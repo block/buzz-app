@@ -22,6 +22,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Mentions.module.css";
 
 import type { ComposerToolProps } from "../../features/conversation/contracts";
@@ -48,6 +49,7 @@ export function MentionPicker({
   const [error, setError] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
   const accepted = useRef(false);
+  const searchInput = useRef<HTMLElement>(null);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -136,12 +138,64 @@ export function MentionPicker({
         />
         <PopoverPopup
           side="top"
-          size="wide"
+          padding="none"
+          initialFocus={searchInput}
+          style={{
+            width: 380,
+            maxHeight: "min(360px, var(--available-height))",
+            overflow: "hidden",
+            display: "flex",
+          }}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            const fromSearch = event.target === searchInput.current;
+            if (event.key === "Enter" && fromSearch) event.preventDefault();
+            if (
+              event.altKey ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.shiftKey
+            )
+              return;
+            if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
+            const rows = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                "[data-mention-choice]:not(:disabled)",
+              ),
+            );
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              if (
+                !fromSearch &&
+                !rows.includes(event.target as HTMLButtonElement)
+              )
+                return;
+              event.preventDefault();
+              event.stopPropagation();
+              const current = rows.indexOf(
+                document.activeElement as HTMLButtonElement,
+              );
+              const next =
+                current < 0
+                  ? event.key === "ArrowDown"
+                    ? 0
+                    : rows.length - 1
+                  : (current +
+                      (event.key === "ArrowDown" ? 1 : -1) +
+                      rows.length) %
+                    rows.length;
+              rows[next]?.focus();
+            } else if (event.key === "Enter" && fromSearch) {
+              event.stopPropagation();
+              rows[0]?.click();
+            }
+          }}
           aria-label="Mention a member or agent"
           finalFocus={() => (accepted.current ? false : trigger.current)}
         >
           <div className={styles.mentionContent}>
             <SearchField
+              variant="capsule"
+              inputRef={searchInput}
               label={
                 inviteAgents
                   ? "Search members and agents"
@@ -154,13 +208,6 @@ export function MentionPicker({
                 if (event.key === "Enter") event.preventDefault();
               }}
             />
-            <p>
-              {inviteAgents
-                ? parentAdmission
-                  ? "Agents you mention join this session and its parent channel when you send, with access to their history."
-                  : "Agents you mention join this session when you send, with access to its history."
-                : "Your agents are added to this channel when you send."}
-            </p>
             {agents.status === "loading" && (
               <p role="status">Loading agents…</p>
             )}
@@ -179,16 +226,11 @@ export function MentionPicker({
             {(!inviteAgents || !!channel) && !channel?.members && (
               <p role="status">Channel membership unavailable.</p>
             )}
-            <Button
-              disabled={disabled}
-              type="button"
-              onClick={() => session.channels.refreshList?.()}
-            >
-              Refresh members
-            </Button>
-            <div className={styles.mentionChoices}>
+            <div className={`${styles.mentionChoices} buzz-thin-scrollbar`}>
               {candidates.slice(0, 100).map(({ recipient, label }) => (
                 <NavigationItem
+                  variant="option"
+                  data-mention-choice=""
                   type="button"
                   key={recipient.pubkey}
                   aria-label={`${label} ${recipient.pubkey}`}
@@ -223,7 +265,7 @@ export function MentionPicker({
                         profiles.get(recipient.pubkey)?.picture ?? "",
                         "small",
                       )}
-                      size="default"
+                      size="large"
                       shape={
                         agentPubkeys.has(recipient.pubkey) ||
                         !channel?.members?.includes(recipient.pubkey)

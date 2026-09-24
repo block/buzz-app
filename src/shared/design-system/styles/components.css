@@ -676,6 +676,17 @@
     color: var(--text-standard);
   }
 
+  .navigation-item[data-variant="option"] {
+    padding: var(--space-2);
+    transition: none;
+  }
+  .navigation-item[data-variant="option"]:focus-visible {
+    background: var(--affordance-floating-hover);
+    --text-metadata: var(--text-standard);
+    --text-subtle: var(--text-standard);
+    outline-offset: -2px;
+  }
+
   .navigation-item[data-inset] {
     padding-left: calc(var(--space-control-inset) + var(--space-4));
   }
@@ -811,6 +822,25 @@
     overflow-y: auto;
     padding: var(--space-4);
     color: var(--text-standard);
+  }
+  .buzz-popover-popup[data-size="compact"] {
+    width: 14rem;
+  }
+  /* Short action surfaces pair 10px outer corners with 8px inner rows.
+     Content surfaces keep the panel recipe, regardless of viewport width. */
+  .buzz-menu-popup[data-size="compact"],
+  .buzz-popover-popup[data-size="compact"] {
+    --affordance-floating-hover: var(--affordance-subtle-hover);
+    border-radius: var(--radius-row);
+  }
+  .buzz-menu-popup[data-size="compact"] .buzz-menu-item,
+  .buzz-popover-popup[data-size="compact"] .navigation-item {
+    border-radius: calc(var(--radius-row) * 0.8);
+    transition: none;
+  }
+  .buzz-popover-popup[data-size="compact"] .navigation-item:focus-visible {
+    background: var(--affordance-floating-hover);
+    outline-offset: -2px;
   }
   .buzz-popover-popup[data-size="wide"] {
     width: 24rem;

@@ -37,7 +37,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     const search = page.locator('em-emoji-picker input[type="search"]');
     await expect(search).toBeVisible();
     const padding = await search.evaluate((input) => {
-      const field = input.getBoundingClientRect();
+      const field = input.parentElement.getBoundingClientRect();
       const picker = input
         .getRootNode()
         .querySelector("#root")
@@ -50,7 +50,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     });
     expect(padding.top).toBeCloseTo(padding.left, 1);
     expect(padding.top).toBeCloseTo(padding.right, 1);
-    await expect(search).toHaveCSS("border-radius", "12px");
+    await expect(search.locator("..")).toHaveCSS("border-radius", "159984px");
     await expect(
       page.getByRole("tab", { name: "GIF", exact: true }),
     ).toHaveCount(0);

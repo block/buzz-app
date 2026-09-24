@@ -136,6 +136,7 @@ export function ChannelSidebarRow({
               />
             </span>
             <MenuPopup
+              size="compact"
               align="end"
               finalFocus={() =>
                 starting.current

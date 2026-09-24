@@ -22,7 +22,8 @@ type PopoverPopupProps = Omit<
     | "anchor"
     | "sticky"
   > & {
-    size?: "default" | "wide";
+    /** Compact account/action surfaces use tighter corners as well as width. */
+    size?: "compact" | "default" | "wide";
     /** Embedded pickers own their internal spacing. */
     padding?: "content" | "list" | "none";
   };

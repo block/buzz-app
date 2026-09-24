@@ -14,28 +14,44 @@
   min-width: 0;
 }
 .emojiContent {
-  --picker-container-radius: var(--radius-card);
-  --picker-inner-radius: calc(var(--picker-container-radius) - var(--space-2));
-  --picker-scrollbar-space: var(--space-4);
-  --picker-tab-foreground: var(--text-standard);
-  --picker-tab-muted: var(--text-subtle);
-  --picker-tab-selected: var(--affordance-selected);
-  --picker-scrollbar-thumb: var(--border-prominent);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(var(--available-height) - 2px);
 }
-.sharedSearchIcon {
-  position: absolute;
-  top: calc(var(--space-2) + (var(--size-control) - var(--space-4)) / 2);
-  left: calc(var(--space-2) + var(--space-control-inset));
-  z-index: 4;
-  color: var(--text-subtle);
-  pointer-events: none;
+/* The panel gap comes from Tabs, so search adds no second top gap. */
+.emojiContent[data-tabs] {
+  --picker-search-top: 0px;
+}
+.emojiContent [role="tablist"] {
+  flex-shrink: 0;
+  margin: var(--space-3) var(--space-3) 0;
+}
+.emojiContent > :first-child,
+.emojiContent [role="tabpanel"] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.emojiContent [role="tabpanel"][hidden] {
+  display: none;
+}
+.emojiContent:not([data-tabs]) > :first-child {
+  gap: 0;
+}
+.emojiContent:not([data-tabs]) [role="tablist"] {
+  display: none;
 }
 .emojiMart {
   position: relative;
+  height: min(348px, 40vh);
+  min-height: 0;
+}
+.emojiMart > div {
+  height: 100%;
 }
 .emojiMart em-emoji-picker {
   width: 100%;
-  height: min(348px, 40vh);
+  height: 100%;
   --border-radius: 0;
   --shadow: none;
 }
@@ -49,41 +65,20 @@
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .gifPicker {
+  min-height: 0;
   position: relative;
   display: flex;
   height: min(348px, 40vh);
-  min-height: 230px;
   flex-direction: column;
 }
 .gifSearch {
-  margin: var(--space-2);
+  margin: var(--picker-search-top, var(--space-3)) var(--space-3) var(--space-3);
 }
 .gifResults {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
   padding: 0 var(--space-3) var(--space-2);
-  scrollbar-width: none;
-}
-.gifResults::-webkit-scrollbar {
-  display: none;
-}
-.gifScrollbarTrack {
-  position: absolute;
-  right: 4px;
-  z-index: 4;
-  width: 8px;
-  opacity: 0.6;
-  pointer-events: none;
-}
-.gifScrollbarThumb {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 8px;
-  min-height: 32px;
-  border-radius: var(--radius-pill);
-  background: var(--picker-scrollbar-thumb);
 }
 .gifGrid {
   columns: 2;
@@ -135,7 +130,11 @@
   text-align: center;
 }
 .gifAttribution {
-  padding: var(--space-1h) var(--space-2);
+  display: grid;
+  height: var(--size-control);
+  flex-shrink: 0;
+  place-items: center;
+  padding: 0 var(--space-2);
   border-top: 1px solid var(--border-standard);
   color: var(--text-subtle);
   font-size: var(--text-caption);

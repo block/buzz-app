@@ -25,7 +25,8 @@ export type MenuPosition = Pick<
 type PopupProps = Omit<ComponentProps<typeof BaseMenu.Popup>, "className"> &
   MenuPosition & {
     children: ReactNode;
-    size?: "default" | "wide";
+    /** Compact is for short action lists; larger choices retain panel corners. */
+    size?: "compact" | "default" | "wide";
   };
 
 function PositionedPopup({

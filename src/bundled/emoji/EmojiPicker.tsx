@@ -9,7 +9,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import {
-  MagnifyingGlassIcon,
   SmileyIcon,
   SmileyStickerIcon,
 } from "../../shared/design-system/icons/index";
@@ -180,11 +179,6 @@ export function EmojiPicker({
   }, [open, disabled, session, scope, catalog, attempt, perLine, tab, host]);
   const emojiContent = (
     <div className={styles.emojiMart}>
-      <MagnifyingGlassIcon
-        className={styles.sharedSearchIcon}
-        size={16}
-        aria-hidden="true"
-      />
       <div ref={setHost} />
     </div>
   );
@@ -205,24 +199,19 @@ export function EmojiPicker({
     />
   );
   const picker = (
-    <div className={styles.emojiContent}>
-      {showGifTab ? (
-        <Tabs
-          variant="panel"
-          label="Media type"
-          value={tab}
-          onValueChange={setTab}
-          items={[
-            { value: "emoji", label: "Emoji" },
-            { value: "gifs", label: "GIF" },
-          ]}
-          renderPanel={(value) =>
-            value === "emoji" ? emojiContent : gifContent
-          }
-        />
-      ) : (
-        emojiContent
-      )}
+    <div className={styles.emojiContent} data-tabs={showGifTab || undefined}>
+      <Tabs
+        variant="panel"
+        label="Media type"
+        value={tab}
+        onValueChange={setTab}
+        items={[
+          { value: "emoji", label: "Emoji" },
+          ...(showGifTab ? [{ value: "gifs" as const, label: "GIF" }] : []),
+        ]}
+        renderPanel={(value) => (value === "emoji" ? emojiContent : gifContent)}
+      />
+
       {tab === "emoji" && error && (
         <div role="alert" className={styles.emojiStatus}>
           Could not load emoji picker: {error}
@@ -289,18 +278,6 @@ export function EmojiPicker({
         initialFocus={false}
         padding="none"
         aria-label="Emoji picker"
-        onFocus={(event) => {
-          // Base UI restores focus to the frame when async GIF discovery replaces
-          // the emoji panel. Keep that fallback on the newly mounted search.
-          if (event.target !== event.currentTarget) return;
-          const searchRoot =
-            tab === "emoji"
-              ? host?.querySelector("em-emoji-picker")?.shadowRoot
-              : event.currentTarget;
-          searchRoot
-            ?.querySelector<HTMLInputElement>('input[type="search"]')
-            ?.focus();
-        }}
         style={{
           width: Math.min(
             availableWidth,

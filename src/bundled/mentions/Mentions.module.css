@@ -1,8 +1,15 @@
 @reference "../../shared/styles/globals.css";
 
 .mentionContent {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  padding: var(--space-3);
   gap: var(--space-2);
+}
+.mentionContent > :not(.mentionChoices) {
+  flex-shrink: 0;
 }
 .mentionContent label {
   display: grid;
@@ -14,6 +21,11 @@
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .mentionChoices {
+  grid-auto-rows: max-content;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: grid;
   gap: var(--space-1);
 }

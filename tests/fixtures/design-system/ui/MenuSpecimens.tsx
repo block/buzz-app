@@ -12,6 +12,7 @@ import {
   BellIcon,
   CheckIcon,
   DotsThreeIcon,
+  GearIcon,
   HashIcon,
   RobotIcon,
 } from "../../../../src/shared/design-system/icons/index";
@@ -314,6 +315,7 @@ export function MenuSpecimen() {
 }
 
 export function PopoverSpecimen() {
+  const [action, setAction] = useState("");
   const [name, setName] = useState("Design studio");
   const [draft, setDraft] = useState(name);
   const [open, setOpen] = useState(false);
@@ -321,6 +323,71 @@ export function PopoverSpecimen() {
   return (
     <div className="space-y-8">
       <Related />
+      <section className="space-y-2">
+        <h2 className="text-label">Choose the surface by its content</h2>
+        <p className="text-body-sm text-tertiary">
+          Small action menus use 10px outer corners, 8px row corners, and a 4px
+          inset. Their quieter hover fill uses Buzz’s subtle-hover color, with
+          immediate pointer and keyboard feedback. The account menu and a short
+          channel action list use this treatment.
+        </p>
+        <p className="text-body-sm text-tertiary">
+          Content popovers, larger action or choice menus, forms, activity
+          previews, and emoji/mention pickers keep 24px panel corners and their
+          existing spacing. A narrow viewport does not turn a content popover
+          into a small action menu. Both treatments share the same surface,
+          border, shadow, and opening motion.
+        </p>
+        <p className="text-body-sm text-tertiary">
+          Opt in with size="compact" on MenuPopup. For an account-style
+          PopoverPopup, use size="compact" with padding="list". Default and wide
+          surfaces retain the larger corners. Use Menu for arrow-key action
+          lists; Popover retains normal Tab navigation for interactive content.
+        </p>
+      </section>
+      <Example
+        title="Small action surfaces"
+        description="Open either example and hover or use the keyboard. Compare both themes with the page theme control. Settings and New session only update this preview."
+      >
+        <div className="flex flex-wrap gap-4">
+          <PopoverRoot>
+            <PopoverTrigger render={<Button>Account actions</Button>} />
+            <PopoverPopup
+              size="compact"
+              padding="list"
+              aria-label="Your account"
+            >
+              <nav aria-label="Your account">
+                <p className="m-0 truncate px-3 py-2 text-label-sm">
+                  Alex Morgan
+                </p>
+                <PopoverClose
+                  render={
+                    <NavigationItem
+                      label="Settings"
+                      icon={<GearIcon size={17} aria-hidden="true" />}
+                      onClick={() => setAction("Settings selected.")}
+                    />
+                  }
+                />
+              </nav>
+            </PopoverPopup>
+          </PopoverRoot>
+          <MenuRoot>
+            <MenuTrigger render={<Button>Channel actions</Button>} />
+            <MenuPopup size="compact" aria-label="Channel actions">
+              <MenuItem onClick={() => setAction("New session selected.")}>
+                New session
+              </MenuItem>
+            </MenuPopup>
+          </MenuRoot>
+        </div>
+      </Example>
+      {action && (
+        <p role="status" className="text-body-sm text-tertiary">
+          {action}
+        </p>
+      )}
       <Example
         title="Supporting details"
         description="A small anchored surface for information that would interrupt the main layout."

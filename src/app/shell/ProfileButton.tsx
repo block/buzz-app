@@ -68,8 +68,8 @@ export function ProfileButton({
         align="end"
         initialFocus={false}
         padding="list"
+        size="compact"
         aria-label="Your account"
-        style={{ width: "14rem" }}
         finalFocus={() => !openingSettings.current}
       >
         <nav aria-label="Your account">

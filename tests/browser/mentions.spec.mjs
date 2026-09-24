@@ -40,9 +40,30 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       await expect(
         picker.getByRole("button", { name: `Honey ${key}`, exact: true }),
       ).toBeVisible();
-      await picker
-        .getByRole("button", { name: `Honey ${key}`, exact: true })
-        .click();
+      const search = picker.getByRole("searchbox");
+      await expect(search).toBeFocused();
+      await expect(picker).toHaveCSS("width", "380px");
+      expect((await picker.boundingBox()).height).toBeLessThanOrEqual(360);
+      await search.fill("");
+      const choice = picker.getByRole("button", {
+        name: `Honey ${key}`,
+        exact: true,
+      });
+      const index = await choice.evaluate((node) =>
+        [
+          ...node.parentElement.querySelectorAll("[data-mention-choice]"),
+        ].indexOf(node),
+      );
+      await search.press("ArrowDown");
+      for (let step = 0; step < index; step++)
+        await page.keyboard.press("ArrowDown");
+      await expect(choice).toBeFocused();
+      await expect(choice).toHaveCSS("padding", "8px");
+      await expect(choice.locator(".buzz-avatar")).toHaveCSS("width", "40px");
+      await choice.press("ArrowUp");
+      await page.keyboard.press("ArrowDown");
+      await expect(choice).toBeFocused();
+      await choice.press("Enter");
     };
     const order = () =>
       page

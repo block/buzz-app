@@ -13,6 +13,7 @@ export function ProfileInstances({
   communityOrigin,
   viewer,
   knownAgent,
+  errorHandledByActions = false,
 }: {
   control: AgentControl;
   navigation: Navigation | undefined;
@@ -21,6 +22,8 @@ export function ProfileInstances({
   communityOrigin: string | undefined;
   viewer: string | undefined;
   knownAgent: boolean;
+  /** The composed Info actions surface owns controller failure and recovery. */
+  errorHandledByActions?: boolean;
 }) {
   const state = useSyncExternalStore(
     control.subscribe,
@@ -32,6 +35,7 @@ export function ProfileInstances({
       void control.refresh();
   }, [control, communityOrigin, knownAgent, state.status]);
   if (!communityOrigin || state.status === "unavailable") return null;
+  if (state.status === "error" && errorHandledByActions) return null;
   const instances =
     scope && state.status === "ready"
       ? sameCommunityAgents(state.data?.agents ?? [], scope).filter(

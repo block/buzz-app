@@ -183,6 +183,7 @@ function ProfileDetails({
                 />
                 {control && (
                   <ProfileInstances
+                    errorHandledByActions
                     control={control}
                     pubkey={pubkey}
                     navigation={navigation}

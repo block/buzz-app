@@ -206,6 +206,10 @@ async function setup(
   const stop = bindMessageNotifications(notifications, communities);
   cleanups.push(stop);
   await flush();
+  // Names retain owner inventory independently of notification/roster startup.
+  await vi.waitFor(() =>
+    expect(owner.session.agentLibrary.snapshot().status).toBe("ready"),
+  );
   notifications.updatePreferences({ sound: false });
   const emit = (
     events: ReturnType<typeof message>[],
@@ -519,7 +523,9 @@ it("live message wiring supplies the signed author and body, resolving names at 
     title: "Pinky mentioned you in #Room",
     body: "Hello Wes",
   });
-  expect(h.query).not.toHaveBeenCalled();
+  expect(h.query.mock.calls.map(([filters]) => filters)).toEqual([
+    [{ authors: [h.viewer.pubkey], kinds: [30175, 30177], limit: 200 }],
+  ]);
 });
 
 it.each([
@@ -719,7 +725,9 @@ it("notification startup waits for the roster without consuming the shared evide
     deferRoster: true,
   });
   expect(h.markerQuery).not.toHaveBeenCalled();
-  expect(h.query).not.toHaveBeenCalled();
+  expect(h.query.mock.calls.map(([filters]) => filters)).toEqual([
+    [{ authors: [h.viewer.pubkey], kinds: [30175, 30177], limit: 200 }],
+  ]);
   h.discover();
   await h.owner.session.unread.ensure();
   expect(h.markerQuery).toHaveBeenCalledOnce();

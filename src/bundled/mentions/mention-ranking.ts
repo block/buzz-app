@@ -39,7 +39,7 @@ export function rankMentions(
   history?: ReadonlyMap<string, number>,
   presence: (key: string) => string = () => "unknown",
 ) {
-  const group = (c: MentionChoice) => (c.member ? 0 : c.agent ? 1 : 2);
+  const group = (c: MentionChoice) => (c.member ? 0 : 1);
   const online = (c: MentionChoice) =>
     ({ online: 0, away: 1 })[presence(c.recipient.pubkey)] ?? 2;
   return choices

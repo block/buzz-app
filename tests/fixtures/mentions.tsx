@@ -19,6 +19,7 @@ import {
   roster,
   profile,
   message,
+  signed,
 } from "../../src/features/relay/testing";
 import { matchesEvent } from "../../src/features/relay/projection";
 import type { RelayEvent } from "../../src/features/relay/events";
@@ -26,7 +27,8 @@ import type { RelayEvent } from "../../src/features/relay/events";
 const viewer = keypair(),
   relay = keypair(),
   first = keypair(),
-  second = keypair();
+  second = keypair(),
+  outsider = keypair();
 let members = [viewer.pubkey, first.pubkey, second.pubkey];
 let time = 1700000000;
 const publications: RelayEvent[] = [];
@@ -36,6 +38,9 @@ let libraryReads = 0;
 const reads: (readonly number[])[] = [];
 let pendingReads = 0;
 let libraryIncludesFirst = false;
+const admission = new URLSearchParams(location.search).has(
+  "nonmember-admission",
+);
 const naming = new URLSearchParams(location.search).has("identity-names");
 let colliding = false;
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
@@ -108,13 +113,27 @@ const owner = createRelaySession(
         }
         const events = [
           roster(relay, "c", members, time),
-          metadata(
-            relay,
-            "c",
-            "General",
-            undefined,
-            stream ? [["t", "stream"]] : [],
-          ),
+          admission
+            ? signed(relay, {
+                kind: 39000,
+                content: JSON.stringify({
+                  name: "General",
+                  channel_type: "stream",
+                }),
+                created_at: time,
+                tags: [
+                  ["d", "c"],
+                  ["name", "General"],
+                  ["t", "stream"],
+                ],
+              })
+            : metadata(
+                relay,
+                "c",
+                "General",
+                undefined,
+                stream ? [["t", "stream"]] : [],
+              ),
           roster(relay, "other", [viewer.pubkey], time),
           metadata(relay, "other", "Other"),
           profile(viewer, { name: "Viewer" }),
@@ -127,18 +146,22 @@ const owner = createRelaySession(
             is_agent: true,
             picture: "https://avatars.test/app-icon.png",
           }),
+          ...(admission ? [profile(outsider, { name: "Outside Person" })] : []),
           ...publications,
         ];
         return events.filter((event) =>
-          filters.some((filter) =>
-            filter.search === undefined
-              ? matchesEvent(event, filter)
-              : // Name-prefix directory search, like the relay's prefix mode.
-                event.kind === 0 &&
-                String(JSON.parse(event.content).name ?? "")
-                  .toLowerCase()
-                  .startsWith(filter.search.toLowerCase()),
-          ),
+          filters.some((filter) => {
+            const { search, search_mode: _mode, ...ordinary } = filter;
+            // Name-prefix directory search, like the relay's prefix mode.
+            return (
+              matchesEvent(event, ordinary) &&
+              (search === undefined ||
+                (event.kind === 0 &&
+                  String(JSON.parse(event.content).name ?? "")
+                    .toLowerCase()
+                    .startsWith(search.toLowerCase())))
+            );
+          }),
         );
       } finally {
         pendingReads--;
@@ -220,6 +243,7 @@ Object.assign(window, {
       await owner.session.agentLibrary.refresh();
     },
     qualifier: (key: string) => names?.lookup(key)?.qualifier,
+    outsider: outsider.pubkey,
     first: first.pubkey,
     second: second.pubkey,
     publications,

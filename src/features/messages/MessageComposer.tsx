@@ -393,9 +393,9 @@ function Composer({
     }
     if (
       recipient &&
-      !mentionCandidates(session, channelId, agentChoices, mentionRoster, [recipient]).some(
-        (c) => c.recipient.pubkey === recipient.pubkey,
-      )
+      !mentionCandidates(session, channelId, agentChoices, mentionRoster, [
+        recipient,
+      ]).some((c) => c.recipient.pubkey === recipient.pubkey)
     ) {
       setError(
         "This recipient is no longer available. Remove it or refresh choices.",

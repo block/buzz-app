@@ -189,9 +189,20 @@ export function MentionPicker({
                   : "Agents you mention join this session when you send, with access to its history."}
               </p>
             )}
-            {model.directory.loading && <p role="status">Searching community…</p>}
-            {model.directory.more && <p>Narrow your search to find more community people.</p>}
-            {model.directory.error && <><p role="status">{model.directory.error}</p><Button type="button" onClick={model.directory.retry}>Retry community search</Button></>}
+            {model.directory.loading && (
+              <p role="status">Searching community…</p>
+            )}
+            {model.directory.more && (
+              <p>Narrow your search to find more community people.</p>
+            )}
+            {model.directory.error && (
+              <>
+                <p role="status">{model.directory.error}</p>
+                <Button type="button" onClick={model.directory.retry}>
+                  Retry community search
+                </Button>
+              </>
+            )}
             {agents.status === "loading" && (
               <p role="status">Loading agents…</p>
             )}
@@ -270,7 +281,11 @@ export function MentionPicker({
                         alt=""
                         fallback={label}
                         src={session.media(
-                          profiles.get(recipient.pubkey)?.picture ?? model.directory.people.find((person) => person.pubkey === recipient.pubkey)?.picture ?? "",
+                          profiles.get(recipient.pubkey)?.picture ??
+                            model.directory.people.find(
+                              (person) => person.pubkey === recipient.pubkey,
+                            )?.picture ??
+                            "",
                           "small",
                         )}
                         size="large"

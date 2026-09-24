@@ -174,3 +174,18 @@ it("does not search unnamed identity fallback labels or commit them with Space",
   expect(rankMentions([row], "aaa")).toEqual([]);
   expect(exactMention([row], "aaaaaaaaaaaa")).toBeUndefined();
 });
+
+it("ranks outside humans and agents in one relevance group", () => {
+  const human = choice("a", "Honey", { member: false });
+  const agent = choice("b", "Honey Bee", {
+    member: false,
+    agent: true,
+    owned: true,
+  });
+  const member = choice("c", "A Honey");
+  expect(rankMentions([agent, human, member], "honey")).toEqual([
+    member,
+    human,
+    agent,
+  ]);
+});

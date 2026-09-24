@@ -11,7 +11,7 @@ test("Local Settings retain plugin recovery without blocking Profile and Appeara
   );
   await page.goto(app.origin);
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toBeVisible();

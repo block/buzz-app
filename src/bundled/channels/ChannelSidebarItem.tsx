@@ -1,10 +1,8 @@
 import { memo } from "react";
-import type { ChannelSummary } from "../../features/relay/contracts";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import {
-  ChatCircleIcon,
-  UsersIcon,
-} from "../../shared/design-system/icons/index";
+import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
@@ -17,6 +15,7 @@ const noSessions: readonly ChannelSummary[] = [];
 // must not rebuild every unchanged row's controls and subscriptions.
 export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   channel,
+  profile,
   session,
   working,
   sessionsEnabled,
@@ -32,6 +31,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onHideDm,
 }: {
   channel: ChannelSummary;
+  profile?: Profile | undefined;
   session: RelaySession;
   working: boolean;
   sessionsEnabled: boolean;
@@ -47,15 +47,36 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onHideDm?: (id: string) => void;
 }) {
   const Icon =
-    channel.channelType === "dm"
-      ? (channel.participants?.length ?? 0) > 1
-        ? UsersIcon
-        : ChatCircleIcon
-      : channelIcon(channel);
+    channel.channelType === "dm" ? ChatCircleIcon : channelIcon(channel);
   return (
     <ChannelSidebarRow
       channel={channel}
-      icon={<Icon size={17} />}
+      icon={
+        channel.channelType === "dm" && channel.participants?.length === 1 ? (
+          <Avatar
+            src={
+              profile?.picture
+                ? session.media(profile.picture, "small")
+                : undefined
+            }
+            alt=""
+            fallback={channel.name}
+            size="small"
+            shape={profile?.isAgent ? "squircle" : "circle"}
+          />
+        ) : channel.channelType === "dm" &&
+          (channel.participants?.length ?? 0) > 1 ? (
+          <span
+            className={styles.dmCount}
+            title={`${channel.participants?.length} other participants`}
+            aria-hidden="true"
+          >
+            {channel.participants?.length}
+          </span>
+        ) : (
+          <Icon size={17} />
+        )
+      }
       badge={
         <>
           {working && (

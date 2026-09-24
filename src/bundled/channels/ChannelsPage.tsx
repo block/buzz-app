@@ -306,7 +306,7 @@ function ChannelWorkspace({
     scope,
     list.status === "ready" && preferences.status !== "loading",
   );
-  const channels = useChannelLabels(
+  const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
     queries.profiles,
     queries.names,
@@ -1020,6 +1020,12 @@ function ChannelWorkspace({
                         : undefined;
                     return (
                       <ChannelSidebarItem
+                        profile={
+                          channel.channelType === "dm" &&
+                          channel.participants?.length === 1
+                            ? dmProfiles.get(channel.participants[0] ?? "")
+                            : undefined
+                        }
                         key={channel.id}
                         channel={channel}
                         session={queries}

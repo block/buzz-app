@@ -366,7 +366,7 @@ test("session actions follow the Sessions plugin availability", async ({
   ).toBeVisible();
 
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   const plugins = page.getByRole("region", { name: "Plugins", exact: true });
   const sessions = plugins.getByRole("article").filter({
@@ -445,7 +445,9 @@ for (const destination of ["Projects", "Settings", "Back/Forward"]) {
     const leave = async () => {
       if (destination === "Settings") {
         await button(page, "Your profile").click();
-        await button(page, "Settings").click();
+        await page
+          .getByRole("menuitem", { name: "Settings", exact: true })
+          .click();
         await expect(
           page.getByRole("heading", { name: "Settings", exact: true }),
         ).toBeVisible();

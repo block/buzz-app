@@ -202,3 +202,9 @@ export const GitHubIssueIcon = defineIcon("custom", GitHubIssueArtwork, {
 
 import { CircleNotchIcon as PhosphorCircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";
 export const CircleNotchIcon = defineIcon("phosphor", PhosphorCircleNotchIcon);
+
+import { PencilSimpleIcon as PhosphorPencilSimpleIcon } from "@phosphor-icons/react/dist/csr/PencilSimple";
+export const PencilSimpleIcon = defineIcon(
+  "phosphor",
+  PhosphorPencilSimpleIcon,
+);

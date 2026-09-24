@@ -71,8 +71,18 @@ export type ChannelMessage = Readonly<{
   /** Unix seconds from the signed event. Ordering is (createdAt asc, id desc); no clock inference. */
   createdAt: number;
   content: string;
+  /** Unprojected current body when attachment presentation removed Markdown. */
+  sourceContent?: string;
   /** Original kind 40002, regardless of edits; self-declared display evidence, not authority. */
   agentEnvelope?: true;
+  /** Original kind 40008. Untrusted display metadata; content stays a raw patch. */
+  diff?: Readonly<{
+    filePath?: string | undefined;
+    repoUrl?: string | undefined;
+    commitSha?: string | undefined;
+    description?: string | undefined;
+    truncated: boolean;
+  }>;
   membership?: MembershipChange;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;

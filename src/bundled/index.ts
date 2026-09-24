@@ -1,3 +1,5 @@
+import diffsManifest from "./diffs/manifest.json";
+import * as diffs from "./diffs";
 import templatesManifest from "./channel-templates/manifest.json";
 import * as templates from "./channel-templates";
 import activityManifest from "./agent-activity/manifest.json";
@@ -29,6 +31,7 @@ import sessionsManifest from "./sessions/manifest.json";
 import * as sessions from "./sessions";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  { manifest: { ...diffsManifest, apiVersion: 1 }, module: diffs },
   {
     manifest: { ...templatesManifest, apiVersion: 1 },
     module: templates,

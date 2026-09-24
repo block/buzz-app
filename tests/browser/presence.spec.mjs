@@ -21,9 +21,9 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
       .click();
     const profile = page.getByRole("region", { name: "Profile details" });
     await expect(profile).toBeVisible();
-    await expect(
-      profile.getByRole("img", { name: "Presence: unknown" }),
-    ).toBeVisible();
+    await expect(profile.getByRole("img", { name: /^Presence:/ })).toHaveCount(
+      0,
+    );
     // Narrowing the timeline for the profile can demand an older page. This
     // fixture deliberately holds those pages; retire that foreground work first.
     await expect
@@ -66,7 +66,7 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
     ).toBe(true);
     app.relay.releasePresence();
     await expect(
-      profile.getByRole("img", { name: "Presence: online" }),
+      profile.getByRole("img", { name: "Presence: Active" }),
     ).toBeVisible();
     // Startup may skip busy setup. Keep real time: advancing only browser time
     // would expire its SSE heartbeat without advancing the broker's keepalive.
@@ -203,23 +203,15 @@ test("foreground send and cold channel entry remain available during a profile s
   }
 });
 
-test.describe("mounted conversation demand", () => {
+test.describe("conversation presence is not rendered or queried", () => {
   test.use({ threadUnread: true, historyCounts: { alpha: 20, beta: 20 } });
-  test("timeline and thread author indicators share one bounded snapshot", async ({
+  test("timeline and thread bylines do not acquire presence; an explicit profile does", async ({
     page,
     app,
   }) => {
-    app.relay.holdPresence();
     await open(page, app);
+    await settle(page);
     const timeline = page.locator("[data-channel-timeline]");
-    await expect(
-      timeline.getByRole("img", { name: "Presence: unknown" }).first(),
-    ).toBeVisible();
-    await expect.poll(() => app.report.presenceSnapshots.length).toBe(1);
-    app.relay.releasePresence();
-    await expect(
-      timeline.getByRole("img", { name: "Presence: online" }).first(),
-    ).toBeVisible();
     const root = app.histories
       .get("primary/alpha")
       .find((row) => row.content === "Thread root 0");
@@ -234,121 +226,27 @@ test.describe("mounted conversation demand", () => {
     await expect(
       thread.getByText("Unread reply 0", { exact: true }),
     ).toBeVisible();
+    await expect(timeline.getByRole("img", { name: /^Presence:/ })).toHaveCount(
+      0,
+    );
+    await expect(thread.getByRole("img", { name: /^Presence:/ })).toHaveCount(
+      0,
+    );
+    // Opening and resolving a profile exercises a real snapshot completion
+    // barrier, without keeping obsolete hidden byline subscribers alive.
+    await thread
+      .getByRole("button", { name: "View Alice Fixture profile", exact: true })
+      .first()
+      .click();
+    const profile = page.getByRole("region", { name: "Profile details" });
     await expect(
-      thread.getByRole("img", { name: "Presence: online" }).last(),
+      profile.getByRole("img", { name: "Presence: Active" }),
     ).toBeVisible();
     expect(app.report.presenceSnapshots).toHaveLength(1);
     expect(app.report.presenceSnapshots[0].filter.authors).toHaveLength(1);
-    expect(
-      app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
-    ).toBe(false);
-  });
-});
-
-test.describe("large mounted thread", () => {
-  test.use({
-    threadUnread: true,
-    presenceThreadAuthors: 300,
-    historyCounts: { alpha: 20, beta: 20 },
-  });
-  test("distinct thread authors stay bounded through loading, scrolling and unmount", async ({
-    page,
-    app,
-  }) => {
-    await open(page, app);
-    const { root, replies } = app.presenceThread;
-    const trigger = page
-      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ });
-    const thread = page.getByRole("region", {
-      name: "Thread messages",
-      exact: true,
-    });
-    const start = performance.now();
-    await trigger.click();
-    await expect(
-      thread.getByText("300 replies shown", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      thread.getByText("Loading thread…", { exact: true }),
-    ).toHaveCount(0);
-    await expect(thread.locator("[data-message-id]")).toHaveCount(301);
-    app.report.measurements.push({
-      threadLoadUpperBoundMs: performance.now() - start,
-      distinctAuthors: 300,
-    });
-    // Query starts, rather than UI row counts, prove the actual transport cap.
-    await expect
-      .poll(() =>
-        app.report.presenceSnapshots.some(
-          ({ filter }) => filter.authors.length === 256,
-        ),
-      )
-      .toBe(true);
-    await expect(
-      thread.locator('[title="Presence demand limit reached"]'),
-    ).toHaveCount(45);
-    await expect(
-      thread.getByRole("img", { name: "Presence: online", exact: true }),
-    ).toHaveCount(256);
-    const first = thread.locator(`[data-message-id="${replies[0].id}"]`);
-    const last = thread.locator(`[data-message-id="${replies.at(-1).id}"]`);
-    await expect(last).toBeInViewport();
-    await thread.focus();
-    await page.keyboard.press("Control+Home");
-    // Use actual input; native key handling differs by engine/platform.
-    await first.scrollIntoViewIfNeeded();
-    await expect(first).toBeInViewport();
-    await thread.hover();
-    const before = await thread.evaluate((el) => el.scrollTop);
-    await page.mouse.wheel(0, 500);
-    await expect
-      .poll(() => thread.evaluate((el) => el.scrollTop))
-      .toBeGreaterThan(before);
-    const count = app.report.presenceSnapshots.length;
-    await page
-      .getByRole("button", { name: "Close thread", exact: true })
-      .click();
-    await expect(thread).toHaveCount(0);
-    // Hold the replacement read: eventual Online alone cannot prove old evidence
-    // was absent between remounting and response completion.
-    app.relay.holdPresence();
-    try {
-      const reopen = performance.now();
-      await trigger.click();
-      await expect(
-        thread.getByText("300 replies shown", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        thread.getByText("Loading thread…", { exact: true }),
-      ).toHaveCount(0);
-      app.report.measurements.push({
-        threadReopenUpperBoundMs: performance.now() - reopen,
-      });
-      await expect
-        .poll(() => app.report.presenceSnapshots.length)
-        .toBeGreaterThan(count);
-      expect(app.report.presenceSnapshots.at(-1).pending).toBe(true);
-      // The root remains mounted in the timeline; all 300 distinct reply authors
-      // were released, so only the root may retain its existing Online value.
-      await expect(
-        thread
-          .locator("ol")
-          .getByRole("img", { name: "Presence: unknown", exact: true }),
-      ).toHaveCount(300);
-    } finally {
-      app.relay.releasePresence();
-    }
-    await expect(
-      thread.getByRole("img", { name: "Presence: online", exact: true }),
-    ).toHaveCount(256);
-    for (const { filter } of app.report.presenceSnapshots) {
-      expect(filter.authors.length).toBeLessThanOrEqual(256);
-      expect(new Set(filter.authors).size).toBe(filter.authors.length);
-    }
-    // Start-gate boundaries are checked with controlled clocks in presence.test.ts
-    // and http-admission.test.ts. Upstream arrival times include variable signing
-    // and transport work after admission, so their spacing cannot prove that gate.
+    await expect(timeline.getByRole("img", { name: /^Presence:/ })).toHaveCount(
+      0,
+    );
     expect(
       app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
     ).toBe(false);
@@ -387,16 +285,38 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     expect(both.held).toHaveLength(1);
     expect(both.held[0].clientId).toBe(owner.clientId);
     expect(both.pending[0].name).toBe(owner.name);
-    const successor = both.pending[0].clientId;
-    await page.close();
+    // A choice in the non-owner window must reach the holder before handoff.
+    await second
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    await second
+      .getByRole("menuitemradio", { name: "Appear offline", exact: true })
+      .click();
+    await expect(
+      page.getByRole("img", { name: "Your status: Offline" }),
+    ).toBeVisible();
     await expect
-      .poll(async () => (await presenceLocks(second)).held[0]?.clientId)
-      .toBe(successor);
-    expect((await presenceLocks(second)).pending).toHaveLength(0);
+      .poll(() => app.report.presencePublications.at(-1)?.event.content)
+      .toBe("offline");
+    await expect
+      .poll(async () => (await presenceLocks(second)).pending.length)
+      .toBe(1);
+    const offlineLocks = await presenceLocks(second);
+    const firstHolds = offlineLocks.held[0].clientId === owner.clientId;
+    const successor = offlineLocks.pending[0].clientId;
+    const remaining = firstHolds ? second : page;
     const before = app.report.presencePublications.length;
+    await (firstHolds ? page : second).close();
+    await expect
+      .poll(async () => (await presenceLocks(remaining)).held[0]?.clientId)
+      .toBe(successor);
+    expect((await presenceLocks(remaining)).pending).toHaveLength(0);
     await expect
       .poll(() => app.report.presencePublications.length, { timeout: 75000 })
       .toBeGreaterThan(before);
+    expect(app.report.presencePublications.at(-1).event.content).toBe(
+      "offline",
+    );
     expect(errors).toEqual([]);
     app.report.measurements.push({
       publisherLockHandoff: { owner: owner.clientId, successor },
@@ -428,14 +348,18 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
       .poll(() => app.report.unreadHolds.some((hold) => hold.pending))
       .toBe(true);
     await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+    await page
+      .getByRole("button", { name: "View Alice Fixture profile", exact: true })
+      .first()
+      .click();
     snapshotStart.resolve(); // Begin broker dispatch only after ordinary HTTP is held.
     await expect
       .poll(() => receipts.some(({ accepted }) => accepted === true))
       .toBe(true);
     await expect(
       page
-        .locator("[data-channel-timeline]")
-        .getByRole("img", { name: "Presence: online" })
+        .getByRole("region", { name: "Profile details" })
+        .getByRole("img", { name: "Presence: Active" })
         .first(),
     ).toBeVisible();
     expect(app.report.unreadHolds.some((hold) => hold.pending)).toBe(true);
@@ -472,4 +396,66 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
     app.relay.releaseUnread();
     app.relay.releaseEose("alpha");
   }
+});
+
+// Real account controls -> shared activity -> retained session -> production
+// broker -> authenticated socket; real localStorage survives app reconstruction.
+test("avatar choices publish through the existing socket and persist across reload", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const avatar = page.getByRole("button", {
+    name: "Your profile",
+    exact: true,
+  });
+  const account = page.getByRole("menu", { name: "Your account" });
+  const published = (status) =>
+    app.report.presencePublications.filter(
+      ({ event }) => event.content === status,
+    ).length;
+  await expect(
+    page.getByRole("img", { name: "Your status: Active" }),
+  ).toBeVisible();
+  await avatar.click();
+  await account
+    .getByRole("menuitemradio", { name: "Away", exact: true })
+    .click();
+  await expect(
+    page.getByRole("img", { name: "Your status: Away" }),
+  ).toBeVisible();
+  await expect.poll(() => published("away")).toBeGreaterThan(0);
+  const editor = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await editor.click();
+  await editor.fill("Still away while typing");
+  await expect(
+    page.getByRole("img", { name: "Your status: Away" }),
+  ).toBeVisible();
+  await avatar.click();
+  await account
+    .getByRole("menuitemradio", { name: "Appear offline", exact: true })
+    .click();
+  await expect.poll(() => published("offline")).toBeGreaterThan(0);
+  await page.reload();
+  await expect(
+    page.getByRole("img", { name: "Your status: Offline" }),
+  ).toBeVisible();
+  await avatar.click();
+  await expect(
+    account.getByRole("menuitemradio", { name: "Appear offline", exact: true }),
+  ).toBeChecked();
+  const before = published("online");
+  await account
+    .getByRole("menuitemradio", { name: "Automatic", exact: true })
+    .click();
+  await expect(
+    page.getByRole("img", { name: "Your status: Active" }),
+  ).toBeVisible();
+  await expect.poll(() => published("online")).toBeGreaterThan(before);
+  await account.screenshot({
+    path: test.info().outputPath("presence-controls.png"),
+  });
 });

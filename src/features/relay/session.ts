@@ -383,14 +383,14 @@ export function createRelaySession(
           filter.search !== undefined &&
           !filter["#h"]?.length &&
           !!filter.kinds?.length &&
-          filter.kinds.every((kind) => [9, 40002].includes(kind)),
+          filter.kinds.every((kind) => [9, 40002, 40008].includes(kind)),
       )
     ) {
       const ids = [
         ...new Set(
           events.flatMap((event) => {
             const tags = event.tags.filter(([name]) => name === "h");
-            return [9, 40002].includes(event.kind) &&
+            return [9, 40002, 40008].includes(event.kind) &&
               tags.length === 1 &&
               tags[0]?.[1]
               ? [tags[0][1]]
@@ -1501,7 +1501,9 @@ export function createRelaySession(
                   ([name]) => name === "h",
                 );
                 return (
-                  (event.kind === 9 || event.kind === 40002) &&
+                  (event.kind === 9 ||
+                    event.kind === 40002 ||
+                    event.kind === 40008) &&
                   event.pubkey !== transport.viewer &&
                   destinations.length === 1 &&
                   destinations[0]?.[1] === provenance.channelId &&

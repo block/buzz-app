@@ -10,7 +10,7 @@ test("shared tokens reach app controls without history or chip overrides", async
 }) => {
   await page.goto(app.origin);
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Appearance", exact: true }).click();
   const reset = page.getByRole("button", {
     name: "Reset text size",

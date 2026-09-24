@@ -6,7 +6,7 @@ const key = "buzz-appearance.v1";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function settings(page) {
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Appearance").click();
 }
 async function expectMode(page, mode) {

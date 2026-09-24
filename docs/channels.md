@@ -80,6 +80,22 @@ palette; legacy sidebar filters are ignored. The saved-groups
 browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
 
+Channel row actions share one page-owned `ContextMenuRoot` / `MenuPopup`, labelled
+`Actions for <channel>`. **New session** comes first; additional sidebar actions
+should extend that popup, with a separator only when another action group follows.
+`ChannelSidebarItem` owns the context trigger inside its memo boundary, using stable
+`onOpenMenu` props. It wraps the activity select surface rather than merging popup
+props onto the activity button; session disclosure and child rows stay outside.
+The popup and trigger are enabled only when `rowActions` supplies actual items;
+each action owns its eligibility, so Sessions availability never gates sibling
+actions. `useChannelRowMenu` owns channel id, the full rendered section key
+(`starred`, `channels`, `group:<id>`, etc.), and the keyboard anchor. It clears
+that state if the row leaves that section or loses its last action; moving back
+or restoring eligibility does not reopen the menu. For future group commands,
+derive the saved group id separately from `group:<id>` rather than conflating it
+with rendered placement. Right-clicking the separate session disclosure remains
+outside the parent menu trigger, as do child-session rows.
+
 ## Starting a direct message
 
 The **+** action in the DMs sidebar header opens **New message**, a routed empty

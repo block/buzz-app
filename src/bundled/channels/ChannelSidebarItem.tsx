@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { ContextMenuTrigger } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
@@ -19,7 +20,6 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   profile,
   session,
   working,
-  sessionsEnabled,
   selected,
   collapsed,
   onToggle,
@@ -30,12 +30,14 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onNewSession,
   onOpenThread,
   onHideDm,
+  menuEnabled,
+  sectionKey,
+  onOpenMenu,
 }: {
   channel: ChannelSummary;
   profile?: Profile | undefined;
   session: RelaySession;
   working: boolean;
-  sessionsEnabled: boolean;
   selected: string | undefined;
   collapsed: boolean;
   onToggle: (key: string, open: boolean) => void;
@@ -46,6 +48,13 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onNewSession: (id: string) => void;
   onOpenThread: (channelId: string, rootId: string) => void;
   onHideDm?: (id: string) => void;
+  menuEnabled?: boolean;
+  sectionKey?: string | undefined;
+  onOpenMenu?: (
+    channel: ChannelSummary,
+    sectionKey: string,
+    anchor?: HTMLElement,
+  ) => void;
 }) {
   const peer =
     channel.channelType === "dm" && channel.participants?.length === 1
@@ -101,20 +110,42 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
           />
         </>
       }
-      wrapSelect={(trigger) => (
-        <ChannelActivityPopover
-          session={session}
-          channelId={channel.id}
-          channelName={channel.name}
-          onOpenThread={(item) => onOpenThread(item.channelId, item.rootId)}
-          trigger={trigger}
-        />
-      )}
+      wrapSelect={(trigger) => {
+        const activity = (
+          <ChannelActivityPopover
+            session={session}
+            channelId={channel.id}
+            channelName={channel.name}
+            onOpenThread={(item) => onOpenThread(item.channelId, item.rootId)}
+            trigger={trigger}
+          />
+        );
+        // Keep popup semantics on separate DOM nodes: activity owns the button,
+        // the context menu wraps only its select surface, not the child sessions.
+        return menuEnabled ? (
+          <ContextMenuTrigger
+            render={<div />}
+            onKeyDown={(event) => {
+              if (
+                event.key === "ContextMenu" ||
+                (event.shiftKey && event.key === "F10")
+              ) {
+                event.preventDefault();
+                if (sectionKey)
+                  onOpenMenu?.(channel, sectionKey, event.currentTarget);
+              }
+            }}
+          >
+            {activity}
+          </ContextMenuTrigger>
+        ) : (
+          activity
+        );
+      }}
       selected={selected}
       presenceDescription={
         presence === "unknown" ? undefined : `Presence: ${presence}`
       }
-      sessionsEnabled={sessionsEnabled}
       collapsed={collapsed}
       onToggle={(open) => onToggle(`session-children:${channel.id}`, open)}
       draft={draft}

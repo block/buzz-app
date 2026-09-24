@@ -13,6 +13,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { UnreadSnapshot } from "../../features/relay/unread";
 import type { PresenceStatus } from "../../features/presence/presence";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
+import { ContextMenuRoot } from "../../shared/design-system/ui/Menu";
 
 afterEach(cleanup);
 
@@ -64,7 +65,6 @@ it("keeps live unread updates and uses replacement session callbacks across row 
     channel: { id: "alpha", name: "Alpha", channelType: "stream" as const },
     session: first.session,
     working: false,
-    sessionsEnabled: true,
     selected: undefined,
     collapsed: false,
     onToggle: vi.fn(),
@@ -147,7 +147,6 @@ it("badges one-to-one DM avatars with live presence and sanitizes their media", 
     },
     session,
     working: false,
-    sessionsEnabled: false,
     selected: undefined,
     collapsed: false,
     onToggle: vi.fn(),
@@ -232,3 +231,61 @@ it("badges one-to-one DM avatars with live presence and sanitizes their media", 
     } else expect(row.querySelector("svg")).toBeInTheDocument();
   }
 });
+
+it.each(["ContextMenu", "F10"])(
+  "opens the parent menu with %s without involving disclosure or child sessions",
+  async (key) => {
+    const onSelect = vi.fn();
+    const onToggle = vi.fn();
+    const onOpenMenu = vi.fn();
+    const channel = {
+      id: "alpha",
+      name: "Alpha",
+      channelType: "stream" as const,
+    };
+    render(
+      <ContextMenuRoot>
+        <ChannelSidebarItem
+          channel={channel}
+          session={owner().session}
+          working={false}
+          selected={undefined}
+          collapsed={false}
+          onToggle={onToggle}
+          draft={false}
+          draftSelected={false}
+          sessions={[{ id: "child", name: "Plan", channelType: "session" }]}
+          onSelect={onSelect}
+          onNewSession={vi.fn()}
+          onOpenThread={vi.fn()}
+          menuEnabled
+          sectionKey="group:work"
+          onOpenMenu={onOpenMenu}
+        />
+      </ContextMenuRoot>,
+    );
+    const parent = screen.getByRole("button", { name: "Alpha" });
+    fireEvent.keyDown(parent, { key, shiftKey: key === "F10" });
+    expect(onOpenMenu).toHaveBeenCalledWith(
+      channel,
+      "group:work",
+      parent.parentElement,
+    );
+    expect(onSelect).not.toHaveBeenCalled();
+    const disclosure = screen.getByRole("button", {
+      name: "Collapse sessions in Alpha",
+    });
+    const child = screen.getByRole("button", {
+      name: "Plan, session in Alpha",
+    });
+    fireEvent.keyDown(disclosure, { key, shiftKey: key === "F10" });
+    fireEvent.keyDown(child, { key, shiftKey: key === "F10" });
+    expect(onOpenMenu).toHaveBeenCalledTimes(1);
+    const user = userEvent.setup();
+    await user.click(disclosure);
+    expect(onToggle).toHaveBeenCalledWith("session-children:alpha", false);
+    expect(onSelect).not.toHaveBeenCalled();
+    await user.click(child);
+    expect(onSelect).toHaveBeenCalledWith("child");
+  },
+);

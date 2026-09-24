@@ -673,3 +673,45 @@ fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
     assert_eq!(output.lines().nth(18), Some(""));
     controller.action(&a.id, Action::Stop).unwrap();
 }
+
+#[test]
+#[cfg(unix)]
+fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let goose = dir.path().join("goose");
+    fs::write(&goose, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&goose, fs::Permissions::from_mode(0o700)).unwrap();
+    let edit = |override_provider: Option<&str>| AgentEdit {
+        name: "Goose".into(),
+        system_prompt: String::new(),
+        workspace: dir.path().display().to_string(),
+        harness: HarnessEdit {
+            command: goose.display().to_string(),
+            args: vec!["acp".into()],
+            model: "short-name".into(),
+            provider: "databricks_v2".into(),
+            databricks: None,
+        },
+        environment: BTreeMap::from([
+            (
+                "DATABRICKS_HOST".into(),
+                Some("https://workspace.example".into()),
+            ),
+            ("GOOSE_MODEL".into(), Some("effective-model".into())),
+            (
+                "GOOSE_PROVIDER".into(),
+                override_provider.map(str::to_owned),
+            ),
+        ]),
+    };
+    let context = Controller::draft_goose_model_context(edit(None)).unwrap();
+    assert_eq!(context.command, goose);
+    assert!(context.model_overridden);
+    assert_eq!(
+        context.environment["DATABRICKS_HOST"],
+        "https://workspace.example"
+    );
+    assert!(!context.environment.contains_key("GOOSE_PROVIDER"));
+    assert!(Controller::draft_goose_model_context(edit(Some("openai"))).is_err());
+}

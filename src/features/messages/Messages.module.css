@@ -144,6 +144,7 @@
 .reactionPillWrap {
   position: relative;
   display: inline-flex;
+  max-width: 100%;
 }
 .reactionChip {
   display: inline-flex;
@@ -151,6 +152,7 @@
   justify-content: center;
   gap: var(--space-1h);
   min-width: 48px;
+  max-width: min(160px, 100%);
   height: 28px;
   border: 1px solid var(--border);
   background: var(--surface-control);
@@ -176,17 +178,26 @@
   cursor: default;
 }
 .reactionNativeEmoji {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 12px;
+  display: inline-block;
+  min-width: 12px;
+  max-width: 96px;
   height: 12px;
   font-size: var(--text-caption);
   line-height: 1;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .reactionFallbackEmoji {
+  display: inline-block;
+  min-width: 0;
+  max-width: 96px;
   font-size: var(--text-caption);
   line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .reactionCustomEmoji {
   display: block;
@@ -196,6 +207,7 @@
 }
 .reactionCount {
   display: inline-flex;
+  flex: none;
   font-size: var(--text-caption);
   line-height: 14px;
   font-variant-numeric: tabular-nums;

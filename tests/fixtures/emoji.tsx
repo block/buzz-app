@@ -39,6 +39,7 @@ const viewer = keypair(),
   relay = keypair(),
   member = keypair();
 const wrap = new URLSearchParams(location.search).has("wrap");
+const long = new URLSearchParams(location.search).has("long");
 const participantProfiles = new Map([
   [viewer.pubkey, { name: "Fixture Reader" }],
   [member.pubkey, { name: "Fixture Member" }],
@@ -192,6 +193,25 @@ const sessions = ["a", "b"].map((community) => {
     created_at: 15,
     tags: [["e", root.id]],
   });
+  const longReactions = long
+    ? [
+        signed(member, {
+          kind: 7,
+          content: "f".repeat(64),
+          created_at: 16,
+          tags: [["e", root.id]],
+        }),
+        signed(member, {
+          kind: 7,
+          content: `:${"a".repeat(64)}:`,
+          created_at: 17,
+          tags: [
+            ["e", root.id],
+            ["emoji", "a".repeat(64), `${origin}/media/no-source.png`],
+          ],
+        }),
+      ]
+    : [];
   const broken = message(viewer, "c", "Broken :missing:", 2, [
     ["emoji", "missing", "javascript:bad"],
   ]);
@@ -217,7 +237,11 @@ const sessions = ["a", "b"].map((community) => {
   );
   owner.session.channels.ensure("c");
   live.receive([root, broken, unloaded, single, table, blocks]);
-  live.receive([reaction, ...(wrap ? [...wrapReactions, ownReaction] : [])]);
+  live.receive([
+    reaction,
+    ...(wrap ? [...wrapReactions, ownReaction] : []),
+    ...longReactions,
+  ]);
   return {
     ...owner,
     community,
@@ -226,6 +250,7 @@ const sessions = ["a", "b"].map((community) => {
       root,
       reaction,
       ...(wrap ? [...wrapReactions, ownReaction] : []),
+      ...longReactions,
       broken,
       unloaded,
       single,

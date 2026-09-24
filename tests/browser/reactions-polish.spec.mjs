@@ -36,9 +36,6 @@ test("reaction pills wrap, preview, toggle, and add from the inline control", as
 
   await custom.hover();
   const tooltip = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
-  await expect(tooltip).toHaveCount(0);
-  await page.waitForTimeout(300);
-  await expect(tooltip).toHaveCount(0);
   await expect(tooltip).toBeVisible({ timeout: 2500 });
   await expect(tooltip.locator("img")).toHaveCount(1);
   await expect(tooltip).toContainText(":party:");
@@ -72,10 +69,6 @@ test("reaction pills wrap, preview, toggle, and add from the inline control", as
   await expect(tooltip).toContainText("heart");
   await expect(tooltip).toHaveClass(/reactionPreviewSlideRight/);
   await page.mouse.move(0, 0);
-  await custom.hover();
-  await expect(tooltip).toHaveCount(0);
-  await page.waitForTimeout(300);
-  await expect(tooltip).toHaveCount(0);
 
   await page.evaluate(() => window.emojiFixture.holdNextReaction(":party:"));
   try {
@@ -137,4 +130,71 @@ test("reaction pills wrap, preview, toggle, and add from the inline control", as
   await custom.hover();
   await expect(tooltip).toBeVisible({ timeout: 2500 });
   await expect(tooltip).toHaveCSS("transition-duration", "0s");
+});
+
+test("reaction previews use the delayed first open, immediate warm switch, and reset delay", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&wrap");
+  const row = page
+    .locator("[data-message-id]")
+    .first()
+    .getByTestId("reaction-row");
+  const custom = row.locator('button[data-reaction=":party:"]');
+  const heart = row.locator('button[data-reaction="❤️"]');
+  const tooltip = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T00:00:10Z"));
+  try {
+    await custom.hover();
+    await expect(tooltip).toHaveCount(0);
+    await page.clock.runFor(1199);
+    await expect(tooltip).toHaveCount(0);
+    await page.clock.runFor(1);
+    await expect(tooltip).toBeVisible();
+    await heart.hover();
+    await expect(tooltip).toContainText("heart");
+    await page.mouse.move(0, 0);
+    await expect(tooltip).toHaveCount(0);
+    await page.clock.runFor(151);
+    await custom.hover();
+    await page.clock.runFor(1199);
+    await expect(tooltip).toHaveCount(0);
+    await page.clock.runFor(1);
+    await expect(tooltip).toBeVisible();
+  } finally {
+    await page.clock.resume();
+  }
+});
+
+test("long native reactions and unavailable shortcode artwork stay inside the pill", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&long&narrow");
+  const row = page
+    .locator("[data-message-id]")
+    .first()
+    .getByTestId("reaction-row");
+  for (const content of ["f".repeat(64), `:${"a".repeat(64)}:`]) {
+    const pill = row.locator(`button[data-reaction="${content}"]`);
+    await expect(pill).toHaveCount(1);
+    await expect(pill).toHaveAttribute("aria-label", `${content}: 1 person`);
+    const bounds = await pill.evaluate((button) => {
+      const glyph = button.firstElementChild;
+      const count = button.lastElementChild;
+      const chip = button.getBoundingClientRect();
+      return {
+        chipWidth: chip.width,
+        glyphRight: glyph.getBoundingClientRect().right,
+        countLeft: count.getBoundingClientRect().left,
+        countRight: count.getBoundingClientRect().right,
+        chipRight: chip.right,
+        truncated: glyph.scrollWidth > glyph.clientWidth,
+      };
+    });
+    expect(bounds.chipWidth).toBeLessThanOrEqual(160);
+    expect(bounds.truncated).toBe(true);
+    expect(bounds.glyphRight).toBeLessThan(bounds.countLeft);
+    expect(bounds.countRight).toBeLessThan(bounds.chipRight);
+  }
 });

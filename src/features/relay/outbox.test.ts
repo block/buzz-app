@@ -864,3 +864,122 @@ it.each(["commit", "reject", "echo"] as const)(
     }
   },
 );
+
+it("fences caller-scoped admission before signing and at publisher entry", async () => {
+  const h = setup();
+  const template = {
+    kind: 9000,
+    content: "",
+    tags: [
+      ["h", "c"],
+      ["p", "a".repeat(64)],
+    ],
+  };
+  let active = true;
+  const first = h.outbox.send(template, () => active);
+  active = false;
+  await vi.waitFor(() =>
+    expect(
+      h.outbox.snapshot().find((row) => row.event.id === first)?.delivery,
+    ).toBe("failed"),
+  );
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(() => h.outbox.retry(first)).toThrow(/cancelled/);
+  active = true;
+  h.outbox.retry(first, () => active);
+  await vi.waitFor(() => expect(h.sign).toHaveBeenCalledOnce());
+  const request = h.signatures.shift();
+  assert.exists(request);
+  active = false;
+  request.resolve(signed(viewer, request.event));
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("failed"),
+  );
+  expect(h.publish).not.toHaveBeenCalled();
+  active = true;
+  h.outbox.retry(first, () => active);
+  await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  const dispatched = h.publications.shift();
+  assert.exists(dispatched);
+  active = false; // Past publisher entry: result may have reached the relay.
+  dispatched.resolve();
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("accepted"),
+  );
+});
+
+it("promotes a legacy saved invitation when a profile retries it with live admission", async () => {
+  const storage = memoryStorage();
+  const event = signed(viewer, {
+    kind: 9000,
+    content: "",
+    tags: [
+      ["h", "c"],
+      ["p", "a".repeat(64)],
+    ],
+  });
+  const { sig: _sig, ...unsigned } = event;
+  await storage.save([{ event: unsigned, delivery: "failed" }]);
+  const h = setup(storage);
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot()[0]?.event.id).toBe(event.id),
+  );
+  const id = event.id;
+  expect(h.outbox.snapshot()[0]?.guarded).toBeUndefined();
+
+  let active = true;
+  h.outbox.retry(id, () => active);
+  await vi.waitFor(() => expect(h.sign).toHaveBeenCalledOnce());
+  const request = h.signatures.shift();
+  assert.exists(request);
+  // A pre-hardening saved intent is now guarded, even while signing is held.
+  active = false;
+  request.resolve(signed(viewer, request.event));
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("failed"),
+  );
+  expect(h.outbox.snapshot()[0]?.guarded).toBe(true);
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(() => h.outbox.retry(id)).toThrow(/cancelled/);
+
+  const restored = setup(storage);
+  await vi.waitFor(() =>
+    expect(restored.outbox.snapshot()[0]?.event.id).toBe(id),
+  );
+  expect(restored.outbox.snapshot()[0]?.guarded).toBe(true);
+  expect(() => restored.outbox.retry(id)).toThrow(/cancelled/);
+  expect(restored.publish).not.toHaveBeenCalled();
+});
+
+it("does not replay a guarded addition through generic retry or after hydration", async () => {
+  const storage = memoryStorage();
+  const h = setup(storage);
+  let active = true;
+  const id = h.outbox.send(
+    {
+      kind: 9000,
+      content: "",
+      tags: [
+        ["h", "c"],
+        ["p", "a".repeat(64)],
+      ],
+    },
+    () => active,
+  );
+  active = false;
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("failed"),
+  );
+  expect(() => h.outbox.retry(id)).toThrow(/cancelled/);
+  const restored = setup(storage);
+  await vi.waitFor(() =>
+    expect(restored.outbox.snapshot()[0]?.event.id).toBe(id),
+  );
+  expect(restored.outbox.snapshot()[0]?.guarded).toBe(true);
+  expect(() => restored.outbox.retry(id)).toThrow(/cancelled/);
+  expect(restored.sign).not.toHaveBeenCalled();
+  expect(restored.publish).not.toHaveBeenCalled();
+  restored.outbox.retry(id, () => true); // Explicit renewed admission may reuse the exact event.
+  await vi.waitFor(() => expect(restored.sign).toHaveBeenCalledOnce());
+});

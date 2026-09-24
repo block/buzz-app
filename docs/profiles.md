@@ -9,6 +9,13 @@ activity** opens its raw panel for this exact identity and originating channel.
 This action is offered for any public identity: it does not infer that the identity
 is an owned/running agent. Missing telemetry is explained by the activity panel.
 
+Guarded invitations that fail or have an unknown outcome remain saved in the
+outbox. Its generic Retry action is withheld for these records: a renewed add
+through the channel composer or managed-agent profile rechecks current
+eligibility and reuses the exact saved event. Older unguarded invitation records
+are promoted to guarded intent when reused through this flow. Remove from
+outbox does not revoke an invitation already dispatched to the relay.
+
 ## Boundaries
 
 - Shared message UI recognizes author-avatar targets and identity-bound mentions.
@@ -112,5 +119,14 @@ section stays hidden for a non-agent without a match. It never derives ownership
 from the old Buzz library, self-declared profile markers, or names. The Agents
 page route opens management, not a per-instance page.
 
-The Info tab keeps the public key and linked instances; the Channels tab is read-only.
-Neither list is a cross-community/global directory.
+The Info tab keeps the public key and linked instances. The Channels tab offers
+**Add to channel** only for an exact native-managed identity in this community
+that is also a managed session choice. It offers loaded, classified stream/forum
+channels with a roster, excluding archived, hidden, read-only and already-member
+rows. On submission it refreshes native evidence, then checks current agent,
+session and channel eligibility across the fresh roster read and at publisher
+entry. The relay still decides permission; local evidence does not grant it.
+Before publisher entry, navigation or loss of eligibility stops the write. Once
+publication begins, leaving the tab cannot undo the request; the session outbox
+retains its outcome and an unconfirmed result requires checking membership
+before attempting again. Neither list is a cross-community/global directory.

@@ -470,12 +470,20 @@ impl Manager {
                 .current_source
                 .clone()
                 .ok_or("Plugin was not installed from a reloadable folder")?;
-            (plugin.current.clone(), source, plugin.manifest.id.clone())
+            (
+                plugin.current.clone(),
+                source,
+                plugin.manifest.id.clone(),
+                plugin.manifest.host.clone().unwrap_or_default(),
+            )
         };
         let bytes = prepare_reload_artifact(&snapshot.1)?;
         let Artifact { manifest, .. } = serde_json::from_slice(&bytes).map_err(err)?;
         if manifest.id != snapshot.2 {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
+        }
+        if manifest.host.clone().unwrap_or_default() != snapshot.3 {
+            return Err("Host access changed; use Load from folder to review it".into());
         }
         let revision = hash(&bytes);
         before_commit();
@@ -761,6 +769,55 @@ mod tests {
         assert_eq!(grants.network_origins, ["https://two.example"]);
         manager.change("disable", "example.page").unwrap();
         assert!(manager.host_grants("example.page", &second).is_err());
+    }
+
+    #[test]
+    fn reload_rejects_changed_host_grants_before_enable() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let source = temp.path().join("build");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
+        fs::write(
+            source.join("manifest.json"),
+            r#"{"id":"example.page","name":"Example","apiVersion":1}"#,
+        )
+        .unwrap();
+        let first = manager
+            .install(&source)
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == "example.page")
+            .unwrap()
+            .revision
+            .clone();
+
+        fs::write(
+            source.join("manifest.json"),
+            r#"{"id":"example.page","name":"Example","apiVersion":1,"host":{"commands":[{"id":"status","program":"example-cli","args":["status"]}]}}"#,
+        )
+        .unwrap();
+        let error = match manager.reload("example.page") {
+            Ok(_) => panic!("reload should reject changed host grants"),
+            Err(error) => error,
+        };
+        assert!(error.contains("Load from folder"));
+
+        let catalog = manager.catalog().unwrap();
+        let plugin = catalog
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == "example.page")
+            .unwrap();
+        assert_eq!(plugin.revision, first);
+        assert!(plugin.previous.is_none());
+        manager.change("enable", "example.page").unwrap();
+        assert!(manager
+            .host_grants("example.page", &first)
+            .unwrap()
+            .commands
+            .is_empty());
     }
 
     #[test]

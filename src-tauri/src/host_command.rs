@@ -1,5 +1,6 @@
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::HostCommand;
+use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
@@ -60,35 +61,65 @@ pub(crate) async fn plugin_host_run_command(
         .flatten())
 }
 
-fn resolve_program(program: &str) -> PathBuf {
+fn effective_path() -> OsString {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    {
+        let path = if path.is_empty() {
+            OsString::from("/usr/bin:/bin")
+        } else {
+            path
+        };
+        let mut directories = std::env::split_paths(&path)
+            .filter(|directory| !directory.as_os_str().is_empty())
+            .collect::<Vec<_>>();
+        directories.extend(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
+        std::env::join_paths(directories).unwrap_or(path)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        path
+    }
+}
+
+fn resolve_program(program: &str, effective_path: &OsStr) -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        let mut directories = std::env::split_paths(&path).collect::<Vec<_>>();
-        directories.extend(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
-        if let Some(executable) =
-            directories
-                .into_iter()
-                .map(|path| path.join(program))
-                .find(|path| {
-                    std::fs::metadata(path).is_ok_and(|metadata| {
-                        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-                    })
+        if let Some(executable) = std::env::split_paths(effective_path)
+            .map(|path| path.join(program))
+            .find(|path| {
+                std::fs::metadata(path).is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
                 })
+            })
         {
             return executable;
         }
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = effective_path;
     PathBuf::from(program)
 }
 
 async fn run_command(command: &HostCommand, deadline: Duration) -> Option<String> {
-    run(&resolve_program(&command.program), &command.args, deadline).await
+    let path = effective_path();
+    run(
+        &resolve_program(&command.program, &path),
+        &command.args,
+        deadline,
+        &path,
+    )
+    .await
 }
 
-async fn run(executable: &Path, args: &[String], deadline: Duration) -> Option<String> {
+async fn run(
+    executable: &Path,
+    args: &[String],
+    deadline: Duration,
+    path: &OsStr,
+) -> Option<String> {
     let mut command = Command::new(executable);
     command
         .args(args)
@@ -96,6 +127,9 @@ async fn run(executable: &Path, args: &[String], deadline: Duration) -> Option<S
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    if !path.is_empty() {
+        command.env("PATH", path);
+    }
     #[cfg(unix)]
     command.as_std_mut().process_group(0);
 
@@ -146,11 +180,15 @@ async fn run(executable: &Path, args: &[String], deadline: Duration) -> Option<S
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::run;
+    use super::{effective_path, run as run_with_path};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
+
+    async fn run(executable: &Path, args: &[String], deadline: Duration) -> Option<String> {
+        run_with_path(executable, args, deadline, &effective_path()).await
+    }
 
     fn executable(script: &str) -> (tempfile::TempDir, PathBuf) {
         let directory = tempfile::tempdir().unwrap();
@@ -173,6 +211,27 @@ mod tests {
             )
             .await,
             Some("ready \n".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn env_shebang_uses_the_path_that_resolved_the_command() {
+        let directory = tempfile::tempdir().unwrap();
+        let interpreter = directory.path().join("fixture-runtime");
+        fs::write(&interpreter, "#!/bin/sh\nexec /bin/sh \"$@\"\n").unwrap();
+        fs::set_permissions(&interpreter, fs::Permissions::from_mode(0o700)).unwrap();
+        let tool = directory.path().join("tool");
+        fs::write(&tool, "#!/usr/bin/env fixture-runtime\nprintf 'ready\\n'\n").unwrap();
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
+        let path =
+            std::env::join_paths([Path::new("/usr/bin"), Path::new("/bin"), directory.path()])
+                .unwrap();
+
+        #[cfg(target_os = "macos")]
+        assert_eq!(super::resolve_program("tool", &path), tool);
+        assert_eq!(
+            run_with_path(&tool, &[], Duration::from_secs(5), &path).await,
+            Some("ready\n".into())
         );
     }
 

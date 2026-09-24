@@ -202,7 +202,7 @@ execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
 UTF-8 stdout. The direct command invocation has a five-second deadline;
 cancellation or timeout kills its process group. Failure returns `null`. The app
 also searches standard Homebrew binary directories when a macOS GUI launch has a
-limited PATH.
+limited PATH and passes that search path to the command.
 Plugins parse and retain their own credentials; the host has no provider registry
 or credential store.
 
@@ -236,9 +236,10 @@ that action and shows declared host access, including changes. Installed artifac
 not watch/pull the source. Plugins installed from a folder keep the selected folder
 path for Settings → Plugins → Reload while disabled;
 reloading reads the recorded candidate folder and requires the manifest ID to stay the
-same. Enabled plugins must be disabled before reload so memory-only plugin state, such
-as credentials, is not discarded by replacing the running module. Git installs and older
-installs without saved folder metadata must be imported again.
+same. Reload rejects changed host declarations; use Load from folder to review and
+install that revision. Enabled plugins must be disabled before reload so memory-only
+plugin state, such as credentials, is not discarded by replacing the running module.
+Git installs and older installs without saved folder metadata must be imported again.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
 single pending preview per native process. Replacing/closing a preview discards it;

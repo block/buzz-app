@@ -247,6 +247,8 @@ function ProfileDetails({
                 navigation={navigation}
                 communityOrigin={communityOrigin}
                 viewer={viewer}
+                control={control}
+                scope={scope}
               />
             )}
           </div>

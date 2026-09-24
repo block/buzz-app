@@ -305,11 +305,16 @@ impl Controller {
                     }
                     Ok(false) => {
                         self.running.remove(&agent.id);
-                        self.errors
-                            .entry(agent.id.clone())
-                            .or_insert_with(|| "Agent listener exited; restart to retry".into());
+                        self.errors.insert(
+                            agent.id.clone(),
+                            "Agent listener exited; restart to retry".into(),
+                        );
                     }
                     Err(error) => {
+                        #[cfg(unix)]
+                        if run.process.stopped() {
+                            self.running.remove(&agent.id);
+                        }
                         self.errors.insert(agent.id.clone(), error);
                     }
                 }
@@ -400,13 +405,15 @@ impl Controller {
         if !matches!(action, Action::Stop) && !self.store.agents()?.iter().any(|a| a.id == id) {
             return Err("Agent no longer exists".into());
         }
+        let mut disable_failed = false;
         let result = match action {
             Action::Stop => {
-                // Stop the process even if durable disable fails; report failure
-                // instead of claiming it will remain stopped on next launch.
+                // Stop even if disabling fails. Report cleanup first, but still
+                // reject Stop when its durable disable did not succeed.
                 let stopped = self.stop(id);
-                self.store.enabled(id, false)?;
-                stopped
+                let saved = self.store.enabled(id, false);
+                disable_failed = saved.is_err();
+                stopped.and(saved)
             }
             Action::Start => self.store.enabled(id, true).and_then(|_| self.start(id)),
             Action::Restart => self
@@ -415,13 +422,16 @@ impl Controller {
                 .and_then(|_| self.stop(id))
                 .and_then(|_| self.start(id)),
         };
-        match result {
+        match &result {
             Ok(()) => {
                 self.errors.remove(id);
             }
             Err(error) => {
-                self.errors.insert(id.into(), error);
+                self.errors.insert(id.into(), error.clone());
             }
+        }
+        if disable_failed {
+            result?;
         }
         self.snapshot()
     }
@@ -575,7 +585,13 @@ impl Controller {
     }
     fn stop(&mut self, id: &str) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
-            run.process.stop()?;
+            let result = run.process.stop();
+            #[cfg(unix)]
+            if run.process.stopped() {
+                // E confirms worker exit even when private-dir removal failed.
+                self.running.remove(id);
+            }
+            result?;
         }
         self.running.remove(id);
         Ok(())

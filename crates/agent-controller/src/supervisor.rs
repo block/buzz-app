@@ -136,6 +136,38 @@ pub(crate) fn serve(
     result
 }
 
+// A failed Start cannot wait indefinitely for an unconfirmed guardian. Keep
+// Child owned until its guardian finishes the same cleanup used after app death.
+fn reap_failed_start(mut child: Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+}
+
+fn confirm_start(mut socket: UnixStream, child: Child) -> Result<(UnixStream, Child)> {
+    let mut state = [0u8];
+    let read = socket.read_exact(&mut state);
+    if read.is_err() || state != *b"R" {
+        // Confirmed pre-listener replies exit immediately. An unconfirmed
+        // read may still own a listener; close the channel so its guardian
+        // cleans up, and reap it without blocking Start indefinitely.
+        drop(socket);
+        if read.is_ok() && matches!(state, [b'O' | b'X' | b'E']) {
+            let mut child = child;
+            let _ = child.wait();
+        } else {
+            reap_failed_start(child);
+        }
+        return Err(if state == *b"O" {
+            "Another buzz-app profile is already running this exact agent/community"
+        } else {
+            "Could not start agent listener or acquire ownership"
+        }
+        .into());
+    }
+    Ok((socket, child))
+}
+
 pub(crate) struct Supervised {
     socket: UnixStream,
     child: Child,
@@ -153,7 +185,7 @@ impl Supervised {
             let cwd = command.get_current_dir().ok_or("Missing agent workspace")?;
             Ok::<_, &str>((pair, program, cwd))
         })();
-        let ((mut socket, other), program, cwd) = preflight.inspect_err(|_| {
+        let ((socket, other), program, cwd) = preflight.inspect_err(|_| {
             let _ = std::fs::remove_dir_all(temp); // no guardian was spawned
         })?;
         let mut guardian = Command::new(program);
@@ -202,28 +234,20 @@ impl Supervised {
                 Ok(())
             });
         }
-        let mut child = guardian.spawn().map_err(|_| {
+        let child = guardian.spawn().map_err(|_| {
             let _ = std::fs::remove_dir_all(temp); // no guardian can use it
             "Could not start agent supervisor"
         })?;
         // After spawn, only the guardian can decide when temp storage is safe to remove.
-        socket
+        if socket
             .set_read_timeout(Some(Duration::from_secs(10)))
-            .map_err(|_| "Could not confirm agent supervisor")?;
-        let mut state = [0u8];
-        if socket.read_exact(&mut state).is_err() || state != *b"R" {
-            // A confirmed pre-listener failure is safe to reap. An unconfirmed
-            // timeout drops the channel and lets the guardian own cleanup.
-            if state == *b"O" || state == *b"X" {
-                let _ = child.wait();
-            }
-            return Err(if state == *b"O" {
-                "Another buzz-app profile is already running this exact agent/community"
-            } else {
-                "Could not start agent listener or acquire ownership"
-            }
-            .into());
+            .is_err()
+        {
+            drop(socket);
+            reap_failed_start(child);
+            return Err("Could not confirm agent supervisor".into());
         }
+        let (socket, child) = confirm_start(socket, child)?;
         Ok(Self {
             socket,
             child,
@@ -231,6 +255,9 @@ impl Supervised {
             cleanup_failed: false,
             shutdown_unconfirmed: false,
         })
+    }
+    pub(crate) fn stopped(&self) -> bool {
+        self.stopped
     }
     pub(crate) fn alive(&mut self) -> Result<bool> {
         if self.stopped {
@@ -404,6 +431,55 @@ mod lifecycle_tests {
                     libc::kill(self.guardian, libc::SIGKILL);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn confirmed_failure_waits_and_uncertain_handshake_reaps_later() {
+        for &response in b"EOX" {
+            let child = Command::new("/usr/bin/true").spawn().unwrap();
+            let pid = child.id() as i32;
+            let (parent, mut guardian) = UnixStream::pair().unwrap();
+            guardian.write_all(&[response]).unwrap();
+            let error = confirm_start(parent, child).err().unwrap();
+            assert_eq!(
+                error,
+                if response == b'O' {
+                    "Another buzz-app profile is already running this exact agent/community"
+                } else {
+                    "Could not start agent listener or acquire ownership"
+                }
+            );
+            assert_eq!(
+                unsafe { libc::kill(pid, 0) },
+                -1,
+                "terminal guardian was not reaped"
+            );
+        }
+        // No handshake: Start returns without waiting for a still-live child,
+        // but its socket closes and its exit is eventually reaped.
+        let child = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+        let pid = child.id() as i32;
+        let (parent, mut guardian) = UnixStream::pair().unwrap();
+        parent
+            .set_read_timeout(Some(Duration::from_millis(30)))
+            .unwrap();
+        assert_eq!(
+            confirm_start(parent, child).err().unwrap(),
+            "Could not start agent listener or acquire ownership"
+        );
+        assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+        guardian.set_nonblocking(true).unwrap();
+        let mut byte = [0];
+        assert_eq!(guardian.read(&mut byte).unwrap(), 0); // socket closed
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "failed-start child was not reaped"
+            );
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 

@@ -59,7 +59,7 @@ fn bundle(directory: &Path) -> RuntimeBundle {
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
 trap 'exit 0' TERM INT
-while :; do /bin/sleep 0.1; done
+while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 0.1; done
 "#).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
@@ -241,6 +241,123 @@ fn failed_temp_cleanup_reports_error_and_allows_explicit_retry() {
         controller.action(&a.id, Action::Stop).unwrap();
         fs::remove_dir_all(moved).unwrap();
     }
+}
+
+#[test]
+#[cfg(unix)]
+fn listener_self_exit_with_failed_cleanup_retires_entry_and_reports_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then_some(())
+    });
+    let temp = controller.running[&a.id]
+        .temporary
+        .as_ref()
+        .unwrap()
+        .clone();
+    let moved = temp.with_extension("moved");
+    fs::rename(&temp, &moved).unwrap();
+    fs::write(&temp, b"block directory removal").unwrap();
+    controller.record_error(&a.id, "credential read failed".into());
+    fs::write(dir.path().join("config/exit-listener"), b"").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let snapshot = controller.snapshot().unwrap();
+        if controller.running.is_empty() {
+            assert_eq!(
+                snapshot.agents[0].error.as_deref(),
+                Some("Agent stopped, but its private runtime directory could not be removed")
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "listener did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    fs::remove_file(temp).unwrap();
+    fs::remove_dir_all(moved).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn listener_exit_replaces_stale_credential_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then_some(())
+    });
+    controller.record_error(&a.id, "credential read failed".into());
+    fs::write(dir.path().join("config/exit-listener"), b"").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let snapshot = controller.snapshot().unwrap();
+        if controller.running.is_empty() {
+            assert_eq!(
+                snapshot.agents[0].error.as_deref(),
+                Some("Agent listener exited; restart to retry")
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "listener did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn stop_reports_cleanup_before_durable_disable_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let mut store = Store::open(config.clone()).unwrap();
+    let a = agent(dir.path());
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    let temp = controller.running[&a.id]
+        .temporary
+        .as_ref()
+        .unwrap()
+        .clone();
+    let moved = temp.with_extension("moved");
+    fs::rename(&temp, &moved).unwrap();
+    fs::write(&temp, b"block directory removal").unwrap();
+    fs::write(config.join("agents.json"), b"{malformed").unwrap();
+    assert!(
+        matches!(controller.action(&a.id, Action::Stop), Err(ref error) if error == "Agent stopped, but its private runtime directory could not be removed")
+    );
+    assert!(controller.running.is_empty());
+    assert_eq!(
+        controller.errors[&a.id],
+        "Agent stopped, but its private runtime directory could not be removed"
+    );
+    fs::remove_file(temp).unwrap();
+    fs::remove_dir_all(moved).unwrap();
 }
 
 #[test]

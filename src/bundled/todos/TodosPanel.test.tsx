@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { keypair, signed } from "../../features/relay/testing";
+import { npubEncode } from "nostr-tools/nip19";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView } from "../../shared/view-state";
 import type { ChannelList } from "../../features/relay/contracts";
@@ -342,7 +343,11 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
   view.unmount();
   const restored = render(<TodosPanel {...f.props} people={users} />);
   await screen.findByRole("checkbox", { name: "First" });
-  expect(select()).toHaveTextContent(`Alex · ${labels.get(a)}`);
+  expect(select()).toHaveTextContent(/^Alex$/);
+  expect(select().querySelector("[title]")).toHaveAttribute(
+    "title",
+    npubEncode(a),
+  );
   act(() => {
     profiles = new Map([
       [a, { name: "Renamed" }],
@@ -365,10 +370,13 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
     };
     for (const listener of rosterListeners) listener();
   });
-  expect(select()).toHaveTextContent("not in channel");
+  expect(select()).toHaveTextContent(/^Renamed$/);
   expect(save()).toBeDisabled();
   act(() => select().focus());
   await user.keyboard("{ArrowDown}");
+  expect(
+    await screen.findByRole("option", { name: /not in channel/ }),
+  ).toHaveAttribute("aria-disabled", "true");
   await user.click(await screen.findByRole("option", { name: "Unassigned" }));
   await user.click(save());
   expect(f.canvas.save).toHaveBeenLastCalledWith(
@@ -444,5 +452,8 @@ it("shows saved identity when profiles fail, disables missing-roster assignments
   };
   view.rerender(<TodosPanel {...f.props} people={users} />);
   expect(select()).toBeDisabled();
-  expect(select()).toHaveTextContent("membership unavailable");
+  expect(select()).toHaveTextContent(/^Saved name$/);
+  expect(
+    screen.getByText("Channel members unavailable or out of date."),
+  ).toBeInTheDocument();
 });

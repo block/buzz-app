@@ -2,7 +2,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 
-// Browser-only boundary: real plugin Settings/launcher/drawer wiring, Canvas
+// Browser-only boundary: real plugin Settings/launcher/panel wiring, Canvas
 // outbox -> signed HTTP receipt -> readback, native focus and drawer geometry.
 // Markdown/recovery permutations belong in colocated Vitest tests.
 test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", async ({
@@ -124,6 +124,31 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(launcher).toBeFocused();
   await launcher.click();
   await expect(assignee).toContainText("Fixture Reader");
+  const expectCompactRow = async () => {
+    const row = assignee.locator("xpath=ancestor::li");
+    const label = row.getByRole("checkbox").locator("..");
+    const rowBounds = await row.boundingBox();
+    const labelBounds = await label.boundingBox();
+    const triggerBounds = await assignee.boundingBox();
+    expect(triggerBounds.x).toBeGreaterThanOrEqual(
+      labelBounds.x + labelBounds.width,
+    );
+    expect(triggerBounds.y + triggerBounds.height / 2).toBeGreaterThanOrEqual(
+      labelBounds.y,
+    );
+    expect(triggerBounds.y + triggerBounds.height / 2).toBeLessThanOrEqual(
+      labelBounds.y + labelBounds.height,
+    );
+    expect(triggerBounds.x + triggerBounds.width).toBeLessThanOrEqual(
+      rowBounds.x + rowBounds.width + 1,
+    );
+    expect(await row.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
+      true,
+    );
+    await expect(assignee).toHaveAttribute("data-size", "sm");
+    await expect(assignee).toHaveAttribute("data-variant", "ghost");
+  };
+  await expectCompactRow();
   await page.screenshot({
     path: test.info().outputPath("todos-light-wide.png"),
   });
@@ -149,6 +174,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   expect(await drawer.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
     true,
   );
+  await expectCompactRow();
   await page.screenshot({
     path: test.info().outputPath("todos-dark-narrow.png"),
   });

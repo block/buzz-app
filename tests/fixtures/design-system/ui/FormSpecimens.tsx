@@ -247,6 +247,15 @@ export function SelectExamples() {
           onValueChange={setInline}
           groups={workspaceGroups}
         />
+        <div style={{ maxWidth: 160 }}>
+          <Select
+            label="Row workspace"
+            variant="compact"
+            value={inline}
+            onValueChange={setInline}
+            groups={workspaceGroups}
+          />
+        </div>
       </FormExample>
     </div>
   );

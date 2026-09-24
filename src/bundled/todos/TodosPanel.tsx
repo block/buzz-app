@@ -7,6 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { npubEncode } from "nostr-tools/nip19";
 import type { RelaySession } from "../../features/relay/session";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -303,9 +304,9 @@ export function TodosPanel({
           )}
           {(namesError || list.error || !members) && (
             <div className="text-caption text-secondary">
-              {namesError
-                ? "Names unavailable; public keys still identify users."
-                : "Channel members unavailable or out of date."}
+              {!members || list.error
+                ? "Channel members unavailable or out of date."
+                : "Names unavailable; public keys still identify users."}
               <Button
                 size="sm"
                 variant="ghost"
@@ -388,8 +389,23 @@ export function TodosPanel({
                                 aria-label={`Assignee for ${item.label}`}
                               >
                                 <Select
-                                  label="Assignee"
-                                  variant="field"
+                                  label={`Assignee for ${item.label}`}
+                                  variant="compact"
+                                  valueLabel={
+                                    item.assignee
+                                      ? resolveName(
+                                          item.assignee.pubkey,
+                                          item.assignee.name,
+                                        ) ||
+                                        keyLabels.get(item.assignee.pubkey) ||
+                                        ""
+                                      : "Unassigned"
+                                  }
+                                  valueTitle={
+                                    item.assignee
+                                      ? npubEncode(item.assignee.pubkey)
+                                      : "Unassigned"
+                                  }
                                   value={item.assignee?.pubkey ?? ""}
                                   disabled={disabled || !members}
                                   groups={[

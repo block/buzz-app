@@ -29,6 +29,7 @@ const list = {
 };
 const people = {
   ...session,
+  profiles: { ...session.profiles, ensure: async () => {} },
   channels: { ...session.channels, list: () => list },
   names: {
     ...session.names,
@@ -53,7 +54,7 @@ function Preview() {
         >
           Toggle theme
         </Button>
-        <Button onClick={() => setOpen(!open)}>Toggle drawer</Button>
+        <Button onClick={() => setOpen(!open)}>Toggle panel</Button>
         <Button
           onClick={() => {
             head = {

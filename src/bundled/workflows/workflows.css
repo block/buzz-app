@@ -83,6 +83,105 @@
   border-top: 1px solid var(--border-standard);
   padding-block: var(--space-4);
 }
+.workflow-schedule {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.workflow-schedule p {
+  margin: 0;
+}
+.workflow-pills,
+.workflow-cron {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.workflow-pills legend,
+.workflow-cron legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+.workflow-pill-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.workflow-pill-grid[data-columns="7"] {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  max-width: 24rem;
+}
+.workflow-pill {
+  position: relative;
+  min-width: 0;
+}
+.workflow-pill[data-span="2"] {
+  grid-column: span 2;
+}
+/* The native input stays in the tree for focus, keyboard and assistive
+   technology; the label is the visible pill. */
+.workflow-pill-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--size-control);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background-color var(--time-fast),
+    border-color var(--time-fast),
+    color var(--time-fast);
+}
+.workflow-pill[data-shape="round"] .workflow-pill-label {
+  aspect-ratio: 1;
+  padding: 0;
+  border-radius: var(--radius-pill);
+}
+.workflow-pill-label:hover {
+  border-color: var(--border-prominent);
+  color: var(--text-standard);
+}
+.workflow-pill-input:checked + .workflow-pill-label {
+  border-color: var(--affordance-prominent);
+  background: var(--affordance-selected);
+  color: var(--text-standard);
+}
+.workflow-pill-input:disabled + .workflow-pill-label {
+  cursor: not-allowed;
+  color: var(--text-unavailable);
+  background: var(--affordance-disabled);
+  border-color: var(--border-standard);
+}
+html[data-keyboard-navigation]
+  .workflow-pill-input:focus-visible
+  + .workflow-pill-label {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.workflow-cron-fields {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.workflow-cron-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  text-align: center;
+}
+.workflow-cron-field .buzz-input {
+  padding-inline: var(--space-1);
+  text-align: center;
+  font-family: var(--font-mono);
+}
 @media (max-width: 640px) {
   .workflows-page {
     padding: var(--space-4);

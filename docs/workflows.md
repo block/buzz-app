@@ -9,11 +9,14 @@ See the [capability contract](../src/features/workflows/types.ts).
 ## Scope
 
 - Channel-scoped saved configurations; new drafts start disabled.
-- Form editing for message/reaction/diff triggers and Send Message/Delay
-  actions. Other definitions stay in YAML; opening them does not rewrite their
-  contents.
+- Form editing for message/reaction/diff/schedule triggers and Send
+  Message/Delay actions. Schedules offer repeat presets, weekday and
+  day-of-month pickers, a UTC run time and a five-field cron editor; six- and
+  seven-field cron stays in YAML. Other definitions stay in YAML; opening them
+  does not rewrite their contents.
 - Save with the original owner/channel/UUID and signed `expected-revision`.
-  Warn on broad message or schedule activation, not ordinary enabled edits.
+  Warn before enabling an unfiltered message trigger or a schedule that runs
+  hourly or more often, not on ordinary enabled edits.
 - Confirmed deletion request, manual run, and on-demand run/trace history in
   20-row pages with the relay's exact `(before,beforeId)` cursor.
 - No approval UI, webhook-secret handling, lifecycle negotiation, alternative

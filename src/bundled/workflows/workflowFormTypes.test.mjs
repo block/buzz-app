@@ -4,7 +4,9 @@ import { parse as parseYaml } from "yaml";
 
 import {
   formStateToYaml,
+  isThreadReplyEligibleTrigger,
   nextStepId,
+  withTriggerType,
   yamlToFormState,
   DEFAULT_FORM_STATE,
 } from "./workflowFormTypes.ts";
@@ -42,6 +44,9 @@ const acceptedFixtures = [
   `name: React\ndescription: Reply to a reaction\nenabled: false\ntrigger: { on: reaction_added, emoji: eyes, filter: 'trigger_message_id == "abc123"' }\nsteps: [{ id: reply, name: Reply, timeout_secs: 30, action: send_message, text: hi, channel: channel-id, reply_in_thread: true }, { id: wait, action: delay, duration: 5m }]\n`,
   `name: Diff\ntrigger: { on: diff_posted }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
   `name: Diff review\ntrigger: { on: diff_posted, filter: 'str_contains(trigger_text, "src/")' }\nsteps: [{ id: s1, action: send_message, text: reviewing, reply_in_thread: true }, { id: wait, action: delay, duration: 1m }]\n`,
+  `name: Standup\ntrigger: { on: schedule, cron: '0 9 * * 1-5' }\nsteps: [{ id: prompt, action: send_message, text: Standup time }]\n`,
+  `name: Tick\nenabled: false\ntrigger: { on: schedule, interval: 30m }\nsteps: [{ id: s1, action: send_message, text: tick }, { id: wait, action: delay, duration: 1m }]\n`,
+  `name: Aliases\ntrigger: { on: schedule, cron: '0 */2 1,15 JAN,MAR MON-FRI' }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
 ];
 
 test("accepted Form fixtures survive a semantic YAML round trip", () => {
@@ -60,6 +65,8 @@ test("recognized nodes with unknown fields are refused without touching YAML", (
     `name: Test\ntrigger: { on: message_posted, future_filter: x }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
     `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: send_message, text: hi, retry: 3 }]\n`,
     `name: Test\ntrigger: { on: diff_posted, cron: '0 9 * * *' }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
+    `name: Test\ntrigger: { on: schedule, cron: '0 9 * * *', filter: 'true' }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
+    `name: Test\ntrigger: { on: schedule, cron: '0 9 * * *', emoji: eyes }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
   ];
 
   for (const yaml of fixtures) {
@@ -101,12 +108,143 @@ test("diff_posted accepts only a filter and never emits emoji", () => {
 
 test("reply_in_thread is accepted on every message-bearing trigger", () => {
   for (const trigger of ["message_posted", "reaction_added", "diff_posted"]) {
+    assert.equal(isThreadReplyEligibleTrigger(trigger), true);
     const yaml = `name: Reply\ntrigger: { on: ${trigger} }\nsteps: [{ id: s1, action: send_message, text: hi, reply_in_thread: true }]\n`;
     const state = accepted(yaml);
     assert.equal(state.trigger.on, trigger);
     assert.equal(state.steps[0].replyInThread, true);
     assert.match(formStateToYaml(state), /reply_in_thread: true/);
   }
+});
+
+test("reply_in_thread on a schedule trigger is refused with the reference message", () => {
+  assert.equal(isThreadReplyEligibleTrigger("schedule"), false);
+  const result = yamlToFormState(
+    `name: Bad\ntrigger: { on: schedule, cron: '0 9 * * 1-5' }\nsteps: [{ id: s1, action: send_message, text: hi, reply_in_thread: true }]\n`,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.error,
+    "reply_in_thread is not supported for schedule triggers — use the YAML editor",
+  );
+  // The relay accepts an explicit false anywhere, and so does Form mode.
+  const explicitFalse = accepted(
+    `name: OK\ntrigger: { on: schedule, cron: '0 9 * * 1-5' }\nsteps: [{ id: s1, action: send_message, text: hi, reply_in_thread: false }]\n`,
+  );
+  assert.equal(explicitFalse.steps[0].replyInThread, false);
+});
+
+test("schedule triggers need exactly one of cron or interval, with reference messages", () => {
+  const refused = (trigger) => {
+    const result = yamlToFormState(
+      `name: Test\ntrigger: ${trigger}\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
+    );
+    assert.equal(result.ok, false, trigger);
+    return result.error;
+  };
+  assert.equal(
+    refused("{ on: schedule, cron: '0 9 * * *', interval: 30m }"),
+    "Schedule triggers cannot specify both cron and interval — use the YAML editor",
+  );
+  assert.equal(
+    refused("{ on: schedule }"),
+    "Schedule triggers require either cron or interval — use the YAML editor",
+  );
+  assert.equal(
+    refused("{ on: schedule, cron: not-a-cron }"),
+    "Unsupported cron expression: Paste a 5-field cron expression. Found 1 field. Use the YAML editor",
+  );
+  assert.equal(
+    refused("{ on: schedule, cron: '0 9 * * 8' }"),
+    "Unsupported cron expression: Weekday must be between 0 and 7. Use the YAML editor",
+  );
+  // The relay accepts 6- and 7-field cron; Form mode leaves those to YAML.
+  assert.equal(
+    refused("{ on: schedule, cron: '0 0 9 * * 1-5' }"),
+    "Unsupported cron expression: Paste a 5-field cron expression. Found 6 fields. Use the YAML editor",
+  );
+  assert.equal(
+    refused("{ on: schedule, cron: '' }"),
+    "trigger.cron cannot be empty in Form mode — use the YAML editor",
+  );
+  assert.equal(
+    refused("{ on: schedule, interval: 30 }"),
+    "trigger.interval must be a string — use the YAML editor",
+  );
+  assert.equal(
+    refused("{ on: schedule, interval: '' }"),
+    "trigger.interval cannot be empty in Form mode — use the YAML editor",
+  );
+  // Non-schedule type errors keep their original wording.
+  assert.equal(
+    yamlToFormState(
+      `name: Test\ntrigger: { on: message_posted, filter: 42 }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
+    ).error,
+    "trigger.filter must be a string",
+  );
+});
+
+test("the serializer emits exactly one schedule representation and no message fields", () => {
+  const schedule = (trigger) =>
+    parseYaml(
+      formStateToYaml({
+        ...DEFAULT_FORM_STATE,
+        name: "Scheduled",
+        trigger,
+        steps: [{ id: "s1", action: "send_message", text: "hi" }],
+      }),
+    ).trigger;
+
+  assert.deepEqual(
+    schedule({ on: "schedule", cron: "0 9 * * *", interval: "15m" }),
+    { on: "schedule", cron: "0 9 * * *" },
+  );
+  assert.deepEqual(schedule({ on: "schedule", interval: "15m" }), {
+    on: "schedule",
+    interval: "15m",
+  });
+  assert.deepEqual(schedule({ on: "schedule", cron: "", interval: "1h" }), {
+    on: "schedule",
+    interval: "1h",
+  });
+  assert.deepEqual(
+    schedule({
+      on: "schedule",
+      cron: "0 9 * * *",
+      filter: "true",
+      emoji: "eyes",
+    }),
+    { on: "schedule", cron: "0 9 * * *" },
+  );
+  // Cron and interval never leak onto message triggers either.
+  assert.deepEqual(
+    schedule({ on: "message_posted", cron: "0 9 * * *", interval: "15m" }),
+    { on: "message_posted" },
+  );
+});
+
+test("switching to a schedule trigger clears threaded replies on every step", () => {
+  const state = {
+    ...DEFAULT_FORM_STATE,
+    name: "Switch",
+    trigger: { on: "message_posted", filter: "true" },
+    steps: [
+      { id: "s1", action: "send_message", text: "hi", replyInThread: true },
+      { id: "s2", action: "delay", duration: "1m", replyInThread: true },
+      { id: "s3", action: "send_message", text: "bye" },
+    ],
+  };
+  const scheduled = withTriggerType(state, "schedule");
+  assert.deepEqual(scheduled.trigger, { on: "schedule" });
+  assert.deepEqual(
+    scheduled.steps.map((step) => step.replyInThread),
+    [false, false, undefined],
+  );
+  assert.equal(scheduled.steps[2], state.steps[2]);
+
+  const reverted = withTriggerType(state, "diff_posted");
+  assert.deepEqual(reverted.trigger, { on: "diff_posted" });
+  assert.equal(reverted.steps, state.steps);
 });
 
 test("invalid IDs, shapes, and scalar types are refused", () => {
@@ -253,8 +391,8 @@ test("new workflow drafts start explicitly disabled", () => {
 });
 
 test("unsupported legacy triggers and actions remain YAML-only without parsing into form state", () => {
-  for (const trigger of ["webhook", "schedule"]) {
-    const yaml = `# retained\nname: Advanced\ntrigger: { on: ${trigger}, cron: '0 9 * * *' }\nsteps: [{id: s1, action: send_message, text: hi}]\n`;
+  for (const trigger of ["webhook"]) {
+    const yaml = `# retained\nname: Advanced\ntrigger: { on: ${trigger} }\nsteps: [{id: s1, action: send_message, text: hi}]\n`;
     const result = yamlToFormState(yaml);
     assert.equal(result.ok, false);
     assert.match(result.error, /Unsupported trigger.*YAML editor/);

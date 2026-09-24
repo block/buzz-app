@@ -641,6 +641,117 @@ test("invalid timeout text stays in the draft and blocks saves in both editor mo
   ).not.toHaveProperty("timeout_secs");
 });
 
+test("schedule presets round-trip into YAML and warn before enabling a frequent one", async ({
+  page,
+}) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.goto(url);
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const yaml = page.getByLabel("Workflow YAML", { exact: true });
+  const tab = (name) => page.getByRole("tab", { name, exact: true });
+  const preset = (name) => page.getByRole("radio", { name, exact: true });
+  // Native inputs sit visually hidden behind the pills; click the pill.
+  const pill = (name) =>
+    page.locator(".workflow-pill-label", { hasText: name });
+  const reply = page.getByRole("switch", {
+    name: "Reply in the triggering thread",
+  });
+  const savedTrigger = async () => {
+    await tab("YAML").click();
+    const trigger = parseYaml(await yaml.inputValue()).trigger;
+    await tab("Form").click();
+    return trigger;
+  };
+
+  await button("New workflow").click();
+  await button("Add Send Message").click();
+  await page.getByLabel("Message text", { exact: true }).fill("On a timer");
+  await reply.click();
+  await expect(reply).toBeChecked();
+  await page.getByRole("combobox", { name: "Trigger", exact: true }).click();
+  await page.getByRole("option", { name: "Schedule", exact: true }).click();
+  await expect(preset("Daily")).toBeChecked();
+  await expect(page.getByLabel("Run time (UTC)", { exact: true })).toHaveValue(
+    "09:00",
+  );
+  await expect(reply).toHaveCount(0);
+  await expect(page.getByText("Trigger options", { exact: true })).toHaveCount(
+    0,
+  );
+  const daily = await savedTrigger();
+  expect(daily).toEqual({ on: "schedule", cron: "0 9 * * *" });
+  await tab("YAML").click();
+  expect(parseYaml(await yaml.inputValue()).steps[0]).not.toHaveProperty(
+    "reply_in_thread",
+  );
+  await tab("Form").click();
+
+  await pill("Weekly").click();
+  await expect(preset("Weekly")).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Monday" })).toBeChecked();
+  await page.locator(".workflow-pill-label", { hasText: /^F$/ }).click();
+  await expect(page.getByRole("checkbox", { name: "Friday" })).toBeChecked();
+  await page.getByLabel("Run time (UTC)", { exact: true }).fill("14:30");
+  expect(await savedTrigger()).toEqual({
+    on: "schedule",
+    cron: "30 14 * * 1,5",
+  });
+  await expect(preset("Weekly")).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Friday" })).toBeChecked();
+
+  await pill("Monthly").click();
+  await page.getByRole("combobox", { name: "Day of month" }).click();
+  await page.getByRole("option", { name: "31", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "won’t run in some months",
+  );
+  expect(await savedTrigger()).toEqual({
+    on: "schedule",
+    cron: "30 14 31 * *",
+  });
+
+  await pill("Every 15 minutes").click();
+  expect(await savedTrigger()).toEqual({ on: "schedule", interval: "15m" });
+  await expect(preset("Every 15 minutes")).toBeChecked();
+  await expect(page.getByLabel("Run time (UTC)", { exact: true })).toHaveCount(
+    0,
+  );
+
+  await pill("Custom cron").click();
+  const minute = page.getByRole("textbox", { name: "Minute", exact: true });
+  await expect(minute).toHaveValue("*/15");
+  await minute.focus();
+  await page.keyboard.press("Space");
+  await expect(
+    page.getByRole("textbox", { name: "Hour", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.type("*/2");
+  expect(await savedTrigger()).toEqual({
+    on: "schedule",
+    cron: "*/15 */2 * * *",
+  });
+  await expect(preset("Custom cron")).toBeChecked();
+
+  await pill("Every hour").click();
+  await page.getByRole("switch", { name: "Enabled in configuration" }).click();
+  await button("Save workflow").click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText(
+    "It is scheduled to run every 1 hour. Review the schedule before turning it on.",
+  );
+  expect(await page.evaluate(() => window.workflowFixture.calls.save)).toBe(0);
+  await button("Save enabled workflow").click();
+  await expect
+    .poll(() => page.evaluate(() => window.workflowFixture.calls.save))
+    .toBe(1);
+  expect(
+    parseYaml(await page.evaluate(() => window.workflowFixture.input().yaml))
+      .trigger,
+  ).toEqual({ on: "schedule", interval: "1h" });
+  expect(errors).toEqual([]);
+});
+
 test("both Add actions allocate unused IDs after a very large parsed ID", async ({
   page,
 }) => {

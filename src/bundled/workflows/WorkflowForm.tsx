@@ -4,13 +4,17 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Switch } from "../../shared/design-system/ui/Switch";
+import { WorkflowScheduleFields } from "./WorkflowScheduleFields";
 import { formWithStep } from "./editor-model";
 import {
   ACTION_LABELS,
+  isThreadReplyEligibleTrigger,
   isTriggerType,
   nextStepId,
+  withTriggerType,
   type WorkflowFormState,
 } from "./workflowFormTypes";
+import { defaultScheduleTrigger } from "./workflowSchedule";
 
 export function WorkflowForm({
   state,
@@ -44,10 +48,19 @@ export function WorkflowForm({
               { value: "diff_posted", label: "Diff posted" },
             ],
           },
+          {
+            label: "Time",
+            options: [{ value: "schedule", label: "Schedule" }],
+          },
         ]}
         onValueChange={(value) => {
-          if (!disabled && isTriggerType(value))
-            onChange({ ...state, trigger: { on: value } });
+          if (disabled || !isTriggerType(value)) return;
+          const next = withTriggerType(state, value);
+          onChange(
+            value === "schedule"
+              ? { ...next, trigger: defaultScheduleTrigger() }
+              : next,
+          );
         }}
       />
       {state.trigger.on === "reaction_added" && (
@@ -62,23 +75,31 @@ export function WorkflowForm({
           />
         </label>
       )}
-      <details>
-        <summary>Trigger options</summary>
-        <label htmlFor={`${id}-3`} className="workflow-field">
-          Trigger condition (optional)
-          <Input
-            id={`${id}-3`}
-            value={state.trigger.filter ?? ""}
-            onValueChange={(filter) =>
-              onChange({ ...state, trigger: { ...state.trigger, filter } })
-            }
-          />
-          <span className="text-body-sm text-secondary">
-            An evalexpr expression; leave empty to match every event of this
-            type.
-          </span>
-        </label>
-      </details>
+      {state.trigger.on === "schedule" ? (
+        <WorkflowScheduleFields
+          disabled={disabled}
+          trigger={state.trigger}
+          onUpdate={(trigger) => onChange({ ...state, trigger })}
+        />
+      ) : (
+        <details>
+          <summary>Trigger options</summary>
+          <label htmlFor={`${id}-3`} className="workflow-field">
+            Trigger condition (optional)
+            <Input
+              id={`${id}-3`}
+              value={state.trigger.filter ?? ""}
+              onValueChange={(filter) =>
+                onChange({ ...state, trigger: { ...state.trigger, filter } })
+              }
+            />
+            <span className="text-body-sm text-secondary">
+              An evalexpr expression; leave empty to match every event of this
+              type.
+            </span>
+          </label>
+        </details>
+      )}
       <ol className="workflow-steps">
         {state.steps.map((step, index) => (
           <li key={step.id} className="workflow-step">
@@ -117,14 +138,16 @@ export function WorkflowForm({
                     }
                   />
                 </div>
-                <Switch
-                  label="Reply in the triggering thread"
-                  checked={step.replyInThread === true}
-                  disabled={disabled}
-                  onCheckedChange={(replyInThread) =>
-                    onChange(formWithStep(state, step.id, { replyInThread }))
-                  }
-                />
+                {isThreadReplyEligibleTrigger(state.trigger.on) && (
+                  <Switch
+                    label="Reply in the triggering thread"
+                    checked={step.replyInThread === true}
+                    disabled={disabled}
+                    onCheckedChange={(replyInThread) =>
+                      onChange(formWithStep(state, step.id, { replyInThread }))
+                    }
+                  />
+                )}
               </>
             ) : (
               <label htmlFor={`${id}-6${step.id}`} className="workflow-field">

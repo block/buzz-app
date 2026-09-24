@@ -9,7 +9,7 @@ import { createPluginManager } from "../../src/plugins/manager";
 import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
 import { bindNames } from "../../src/features/identity-names/service";
-import { createAgentDirectory } from "../../src/bundled/agents/directory";
+import { createAgentDirectory } from "../../src/features/identity-names/testing";
 import { createRelaySession } from "../../src/features/relay/session";
 import { relayOrigin } from "../../src/features/communities/destination";
 import { registerBrokerCommunity } from "../../src/features/relay/transport";
@@ -132,13 +132,11 @@ const owner = createRelaySession(
   { outboxStorage: { load: () => [], save: () => {} } },
 );
 const nameProvider = createAgentDirectory();
-const names = naming
-  ? bindNames(owner.session, {
-      snapshot: () => [nameProvider],
-      subscribe: () => () => {},
-    })
-  : undefined;
-const namedSession = names ? { ...owner.session, names } : owner.session;
+const names = bindNames(owner.session, {
+  snapshot: () => [nameProvider],
+  subscribe: () => () => {},
+});
+const namedSession = { ...owner.session, names };
 owner.session.channels.ensureList();
 const context = new Context();
 const disabledCalls: {

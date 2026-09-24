@@ -24,7 +24,10 @@ test("mention completion distinguishes exact agent identity without reshaping a 
     "circle",
   );
   await expectAvatarShape(
-    page.getByRole("option", { name: `Honey ${keys.agent}`, exact: true }),
+    page.getByRole("option", {
+      name: `Honey (agent) ${keys.agent}`,
+      exact: true,
+    }),
     "squircle",
   );
   await input.fill("");
@@ -39,7 +42,10 @@ test("mention completion distinguishes exact agent identity without reshaping a 
     "circle",
   );
   await expectAvatarShape(
-    picker.getByRole("button", { name: `Honey ${keys.agent}`, exact: true }),
+    picker.getByRole("button", {
+      name: `Honey (agent) ${keys.agent}`,
+      exact: true,
+    }),
     "squircle",
   );
 });
@@ -51,25 +57,28 @@ test("open completion republishes library-only display hints without changing th
     first: window.mentionFixture.first,
     second: window.mentionFixture.second,
   }));
+  // The shared naming provider retains library facts when this fixture mounts.
+  // Opening completion must not create a second load owner.
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.libraryReads()))
+    .toBe(1);
   await input.fill("@Ho");
   const first = page.getByRole("option", {
-    name: `Honey ${keys.first}`,
-    exact: true,
+    name: new RegExp(keys.first),
   });
   const second = page.getByRole("option", {
-    name: `Honey ${keys.second}`,
-    exact: true,
+    name: new RegExp(keys.second),
   });
   await expectAvatarShape(first, "circle");
   await expectAvatarShape(second, "squircle");
-  // Opening completion subscribes to the library; it must not load it.
+  // Completion observes the existing naming demand; it does not reload it.
   expect(await page.evaluate(() => window.mentionFixture.libraryReads())).toBe(
-    0,
+    1,
   );
 
   for (const [included, reads] of [
-    [true, 1],
-    [false, 2],
+    [true, 2],
+    [false, 3],
   ]) {
     await page.evaluate(
       (included) => window.mentionFixture.setLibraryAgent(included),
@@ -184,7 +193,7 @@ test("typeahead replaces only the query and publishes selected namesake identity
     el.dispatchEvent(new Event("select", { bubbles: true }));
   });
   const option = page.getByRole("option", {
-    name: `Honey ${keys.second}`,
+    name: `Honey (agent) ${keys.second}`,
     exact: true,
   });
   await expect(option).toBeVisible();

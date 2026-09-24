@@ -1,5 +1,6 @@
 import { Popover } from "../../shared/design-system/ui/Popover";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
+import { availableMentionAgents } from "../../features/agents/mention-choices";
 import { mentionChoices } from "./mention-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -62,16 +63,12 @@ export function MentionPicker({
   const channel = list.channels.find((item) => item.id === channelId);
   const available = useMemo(
     () =>
-      !inviteAgents &&
-      channel?.members &&
-      !channel.archived &&
-      (channel.channelType === "stream" || channel.channelType === "forum") &&
-      session.outbox?.supports(9000)
-        ? agents.identities
-            .filter((agent) => agent.managed)
-            .filter((agent) => !channel.members?.includes(agent.pubkey))
-            .map(({ pubkey, name }) => ({ pubkey, name }))
-        : [],
+      availableMentionAgents(
+        channel,
+        agents.identities,
+        inviteAgents,
+        session.outbox?.supports(9000),
+      ),
     [channel, agents, session.outbox, inviteAgents],
   );
   const parentAdmission =

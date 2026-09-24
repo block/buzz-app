@@ -123,3 +123,34 @@ it.each([
     }
   },
 );
+
+it("publishes owner-only changes and removal without treating profile claims as authority", () => {
+  const wire = scriptedTransport(user.pubkey, keypair().pubkey);
+  const reader = createRelayReader(wire.transport);
+  const directory = createProfileDirectory(reader.reader);
+  const changed = vi.fn();
+  directory.queries.subscribe(changed);
+  try {
+    for (const [index, owner] of [
+      "a".repeat(64),
+      "b".repeat(64),
+      undefined,
+    ].entries()) {
+      directory.accept([
+        signed(user, {
+          kind: 0,
+          content: JSON.stringify({ name: "Honey", is_agent: true }),
+          created_at: index + 1,
+          tags: owner ? [["auth", owner, "", "c".repeat(128)]] : [],
+        }),
+      ]);
+      expect(directory.queries.snapshot().get(user.pubkey)?.ownerPubkey).toBe(
+        owner,
+      );
+      expect(changed).toHaveBeenCalledTimes(index + 1);
+    }
+  } finally {
+    directory.dispose();
+    reader.dispose();
+  }
+});

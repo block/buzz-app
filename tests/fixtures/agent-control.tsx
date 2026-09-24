@@ -3,7 +3,7 @@ import { createNavigationController } from "../../src/features/navigation/contro
 import { createMemoryHistory } from "../../src/features/navigation/history";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { createRoot } from "react-dom/client";
-import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
+import { InventoryPage } from "../../src/bundled/agents/InventoryPage";
 import { createRelaySession } from "../../src/features/relay/session";
 import type {
   RelayData,
@@ -229,7 +229,7 @@ function Fixture() {
         </section>
       ) : (
         shown && (
-          <AgentsPage
+          <InventoryPage
             relay={relay}
             key={browser ? "browser" : "native"}
             control={browser ? unavailable : control}

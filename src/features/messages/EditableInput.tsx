@@ -985,10 +985,13 @@ export function EditableInput({
               event.preventDefault();
             return false;
           },
-          // Enter belongs to the host send/completion policy, then our newline adapter.
+          // Send/completion/cancel policy belongs to the host. ProseMirror's
+          // default capture otherwise prevents Escape before React can cancel edits.
           keydown(_view, event) {
             return (
-              event.key === "Enter" && !event.isComposing && !composing.current
+              (event.key === "Enter" || event.key === "Escape") &&
+              !event.isComposing &&
+              !composing.current
             );
           },
           beforeinput(_view, event) {
@@ -1201,6 +1204,24 @@ export function EditableInput({
         },
       },
       undo: { configurable: true, value: historyCommand },
+      checkpoint: {
+        configurable: true,
+        value: () => {
+          const saved = editor.state;
+          const savedDraft = emitted.current;
+          const savedPlain = [...plain.current];
+          const savedSeparateHistory = separateHistory;
+          return () => {
+            if (view.current !== editor) return;
+            plain.current = savedPlain;
+            separateHistory = savedSeparateHistory;
+            emitted.current = savedDraft;
+            editor.updateState(saved);
+            tokenViews();
+            selected();
+          };
+        },
+      },
       reset: {
         configurable: true,
         value: (next: MentionDraft) => api.current?.sync(next, true),
@@ -1218,8 +1239,10 @@ export function EditableInput({
           next,
           current.current.decorationsFor(next),
         );
-        if (reset) editor.updateState(state(doc));
-        else
+        if (reset) {
+          separateHistory = false;
+          editor.updateState(state(doc));
+        } else
           editor.dispatch(
             closeHistory(
               editor.state.tr.replaceWith(

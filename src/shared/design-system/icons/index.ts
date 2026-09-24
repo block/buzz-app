@@ -235,3 +235,9 @@ export const QuotesIcon = defineIcon("phosphor", PhosphorQuotesIcon);
 
 import { DetectiveIcon as PhosphorDetectiveIcon } from "@phosphor-icons/react/dist/csr/Detective";
 export const DetectiveIcon = defineIcon("phosphor", PhosphorDetectiveIcon);
+
+import { PencilSimpleIcon as PhosphorPencilSimpleIcon } from "@phosphor-icons/react/dist/csr/PencilSimple";
+export const PencilSimpleIcon = defineIcon(
+  "phosphor",
+  PhosphorPencilSimpleIcon,
+);

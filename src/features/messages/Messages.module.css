@@ -207,6 +207,25 @@
     margin: var(--space-2) var(--space-3) var(--space-3);
   }
 }
+.composer[data-editing] {
+  overflow: hidden;
+}
+.composerEditHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-3)) var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+  font-size: var(--text-label-sm);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
+  font-weight: var(--text-label-sm--font-weight);
+}
+.composerEditHeader span {
+  flex: 1;
+}
 .composerInput {
   position: relative;
   min-width: 0;

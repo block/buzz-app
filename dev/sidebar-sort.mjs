@@ -64,6 +64,8 @@ function parseSortEvent(events, secret, sectionIds) {
     key.fill(0);
   }
 }
+// Desktop compatibility uses one encrypted whole-blob LWW record, not per-group
+// conflict resolution. Only choices present in this read can be preserved.
 export function prepareSidebarSort(events, intent, secret, now = Date.now()) {
   assertSidebarSortIntent(intent);
   const viewer = getPublicKey(secret);
@@ -116,6 +118,8 @@ export async function mutateSidebarSort(intent, secret, readHead, publish) {
   const draft = prepareSidebarSort(await readHead(), intent, secret);
   if (!draft.event) return draft.groups;
   await publish(draft.event);
+  // This checks only the requested group now, not whether the whole-blob write
+  // lost another device's intervening change to an unrelated group.
   const confirmation = prepareSidebarSort(await readHead(), intent, secret);
   if (confirmation.event)
     throw new Error(

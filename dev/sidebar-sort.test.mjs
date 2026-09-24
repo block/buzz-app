@@ -138,6 +138,49 @@ it("confirms newer unrelated choices, rejects a replaced intent, and never seeds
   ).rejects.toThrow("offline");
   expect(publish).toHaveBeenCalledOnce();
 });
+it("whole-blob LWW can lose an intervening other-section save while both mutations succeed", async () => {
+  const h = harness();
+  let heads = [h.encrypt({ version: 1, groups: { starred: "recent" } })];
+  const read = async () => heads;
+  const publish = async (event) => {
+    // Model replaceable-event ordering without a same-second ID tie.
+    expect(event.created_at).toBeGreaterThan(heads[0].created_at);
+    heads = [event];
+  };
+  const clock = vi.spyOn(Date, "now").mockReturnValue(200_000);
+  try {
+    const result = await mutateSidebarSort(
+      { ...intent, group: "channels" },
+      h.secret,
+      read,
+      async (event) => {
+        // Device B saves and confirms after A's read but before A publishes.
+        // B's clock is one second behind A's, so A's stale blob wins later.
+        clock.mockReturnValue(199_000);
+        await expect(
+          mutateSidebarSort(
+            { ...intent, group: "forums" },
+            h.secret,
+            read,
+            publish,
+          ),
+        ).resolves.toEqual({ starred: "recent", forums: "recent" });
+        expect(h.decode(heads[0]).groups).toEqual({
+          starred: "recent",
+          forums: "recent",
+        });
+        await publish(event);
+      },
+    );
+    expect(result).toEqual({ starred: "recent", channels: "recent" });
+    expect(h.decode(heads[0])).toEqual({
+      version: 1,
+      groups: { starred: "recent", channels: "recent" },
+    });
+  } finally {
+    clock.mockRestore();
+  }
+});
 it("projection accepts full-length section keys, rejects over-budget data, and ignores unknown keys/modes", () => {
   const id = "x".repeat(256);
   expect(

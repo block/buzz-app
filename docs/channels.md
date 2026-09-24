@@ -96,6 +96,30 @@ derive the saved group id separately from `group:<id>` rather than conflating it
 with rendered placement. Right-clicking the separate session disclosure remains
 outside the parent menu trigger, as do child-session rows.
 
+## Sidebar sort persistence
+
+Each sidebar section can independently select **A–Z** (the default) or **Recent**.
+The development broker saves these choices in the desktop-compatible encrypted
+kind-30078 `channel-sort` record: `{ version: 1, groups: { ... } }`. A–Z removes
+that group's override. Saving preserves unrelated fields and choices present in
+the record read before publication.
+
+Persistence is **whole-record last-write-wins**, not conflict-safe per-section
+merging. Two devices can read the same record and save different sections; the
+winning replacement can silently erase the other device's choice even when both
+saves report success. The broker's mutation queue serializes its own writes only.
+Read-back checks the requested section at that moment; it cannot detect an unseen
+choice overwritten in another section or guarantee preservation against later
+writes. “Independent” describes selecting a mode per section, not simultaneous
+cross-device save guarantees. Retaining the shared record preserves compatibility
+with existing desktop writers; per-section conflict resolution would require a
+coordinated persistence change.
+
+`dev/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
+through the real mutation helper: another section saves and confirms between a
+read and publication, then the stale whole-record replacement wins and also
+confirms. This is contract coverage, not a concurrency fix.
+
 ## Starting a direct message
 
 The **+** action in the DMs sidebar header opens **New message**, a routed empty

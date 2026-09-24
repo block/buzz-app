@@ -31,6 +31,47 @@ export async function settle(page) {
     )
     .toBeGreaterThanOrEqual(3);
 }
+// Use for gestures that must move before capturing a reading baseline. Geometry
+// can pause mid-gesture in Linux WebKit; only scrollend closes native input.
+export async function wheel(page, deltaY) {
+  const completion = await history(page).evaluateHandle((element) => {
+    const state = { started: false, done: false };
+    const started = () => {
+      state.started = true;
+    };
+    const ended = (event) => {
+      if (event.target === element && state.started) state.done = true;
+    };
+    element.addEventListener("wheel", started, { once: true });
+    element.addEventListener("scrollend", ended);
+    return {
+      state,
+      dispose() {
+        element.removeEventListener("wheel", started);
+        element.removeEventListener("scrollend", ended);
+      },
+    };
+  });
+  let pendingRead;
+  try {
+    await page.mouse.wheel(0, deltaY);
+    await expect
+      .poll(
+        () => (pendingRead = completion.evaluate(({ state }) => state.done)),
+        {
+          message: "timeline wheel gesture completes",
+        },
+      )
+      .toBe(true);
+    await settle(page);
+  } finally {
+    // expect.poll does not cancel a DOM read when its deadline expires.
+    await pendingRead;
+    await completion.evaluate((observer) => observer.dispose());
+    await completion.dispose();
+  }
+}
+
 export async function anchor(page) {
   return history(page).evaluate((element) => {
     const bounds = element.getBoundingClientRect();

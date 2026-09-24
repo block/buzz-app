@@ -183,3 +183,80 @@ test("reading setup drains a timed-out DOM read before returning its rejection",
     page.mouse.wheel = wheel;
   }
 });
+
+// No app fixture: these controls exercise native input/scrollend ordering only.
+test("wheel baseline waits through a geometry pause until the final input completes", async ({
+  page,
+}) => {
+  const { wheel, settle } = await import("./timeline.mjs");
+  await page.setContent(
+    '<section role="region" aria-label="Channel message history" style="height:200px;overflow:auto"><div style="height:2000px"></div></section>',
+  );
+  await history(page).evaluate((element) => {
+    window.heldScrollEnds = 0;
+    window.holdScrollEnd = true;
+    element.addEventListener("scrollend", (event) => {
+      if (window.holdScrollEnd) {
+        event.stopImmediatePropagation();
+        window.heldScrollEnds++;
+      }
+    });
+  });
+  await history(page).hover();
+  let finished = false;
+  const outcome = wheel(page, 300).then(() => {
+    finished = true;
+  });
+  try {
+    await expect.poll(() => page.evaluate(() => window.heldScrollEnds)).toBe(1);
+    // Geometry-only settling would return here: explicitly hold the final
+    // movement, rather than hoping a slow machine produces a long enough pause.
+    await settle(page);
+    expect(finished, "stationary geometry is not completed input").toBe(false);
+    await page.evaluate(() => {
+      window.holdScrollEnd = false;
+    });
+    await page.mouse.wheel(0, 100);
+    await outcome;
+    expect(await history(page).evaluate((element) => element.scrollTop)).toBe(
+      400,
+    );
+  } finally {
+    await page.evaluate(() => {
+      window.holdScrollEnd = false;
+    });
+    await history(page).dispatchEvent("scrollend");
+    await outcome;
+  }
+});
+
+test("wheel baseline rejects input blocked at the edge instead of accepting a stale completion", async ({
+  page,
+}) => {
+  const { wheel } = await import("./timeline.mjs");
+  await page.setContent(
+    '<section role="region" aria-label="Channel message history" style="height:200px;overflow:auto"><div style="height:2000px"></div></section>',
+  );
+  await history(page).hover();
+  const input = page.mouse.wheel.bind(page.mouse);
+  page.mouse.wheel = async (...args) => {
+    // A completion from before this gesture must not satisfy its observer.
+    await history(page).dispatchEvent("scrollend");
+    await input(...args);
+  };
+  try {
+    await expect(wheel(page, -100)).rejects.toThrow(
+      "timeline wheel gesture completes",
+    );
+    expect(await history(page).evaluate((element) => element.scrollTop)).toBe(
+      0,
+    );
+    // Failure must remove its observer; a later ordinary gesture still works.
+    await wheel(page, 100);
+    expect(await history(page).evaluate((element) => element.scrollTop)).toBe(
+      100,
+    );
+  } finally {
+    page.mouse.wheel = input;
+  }
+});

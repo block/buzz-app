@@ -403,14 +403,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "status-online",
         variable: "--status-online",
-        pointsAt: "green-9 light / green-11 dark",
+        pointsAt: "green-11 light / green-11 dark",
         use: "Online presence dot.",
         status: "core",
       },
       {
         token: "status-away",
         variable: "--status-away",
-        pointsAt: "amber-9 light / amber-11 dark",
+        pointsAt: "amber-11 light / amber-11 dark",
         use: "Away presence dot.",
         status: "core",
       },

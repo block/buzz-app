@@ -74,6 +74,26 @@ describe("semantic contrast contract", () => {
     },
   );
 
+  it.each([
+    ["online", "green"],
+    ["away", "amber"],
+    ["offline", "neutral"],
+  ])("checks %s status on supported surfaces in both modes", (role, hue) => {
+    const result = check(
+      tokens.replaceAll(
+        new RegExp(`--status-${role}: var\\(--${hue}-\\d+\\);`, "g"),
+        `--status-${role}: var(--${hue}-5);`,
+      ),
+    );
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain(
+      `light: --status-${role} on --surface-panel`,
+    );
+    expect(result.output).toContain(
+      `dark: --status-${role} on --surface-popover`,
+    );
+  });
+
   it.each(["warning", "success", "accent"])(
     "checks %s text against its semantic fill, not only the palette",
     (role) => {

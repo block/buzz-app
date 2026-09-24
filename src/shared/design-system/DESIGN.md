@@ -391,7 +391,8 @@ it is the rule a generated theme is measured against.
   Apple ship theirs; raising them would draw the box the fill already implies.
   Error and warning boundary roles must reach 3:1 against surface-base,
   surface-panel, surface-inset and surface-popover in both themes. The contrast
-  guard checks these role mappings separately from text and decorative dividers.
+  guard checks these role mappings and status dots separately from text and
+  decorative dividers.
 
 ## Writing
 

@@ -89,9 +89,9 @@ export function useAppNavigation(services: AppServices) {
       "appearance",
       "shortcuts",
       "agents",
-      "channels",
       "notifications",
     ].includes(target.section) &&
+    !target.section.startsWith("community-") &&
     !(developerMode && target.section === "developer")
   ) {
     // Grouped plugin cards are addressed by contribution key.
@@ -193,7 +193,20 @@ export function useAppNavigation(services: AppServices) {
   const select = (key: string) => {
     const selectedClient = services.communities.snapshot();
     let destination: OpenTarget;
-    if (key === "settings") destination = { version: 1, kind: "settings" };
+    if (key === "settings")
+      destination = {
+        version: 1,
+        kind: "settings",
+        ...(selectedClient.viewer && selectedClient.selected
+          ? {
+              scope: {
+                viewer: selectedClient.viewer,
+                communityOrigin: communityDestination(selectedClient.selected)
+                  .url,
+              },
+            }
+          : { scope: null }),
+      };
     else {
       const selected = pages.find((page) => page.key === key);
       if (!selected) return;

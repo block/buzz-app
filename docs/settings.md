@@ -1,24 +1,27 @@
 # Settings scope and navigation
 
-Buzz distinguishes settings by who owns their state. Navigation follows that
-ownership instead of the currently selected community.
+Buzz distinguishes settings by whether they belong to the community from which
+Settings opened or to this Buzz installation.
 
-## Global settings
+## Settings navigation
 
-The global Settings page contains preferences that apply across communities in
-this Buzz installation. Switching communities does not replace their values.
+Settings has two groups:
 
-- **Personal** contains identity-scoped defaults and account preferences saved on
-  this device. **Profile** supplies the shell identity and pre-fills a community
-  profile when that community has no existing profile. It does not republish
-  profiles that already exist in communities.
-- **Personal** also contains appearance, notifications, and shortcuts that follow
-  this person across communities on the device.
-- **App** contains installation-level capabilities such as agents and plugins.
+- The selected **community name** comes first. It contains **Profile**, **Personal
+  groups**, **Templates & teams**, and future community-scoped personal or
+  permission-gated settings.
+- **App** contains Appearance, Notifications, Shortcuts, Agents, and Plugins.
+  These preferences apply across communities on this device.
 
-A setting can still be partitioned by identity or depend on an operating-system
-permission. Those details must be explained where they affect behavior, but they
-do not make the setting community-scoped.
+Selecting another community in the rail leaves Settings and opens that
+community's view. Opening Settings there captures the new community context; the
+contents do not change underneath an open form.
+
+The current Profile implementation still edits a device-local seed and does not
+publish to the named community. That is a transitional implementation, not the
+final product contract. The community-settings batch must make Profile edit the
+captured community profile, update the local seed only after an accepted publish,
+and leave other existing community profiles unchanged.
 
 ## Appearance roadmap
 
@@ -108,24 +111,17 @@ Do not add empty destinations or functional-looking placeholders for pending row
 
 ## Community settings
 
-Community-specific personal settings and administration do not belong among the
-global destinations. The planned **Communities** destination is a list-detail
-surface:
+Community-specific personal settings and administration share the named community
+group. **Profile**, **Personal groups**, and **Templates & teams** are available
+to ordinary members. Permission-gated entries such as members, invites,
+moderation, or hosting appear only when verified evidence for that exact
+community authorizes them.
 
-1. List communities associated with this identity and installation.
-2. Open one community to manage its scoped sections.
-3. Show personal sections such as **Your profile** separately from permission-
-   gated administration such as members, invites, moderation, or hosting.
-
-Do not add every community to the primary Settings navigation. The list must
-remain usable with many communities, long names, changing roles, narrow windows,
-and enlarged text. Contextual **Community settings** actions may deep-link to the
-same community detail; they must not create a second implementation.
-
-Joined, administered, and hosted are attributes, not exclusive navigation
-buckets. Authorization comes from verified community evidence for the exact
-community. A selected community, saved membership, display name, local profile,
-or hosting relationship does not establish administration permission.
+Settings must retain the captured community scope in navigation and asynchronous
+work. A saved membership, display name, local profile, selected rail item, or
+hosting relationship does not establish administration permission. Contextual
+**Community settings** actions may deep-link to the same captured surface; they
+must not create a second implementation.
 
 ## Hosting boundary
 
@@ -140,14 +136,11 @@ authorization owners:
 
 ## Current implementation boundary
 
-This change establishes the global **Personal** and **App** groups, explains
-Profile's default behavior without renaming the current Buzz destination, and
-places agent conversation behavior under the existing **Agents** destination.
-The temporary **Channels** destination retains main's implemented Personal groups
-and Templates & teams cards without misclassifying them as agent preferences. The
-future Communities work should move those community-scoped cards into the owning
-community detail, then remove this temporary destination.
+This change establishes the selected community and **App** groups, places the
+existing Profile and contributed community cards under the community name, and
+places agent conversation behavior under **Agents**. It does not yet change the
+local-only Profile persistence contract or add permission-gated community
+administration.
 
-This change does not add a placeholder Communities control. Add that destination
-only with a real community list/detail path and honest unavailable, permission,
-loading, and recovery states.
+Add new community entries only with real behavior and honest unavailable,
+permission, loading, and recovery states.

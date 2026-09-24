@@ -131,13 +131,23 @@ export function App({ services }: { services: AppServices }) {
               shortcutBindings={services.shortcutBindings}
               notifications={services.notifications}
               navigation={route.request}
-              onSection={(section) =>
+              onSection={(section) => {
+                const client = services.communities.snapshot();
                 void services.navigation.open({
                   version: 1,
                   kind: "settings",
                   section,
-                })
-              }
+                  ...(client.viewer && client.selected
+                    ? {
+                        scope: {
+                          viewer: client.viewer,
+                          communityOrigin: communityDestination(client.selected)
+                            .url,
+                        },
+                      }
+                    : { scope: null }),
+                });
+              }}
             />
           ) : route.waiting || startup === "loading" ? (
             <p role="status">Opening destination…</p>

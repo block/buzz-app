@@ -4,7 +4,7 @@ import { Input } from "../shared/design-system/ui/Input";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { avatarSource } from "../shared/avatar-source";
 import { npubEncode } from "nostr-tools/nip19";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import styles from "./ProfileSettings.module.css";
 import type {
   Communities,
@@ -14,26 +14,75 @@ import {
   canSaveProfile,
   ProfileFields,
 } from "../features/communities/ProfileFields";
+import * as communityApi from "../features/communities/api";
+import type { Membership } from "../features/communities/service";
 
-export function ProfileSettings({ communities }: { communities: Communities }) {
+type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
+
+export function ProfileSettings({
+  communities,
+  community,
+}: {
+  communities: Communities;
+  community?: Membership | undefined;
+}) {
   const client = useSyncExternalStore(
     communities.subscribe,
     communities.snapshot,
   );
+  const [loaded, setLoaded] = useState<LoadedProfile | null>(null);
+  const [loadStatus, setLoadStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >(community ? "idle" : "ready");
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadError, setLoadError] = useState("");
   const [draft, setDraft] = useState<PersonalProfile | null>(null);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [copyStatus, setCopyStatus] = useState<{
     message: string;
     failed: boolean;
   } | null>(null);
   const copyAttempt = useRef(0);
-  const profile = draft ?? client.profile;
+  // loadAttempt is an explicit recovery trigger.
+  useEffect(() => {
+    void loadAttempt;
+    setDraft(null);
+    setLoaded(null);
+    setSaved(false);
+    setLoadError("");
+    setError("");
+    if (!community) {
+      setLoadStatus("ready");
+      return;
+    }
+    let current = true;
+    setLoadStatus("loading");
+    void communityApi.inspectProfile(community.id).then(
+      (result) => {
+        if (!current) return;
+        setLoaded(result);
+        setLoadStatus("ready");
+      },
+      (reason) => {
+        if (!current) return;
+        setLoadStatus("error");
+        setLoadError(reason instanceof Error ? reason.message : String(reason));
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [community, loadAttempt]);
+  const persisted =
+    community && loaded?.exists ? loaded.profile : client.profile;
+  const profile = draft ?? persisted;
   const hasChanges =
     draft !== null &&
-    (draft.name !== client.profile.name ||
-      draft.picture !== client.profile.picture ||
-      (draft.about ?? "") !== (client.profile.about ?? ""));
+    (draft.name !== persisted.name ||
+      draft.picture !== persisted.picture ||
+      (draft.about ?? "") !== (persisted.about ?? ""));
   const npub = client.viewer ? npubEncode(client.viewer) : "";
   async function copyIdentity(value: string, label: string) {
     const attempt = ++copyAttempt.current;
@@ -57,8 +106,9 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
       </h2>
       <div>
         <p className="mt-0 text-body-sm text-muted">
-          Set your profile details. Any existing community profiles won’t be
-          changed.
+          {community
+            ? "Set your profile details for this community. Any existing community profiles won’t be changed."
+            : "Set your profile details. Any existing community profiles won’t be changed."}
         </p>
         {client.status !== "ready" ? (
           <p role="status">
@@ -66,6 +116,25 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
               ? "Opening your local identity…"
               : "Your local identity is unavailable. Connect your identity to edit your profile."}
           </p>
+        ) : community && loadStatus !== "ready" ? (
+          <div>
+            {loadStatus === "error" ? (
+              <>
+                <p role="alert" className="error">
+                  Your profile in {community.name} couldn’t be loaded.{" "}
+                  {loadError}
+                </p>
+                <Button
+                  type="button"
+                  onClick={() => setLoadAttempt((value) => value + 1)}
+                >
+                  Retry loading profile
+                </Button>
+              </>
+            ) : (
+              <p role="status">Loading your profile in {community.name}…</p>
+            )}
+          </div>
         ) : (
           <>
             <section aria-label="Profile preview" className={styles.preview}>
@@ -89,26 +158,51 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                if (!hasChanges || !canSaveProfile(profile)) return;
+                if (
+                  saving ||
+                  !hasChanges ||
+                  !canSaveProfile(profile) ||
+                  (community && !loaded)
+                )
+                  return;
+                const next = {
+                  ...profile,
+                  name: profile.name.trim(),
+                  about: profile.about?.trim() ?? "",
+                };
+                setSaving(true);
+                setSaved(false);
                 setError("");
-                try {
-                  communities.saveProfile({
-                    ...profile,
-                    name: profile.name.trim(),
-                    about: profile.about?.trim() ?? "",
-                  });
-                  setDraft(null);
-                  setSaved(true);
-                } catch (reason) {
-                  setSaved(false);
-                  setError(
-                    reason instanceof Error ? reason.message : String(reason),
-                  );
-                }
+                void (async () => {
+                  try {
+                    if (community && loaded) {
+                      await communityApi.publishProfile(
+                        community.id,
+                        next,
+                        loaded.existing,
+                      );
+                      setLoaded({
+                        exists: true,
+                        existing: { ...loaded.existing, ...next },
+                        profile: next,
+                      });
+                    }
+                    communities.saveProfile(next);
+                    setDraft(null);
+                    setSaved(true);
+                  } catch (reason) {
+                    setError(
+                      reason instanceof Error ? reason.message : String(reason),
+                    );
+                  } finally {
+                    setSaving(false);
+                  }
+                })();
               }}
             >
               <ProfileFields
                 profile={profile}
+                disabled={saving}
                 onChange={(next) => {
                   setDraft(next);
                   setSaved(false);
@@ -123,14 +217,14 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 <Button
                   type="submit"
-                  disabled={!hasChanges || !canSaveProfile(profile)}
+                  disabled={saving || !hasChanges || !canSaveProfile(profile)}
                   variant="primary"
                 >
-                  Save profile
+                  {saving ? "Saving…" : "Save profile"}
                 </Button>
                 <Button
                   type="button"
-                  disabled={!hasChanges}
+                  disabled={saving || !hasChanges}
                   onClick={() => {
                     setDraft(null);
                     setSaved(false);

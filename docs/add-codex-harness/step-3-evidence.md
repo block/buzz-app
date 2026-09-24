@@ -16,7 +16,7 @@ its bundled `@openai/codex` dependency. The alignment follow-up leaves `CODEX_PA
 Buzz. Version/login probes now invoke `codex-acp cli`; an explicit absolute
 override still selects the same executable for both checks and execution.
 
-Ran `spike.py` with the installed absolute adapter path, first with the adapter's
+Ran the historical local spike script (now excluded from the repository) with the installed absolute adapter path, first with the adapter's
 bundled default, then with `BUZZ_SPIKE_CODEX_PATH=/opt/homebrew/bin/codex` to bind
 the standalone CLI. Both passed:
 

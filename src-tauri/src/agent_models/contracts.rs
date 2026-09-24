@@ -26,6 +26,14 @@ pub(crate) struct ModelError {
     message: String,
 }
 impl ModelError {
+    pub(super) fn with_diagnostic(mut self, message: Option<&'static str>) -> Self {
+        if self.code == "unavailable" {
+            if let Some(message) = message {
+                self.message = message.into();
+            }
+        }
+        self
+    }
     pub(super) fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,

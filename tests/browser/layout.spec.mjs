@@ -78,9 +78,9 @@ async function shellFits(page, width) {
   );
   expect(actions.x + actions.width).toBeLessThanOrEqual(width);
   expect(communities.x + communities.width).toBeLessThan(actions.x);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    width,
-  );
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBe(width);
   if (width > 700) {
     expect(communities.x + communities.width).toBeLessThan(tabs.x);
     expect(tabs.x + tabs.width).toBeLessThan(actions.x);
@@ -567,17 +567,6 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
-  // A saved management update still exercises plugin disposal independently of
-  // the launch UI, which no longer offers a Channels off switch.
-  await page.evaluate(() => {
-    const key = "buzzodz.plugins.v1";
-    const saved = JSON.parse(localStorage.getItem(key));
-    saved.enabled["buzz.channels"] = false;
-    localStorage.setItem(key, JSON.stringify(saved));
-  });
-  await expect(
-    page.getByRole("switch", { name: "Enable Channels", exact: true }),
-  ).toHaveAttribute("aria-checked", "false");
   await expect(bestie).toHaveCount(1);
   for (const [width, height] of [
     [800, 600],
@@ -759,23 +748,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   ]);
   await projects.click();
   await expect(nav.getByRole("button")).toHaveText(titles);
-  // Leave registration order reversed so every navigation surface must sort it.
-  await page.evaluate(() => {
-    const key = "buzzodz.plugins.v1";
-    const saved = JSON.parse(localStorage.getItem(key));
-    saved.enabled["buzz.channels"] = false;
-    localStorage.setItem(key, JSON.stringify(saved));
-  });
-  await expect(nav.getByRole("button")).toHaveText([
-    "Projects",
-    "Agents",
-    "Sessions",
-    "Workflows",
-  ]);
-  await page
-    .getByRole("switch", { name: "Enable Channels", exact: true })
-    .click();
-  await expect(nav.getByRole("button")).toHaveText(titles);
+  // Re-enabled Projects registered last; navigation surfaces must still sort it.
   await button(page, "Search Buzz").click();
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const pageResults = search.locator("section").filter({

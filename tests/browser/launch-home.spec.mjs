@@ -84,7 +84,7 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   expect(await page.evaluate(() => window.homeFrames)).toEqual([]);
 });
 
-test("Settings hides the Channels off switch and can recover a saved disabled plugin", async ({
+test("Channels stays enabled despite saved disabled settings and has no switch", async ({
   page,
   app,
 }) => {
@@ -99,8 +99,7 @@ test("Settings hides the Channels off switch and can recover a saved disabled pl
   await expect(
     page.getByRole("switch", { name: "Enable Projects", exact: true }),
   ).toBeVisible();
-  // Existing disabled preferences remain recoverable; Settings no longer offers
-  // the disable action, but the underlying plugin lifecycle is still supported.
+  // Older disabled preferences cannot turn off the required launch destination.
   await page.evaluate(() => {
     const key = "buzzodz.plugins.v1";
     const saved = JSON.parse(localStorage.getItem(key)) ?? {
@@ -110,32 +109,11 @@ test("Settings hides the Channels off switch and can recover a saved disabled pl
     saved.enabled["buzz.channels"] = false;
     localStorage.setItem(key, JSON.stringify(saved));
   });
-  await page.reload();
-  await expect(
-    pages(page).getByRole("button", { name: "Messages", exact: true }),
-  ).toHaveCount(0);
   await page.goto(address(app.origin, home));
-  await expect(
-    page.getByRole("heading", { name: "This destination couldn’t open" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Go Home", exact: true }),
-  ).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Open Settings", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
-  const channelsSwitch = page.getByRole("switch", {
-    name: "Enable Channels",
-    exact: true,
-  });
-  await channelsSwitch.focus();
-  await page.keyboard.press("Space");
-  await expect(channelsSwitch).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Plugins", exact: true }),
-  ).toBeFocused();
+  await expect(messages(page)).toBeVisible();
   await page.reload();
+  await expect(messages(page)).toBeVisible();
+  await page.goto(address(app.origin, settings));
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Channels", exact: true }),
@@ -164,7 +142,7 @@ test("launch retains plugin-configuration recovery without Home", async ({
     pages(page).getByRole("button", { name: "Home", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toBeVisible();

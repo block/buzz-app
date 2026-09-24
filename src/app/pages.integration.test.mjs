@@ -27,7 +27,10 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
   try {
     const { createServices } = await vite.ssrLoadModule("/src/app/services.ts");
     services = createServices();
-    assert.deepEqual(services.pages.snapshot(), []);
+    assert.deepEqual(
+      services.pages.snapshot().map((page) => page.pluginId),
+      ["buzz.channels"],
+    );
     await settle();
     assert.equal(services.pages.snapshot().length, 5);
     assert.deepEqual(services.channelTemplates.snapshot(), []);
@@ -251,9 +254,14 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       ),
     );
     await services.plugins.change("disable", "buzz.workflows");
-    await services.plugins.change("disable", "buzz.channels");
-    const [projects] = services.pages.snapshot();
-    assert.equal(services.pages.snapshot().length, 1);
+    assert.equal(
+      await services.plugins.change("disable", "buzz.channels"),
+      false,
+    );
+    const projects = services.pages
+      .snapshot()
+      .find((page) => page.pluginId === "buzz.projects");
+    assert.equal(services.pages.snapshot().length, 2);
     assert.equal(projects.pluginId, "buzz.projects");
     assert.equal(projects.id, "projects");
     assert.equal(projects.title, "Projects");
@@ -263,10 +271,15 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       /^<div class="[^"]*"><section aria-label="Projects" data-buzz-surface="" class="panel"><div[^>]*><h1[^>]*>Projects<\/h1><\/div><\/section><\/div>$/,
     );
     await services.plugins.change("disable", "buzz.projects");
-    assert.deepEqual(services.pages.snapshot(), []);
+    assert.deepEqual(
+      services.pages.snapshot().map((page) => page.pluginId),
+      ["buzz.channels"],
+    );
     await services.plugins.change("enable", "buzz.projects");
     await vi.waitFor(() => {
-      const [restored] = services.pages.snapshot();
+      const restored = services.pages
+        .snapshot()
+        .find((page) => page.pluginId === "buzz.projects");
       assert.equal(restored?.pluginId, "buzz.projects");
       assert.notEqual(restored, projects);
     });

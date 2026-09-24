@@ -3,13 +3,7 @@ import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { Button } from "../shared/design-system/ui/Button";
 import { Switch } from "../shared/design-system/ui/Switch";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import {
@@ -82,15 +76,6 @@ export function Settings({
     | undefined;
   onSection?: (section: string) => void;
 }) {
-  const pluginsSection = useRef<HTMLButtonElement>(null);
-  const channelsControl = useCallback((control: HTMLElement | null) => {
-    if (!control) return;
-    return () => {
-      // A successful enable removes this recovery-only switch. Move focus only
-      // if the person is still using it, not if they moved elsewhere meanwhile.
-      if (document.activeElement === control) pluginsSection.current?.focus();
-    };
-  }, []);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const [selected, setSelected] =
     useState<(typeof sections)[number]["id"]>("profile");
@@ -125,7 +110,6 @@ export function Settings({
             <nav aria-label="Settings sections" className={styles.navigation}>
               {sections.map(({ id, label, icon: Icon }) => (
                 <NavigationItem
-                  ref={id === "plugins" ? pluginsSection : undefined}
                   label={label}
                   icon={<Icon aria-hidden="true" size={18} />}
                   selected={selected === id}
@@ -258,15 +242,9 @@ export function Settings({
                             </div>
                           </div>
                           <div className="actions items-center">
-                            {/* Channels is the launch destination. Keep recovery for
-                                saved disabled installs without offering an off switch. */}
-                            {(id !== "buzz.channels" || !plugin.enabled) && (
+                            {/* Channels is required and has no enable/disable control. */}
+                            {id !== "buzz.channels" && (
                               <Switch
-                                ref={
-                                  id === "buzz.channels"
-                                    ? channelsControl
-                                    : undefined
-                                }
                                 aria-label={`Enable ${plugin.manifest.name}`}
                                 checked={plugin.enabled}
                                 readOnly={busy}

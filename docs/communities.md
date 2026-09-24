@@ -108,7 +108,9 @@ with the relay host. Only `1` enables it and it requires `BUZZ_RELAY_URL`; any
 saved record, including Personal space, wins; switching in the UI never writes
 configuration; production builds ignore it. Session acquisition/retry registers again, including startup of a
 saved custom community after broker restart. Query/sign/publish, policy/claim,
-metadata, protected media and live traffic stay bound to the captured destination.
+owner/admin invite minting and member changes (`invite`, `member`; scoped only,
+relay-enforced, used by the bundled `buzz.moderation` plugin), metadata, protected
+media and live traffic stay bound to the captured destination.
 HTTP authority discovery and other upstream fetches reject redirects.
 
 The broker keeps its loopback Host check, requires exact local Origin on POSTs,

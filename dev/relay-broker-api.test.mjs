@@ -1507,3 +1507,224 @@ test("memory reads use captured relay and owner, not submitted identity/filter a
     await h.close();
   }
 });
+
+// Owner/admin community commands: community-bound, bounded before upstream I/O.
+async function communityAdmin(respond) {
+  const h = await harness(respond);
+  const registered = await fetch(`${h.base}/api/relay/register`, {
+    method: "POST",
+    headers: { Origin: h.base },
+    body: JSON.stringify({ url: fixtureRelayUrl }),
+  });
+  const { id } = await registered.json();
+  return {
+    h,
+    post: (route, body) => h.post(`${encodeURIComponent(id)}/${route}`, body),
+  };
+}
+
+test("invite mint forwards only bounded ttl/max_uses and returns the relay invite", async () => {
+  const minted = {
+    code: "abc",
+    expires_at: 1700003600,
+    max_uses: 1,
+    uses_remaining: 1,
+    url: "https://primary.example/invite/abc",
+  };
+  const { h, post } = await communityAdmin((call) =>
+    call.url.endsWith("/api/invites")
+      ? Response.json(minted)
+      : new Response(null, { status: 404 }),
+  );
+  try {
+    const response = await post("invite", {
+      ttl_secs: 3600,
+      max_uses: 1,
+      extra: "dropped",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(minted);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]).toMatchObject({
+      url: `${fixtureRelayUrl}/api/invites`,
+      body: { ttl_secs: 3600, max_uses: 1 },
+    });
+    expect(h.calls[0].auth.tags).toContainEqual([
+      "u",
+      `${fixtureRelayUrl}/api/invites`,
+    ]);
+    const unlimited = await post("invite", { ttl_secs: 2592000 });
+    expect(unlimited.status).toBe(200);
+    expect(h.calls[1].body).toEqual({ ttl_secs: 2592000, max_uses: null });
+
+    for (const body of [
+      {},
+      { ttl_secs: 59 },
+      { ttl_secs: 2592001 },
+      { ttl_secs: 3600.5 },
+      { ttl_secs: "3600" },
+      { ttl_secs: 3600, max_uses: 0 },
+      { ttl_secs: 3600, max_uses: 10001 },
+      { ttl_secs: 3600, max_uses: "1" },
+      null,
+    ])
+      expect((await post("invite", body)).status).toBe(400);
+    // Unscoped requests have no community to administer.
+    expect((await h.post("invite", { ttl_secs: 3600 })).status).toBe(400);
+    expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test("member changes sign exact NIP-43 admin kinds and reject malformed changes locally", async () => {
+  const { h, post } = await communityAdmin((call) =>
+    Response.json({ accepted: true, event_id: call.body.id, message: "" }),
+  );
+  const target = "a".repeat(64);
+  try {
+    for (const [change, kind, tags] of [
+      [
+        { action: "add", pubkey: target, role: "member" },
+        9030,
+        [
+          ["p", target],
+          ["role", "member"],
+        ],
+      ],
+      [
+        { action: "add", pubkey: target, role: "admin" },
+        9030,
+        [
+          ["p", target],
+          ["role", "admin"],
+        ],
+      ],
+      [{ action: "remove", pubkey: target }, 9031, [["p", target]]],
+      [
+        { action: "role", pubkey: target, role: "admin" },
+        9032,
+        [
+          ["p", target],
+          ["role", "admin"],
+        ],
+      ],
+    ]) {
+      const response = await post("member", change);
+      expect(response.status).toBe(200);
+      const sent = h.calls.at(-1);
+      expect(sent.url).toBe(`${fixtureRelayUrl}/events`);
+      expect(verifyEvent(sent.body)).toBe(true);
+      expect(sent.body).toMatchObject({
+        kind,
+        tags,
+        content: "",
+        pubkey: h.event.pubkey,
+        created_at: Math.floor(Date.now() / 1000),
+      });
+      expect(await response.json()).toMatchObject({
+        accepted: true,
+        event_id: sent.body.id,
+      });
+    }
+    for (const change of [
+      { action: "role", pubkey: target, role: "owner" },
+      { action: "add", pubkey: target },
+      { action: "remove", pubkey: target, role: "member" },
+      { action: "ban", pubkey: target },
+      { action: "toString", pubkey: target, role: "member" },
+      { action: "add", pubkey: "A".repeat(64), role: "member" },
+      { action: "add", pubkey: "a".repeat(63), role: "member" },
+      { kind: 9030, tags: [["p", target]] },
+    ])
+      expect((await post("member", change)).status).toBe(400);
+    expect(
+      (await h.post("member", { action: "remove", pubkey: target })).status,
+    ).toBe(400);
+    expect(h.calls).toHaveLength(4);
+  } finally {
+    await h.close();
+  }
+});
+
+test("member change receipts must match the signed command", async () => {
+  const { h, post } = await communityAdmin(() =>
+    Response.json({ accepted: true, event_id: "wrong" }),
+  );
+  try {
+    const response = await post("member", {
+      action: "remove",
+      pubkey: "a".repeat(64),
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: "Member change could not be confirmed",
+    });
+  } finally {
+    await h.close();
+  }
+});
+
+test.each([
+  [400, "invalid: cannot remove yourself", "invalid: cannot remove yourself"],
+  [
+    400,
+    "invalid: cannot remove the relay owner",
+    "invalid: cannot remove the relay owner",
+  ],
+  [
+    400,
+    `invalid: member not found: ${"a".repeat(64)}`,
+    `invalid: member not found: ${"a".repeat(64)}`,
+  ],
+  [
+    400,
+    "invalid: actor not authorized: must be admin or owner",
+    "invalid: actor not authorized: must be admin or owner",
+  ],
+  [
+    403,
+    "blocked: you are banned from this community",
+    "blocked: you are banned from this community",
+  ],
+  [
+    403,
+    "only relay owners and admins can create invites",
+    "only relay owners and admins can create invites",
+  ],
+  [
+    400,
+    "ttl_secs must be between 60 and 2592000",
+    "ttl_secs must be between 60 and 2592000",
+  ],
+  [
+    400,
+    "invalid: database error: connection reset <script>",
+    "Relay request failed (400)",
+  ],
+  [
+    400,
+    "invalid: event timestamp out of range: created_at=1",
+    "Relay request failed (400)",
+  ],
+  [500, "error: database error: secret", "Relay request failed (500)"],
+])(
+  "admin refusal %i %j is surfaced only when whitelisted",
+  async (status, error, shown) => {
+    const { h, post } = await communityAdmin(() =>
+      Response.json({ error }, { status }),
+    );
+    try {
+      for (const [route, body] of [
+        ["member", { action: "remove", pubkey: "a".repeat(64) }],
+        ["invite", { ttl_secs: 3600 }],
+      ]) {
+        const response = await post(route, body);
+        expect(response.status).toBe(status);
+        expect((await response.json()).error).toBe(shown);
+      }
+    } finally {
+      await h.close();
+    }
+  },
+);

@@ -12,6 +12,11 @@ import {
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validChannelCommand } from "./session-commands.mjs";
 import {
+  adminReason,
+  inviteRequest,
+  memberCommand,
+} from "./community-admin.mjs";
+import {
   directMessageEvent,
   directMessageReceipt,
 } from "./direct-messages.mjs";
@@ -1207,6 +1212,8 @@ export function relayBrokerPlugin({
               "/api/relay/authorize-agent",
               "/api/relay/claim",
               "/api/relay/accept-policy",
+              "/api/relay/invite",
+              "/api/relay/member",
               "/api/relay/gifs",
               "/api/relay/workflow-runs",
               "/api/relay/project-git",
@@ -1344,7 +1351,21 @@ export function relayBrokerPlugin({
           }
           const claim = route === "/api/relay/claim";
           const policy = route === "/api/relay/accept-policy";
+          const invite = route === "/api/relay/invite";
+          const member = route === "/api/relay/member";
           const gifs = route === "/api/relay/gifs";
+          if (invite || member) {
+            // Community-bound only; the relay remains the authority for roles.
+            if (!scoped)
+              return json(res, 400, { error: "Select a community first" });
+            try {
+              filters = invite
+                ? inviteRequest(filters)
+                : finalizeEvent(memberCommand(filters), key);
+            } catch (error) {
+              return json(res, 400, { error: error.message, sent: false });
+            }
+          }
           if (gifs) {
             if (
               typeof filters?.query !== "string" ||
@@ -1518,6 +1539,8 @@ export function relayBrokerPlugin({
             !directMessage &&
             !claim &&
             !policy &&
+            !invite &&
+            !member &&
             !gifs &&
             !workflowPath &&
             !readPublishing &&
@@ -1562,13 +1585,15 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile || directMessage
+              : profile || directMessage || member
                 ? "/events"
                 : claim
                   ? "/api/invites/claim"
                   : policy
                     ? "/api/invites/accept-policy"
-                    : "/query");
+                    : invite
+                      ? "/api/invites"
+                      : "/query");
           const method = workflowPath ? "GET" : "POST";
           const lane = admissions(relay, viewer).api;
           let releasePresence;
@@ -1590,7 +1615,7 @@ export function relayBrokerPlugin({
             const body = workflowPath ? undefined : JSON.stringify(filters);
             const admissionStart = performance.now();
             let connectsBefore, upstreamStart;
-            let response;
+            let response, relayReason;
             const requestSignal = AbortSignal.any([
               cancel.signal,
               AbortSignal.timeout(
@@ -1641,11 +1666,17 @@ export function relayBrokerPlugin({
                 body,
                 redirect: "error",
                 signal: requestSignal,
-              }).then((response) => {
+              }).then(async (response) => {
                 timings.push(
                   `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
                 );
-                return response;
+                if (!(invite || member) || response.ok) return response;
+                // Admission reduces failures to a summary; keep exact relay refusals.
+                const text = await response.text();
+                try {
+                  relayReason = adminReason(JSON.parse(text));
+                } catch {}
+                return new Response(text, response);
               });
             };
             response = presence
@@ -1690,6 +1721,7 @@ export function relayBrokerPlugin({
               } catch {
                 failure = apiFailure(response.status, undefined);
               }
+              if (relayReason) failure = { ...failure, error: relayReason };
               if (presence && failure.quota === "api")
                 lane.pause(failure.retryAfterMs);
               return json(res, response.status, failure);
@@ -1720,14 +1752,16 @@ export function relayBrokerPlugin({
                 });
               }
             }
-            if (profile) {
+            if (profile || member) {
               const receipt = JSON.parse(text);
               if (
                 receipt.event_id !== filters.id ||
                 typeof receipt.accepted !== "boolean"
               )
                 return json(res, 502, {
-                  error: "Profile publication could not be confirmed",
+                  error: member
+                    ? "Member change could not be confirmed"
+                    : "Profile publication could not be confirmed",
                 });
             }
             res.writeHead(200, {

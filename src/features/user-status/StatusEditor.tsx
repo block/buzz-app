@@ -56,6 +56,7 @@ export function StatusEditor({
       (current?.expiresAt ?? statusDeadline("today", Date.now() / 1000)) * 1000,
     ),
   );
+  const effectiveEmoji = emoji || (text.trim() ? "💬" : "");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -98,7 +99,7 @@ export function StatusEditor({
     try {
       await session.statuses.save({
         text: clear ? "" : text,
-        emoji: clear ? "" : emoji,
+        emoji: clear ? "" : effectiveEmoji,
         ...(expiresAt === undefined ? {} : { expiresAt }),
       });
       if (mounted.current) close();
@@ -170,8 +171,8 @@ export function StatusEditor({
                   setPickerOpen(true);
                 }}
                 icon={
-                  emoji ? (
-                    <StatusEmoji value={emoji} session={session} />
+                  effectiveEmoji ? (
+                    <StatusEmoji value={effectiveEmoji} session={session} />
                   ) : (
                     <SmileyIcon size={22} />
                   )

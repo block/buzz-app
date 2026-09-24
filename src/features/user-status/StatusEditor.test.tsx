@@ -136,3 +136,53 @@ it("prefills and preserves an existing deadline, and validates a custom date bef
     expiresAt: tomorrow.getTime() / 1000,
   });
 });
+
+it("adds and saves a message emoji for nonblank text, and removes the automatic emoji when emptied", async () => {
+  const user = userEvent.setup();
+  const { save } = setup();
+  const input = screen.getByLabelText("Status message");
+  const emoji = screen.getByRole("button", { name: "Choose a status emoji" });
+  const submit = screen.getByRole("button", { name: "Save status" });
+  await user.type(input, "Reading");
+  expect(emoji).toHaveTextContent("💬");
+  await user.clear(input);
+  await user.type(input, "   ");
+  expect(emoji).not.toHaveTextContent("💬");
+  expect(submit).toBeDisabled();
+  await user.clear(input);
+  await user.type(input, "Reading");
+  await user.click(submit);
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Reading", emoji: "💬" }),
+    ),
+  );
+});
+it.each(["🏠", ":party:"])(
+  "preserves the selected %s emoji when text changes or is erased",
+  async (emoji) => {
+    const user = userEvent.setup();
+    const { save } = setup({
+      userId: "a".repeat(64),
+      text: "Remote",
+      emoji,
+      updatedAt: Date.now() / 1000,
+    });
+    const input = screen.getByLabelText("Status message");
+    await user.clear(input);
+    await user.type(input, "Later");
+    await user.click(screen.getByRole("button", { name: "Save status" }));
+    await waitFor(() =>
+      expect(save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ text: "Later", emoji }),
+      ),
+    );
+    await user.clear(input);
+    await user.click(screen.getByRole("button", { name: "Save status" }));
+    await waitFor(() =>
+      expect(save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ text: "", emoji }),
+      ),
+    );
+  },
+);

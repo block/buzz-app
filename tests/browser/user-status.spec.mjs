@@ -61,7 +61,15 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(
       editor.getByRole("button", { name: "Duration: Today", exact: true }),
     ).toBeVisible();
+    const emojiButton = editor.getByRole("button", {
+      name: "Choose a status emoji",
+    });
+    await editor.getByLabel("Status message").fill("Typing");
+    await expect(emojiButton).toHaveText("💬");
+    await editor.getByLabel("Status message").fill("   ");
+    await expect(emojiButton).not.toHaveText("💬");
     await editor.getByLabel("Status message").fill("Design meeting");
+    await expect(emojiButton).toHaveText("💬");
     await expect(editor.getByLabel("Status message")).toHaveValue(
       "Design meeting",
     );
@@ -76,7 +84,7 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(
       page.getByRole("button", { name: "Your profile", exact: true }),
     ).toBeFocused();
-    await expect(chat.locator('[aria-label="Design meeting"]')).toHaveText(
+    await expect(chat.locator('[aria-label="💬 Design meeting"]')).toHaveText(
       "💬",
     );
     await expect(chat.getByText("Design meeting", { exact: true })).toHaveCount(

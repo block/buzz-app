@@ -541,7 +541,7 @@ it.each(["picker", "completion"])(
           screen.getByRole("button", { name: "Mention a member" }),
         );
         return within(
-          screen.getByRole("region", { name: "Mention a member or agent" }),
+          screen.getByRole("dialog", { name: "Mention a member or agent" }),
         );
       }
       // jsdom has no caret hit testing; append after the existing mention.

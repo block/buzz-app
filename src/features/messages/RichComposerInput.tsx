@@ -1,6 +1,6 @@
 import { availableMentionAgents } from "../agents/mention-choices";
 import { useAgentChoices } from "../agents/use-choices";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { useIdentityNames } from "../identity-names/react";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -85,6 +85,24 @@ export function RichComposerInput({
   const previous = useRef(labels);
   const revealed = useRef(
     new Set([...qualifiers].filter(([, suffix]) => suffix).map(([key]) => key)),
+  );
+  // Keep the motion decision through editor-driven rerenders of the same
+  // draft and labels; a new draft or naming result starts a new decision.
+  const labelState = JSON.stringify([...labels]);
+  const reveal = useMemo(
+    () =>
+      new Set(
+        (JSON.parse(labelState) as [string, string][])
+          .filter(
+            ([key, label]) =>
+              draft.recipients.some((recipient) => recipient.pubkey === key) &&
+              previous.current.has(key) &&
+              previous.current.get(key) !== label &&
+              !revealed.current.has(key),
+          )
+          .map(([key]) => key),
+      ),
+    [draft, labelState],
   );
   useLayoutEffect(() => {
     previous.current = labels;
@@ -171,11 +189,11 @@ export function RichComposerInput({
       .sort((a, b) => a.start - b.start)
       .map(({ start, end, mention, editAsText }) => {
         const label = draft.text.slice(start + 1, end);
-      const resolved = mention ? (labels.get(mention) ?? label) : label;
-      const qualifier = mention ? qualifiers.get(mention) : undefined;
-      const faceLabel = qualifier
-        ? resolved.slice(0, -(qualifier.length + 3))
-        : resolved;
+        const resolved = mention ? (labels.get(mention) ?? label) : label;
+        const qualifier = mention ? qualifiers.get(mention) : undefined;
+        const faceLabel = qualifier
+          ? resolved.slice(0, -(qualifier.length + 3))
+          : resolved;
         return {
           start,
           end,
@@ -199,10 +217,7 @@ export function RichComposerInput({
                 qualifier
                   ? {
                       text: `· ${qualifier}`,
-                      reveal:
-                        previous.current.has(mention) &&
-                        previous.current.get(mention) !== resolved &&
-                        !revealed.current.has(mention),
+                      reveal: reveal.has(mention),
                       accessibleLabel: `public key ending ${qualifier.split("").join(" ")}`,
                     }
                   : undefined

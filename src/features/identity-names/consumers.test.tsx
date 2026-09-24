@@ -132,7 +132,7 @@ it("uses channel scope in link previews and activity, and participant scope in s
       f.session.profiles,
       f.session.names,
     );
-    return <output aria-label="DM label">{labels[0]?.name}</output>;
+    return <output aria-label="DM label">{labels.channels[0]?.name}</output>;
   }
   const view = render(
     <>

@@ -255,6 +255,12 @@ form one stack; avoid inserting form-section gaps between individual rows.
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
 Escape behavior from Base UI. Overlay layers keep menus and hints above dialogs.
+Hints use text-caption (12px / 16px), with space-1 vertical and space-2 horizontal
+padding. Pointer entry uses the shared state duration (150ms), fading from a
+0.97 scale, 2px downward offset and 2px blur; exit reverses it with the fast
+duration (120ms). This designer-requested blur is a tooltip-specific exception.
+Base UI instant states and keyboard navigation skip transitions; reduced motion
+keeps only the fade.
 
 ToastProvider mounts once in the host. ToastNotice belongs to the source that
 owns its state and recovery: unmounting the source removes its notification,

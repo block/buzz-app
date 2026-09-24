@@ -156,7 +156,9 @@ This is a host-matched preview addition, not cross-version capability negotiatio
 
 A panel may additionally contribute `channelLauncher: ComponentType<ChannelLauncherProps>`.
 Channels renders these in its conversation header with public `context`, `pressed`,
-`available()` and `toggle(target)`. The page owns a single bottom drawer; a launcher
+`available()` and `toggle(target)`. The page owns one selected channel panel, placed
+in the bottom drawer by default or the existing companion column when the contribution
+sets `channelPlacement: "side"`; a launcher
 selects its **exact active contribution**, not target matching. `available()` and
 `toggle()` are revoked when the mounted context or contribution is retired. Optional
 `PanelProps.channelContext` carries the current displayed public context to a channel
@@ -170,6 +172,56 @@ host companion change is required. Disabling/replacing a contribution closes its
 drawer, and re-enabling starts closed. See [Terminal](terminal.md) for native support,
 session behavior and validation limits. This is a host-matched preview addition,
 not cross-version capability negotiation.
+
+### Optional Canvas todos
+
+Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
+it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
+side panel, with add/check/uncheck, one optional assignee per item, automatic
+saving after each action, and explicit Refresh. It uses shared controls and theme
+tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
+
+The source of truth is ordinary Markdown in one root level-two `Todos` section:
+
+```markdown
+## Todos
+
+- [ ] Review the plan
+- [x] Share the preview
+```
+
+Only top-level unordered checkbox items in that section are shown. Nested lists,
+quotes and fenced examples are not tasks in this view. Checkbox edits change one
+source byte; additions insert below the heading without rewriting other content.
+Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
+the convenience UI, not the saved list: Channel settings → Canvas remains editable.
+
+An optional terminal suffix records assignment as ordinary Markdown:
+` · Assignee: [Display name](nostr:npub…)`, using a full valid npub, not the abbreviated
+placeholder shown here. Only that exact structural suffix is assignment metadata;
+other links/prose remain task text. The public key is identity; names are escaped
+presentation. Assign/change/clear edits only the suffix. The selector uses the
+current channel member roster, including that boundary for shared naming policy,
+with public-key qualifiers in the opened choices. Missing rosters disable assignment controls; failed profile reads retain key/name fallbacks
+and offer retry. Profile renames never rewrite saved Canvas. Former members remain
+visible and can be changed or cleared. Assignment sends no notification and grants
+no channel membership or access.
+
+Canvas reads occur on open and explicit Refresh, not on a timer. Missing assignee
+and member profiles use the existing shared background directory. Typing an unfinished
+new item stays local; Add, checkbox and assignment actions save automatically.
+Task actions pause while saving; the new-item input stays editable and retains
+its text when the save finishes. If the loaded Canvas was written in the current second,
+a single cancellable wait respects its timestamp ordering; there is no background
+retry loop. Failures and recovered drafts expose Retry rather than silently publishing
+on reopen. Save uses the existing session Canvas/outbox contract, including its 24 KiB limit, fresh membership check,
+optimistic head comparison and exact confirmation. This is **not atomic concurrency
+control**; simultaneous saves can overwrite edits. Detected conflicts retain the
+local draft and require reviewing the saved Canvas. Refresh confirms before discarding
+edits. Local recovery drafts are partitioned by community/viewer/channel; if browser
+storage is unavailable they survive only while the editor stays open. Save never
+promotes local recovery storage to shared state. Already accepted outbox operations
+remain session-owned if the drawer closes or plugin is disabled.
 
 ### Top-bar launchers and the companion slot
 

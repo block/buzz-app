@@ -1,3 +1,5 @@
+import todosManifest from "./todos/manifest.json";
+import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import templatesManifest from "./channel-templates/manifest.json";
@@ -33,6 +35,11 @@ import sessionsManifest from "./sessions/manifest.json";
 import * as sessions from "./sessions";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...todosManifest, apiVersion: 1 },
+    module: todos,
+    enabledByDefault: false,
+  },
   { manifest: { ...diffsManifest, apiVersion: 1 }, module: diffs },
   {
     manifest: { ...templatesManifest, apiVersion: 1 },

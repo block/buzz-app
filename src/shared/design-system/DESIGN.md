@@ -170,7 +170,10 @@ independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
-`variant="field"` fits labelled forms. Pass `disabled` explicitly when the choice
+`variant="field"` fits labelled forms. The proposed `variant="compact"` fits
+trailing row choices: a small ghost trigger with a visually hidden accessible
+label, bounded single-line value, and full choice text in the popup and value hint.
+The caller owns its column width. Pass `disabled` explicitly when the choice
 is unavailable. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared

@@ -351,7 +351,9 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     }),
   ).toHaveAttribute("contenteditable", "false");
   await expect(
-    page.getByRole("textbox", { name: "New message", exact: true }),
+    page
+      .getByRole("textbox", { name: "New message", exact: true })
+      .locator("[data-placeholder]"),
   ).toHaveAttribute("data-placeholder", "");
   for (const name of ["Mention a member", "Insert emoji"]) {
     const tool = page.getByRole("button", { name, exact: true });

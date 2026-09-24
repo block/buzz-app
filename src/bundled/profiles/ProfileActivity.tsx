@@ -29,37 +29,30 @@ export function ProfileActivity({
   const turns = snapshot.turns.filter(
     (turn) => turn.agent === pubkey && turn.channelId === channelId,
   );
-  const working = turns.filter((turn) => turn.state === "working").length;
-  const unknown = turns.filter((turn) => turn.state === "unknown").length;
-  const ended = turns.length - working - unknown;
   const latest = Math.max(...turns.map((turn) => turn.timestamp));
   return (
     <section aria-label="Activity preview" className="flex flex-col gap-2">
-      <h3 className="text-body">Activity in this channel</h3>
-      <p className="text-body-sm text-secondary">
-        Owner-only agent telemetry, including threads. Quiet means unknown, not
-        idle.
-      </p>
-      <p role="status" className="text-body-sm">
-        {snapshot.status === "unavailable"
-          ? "Activity is unavailable on this host."
-          : snapshot.status === "connecting"
-            ? "Connecting to live activity…"
-            : snapshot.status === "interrupted"
-              ? "Activity feed interrupted. Current work is unknown."
-              : !turns.length
-                ? "No turn activity received for this identity in this channel."
-                : `${working} working · ${unknown} unknown · ${ended} ended`}
-      </p>
-      {turns.length > 0 && (
-        <p className="text-body-sm text-secondary">
-          Latest turn signal:{" "}
+      <h3 className="text-body">Latest activity</h3>
+      <p role="status" className="text-body-sm text-secondary">
+        {snapshot.status === "unavailable" ? (
+          "Activity unavailable"
+        ) : snapshot.status === "connecting" ? (
+          "Connecting…"
+        ) : snapshot.status === "interrupted" ? (
+          "Activity disconnected"
+        ) : !turns.length ? (
+          "No activity yet"
+        ) : (
           <time dateTime={new Date(latest).toISOString()}>
-            {new Date(latest).toLocaleString()}
+            {new Date(latest).toLocaleString(undefined, {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
           </time>
-          . Ended does not necessarily mean succeeded.
-        </p>
-      )}
+        )}
+      </p>
       <div>
         <Button size="compact" onClick={() => context.open(target)}>
           View activity

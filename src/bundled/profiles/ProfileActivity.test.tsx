@@ -86,29 +86,44 @@ it("renders connecting, empty, and unavailable without inferring idle or ownersh
   const mounted = render(f.view());
   expect(screen.getByRole("status")).toHaveTextContent("Connecting");
   act(f.listening);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "No turn activity received",
-  );
+  expect(screen.getByRole("status")).toHaveTextContent("No activity yet");
   const unavailable = fixture(false);
   mounted.rerender(unavailable.view());
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "unavailable on this host",
-  );
+  expect(screen.getByRole("status")).toHaveTextContent("Activity unavailable");
   expect(screen.getByRole("button", { name: "View activity" })).toBeEnabled();
   expect(unavailable.observe).not.toHaveBeenCalled();
 });
 it("projects only this identity and channel, excludes unscoped/foreign data, and opens exact context", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-23T12:00:00Z"));
   const f = fixture();
   f.listening();
   f.send();
+  vi.setSystemTime(new Date("2026-09-23T12:05:00Z"));
   f.send(agent, "channel-a", "turn_completed");
+  vi.setSystemTime(new Date("2026-09-23T12:10:00Z"));
   f.send(foreign);
   f.send(agent, "channel-b");
   f.send(agent, null);
   const mounted = render(f.view());
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "1 working · 0 unknown · 1 ended",
+  expect(
+    screen.getByRole("heading", { name: "Latest activity" }),
+  ).toBeVisible();
+  expect(screen.getByRole("status").querySelector("time")).toHaveAttribute(
+    "datetime",
+    "2026-09-23T12:05:00.000Z",
   );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    new Date("2026-09-23T12:05:00Z").toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }),
+  );
+  expect(
+    screen.queryByText(/working|unknown|ended|telemetry/i),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByText(/never render raw telemetry/),
   ).not.toBeInTheDocument();
@@ -119,28 +134,36 @@ it("projects only this identity and channel, excludes unscoped/foreign data, and
     activityTarget(agent, "channel-a"),
   );
   mounted.rerender(f.view("c".repeat(64)));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "No turn activity received",
-  );
-  expect(screen.queryByText(/Latest turn signal/)).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("No activity yet");
+  expect(
+    screen.getByRole("status").querySelector("time"),
+  ).not.toBeInTheDocument();
   mounted.rerender(f.view(agent, { ...f.context, channelId: "channel-b" }));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "1 working · 0 unknown · 0 ended",
+  expect(screen.getByRole("status").querySelector("time")).toHaveAttribute(
+    "datetime",
+    "2026-09-23T12:10:00.000Z",
   );
 });
-it("ages evidence using the existing owner timer and reports interruption truthfully", () => {
+it("keeps the observed timestamp when evidence ages and reports disconnection", () => {
   vi.useFakeTimers();
   const f = fixture();
   f.listening();
   f.send();
   render(f.view());
-  expect(screen.getByRole("status")).toHaveTextContent("1 working");
-  act(() => vi.advanceTimersByTime(31_000));
-  expect(screen.getByRole("status")).toHaveTextContent("0 working · 1 unknown");
+  expect(screen.getByRole("status").querySelector("time")).toBeInTheDocument();
+  const timestamp = screen.getByRole("status").querySelector("time")?.dateTime;
+  act(() => vi.advanceTimersByTime(61_000));
+  expect(screen.getByRole("status").querySelector("time")).toHaveAttribute(
+    "datetime",
+    timestamp,
+  );
   act(() => f.owner.state({ status: "retrying", routes: [] }));
-  expect(screen.getByRole("status")).toHaveTextContent("interrupted");
+  expect(screen.getByRole("status")).toHaveTextContent("Activity disconnected");
   act(f.listening);
-  expect(screen.getByRole("status")).toHaveTextContent("0 working · 1 unknown");
+  expect(screen.getByRole("status").querySelector("time")).toHaveAttribute(
+    "datetime",
+    timestamp,
+  );
 });
 it("never starts capture, releases the React subscription, and hides when the plugin is disabled", () => {
   const f = fixture();
@@ -160,9 +183,7 @@ it("never starts capture, releases the React subscription, and hides when the pl
     f.owner.queries.activate();
     f.listening();
   });
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "No turn activity received",
-  );
+  expect(screen.getByRole("status")).toHaveTextContent("No activity yet");
 });
 it("does not broaden missing context or render when the destination is unavailable", () => {
   const f = fixture();
@@ -182,16 +203,16 @@ it("drops retained signals on access reset and rejects late deliveries", () => {
   f.listening();
   f.send();
   render(f.view());
-  expect(screen.getByText(/Latest turn signal/)).toBeInTheDocument();
+  expect(screen.getByRole("status").querySelector("time")).toBeInTheDocument();
   act(() => {
     f.deny();
     f.send();
     f.listening();
   });
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "No turn activity received",
-  );
-  expect(screen.queryByText(/Latest turn signal/)).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("No activity yet");
+  expect(
+    screen.getByRole("status").querySelector("time"),
+  ).not.toBeInTheDocument();
 });
 it("switches snapshots synchronously without requiring a parent remount key", () => {
   const old = fixture();
@@ -200,15 +221,11 @@ it("switches snapshots synchronously without requiring a parent remount key", ()
   const next = fixture();
   next.listening();
   const mounted = render(old.view());
-  expect(screen.getByRole("status")).toHaveTextContent("1 working");
+  expect(screen.getByRole("status").querySelector("time")).toBeInTheDocument();
   mounted.rerender(next.view());
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "No turn activity received",
-  );
+  expect(screen.getByRole("status")).toHaveTextContent("No activity yet");
   act(() => old.send());
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "No turn activity received",
-  );
+  expect(screen.getByRole("status")).toHaveTextContent("No activity yet");
   act(() => next.send());
-  expect(screen.getByRole("status")).toHaveTextContent("1 working");
+  expect(screen.getByRole("status").querySelector("time")).toBeInTheDocument();
 });

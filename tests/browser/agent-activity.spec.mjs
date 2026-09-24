@@ -361,9 +361,7 @@ test("profile activity opens the exact agent and originating channel before its 
   });
   await expect(
     profile.getByRole("region", { name: "Activity preview" }),
-  ).toContainText(
-    "No turn activity received for this identity in this channel.",
-  );
+  ).toContainText("No activity yet");
   await profile
     .getByRole("button", { name: "View activity", exact: true })
     .click();
@@ -419,8 +417,8 @@ test("profile activity opens the exact agent and originating channel before its 
   await expect(avatar).toBeFocused();
   await avatar.click();
   await expect(
-    profile.getByRole("region", { name: "Activity preview" }),
-  ).toContainText("1 working · 0 unknown · 0 ended");
+    profile.getByRole("region", { name: "Activity preview" }).locator("time"),
+  ).toHaveAttribute("datetime", JSON.parse(expected.plaintext).timestamp);
   const preview = profile.getByRole("region", { name: "Activity preview" });
   // Exercise painted theme/layout, not the separate appearance persistence contract.
   for (const mode of ["light", "dark"]) {

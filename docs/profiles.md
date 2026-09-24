@@ -6,12 +6,13 @@ directory. Agents retains agent-specific configuration/operations; this slice
 adds no ownership/running badge, editor, agent-library read or execution API.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
-The in-pane preview reads the same session-owned turn snapshot: working, unknown
-and ended counts plus the latest turn signal, restricted to this exact public key
-and originating channel (including threads). No context means no preview, never an
-all-channel fallback. Connecting, interrupted, unavailable and empty states are
-explicit; silence is not idle, and ended is not necessarily succeeded. Counts
-cover retained turn evidence, not a complete history or raw event count.
+The in-pane “Latest activity” preview shows the latest observed turn timestamp
+from the same session-owned snapshot, restricted to this exact public key and
+originating channel (including threads). It uses a short date and time rather than
+a relative age that could become stale between snapshot updates. No context means
+no preview, never an all-channel fallback. Connecting, disconnected, unavailable
+and empty states are explicit. Counts and detailed explanations stay in the
+activity panel; the preview does not infer idle state or successful completion.
 
 This action is offered for any public identity: it does not infer that the identity
 is an owned/running agent. Public agent hints never grant telemetry access. The

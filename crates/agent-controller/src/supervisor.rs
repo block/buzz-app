@@ -92,7 +92,9 @@ pub(crate) fn serve(
                 Err(e)
                     if matches!(
                         e.kind(),
-                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                        std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::Interrupted
                     ) =>
                 {
                     match process.alive() {
@@ -460,10 +462,22 @@ mod lifecycle_tests {
         // but its socket closes and its exit is eventually reaped.
         let child = Command::new("/bin/sleep").arg("60").spawn().unwrap();
         let pid = child.id() as i32;
+        // An assertion before the explicit kill must not leave /bin/sleep running.
+        struct KillOnFailure(i32);
+        impl Drop for KillOnFailure {
+            fn drop(&mut self) {
+                if self.0 > 1 {
+                    unsafe { libc::kill(self.0, libc::SIGKILL) };
+                }
+            }
+        }
+        let mut cleanup = KillOnFailure(pid);
         let (parent, mut guardian) = UnixStream::pair().unwrap();
         parent
             .set_read_timeout(Some(Duration::from_millis(30)))
             .unwrap();
+        // Model a peer reference that outlives confirm_start's socket drop.
+        let delayed_peer = parent.try_clone().unwrap();
         assert_eq!(
             confirm_start(parent, child).err().unwrap(),
             "Could not start agent listener or acquire ownership"
@@ -471,8 +485,25 @@ mod lifecycle_tests {
         assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
         guardian.set_nonblocking(true).unwrap();
         let mut byte = [0];
-        assert_eq!(guardian.read(&mut byte).unwrap(), 0); // socket closed
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // Verify the race path: the extra reference prevents immediate EOF.
+        assert_eq!(
+            guardian.read(&mut byte).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        drop(delayed_peer);
+        loop {
+            match guardian.read(&mut byte) {
+                Ok(0) => break, // peer socket closed
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "peer socket did not close");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                result => panic!("unexpected peer read: {result:?}"),
+            }
+        }
         assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+        cleanup.0 = 0;
         let deadline = Instant::now() + Duration::from_secs(5);
         while unsafe { libc::kill(pid, 0) } == 0 {
             assert!(

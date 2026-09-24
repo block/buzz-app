@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { composerDOMFixture } from "../messages/composer-testing";
+
+composerDOMFixture();
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import {
   act,

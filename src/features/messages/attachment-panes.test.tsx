@@ -231,13 +231,13 @@ it.each([false, true])(
       <StrictMode>
         <OuterComposer attach={other}>
           <MediaReviewViewer
+            onOpenLink={() => false}
             attachment={image}
             session={session}
             scope={h.scope}
             channelId="work"
             channelName="Work"
             messageId={h.root.id}
-            onOpenLink={() => false}
             initialTime={0}
             close={() => {}}
           />

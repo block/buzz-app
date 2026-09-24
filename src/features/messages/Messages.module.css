@@ -75,7 +75,7 @@
 .message {
   position: relative;
   display: flex;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: var(--space-2) 0 var(--space-section-gap);
 }
 .messageBody {
@@ -315,9 +315,10 @@
   width: 100%;
 }
 .threadAvatars {
+  --thread-avatar-stroke: 1.5px;
   display: inline-flex;
   align-items: center;
-  padding-right: var(--space-half);
+  padding-right: var(--space-1);
 }
 .threadAvatar {
   position: relative;
@@ -327,9 +328,10 @@
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  margin-right: calc(-1 * var(--space-half));
+  margin-right: calc(-1 * var(--space-1));
   overflow: hidden;
-  border: 2px solid var(--surface-panel);
+  /* Padding preserves the fractional ring width across browser engines. */
+  padding: var(--thread-avatar-stroke);
   background: var(--surface-panel);
   color: var(--text-subtle);
   font-size: var(--text-caption);
@@ -989,7 +991,10 @@ button.mediaPreview {
   width: max-content;
   max-width: 100%;
   overflow-x: auto;
-  border-collapse: collapse;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
@@ -998,10 +1003,18 @@ button.mediaPreview {
   white-space: nowrap;
 }
 .text :where(th, td) {
-  border: 1px solid var(--border-standard);
+  border: 0;
+  border-right: 1px solid var(--border-standard);
+  border-bottom: 1px solid var(--border-standard);
   padding: var(--space-1) var(--space-2);
   text-align: left;
   vertical-align: top;
+}
+.text :where(th, td):last-child {
+  border-right: 0;
+}
+.text tbody tr:last-child td {
+  border-bottom: 0;
 }
 .text th {
   background: var(--affordance-subtle);
@@ -1055,7 +1068,7 @@ button.mediaPreview {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: var(--space-2) 0 var(--space-4);
   color: var(--text-subtle);
   font-size: var(--text-body-sm);
@@ -1105,7 +1118,9 @@ button.mediaPreview {
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .threadAvatarCount {
-  margin-right: calc(-1 * var(--space-half));
+  margin-right: calc(-1 * var(--space-1));
+  border: 0;
+  box-shadow: inset 0 0 0 var(--thread-avatar-stroke) var(--surface-panel);
 }
 .membershipAvatarCount {
   margin-right: calc(-1 * var(--space-1h));

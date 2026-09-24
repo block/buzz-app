@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { composerDOMFixture } from "./composer-testing";
+
+composerDOMFixture();
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EventTemplate } from "nostr-tools";
@@ -8,9 +11,6 @@ import type { RelayEvent } from "../relay/events";
 import { createRelaySession } from "../relay/session";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
-import { composerDOMFixture } from "./composer-testing";
-
-composerDOMFixture();
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 
@@ -89,13 +89,13 @@ async function setupReview({
   const user = userEvent.setup();
   render(
     <MediaReviewViewer
+      onOpenLink={() => false}
       attachment={attachment}
       session={owner.session}
       scope={`review-${kind}`}
       channelId="one"
       channelName="One"
       messageId={root.id}
-      onOpenLink={() => false}
       initialTime={72}
       close={() => {}}
     />,

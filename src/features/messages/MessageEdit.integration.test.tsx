@@ -286,13 +286,13 @@ it.each(["image", "video"] as const)(
         await authorize(owner);
         render(
           <MediaReviewViewer
+            onOpenLink={() => false}
             attachment={attachment}
             session={owner.session}
             scope={`media-edit-${kind}-${scenario}`}
             channelId="channel"
             channelName="General"
             messageId={exactTarget ? exact.id : root.id}
-            onOpenLink={() => false}
             initialTime={5}
             close={() => {}}
           />,

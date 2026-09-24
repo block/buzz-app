@@ -81,7 +81,9 @@ export function entityFromEvent(event: EventData): Entity | undefined {
     dtag,
     address: `${event.kind}:${event.pubkey}:${dtag}`,
     name: value(event, "name") ?? dtag,
-    description: value(event, "description") ?? event.content,
+    description:
+      value(event, "description") ??
+      (event.kind === 30621 ? "" : event.content),
     event,
   };
 }
@@ -95,6 +97,10 @@ function repositoryCoordinate(address: string) {
     ? { type: "repo" as const, owner, dtag }
     : undefined;
 }
+const singleValue = (event: EventData, name: string) => {
+  const tags = event.tags.filter((t) => t[0] === name);
+  return tags.length === 1 ? tags[0]?.[1] : undefined;
+};
 const related = (event: EventData, id: string) =>
   event.tags.some((t) => ["e", "E"].includes(t[0] ?? "") && t[1] === id);
 
@@ -251,29 +257,48 @@ export function projectDestinations(read: Read) {
           )
         )
           throw new EntityFailure("not-found");
-        const authorized = new Set([item.pubkey, entity.owner]);
+        const authorized = new Set([
+          item.pubkey,
+          entity.owner,
+          ...entity.event.tags
+            .filter((t) => t[0] === "maintainers")
+            .flatMap((t) => t.slice(1))
+            .filter((key) => entityHex.test(key)),
+        ]);
         const update = activity
           .filter(
             (e) =>
               e.kind === 1619 &&
-              value(e, "E") === item.id &&
+              singleValue(e, "E") === item.id &&
+              singleValue(e, "P") === item.pubkey &&
+              singleValue(e, "a") === entity.address &&
+              gitHash.test(singleValue(e, "c") ?? "") &&
+              e.tags.some(
+                (t) => t[0] === "clone" && t.slice(1).some((url) => url.trim()),
+              ) &&
               authorized.has(e.pubkey),
           )
           .reduce<EventData | undefined>(
             (head, e) => newer(head, e),
             undefined,
           );
-        const commit = value(update ?? item, "c");
+        const commit = singleValue(update ?? item, "c");
         if (route.type === "pr" && commit && gitHash.test(commit))
           result.commit = commit.toLowerCase();
         const status = activity
-          .filter(
-            (e) =>
+          .filter((e) => {
+            const roots = e.tags.filter((t) => t[0] === "e" && t[3] === "root");
+            return (
               e.kind >= 1630 &&
               e.kind <= 1633 &&
-              related(e, item.id) &&
-              authorized.has(e.pubkey),
-          )
+              roots.length === 1 &&
+              roots[0]?.[1] === item.id &&
+              e.tags
+                .filter((t) => t[0] === "a")
+                .every((t) => t[1] === entity.address) &&
+              authorized.has(e.pubkey)
+            );
+          })
           .reduce<EventData | undefined>(
             (head, e) => newer(head, e),
             undefined,

@@ -2,8 +2,8 @@
 
 Desktop builds register a URL scheme with the operating system, so a link opened
 outside the app brings it to the front and navigates, at cold start too. Every build
-registers `buzz://`, the same scheme in-app links and **Copy link** use; `just desktop`
-and `just desktop-bundle` claim it like a released build does. Builds share this
+uses `buzz://`, the same scheme in-app links and **Copy link** use. Windows/Linux
+register on launch; macOS requires a registered bundle, not `just desktop`. Builds share this
 scheme (see [current limits](#current-limits)). The browser build has no OS ingress
 and keeps its `#buzz=` address form.
 
@@ -28,12 +28,14 @@ parameters are rejected. The same forms work in message content.
 None carries a community, so each binds to the currently selected community and
 viewer, and fail `unavailable` when no community is selected or no identity is
 known. Every other link, including `buzz://open?target=…`, `buzz://join`,
-incomplete entity links, unknown hosts, case variants of the scheme and oversize links, fails as
+incomplete entity links, unknown hosts and oversize links, fails as
 `invalid-target` and shows "This destination couldn't open" with
 **Open Settings**. Unsupported links have no Retry action. Nothing is
 auto-joined. A valid address is never authorization: bound targets pass the same
 viewer, membership and channel checks as in-app navigation, so a link into a channel
-you cannot read still fails `denied`.
+you cannot read still fails `denied`. The frontend expects the canonical lowercase
+`buzz:` scheme; the native URL parser can normalize scheme case before delivery,
+so uppercase OS input is not guaranteed to be rejected.
 
 The latest arriving link wins. Before readiness, one pending intent is retained;
 if identity or community is missing, select a community and use **Retry navigation**.
@@ -44,7 +46,9 @@ start page before the destination.
 Projects owns entity presentation and acknowledges navigation after the requested
 content is ready. Repository/project overviews, files, commit history and selected
 diffs, issue/PR details and discussion, contributors, and linked channels are real
-read-only destinations. Project Git sections name their primary repository
+read-only destinations. The landing page is an explicitly partial recent-entities
+list (up to 100 announcements), not the canonical grouped NIP-MP collection.
+Project Git sections name their primary repository
 (matching identifier, otherwise the first coordinate) and link to other members.
 Signed entity metadata remains visible independently of linked-channel access;
 Git reads still enforce the relay's authorization. Missing entities and failed
@@ -71,6 +75,13 @@ message. No publication is needed to browse. The broker requires Git on its PATH
 it signs repository-root NIP-98 reads with the existing host identity. A selected
 commit must show that exact revision and its diff. Back/Forward and Copy link
 preserve the entity route, including the requested tab and commit.
+
+**Before native testing:** coordinate with anyone using another Buzz copy on the
+machine. Registration can change the installed app's handler, and the shared app
+identifier permits only one active native instance across checkouts. Use a
+disposable machine/profile or explicitly agree which app owns the handler and how
+to restore it. Do not launch/register a test bundle over an active installation
+without that agreement.
 
 **macOS** only routes a scheme to a bundled app. `just desktop` binaries are never
 registered, so build a debug bundle and launch it once to register it with Launch
@@ -109,13 +120,17 @@ xdg-open "buzz://channel/general"
   installed the two compete for it: Windows and Linux route it to whichever binary
   started last, and macOS to whichever registered bundle Launch Services picks.
 - Every local bundle keeps the same application identifier, so they share app data
-  and Launch Services lists several bundles under one identifier.
+  and single-instance identity. A second checkout can forward its link to the
+  already running copy and exit. This is one active native Buzz per machine, not
+  per-worktree isolation; Launch Services can list several bundles under that identity.
 - Invite links (`buzz://join`, `https://<relay>/invite/<code>`) and remote push
   are not handled; they end in the
   failure notice or, for HTTPS, never reach the app.
 - Git browsing currently uses the authenticated development broker, not packaged
   desktop transport. Other adapters can still show entity metadata; explicit Git
-  sections report unavailable. No repository editing, issue changes, PR review
+  sections report unavailable. PR commit lookups only read the base repository;
+  external fork clone URLs are never fetched, so exact fork PR diffs are unavailable.
+  No repository editing, issue changes, PR review
   decisions, or merge operations are included.
 - Git reads fetch a fresh shallow repository per demand: latest 100 commits,
   20,000 file entries, 1 MiB text files and a 4 MiB response ceiling. The 12-second

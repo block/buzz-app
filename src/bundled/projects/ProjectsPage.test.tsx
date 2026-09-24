@@ -45,6 +45,7 @@ const repo = finalizeEvent(
       ["d", "repo"],
       ["name", "Real repository"],
       ["buzz-channel", "private-channel"],
+      ["buzz-related-channel", "missing-channel"],
       ["h", "stray-channel"],
     ],
   },
@@ -58,6 +59,7 @@ const project = finalizeEvent(
     tags: [
       ["d", "project"],
       ["name", "Real project"],
+      ["description", "Project overview"],
       ["a", `30617:${owner}:repo`],
     ],
   },
@@ -83,6 +85,7 @@ const pr = finalizeEvent(
     tags: [
       ["a", `30617:${owner}:repo`],
       ["subject", "Selected pull request"],
+      ["c", "a".repeat(40)],
     ],
   },
   key,
@@ -109,7 +112,7 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
   vi.restoreAllMocks();
 });
-function setup(route?: EntityRoute, unscoped = false) {
+function setup(route?: EntityRoute, unscoped = false, gitAvailable = true) {
   const roster = (allowed: boolean, created_at = 1) =>
     finalizeEvent(
       {
@@ -159,7 +162,7 @@ function setup(route?: EntityRoute, unscoped = false) {
       scope: scope.communityOrigin,
       query,
       media: () => undefined,
-      projectGit: { read: readGit },
+      ...(gitAvailable ? { projectGit: { read: readGit } } : {}),
       subscribe(callbacks) {
         live = callbacks;
         return { update() {}, retry() {}, dispose() {} };
@@ -266,6 +269,9 @@ it("binds an unscoped directory to the active community in the same visit", asyn
   t.mount();
   await expect(t.promise).resolves.toEqual({ status: "opened" });
   expect(screen.getByRole("button", { name: "Real repository" })).toBeVisible();
+  expect(
+    screen.getByText(/Partial list, up to 100 announcements/),
+  ).toBeVisible();
   expect(t.host.navigation.snapshot().entry).toMatchObject({
     id: entryId,
     target: { scope },
@@ -521,3 +527,41 @@ it.each([true, false])(
     }
   },
 );
+
+it("resolves linked channels before presentation and removes them on revocation", async () => {
+  const t = setup({ type: "project", owner, dtag: "project", tab: "channels" });
+  t.mount();
+  await expect(t.promise).resolves.toEqual({ status: "opened" });
+  expect(screen.getByRole("button", { name: "Private channel" })).toBeVisible();
+  expect(screen.queryByText("private-channel")).not.toBeInTheDocument();
+  expect(screen.queryByText("missing-channel")).not.toBeInTheDocument();
+  await act(async () => t.revoke());
+  expect(
+    screen.queryByRole("button", { name: "Private channel" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("private-channel")).not.toBeInTheDocument();
+  expect(screen.getByText("No accessible linked channels.")).toBeVisible();
+});
+
+it("omits inaccessible channel metadata without hiding the project", async () => {
+  const t = setup({ type: "project", owner, dtag: "project", tab: "channels" });
+  const query = t.query.getMockImplementation();
+  t.query.mockImplementation(async (filters) =>
+    ((await query?.(filters)) ?? []).filter((event) => event.kind !== 39002),
+  );
+  t.mount();
+  await expect(t.promise).resolves.toEqual({ status: "opened" });
+  expect(screen.getByRole("heading", { name: "Real project" })).toBeVisible();
+  expect(screen.queryByText("Private channel")).not.toBeInTheDocument();
+  expect(screen.queryByText("private-channel")).not.toBeInTheDocument();
+  expect(screen.getByText("No accessible linked channels.")).toBeVisible();
+});
+it("labels PR revision lookup as base-only and disables it without a host Git reader", async () => {
+  const t = setup({ type: "pr", owner, dtag: "repo", id: pr.id }, false, false);
+  t.mount();
+  await expect(t.promise).resolves.toEqual({ status: "opened" });
+  expect(screen.getByRole("button", { name: "a".repeat(40) })).toBeDisabled();
+  expect(
+    screen.getByText(/Exact PR diffs from external forks are unavailable/),
+  ).toBeVisible();
+});

@@ -34,7 +34,8 @@ export function deepLinkStep(
   url: string,
   client: Pick<Client, "viewer" | "selected">,
 ): DeepLinkStep {
-  // Match the shell's exact scheme check before parsing, so `BUZZ:` is refused.
+  // Require the canonical scheme here. The native URL parser may already have
+  // normalized its case before this bridge receives it.
   if (typeof url !== "string" || !url.startsWith("buzz:"))
     return { fail: "invalid-target" };
   const link = parseBuzzLink(url);
@@ -231,9 +232,16 @@ export function createDeepLinkShell(): DeepLinkShell | undefined {
       const channel = new Channel<unknown>(() => {
         if (active) listener();
       });
-      void invoke("deep_link_watch", { onEvent: channel }).catch((error) => {
-        if (active) console.error("Deep link updates are unavailable", error);
-      });
+      void invoke("deep_link_watch", { onEvent: channel }).then(
+        () => {
+          // A URL can arrive after the startup take but before registration.
+          // Drain again once the watcher is installed so that gap cannot strand it.
+          if (active) listener();
+        },
+        (error) => {
+          if (active) console.error("Deep link updates are unavailable", error);
+        },
+      );
       return () => {
         active = false;
         channel.onmessage = () => {};

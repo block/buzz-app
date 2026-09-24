@@ -581,9 +581,62 @@ it("bridges the Tauri shell with raw strings only and detaches its ping channel 
   expect(invoked.fn).toHaveBeenCalledWith("deep_link_watch", {
     onEvent: channel,
   });
+  expect(listener).toHaveBeenCalledTimes(1); // registration closes the startup gap
   channel?.onmessage({ pending: 1 });
-  expect(listener).toHaveBeenCalledTimes(1);
+  expect(listener).toHaveBeenCalledTimes(2);
   stop();
   channel?.onmessage({ pending: 2 });
-  expect(listener).toHaveBeenCalledTimes(1);
+  expect(listener).toHaveBeenCalledTimes(2);
+});
+
+it("drains URLs arriving between startup take and deferred native watch registration", async () => {
+  native.value = true;
+  const registration = Promise.withResolvers<void>();
+  const queue: string[] = [];
+  const take = vi.fn(() => queue.splice(0));
+  invoked.fn.mockImplementation(async (command) => {
+    if (command === "deep_link_take") return take();
+    if (command === "deep_link_watch") return registration.promise;
+    throw new Error(`Unexpected native command: ${command}`);
+  });
+  const controller = createNavigationController(createMemoryHistory());
+  const host = { ...controller, fail: vi.fn() };
+  const stop = bindDeepLinks(host, {
+    snapshot: () => ready,
+    subscribe: () => () => {},
+  });
+  try {
+    await vi.waitFor(() => expect(take).toHaveBeenCalledTimes(1));
+    // Wait for the empty initial IPC response, not just its invocation.
+    await invoked.fn.mock.results.find(
+      (_, index) => invoked.fn.mock.calls[index]?.[0] === "deep_link_take",
+    )?.value;
+    // No native watcher exists yet, so this arrival cannot ping the webview.
+    queue.push("buzz://join?relay=example");
+    expect(host.fail).not.toHaveBeenCalled();
+    registration.resolve();
+    await vi.waitFor(() => expect(take).toHaveBeenCalledTimes(2));
+    expect(host.fail).toHaveBeenCalledWith("invalid-target", undefined);
+    expect(queue).toEqual([]);
+  } finally {
+    registration.resolve();
+    stop();
+    controller.dispose();
+  }
+});
+it("does not revive a disposed bridge when native registration finishes", async () => {
+  native.value = true;
+  const registration = Promise.withResolvers<void>();
+  invoked.fn.mockImplementation(async () => registration.promise);
+  const shell = createDeepLinkShell();
+  const listener = vi.fn();
+  const stop = shell?.watch(listener);
+  expect(invoked.fn).toHaveBeenCalledWith(
+    "deep_link_watch",
+    expect.any(Object),
+  );
+  stop?.();
+  registration.resolve();
+  await invoked.fn.mock.results[0]?.value;
+  expect(listener).not.toHaveBeenCalled();
 });

@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
-import { projectDestinations } from "./destinations";
+import { entityFromEvent, projectDestinations } from "./destinations";
 import { matchesEvent } from "../relay/projection";
 import type { ReadFilter, RelayEvent } from "../relay/events";
 import type { EntityRoute } from "./routes";
@@ -79,8 +79,8 @@ it("resolves exact repository and project coordinates, members and related chann
 it.each([issue, pr])(
   "resolves the selected event and only authorized lifecycle changes ($kind)",
   async (item) => {
-    const good = event(1632, [["e", item.id]], "", 2);
-    const forged = event(1631, [["e", item.id]], "", 3, outsider);
+    const good = event(1632, [["e", item.id, "", "root"]], "", 2);
+    const forged = event(1631, [["e", item.id, "", "root"]], "", 3, outsider);
     const comment = event(
       1111,
       [["E", item.id]],
@@ -212,8 +212,11 @@ it("honors the newest trusted PR revision and draft status without accepting an 
   const update = event(
     1619,
     [
+      ["a", address],
       ["E", root.id],
+      ["P", root.pubkey],
       ["c", "b".repeat(40)],
+      ["clone", "https://git.example/repo.git"],
     ],
     "",
     2,
@@ -264,4 +267,115 @@ it("does not resurrect a listed announcement after its owner marks it unlisted",
       new AbortController().signal,
     ),
   ).toEqual([]);
+});
+
+it.each([issue, pr])(
+  "accepts statuses from all current multi-value maintainers ($kind)",
+  async (item) => {
+    const maintained = event(
+      30617,
+      [
+        ["d", "repo"],
+        ["maintainers", "f".repeat(64), getPublicKey(outsider)],
+      ],
+      "",
+      2,
+    );
+    const status = event(1632, [["e", item.id, "", "root"]], "", 3, outsider);
+    const result = await fixture([maintained, item, status]).destinations.load(
+      { type: item.kind === 1618 ? "pr" : "issue", ...base, id: item.id },
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("Closed");
+  },
+);
+it.each(
+  [
+    [["E", pr.id]],
+    [["e", pr.id, "", "reply"]],
+    [
+      ["e", "f".repeat(64), "", "root"],
+      ["e", pr.id, "", "reply"],
+    ],
+    [
+      ["e", pr.id, "", "root"],
+      ["e", "f".repeat(64), "", "root"],
+    ],
+    [
+      ["e", pr.id, "", "root"],
+      ["a", `30617:${owner}:other`],
+    ],
+  ].map((tags) => ({ tags })),
+)(
+  "ignores status events that do not name this exact root: $tags",
+  async ({ tags }) => {
+    const status = event(1632, tags, "", 2);
+    const result = await fixture([repo, pr, status]).destinations.load(
+      { type: "pr", ...base, id: pr.id },
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("Open");
+  },
+);
+it.each([
+  ["c", []],
+  ["c", [["c", "invalid"]]],
+  [
+    "c",
+    [
+      ["c", "c".repeat(40)],
+      ["c", "d".repeat(40)],
+    ],
+  ],
+  [
+    "E",
+    [
+      ["E", pr.id],
+      ["E", "f".repeat(64)],
+    ],
+  ],
+  ["a", []],
+  ["a", [["a", `30617:${owner}:other`]]],
+  ["P", []],
+  ["P", [["P", getPublicKey(outsider)]]],
+  ["clone", []],
+] as [string, string[][]][])(
+  "ignores malformed newer PR updates (%s %j) before selecting the revision",
+  async (tag, replacement) => {
+    const tags = [
+      ["a", address],
+      ["E", pr.id],
+      ["P", pr.pubkey],
+      ["c", "b".repeat(40)],
+      ["clone", "https://git.example/repo.git"],
+    ];
+    const valid = event(1619, tags, "", 2);
+    const malformed = event(
+      1619,
+      [
+        ...tags
+          .filter((t) => t[0] !== tag)
+          .map((t) => (t[0] === "c" ? ["c", "e".repeat(40)] : t)),
+        ...replacement,
+      ],
+      "",
+      3,
+    );
+    const result = await fixture([
+      repo,
+      pr,
+      valid,
+      malformed,
+    ]).destinations.load(
+      { type: "pr", ...base, id: pr.id },
+      new AbortController().signal,
+    );
+    expect(result.commit).toBe("b".repeat(40));
+  },
+);
+
+it("does not interpret project content as description metadata", () => {
+  expect(
+    entityFromEvent(event(30621, [["d", "project"]], "ignored"))?.description,
+  ).toBe("");
 });

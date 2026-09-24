@@ -205,6 +205,8 @@ function Destination({
       if (!route) return { directory: await session.projects.list(signal) };
       const detail = await session.projects.load(route, signal);
       const tab = "tab" in route ? route.tab : undefined;
+      if (tab === "channels")
+        await session.channels.resolve?.(detail.channels, { signal });
       if (
         "id" in route ||
         tab === "prs" ||
@@ -295,6 +297,10 @@ function Destination({
           Projects
         </h1>
         <p className="text-secondary">Recent projects and repositories</p>
+        <p>
+          Partial list, up to 100 announcements. Projects and repositories are
+          shown separately, not as a grouped collection.
+        </p>
         <ul className="project-list">
           {data.directory.map((entity) => (
             <li key={entity.address}>
@@ -319,7 +325,7 @@ function Destination({
           ))}
         </ul>
         {!data.directory.length && (
-          <p>No projects or repositories in this community.</p>
+          <p>No recent projects or repositories found.</p>
         )}
       </>
     );
@@ -342,6 +348,10 @@ function Destination({
     detail.repositories.find((repo) => repo.dtag === detail.entity.dtag) ??
     detail.repositories[0];
   const commit = detail.commit;
+  const channels = detail.channels.flatMap((id) => {
+    const channel = session.channels.get?.(id);
+    return channel ? [channel] : [];
+  });
   return (
     <>
       <header className="project-heading">
@@ -416,15 +426,18 @@ function Destination({
             <Body text={detail.item.content} open={open} scope={scope} />
             {commit && (
               <p>
-                Commit{" "}
+                Look up commit in the base repository:{" "}
                 <Button
                   variant="link"
+                  disabled={!session.projectGit}
                   onClick={() =>
                     go({ ...base, type: "repo", tab: "commits", commit })
                   }
                 >
                   <code>{commit}</code>
-                </Button>
+                </Button>{" "}
+                Exact PR diffs from external forks are unavailable. This lookup
+                only works if the commit is readable from the base repository.
               </p>
             )}
             <h2 className="text-heading">Discussion</h2>
@@ -522,8 +535,8 @@ function Destination({
           </>
         ) : active === "channels" ? (
           <ul className="project-list">
-            {detail.channels.map((id) => (
-              <li key={id}>
+            {channels.map((channel) => (
+              <li key={channel.id}>
                 <Button
                   variant="link"
                   onClick={() =>
@@ -531,15 +544,15 @@ function Destination({
                       version: 1,
                       kind: "conversation",
                       scope,
-                      channelId: id,
+                      channelId: channel.id,
                     })
                   }
                 >
-                  {session.channels.get?.(id)?.name ?? id}
+                  {channel.name}
                 </Button>
               </li>
             ))}
-            {!detail.channels.length && <li>No linked channels.</li>}
+            {!channels.length && <li>No accessible linked channels.</li>}
           </ul>
         ) : data.git ? (
           <GitContent

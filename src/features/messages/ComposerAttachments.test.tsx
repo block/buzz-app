@@ -6,9 +6,14 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { assert, afterEach, expect, it, vi } from "vitest";
+import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ComposerAttachments } from "./ComposerAttachments";
 import type { DraftAttachment } from "./attachment-draft";
+
+beforeEach(() => {
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+});
 
 afterEach(() => {
   cleanup();
@@ -136,4 +141,117 @@ it("does not fall back to an untrusted original when canonical media cannot be r
   );
   expect(root.container.querySelector("video, img")).toBeNull();
   expect(create).not.toHaveBeenCalled();
+});
+
+it("explains an upload failure on focus and preserves retry and removal", async () => {
+  const retry = vi.fn();
+  const remove = vi.fn();
+  render(
+    <ComposerAttachments
+      items={[
+        {
+          id: "failed-file",
+          file: new File(["document"], "report.pdf", {
+            type: "application/pdf",
+          }),
+          status: "error",
+          error: "The relay rejected this file.",
+        },
+      ]}
+      disabled={false}
+      retry={retry}
+      remove={remove}
+      media={() => undefined}
+    />,
+  );
+  expect(screen.getByRole("alert").textContent).toBe(
+    "The relay rejected this file.",
+  );
+  fireEvent.focus(
+    screen.getByRole("button", { name: "Attachment issue: report.pdf" }),
+  );
+  expect((await screen.findByRole("tooltip")).textContent).toBe(
+    "The relay rejected this file.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry report.pdf" }));
+  expect(retry).toHaveBeenCalledWith("failed-file");
+  fireEvent.click(screen.getByRole("button", { name: "Remove report.pdf" }));
+  expect(remove).toHaveBeenCalledWith("failed-file");
+});
+
+it("keeps the uploading spinner actionable as a remove control", () => {
+  const remove = vi.fn();
+  render(
+    <ComposerAttachments
+      items={[
+        {
+          id: "pending",
+          file: new File(["data"], "pending.pdf"),
+          status: "uploading",
+        },
+      ]}
+      disabled={false}
+      remove={remove}
+      retry={vi.fn()}
+      media={() => undefined}
+    />,
+  );
+  const control = screen.getByRole("button", { name: "Remove pending.pdf" });
+  expect(control.hasAttribute("data-uploading")).toBe(true);
+  fireEvent.click(control);
+  expect(remove).toHaveBeenCalledWith("pending");
+});
+
+it("keeps one puff after the final attachment is removed and cleans up its timer", () => {
+  vi.useFakeTimers();
+  const play = vi.fn().mockResolvedValue(undefined);
+  const pause = vi.fn();
+  vi.stubGlobal(
+    "Audio",
+    class {
+      play = play;
+      pause = pause;
+      preload = "";
+      volume = 1;
+      currentTime = 0;
+    },
+  );
+  const item: DraftAttachment = {
+    id: "poof",
+    file: new File(["data"], "remove.txt"),
+    status: "ready",
+  };
+  const remove = vi.fn();
+  const props = {
+    disabled: false,
+    remove,
+    retry: vi.fn(),
+    media: () => undefined,
+  };
+  const view = render(<ComposerAttachments {...props} items={[item]} />);
+  try {
+    const button = screen.getByRole("button", { name: "Remove remove.txt" });
+    fireEvent.pointerDown(button);
+    expect(play).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(play).toHaveBeenCalledTimes(1);
+    view.rerender(<ComposerAttachments {...props} items={[]} />);
+    expect(screen.queryByRole("region", { name: "Attachments" })).toBeNull();
+    expect(
+      document.querySelectorAll("[data-attachment-poof] img"),
+    ).toHaveLength(5);
+    act(() => vi.advanceTimersByTime(430));
+    expect(document.querySelector("[data-attachment-poof]")).toBeNull();
+    view.rerender(<ComposerAttachments {...props} items={[item]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove remove.txt" }));
+    expect(document.querySelector("[data-attachment-poof]")).not.toBeNull();
+    view.unmount();
+    expect(document.querySelector("[data-attachment-poof]")).toBeNull();
+    expect(pause).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
 });

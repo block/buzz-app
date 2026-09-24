@@ -243,3 +243,9 @@ export const PencilSimpleIcon = defineIcon(
   "phosphor",
   PhosphorPencilSimpleIcon,
 );
+
+import { WarningCircleIcon as PhosphorWarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
+export const WarningCircleIcon = defineIcon(
+  "phosphor",
+  PhosphorWarningCircleIcon,
+);

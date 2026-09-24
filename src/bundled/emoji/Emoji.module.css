@@ -14,9 +14,6 @@
   min-width: 0;
 }
 .emojiPopover {
-  --picker-tab-foreground: var(--text-standard);
-  --picker-tab-muted: var(--text-subtle);
-  --picker-tab-selected: var(--affordance-selected);
   max-width: min(var(--anchor-width), var(--available-width));
   overflow: hidden;
 }

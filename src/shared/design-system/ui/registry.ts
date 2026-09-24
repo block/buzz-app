@@ -348,7 +348,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "tint",
       "chrome",
       "shape: round (default) | control",
-      "size: sm (32px) | md (40px) | lg (52px)",
+      "size: xs (20px, 12px icon) | sm (32px) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
     ],
     status: "proposed",

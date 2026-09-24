@@ -315,7 +315,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(emojiTool).toBeFocused();
     const chipRoles = await chip.evaluate((element) => {
       const probe = document.createElement("span");
-      probe.style.backgroundColor = "var(--affordance-accent)";
+      probe.style.backgroundColor = "var(--affordance-subtle)";
       probe.style.color = "var(--text-standard)";
       element.append(probe);
       const style = getComputedStyle(probe);

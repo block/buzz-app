@@ -540,6 +540,7 @@ name = "buzz-builderlab-client"
 version = "0.1.0"
 dependencies = [
  "reqwest",
+ "security-framework",
  "serde",
  "serde_json",
  "time",

@@ -63,24 +63,22 @@ impl Keychain for SystemKeychain {
         service: &str,
         account: &str,
     ) -> Result<Option<Zeroizing<Vec<u8>>>, KeychainError> {
-        let output = std::process::Command::new("/usr/bin/security")
-            .args(["find-generic-password", "-s", service, "-a", account, "-w"])
-            .output()
-            .map_err(|_| KeychainError::Unavailable)?;
-        if !output.status.success() {
-            if security_item_not_found(&output.stderr) {
-                return Ok(None);
-            }
-            return Err(KeychainError::AccessDenied);
+        use security_framework::os::macos::keychain::SecKeychain;
+
+        let keychain = SecKeychain::default().map_err(|_| KeychainError::Unavailable)?;
+        match keychain.find_generic_password(service, account) {
+            Ok((password, _)) => Ok(Some(Zeroizing::new(password.to_vec()))),
+            Err(error) => classify_keychain_read_error(error.code()),
         }
-        Ok(Some(Zeroizing::new(output.stdout)))
     }
 }
 
-#[cfg(target_os = "macos")]
-fn security_item_not_found(stderr: &[u8]) -> bool {
-    String::from_utf8_lossy(stderr)
-        .contains("The specified item could not be found in the keychain")
+fn classify_keychain_read_error(code: i32) -> Result<Option<Zeroizing<Vec<u8>>>, KeychainError> {
+    match code {
+        -25300 => Ok(None),
+        -128 | -25293 | -25308 => Err(KeychainError::AccessDenied),
+        _ => Err(KeychainError::Unavailable),
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -524,15 +522,19 @@ mod tests {
         SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000)
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn recognizes_only_security_item_not_found_as_a_missing_credential() {
-        assert!(security_item_not_found(
-            b"security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain."
-        ));
-        assert!(!security_item_not_found(
-            b"security: User interaction is not allowed."
-        ));
+    fn classifies_keychain_read_osstatus_codes() {
+        assert!(matches!(classify_keychain_read_error(-25300), Ok(None)));
+        for code in [-128, -25293, -25308] {
+            assert_eq!(
+                classify_keychain_read_error(code),
+                Err(KeychainError::AccessDenied)
+            );
+        }
+        assert_eq!(
+            classify_keychain_read_error(-1),
+            Err(KeychainError::Unavailable)
+        );
     }
 
     #[test]

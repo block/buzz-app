@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ContextMenuRoot, MenuPopup } from "../../shared/design-system/ui/Menu";
 import {
@@ -56,6 +56,7 @@ it("waits silently for fresh permissions and preserves the last-owner boundary",
           lifecycle={lifecycle}
           choose={choose}
           disabled={false}
+          separator
         />
       </MenuPopup>
     </ContextMenuRoot>,
@@ -63,11 +64,13 @@ it("waits silently for fresh permissions and preserves the last-owner boundary",
   await waitFor(() => expect(lifecycle.load).toHaveBeenCalledOnce());
   expect(screen.queryByText("Checking channel permissions…")).toBeNull();
   expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+  expect(screen.queryByRole("separator")).toBeNull();
   expect(choose).not.toHaveBeenCalled();
   gate.resolve(settings);
   const remove = await screen.findByRole("menuitem", {
     name: "Delete channel",
   });
+  expect(screen.getAllByRole("separator")).toHaveLength(1);
   expect(screen.queryByRole("menuitem", { name: /^Leave channel/ })).toBeNull();
   expect(
     screen.queryByText("Transfer ownership before leaving the channel."),
@@ -103,6 +106,7 @@ it.each([
             lifecycle={lifecycle}
             choose={choose}
             disabled={false}
+            separator
           />
         </MenuPopup>
       </ContextMenuRoot>,
@@ -129,6 +133,7 @@ it("failed permission reads offer retry rather than stale destructive actions", 
           lifecycle={lifecycle}
           choose={() => {}}
           disabled={false}
+          separator
         />
       </MenuPopup>
     </ContextMenuRoot>,
@@ -139,6 +144,7 @@ it("failed permission reads offer retry rather than stale destructive actions", 
   expect(
     screen.queryByRole("menuitem", { name: "Archive channel" }),
   ).toBeNull();
+  expect(screen.getAllByRole("separator")).toHaveLength(1);
   const retry = deferred<ChannelLifecycleSettings>();
   lifecycle.load.mockReturnValueOnce(retry.promise);
   await user.click(
@@ -146,6 +152,7 @@ it("failed permission reads offer retry rather than stale destructive actions", 
   );
   await waitFor(() => expect(lifecycle.load).toHaveBeenCalledTimes(2));
   expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+  expect(screen.queryByRole("separator")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   retry.resolve(settings);
   expect(
@@ -153,6 +160,58 @@ it("failed permission reads offer retry rather than stale destructive actions", 
       name: "Archive channel",
     }),
   ).toBeDefined();
+  expect(screen.getAllByRole("separator")).toHaveLength(1);
+});
+it.each([
+  { separator: false, allowed: true },
+  { separator: true, allowed: false },
+])("omits an orphan separator: %j", async ({ separator, allowed }) => {
+  const lifecycle = capability();
+  const gate = deferred<ChannelLifecycleSettings>();
+  lifecycle.load.mockReturnValueOnce(gate.promise);
+  render(
+    <ContextMenuRoot open>
+      <MenuPopup>
+        <ChannelLifecycleMenu
+          channelId="id"
+          lifecycle={lifecycle}
+          choose={() => {}}
+          disabled={false}
+          separator={separator}
+        />
+      </MenuPopup>
+    </ContextMenuRoot>,
+  );
+  await waitFor(() => expect(lifecycle.load).toHaveBeenCalledOnce());
+  await act(async () => {
+    gate.resolve({ ...settings, canArchive: allowed, canDelete: allowed });
+    await gate.promise;
+  });
+  expect(screen.queryAllByRole("menuitem")).toHaveLength(allowed ? 2 : 0);
+  expect(screen.queryByRole("separator")).toBeNull();
+});
+it("keeps the unavailable section separated without loading permissions", async () => {
+  const lifecycle = { ...capability(), available: false };
+  render(
+    <ContextMenuRoot open>
+      <MenuPopup>
+        <ChannelLifecycleMenu
+          channelId="id"
+          lifecycle={lifecycle}
+          choose={() => {}}
+          disabled={false}
+          separator
+        />
+      </MenuPopup>
+    </ContextMenuRoot>,
+  );
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Channel actions unavailable on this connection",
+    }),
+  ).toBeDefined();
+  expect(screen.getAllByRole("separator")).toHaveLength(1);
+  expect(lifecycle.load).not.toHaveBeenCalled();
 });
 it("confirmation, pending lockout and failed-write recovery stay in the actual dialog", async () => {
   // jsdom does not implement top-layer focus; that contract is covered in browsers.

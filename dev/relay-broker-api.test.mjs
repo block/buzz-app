@@ -1839,6 +1839,7 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
         : [],
     ),
   );
+  let live;
   try {
     const transport = await connectBrokerTransport(h.base);
     expect(transport.writer.kinds).not.toContain(9008);
@@ -1887,10 +1888,13 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
     expect(verifyEvent(signed)).toBe(true);
     expect(signed).toMatchObject(template);
     expect((await h.post("publish", signed)).status).toBe(400);
+    await expect(
+      transport.channelLifecycle.publish(signed, signal),
+    ).rejects.toBeInstanceOf(PublishRejected);
+    expect(h.publications).toHaveLength(0);
+    live = await openBrokerSocket(transport);
     await transport.channelLifecycle.publish(signed, signal);
-    expect(h.calls.filter((call) => call.url.endsWith("/events"))).toHaveLength(
-      1,
-    );
+    expect(h.publications).toHaveLength(1);
     const foreignKey = new Uint8Array(32).fill(5);
     const foreign = finalizeEvent(
       { ...template, tags: template.tags.map((tag) => [...tag]) },
@@ -1899,10 +1903,9 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
     expect((await h.post("channel-lifecycle-publish", foreign)).status).toBe(
       400,
     );
-    expect(h.calls.filter((call) => call.url.endsWith("/events"))).toHaveLength(
-      1,
-    );
+    expect(h.publications).toHaveLength(1);
   } finally {
+    live?.dispose();
     await h.close();
   }
 });

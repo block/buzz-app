@@ -56,7 +56,15 @@ function harness(role = "owner", type = "stream", owners = 1) {
   const read = vi.fn(async (filters: readonly ReadFilter[]) => {
     if (filters[0]?.kinds?.[0] === 30622) return visible;
     return events.filter((event) =>
-      filters.some((filter) => filter.kinds?.includes(event.kind)),
+      filters.some(
+        (filter) =>
+          filter.kinds?.includes(event.kind) &&
+          (!filter["#p"] ||
+            event.tags.some(
+              ([key, value]) =>
+                key === "p" && filter["#p"]?.includes(value ?? ""),
+            )),
+      ),
     );
   });
   const sign = vi.fn(async (event: EventTemplate) =>
@@ -71,7 +79,16 @@ function harness(role = "owner", type = "stream", owners = 1) {
     if (event.kind === 9008)
       events = events.filter((event) => event.kind !== 39000);
     if (event.kind === 9022)
-      events = events.filter((event) => event.kind !== 39002);
+      events = events.map((entry) =>
+        entry.kind === 39002
+          ? record(
+              39002,
+              entry.tags.filter(
+                ([key, value]) => key !== "p" || value !== viewer,
+              ),
+            )
+          : entry,
+      );
     if (event.kind === 41012)
       visible = [
         record(30622, [
@@ -257,6 +274,23 @@ it.each(["archive", "delete", "leave", "hide"] as const)(
       else {
         expect(h.owner.capability.snapshot().hidden).toEqual([id]);
         expect(h.removed).not.toHaveBeenCalled();
+      }
+      if (action === "leave") {
+        expect(
+          h.getEvents().find((event) => event.kind === 39002)?.tags,
+        ).toEqual([
+          ["d", id],
+          ["p", other, "", "owner"],
+        ]);
+        expect(h.read.mock.calls.at(-1)?.[0]).toEqual([
+          {
+            kinds: [39002],
+            authors: [relayAuthor],
+            "#d": [id],
+            "#p": [viewer],
+            limit: 1,
+          },
+        ]);
       }
       h.owner.dispose();
     } finally {

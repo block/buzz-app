@@ -227,6 +227,11 @@ and modeled upstream I/O; it does not send messages to a live community.
 
 ## Channel lifecycle
 
+Lifecycle actions extend the existing row’s ⋮ menu and a context menu on the
+conversation button. Session creation and child-session navigation keep their
+existing owners; sessions do not receive lifecycle actions. This slice adds no
+Move/Star/grouping, mute, read controls, or shared-menu restyling.
+
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering
 Archive/Delete/Leave or DM Hide. Archive requires a direct owner/admin role;
@@ -240,7 +245,9 @@ Membership accepts NIP-29 `p` tags with optional relay and role fields
 These fields never substitute for the separate administrator record. Invalid
 member keys and duplicate entries still fail closed. Failed menu permission reads
 show "Channel actions unavailable" with retry, not raw protocol errors. Pending
-permission reads show no loading row; actions appear only after verification.
+permission reads show neither a loading row nor a lifecycle separator; the
+separator appears with the resolved actions or unavailable/retry section, and is
+omitted when there are no lifecycle items. Actions appear only after verification.
 
 Each command has explicit confirmation; Delete additionally requires the channel
 name. The lifecycle owner rechecks authority before signing and again before
@@ -250,7 +257,8 @@ access-loss purge. Commands use narrow development-broker routes, never the mess
 outbox or automatic replay. Hosts without this capability display an unavailable
 notice; native/direct-signer parity is deferred.
 
-DM Hide publishes `41012`, not Leave or Delete. The separate relay-authored `30622`
+Main’s DM × remains local removal, including restoration on new message evidence.
+The separate, confirmed Hide conversation action publishes `41012`, not Leave or Delete. The separate relay-authored `30622`
 visibility snapshot (`d=viewer`, `p=viewer`, hidden DM `h` tags) only filters sidebar
 rows; it does not deny access or prevent exact conversation navigation. Visibility
 refreshes with the channel roster, preserves the last good set on failure and
@@ -264,7 +272,7 @@ taken effect, disables blind resubmission and asks the user to close and refresh
 channels. Cancellation/cache clear/session replacement fence late results but cannot
 retract a request already sent. Cancellation returns focus to the originating row;
 confirmed removal moves an active conversation to another available destination
-(or the neutral Messages page) with a sidebar/search focus fallback.
+(or the neutral Messages page) with a visible sidebar-row focus fallback.
 
 ## Performance and correctness carried from Astra
 

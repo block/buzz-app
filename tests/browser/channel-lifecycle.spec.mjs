@@ -42,14 +42,50 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
       exact: true,
     }),
   ).toBeVisible();
-  await row.focus();
-  await page.keyboard.press("Shift+F10");
+  // Hold the real permission request: the composed row menu must have no
+  // orphan divider or unchecked actions.
+  let release;
+  let intercepted;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const seen = new Promise((resolve) => {
+    intercepted = resolve;
+  });
+  const permissionRoute = async (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      !filters.some(
+        (filter) =>
+          filter.kinds?.includes(39001) &&
+          filter["#d"]?.includes("11111111-1111-4111-8111-111111111111"),
+      )
+    )
+      return route.continue();
+    intercepted();
+    await held;
+    await route.continue();
+  };
+  await page.route("**/api/relay/**/query", permissionRoute);
   const menu = page.getByRole("menu", {
     name: "Actions for Lifecycle channel",
   });
+  try {
+    await row.focus();
+    await page.keyboard.press("Shift+F10");
+    await seen;
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("separator")).toHaveCount(0);
+    await expect(menu.getByRole("menuitem")).toHaveCount(0);
+    await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
+  } finally {
+    release();
+  }
   await expect(
     menu.getByRole("menuitem", { name: "Archive channel", exact: true }),
   ).toBeVisible();
+  await expect(menu.getByRole("separator")).toHaveCount(0);
+  await page.unroute("**/api/relay/**/query", permissionRoute);
   await expect(
     menu.getByRole("menuitem", { name: /^Leave channel/ }),
   ).toHaveCount(0);

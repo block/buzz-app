@@ -617,7 +617,7 @@ export async function connectBrokerTransport(
                 {
                   method: "POST",
                   credentials: "same-origin",
-                  headers: { "Content-Type": "application/json" },
+                  headers: publicationHeaders(),
                   body: JSON.stringify(event),
                   signal,
                 },

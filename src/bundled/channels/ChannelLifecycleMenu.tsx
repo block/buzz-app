@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { MenuItem, MenuSeparator } from "../../shared/design-system/ui/Menu";
 import type { ChannelLifecycleCapability } from "../../features/relay/channel-lifecycle";
 import type {
   ChannelLifecycleAction,
@@ -12,11 +12,13 @@ export function ChannelLifecycleMenu({
   lifecycle,
   choose,
   disabled,
+  separator,
 }: {
   channelId: string;
   lifecycle: ChannelLifecycleCapability;
   choose(action: ChannelLifecycleAction): void;
   disabled: boolean;
+  separator: boolean;
 }) {
   const [state, setState] = useState<ChannelLifecycleSettings>();
   const [failed, setFailed] = useState(false);
@@ -39,13 +41,17 @@ export function ChannelLifecycleMenu({
   }, [channelId, lifecycle, retry]);
   if (!lifecycle.available)
     return (
-      <MenuItem disabled>
-        Channel actions unavailable on this connection
-      </MenuItem>
+      <>
+        {separator && <MenuSeparator />}
+        <MenuItem disabled>
+          Channel actions unavailable on this connection
+        </MenuItem>
+      </>
     );
   if (failed)
     return (
       <>
+        {separator && <MenuSeparator />}
         <p role="alert">Channel actions unavailable</p>
         <MenuItem
           closeOnClick={false}
@@ -56,9 +62,14 @@ export function ChannelLifecycleMenu({
         </MenuItem>
       </>
     );
-  if (!state) return null;
+  if (
+    !state ||
+    !(state.canHide || state.canArchive || state.canDelete || state.canLeave)
+  )
+    return null;
   return (
     <>
+      {separator && <MenuSeparator />}
       {state.canHide ? (
         <MenuItem disabled={disabled} onClick={() => choose("hide")}>
           Hide conversation

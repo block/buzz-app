@@ -20,7 +20,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 // Real browser HTTP -> production broker. Ephemeral key; upstream I/O is entirely local.
-async function harness(respond, capabilities = {}) {
+async function harness(respond, capabilities = {}, publish = undefined) {
   const key = new Uint8Array(32);
   key[31] = 7;
   const viewer = getPublicKey(key);
@@ -29,7 +29,7 @@ async function harness(respond, capabilities = {}) {
     key,
   );
   const calls = [];
-  const socket = brokerSocket();
+  const socket = brokerSocket(publish);
   let live;
   let handler;
   const server = createServer((req, res) => {
@@ -1262,6 +1262,50 @@ test("message/reaction deletions pass real signing and publication without admit
     }
     expect(h.publications).toHaveLength(1);
   } finally {
+    await h.close();
+  }
+});
+
+test("broker signs and publishes one-to-one DM opens and returns the relay receipt", async () => {
+  const channel = "22222222-2222-4222-8222-222222222222";
+  const h = await harness(success, { channelCreation: true }, (event) =>
+    event.kind === 41010
+      ? `response:${JSON.stringify({ channel_id: channel, created: false })}`
+      : "",
+  );
+  let traffic;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    traffic = await openBrokerSocket(transport);
+    expect(transport.writer.kinds).toContain(41010);
+    const signal = new AbortController().signal;
+    const open = await transport.writer.sign(
+      {
+        kind: 41010,
+        created_at: 1700000000,
+        content: "",
+        tags: [
+          ["p", "a".repeat(64)],
+          ["d", "11111111-1111-4111-8111-111111111111"],
+        ],
+      },
+      signal,
+    );
+    await expect(transport.writer.publish(open, signal)).resolves.toBe(
+      `response:{"channel_id":"${channel}","created":false}`,
+    );
+    expect(h.publications).toEqual([JSON.parse(JSON.stringify(open))]);
+    const group = await h.post("sign", {
+      ...open,
+      tags: [
+        ["p", "a".repeat(64)],
+        ["p", "b".repeat(64)],
+        ...open.tags.slice(1),
+      ],
+    });
+    expect(group.status).toBe(400);
+  } finally {
+    traffic?.dispose();
     await h.close();
   }
 });

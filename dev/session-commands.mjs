@@ -17,10 +17,27 @@ export function validChannelCommand(event) {
   )
     return false;
   let tags = event.tags;
-  if ([9000, 9007].includes(event.kind) && tags.at(-1)?.[0] === "client-id") {
+  if (
+    [9000, 9007, 41010].includes(event.kind) &&
+    tags.at(-1)?.[0] === "client-id"
+  ) {
     const clientId = tags.at(-1);
     if (clientId.length !== 2 || !uuid.test(clientId[1])) return false;
     tags = tags.slice(0, -1);
+  }
+  if (event.kind === 41010) {
+    // One-to-one DM open: exactly one peer and a request UUID, nothing else.
+    const [peer, request] = tags;
+    return (
+      event.content === "" &&
+      tags.length === 2 &&
+      peer?.length === 2 &&
+      peer[0] === "p" &&
+      /^[0-9a-f]{64}$/.test(peer[1]) &&
+      request?.length === 2 &&
+      request[0] === "d" &&
+      uuid.test(request[1])
+    );
   }
   const [h, p] = tags;
   if (h?.length !== 2 || h[0] !== "h" || !uuid.test(h[1])) return false;

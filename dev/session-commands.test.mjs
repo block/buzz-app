@@ -201,3 +201,57 @@ it("does not add temporary cleanup to Sessions metadata", () => {
   };
   expect(validChannelCommand(create)).toBe(false);
 });
+
+it("allows only one-to-one DM opens with a request UUID", () => {
+  const open = {
+    kind: 41010,
+    created_at: 1,
+    content: "",
+    tags: [
+      ["p", "a".repeat(64)],
+      ["d", id],
+      ["client-id", id],
+    ],
+  };
+  expect(validChannelCommand(open)).toBe(true);
+  const invalid = [
+    { ...open, content: "x" },
+    {
+      ...open,
+      tags: [
+        ["p", "a".repeat(64)],
+        ["client-id", id],
+      ],
+    },
+    {
+      ...open,
+      tags: [
+        ["p", "A".repeat(64)],
+        ["d", id],
+      ],
+    },
+    {
+      ...open,
+      tags: [
+        ["p", "a".repeat(64)],
+        ["d", "not-a-uuid"],
+      ],
+    },
+    {
+      ...open,
+      tags: [
+        ["p", "a".repeat(64)],
+        ["p", "b".repeat(64)],
+        ["d", id],
+      ],
+    },
+    {
+      ...open,
+      tags: [
+        ["d", id],
+        ["p", "a".repeat(64)],
+      ],
+    },
+  ];
+  for (const event of invalid) expect(validChannelCommand(event)).toBe(false);
+});

@@ -681,7 +681,9 @@ export function relayBrokerPlugin({
                 30078,
                 40100,
                 ...WORKFLOW_KINDS,
-                ...((await getAuthority(relay)).channelCreation ? [9007] : []),
+                ...((await getAuthority(relay)).channelCreation
+                  ? [9007, 41010]
+                  : []),
               ],
               workflowReads: true,
               attachmentUploads: true,
@@ -1302,7 +1304,7 @@ export function relayBrokerPlugin({
           const signing = route === "/api/relay/sign";
           const publishing = route === "/api/relay/publish";
           if (signing || publishing) {
-            if ([9000, 9007].includes(filters?.kind)) {
+            if ([9000, 9007, 41010].includes(filters?.kind)) {
               const enrollment = validAgentEnrollment(filters);
               const authority = await getAuthority(relay);
               if (

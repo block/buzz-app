@@ -22,6 +22,7 @@ import {
 import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createWorkSessions } from "./work-sessions";
+import { createDirectMessages } from "./direct-messages";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
 import {
@@ -242,8 +243,12 @@ export function createRelaySession(
             profiling,
             notifyListener: notify,
             onAccepted: (event) => confirm(event),
-            needsReceipt: isWorkflowOperation,
-            onReceipt: (event, message) => workflows.receipt(event, message),
+            needsReceipt: (event) =>
+              isWorkflowOperation(event) || directMessages.needsReceipt(event),
+            onReceipt: (event, message) => {
+              workflows.receipt(event, message);
+              directMessages.receipt(event, message);
+            },
             preparePublish: async (event, signal) => {
               workflows.validate(event);
               if (event.kind === 40100) {
@@ -844,6 +849,13 @@ export function createRelaySession(
     () => agentChoices.snapshot().identities.map((agent) => agent.pubkey),
     transport?.relayAuthor,
   );
+  const directMessages = createDirectMessages(
+    writes?.outbox,
+    channels.queries,
+    transport?.viewer ?? "",
+    lifetime.signal,
+    writes?.ready,
+  );
   const channelKit = createChannelKit({
     host: transport?.channelKit,
     reader: verified,
@@ -1084,6 +1096,7 @@ export function createRelaySession(
     },
     typing: typing.capability,
     channelCreation,
+    directMessages: directMessages.capability,
     channelKit: channelKit.capability,
     canvas: channelKit.canvas,
     workSessions,

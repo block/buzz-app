@@ -1,3 +1,5 @@
+import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
+import { memoryResponseText } from "../src/features/agents/memory.ts";
 import { prepareMedia } from "./media-preparation.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
@@ -699,6 +701,7 @@ export function relayBrokerPlugin({
               channelKit: true,
               readState: true,
               agentLibrary: true,
+              agentMemories: true,
               live: true,
               presence: true,
               agentActivity: true,
@@ -1144,6 +1147,7 @@ export function relayBrokerPlugin({
           if (
             ![
               "/api/relay/query",
+              "/api/relay/agent-memories",
               "/api/relay/presence-snapshot",
               "/api/relay/sign",
               "/api/relay/publish",
@@ -1162,20 +1166,42 @@ export function relayBrokerPlugin({
             req.method !== "POST"
           )
             return json(res, 404, { error: "Unknown broker route" });
+          const memory = route === "/api/relay/agent-memories";
           const presence = route === "/api/relay/presence-snapshot";
           let raw = "";
-          for await (const part of req) {
-            raw += part;
-            if (
-              presence ? Buffer.byteLength(raw) > 20 * 1024 : raw.length > 65536
-            )
-              return json(res, 413, { error: "Filter body too large" });
+          const uploadDeadline = memory
+            ? setTimeout(() => req.destroy(), 10000)
+            : undefined;
+          try {
+            for await (const part of req) {
+              raw += part;
+              if (
+                presence
+                  ? Buffer.byteLength(raw) > 20 * 1024
+                  : raw.length > 65536
+              )
+                return json(res, 413, { error: "Filter body too large" });
+            }
+          } finally {
+            clearTimeout(uploadDeadline);
           }
           let filters;
           try {
             filters = JSON.parse(raw);
           } catch {
             return json(res, 400, { error: "Filter body is not JSON" });
+          }
+          let memoryAgent;
+          if (memory) {
+            try {
+              if (!scoped)
+                throw new Error("Memory reads need an explicit community");
+              const query = memoryFilter(filters, viewer);
+              memoryAgent = filters.agent;
+              filters = query;
+            } catch {
+              return json(res, 400, { error: "Invalid memory target" });
+            }
           }
           if (route === "/api/relay/channel-kit-prepare") {
             try {
@@ -1370,7 +1396,10 @@ export function relayBrokerPlugin({
               const authority = await getAuthority(relay);
               if (
                 !enrollment &&
-                !(authority.channelCreation && validChannelCommand(filters))
+                !(
+                  validChannelCommand(filters) &&
+                  (filters.kind === 9000 || authority.channelCreation)
+                )
               )
                 return json(res, 400, {
                   error:
@@ -1516,7 +1545,9 @@ export function relayBrokerPlugin({
             let response;
             const requestSignal = AbortSignal.any([
               cancel.signal,
-              AbortSignal.timeout(presence ? 10000 : UPSTREAM_TIMEOUT_MS),
+              AbortSignal.timeout(
+                presence || memory ? 10000 : UPSTREAM_TIMEOUT_MS,
+              ),
             ]);
             const request = () => {
               // Auth freshness and network timings begin at dispatch, not queue entry.
@@ -1580,13 +1611,15 @@ export function relayBrokerPlugin({
                     ? "background"
                     : "foreground",
                 );
-            const text = presence
-              ? await presenceText(response)
-              : snapshot && response.ok
-                ? await readSnapshotText(response)
-                : workflowPath && response.ok
-                  ? await workflowReadText(response)
-                  : await response.text();
+            const text = memory
+              ? await memoryResponseText(response)
+              : presence
+                ? await presenceText(response)
+                : snapshot && response.ok
+                  ? await readSnapshotText(response)
+                  : workflowPath && response.ok
+                    ? await workflowReadText(response)
+                    : await response.text();
             // The relay's own service time separates server work from network time.
             const relayMs = Number(
               response.headers.get("x-envoy-upstream-service-time"),
@@ -1619,6 +1652,23 @@ export function relayBrokerPlugin({
               } catch {
                 return json(res, 502, {
                   error: "The direct message could not be opened. Try again.",
+                });
+              }
+            }
+            if (memory) {
+              try {
+                const listing = await decodeAgentMemory(
+                  JSON.parse(text),
+                  key,
+                  viewer,
+                  memoryAgent,
+                  requestSignal,
+                );
+                requestSignal.throwIfAborted();
+                return json(res, 200, listing);
+              } catch {
+                return json(res, 502, {
+                  error: "Memory listing could not be validated",
                 });
               }
             }

@@ -89,6 +89,52 @@ fn request(dir: &std::path::Path, id: &str, action: &str) -> Value {
     json!({"id":id,"expectedRevision":1,"host":"https://workspace.example.com","filter":"", "action":action,
     "edit":{"name":"Sample","systemPrompt":"Original","workspace":dir.to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"custom-unchanged","provider":"databricks_v2"},"environment":{}}})
 }
+
+#[test]
+#[cfg(unix)]
+fn goose_databricks_models_load_through_native_ipc_for_an_unsaved_agent() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _, _app, view) = fixture();
+    let goose = dir.path().join("goose");
+    let invoked = dir.path().join("invoked");
+    std::fs::write(
+        &goose,
+        format!(
+            "#!/bin/sh\n: > '{}'\nread request\nprintf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"providerId\":\"databricks_v2\",\"models\":[\"catalog.schema.goose-glm-5-3\"]}}}}'\n",
+            invoked.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let edit = json!({"name":"Goose","systemPrompt":"","workspace":dir.path(),
+        "harness":{"command":goose,"args":["acp"],"provider":"databricks_v2","model":""},
+        "environment":{}});
+    let refresh_ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    assert!(invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":refresh_ticket,"request":{
+            "host":"", "filter":"", "action":"refresh", "edit":edit
+        }})
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("explicit Browse or Retry"));
+    assert!(!invoked.exists());
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"", "filter":"", "action":"connect",
+            "edit":edit
+        }}),
+    )
+    .unwrap();
+    assert!(invoked.exists());
+    assert_eq!(result["models"][0]["id"], "catalog.schema.goose-glm-5-3");
+    assert_eq!(result["host"], "");
+}
 #[test]
 fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     let fake = Arc::new(Fake::default());
@@ -468,4 +514,40 @@ async fn unstarted_ticket_expires_and_old_run_cannot_claim_its_replacement() {
         .is_err());
     host.cancel(next).unwrap();
     assert!(host.begin().is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn pi_catalog_uses_native_ticket_and_draft_configuration_without_saving() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _host, _app, view) = fixture();
+    std::fs::create_dir(dir.path().join("local-config")).unwrap();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    for tool in ["pi", "node", "buzz-pi-acp"] {
+        let file = tools.join(tool);
+        std::fs::write(&file, r#"#!/bin/sh
+read request
+[ "$PI_CODING_AGENT_DIR" -ef "./local-config" ] || exit 1
+[ "$BUZZ_PRIVATE_KEY" = "" ] || exit 1
+printf '%s\n' '{"id":"catalog","type":"response","command":"get_available_models","success":true,"data":{"models":[{"provider":"extension","id":"namespace/model.v1"}]}}'
+"#).unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result=invoke(&view,"agent_models_run",json!({"ticket":ticket,"request":{
+        "host":"","filter":"","action":"connect","edit":{
+            "name":"Pi draft","systemPrompt":"","workspace":dir.path(),
+            "harness":{"command":tools.join("buzz-pi-acp"),"args":[],"provider":"extension","model":"invalid-old-id"},
+            "environment":{"PI_CODING_AGENT_DIR":dir.path().join("local-config")}
+        }
+    }})).unwrap();
+    assert_eq!(
+        result["models"],
+        json!([{"id":"extension/namespace/model.v1","name":"extension/namespace/model.v1"}])
+    );
+    assert_eq!(
+        invoke(&view, "agent_control_snapshot", json!({})).unwrap()["agents"],
+        json!([])
+    );
 }

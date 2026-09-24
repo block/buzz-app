@@ -19,24 +19,41 @@ export function createWorkSessions(
   relayAuthor?: string,
 ) {
   const available = !!outbox?.supports(9007);
-  function writer() {
+  function writer(addition = false) {
     if (signal.aborted || !available || !outbox)
       throw new Error(
-        "This community does not support channel creation yet. Your draft is kept here.",
+        addition
+          ? "This community cannot add agents to channels right now. Check the connection and retry."
+          : "This community does not support channel creation yet. Your draft is kept here.",
       );
     return outbox;
   }
   function identifier(id: string) {
     if (!uuid.test(id)) throw new Error("Invalid session identifier");
   }
-  async function delivered(id: string) {
-    const source = writer();
+  async function delivered(
+    id: string,
+    active?: () => boolean,
+    addition = false,
+  ) {
+    const check = () => {
+      if (active?.() === false)
+        throw new DOMException("Channel addition cancelled", "AbortError");
+    };
+    check();
+    const source = writer(addition);
     const journal = receipts ?? source;
     const existing = journal.snapshot().find((item) => item.event.id === id);
     if (!existing) {
-      if (await confirmCreation?.(id)) return;
+      if (await confirmCreation?.(id)) {
+        check();
+        return;
+      }
       const events = await reader.read([{ ids: [id], limit: 1 }], { signal });
-      if (events.some((event) => event.id === id)) return;
+      if (events.some((event) => event.id === id)) {
+        check();
+        return;
+      }
       throw new Error(
         "The saved operation could not be confirmed. Reconnect and retry.",
       );
@@ -45,7 +62,10 @@ export function createWorkSessions(
       // Ordinary channel creation rejects a repeated channel UUID. An exact,
       // verified creation event can confirm an earlier lost acknowledgment.
       if (existing.event.kind === 9007) {
-        if (await confirmCreation?.(id)) return;
+        if (await confirmCreation?.(id)) {
+          check();
+          return;
+        }
         const channelId = existing.event.tags.find(
           ([name]) => name === "h",
         )?.[1];
@@ -65,10 +85,14 @@ export function createWorkSessions(
             (event) =>
               event.id === id && event.pubkey === existing.event.pubkey,
           )
-        )
+        ) {
+          check();
           return;
+        }
       }
-      source.retry(id);
+      check();
+      if (active) source.retry(id, active);
+      else source.retry(id);
     }
     await new Promise<void>((resolve, reject) => {
       let unsubscribe = () => {};
@@ -80,13 +104,19 @@ export function createWorkSessions(
       };
       const aborted = () =>
         finish(
-          new Error("The community connection changed. Your draft is kept."),
+          new Error(
+            addition
+              ? "The community connection changed. Check channel membership before adding again."
+              : "The community connection changed. Your draft is kept.",
+          ),
         );
       const timer = setTimeout(
         () =>
           finish(
             new Error(
-              "Still waiting for confirmation. Retry without starting another session.",
+              addition
+                ? "Agent addition is unconfirmed. Check channel membership before retrying; the request may already have reached the relay."
+                : "Still waiting for confirmation. Retry without starting another session.",
             ),
           ),
         15000,
@@ -97,7 +127,12 @@ export function createWorkSessions(
           finish();
         else if (item?.delivery === "failed" || item?.delivery === "unknown")
           finish(
-            new Error(item.error ?? "The operation could not be confirmed."),
+            new Error(
+              item.error ??
+                (addition
+                  ? "Agent addition could not be confirmed. Check membership before retrying."
+                  : "The operation could not be confirmed."),
+            ),
           );
       };
       unsubscribe = journal.subscribe(inspect);
@@ -105,6 +140,7 @@ export function createWorkSessions(
       if (signal.aborted) aborted();
       else inspect();
     });
+    check();
   }
   async function refresh(
     id: string,
@@ -115,7 +151,7 @@ export function createWorkSessions(
     } = {},
     sessionOnly = true,
   ) {
-    writer();
+    writer(!sessionOnly);
     const wait = new Promise<void>((resolve, reject) => {
       let unsubscribe = () => {};
       const done = (error?: Error) => {
@@ -129,7 +165,9 @@ export function createWorkSessions(
         () =>
           done(
             new Error(
-              "Session saved, but its membership is still loading. Retry to continue.",
+              sessionOnly
+                ? "Session saved, but its membership is still loading. Retry to continue."
+                : "Agent addition is unconfirmed. Check channel membership before retrying; the request may already have reached the relay.",
             ),
           ),
         15000,
@@ -164,13 +202,16 @@ export function createWorkSessions(
     await wait;
   }
   async function refreshMembership(id: string) {
-    writer();
+    if (signal.aborted || (!outbox?.supports(9007) && !outbox?.supports(9000)))
+      throw new Error("Channel membership is unavailable.");
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const events = await reader.read(
       [{ kinds: [39002], authors: [relayAuthor], "#d": [id], limit: 1 }],
       { signal, fresh: true, priority: "foreground" },
     );
-    const channel = channels.list().channels.find((item) => item.id === id);
+    const channel =
+      channels.list().channels.find((item) => item.id === id) ??
+      channels.get?.(id);
     if (
       !events.some(
         (event) =>
@@ -189,12 +230,14 @@ export function createWorkSessions(
   async function addAgents(
     id: string,
     keys: readonly string[],
-    active = () => true,
+    active?: () => boolean,
   ) {
     const find = () => channels.list().channels.find((item) => item.id === id);
+    if (active?.() === false)
+      throw new DOMException("Channel addition cancelled", "AbortError");
     const original = await refreshMembership(id);
-    if (!active())
-      throw new DOMException("Session submission cancelled", "AbortError");
+    if (active?.() === false)
+      throw new DOMException("Channel addition cancelled", "AbortError");
     const unique = [...new Set(keys)].filter(
       (key) =>
         original.channelType !== "session" || !original.members?.includes(key),
@@ -217,9 +260,9 @@ export function createWorkSessions(
     const targets = parentId !== id ? [parentId, id] : [parentId];
     for (const targetId of targets) {
       for (const key of unique) {
-        if (!active())
-          throw new DOMException("Session submission cancelled", "AbortError");
-        writer();
+        if (active?.() === false)
+          throw new DOMException("Channel addition cancelled", "AbortError");
+        writer(!!active);
         if (find()?.parentChannelId !== original?.parentChannelId)
           throw new Error("This session moved. Refresh and retry.");
         const current = channels
@@ -233,6 +276,7 @@ export function createWorkSessions(
           .find(
             (item) =>
               item.event.kind === 9000 &&
+              !item.acknowledged &&
               !["accepted", "seen"].includes(item.delivery) &&
               item.event.tags.some(
                 ([name, value]) => name === "h" && value === targetId,
@@ -242,17 +286,30 @@ export function createWorkSessions(
               ) &&
               !item.event.tags.some(([name]) => name === "role"),
           );
+        if (
+          previous &&
+          Date.now() / 1000 - previous.event.created_at >= 15 * 60
+        )
+          throw new Error(
+            `This agent-add request expired. Open Outbox, remove the “Add agent ${key.slice(0, 12)}” item, then add the agent again. Check channel membership first if the request was unconfirmed.`,
+          );
         const operation =
           previous?.event.id ??
-          writer().send({
-            kind: 9000,
-            content: "",
-            tags: [
-              ["h", targetId],
-              ["p", key],
-            ],
-          });
-        await delivered(operation);
+          writer(!!active).send(
+            {
+              kind: 9000,
+              content: "",
+              tags: [
+                ["h", targetId],
+                ["p", key],
+              ],
+            },
+            undefined,
+            active,
+          );
+        await delivered(operation, active, true);
+        if (active?.() === false)
+          throw new DOMException("Channel addition cancelled", "AbortError");
         await refresh(targetId, { member: key }, false);
       }
     }

@@ -1,7 +1,11 @@
+import todosManifest from "./todos/manifest.json";
+import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import templatesManifest from "./channel-templates/manifest.json";
 import * as templates from "./channel-templates";
+import namingManifest from "./identity-naming/manifest.json";
+import * as naming from "./identity-naming";
 import activityManifest from "./agent-activity/manifest.json";
 import * as activity from "./agent-activity";
 import terminalManifest from "./terminal/manifest.json";
@@ -31,12 +35,18 @@ import sessionsManifest from "./sessions/manifest.json";
 import * as sessions from "./sessions";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...todosManifest, apiVersion: 1 },
+    module: todos,
+    enabledByDefault: false,
+  },
   { manifest: { ...diffsManifest, apiVersion: 1 }, module: diffs },
   {
     manifest: { ...templatesManifest, apiVersion: 1 },
     module: templates,
     enabledByDefault: false,
   },
+  { manifest: { ...namingManifest, apiVersion: 1 }, module: naming },
   { manifest: { ...activityManifest, apiVersion: 1 }, module: activity },
   { manifest: { ...terminalManifest, apiVersion: 1 }, module: terminal },
   { manifest: { ...profilesManifest, apiVersion: 1 }, module: profiles },

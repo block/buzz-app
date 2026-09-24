@@ -27,8 +27,8 @@ const test = base.extend({
         },
         secret,
       );
-    const people = Array.from({ length: 35 }, (_, i) => {
-      const secret = generateSecretKey();
+    const secrets = Array.from({ length: 35 }, () => generateSecretKey());
+    const people = secrets.map((secret, i) => {
       return sign(
         secret,
         0,
@@ -59,14 +59,17 @@ const test = base.extend({
       releaseDirectory = () => {};
     let backgroundReady = Promise.resolve(),
       releaseBackground = () => {};
-    const socket = brokerSocket(async (event) => {
-      if (hold)
+    const publish = async (event) => {
+      // The app can publish read state while a message is in flight. Only hold
+      // the message: otherwise a second publication replaces its release gate.
+      if (hold && event.kind === 9)
         await new Promise((resolve) => {
           release = resolve;
         });
       events.push(event);
       return "saved";
-    });
+    };
+    const socket = brokerSocket(publish);
     const broker = relayBrokerPlugin({
       relayUrl: fixtureRelayUrl,
       communityAliases: fixtureAliases,
@@ -217,6 +220,27 @@ const test = base.extend({
           });
         },
         showPeople: () => releaseDirectory(),
+        // A shared stream where Avery has spoken, so the profile is reachable.
+        seedChannel: (id, text) => {
+          const avery = getPublicKey(secrets[0]);
+          events.push(
+            sign(
+              relay,
+              39000,
+              [
+                ["d", id],
+                ["t", "stream"],
+              ],
+              JSON.stringify({ name: "general" }),
+            ),
+            sign(relay, 39002, [
+              ["d", id],
+              ["p", viewer],
+              ["p", avery],
+            ]),
+            sign(secrets[0], 9, [["h", id]], text),
+          );
+        },
         holdBackground: () => {
           backgroundReady = new Promise((resolve) => {
             releaseBackground = resolve;
@@ -229,6 +253,8 @@ const test = base.extend({
         holdDelivery: () => {
           hold = true;
         },
+        publishReadState: () =>
+          publish(sign(key, 30078, [["d", "fixture-read-state"]])),
         confirm: () => {
           hold = false;
           release();
@@ -547,10 +573,14 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   // must be gone before another New message starts.
   await page.reload();
   await expect(message).toBeVisible();
+  await expect(sidebarDm).toHaveAttribute("aria-current", "page");
   // Resolving an existing DM keeps its row visible while the next send is held.
   await page.getByText("DMs", { exact: true }).hover();
   await page.getByRole("button", { name: "New message", exact: true }).click();
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
+  // Composing is a separate route, not the previously selected conversation.
+  await expect(sidebarDm).toBeVisible();
+  await expect(sidebarDm).not.toHaveAttribute("aria-current", "page");
   await page
     .getByRole("textbox", { name: "Message Avery Chen", exact: true })
     .fill("Another message");
@@ -560,9 +590,65 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     .poll(() => app.publications.filter((event) => event.kind === 9).length)
     .toBe(2);
   await expect(sidebarDm).toBeVisible();
+  // A concurrent non-message write must not replace the held message's gate.
+  await app.publishReadState();
   app.confirm();
   await expect(
     page.locator("[data-message-id]", { hasText: "Another message" }),
   ).toBeVisible();
+  await expect(sidebarDm).toHaveAttribute("aria-current", "page");
+  expect(app.errors).toEqual([]);
+});
+
+test("profile Message opens a fresh DM and restores a hidden one", async ({
+  page,
+  app,
+}) => {
+  app.seedChannel("22222222-2222-4222-8222-222222222222", "Hello from Avery");
+  await page.goto(app.origin);
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Messages", exact: true })
+    .click();
+  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  const general = sidebar.locator(
+    '[data-channel-id="22222222-2222-4222-8222-222222222222"]',
+  );
+  const sidebarDm = sidebar.getByRole("button", {
+    name: "Avery Chen",
+    exact: true,
+  });
+  const openProfileMessage = async () => {
+    await general.click();
+    await page
+      .locator("[data-message-id]", { hasText: "Hello from Avery" })
+      .getByRole("button", { name: "View Avery Chen profile" })
+      .click();
+    const profile = page.getByRole("complementary", {
+      name: "Profile",
+      exact: true,
+    });
+    await profile.getByRole("button", { name: "Message", exact: true }).click();
+  };
+  await expect(sidebarDm).toHaveCount(0);
+  await openProfileMessage();
+  await expect(sidebarDm).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Avery Chen" }),
+  ).toBeVisible();
+  expect(app.commands).toHaveLength(1);
+  expect(app.commands[0].kind).toBe(41010);
+  // A locally hidden DM reappears when the profile opens it again.
+  await sidebarDm.hover();
+  await sidebar
+    .getByRole("button", { name: "Remove Avery Chen from DMs" })
+    .click();
+  await expect(sidebarDm).toHaveCount(0);
+  await openProfileMessage();
+  await expect(sidebarDm).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Avery Chen" }),
+  ).toBeVisible();
+  expect(app.commands).toHaveLength(2);
   expect(app.errors).toEqual([]);
 });

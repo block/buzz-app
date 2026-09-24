@@ -1,8 +1,11 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { npubEncode } from "nostr-tools/nip19";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 test.use({
   productionBroker: true,
+  // Navigation can publish read positions through the real broker.
+  readState: true,
   developmentReact: true,
   historyCounts: { alpha: 1, beta: 1 },
 });
@@ -113,6 +116,28 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     panel.getByRole("combobox", { name: "Channel", exact: true }),
   ).toHaveText(/Alpha.*alpha/);
   await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
+  // Telemetry supplies keys before any profile or directory facts exist.
+  const agentSelect = panel.getByRole("combobox", {
+    name: "Agent",
+    exact: true,
+  });
+  for (const key of [second, first]) {
+    await agentSelect.click();
+    const choices = page.getByRole("option");
+    await expect(choices).toHaveCount(2);
+    const labels = await choices.allTextContents();
+    expect(new Set(labels).size).toBe(2);
+    const label = labels.find(
+      (text) =>
+        text.startsWith("Agent · npub…") &&
+        npubEncode(key).endsWith(text.slice("Agent · npub…".length)),
+    );
+    expect(label).toBeDefined();
+    const choice = page.getByRole("option", { name: label, exact: true });
+    await expect(choice).toBeVisible();
+    await choice.click();
+    await expect(panel.locator("code").first()).toHaveText(key);
+  }
   const unsafeDisclosure = panel.getByRole("button", { name: /turn_liveness/ });
   await unsafeDisclosure.focus();
   await unsafeDisclosure.press("Enter");
@@ -313,8 +338,25 @@ for (const mode of ["light", "dark"]) {
 test("profile activity opens the exact agent and originating channel before its first frame", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
   await open(page, app);
+  // The production broker advertises read-state writes even without the
+  // readState fixture option. Exercise that publication before profile activity.
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await page.getByText("Diagnostics", { exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Mark read through loaded messages",
+      exact: true,
+    })
+    .click();
+  await expect.poll(() => app.report.readPublications.length).toBe(1);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const agentKey = generateSecretKey();
   const agent = getPublicKey(agentKey);
@@ -336,6 +378,9 @@ test("profile activity opens the exact agent and originating channel before its 
     name: "Profile",
     exact: true,
   });
+  await expect(
+    profile.getByRole("region", { name: "Activity preview" }),
+  ).toContainText("No activity yet");
   await profile
     .getByRole("button", { name: "View activity", exact: true })
     .click();
@@ -390,6 +435,101 @@ test("profile activity opens the exact agent and originating channel before its 
   await panel.press("Escape");
   await expect(avatar).toBeFocused();
   await avatar.click();
+  await expect(
+    profile.getByRole("region", { name: "Activity preview" }).locator("time"),
+  ).toHaveAttribute("datetime", JSON.parse(expected.plaintext).timestamp);
+  const preview = profile.getByRole("region", { name: "Activity preview" });
+  await profile.getByRole("tab", { name: "Channels", exact: true }).click();
+  await expect(preview).toHaveCount(0);
+  await profile.getByRole("tab", { name: "Info", exact: true }).click();
+  await expect(preview.locator("time")).toHaveAttribute(
+    "datetime",
+    JSON.parse(expected.plaintext).timestamp,
+  );
+  const update = (value) => ({
+    ...item("acp_read", "alpha", "wanted"),
+    payload: { method: "session/update", params: { update: value } },
+  });
+  app.observer(
+    update({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "reply",
+      content: {
+        type: "text",
+        text: "I found the issue in the channel subscription. ",
+      },
+    }),
+    agentKey,
+  );
+  app.observer(
+    update({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "reply",
+      content: {
+        type: "text",
+        text: "Checking the fix against the existing tests.",
+      },
+    }),
+    agentKey,
+  );
+  app.observer(
+    update({
+      sessionUpdate: "tool_call",
+      toolCallId: "tests",
+      title: "Run profile tests",
+      status: "in_progress",
+    }),
+    agentKey,
+  );
+  await expect(
+    preview.getByRole("list", { name: "Recent activity" }),
+  ).toContainText(
+    "I found the issue in the channel subscription. Checking the fix against the existing tests.",
+  );
+  await expect(
+    preview.getByText("Run profile tests", { exact: true }),
+  ).toBeVisible();
+  app.observer(
+    update({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tests",
+      status: "completed",
+    }),
+    agentKey,
+  );
+  await expect(
+    preview.getByText("Tool completed", { exact: true }),
+  ).toBeVisible();
+  await profile.getByRole("tab", { name: "Channels", exact: true }).click();
+  await profile.getByRole("tab", { name: "Info", exact: true }).click();
+  await expect(
+    preview.getByText("Run profile tests", { exact: true }),
+  ).toBeVisible();
+  // Exercise painted theme/layout, not the separate appearance persistence contract.
+  for (const mode of ["light", "dark"]) {
+    await page.locator("html").evaluate((element, mode) => {
+      element.setAttribute("data-color-mode", mode);
+    }, mode);
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await expect(preview).toBeVisible();
+      await expect(
+        preview.getByRole("button", { name: "View activity" }),
+      ).toBeVisible();
+      const bounds = await preview.boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      expect(
+        await preview.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: testInfo.outputPath(`profile-preview-${mode}-${width}.png`),
+      });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
   await profile
     .getByRole("button", { name: "View activity", exact: true })
     .click();

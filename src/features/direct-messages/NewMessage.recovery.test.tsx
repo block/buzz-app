@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import type { ComposerInputElement } from "../messages/composer-dom";
+import { composerDOMFixture } from "../messages/composer-testing";
+
+composerDOMFixture();
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -529,7 +533,8 @@ it.each(["picker", "completion"])(
     t.mount(owner, extensions);
     await t.user.click(await screen.findByRole("option", { name: "Avery" }));
     await t.user.click(screen.getByRole("option", { name: "Zoe" }));
-    const composer = () => screen.getByRole("textbox", { name: /^Message / });
+    const composer = () =>
+      screen.getByRole<ComposerInputElement>("textbox", { name: /^Message / });
     const choices = async () => {
       if (path === "picker") {
         await t.user.click(
@@ -539,7 +544,13 @@ it.each(["picker", "completion"])(
           screen.getByRole("region", { name: "Mention a member or agent" }),
         );
       }
-      await t.user.type(composer(), "@");
+      // jsdom has no caret hit testing; append after the existing mention.
+      act(() => {
+        const input = composer();
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
+      await t.user.keyboard("@");
       return within(
         await screen.findByRole("listbox", { name: "Mention suggestions" }),
       );
@@ -572,7 +583,7 @@ it.each(["picker", "completion"])(
       second.queryByRole(choiceRole, { name: new RegExp(another.pubkey) }),
     ).not.toBeInTheDocument();
     if (path === "picker") await t.user.keyboard("{Escape}");
-    else await t.user.type(composer(), " ");
+    else await t.user.keyboard(" ");
     expect(t.openDirectMessage).not.toHaveBeenCalled();
     await t.user.click(send());
     expect(await screen.findByRole("alert")).toHaveTextContent(

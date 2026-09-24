@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { composerDOMFixture } from "./composer-testing";
+
+composerDOMFixture();
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EventTemplate } from "nostr-tools";

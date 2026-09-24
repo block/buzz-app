@@ -2,10 +2,10 @@
 
 Profiles show Active, Away, or Offline with text, while avatar badges use
 solid status fills. Pending, failed, stale, or unavailable evidence renders no
-status; it is not relabeled Offline. Human message and thread bylines neither
-display presence nor demand snapshots. Agent bylines display a badge and demand
-presence when mounted. This describes recent Buzz
-session status in this community, not proof that a person is available or an
+status; it is not relabeled Offline. Message and thread bylines display badges
+and demand presence when mounted, as do one-to-one DM avatars in the sidebar.
+This describes recent Buzz session status in this community, not proof that a
+person is available or an
 immediate live-status stream. The relay stores one status per community/pubkey:
 multiple devices are last-writer-wins, so an idle device can report Away even
 while another is active. A crashed connection's lease can remain for up to 180
@@ -40,8 +40,8 @@ or imply confirmed delivery. There is no durable invisible policy on the relay.
   including input without a keydown. Same-origin windows share
   recent input through BroadcastChannel; no machine-idle or cross-device claim.
 - Each retained connected session owns one volatile presence directory. Mounted
-  profiles and agent message bylines demand authors. At most 256 unique authors
-  are selected; profiles take priority, then existing
+  profiles, message bylines, and one-to-one DM sidebar rows demand authors. At
+  most 256 unique authors are selected; profiles take priority, then existing
   selections and stable acquisition order. Overflow has no visible status.
 - Initial/new demand coalesces for 100ms behind a five-second start gate. Successful
   views refresh after 60–65 seconds. Evidence expires 75 seconds after request start.
@@ -77,8 +77,8 @@ There are no presence REQs, added sockets, relay changes, or direct-adapter pari
 
 Owner tests live with `features/presence`, relay transport/admission and the broker.
 `tests/browser/presence.spec.mjs` exercises the built app and production broker with
-modeled upstream and ephemeral keys: held profile snapshots versus chat, no
-human byline presence/demand, avatar choices and reload, and real same-origin preference
+modeled upstream and ephemeral keys: held profile snapshots versus chat,
+byline presence/demand, avatar choices and reload, and real same-origin preference
 synchronization/Web Lock handoff while Offline. `settings.spec.mjs` retains the
 account disclosure, keyboard traversal and Settings journey in both engines. `channel-opening.spec.mjs` includes matched-thread
 measurement support. See [browser measurement limits](browser-testing.md).

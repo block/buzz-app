@@ -131,10 +131,7 @@ export const MessageRow = memo(function MessageRow({
     row.agentEnvelope || agentPubkeys?.has(row.authorId)
       ? "squircle"
       : "circle";
-  const agentPresence = usePresenceStatus(
-    session?.presence,
-    avatarShape === "squircle" ? row.authorId : undefined,
-  );
+  const presence = usePresenceStatus(session?.presence, row.authorId);
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
@@ -209,9 +206,7 @@ export const MessageRow = memo(function MessageRow({
             shape="round"
             aria-label={`View ${name} profile`}
             aria-description={
-              agentPresence === "unknown"
-                ? undefined
-                : `Presence: ${agentPresence}`
+              presence === "unknown" ? undefined : `Presence: ${presence}`
             }
             onClick={(event) => {
               event.currentTarget.focus();
@@ -224,22 +219,24 @@ export const MessageRow = memo(function MessageRow({
                 fallback={name}
                 size="fill"
                 shape={avatarShape}
-                statusBadge={
-                  agentPresence === "unknown" ? undefined : agentPresence
-                }
+                statusBadge={presence === "unknown" ? undefined : presence}
               />
             }
           />
         ) : (
           <Avatar
             src={picture}
-            alt={agentPresence === "unknown" ? "" : "Agent"}
+            alt={
+              presence === "unknown"
+                ? ""
+                : avatarShape === "squircle"
+                  ? "Agent"
+                  : `${name} avatar`
+            }
             fallback={name}
             size="large"
             shape={avatarShape}
-            statusBadge={
-              agentPresence === "unknown" ? undefined : agentPresence
-            }
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         )}
         <div className={styles.messageBody}>

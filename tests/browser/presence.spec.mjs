@@ -206,9 +206,9 @@ test("foreground send and cold channel entry remain available during a profile s
   }
 });
 
-test.describe("human byline presence is not rendered or queried", () => {
+test.describe("human message bylines show known presence", () => {
   test.use({ threadUnread: true, historyCounts: { alpha: 20, beta: 20 } });
-  test("timeline and thread bylines do not acquire presence; an explicit profile does", async ({
+  test("timeline and thread bylines demand presence alongside an explicit profile", async ({
     page,
     app,
   }) => {
@@ -229,14 +229,18 @@ test.describe("human byline presence is not rendered or queried", () => {
     await expect(
       thread.getByText("Unread reply 0", { exact: true }),
     ).toBeVisible();
-    await expect(timeline.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
-    );
-    await expect(thread.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
-    );
-    // Opening and resolving a profile exercises a real snapshot completion
-    // barrier, without keeping obsolete hidden byline subscribers alive.
+    await expect(
+      timeline
+        .getByRole("button", { name: "View Alice Fixture profile" })
+        .first()
+        .locator(".buzz-avatar-status"),
+    ).toHaveAttribute("data-status", "online");
+    await expect(
+      thread
+        .getByRole("button", { name: "View Alice Fixture profile" })
+        .first()
+        .locator(".buzz-avatar-status"),
+    ).toHaveAttribute("data-status", "online");
     await thread
       .getByRole("button", { name: "View Alice Fixture profile", exact: true })
       .first()
@@ -245,11 +249,14 @@ test.describe("human byline presence is not rendered or queried", () => {
     await expect(
       profile.getByRole("img", { name: "Presence: Active" }),
     ).toBeVisible();
-    expect(app.report.presenceSnapshots).toHaveLength(1);
-    expect(app.report.presenceSnapshots[0].filter.authors).toHaveLength(1);
-    await expect(timeline.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
-    );
+    expect(
+      app.report.presenceSnapshots.some((snapshot) =>
+        snapshot.filter.authors.includes(root.pubkey),
+      ),
+    ).toBe(true);
+    await expect(
+      profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
+    ).toBeVisible();
     expect(
       app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
     ).toBe(false);

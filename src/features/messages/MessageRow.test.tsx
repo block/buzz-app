@@ -31,7 +31,7 @@ const row: ChannelMessage = {
   replyCount: 23,
 };
 
-it("badges agent bylines with known presence and leaves human bylines undemanded", () => {
+it("badges agent and human bylines with known presence", () => {
   const agentRow = { ...row, authorId: "a".repeat(64) };
   const subscribe = vi.fn(() => () => {});
   const status = vi.fn(() => "online" as const);
@@ -60,8 +60,9 @@ it("badges agent bylines with known presence and leaves human bylines undemanded
   expect(agent).toContain('data-status="online"');
   expect(agent).toContain('aria-label="Agent, online"');
   const human = show(false);
-  expect(human).not.toContain('data-status="online"');
-  expect(status).toHaveBeenCalledTimes(1);
+  expect(human).toContain('data-status="online"');
+  expect(human).toContain('aria-label="aaaaaaaaaa avatar, online"');
+  expect(status).toHaveBeenCalledTimes(2);
   const props = {
     row: agentRow,
     session,
@@ -92,7 +93,11 @@ it("badges agent bylines with known presence and leaves human bylines undemanded
   mounted.unmount();
   subscribe.mockClear();
   renderDom(<MessageRow {...props} />);
-  expect(subscribe).not.toHaveBeenCalled();
+  expect(subscribe).toHaveBeenCalledWith(
+    agentRow.authorId,
+    expect.any(Function),
+    false,
+  );
   cleanup();
 });
 it.each(["bare", "angle", "markdown", "escaped"] as const)(

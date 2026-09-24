@@ -1,3 +1,12 @@
-.buzz-avatar-status > .buzz-avatar {
+.buzz-avatar-status[data-shape="circle"] > .buzz-avatar {
   mask: url("./avatar-status-cutout.svg") center / 100% 100% no-repeat;
+}
+
+.buzz-avatar-status[data-shape="squircle"] > .buzz-avatar {
+  mask: url("./avatar-status-squircle-cutout.svg") center / 100% 100% no-repeat;
+}
+
+.buzz-avatar-status[data-shape="squircle"] .buzz-avatar-status-dot {
+  border-radius: 0;
+  mask: url("./avatar-squircle.svg") center / 100% 100% no-repeat;
 }

@@ -1,6 +1,7 @@
 import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { usePresenceStatus } from "../presence/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
@@ -130,6 +131,10 @@ export const MessageRow = memo(function MessageRow({
     row.agentEnvelope || agentPubkeys?.has(row.authorId)
       ? "squircle"
       : "circle";
+  const agentPresence = usePresenceStatus(
+    session?.presence,
+    avatarShape === "squircle" ? row.authorId : undefined,
+  );
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
@@ -214,6 +219,9 @@ export const MessageRow = memo(function MessageRow({
                 fallback={name}
                 size="fill"
                 shape={avatarShape}
+                statusBadge={
+                  agentPresence === "unknown" ? undefined : agentPresence
+                }
               />
             }
           />
@@ -224,6 +232,9 @@ export const MessageRow = memo(function MessageRow({
             fallback={name}
             size="large"
             shape={avatarShape}
+            statusBadge={
+              agentPresence === "unknown" ? undefined : agentPresence
+            }
           />
         )}
         <div className={styles.messageBody}>

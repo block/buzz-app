@@ -336,13 +336,11 @@
   }
 
   .buzz-avatar-status[data-status="away"] .buzz-avatar-status-dot {
-    background: linear-gradient(90deg, var(--status-away) 50%, transparent 50%);
-    box-shadow: inset 0 0 0 1.5px var(--status-away);
+    background: var(--status-away);
   }
 
   .buzz-avatar-status[data-status="offline"] .buzz-avatar-status-dot {
-    background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--status-offline);
+    background: var(--status-offline);
   }
 
   /* A panel is the default opaque reading surface over the atmospheric

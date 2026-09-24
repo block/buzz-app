@@ -9,6 +9,7 @@ import type { ComposerAccessoryProps } from "../../features/conversation/contrac
 import { activityTarget } from "../../features/agents/activity-target";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { usePresenceStatus } from "../../features/presence/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import styles from "./ActivityAccessory.module.css";
 
@@ -112,12 +113,11 @@ export function ActivityAccessory({
                 aria-label={`View activity for ${name} ${agent.slice(0, 12)}`}
                 onClick={() => open(target)}
                 icon={
-                  <Avatar
+                  <ActivityAvatar
+                    session={session}
+                    pubkey={agent}
                     src={picture ? (session.media(picture) ?? null) : null}
-                    alt=""
-                    fallback={name}
-                    size="small"
-                    shape="squircle"
+                    name={name}
                   />
                 }
                 label={
@@ -142,5 +142,29 @@ export function ActivityAccessory({
         })}
       </div>
     </section>
+  );
+}
+
+function ActivityAvatar({
+  session,
+  pubkey,
+  src,
+  name,
+}: {
+  session: ComposerAccessoryProps["session"];
+  pubkey: string;
+  src: string | null;
+  name: string;
+}) {
+  const presence = usePresenceStatus(session.presence, pubkey);
+  return (
+    <Avatar
+      src={src}
+      alt=""
+      fallback={name}
+      size="small"
+      shape="squircle"
+      statusBadge={presence === "unknown" ? undefined : presence}
+    />
   );
 }

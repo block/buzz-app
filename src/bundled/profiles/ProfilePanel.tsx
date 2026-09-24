@@ -4,7 +4,10 @@ import { ProfileInstances } from "./ProfileInstances";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { PresenceIndicator } from "../../features/presence/react";
+import {
+  PresenceIndicator,
+  usePresenceStatus,
+} from "../../features/presence/react";
 import {
   useEffect,
   useMemo,
@@ -110,6 +113,7 @@ function ProfileDetails({
     };
   }, [session, pubkey, attempt]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const presence = usePresenceStatus(session.presence, pubkey, true);
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
     try {
@@ -143,6 +147,11 @@ function ProfileDetails({
             fallback={name}
             size={picture ? "fill" : "large"}
             shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
+            statusBadge={
+              agentPubkeys.has(pubkey) && presence !== "unknown"
+                ? presence
+                : undefined
+            }
           />
         </div>
         <h2 className="text-heading">{name}</h2>

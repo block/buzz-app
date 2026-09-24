@@ -7,13 +7,11 @@
 }
 
 .statusDot[data-status="away"] {
-  background: linear-gradient(90deg, var(--status-away) 50%, transparent 50%);
-  box-shadow: inset 0 0 0 1.5px var(--status-away);
+  background: var(--status-away);
 }
 
 .statusDot[data-status="offline"] {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--status-offline);
+  background: var(--status-offline);
 }
 
 .statusText {

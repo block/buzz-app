@@ -8,7 +8,7 @@ test("status badges keep avatar sizes and show a clear cutout in both modes", as
   page,
 }) => {
   await page.goto(`${viewer}#/design/components/avatar`);
-  const badges = page.locator(".buzz-avatar-status");
+  const badges = page.locator('.buzz-avatar-status[data-shape="circle"]');
   await expect(badges).toHaveCount(5);
   await expect(
     page.getByRole("img", { name: "Morgan Martin, online" }),
@@ -79,20 +79,9 @@ test("status badges keep avatar sizes and show a clear cutout in both modes", as
           `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot`,
         )
         .first();
-      if (status === "online") {
-        await expect(dot).toHaveCSS("background-color", color);
-        await expect(dot).toHaveCSS("background-image", "none");
-      } else {
-        await expect(dot).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-        await expect(dot).toHaveCSS("box-shadow", /inset/);
-        expect(
-          await dot.evaluate((element) => getComputedStyle(element).boxShadow),
-        ).toContain(color);
-        await expect(dot).toHaveCSS(
-          "background-image",
-          status === "away" ? /linear-gradient/ : "none",
-        );
-      }
+      await expect(dot).toHaveCSS("background-color", color);
+      await expect(dot).toHaveCSS("background-image", "none");
+      await expect(dot).toHaveCSS("box-shadow", "none");
     }
     const box = await large.boundingBox();
     if (!box) throw new Error("Large status avatar is not visible");
@@ -146,6 +135,45 @@ test("status badges keep avatar sizes and show a clear cutout in both modes", as
       `${mode} artwork`,
     ).toBeGreaterThan(30);
   }
+});
+
+test("agent status badges follow the squircle while keeping the artwork size", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/avatar`);
+  const badges = page.locator('.buzz-avatar-status[data-shape="squircle"]');
+  await expect(badges).toHaveCount(5);
+  for (const [index, size] of [24, 32, 40].entries()) {
+    const avatar = badges.nth(index).locator(".buzz-avatar");
+    await expect(avatar).toHaveCSS("width", `${size}px`);
+    await expect(avatar).toHaveCSS("height", `${size}px`);
+    await expect(avatar).toHaveCSS("mask-image", /^url\(/);
+    await expect(
+      badges.nth(index).locator(".buzz-avatar-status-dot"),
+    ).toHaveCSS("width", `${size / 4}px`);
+    await expect(
+      badges.nth(index).locator(".buzz-avatar-status-dot"),
+    ).toHaveCSS("mask-image", /^url\(/);
+  }
+  for (const status of ["online", "away", "offline"]) {
+    await expect(
+      page.getByRole("img", { name: `Agent artwork, ${status}` }),
+    ).toHaveCount(status === "online" ? 3 : 1);
+  }
+  const plain = page
+    .locator(".component-specimen")
+    .filter({ hasText: 'shape="squircle"' })
+    .first()
+    .locator(".buzz-avatar");
+  await expect(plain).toHaveCSS("mask-image", /^url\(/);
+  expect(
+    await plain.evaluate((element) => getComputedStyle(element).maskImage),
+  ).not.toBe(
+    await badges
+      .first()
+      .locator(".buzz-avatar")
+      .evaluate((element) => getComputedStyle(element).maskImage),
+  );
 });
 
 test("built viewer loads every specimen and foundation without app connections", async ({

@@ -57,11 +57,13 @@ Avatar `shape="circle"` or `shape="squircle"`; the shape carries identity meanin
 not density or emphasis. The caller supplies identity type from domain data,
 never a name or picture heuristic. `size="fill"` fills the owning layout’s
 available space. Shape clips the artwork, never the interactive focus target.
-Circular avatars can add `statusBadge="online" | "away" | "offline"`. The dot
+Circular and squircle avatars can add `statusBadge="online" | "away" | "offline"`. The dot
 uses a semantic green, yellow, or grey role with light and dark values. Its inset
 cutout and dot scale with the existing avatar size; the dot is separate from the
-clipped artwork, and avatars without a badge retain their full circle. Online is
-filled, Away is half-filled, and Offline is a ring so color is not the only cue.
+clipped artwork, and avatars without a badge retain their full shape. The agent
+cutout and badge follow the squircle contour; agent badges use live presence and leave
+unknown status unbadged. All three statuses use solid fills: green for Online,
+yellow for Away, and grey for Offline, with semantic light and dark values.
 
 ## Public identity text
 

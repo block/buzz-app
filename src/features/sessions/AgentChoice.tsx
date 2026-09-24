@@ -10,6 +10,7 @@ import { Menu } from "@base-ui/react/menu";
 import type { RelaySession } from "../relay/session";
 import { Avatar } from "../../shared/Avatar";
 import { avatarSource } from "../../shared/avatar-source";
+import { usePresenceStatus } from "../presence/react";
 import completion from "../conversation/Completions.module.css";
 import styles from "./Sessions.module.css";
 
@@ -27,6 +28,29 @@ export function agentAdmission(
   return parentMembers !== undefined && !parentMembers.includes(pubkey)
     ? ("session-and-channel" as const)
     : ("session" as const);
+}
+
+function AgentStatusAvatar({
+  session,
+  pubkey,
+  name,
+  src,
+}: {
+  session: RelaySession;
+  pubkey: string;
+  name: string;
+  src: string | undefined;
+}) {
+  const presence = usePresenceStatus(session.presence, pubkey);
+  return (
+    <Avatar
+      name={name}
+      src={src}
+      className={styles.agentAvatar ?? ""}
+      shape="squircle"
+      statusBadge={presence === "unknown" ? undefined : presence}
+    />
+  );
 }
 
 export function AgentChoice({
@@ -80,11 +104,11 @@ export function AgentChoice({
           render={
             <Button variant="outline" size="sm" style={{ maxWidth: "100%" }}>
               {selected ? (
-                <Avatar
+                <AgentStatusAvatar
+                  session={session}
+                  pubkey={selected.pubkey}
                   name={selected.name}
                   src={picture(selected.avatar)}
-                  className={styles.agentAvatar ?? ""}
-                  shape="squircle"
                 />
               ) : (
                 <RobotIcon size={20} aria-hidden="true" />
@@ -151,11 +175,11 @@ export function AgentChoice({
                     closeOnClick
                     className={`${completion.option} ${styles.agentOption}`}
                   >
-                    <Avatar
+                    <AgentStatusAvatar
+                      session={session}
+                      pubkey={agent.pubkey}
                       name={agent.name}
                       src={picture(agent.avatar)}
-                      className={styles.agentAvatar ?? ""}
-                      shape="squircle"
                     />
                     <span>
                       {agent.name}

@@ -207,6 +207,30 @@ function AvatarSpecimen() {
       </SpecimenGroup>
       <SpecimenGroup label="Agent shape (proposed)">
         <div className="component-specimen-row">
+          {(["small", "default", "large"] as const).map((size) => (
+            <Specimen key={size} prop={`squircle · ${size} · online`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Agent artwork"
+                fallback="Agent"
+                shape="squircle"
+                size={size}
+                statusBadge="online"
+              />
+            </Specimen>
+          ))}
+          {(["away", "offline"] as const).map((status) => (
+            <Specimen key={status} prop={`squircle · large · ${status}`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Agent artwork"
+                fallback="Agent"
+                shape="squircle"
+                size="large"
+                statusBadge={status}
+              />
+            </Specimen>
+          ))}
           <Specimen prop='shape="squircle"'>
             <Avatar
               src={avatarUrl}

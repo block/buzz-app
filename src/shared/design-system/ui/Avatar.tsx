@@ -54,7 +54,7 @@ export function Avatar({
   fallbackContent?: ReactNode;
   size?: AvatarSize;
   shape?: "circle" | "squircle";
-  statusBadge?: "online" | "away" | "offline";
+  statusBadge?: "online" | "away" | "offline" | undefined;
 }) {
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   const content = fallbackContent ?? initial;
@@ -66,9 +66,7 @@ export function Avatar({
       data-avatar-shape={shape}
       role={alt ? "img" : undefined}
       aria-label={
-        alt
-          ? `${alt}${statusBadge && shape === "circle" ? `, ${statusBadge}` : ""}`
-          : undefined
+        alt ? `${alt}${statusBadge ? `, ${statusBadge}` : ""}` : undefined
       }
       aria-hidden={!alt || undefined}
     >
@@ -79,11 +77,12 @@ export function Avatar({
       )}
     </BaseAvatar.Root>
   );
-  if (!statusBadge || shape !== "circle") return artwork;
+  if (!statusBadge) return artwork;
   return (
     <span
       className="buzz-avatar-status"
       data-size={size}
+      data-shape={shape}
       data-status={statusBadge}
     >
       {artwork}

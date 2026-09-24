@@ -8,6 +8,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { avatarSource } from "../../shared/avatar-source";
+import { usePresenceStatus } from "../../features/presence/react";
 import type { AgentLibrary } from "../../features/agents/library";
 import type { AgentView } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
@@ -31,6 +32,10 @@ export function AgentCard({
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const source = avatarSource(avatar);
+  const presence = usePresenceStatus(
+    session?.presence,
+    identities.length === 1 ? identities[0]?.pubkey : undefined,
+  );
   const picture = source?.startsWith("data:")
     ? source
     : source
@@ -127,6 +132,7 @@ export function AgentCard({
             src={picture ?? null}
             size="large"
             shape="squircle"
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         </div>
         <h3 className="m-0 min-w-0 truncate text-label" title={name}>

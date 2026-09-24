@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { test as sourceTest } from "./source-fixture.mjs";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -251,3 +252,63 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     await server.close();
   }
 });
+
+sourceTest(
+  "one active reaction picker preserves target and focus when switching or unmounting",
+  async ({ page }) => {
+    await page.route("**/emoji-media/**", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"/>',
+      }),
+    );
+    await page.goto("/tests/fixtures/emoji.html?reactions");
+    const rows = page.locator("[data-message-id]");
+    // Open the lower row first so its popup does not cover the next trigger.
+    const firstRow = rows.nth(1);
+    const secondRow = rows.nth(0);
+    const first = firstRow.getByRole("button", {
+      name: "Add reaction",
+      exact: true,
+    });
+    const second = secondRow.getByRole("button", {
+      name: "Add reaction",
+      exact: true,
+    });
+    const search = page.locator('em-emoji-picker input[type="search"]');
+    await firstRow.hover();
+    await first.click();
+    await expect(search).toBeVisible();
+    await secondRow.hover();
+    await second.click();
+    await expect(search).toHaveCount(1);
+    await expect(search).toBeVisible();
+    await expect(first).toHaveAttribute("aria-expanded", "false");
+    await expect(second).toHaveAttribute("aria-expanded", "true");
+    await search.press("Escape");
+    await expect(search).toHaveCount(0);
+    await expect(second).toBeFocused();
+    await first.focus();
+    await first.press("Enter");
+    await expect(search).toBeVisible();
+    await second.focus();
+    await second.press("Enter");
+    await expect(search).toHaveCount(1);
+    await expect(search).toBeVisible();
+    await search.press("Escape");
+    await expect(search).toHaveCount(0);
+    await expect(second).toBeFocused();
+    await second.press("Enter");
+    await expect(search).toBeVisible();
+    await page.evaluate(() => window.emojiFixture.remount());
+    await expect(search).toHaveCount(0);
+    await firstRow.hover();
+    await first.click();
+    await expect(search).toBeVisible();
+    await page.evaluate(() => window.emojiFixture.archive(true));
+    await expect(search).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Add reaction", exact: true }),
+    ).toHaveCount(0);
+  },
+);

@@ -37,6 +37,7 @@ fn main() {
             "agent_control_action",
             "agent_control_import_preview",
             "agent_control_import_commit",
+            "agent_control_use_here",
             "agent_models_begin",
             "agent_models_cancel",
             "agent_models_run",

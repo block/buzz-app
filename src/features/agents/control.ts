@@ -61,8 +61,11 @@ export interface AgentView {
   launchProviderEnv: string | null;
   /** Empty unless a running process was started with different saved settings. */
   restartDiff: RestartDiffEntry[];
+  /** Absent on older hosts means an existing configured setup. */
+  configured?: boolean;
 }
 export interface ControlSnapshot {
+  localInventoryActions?: boolean;
   agents: AgentView[];
   runtimeAvailable: boolean;
   /** Native-owned editing suggestions, not installation or execution evidence.
@@ -96,7 +99,17 @@ export interface AgentImportPreview {
   candidates: Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name">[];
   warnings: string[];
 }
+export type CommunityResolution = {
+  pubkey: string;
+  relayUrl: string;
+  owner: string;
+  signature: string;
+};
 export interface AgentControlHost {
+  configureHere?(
+    id: string,
+    resolution: CommunityResolution,
+  ): Promise<ControlSnapshot>;
   models?: ModelHost;
   prepareCreate?(
     requestId: string,
@@ -140,6 +153,7 @@ export interface AgentControlState {
   error: string | null;
 }
 export interface AgentControl {
+  configureHere?: AgentControlHost["configureHere"];
   models?: AgentModels;
   create?(
     requestId: string,
@@ -171,6 +185,8 @@ export function agentLaunchBlock(
   state: AgentControlState,
   agent: AgentView,
 ): string | null {
+  if (agent.configured === false)
+    return "Choose Use here before starting this imported identity.";
   if (state.status !== "ready") return "Refresh status before starting.";
   if (state.busy) return "Waiting for the current operation.";
   if (!state.data?.runtimeAvailable)
@@ -450,6 +466,7 @@ export function createAgentControl(
         const agents =
           state.data?.agents.filter(
             (agent) =>
+              agent.configured !== false &&
               pubkeys.includes(agent.pubkey) &&
               relayOrigin(agent.relayUrl) === relayOrigin(relayUrl),
           ) ?? [];
@@ -483,6 +500,22 @@ export function createAgentControl(
           update({ mentionError: `Message sent, but ${failures.join(" ")}` });
       };
     },
+    ...(host?.configureHere
+      ? {
+          configureHere: (id: string, resolution: CommunityResolution) =>
+            run(
+              (native) => {
+                if (!native.configureHere)
+                  throw new Error("Use here is unavailable.");
+                return native.configureHere(id, resolution);
+              },
+              (data) => update({ data }),
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
     previewImport: (source, destination) =>
       run(
         (native) => native.previewImport(source, destination),

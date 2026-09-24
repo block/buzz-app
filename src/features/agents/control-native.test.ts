@@ -84,3 +84,19 @@ it("mention replay floor is transient IPC input on the existing Start command", 
     replayFloor: 1234567890,
   });
 });
+
+it("retained inventory actions use native custody commands", async () => {
+  vi.mocked(invoke).mockClear();
+  vi.mocked(isTauri).mockReturnValue(true);
+  const host = nativeAgentControlHost();
+  const resolution = {
+    pubkey: "ab".repeat(32),
+    relayUrl: "wss://relay.example",
+    owner: "cd".repeat(32),
+    signature: "signed",
+  };
+  await host?.configureHere?.("retained", resolution);
+  expect(vi.mocked(invoke).mock.calls).toEqual([
+    ["agent_control_use_here", { id: "retained", resolution }],
+  ]);
+});

@@ -333,8 +333,8 @@ for (const mode of ["light", "dark"]) {
   });
 }
 
-const profileTest = test.extend({ readState: true });
-profileTest("profile activity opens the exact agent and originating channel before its first frame", async ({
+const it = test.extend({ readState: true });
+it("profile activity opens the exact agent and originating channel before its first frame", async ({
   page,
   app,
 }, testInfo) => {
@@ -413,7 +413,9 @@ profileTest("profile activity opens the exact agent and originating channel befo
   await expect(row).toBeVisible();
   await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
   await expect(
-    panel.getByRole("button", { name: /acp_read|acp_write|session_resolved/ }),
+    panel.getByRole("button", {
+      name: /acp_read|acp_write|session_resolved/,
+    }),
   ).toHaveCount(0);
   await row.click();
   await expect(panel.locator("pre code")).toHaveText(expected.plaintext);

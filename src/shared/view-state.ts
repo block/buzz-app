@@ -21,3 +21,13 @@ export function writeView(scope: string, key: string, value: unknown) {
     /* Keep the in-memory editor usable when browser storage is unavailable. */
   }
 }
+
+/** Recovery callers must confirm cleanup before retiring their durable operation. */
+export function clearView(scope: string, ...keys: string[]) {
+  for (const key of keys) {
+    const storageKey = `buzz-view.v1:${JSON.stringify([scope, key])}`;
+    localStorage.removeItem(storageKey);
+    if (localStorage.getItem(storageKey) !== null)
+      throw new Error("Could not clear the saved message. Try again.");
+  }
+}

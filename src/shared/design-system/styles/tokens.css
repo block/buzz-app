@@ -650,7 +650,7 @@
      nothing on screen, so the two are separate decisions with separate names. */
   --size-resize-seam: 0.875rem;
   --radius-panel: var(--corner-panel);
-  --radius-control: 0.5rem;
+  --radius-control: var(--corner-control);
   --radius-row: var(--corner-row);
   --radius-pill: var(--corner-round);
   /* A chip reads as a chip in running text, so it takes a tighter corner than
@@ -659,6 +659,7 @@
   --duration-fast: var(--time-fast);
   --duration-state: var(--time-state);
   --duration-settle: var(--time-settle);
+  --duration-field-focus: var(--time-state);
   --easing-state: var(--ease-state);
   --easing-settle: var(--ease-settle);
 

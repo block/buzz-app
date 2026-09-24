@@ -1,3 +1,6 @@
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
+import { Select } from "../../shared/design-system/ui/Select";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentControl,
@@ -145,36 +148,40 @@ export function AgentImport({
         </summary>
         <fieldset
           disabled={disabled && !previewing}
-          className="flex flex-col gap-3 pt-3"
+          className="flex flex-col gap-4 pt-4"
         >
-          <label className="agent-control-field">
-            Source library
-            <select
-              value={source}
-              onChange={(event) => {
-                const next = event.target.value as ImportSource;
-                setSource(next);
-                invalidatePreview();
-                if (destination.trim() && !disabled)
-                  void load(next, destination);
-              }}
-            >
-              <option value="installed">Installed Buzz</option>
-              <option value="development">Development Buzz</option>
-            </select>
-          </label>
-          <label className="agent-control-field">
-            Destination community
-            <input
+          <Select
+            label="Source library"
+            variant="field"
+            disabled={disabled && !previewing}
+            value={source}
+            groups={[
+              {
+                label: "",
+                options: [
+                  { value: "installed", label: "Installed Buzz" },
+                  { value: "development", label: "Development Buzz" },
+                ],
+              },
+            ]}
+            onValueChange={(value) => {
+              const next = value as ImportSource;
+              setSource(next);
+              invalidatePreview();
+              if (destination.trim() && !disabled) void load(next, destination);
+            }}
+          />
+          <Field label="Destination community">
+            <Input
               value={destination}
               placeholder="https://community.example"
               spellCheck={false}
-              onChange={(event) => {
-                setDestination(event.target.value);
+              onValueChange={(value) => {
+                setDestination(value);
                 invalidatePreview();
               }}
             />
-          </label>
+          </Field>
           <Button
             disabled={disabled || previewing || !destination.trim()}
             onClick={() => void load(source, destination)}

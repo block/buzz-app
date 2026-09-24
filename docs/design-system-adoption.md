@@ -31,9 +31,11 @@ pill actions, consistent fields and shared states.
   range retains native range behavior and reads semantic colors; there is no
   separate shared Slider. Media modal focus, drag regions, playback and timecode
   ownership stay with the renderer.
-- Emoji Mart keeps its shadow-root adapter and compact search geometry. It reads
-  shared semantic colors, type and the host’s keyboard-focus mode. It does not own
-  another appearance preference.
+- Emoji Mart keeps its shadow-root adapter and native search behavior. Its search
+  field mirrors SearchField's 40px minimum size, 12px control corners, 14px body
+  type, inset fill, metadata placeholder and perimeter focus border. Keyboard
+  focus and reduced motion are immediate. It does not own another appearance
+  preference.
 - Native disclosures remain for persisted channel groups and diagnostic content.
   They are disclosures, not application menus; their content and state remain local.
 - Avatars, previews, links, mentions and thread summaries retain their identity
@@ -47,6 +49,23 @@ pill actions, consistent fields and shared states.
 - Legacy utility names remain available through the host bridge for existing
   callers and plugins. They are aliases, not another palette. Use the semantic
   names and shared components for new work.
+
+## Form adoption
+
+Agent import uses shared Input and Select styling without local element overrides.
+Do not add container selectors that repaint shared inputs, textareas or selects.
+
+Environment variable-name errors and link-lab URL errors belong to Field. Workflow
+validation retains one owner (`editor-model.ts`); its issue includes the field and
+step location when available. Form mode attaches name, message, delay and timeout
+errors to the corresponding control, revealing step options when a timeout needs
+attention. YAML mode attaches draft validation to the YAML field and restores its
+helper description after correction. Unsupported Form-mode conversion is a
+separate notice: valid advanced YAML is still valid and saveable.
+
+Keep request failures, permissions and whole-workflow problems as feature-level
+notices. They must not mark an unrelated input invalid. Styling and message
+placement do not change save gates, secret handling, or relay validation.
 
 ## Checking a migration
 

@@ -177,8 +177,8 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveAttribute("autocorrect", "off");
   await expect(search).toHaveAttribute("autocapitalize", "off");
   const searchFrame = search.locator("..");
-  await expect(searchFrame).toHaveClass(/search-field/);
-  await expect(searchFrame).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(searchFrame).toHaveClass(/buzz-input-group/);
+  await expect(searchFrame).toHaveCSS("background-color", "rgb(240, 240, 240)");
   await expect(searchFrame).toHaveCSS("border-top-color", "rgb(128, 128, 128)");
   await expect(search).toHaveCSS("color", "rgb(0, 0, 0)");
   await expect(search).toHaveCSS("font-family", /Inter Variable/);

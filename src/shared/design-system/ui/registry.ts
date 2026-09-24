@@ -465,8 +465,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     collection: "components",
     owner: "desktop-new Messages",
     source: "shared/design-system/ui/SearchField.tsx",
-    baseUi: [BASE_UI_PARTS.field, BASE_UI_PARTS.input],
-    composes: ["icon-button"],
+    baseUi: [BASE_UI_PARTS.input],
+    composes: ["field", "icon-button"],
   },
   {
     slug: "navigation-section",
@@ -527,7 +527,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     collection: "components",
     source: "shared/design-system/ui/Combobox.tsx",
     baseUi: [BASE_UI_PARTS.combobox],
-    composes: ["icon-button"],
+    composes: ["field", "icon-button"],
   },
   {
     slug: "menu",
@@ -560,7 +560,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     owner: "desktop-new Design system",
     source: "shared/design-system/ui/Select.tsx",
     baseUi: [BASE_UI_PARTS.select],
-    composes: ["button"],
+    composes: ["field", "button"],
   },
 ];
 

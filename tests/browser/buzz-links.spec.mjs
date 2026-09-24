@@ -53,7 +53,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   ).toBeVisible();
   await expect(preview).toHaveClass(/buzz-preview-card/);
   await expect(preview.getByRole("img")).toHaveClass(/buzz-avatar/);
-  await expect(preview).toHaveCSS("font-size", "16px");
+  await expect(preview).toHaveCSS("font-size", "14px");
   await expect(preview.locator("strong")).not.toBeEmpty();
   await expect(preview.locator("time")).toHaveAttribute(
     "datetime",
@@ -223,7 +223,15 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   await expect.poll(async () => (await state(page)).status).toBe("opened");
   // The deliberately wrong hint must not select a different root or force a
   // visible root out of the ordinary timeline.
-  await row.locator("a").nth(1).click();
+  // Revealing the prior target can still reposition the timeline. Activate the
+  // unavailable link by keyboard so this routing check does not click a moving row.
+  const unavailable = row.locator("a").nth(1);
+  await unavailable.focus();
+  await expect(unavailable).toBeFocused();
+  await unavailable.press("Enter");
+  await expect
+    .poll(async () => (await state(page)).entry.target.messageId)
+    .toBe("0".repeat(64));
   await expect(button(page, "Retry navigation")).toBeVisible();
   expect((await state(page)).status).toBe("failed");
 });

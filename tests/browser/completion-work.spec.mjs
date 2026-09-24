@@ -10,6 +10,38 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.list().status))
     .toBe("ready");
+  await input.evaluate((element) => {
+    const anchor = element.closest("form");
+    const original = anchor.getBoundingClientRect;
+    const sample = { popups: 0, geometryReads: 0 };
+    anchor.getBoundingClientRect = function (...args) {
+      // ProseMirror also measures ancestors to keep the caret visible. This
+      // assertion owns completion positioning, not the editor's native scrolling.
+      if (new Error().stack?.includes("useCompletionPosition.ts"))
+        sample.geometryReads++;
+      return original.apply(this, args);
+    };
+    const observer = new MutationObserver((records) => {
+      for (const record of records)
+        for (const node of record.addedNodes) {
+          if (!(node instanceof Element)) continue;
+          sample.popups += Number(
+            node.matches('section[aria-label="Mention suggestions"]'),
+          );
+          sample.popups += node.querySelectorAll(
+            'section[aria-label="Mention suggestions"]',
+          ).length;
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    window.suggestionWork = {
+      sample,
+      stop() {
+        observer.disconnect();
+        anchor.getBoundingClientRect = original;
+      },
+    };
+  });
   await input.fill("@M");
   const reads = () => page.evaluate(() => window.mentionFixture.reads());
   await expect
@@ -42,34 +74,13 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   const warmLibraryReads = await page.evaluate(() =>
     window.mentionFixture.libraryReads(),
   );
-  await input.evaluate((element) => {
-    const anchor = element.closest("form");
-    const original = anchor.getBoundingClientRect;
-    const sample = { popups: 0, geometryReads: 0 };
-    anchor.getBoundingClientRect = function (...args) {
-      sample.geometryReads++;
-      return original.apply(this, args);
-    };
-    const observer = new MutationObserver((records) => {
-      for (const record of records)
-        for (const node of record.addedNodes) {
-          if (!(node instanceof Element)) continue;
-          sample.popups += Number(
-            node.matches('section[aria-label="Mention suggestions"]'),
-          );
-          sample.popups += node.querySelectorAll(
-            'section[aria-label="Mention suggestions"]',
-          ).length;
-        }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    window.suggestionWork = {
-      sample,
-      stop() {
-        observer.disconnect();
-        anchor.getBoundingClientRect = original;
-      },
-    };
+  // Calibrate the probe against the real popup, then measure only post-acceptance work.
+  await expect
+    .poll(() => page.evaluate(() => window.suggestionWork.sample.geometryReads))
+    .toBeGreaterThan(0);
+  await page.evaluate(() => {
+    window.suggestionWork.sample.popups = 0;
+    window.suggestionWork.sample.geometryReads = 0;
   });
   const prose = "this looks weird while typing";
   let sample;

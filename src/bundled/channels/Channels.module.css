@@ -179,6 +179,12 @@ html[data-keyboard-navigation]
   opacity: 1;
   pointer-events: auto;
 }
+@media (hover: none) {
+  .sectionAction {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
 .preferenceNotice {
   padding: var(--space-2);
   color: var(--text-subtle);

@@ -7,6 +7,8 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function settings(page) {
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  // Finish the menu-to-page focus handoff before testing keyboard controls.
+  await expect(page.getByRole("main")).toBeFocused();
   await button(page, "Appearance").click();
 }
 async function expectMode(page, mode) {
@@ -91,6 +93,35 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await expectMode(page, "dark");
   await settings(page);
   await expect(dark).toBeChecked();
+});
+
+test("System appearance follows computer changes and keeps the selected choice after reload", async ({
+  page,
+  app,
+}, testInfo) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto(app.origin);
+  await settings(page);
+  const system = page.getByRole("radio", { name: "System", exact: true });
+  await system.check();
+  await expect(system).toBeChecked();
+  await expectMode(page, "light");
+  await page.screenshot({ path: testInfo.outputPath("system-light.png") });
+  expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
+    "system",
+  );
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expectMode(page, "dark");
+  await page.reload();
+  await expectMode(page, "dark");
+  await settings(page);
+  await expect(system).toBeChecked();
+  await page.screenshot({ path: testInfo.outputPath("system-dark.png") });
+  await page.emulateMedia({ colorScheme: "light" });
+  await expectMode(page, "light");
+  await page.getByRole("radio", { name: "Dark", exact: true }).check();
+  await page.emulateMedia({ colorScheme: "light" });
+  await expectMode(page, "dark");
 });
 
 test("storage denial is visible and retryable; another window updates a live conversation without remount", async ({

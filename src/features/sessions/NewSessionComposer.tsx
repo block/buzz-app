@@ -4,6 +4,7 @@ import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { MessageComposer } from "../messages/MessageComposer";
+import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { AgentChoice } from "./AgentChoice";
@@ -101,9 +102,16 @@ export function NewSessionComposer({
     const current = pending
       ? {
           ...pending,
-          ...(!pending.messageId ? { text: draft.text, draft } : {}),
+          ...(!pending.messageId
+            ? { text: composerMarkdown(draft), draft }
+            : {}),
         }
-      : { id: channelId, text: draft.text, draft, ...(agent ? { agent } : {}) };
+      : {
+          id: channelId,
+          text: composerMarkdown(draft),
+          draft,
+          ...(agent ? { agent } : {}),
+        };
 
     const mentions = mentionDraft(current.draft).recipients.map(
       (item) => item.pubkey,

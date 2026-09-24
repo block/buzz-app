@@ -75,7 +75,7 @@
 .message {
   position: relative;
   display: flex;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: var(--space-2) 0 var(--space-section-gap);
 }
 .messageBody {
@@ -240,19 +240,14 @@
   gap: var(--space-2);
   padding-top: var(--space-1);
 }
-.composerTools {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
-  flex: 1;
-}
 .composerHint {
   color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
+}
+.composerActions:has([data-formatting-open]) .composerHint {
+  display: none;
 }
 @media (max-width: 850px) {
   .composerHint {
@@ -274,12 +269,6 @@
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-pill);
   padding: var(--space-1h) var(--space-3);
-}
-html[data-keyboard-navigation]
-  .composerInput
-  > [contenteditable]:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
 }
 .threadUnread {
   width: 8px;
@@ -326,9 +315,10 @@ html[data-keyboard-navigation]
   width: 100%;
 }
 .threadAvatars {
+  --thread-avatar-stroke: 1.5px;
   display: inline-flex;
   align-items: center;
-  padding-right: var(--space-half);
+  padding-right: var(--space-1);
 }
 .threadAvatar {
   position: relative;
@@ -338,9 +328,10 @@ html[data-keyboard-navigation]
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  margin-right: calc(-1 * var(--space-half));
+  margin-right: calc(-1 * var(--space-1));
   overflow: hidden;
-  border: 2px solid var(--surface-panel);
+  /* Padding preserves the fractional ring width across browser engines. */
+  padding: var(--thread-avatar-stroke);
   background: var(--surface-panel);
   color: var(--text-subtle);
   font-size: var(--text-caption);
@@ -957,7 +948,10 @@ button.mediaPreview {
   width: max-content;
   max-width: 100%;
   overflow-x: auto;
-  border-collapse: collapse;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
@@ -966,10 +960,18 @@ button.mediaPreview {
   white-space: nowrap;
 }
 .text :where(th, td) {
-  border: 1px solid var(--border-standard);
+  border: 0;
+  border-right: 1px solid var(--border-standard);
+  border-bottom: 1px solid var(--border-standard);
   padding: var(--space-1) var(--space-2);
   text-align: left;
   vertical-align: top;
+}
+.text :where(th, td):last-child {
+  border-right: 0;
+}
+.text tbody tr:last-child td {
+  border-bottom: 0;
 }
 .text th {
   background: var(--affordance-subtle);
@@ -1023,7 +1025,7 @@ button.mediaPreview {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: var(--space-2) 0 var(--space-4);
   color: var(--text-subtle);
   font-size: var(--text-body-sm);
@@ -1073,7 +1075,9 @@ button.mediaPreview {
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .threadAvatarCount {
-  margin-right: calc(-1 * var(--space-half));
+  margin-right: calc(-1 * var(--space-1));
+  border: 0;
+  box-shadow: inset 0 0 0 var(--thread-avatar-stroke) var(--surface-panel);
 }
 .membershipAvatarCount {
   margin-right: calc(-1 * var(--space-1h));
@@ -1137,6 +1141,94 @@ button.mediaPreview {
   }
 }
 
+.spoiler {
+  display: inline-block;
+  position: relative;
+  max-width: 100%;
+  border-radius: var(--radius-chip);
+  padding-inline: var(--space-half);
+  vertical-align: baseline;
+}
+.spoilerMask {
+  position: absolute;
+  overflow: hidden;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: inherit;
+  padding: 0;
+  background: transparent;
+  color: var(--text-standard);
+  cursor: pointer;
+}
+/* Two small repeating dot fields supply the old dust-like twinkle without a
+   canvas, per-particle nodes, observers, timers or a requestAnimationFrame loop. */
+.spoilerMask::before,
+.spoilerMask::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 2px 3px, currentColor 0.65px, transparent 1px),
+    radial-gradient(circle at 8px 7px, currentColor 0.5px, transparent 0.9px),
+    radial-gradient(circle at 5px 11px, currentColor 0.7px, transparent 1px);
+  background-size:
+    11px 13px,
+    17px 11px,
+    13px 17px;
+  animation: spoiler-twinkle 0.65s ease-in-out infinite alternate;
+}
+.spoilerMask::after {
+  background-position:
+    5px 7px,
+    3px 2px,
+    7px 5px;
+  animation-delay: -1.1s;
+  animation-duration: 0.9s;
+  animation-direction: alternate-reverse;
+}
+.spoilerMask:hover,
+.spoilerMask:focus-visible,
+.spoiler[data-revealed="true"] {
+  background-color: var(--affordance-subtle);
+}
+.spoilerContent {
+  position: relative;
+  visibility: hidden;
+  pointer-events: none;
+}
+.spoiler[data-revealed="true"] .spoilerContent {
+  visibility: visible;
+}
+.spoiler[data-revealed="true"] .spoilerContent :is(a, button) {
+  pointer-events: auto;
+}
+.spoiler[data-revealed="true"] .spoilerMask::before,
+.spoiler[data-revealed="true"] .spoilerMask::after {
+  display: none;
+  animation: none;
+}
+@keyframes spoiler-twinkle {
+  from {
+    opacity: 0.35;
+    transform: translate(-1px, 1px);
+  }
+  to {
+    opacity: 0.9;
+    transform: translate(1px, -1px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spoilerMask::before,
+  .spoilerMask::after {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 .rawDiff {
   max-height: 25rem;
   overflow: auto;
@@ -1146,4 +1238,9 @@ button.mediaPreview {
   line-height: var(--text-mono--line-height);
   letter-spacing: var(--text-mono--letter-spacing);
   font-weight: var(--text-mono--font-weight);
+}
+
+html[data-keyboard-navigation] .rawDiff:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
 }

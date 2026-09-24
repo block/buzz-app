@@ -884,3 +884,127 @@ it("keeps explicit profile links literal inside code", () => {
   expect(html).not.toContain("href=");
   expect(html).toContain(link);
 });
+
+describe("text spoilers", () => {
+  it("hides formatted content and link controls until reveal, and resets after edits", () => {
+    const view = renderDom(
+      <MessageMarkdown
+        {...props("Before ||**secret** [link](https://example.com)|| after")}
+      />,
+    );
+    const reveal = screen.getByRole("button", { name: "Reveal spoiler" });
+    const content = view.container.querySelector("[inert]");
+    expect(content).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    fireEvent.click(reveal);
+    expect(
+      screen.getByRole("button", { name: "Hide spoiler" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(view.container.querySelector("strong")).toHaveTextContent("secret");
+    expect(screen.getByRole("link", { name: "link" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hide spoiler" }));
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reveal spoiler" }));
+    view.rerender(<MessageMarkdown {...props("Before ||changed|| after")} />);
+    expect(
+      screen.getByRole("button", { name: "Reveal spoiler" }),
+    ).toBeInTheDocument();
+    expect(view.container.querySelector("[inert]")).toHaveTextContent(
+      "changed",
+    );
+  });
+
+  it.each([
+    "`||code||`",
+    "```\n||code||\n```",
+    "\\|\\|escaped\\|\\|",
+    "&#124;&#124;entity&#124;&#124;",
+    '<span title="||attribute||">raw</span>',
+    "![||alt||](https://image.test/a.png)",
+    "[link](https://example.com/||path||)",
+    "||unclosed",
+    "||||",
+    "| a | b |\n| - | - |\n| || | cell |",
+  ])("does not turn literal syntax into a reveal control: %s", (content) => {
+    expect(render(content)).not.toContain('aria-label="Reveal spoiler"');
+  });
+
+  it("keeps spoilers inert in noninteractive previews", () => {
+    const html = render("||secret [link](https://example.com)||", {
+      interactive: false,
+    });
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<a ");
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain('inert=""');
+  });
+});
+
+it.each(["one\n\ntwo", "https://example.com/path"])(
+  "hides serialized spoiler content before reveal: %s",
+  async (text) => {
+    const { composerSchema: schema, projectComposerDocument } = await import(
+      "./composer-document"
+    );
+    const { composerMarkdown } = await import("./composer-markdown");
+    const doc = schema.nodes.doc.create(
+      null,
+      schema.nodes.paragraph.create(
+        null,
+        schema.text(text, [schema.marks.spoiler.create()]),
+      ),
+    );
+    const wire = composerMarkdown(projectComposerDocument(doc).draft);
+    const view = renderDom(<MessageMarkdown {...props(wire)} />);
+    expect(
+      screen.getAllByRole("button", { name: "Reveal spoiler" }),
+    ).toHaveLength(text.includes("\n\n") ? 2 : 1);
+    const visibleText = [...view.container.querySelectorAll("p")]
+      .map((paragraph) => {
+        const clone = paragraph.cloneNode(true) as Element;
+        for (const hidden of clone.querySelectorAll('[aria-hidden="true"]'))
+          hidden.remove();
+        return clone.textContent?.trim();
+      })
+      .join("");
+    expect(visibleText).toBe("");
+    for (const button of screen.getAllByRole("button", {
+      name: "Reveal spoiler",
+    }))
+      fireEvent.click(button);
+    expect(view.container.textContent).toContain(
+      text.includes("\n") ? "one" : text,
+    );
+    if (!text.includes("\n"))
+      expect(screen.getByRole("link")).toHaveAttribute("href", text);
+  },
+);
+
+it("preserves a GFM table with adjacent pipes and an empty middle cell", () => {
+  const html = render("| A || C |\n| - | - | - |\n| a || c |");
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(
+    [...container.querySelectorAll("th")].map((cell) => cell.textContent),
+  ).toEqual(["A", "", "C"]);
+  expect(
+    [...container.querySelectorAll("td")].map((cell) => cell.textContent),
+  ).toEqual(["a", "", "c"]);
+  expect(html).not.toContain("Reveal spoiler");
+});
+
+it.each([
+  ["**||secret||**", "strong"],
+  ["_||secret||_", "em"],
+  ["~~||secret||~~", "del"],
+])("preserves authored formatting outside a spoiler: %s", (source, tag) => {
+  const view = renderDom(<MessageMarkdown {...props(source)} />);
+  const formatted = view.container.querySelector(tag);
+  expect(formatted).toHaveTextContent("secret");
+  expect(formatted?.querySelector("[inert]")).toHaveTextContent("secret");
+  expect(view.container.textContent).toBe("secret");
+  fireEvent.click(screen.getByRole("button", { name: "Reveal spoiler" }));
+  expect(formatted?.querySelector('[aria-hidden="false"]')).toHaveTextContent(
+    "secret",
+  );
+});

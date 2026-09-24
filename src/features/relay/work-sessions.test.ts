@@ -560,6 +560,8 @@ function setup(
   };
   const outbox: Outbox = {
     observeSend: () => () => {},
+    ready: async () => {},
+    acknowledge: async () => {},
     snapshot: () => [],
     subscribe: receipts.subscribe,
     supports: (kind) => channelCreation && [9, 9000, 9007].includes(kind),
@@ -799,6 +801,8 @@ it.each([true, false])(
       ];
       const outbox: Outbox = {
         observeSend: () => () => {},
+        ready: async () => {},
+        acknowledge: async () => {},
         supports: () => true,
         send: vi.fn(),
         snapshot: () => items,

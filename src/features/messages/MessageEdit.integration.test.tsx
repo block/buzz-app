@@ -25,6 +25,9 @@ import { MediaReviewViewer } from "./MediaReviewViewer";
 import { PublishRejected, type OutboxStorage } from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
 import type { ComposerInputElement } from "./composer-dom";
+import { composerDOMFixture } from "./composer-testing";
+
+composerDOMFixture();
 
 beforeEach(() => {
   localStorage.clear();
@@ -283,6 +286,7 @@ it.each(["image", "video"] as const)(
         await authorize(owner);
         render(
           <MediaReviewViewer
+            onOpenLink={() => false}
             attachment={attachment}
             session={owner.session}
             scope={`media-edit-${kind}-${scenario}`}

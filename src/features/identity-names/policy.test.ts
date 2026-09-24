@@ -233,22 +233,25 @@ const conformance = JSON.parse(
     expected: Record<string, { name: string; qualifier: string | null }>;
   }[];
 };
-it("loads the supported portable naming contract", () => {
+it("validates the portable fixture version and non-empty case list", () => {
   expect(conformance.version).toBe(1);
   expect(conformance.cases.length).toBeGreaterThan(0);
 });
-it.each(conformance.cases)("portable conformance: $name", (fixture) => {
-  const actual = resolveIdentityNames(
-    fixture.identities,
-    fixture.viewer,
-    fixture.candidates,
-  );
-  expect(
-    Object.fromEntries(
-      [...actual].map(([key, value]) => [
-        key,
-        { name: value.name, qualifier: value.qualifier ?? null },
-      ]),
-    ),
-  ).toEqual(fixture.expected);
-});
+it.each(conformance.cases)(
+  "conforms to the portable naming contract: $name",
+  (fixture) => {
+    const actual = resolveIdentityNames(
+      fixture.identities,
+      fixture.viewer,
+      fixture.candidates,
+    );
+    expect(
+      Object.fromEntries(
+        [...actual].map(([key, value]) => [
+          key,
+          { name: value.name, qualifier: value.qualifier ?? null },
+        ]),
+      ),
+    ).toEqual(fixture.expected);
+  },
+);

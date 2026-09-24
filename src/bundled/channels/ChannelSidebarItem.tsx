@@ -7,6 +7,7 @@ import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
+import { usePresenceStatus } from "../../features/presence/react";
 import { UnreadBadge } from "./UnreadBadge";
 import styles from "./Channels.module.css";
 
@@ -55,6 +56,11 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
     anchor?: HTMLElement,
   ) => void;
 }) {
+  const peer =
+    channel.channelType === "dm" && channel.participants?.length === 1
+      ? channel.participants[0]
+      : undefined;
+  const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
   const Icon =
     channel.channelType === "dm" ? ChatCircleIcon : channelIcon(channel);
   return (
@@ -72,6 +78,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
             fallback={channel.name}
             size="small"
             shape={profile?.isAgent ? "squircle" : "circle"}
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         ) : channel.channelType === "dm" &&
           (channel.participants?.length ?? 0) > 1 ? (
@@ -136,6 +143,9 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         );
       }}
       selected={selected}
+      presenceDescription={
+        presence === "unknown" ? undefined : `Presence: ${presence}`
+      }
       collapsed={collapsed}
       onToggle={(open) => onToggle(`session-children:${channel.id}`, open)}
       draft={draft}

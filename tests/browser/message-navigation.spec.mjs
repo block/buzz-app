@@ -242,69 +242,104 @@ test("an accessible exact reply stays visible without its root or a thread compo
   ).toBeVisible();
 });
 
-for (const moveFocus of [false, true])
-  test(`exact reply reveals before slow surrounding traversal and ${moveFocus ? "preserves moved focus" : "retains target focus"} afterwards`, async ({
-    page,
-    app,
-  }) => {
-    await open(page, app);
-    let release;
-    const held = new Promise((resolve) => {
-      release = resolve;
-    });
-    let intercepted;
-    const seen = new Promise((resolve) => {
-      intercepted = resolve;
-    });
-    let first = true;
-    await page.route("**/api/relay/**/query", async (route) => {
-      if (
-        !first ||
-        !route
-          .request()
-          .postDataJSON()
-          .some((filter) => filter.depth_limit)
-      )
-        return route.continue();
-      first = false;
-      intercepted();
-      await held;
-      await route.continue().catch(() => {});
-    });
-    const row = thread(page).locator(
-      `[data-message-id="${app.exact.target.id}"]`,
-    );
-    const close = page.getByRole("button", {
-      name: "Close thread",
-      exact: true,
-    });
-    let originalRow;
-    try {
-      await page.evaluate((value) => {
-        window.exactResult = window.fixtureNavigation.open(value);
-      }, target(app));
-      await seen;
-      await expect.poll(() => status(page)).toBe("opened");
-      await expect(row).toBeFocused();
-      await expect(row).toBeInViewport();
-      originalRow = await row.elementHandle();
-      if (moveFocus) await close.focus();
-    } finally {
-      release();
-    }
-    try {
-      await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
-      await expect(row).toBeInViewport();
-      expect(
-        await row.evaluate(
-          (element, original) => element === original,
-          originalRow,
-        ),
-      ).toBe(true);
-      await expect(moveFocus ? close : row).toBeFocused();
-    } finally {
-      await originalRow?.dispose();
-    }
+// Real browsers own focus when a keyed row is removed and mounted under late ancestry.
+const traversalTest = test.extend({ productionBroker: true, readState: true });
+for (const nested of [false, true])
+  traversalTest.describe(nested ? "late ancestry" : "direct ancestry", () => {
+    traversalTest.use({ exactMessages: nested ? "nested" : true });
+    for (const moveFocus of [false, true])
+      traversalTest(
+        `exact ${nested ? "nested" : "direct"} reply reveals before slow surrounding traversal and ${moveFocus ? "preserves moved focus" : "retains target focus"} afterwards`,
+        async ({ page, app }) => {
+          await open(page, app);
+          let release;
+          const held = new Promise((resolve) => {
+            release = resolve;
+          });
+          let intercepted;
+          const seen = new Promise((resolve) => {
+            intercepted = resolve;
+          });
+          let first = true;
+          await page.route("**/api/relay/**/query", async (route) => {
+            if (
+              !first ||
+              !route
+                .request()
+                .postDataJSON()
+                .some((filter) => filter.depth_limit)
+            )
+              return route.continue();
+            first = false;
+            intercepted();
+            await held;
+            await route.continue().catch(() => {});
+          });
+          const row = thread(page).locator(
+            `[data-message-id="${app.exact.target.id}"]`,
+          );
+          const close = page.getByRole("button", {
+            name: "Close thread",
+            exact: true,
+          });
+          let originalRow;
+          try {
+            await page.evaluate((value) => {
+              window.exactResult = window.fixtureNavigation.open(value);
+            }, target(app));
+            await seen;
+            await expect.poll(() => status(page)).toBe("opened");
+            await expect(row).toBeFocused();
+            await expect(row).toBeInViewport();
+            if (nested)
+              await expect(
+                thread(page).getByText(
+                  "Earlier reply unavailable in loaded history.",
+                  { exact: true },
+                ),
+              ).toBeVisible();
+            originalRow = await row.elementHandle();
+            if (moveFocus) await close.focus();
+          } finally {
+            release();
+          }
+          try {
+            await expect(thread(page).locator("[data-message-id]")).toHaveCount(
+              81,
+            );
+            if (nested)
+              await expect(
+                thread(page).getByText(
+                  "Earlier reply unavailable in loaded history.",
+                  { exact: true },
+                ),
+              ).toHaveCount(0);
+            await expect(row).toBeInViewport();
+            expect(
+              await row.evaluate(
+                (element, original) => element === original,
+                originalRow,
+              ),
+            ).toBe(!nested);
+            await expect(moveFocus ? close : row).toBeFocused();
+            if (nested && !moveFocus) {
+              // Programmatic collapse removes a focused target without first moving
+              // focus to a trigger. Reopening later must not revive that old intent.
+              await page
+                .getByRole("button", { name: "Hide replies", exact: true })
+                .evaluate((element) => element.click());
+              await expect(row).toHaveCount(0);
+              await page
+                .getByRole("button", { name: /^View 1 reply/ })
+                .evaluate((element) => element.click());
+              await expect(row).toBeVisible();
+              await expect(row).not.toBeFocused();
+            }
+          } finally {
+            await originalRow?.dispose();
+          }
+        },
+      );
   });
 
 test("unknown target fails without channel-head success and retries in the same visit", async ({
@@ -695,6 +730,58 @@ readTest(
     await expect
       .poll(() => app.report.readPublications.length)
       .toBeGreaterThan(before);
+  },
+);
+
+// Paint compositing, unlike DOM visibility, includes descendant visibility overrides.
+traversalTest(
+  "settings suppresses revealed spoiler painting and restores the retained thread",
+  async ({ page, app }) => {
+    const child = app.append(
+      "primary",
+      "alpha",
+      "||REVEALED SPOILER TEXT||",
+      false,
+      false,
+      app.exact.root.id,
+    );
+    await open(page, app);
+    expect(await openTarget(page, target(app, child.id))).toEqual({
+      status: "opened",
+    });
+    const row = page.locator(
+      `[aria-label="Thread messages"] [data-message-id="${child.id}"]`,
+    );
+    await row.getByRole("button", { name: "Reveal spoiler" }).click();
+    await expect(row.locator('[data-revealed="true"]')).toHaveCount(1);
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .click();
+    const settings = page.getByRole("complementary", {
+      name: "Channel settings",
+      exact: true,
+    });
+    await expect(settings).toBeVisible();
+    const retained = row.locator("xpath=ancestor::*[@inert][1]");
+    const actual = await settings.screenshot({ animations: "disabled" });
+    await retained.evaluate((element) => {
+      element.style.opacity = "0";
+    });
+    const fullyHidden = await settings.screenshot({ animations: "disabled" });
+    await retained.evaluate((element) => {
+      element.style.removeProperty("opacity");
+    });
+    expect(
+      actual.equals(fullyHidden),
+      "retained thread must not paint over settings",
+    ).toBe(true);
+    await page
+      .getByRole("button", { name: "Close channel settings", exact: true })
+      .click();
+    await expect(
+      row.getByText("REVEALED SPOILER TEXT", { exact: true }),
+    ).toBeVisible();
+    await expect(row.locator('[data-revealed="true"]')).toHaveCount(1);
   },
 );
 

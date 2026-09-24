@@ -337,6 +337,21 @@ export const test = base.extend({
           root.created_at + i + 1,
         ),
       );
+      if (exactMessages === "nested") {
+        const last = replies.at(-1);
+        replies[replies.length - 1] = sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["e", root.id, "", "root"],
+            ["e", replies.at(-2).id, "", "reply"],
+            ["p", getPublicKey(peerKey)],
+          ],
+          last.content,
+          userKey,
+          last.created_at,
+        );
+      }
       const target = replies.at(-1);
       const edit = sign(
         40003,

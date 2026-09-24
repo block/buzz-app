@@ -286,6 +286,8 @@ html[data-keyboard-navigation]
 }
 .retainedPanel[inert] {
   visibility: hidden;
+  /* Revealed spoilers override visibility; opacity suppresses the whole subtree. */
+  opacity: 0;
 }
 .companion {
   display: grid;

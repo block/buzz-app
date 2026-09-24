@@ -281,6 +281,36 @@ function ThreadMessages({
       ].find((row) => row.dataset.messageId === messageId),
     [messageId],
   );
+  // A late ancestor reparents the exact row. Transfer only focus owned at detach,
+  // within this commit/layout expansion; a later user expansion must not restore it.
+  const selectedBranchRef = useMemo(() => {
+    let restore = false;
+    return (branch: HTMLLIElement | null) => {
+      if (!branch) return;
+      const row = branch.querySelector<HTMLElement>("[data-message-id]");
+      if (
+        restore &&
+        row &&
+        !navigation?.signal.aborted &&
+        !branch.closest("[inert]") &&
+        document.activeElement === document.body
+      ) {
+        row.tabIndex = -1;
+        row.focus({ preventScroll: true });
+      }
+      restore = false;
+      return () => {
+        restore =
+          row?.dataset.messageId === messageId &&
+          document.activeElement === row;
+        // Ancestor expansion happens synchronously in a layout effect. Do not
+        // retain focus intent after this update (collapse, deletion, or unmount).
+        queueMicrotask(() => {
+          restore = false;
+        });
+      };
+    };
+  }, [messageId, navigation?.signal]);
   const selectedOffset = useCallback(() => {
     const row = selectedRow();
     const container = scroller.current;
@@ -494,6 +524,7 @@ function ThreadMessages({
       return (
         <li
           key={row.id}
+          ref={row.id === messageId ? selectedBranchRef : undefined}
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >

@@ -13,7 +13,10 @@ profile marker grants access. Remote-owned agents need no local instance.
 
 The relay authorizes the owner-scoped read. The host verifies each signature,
 exact author/kind and single owner/d tags before NIP-44 decryption, rejects duplicate
-JSON names at every depth, validates body/slug and HMAC-derived address, selects
+JSON names and unpaired Unicode surrogates at every depth. An exact NIP-44
+round-trip with the original nonce rejects lossy UTF-8 decoding (and noncanonical
+padding) before parsing, without rejecting legitimate replacement characters.
+The host validates body/slug and HMAC-derived address, selects
 newest timestamp/lowest-ID heads, then drops tombstones. Unknown fields remain
 compatible. Invalid records mark a partial result; they never prove empty memory.
 An empty successful response means no valid records returned for this viewer in

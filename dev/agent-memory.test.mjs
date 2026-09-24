@@ -156,3 +156,69 @@ it("enforces event, plaintext and streamed wire budgets and cancellation", async
   controller.abort();
   await expect(decode([value], controller.signal)).rejects.toThrow();
 });
+
+// Mutate authenticated plaintext bytes without passing through a UTF-8 encoder.
+// ChaCha20 XOR preserves offsets; recompute the MAC with the NIP-44 HKDF expand.
+function invalidUtf8(bytes) {
+  const conversation = nip44.v2.utils.getConversationKey(agent, viewer);
+  const text = `{"slug":"mem/test","value":"${"?".repeat(bytes.length)}"}`;
+  const payload = Buffer.from(nip44.v2.encrypt(text, conversation), "base64");
+  const nonce = payload.subarray(1, 33);
+  let block = Buffer.alloc(0);
+  const blocks = [];
+  for (let i = 1; i <= 3; i++) {
+    block = createHmac("sha256", conversation)
+      .update(block)
+      .update(nonce)
+      .update(Buffer.from([i]))
+      .digest();
+    blocks.push(block);
+  }
+  const keys = Buffer.concat(blocks);
+  const offset = 33 + 2 + text.indexOf("?");
+  for (let i = 0; i < bytes.length; i++) payload[offset + i] ^= 0x3f ^ bytes[i];
+  createHmac("sha256", keys.subarray(44, 76))
+    .update(payload.subarray(1, -32))
+    .digest()
+    .copy(payload, payload.length - 32);
+  return event(undefined, {
+    created_at: 11,
+    content: payload.toString("base64"),
+  });
+}
+it("rejects lossy UTF-8 and unpaired JSON surrogates before head selection", async () => {
+  const tomb = event({ slug: "mem/test", value: null });
+  const malformed = [
+    ...[[0xff], [0xc0, 0xaf], [0xed, 0xa0, 0x80], [0xe2, 0x82]].map(
+      invalidUtf8,
+    ),
+    ...[
+      '{"slug":"mem/test","value":"\\ud800"}',
+      '{"slug":"mem/test","value":"\\udc00"}',
+      '{"slug":"mem/test","value":null,"unknown":["\\ud800"]}',
+      '{"slug":"mem/test","value":null,"\\ud800":true}',
+    ].map((body) => event(body, { created_at: 11 })),
+  ];
+  for (const invalid of malformed) {
+    for (const records of [
+      [tomb, invalid],
+      [invalid, tomb],
+    ]) {
+      expect(await decode(records)).toEqual({ entries: [], partial: true });
+    }
+  }
+  const core = event({ slug: "core", profile: "old" });
+  const invalidCore = event(
+    { slug: "core", profile: "\ud800" },
+    { created_at: 11 },
+  );
+  const result = await decode([core, invalidCore]);
+  expect(result.partial).toBe(true);
+  expect(result.entries[0]?.eventId).toBe(core.id);
+  for (const value of ["�", "😀", "文", "\ufeff", "\ud83d\ude00"]) {
+    const valid = event({ slug: "mem/test", value }, { created_at: 11 });
+    const result = await decode([tomb, valid]);
+    expect(result.partial).toBe(false);
+    expect(result.entries[0]?.body).toBe(value);
+  }
+});

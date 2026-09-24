@@ -37,11 +37,15 @@ function uniqueJson(text) {
     if (token === "{") stack.push(new Set());
     else if (token === "[") stack.push(null);
     else if (token === "}" || token === "]") stack.pop();
-    else if (token.startsWith('"') && tokens[i + 1] === ":") {
-      const names = stack.at(-1);
-      const name = JSON.parse(token);
-      if (!names || names.has(name)) throw new Error("Duplicate memory field");
-      names.add(name);
+    else if (token.startsWith('"')) {
+      const decoded = JSON.parse(token);
+      if (!decoded.isWellFormed()) throw new Error("Invalid memory Unicode");
+      if (tokens[i + 1] === ":") {
+        const names = stack.at(-1);
+        if (!names || names.has(decoded))
+          throw new Error("Duplicate memory field");
+        names.add(decoded);
+      }
     }
   }
   return value;
@@ -78,6 +82,12 @@ export async function decodeAgentMemory(events, secret, viewer, agent, signal) {
         )
           throw new Error("Invalid memory envelope");
         const text = nip44.v2.decrypt(event.content, key);
+        // nostr-tools decodes UTF-8 lossily. Require an exact authenticated
+        // round-trip before parsing, rather than treating replacement text as head
+        // evidence. Reuse its crypto/padding implementation and original nonce.
+        const nonce = Buffer.from(event.content, "base64").subarray(1, 33);
+        if (nip44.v2.encrypt(text, key, nonce) !== event.content)
+          throw new Error("Noncanonical memory plaintext");
         body = uniqueJson(text);
         const slug = body?.slug;
         if (

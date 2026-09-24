@@ -174,7 +174,10 @@ independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
-`variant="field"` fits labelled forms. Pass `disabled` explicitly when the choice
+`variant="field"` fits labelled forms. The proposed `variant="compact"` fits
+trailing row choices: a small ghost trigger with a visually hidden accessible
+label, bounded single-line value, and full choice text in the popup and value hint.
+The caller owns its column width. Pass `disabled` explicitly when the choice
 is unavailable. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
@@ -281,6 +284,14 @@ Route navigation uses NavigationItem with aria-current instead. NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+
+## Menu row corners
+
+Every shared menu item uses `--radius-pill` on all four corners. First, middle and
+last rows keep the same fully rounded highlight, so moving between them does not
+change its shape. Direct items, grouped choices and submenu triggers share this
+recipe. Do not add positional or feature-local radius overrides, derive a special
+menu inset radius, or change the global row radius to correct a menu.
 
 ## Align row content, not state backgrounds
 

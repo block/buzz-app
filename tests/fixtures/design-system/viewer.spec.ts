@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { COMPONENTS } from "../../../src/shared/design-system/ui/registry";
 import { PHOSPHOR_ICONS } from "../../../src/shared/design-system/icons/inventory";
 
@@ -1062,6 +1062,27 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
   const submenu = page.getByRole("menuitem", { name: "Sort", exact: true });
   const recent = page.getByRole("menuitemradio", { name: "Recent" });
   const alpha = page.getByRole("menuitemradio", { name: "A–Z" });
+  // Every position and grouped choice uses the shared full-round token.
+  const expectRounded = async (item: Locator) => {
+    const radius = await item.evaluate((element) => {
+      // The shared pill token is rem-based; computed corner values are pixels.
+      const rem = Number.parseFloat(
+        getComputedStyle(element).getPropertyValue("--radius-pill"),
+      );
+      const rootSize = Number.parseFloat(
+        getComputedStyle(document.documentElement).fontSize,
+      );
+      return `${rem * rootSize}px`;
+    });
+    for (const corner of [
+      "top-left",
+      "top-right",
+      "bottom-left",
+      "bottom-right",
+    ]) {
+      await expect(item).toHaveCSS(`border-${corner}-radius`, radius);
+    }
+  };
   const tab =
     browserName === "webkit" && process.platform === "darwin"
       ? "Alt+Tab"
@@ -1071,6 +1092,10 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
     if (await toggle.count()) await toggle.click();
     await trigger.click();
     await expect(page.getByRole("menu")).toHaveCSS("transform", "none");
+    for (const width of [390, 800, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const item of [action, checkbox, submenu]) await expectRounded(item);
+    }
     await page.mouse.move(0, 0);
     await action.hover();
     // Programmatic focus following a pointer open must stay quiet too.
@@ -1090,6 +1115,10 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
     }
     await page.keyboard.press("ArrowRight");
     await expect(recent).toBeFocused();
+    for (const width of [390, 800, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const item of [recent, alpha]) await expectRounded(item);
+    }
     await expect(recent).toHaveCSS("outline-style", "none");
     await page.keyboard.press("ArrowDown");
     await expect(alpha).toBeFocused();

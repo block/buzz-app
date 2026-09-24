@@ -138,6 +138,11 @@ it("validates and freezes launcher metadata without changing target resolution",
         "launcher",
       );
     }
+    for (const channelPlacement of [null, "left", "", 42, {}]) {
+      expect(() =>
+        ctx.panels.register({ ...base, channelPlacement } as never),
+      ).toThrow("placement");
+    }
     const launcher = { icon: "/icon.png", target: "" };
     ctx.panels.register({ ...base, launcher });
     launcher.icon = "/mutated.png";

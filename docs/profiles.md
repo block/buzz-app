@@ -2,8 +2,9 @@
 
 The bundled `buzz.profiles` plugin supplies a profile panel for any
 public identity, human or agent. It uses the current session's shared profile
-directory. Agents retains agent-specific configuration/operations; this slice
-adds no ownership/running badge, editor, agent-library read or execution API.
+directory. Agents retains agent-specific configuration and its page-local editor. Profiles
+can dispatch existing local Start/Stop/Restart commands for an exact managed
+identity in the active community; profile metadata and library hints grant no authority.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
 The Info tab's “Latest activity” card shows up to three recently updated assistant
@@ -159,3 +160,44 @@ Before publisher entry, navigation or loss of eligibility stops the write. Once
 publication begins, leaving the tab cannot undo the request; the session outbox
 retains its outcome and an unconfirmed result requires checking membership
 before attempting again. Neither list is a cross-community/global directory.
+
+## Owned local agent actions
+
+`ProfileAgentActions` observes the app-owned `AgentControl` injected into Profiles.
+It mounts only in Info, alongside the linked-instance child; changing tabs releases
+the actions view without cancelling an admitted app-owned command. Returning to
+Info observes current host evidence without restoring focus from the retired view.
+In this composition, actions own controller errors and Retry status; linked instances
+suppress their duplicate error surface only when actions can present recovery
+(unknown inventory or one exact match). Known unmatched/ambiguous identities keep
+a single linked-instance status warning and Retry agents. Standalone
+linked-instance views retain their own recovery. Initial-read Retry remains available
+when native ownership is unknown.
+It matches the exact public key and canonical active-community scope to one native
+ID; namesakes, other-community identities, ambiguous matches and browser-only
+profiles get no runtime actions. It adds no controller, relay scan or agent editor.
+Profiles and Agents share `useAgentControl` for observation. While mounted it
+refreshes host evidence every five seconds when visible/ready; errors stop polling and expose explicit Retry status. Unmount
+releases observation, never native execution.
+
+Start/Restart require ready host evidence, an available runtime and no pending
+operation or process transition. Stop uses the controller's existing recovery
+policy, including stale evidence and pending launch/credential waits; it is the
+intentional exception to disabling pending actions. A pending Stop cannot repeat.
+Host failures remain visible with snapshot uncertainty for the matched agent.
+Known unmatched profiles suppress unrelated controller errors; an initial read
+failure still offers Retry while ownership is unknown. Start stays focusable but
+inactive while pending, and moves focus to Stop if success removes the focused
+Start button. It does not steal focus moved elsewhere during the wait. Stop and
+Restart retain focus when disabled or pending without allowing activation.
+`agentLaunchBlock` centralizes the launch gates used by Profiles and Agents.
+Retired relay
+presentations cannot dispatch commands. The separate runtime child owns badges
+and runtime detail; actions do not infer relay readiness.
+
+Edit ingress is deferred: Agents currently registers no specific editor route;
+its editor selection is page-local state. No invented route or second editor is
+added. Mounted React regression tests exercise exact dispatch, pending/failure/
+recovery and profile/community lifecycle through the real controller projection
+with a synthetic native host. Live process/credential handover and rendered native
+acceptance remain attended checks, not established by these tests.

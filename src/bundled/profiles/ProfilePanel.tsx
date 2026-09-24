@@ -1,3 +1,4 @@
+import { ProfileAgentActions } from "./ProfileAgentActions";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
@@ -6,6 +7,7 @@ import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { PresenceIndicator } from "../../features/presence/react";
 import {
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -52,10 +54,15 @@ export function ProfilePanel({
       control={control}
       scope={connection.scope}
       viewer={connection.viewer}
-    />
+    >
+      {control && (
+        <ProfileAgentActions control={control} relay={relay} pubkey={pubkey} />
+      )}
+    </ProfileDetails>
   );
 }
 function ProfileDetails({
+  children,
   session,
   pubkey,
   context,
@@ -64,6 +71,7 @@ function ProfileDetails({
   scope,
   viewer,
 }: {
+  children?: ReactNode;
   session: RelaySession;
   pubkey: string;
   context: PanelProps["context"];
@@ -167,6 +175,7 @@ function ProfileDetails({
                 {profile?.about && (
                   <p className={styles.about}>{profile.about}</p>
                 )}
+                {children}
                 <ProfileActivity
                   session={session}
                   pubkey={pubkey}
@@ -174,6 +183,7 @@ function ProfileDetails({
                 />
                 {control && (
                   <ProfileInstances
+                    errorHandledByActions
                     control={control}
                     pubkey={pubkey}
                     navigation={navigation}

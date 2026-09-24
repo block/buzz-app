@@ -249,3 +249,5 @@ export const WarningCircleIcon = defineIcon(
   "phosphor",
   PhosphorWarningCircleIcon,
 );
+import { ListChecksIcon as PhosphorListChecksIcon } from "@phosphor-icons/react/dist/csr/ListChecks";
+export const ListChecksIcon = defineIcon("phosphor", PhosphorListChecksIcon);

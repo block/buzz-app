@@ -533,6 +533,61 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.input()).toHaveValue("");
 });
 
+it("prefixes thread replies with the selected media time and clears it after send", async () => {
+  const clearMediaTime = vi.fn();
+  const h = mount({
+    threadRootId: "root",
+    mediaTimeSeconds: 72.8,
+    clearMediaTime,
+  });
+  expect(screen.getByText("Commenting at 1:12")).toBeVisible();
+  await h.user.type(h.input(), "trim this ");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.reply).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "root",
+    "⏱ 1:12 — trim this",
+    [],
+  );
+  expect(clearMediaTime).toHaveBeenCalledOnce();
+  expect(h.input()).toHaveValue("");
+});
+
+it("lets the visible media time indicator dismiss without sending", async () => {
+  const clearMediaTime = vi.fn();
+  const h = mount({
+    threadRootId: "root",
+    mediaTimeSeconds: 12,
+    clearMediaTime,
+  });
+  await h.user.click(screen.getByRole("button", { name: "Remove video time" }));
+  expect(clearMediaTime).toHaveBeenCalledOnce();
+  expect(h.messages.reply).not.toHaveBeenCalled();
+});
+
+it("hides the media time indicator while keeping the send prefix", async () => {
+  const clearMediaTime = vi.fn();
+  const h = mount({
+    threadRootId: "root",
+    mediaTimeSeconds: 12,
+    clearMediaTime,
+    hideMediaTimeIndicator: true,
+  });
+  expect(screen.queryByText("Commenting at 0:12")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Remove video time" }),
+  ).not.toBeInTheDocument();
+  await h.user.type(h.input(), "hidden frame");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.reply).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "root",
+    "⏱ 0:12 — hidden frame",
+    [],
+  );
+  expect(clearMediaTime).toHaveBeenCalledOnce();
+});
+
 it("isolates channel, thread and identity drafts through retargeting and remounting", () => {
   const h = mount();
   h.fill("channel draft");

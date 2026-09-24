@@ -9,7 +9,7 @@ import type {
 } from "../../features/agents/control";
 import type { ModelCatalog } from "../../features/agents/models";
 import { Button } from "../../shared/design-system/ui/Button";
-import { agentEdit, type AgentDraft } from "./agent-edit";
+import { agentEdit, isGoose, type AgentDraft } from "./agent-edit";
 
 export function AgentModelPicker({
   id,
@@ -29,6 +29,7 @@ export function AgentModelPicker({
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const statusId = useId();
+  const goose = isGoose(draft.command);
   const host = draft.databricks?.host ?? defaults?.host ?? "";
   const filter = draft.databricks?.filter ?? defaults?.filter ?? "";
   const [catalog, setCatalog] = useState<{
@@ -75,7 +76,7 @@ export function AgentModelPicker({
   }, [key]);
   const run = async (action: "connect" | "refresh" | "disconnect") => {
     if (!control.models || pending.current) return;
-    if (!host.trim()) {
+    if (!goose && !host.trim()) {
       setStatus(
         "Set your Databricks workspace under Advanced → Model to browse models.",
       );
@@ -88,7 +89,9 @@ export function AgentModelPicker({
     setCatalog(null);
     setStatus(
       action === "connect"
-        ? "Loading models… sign in through your browser if asked."
+        ? goose
+          ? "Loading Goose models…"
+          : "Loading models… sign in through your browser if asked."
         : action === "refresh"
           ? "Loading models…"
           : "Removing this app’s credentials for this workspace…",
@@ -99,8 +102,8 @@ export function AgentModelPicker({
           id,
           expectedRevision: id ? draft.revision : undefined,
           edit: action === "disconnect" ? undefined : agentEdit(draft, true),
-          host,
-          filter,
+          host: goose ? "" : host,
+          filter: goose ? "" : filter,
           action,
         },
         abort.signal,
@@ -112,7 +115,9 @@ export function AgentModelPicker({
           ? "Disconnected from this workspace in Foundation."
           : data.models.length
             ? ""
-            : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
+            : goose
+              ? "No Goose models found. Check Goose configuration or enter a custom ID."
+              : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
       );
     } catch (error) {
       if (!abort.signal.aborted && currentKey.current === key)
@@ -261,7 +266,7 @@ export function AgentModelPicker({
               setStatus("Cancelled. Retry when ready.");
             }}
           >
-            Cancel sign-in
+            {goose ? "Cancel model lookup" : "Cancel sign-in"}
           </Button>
         ) : (
           status &&
@@ -273,8 +278,24 @@ export function AgentModelPicker({
         )}
         {fresh?.modelOverridden && (
           <p className="text-body-sm text-warning">
-            A saved BUZZ_AGENT_MODEL override takes precedence. Change it in
-            Advanced → Environment to use this selection.
+            {goose ? "A GOOSE_MODEL" : "A saved BUZZ_AGENT_MODEL"} environment
+            override takes precedence. Change it in Advanced → Environment to
+            use this selection.
+          </p>
+        )}
+        {goose &&
+          fresh &&
+          draft.model &&
+          !entries.some((model) => model.id === draft.model) && (
+            <p className="text-body-sm text-warning">
+              This model ID is not in Goose’s current Databricks v2 list. Select
+              a listed model or confirm the custom ID before starting.
+            </p>
+          )}
+        {goose && (
+          <p className="text-body-sm text-secondary">
+            Models come from your Goose Databricks connection. If sign-in is
+            needed, run goose configure before browsing.
           </p>
         )}
       </div>
@@ -299,7 +320,7 @@ export function AgentModelPicker({
                       }
                     />
                   </Field>
-                  {supported && (
+                  {supported && !goose && (
                     <>
                       <Field label="Databricks workspace (HTTPS origin)">
                         <Input

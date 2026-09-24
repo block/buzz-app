@@ -12,6 +12,9 @@ export interface AgentDraft {
   environment: Record<string, string | null>;
   databricks?: { host: string; filter: string } | null;
 }
+export function isGoose(command: string): boolean {
+  return command.replaceAll("\\", "/").split("/").at(-1) === "goose";
+}
 export function agentDraft(
   agent: AgentView,
   defaults?: { host: string; filter: string },

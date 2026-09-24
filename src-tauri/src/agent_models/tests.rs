@@ -89,6 +89,52 @@ fn request(dir: &std::path::Path, id: &str, action: &str) -> Value {
     json!({"id":id,"expectedRevision":1,"host":"https://workspace.example.com","filter":"", "action":action,
     "edit":{"name":"Sample","systemPrompt":"Original","workspace":dir.to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"custom-unchanged","provider":"databricks_v2"},"environment":{}}})
 }
+
+#[test]
+#[cfg(unix)]
+fn goose_databricks_models_load_through_native_ipc_for_an_unsaved_agent() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _, _app, view) = fixture();
+    let goose = dir.path().join("goose");
+    let invoked = dir.path().join("invoked");
+    std::fs::write(
+        &goose,
+        format!(
+            "#!/bin/sh\n: > '{}'\nread request\nprintf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"providerId\":\"databricks_v2\",\"models\":[\"catalog.schema.goose-glm-5-3\"]}}}}'\n",
+            invoked.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let edit = json!({"name":"Goose","systemPrompt":"","workspace":dir.path(),
+        "harness":{"command":goose,"args":["acp"],"provider":"databricks_v2","model":""},
+        "environment":{}});
+    let refresh_ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    assert!(invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":refresh_ticket,"request":{
+            "host":"", "filter":"", "action":"refresh", "edit":edit
+        }})
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("explicit Browse or Retry"));
+    assert!(!invoked.exists());
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"", "filter":"", "action":"connect",
+            "edit":edit
+        }}),
+    )
+    .unwrap();
+    assert!(invoked.exists());
+    assert_eq!(result["models"][0]["id"], "catalog.schema.goose-glm-5-3");
+    assert_eq!(result["host"], "");
+}
 #[test]
 fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     let fake = Arc::new(Fake::default());

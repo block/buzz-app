@@ -248,6 +248,54 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
 ) -> Result<Catalog, String> {
     let host = state.inner().clone();
     let controller = agents.inner().clone();
+    let goose = request.edit.as_ref().is_some_and(|edit| {
+        std::path::Path::new(&edit.harness.command)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("goose")
+    });
+    if goose {
+        // Goose's catalog handler may start OAuth on a cache miss. Only the
+        // explicit Browse/Retry action may invoke it; Refresh stays headless.
+        if request.action != Operation::Connect {
+            return host
+                .run(ticket, async {
+                    Err("Goose model lookup requires explicit Browse or Retry".into())
+                })
+                .await;
+        }
+        let prepared = request
+            .edit
+            .clone()
+            .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
+            .and_then(|edit| {
+                controller.goose_model_context(
+                    request.id.as_deref(),
+                    request.expected_revision,
+                    edit,
+                )
+            });
+        return host
+            .run(ticket, async move {
+                let context = prepared?;
+                let model_overridden = context.model_overridden;
+                let models = crate::goose_models::fetch(context)
+                    .await?
+                    .into_iter()
+                    .map(|id| Model {
+                        name: id.clone(),
+                        id,
+                    })
+                    .collect();
+                Ok(Catalog {
+                    host: String::new(),
+                    models,
+                    model_overridden,
+                    disconnected: false,
+                })
+            })
+            .await;
+    }
     // Disconnect is recovery: changing provider or breaking saved settings must
     // not trap credentials. Its explicit host selects ONLY this app's cache.
     let prepared = if request.action == Operation::Disconnect {

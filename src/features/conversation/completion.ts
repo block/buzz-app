@@ -99,6 +99,12 @@ export function completionResult(result: CompletionResult): CompletionResult {
         label: item.label,
         ...(typeof item.detail === "string" ? { detail: item.detail } : {}),
         preview: item.preview,
+        ...(typeof item.disabled === "string"
+          ? { disabled: item.disabled }
+          : {}),
+        ...(typeof item.canSelect === "function"
+          ? { canSelect: item.canSelect }
+          : {}),
         edit: Object.freeze(
           "mention" in edit
             ? { mention: Object.freeze({ ...edit.mention }) }
@@ -109,6 +115,9 @@ export function completionResult(result: CompletionResult): CompletionResult {
   }
   return Object.freeze({
     items: Object.freeze(items),
+    ...(typeof result.spaceId === "string" && ids.has(result.spaceId)
+      ? { spaceId: result.spaceId }
+      : {}),
     ...(typeof result.status === "string" ? { status: result.status } : {}),
     ...(typeof result.retry === "function" ? { retry: result.retry } : {}),
   });

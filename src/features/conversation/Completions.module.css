@@ -136,3 +136,7 @@
   font-family: var(--font-mono);
   color: var(--text-metadata);
 }
+.option[aria-disabled="true"] {
+  color: var(--text-subtle);
+  cursor: not-allowed;
+}

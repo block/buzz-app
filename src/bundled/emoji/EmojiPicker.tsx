@@ -2,6 +2,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  type RefObject,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -39,14 +40,21 @@ export function EmojiPicker({
   disabled,
   insert,
   reaction = false,
+  externalTrigger,
 }: {
   session: RelaySession;
   scope: string;
   disabled: boolean;
   insert(value: string): void;
   reaction?: boolean;
+  externalTrigger?: {
+    ref: RefObject<HTMLButtonElement | null>;
+    id: string;
+    close(): void;
+    finalFocus(): HTMLButtonElement | false;
+  };
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!externalTrigger);
   const [tab, setTab] = useState<"emoji" | "gifs">("emoji");
   const [gifAvailability, setGifAvailability] = useState<{
     community: string;
@@ -262,21 +270,32 @@ export function EmojiPicker({
           event.preventDefault();
           event.stopPropagation();
           setOpen(false);
-          trigger.current?.focus();
+          const target = externalTrigger
+            ? externalTrigger.finalFocus()
+            : trigger.current;
+          if (target) target.focus();
+          // Keyboard dismissal is immediate; release the external trigger before
+          // another Enter can arrive, rather than waiting for exit completion.
+          externalTrigger?.close();
         }
       }}
     >
-      <PopoverTrigger disabled={disabled} render={button} />
+      {!externalTrigger && (
+        <PopoverTrigger disabled={disabled} render={button} />
+      )}
       <PopoverPopup
         side={reaction ? "bottom" : "top"}
         anchor={
-          reaction ? undefined : () => controls.current?.offsetParent ?? null
+          reaction
+            ? externalTrigger?.ref
+            : () => controls.current?.offsetParent ?? null
         }
         sideOffset={reaction ? 6 : 8}
         collisionPadding={16}
         // Each media panel focuses its search after its asynchronous content mounts.
         initialFocus={false}
         padding="none"
+        id={externalTrigger?.id}
         aria-label="Emoji picker"
         style={{
           width: Math.min(
@@ -286,7 +305,11 @@ export function EmojiPicker({
           overflow: "hidden",
         }}
         finalFocus={() =>
-          accepted.current && !reaction ? false : trigger.current
+          externalTrigger
+            ? externalTrigger.finalFocus()
+            : accepted.current && !reaction
+              ? false
+              : trigger.current
         }
       >
         {picker}
@@ -296,6 +319,9 @@ export function EmojiPicker({
   return (
     <PopoverRoot
       open={open && !disabled}
+      onOpenChangeComplete={(isOpen) => {
+        if (!isOpen) externalTrigger?.close();
+      }}
       onOpenChange={(next) => {
         setOpen(next);
         if (next) {

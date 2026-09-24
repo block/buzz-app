@@ -229,3 +229,66 @@ it("read-only and disabled options cannot change the selected value", async () =
   await user.click(unavailable);
   expect(change).not.toHaveBeenCalled();
 });
+
+it.each(["inline", "field"] as const)(
+  "preserves an explicit empty-string choice in the %s Select",
+  async (variant) => {
+    const user = userEvent.setup();
+    function Example() {
+      const [value, setValue] = useState("");
+      return (
+        <Select
+          label="Channel"
+          variant={variant}
+          value={value}
+          placeholder="Choose a channel"
+          groups={[
+            {
+              label: "",
+              options: [{ value: "", label: "All channels" }, ...options],
+            },
+          ]}
+          onValueChange={setValue}
+        />
+      );
+    }
+    render(<Example />);
+    const trigger = screen.getByRole("combobox", { name: "Channel" });
+    expect(trigger).toHaveTextContent("All channels");
+    expect(trigger.querySelector("[data-placeholder]")).toBeNull();
+    await user.click(trigger);
+    await user.click(await screen.findByRole("option", { name: "One" }));
+    expect(trigger).toHaveTextContent("One");
+    await user.click(trigger);
+    await user.click(
+      await screen.findByRole("option", { name: "All channels" }),
+    );
+    expect(trigger).toHaveTextContent("All channels");
+    expect(trigger.querySelector("[data-placeholder]")).toBeNull();
+    expect(trigger).toHaveFocus();
+  },
+);
+
+it("shows the placeholder when an empty value has no matching option", async () => {
+  const user = userEvent.setup();
+  function Example() {
+    const [value, setValue] = useState("");
+    return (
+      <Select
+        label="Channel"
+        variant="field"
+        value={value}
+        placeholder="Choose a channel"
+        groups={[{ label: "", options }]}
+        onValueChange={setValue}
+      />
+    );
+  }
+  render(<Example />);
+  const trigger = screen.getByRole("combobox", { name: "Channel" });
+  expect(trigger).toHaveTextContent("Choose a channel");
+  expect(trigger.querySelector("[data-placeholder]")).not.toBeNull();
+  await user.click(trigger);
+  await user.click(await screen.findByRole("option", { name: "One" }));
+  expect(trigger).toHaveTextContent("One");
+});

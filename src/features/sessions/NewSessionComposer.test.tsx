@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { composerDOMFixture } from "../messages/composer-testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -7,6 +8,7 @@ import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
 import { NewSessionComposer } from "./NewSessionComposer";
 
+composerDOMFixture();
 afterEach(cleanup);
 beforeEach(() => localStorage.clear());
 const parent = {
@@ -29,11 +31,14 @@ function setup(available = true) {
     addAgents: vi.fn(async () => {}),
     create: vi.fn<RelaySession["workSessions"]["create"]>(() => "c".repeat(64)),
     invite: vi.fn(() => "e".repeat(64)),
-    delivered: vi.fn(async () => {}),
+    delivered: vi.fn<RelaySession["workSessions"]["delivered"]>(async () => {}),
     refresh: vi.fn(async () => {}),
-    failed: () => false,
+    failed: (_id: string) => false,
+    discardFailed: vi.fn(async (_id: string) => {}),
   };
-  const messages = { send: vi.fn(() => "d".repeat(64)) };
+  const messages = {
+    send: vi.fn<RelaySession["messages"]["send"]>(() => "d".repeat(64)),
+  };
   let channelSnapshot = { channels: [{ id: "", members: parent.members }] };
   const profileSnapshot = new Map();
   const session = {
@@ -53,7 +58,8 @@ function setup(available = true) {
       snapshot: () => profileSnapshot,
       subscribe: () => () => {},
     },
-    agentLibrary: {
+    agentChoices: {
+      retain: () => () => {},
       snapshot: () => agents,
       subscribe: () => () => {},
       refresh: async () => {},
@@ -556,5 +562,46 @@ it.each(
         ["a".repeat(64)],
       );
     }
+  },
+);
+
+it.each([false, true])(
+  "keeps edits after discarding a failed session send and remounting, child=%s",
+  async (child) => {
+    const t = setup();
+    const user = userEvent.setup();
+    const onStarted = vi.fn();
+    const id = "d".repeat(64);
+    let failed = true;
+    t.workSessions.failed = (eventId) => failed && eventId === id;
+    t.workSessions.discardFailed = vi.fn(async () => {
+      failed = false;
+    });
+    t.workSessions.delivered.mockImplementation(async (eventId) => {
+      if (failed && eventId === id) throw new Error("Not sent");
+    });
+    const mount = () =>
+      render(
+        <NewSessionComposer
+          session={t.session}
+          scope="test"
+          parent={child ? parent : undefined}
+          onStarted={onStarted}
+        />,
+      );
+    const page = mount();
+    await user.type(screen.getByRole("textbox"), "Original draft");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Edit and retry" }),
+    );
+    await user.clear(screen.getByRole("textbox"));
+    await user.type(screen.getByRole("textbox"), "Corrected draft");
+    page.unmount();
+    mount();
+    expect(screen.getByRole("textbox")).toHaveTextContent("Corrected draft");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+    expect(t.messages.send.mock.calls[1]?.[1]).toBe("Corrected draft");
   },
 );

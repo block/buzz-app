@@ -148,8 +148,13 @@ colors while blocking activation; never swap in a differently sized loading labe
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
+IconButton also offers `xs` (28px with 16px icons) for dense composer formatting
+options, preserving the original toolbar layout. Mode toggles remain `sm`.
+
 IconButton defaults to round across all sizes and variants. Use `shape="control"`
-only when a rectangular control shape is explicitly needed.
+only when a rectangular control shape is explicitly needed. Disabled ghost icons
+remain unfilled; their muted foreground communicates unavailability without
+adding a container to an otherwise empty toolbar.
 
 Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
@@ -247,6 +252,9 @@ close button and actions. Pending operations set preventClose so Escape and the
 close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
+Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
+the body scrolls while the shared title and close action remain available. This
+changes only size, not modal ownership or dismissal behavior.
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
 the close button so its hit area does not enlarge the text gap. The body owns
@@ -291,7 +299,7 @@ preloading and product shortcuts remain with the caller.
 When composing NavigationItem lists inside dialogs or padded panels, align the
 leading content column with the heading. With icons, this means the icon slot;
 labels form a second consistent column. Give mixed icons and identity fallbacks
-the same slot (24px in the community chooser and page search), retaining each
+the same slot (24px in the page search palette), retaining each
 icon's intended size within it.
 
 The hover and selected backgrounds may extend beyond that content edge. Offset

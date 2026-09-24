@@ -36,7 +36,7 @@ test("production composer catalogue preserves source and controls at responsive 
   ).toBeVisible();
   await expect(
     playground.getByRole("button", { name: "Toggle formatting" }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   for (const width of [360, 768, 1440]) {
     await page.setViewportSize({ width, height: 950 });
     const form = playground.getByRole("form");
@@ -117,7 +117,7 @@ test("playground distinguishes same-name people and agents in the real composer"
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
       await page
-        .getByRole("region", { name: "Mention a member or agent" })
+        .getByRole("dialog", { name: "Mention a member or agent" })
         .getByRole("button", { name: `${name} ${key}`, exact: true })
         .click();
       if (index === 0) {

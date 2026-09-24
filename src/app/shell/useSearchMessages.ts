@@ -51,7 +51,7 @@ export function useSearchMessages(session: RelaySession, query: string) {
         .read(
           [
             {
-              kinds: [9, 40002],
+              kinds: [9, 40002, 40008],
               search: query,
               search_mode: "prefix",
               limit: 20,
@@ -65,7 +65,7 @@ export function useSearchMessages(session: RelaySession, query: string) {
             const destinations = event.tags.filter(([name]) => name === "h");
             const channelId = destinations[0]?.[1];
             if (
-              ![9, 40002].includes(event.kind) ||
+              ![9, 40002, 40008].includes(event.kind) ||
               destinations.length !== 1 ||
               !channelId ||
               !session.channels.get?.(channelId)

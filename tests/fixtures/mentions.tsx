@@ -47,6 +47,13 @@ const owner = createRelaySession(
     relayAuthor: relay.pubkey,
     media: (url) =>
       url.startsWith("https://avatars.test/") ? new URL(url).pathname : url,
+    ...(new URLSearchParams(location.search).has("attachments")
+      ? {
+          async uploadAttachment() {
+            throw new Error("Toolbar fixture does not upload files");
+          },
+        }
+      : {}),
     // Synthetic, lazy capability: only the explicit fixture action loads it.
     async readAgentLibrary() {
       libraryReads++;

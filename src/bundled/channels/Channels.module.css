@@ -179,6 +179,12 @@ html[data-keyboard-navigation]
   opacity: 1;
   pointer-events: auto;
 }
+@media (hover: none) {
+  .sectionAction {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
 .preferenceNotice {
   padding: var(--space-2);
   color: var(--text-subtle);
@@ -550,4 +556,20 @@ html[data-keyboard-navigation]
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--affordance-accent-prominent);
+}
+
+/* Match the adjacent small avatars without creating image/profile demand. */
+.dmCount {
+  display: grid;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding-inline: var(--space-half);
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--affordance-subtle);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
 }

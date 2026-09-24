@@ -84,7 +84,9 @@ it("uses independent explicit channel routes and self-p globals; equal interests
       limit: 500,
     },
     {
-      kinds: expect.arrayContaining([20002, 9, 40003, 7, 39002, 40099]),
+      kinds: expect.arrayContaining([
+        20002, 9, 40002, 40008, 40003, 7, 39002, 40099,
+      ]),
       "#h": ["a"],
       since: expect.any(Number),
       limit: 500,
@@ -1174,6 +1176,31 @@ it("presence and ordinary publications correlate independently and share only re
     await h.first.receive(["OK", last.id, true, ""]);
     expect(await renewal).toBe(true);
     expect(h.sockets).toHaveLength(1);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("publishes manual Offline on the authenticated presence socket with a correlated receipt", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    await h.first.auth();
+    const result = h.owner.publishPresence?.(
+      "offline",
+      new AbortController().signal,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const event = h.first.sent.find(([kind]) => kind === "EVENT")?.[1] as {
+      id: string;
+      kind: number;
+      content: string;
+      tags: string[][];
+    };
+    assert.exists(event);
+    expect(event).toMatchObject({ kind: 20001, content: "offline", tags: [] });
+    await h.first.receive(["OK", event.id, true]);
+    expect(await result).toBe(true);
   } finally {
     h.owner.dispose();
   }

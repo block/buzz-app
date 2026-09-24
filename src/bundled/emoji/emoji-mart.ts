@@ -277,7 +277,7 @@ export function mountEmojiMart({
     }
     .buzz-skin-tone-source {
       width: 0 !important;
-      height: 48px !important;
+      height: 0 !important;
       overflow: hidden;
       visibility: hidden;
     }

@@ -12,6 +12,8 @@ export type DialogProps = {
   children: ReactNode;
   actions?: ReactNode;
   closeLabel?: string;
+  /** Expanded reading surfaces retain the same modal/focus behavior. */
+  size?: "default" | "expanded";
   /** Keep frequent surfaces such as search palettes immediate. */
   motion?: "default" | "none";
   /** A pending operation can prevent all user dismissal paths. */
@@ -29,6 +31,7 @@ export function Dialog({
   children,
   actions,
   closeLabel = "Close",
+  size = "default",
   preventClose = false,
   motion = "default",
   initialFocus,
@@ -59,6 +62,7 @@ export function Dialog({
         <BaseDialog.Popup
           data-buzz-ui=""
           className="buzz-dialog gap-0"
+          data-size={size}
           data-motion={transition}
           aria-modal="true"
           initialFocus={initialFocus}

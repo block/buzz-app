@@ -43,6 +43,11 @@ const session = {
     reply: () => "preview-reply",
   },
   typing: { snapshot: () => emptyList, subscribe: empty },
+  names: {
+    snapshot: () => 0,
+    subscribe: empty,
+    resolve: (_pubkey: string, fallback: string) => fallback,
+  },
   profiles: {
     snapshot: () => profiles,
     subscribe: empty,
@@ -55,6 +60,12 @@ const session = {
     refreshList: () => {},
   },
   agentLibrary: { snapshot: () => library, subscribe: empty },
+  agentChoices: {
+    snapshot: () => library,
+    subscribe: empty,
+    retain: empty,
+    refresh: async () => {},
+  },
   emoji: {
     snapshot: () => emojiSnapshot,
     subscribe: empty,

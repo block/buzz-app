@@ -230,6 +230,12 @@ test("independent packed author consumer and native-installed contribution survi
         ),
       )
       .toEqual({
+        // The editor now persists its versioned document alongside the exact
+        // text/recipient projection consumed by independently built plugins.
+        document: {
+          version: 1,
+          content: expect.objectContaining({ type: "doc" }),
+        },
         text: "Hi @Member and @Member ",
         recipients: [
           { pubkey: member, name: "Member", start: 3, end: 10 },
@@ -306,10 +312,10 @@ test("independent packed author consumer and native-installed contribution survi
     await draft.fill("Channels draft");
     await draft.focus();
     await draft.evaluate((el) => el.setSelectionRange(2, 5));
-    // Programmatic click avoids intentionally moving focus away from the editor.
-    await page
-      .getByRole("button", { name: "Rerender consumer 0" })
-      .evaluate((el) => el.click());
+    // Request a render without a click outside the picker (which dismisses it).
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("conversation-fixture-rerender")),
+    );
     await expect(
       page.getByRole("button", { name: "Rerender consumer 1" }),
     ).toBeVisible();
@@ -324,9 +330,9 @@ test("independent packed author consumer and native-installed contribution survi
     const search = page.getByRole("searchbox", { name: "Search" });
     await search.fill("party");
     const picker = await page.locator("em-emoji-picker").elementHandle();
-    await page
-      .getByRole("button", { name: "Rerender consumer 1" })
-      .evaluate((el) => el.click());
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("conversation-fixture-rerender")),
+    );
     await expect(
       page.getByRole("button", { name: "Rerender consumer 2" }),
     ).toBeVisible();

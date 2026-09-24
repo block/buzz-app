@@ -1,7 +1,7 @@
 import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { RobotIcon, CaretUpIcon } from "../../shared/design-system/icons/index";
-import { useEffect, useSyncExternalStore } from "react";
+import { useAgentChoices } from "../agents/use-choices";
 import {
   MenuRoot,
   MenuTrigger,
@@ -58,15 +58,8 @@ export function AgentChoice({
   side?: "top" | "bottom";
 }) {
   const resolveName = useIdentityNames(session.names);
-  const library = session.agentLibrary;
-  const agents = useSyncExternalStore(
-    library.subscribe,
-    library.snapshot,
-    library.snapshot,
-  );
-  useEffect(() => {
-    if (agents.status === "idle") void library.refresh();
-  }, [library, agents.status]);
+  const library = session.agentChoices;
+  const agents = useAgentChoices(session);
   const identities = agents.identities.map((agent) => ({
     ...agent,
     name: resolveName(agent.pubkey, agent.name),
@@ -217,7 +210,7 @@ export function AgentChoice({
         )}
         {agents.status === "ready" && !agents.identities.length && (
           <MenuNote role="status">
-            No agents found in your Buzz library.
+            No agents available in this community.
           </MenuNote>
         )}
         {agents.status === "unavailable" && (
@@ -225,7 +218,7 @@ export function AgentChoice({
             Your agent library isn’t available on this connection.
           </MenuNote>
         )}
-        {agents.status === "error" && (
+        {(agents.status === "error" || !!agents.error) && (
           <MenuItem closeOnClick={false} onClick={() => void library.refresh()}>
             Retry agent list
           </MenuItem>

@@ -1,3 +1,6 @@
+import { brokerUpload, type AttachmentUpload } from "./attachments";
+import type { ChannelKitHost } from "../channel-templates/host";
+import type { KitRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
@@ -48,6 +51,12 @@ export interface RelayWriter {
   ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
+  readonly uploadAttachment?: AttachmentUpload;
+  /** Host-owned idempotent DM opening. The session verifies membership before use. */
+  readonly openDirectMessage?: (
+    pubkeys: readonly string[],
+    signal: AbortSignal,
+  ) => Promise<string>;
   readonly workflows?: WorkflowHost;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
@@ -57,6 +66,7 @@ export interface ReadTransport {
   /** Host-only decoder of the viewer's two signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
   readonly readState?: ReadStateHost;
+  readonly channelKit?: ChannelKitHost;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
@@ -222,10 +232,13 @@ export async function connectBrokerTransport(
     archiveAuthority?: unknown;
     writeKinds?: number[];
     workflowReads?: boolean;
+    attachmentUploads?: boolean;
+    directMessages?: boolean;
     relayUrl?: string;
     live?: boolean;
     presence?: boolean;
     sidebarPreferences?: boolean;
+    channelKit?: boolean;
     agentLibrary?: boolean;
     agentActivity?: boolean;
     readState?: boolean;
@@ -251,6 +264,9 @@ export async function connectBrokerTransport(
   });
   return {
     profiling,
+    ...(session.attachmentUploads === true && session.relayUrl
+      ? { uploadAttachment: brokerUpload(endpoint, session.relayUrl) }
+      : {}),
     ...(session.presence && session.live
       ? {
           async presenceSnapshot(
@@ -302,6 +318,33 @@ export async function connectBrokerTransport(
         }
       : {}),
     ...(session.relayUrl ? { scope: session.relayUrl } : {}),
+    ...(session.directMessages === true
+      ? {
+          async openDirectMessage(
+            pubkeys: readonly string[],
+            signal: AbortSignal,
+          ) {
+            const result = await fetch(`${endpoint}/direct-message`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pubkeys }),
+              signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+            });
+            if (!result.ok)
+              throw new Error("Could not open the direct message. Try again.");
+            const value = await result.json();
+            if (
+              typeof value?.channelId !== "string" ||
+              !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+                value.channelId,
+              )
+            )
+              throw new Error("The relay returned an invalid direct message.");
+            return value.channelId;
+          },
+        }
+      : {}),
     viewer: session.viewer,
     relayAuthor: session.relayAuthor,
     ...(typeof session.archiveAuthority === "string"
@@ -348,6 +391,44 @@ export async function connectBrokerTransport(
             if (!result.ok)
               throw new Error(`Local decoder failed (HTTP ${result.status})`);
             return result.json();
+          },
+        }
+      : {}),
+    ...(session.channelKit
+      ? {
+          channelKit: {
+            async prepare(record: KitRecord, signal: AbortSignal) {
+              const response = await fetch(`${endpoint}/channel-kit-prepare`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(record),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(
+                  `Recipe preparation failed (${response.status})`,
+                );
+              const result = await response.json();
+              if (
+                typeof result.content !== "string" ||
+                result.content.length > 24 * 1024
+              )
+                throw new Error("Invalid encrypted recipe");
+              return result.content as string;
+            },
+            async decode(events: readonly RelayEvent[], signal: AbortSignal) {
+              const response = await fetch(`${endpoint}/channel-kit-decode`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(events),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(`Recipe decode failed (${response.status})`);
+              return response.json();
+            },
           },
         }
       : {}),

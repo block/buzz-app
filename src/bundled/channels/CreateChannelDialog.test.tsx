@@ -3,9 +3,28 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { createRelaySession } from "../../features/relay/session";
 import { CreateChannelDialog } from "./CreateChannelDialog";
 
-afterEach(cleanup);
+const providers = {
+  snapshot: () => emptyProviders,
+  subscribe: () => () => {},
+  register: () => {},
+};
+const emptyProviders = Object.freeze([]);
+let store = createRelaySession(null);
+const setupProps = () => ({
+  session: store.session,
+  providers,
+  groups: undefined,
+  initialGroup: "",
+  groupsReady: true,
+});
+afterEach(() => {
+  cleanup();
+  store.dispose();
+  store = createRelaySession(null);
+});
 
 it("reveals description on demand and creates an ongoing open channel", async () => {
   const user = userEvent.setup();
@@ -13,6 +32,7 @@ it("reveals description on demand and creates an ongoing open channel", async ()
   const onOpenChange = vi.fn();
   render(
     <CreateChannelDialog
+      {...setupProps()}
       open
       onOpenChange={onOpenChange}
       onCreate={onCreate}
@@ -64,6 +84,7 @@ it("creates a private temporary channel and reports a rejected request", async (
   });
   render(
     <CreateChannelDialog
+      {...setupProps()}
       open
       onOpenChange={onOpenChange}
       onCreate={onCreate}
@@ -103,6 +124,7 @@ it("keeps the visible draft when a pending creation fails", async () => {
     ttlSeconds: number;
   }) => (
     <CreateChannelDialog
+      {...setupProps()}
       open
       pending={pending}
       onOpenChange={onOpenChange}
@@ -155,6 +177,7 @@ it("blocks edits during creation without applying disabled control styles", asyn
   const onOpenChange = vi.fn();
   render(
     <CreateChannelDialog
+      {...setupProps()}
       open
       onOpenChange={onOpenChange}
       onCreate={onCreate}
@@ -187,6 +210,7 @@ it("restores an unconfirmed channel draft after closing and reopening", () => {
   const onCreate = vi.fn(async () => {});
   const { rerender } = render(
     <CreateChannelDialog
+      {...setupProps()}
       open
       pending={pending}
       onOpenChange={onOpenChange}
@@ -204,6 +228,7 @@ it("restores an unconfirmed channel draft after closing and reopening", () => {
 
   rerender(
     <CreateChannelDialog
+      {...setupProps()}
       open={false}
       pending={pending}
       onOpenChange={onOpenChange}
@@ -212,6 +237,7 @@ it("restores an unconfirmed channel draft after closing and reopening", () => {
   );
   rerender(
     <CreateChannelDialog
+      {...setupProps()}
       open
       pending={pending}
       onOpenChange={onOpenChange}
@@ -224,4 +250,42 @@ it("restores an unconfirmed channel draft after closing and reopening", () => {
   expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
     "Updates for the team",
   );
+});
+
+it("resumes frozen setup with the plugin off and unavailable catalogs without recalculating it", async () => {
+  const user = userEvent.setup();
+  const pending = {
+    name: "Recovery",
+    visibility: "private" as const,
+    setup: {
+      agents: ["ab".repeat(32)],
+      canvas: "# Frozen plan",
+      groupId: "removed-group",
+      templateId: "unavailable",
+    },
+  };
+  const onCreate = vi.fn(async () => {});
+  render(
+    <CreateChannelDialog
+      {...setupProps()}
+      groupsReady={false}
+      open
+      pending={pending}
+      onOpenChange={() => {}}
+      onCreate={onCreate}
+    />,
+  );
+  expect(
+    screen.getByRole("region", { name: "Channel setup summary" }),
+  ).toHaveTextContent("ab".repeat(32));
+  expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
+  expect(
+    screen.queryByRole("button", {
+      name: "Review / customize teams, agents & Canvas",
+    }),
+  ).not.toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: "Resume channel setup" }),
+  );
+  await waitFor(() => expect(onCreate).toHaveBeenCalledWith(pending));
 });

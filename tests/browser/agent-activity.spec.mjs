@@ -143,7 +143,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
 
   const sockets = app.relay.sockets.length;
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   const toggle = page.getByRole("switch", {
     name: "Enable Agent Activity",
@@ -162,7 +162,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect(region).toHaveCount(0);
 
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await toggle.click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
@@ -397,7 +397,7 @@ test("profile activity opens the exact agent and originating channel before its 
   await expect(panel).toHaveCount(0);
   // Disable removes both registration and profile affordance, not the profile itself.
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await page
     .getByRole("switch", { name: "Enable Agent Activity", exact: true })

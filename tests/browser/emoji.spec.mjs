@@ -246,7 +246,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       ["Shift+ArrowRight", ""],
     ]) {
       await draft().press(key);
-      expect(await selectedDraftText()).toBe(selected);
+      await expect.poll(selectedDraftText).toBe(selected);
     }
     await draft().evaluate((element) => element.setSelectionRange(0, 0));
     for (const [key, selected] of [
@@ -256,27 +256,30 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       ["Shift+ArrowLeft", ""],
     ]) {
       await draft().press(key);
-      expect(await selectedDraftText()).toBe(selected);
+      await expect.poll(selectedDraftText).toBe(selected);
     }
     await draft().fill(":party:hello");
     await draft().evaluate((element) => element.setSelectionRange(7, 7));
     await draft().press("Shift+ArrowLeft");
-    expect(await selectedDraftText()).toBe(":party:");
+    await expect.poll(selectedDraftText).toBe(":party:");
     await draft().press("Backspace");
     await expect(draft()).toHaveJSProperty("value", "hello");
     // Visible source text and unavailable emoji retain ordinary character selection.
     for (const literal of [":unknown:", ":nosource:"]) {
       await draft().fill(literal);
       await draft().press("Shift+ArrowLeft");
-      expect(await selectedDraftText()).toBe(":");
+      await expect.poll(selectedDraftText).toBe(":");
     }
     await page.locator("main").evaluate((main) => {
       main.style.width = "300px";
     });
     await draft().fill(Array(24).fill(":party:").join(" "));
     const largeCustom = draft();
-    await expect(largeCustom.locator("img")).toHaveCount(24);
-    await expect(largeCustom.locator("img").last()).toHaveCSS("width", "42px");
+    await expect(largeCustom.locator("img[data-copy-emoji]")).toHaveCount(24);
+    await expect(largeCustom.locator("img[data-copy-emoji]").last()).toHaveCSS(
+      "width",
+      "42px",
+    );
     expect(
       await largeCustom.evaluate(
         (group) => group.scrollWidth <= group.clientWidth,
@@ -284,7 +287,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBe(true);
     expect(
       await largeCustom
-        .locator("img")
+        .locator("img[data-copy-emoji]")
         .last()
         .evaluate((image) => image.offsetTop),
     ).toBeGreaterThan(0);
@@ -292,7 +295,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       path: test.info().outputPath("large-custom-emoji-draft.png"),
     });
     const lastCustomBounds = await largeCustom
-      .locator("img")
+      .locator("img[data-copy-emoji]")
       .last()
       .boundingBox();
     const inputBounds = await draft().boundingBox();
@@ -421,11 +424,20 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         .querySelector("#root")
         .getBoundingClientRect();
       return {
+        top: searchBounds.top - rootBounds.top,
         left: searchBounds.left - rootBounds.left,
         right: rootBounds.right - searchBounds.right,
       };
     });
     expect(searchGutters.left).toBeCloseTo(searchGutters.right, 1);
+    expect(searchGutters.top).toBe(12);
+    expect(searchGutters.left).toBe(12);
+    const searchBox = await search.boundingBox();
+    const searchIconBox = await searchIcon.boundingBox();
+    expect(searchIconBox.y + searchIconBox.height / 2).toBeCloseTo(
+      searchBox.y + searchBox.height / 2,
+      1,
+    );
     expect(initialSurface.height).toBeCloseTo(
       Math.min(348, page.viewportSize().height * 0.4),
       1,
@@ -937,7 +949,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await draft().fill(longDraft);
     await expect(draft()).toHaveJSProperty("value", longDraft);
     await expect(draft()).toContainText("long text long text");
-    await expect(draft().locator("img")).toHaveCount(1);
+    await expect(draft().locator("img[data-copy-emoji]")).toHaveCount(1);
     await expect
       .poll(() =>
         draft().evaluate(

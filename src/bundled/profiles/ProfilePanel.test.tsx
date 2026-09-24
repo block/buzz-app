@@ -88,7 +88,10 @@ it("recovers provider-owned names in the same live session and releases demand w
       viewer: person.pubkey,
       relayAuthor: relayKey.pubkey,
       scope: "wss://relay.example.test",
-      query: async () => [publicProfile],
+      query: async (filters) =>
+        filters.some((filter) => filter.kinds?.includes(0))
+          ? [publicProfile]
+          : [],
       media: () => undefined,
       readAgentLibrary: read,
       subscribe(callbacks) {
@@ -129,6 +132,10 @@ it("recovers provider-owned names in the same live session and releases demand w
     live.established();
   };
   try {
+    owner.session.channels.ensureList();
+    await waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
     render(
       <ProfilePanel
         relay={relay}

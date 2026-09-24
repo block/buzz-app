@@ -46,15 +46,20 @@ need their own validation.
 
 - `just web [args...]`: install locked dependencies and forward arguments to Vite,
   e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
-  (default: 1430) or the next available port, allowing parallel browser development.
+  (default: derived from the worktree path) or the next available port, allowing
+  parallel browser development.
   Use `just web profile` for opt-in Chromium and broker CPU profiles. Profiling
   binds only `127.0.0.1`; wildcard, hostname, and IPv6 `--host` values are rejected
   so the captured page and development broker have one unambiguous owner. Use
   `just web profile --network` to additionally record sanitized browser network
   metadata in `network.json`; payloads, cookies, authorization headers, query strings,
-  fragments, and WebSocket frame data are omitted. Press Ctrl+C to finalize the
-  capture; the command prints the `.profiles/...-web` output directory. Load
-  `.cpuprofile` files in Chromium DevTools (**Performance** > **Load profile**).
+  fragments, and WebSocket frame data are omitted. Use `just web profile --trace`
+  to record a Chromium DevTools Performance trace (`chromium-trace.json`, with
+  style/layout/paint events, React's performance tracks, and denser CPU samples)
+  in place of `chromium-renderer.cpuprofile`; traces are large, so keep traced
+  sessions short. Press Ctrl+C to finalize the capture; the command prints the
+  `.profiles/...-web` output directory. Load `.cpuprofile` and trace files in
+  Chromium DevTools (**Performance** > **Load profile**).
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.
@@ -62,7 +67,9 @@ need their own validation.
   The desktop adapter consumes
   `--port N` or `--port=N` to set both Vite's port and Tauri's development URL;
   Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
-  the existing Tauri configuration is unchanged (port 1430). Desktop requires the
+  the adapter derives a stable port from the worktree path (the same derivation
+  `just web` uses) and prints the chosen URL. Different paths can still collide.
+  Desktop requires the
   exact port to be free; an occupied port fails rather than opening another copy's
   server. Other arguments, including runner/application arguments after `--`, pass
   through unchanged. Port configuration is prepended so Tauri parses it even with
@@ -108,9 +115,10 @@ isolated test buses, never use the desktop session bus or display real banners. 
 Installs run on every invocation to account for branch and lockfile changes.
 pnpm reuses its shared package cache; no node_modules directory needs to be copied
 into a new worktree. Native dependencies are fetched by Cargo as needed. Initial
-downloads and native compilation can take time. For parallel copies, run
-`just desktop --port 1430` and `just desktop --port 1431` in separate
-terminals/worktrees, or choose other free ports. Ports must be integers from 1 to 65535. Browser dev
+downloads and native compilation can take time. Parallel worktrees normally need
+no port flags: each derives a stable default from its path. Pass `--port` if paths
+collide, the default is occupied, or you run a second instance from one checkout;
+ports must be integers from 1 to 65535. Browser dev
 prints its selected URL and can use a later port when the requested port is
 occupied. Port selection does not isolate credentials or native plugin data;
 use the existing `BUZZODZ_PROFILE` setting for separate plugin profiles.
@@ -148,7 +156,7 @@ if it fails, startup warns and continues with the ordinary icon. Explicit Tauri
 `--config` arguments still take precedence over the generated icon and port.
 
 Ordinary checkouts, non-macOS launches, and `pnpm tauri build` keep their existing
-icons. This does not change the app identifier, credentials, profiles, ports, or
+icons. This does not change the app identifier, credentials, profiles, or
 notification settings.
 
 ## Interactive product iteration

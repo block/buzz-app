@@ -6,6 +6,7 @@ import {
   memo,
   useContext,
   useMemo,
+  useState,
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from "react";
@@ -29,6 +30,7 @@ import Markdown, {
 } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { remarkSpoilers } from "./remark-spoilers";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
@@ -58,7 +60,11 @@ type MarkdownNode = {
   };
 };
 
-type InlinePart = { text: string; target?: string | undefined };
+type InlinePart = {
+  text: string;
+  target?: string | undefined;
+  literal?: boolean;
+};
 type ProtectedContent = {
   content: string;
   prefix: string;
@@ -74,6 +80,7 @@ function protectInlineContent(
   profiles: ReadonlyMap<string, Profile> | undefined,
   literalRanges: readonly LiteralRange[],
   agents: typeof emptyReferenceDirectory.agents,
+  spoilerDelimiters: readonly number[],
 ): ProtectedContent {
   let rangeIndex = 0;
   const isLiteral = (start: number, end: number) => {
@@ -119,14 +126,60 @@ function protectInlineContent(
         .map((part) => {
           const partStart = partOffset;
           partOffset += part.length;
-          if (part.startsWith("https://")) return part;
+          const urlPart = part.startsWith("https://");
           let result = "";
           let end = 0;
-          for (const match of emojiMatches(part, row.emoji ?? [])) {
-            if (isLiteral(partStart + match.start, partStart + match.end))
+          // Protect explicitly encoded URL punctuation before GFM's fallback
+          // autolinker decodes it. Restore as literal text, not another URL scan.
+          const encoded = [...part.matchAll(/&#(58|46|64|x3a|x2e|x40);/gi)].map(
+            (match) => ({
+              start: match.index,
+              end: match.index + match[0].length,
+              literal: String.fromCodePoint(
+                match[1]?.toLowerCase().startsWith("x")
+                  ? Number.parseInt(match[1].slice(1), 16)
+                  : Number(match[1]),
+              ),
+            }),
+          );
+          const replacements = [
+            ...(urlPart
+              ? []
+              : Array.from(emojiMatches(part, row.emoji ?? []), (match) => ({
+                  ...match,
+                  literal: undefined,
+                }))),
+            ...(urlPart ? [] : encoded),
+            ...spoilerDelimiters
+              .filter(
+                (start) =>
+                  start >= partStart && start + 2 <= partStart + part.length,
+              )
+              .map((start) => ({
+                start: start - partStart,
+                end: start - partStart + 2,
+                literal: undefined,
+                spoiler: true,
+              })),
+          ].sort((a, b) => a.start - b.start);
+          for (const match of replacements) {
+            if (
+              match.start < end ||
+              isLiteral(partStart + match.start, partStart + match.end)
+            )
               continue;
             result += part.slice(end, match.start);
-            result += token({ text: part.slice(match.start, match.end) });
+            // Angle punctuation preserves the pipes' emphasis flanking while
+            // `<` terminates GFM autolinks. The private-use first character is
+            // not an HTML/autolink opener, so this remains a text delimiter.
+            result +=
+              "spoiler" in match
+                ? `<${prefix}spoiler\uE002>`
+                : token(
+                    match.literal
+                      ? { text: match.literal, literal: true }
+                      : { text: part.slice(match.start, match.end) },
+                  );
             end = match.end;
           }
           return result + part.slice(end);
@@ -202,7 +255,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
         )) {
           plain += child.value.slice(end, match.index);
           const part = protectedContent.parts[Number(match[1])];
-          if (part?.target) {
+          if (part?.target || part?.literal) {
             if (plain) parts.push({ text: plain });
             parts.push(part);
             plain = "";
@@ -219,6 +272,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
             hName: "span",
             hProperties: {
               "data-inline-text": part.text,
+              ...(part.literal ? { "data-literal-text": "true" } : {}),
               ...(part.target ? { "data-profile-target": part.target } : {}),
             },
           },
@@ -230,7 +284,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
 }
 
 const transformUrl: UrlTransform = (value) =>
-  parseBuzzLink(value) ? value : safeMessageUrl(value);
+  parseBuzzLink(value) || profileKey(value) ? value : safeMessageUrl(value);
 const labelText = (children: ReactNode): string =>
   Children.toArray(children)
     .map((child) =>
@@ -405,9 +459,55 @@ function PreparedMessageMarkdown({
         profiles,
         prepared.literalRanges,
         directory.agents,
+        prepared.spoilerDelimiters,
       ),
-    [prepared.content, prepared.literalRanges, protectionKey],
+    [
+      prepared.content,
+      prepared.literalRanges,
+      prepared.spoilerDelimiters,
+      protectionKey,
+    ],
   );
+  // Explicit profile links are identity locators, not signed notification intent.
+  // Reuse the same control and availability gate as bound prose mentions.
+  const renderProfile = (text: unknown, target: unknown) => {
+    const key = typeof target === "string" ? profileKey(target) : undefined;
+    const agent =
+      !!key &&
+      (directory.agents.some((agent) => agent.pubkey === key) ||
+        (participantProfiles ?? directory.profiles).get(key)?.isAgent);
+    const clickable =
+      interactive && typeof target === "string" && !!canOpenLink?.(target);
+    if (
+      typeof text === "string" &&
+      typeof target === "string" &&
+      (!interactive || clickable || agent)
+    ) {
+      const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
+      const Icon = agent ? RobotIcon : AtIcon;
+      const Mention = clickable ? "button" : "span";
+      return (
+        <Mention
+          type={clickable ? "button" : undefined}
+          className={referenceStyles.link}
+          data-mention-kind={agent ? "agent" : "person"}
+          aria-label={clickable ? `View ${label} profile` : undefined}
+          onClick={
+            clickable
+              ? (event) => {
+                  event.currentTarget.focus();
+                  onOpenLink(target);
+                }
+              : undefined
+          }
+        >
+          <Icon aria-hidden="true" className={referenceStyles.icon} />
+          {label}
+        </Mention>
+      );
+    }
+    return undefined;
+  };
   const components: MessageComponents = {
     p: ({ node: _node, ...props }) => (
       <p
@@ -416,8 +516,18 @@ function PreparedMessageMarkdown({
         data-single-emoji={largeEmoji || undefined}
       />
     ),
-    a: ({ href, children }) =>
-      href ? (
+    a: ({ href, children }) => {
+      if (href && profileKey(href)) {
+        const label = labelText(children);
+        if (!interactive || !canOpenLink?.(href))
+          return (
+            <span>
+              {children} ({href})
+            </span>
+          );
+        return renderProfile(label.startsWith("@") ? label : `@${label}`, href);
+      }
+      return href ? (
         renderLink(
           href,
           labelText(children) === href ? undefined : labelText(children),
@@ -425,52 +535,34 @@ function PreparedMessageMarkdown({
         )
       ) : (
         <span>{children}</span>
-      ),
+      );
+    },
     img: ({ node: _node, alt }) =>
       alt ? <span className={styles.imageAlt}>{alt}</span> : null,
     span: ({ node: _node, children, ...props }) => {
-      const { "data-inline-text": text, "data-profile-target": target } =
-        props as typeof props & {
-          "data-inline-text"?: unknown;
-          "data-profile-target"?: unknown;
-        };
-      const key = typeof target === "string" ? profileKey(target) : undefined;
-      const agent =
-        !!key &&
-        (directory.agents.some((agent) => agent.pubkey === key) ||
-          (participantProfiles ?? directory.profiles).get(key)?.isAgent);
-      const clickable =
-        interactive && typeof target === "string" && !!canOpenLink?.(target);
-      if (
-        typeof text === "string" &&
-        typeof target === "string" &&
-        (!interactive || clickable || agent)
-      ) {
-        const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
-        const Icon = agent ? RobotIcon : AtIcon;
-        const Mention = clickable ? "button" : "span";
+      if ((props as Record<string, unknown>)["data-spoiler"] === "true")
         return (
-          <Mention
-            type={clickable ? "button" : undefined}
-            className={referenceStyles.link}
-            data-mention-kind={agent ? "agent" : "person"}
-            aria-label={clickable ? `View ${label} profile` : undefined}
-            onClick={
-              clickable
-                ? (event) => {
-                    event.currentTarget.focus();
-                    onOpenLink(target);
-                  }
-                : undefined
-            }
-          >
-            <Icon aria-hidden="true" className={referenceStyles.icon} />
-            {label}
-          </Mention>
+          <MessageSpoiler key={row.content} interactive={interactive}>
+            {children}
+          </MessageSpoiler>
         );
-      }
+      const {
+        "data-inline-text": text,
+        "data-profile-target": target,
+        "data-literal-text": literalText,
+      } = props as typeof props & {
+        "data-inline-text"?: unknown;
+        "data-profile-target"?: unknown;
+        "data-literal-text"?: unknown;
+      };
+      const profile = renderProfile(text, target);
+      if (profile) return profile;
       return typeof text === "string" ? (
-        renderText(text)
+        literalText === "true" ? (
+          text
+        ) : (
+          renderText(text)
+        )
       ) : (
         <span {...props}>{children}</span>
       );
@@ -495,6 +587,7 @@ const MarkdownBody = memo(function MarkdownBody({
       remarkPlugins={[
         remarkGfm,
         remarkBreaks,
+        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
         [remarkInlineContent, protectedContent],
       ]}
       components={markdownComponents}
@@ -505,3 +598,38 @@ const MarkdownBody = memo(function MarkdownBody({
     </Markdown>
   );
 });
+
+function MessageSpoiler({
+  children,
+  interactive,
+}: {
+  children: ReactNode;
+  interactive: boolean;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <span className={styles.spoiler} data-revealed={revealed}>
+      {interactive ? (
+        <button
+          type="button"
+          className={styles.spoilerMask}
+          aria-label={revealed ? "Hide spoiler" : "Reveal spoiler"}
+          aria-expanded={revealed}
+          onClick={(event) => {
+            event.stopPropagation();
+            setRevealed(!revealed);
+          }}
+        />
+      ) : (
+        <span className={styles.spoilerMask} aria-hidden="true" />
+      )}
+      <span
+        className={styles.spoilerContent}
+        aria-hidden={!revealed}
+        inert={!revealed}
+      >
+        {children}
+      </span>
+    </span>
+  );
+}

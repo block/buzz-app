@@ -31,7 +31,7 @@ test("mention completion distinguishes exact agent identity without reshaping a 
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
-  const picker = page.getByRole("region", {
+  const picker = page.getByRole("dialog", {
     name: "Mention a member or agent",
   });
   await expectAvatarShape(
@@ -216,12 +216,14 @@ test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preser
   await expect(input).toHaveJSProperty("value", "😄");
   await expect(input).toBeFocused();
   await input.press("Shift+ArrowLeft");
-  expect(
-    await input.evaluate((element) => [
-      element.selectionStart,
-      element.selectionEnd,
-    ]),
-  ).toEqual([0, "😄".length]);
+  await expect
+    .poll(() =>
+      input.evaluate((element) => [
+        element.selectionStart,
+        element.selectionEnd,
+      ]),
+    )
+    .toEqual([0, "😄".length]);
   await input.press("ArrowRight");
   expect(
     await page.evaluate(() => window.mentionFixture.publications.length),
@@ -271,14 +273,14 @@ test("completion resumes after selection collapses to the original caret", async
   await input.fill(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Shift+ArrowLeft");
-  expect(
-    await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
-  ).toEqual([5, 6]);
+  await expect
+    .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([5, 6]);
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await input.press("ArrowRight");
-  expect(
-    await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
-  ).toEqual([6, 6]);
+  await expect
+    .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([6, 6]);
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
   await expect(input).toHaveJSProperty("value", "😄");
@@ -638,7 +640,10 @@ test("current custom catalog drives typeahead and signed tags across community r
   expect(suggestionBox.width).toBeCloseTo(composerBox.width * 0.375, 1);
   await first.click();
   await expect(input).toHaveJSProperty("value", ":party-parrot:");
-  await expect(composer.locator("img")).toHaveCSS("width", "42px");
+  await expect(composer.locator("img[data-copy-emoji]")).toHaveCSS(
+    "width",
+    "42px",
+  );
   await input.press("Shift+ArrowLeft");
   expect(
     await input.evaluate((element) =>
@@ -687,7 +692,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   ).toBe(":party-parrot: hello");
   await input.fill(":party-parrot:");
   await expect(input).toHaveAttribute("data-single-emoji", "true");
-  const renderedEmoji = input.locator("img");
+  const renderedEmoji = input.locator("img[data-copy-emoji]");
   await expect(renderedEmoji).toHaveCount(1);
   await expect(renderedEmoji).toHaveCSS("width", "42px");
   await expect(renderedEmoji).toHaveCSS("height", "42px");
@@ -954,6 +959,9 @@ test("portal bounds hold when the focused composer moves outside the viewport", 
   await page.goto("/tests/fixtures/typeahead.html");
   const input = page.getByRole("textbox", { name: "Message #Test" });
   await input.fill("!geometry");
+  await expect
+    .poll(() => page.evaluate(() => window.completionFixture.queries().at(-1)))
+    .toBe("geometry");
   const index = await page.evaluate(
     () => window.completionFixture.queries().length - 1,
   );

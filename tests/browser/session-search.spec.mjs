@@ -53,7 +53,10 @@ test("global search opens a child session without changing collapsed sidebar lev
   ).toBeVisible();
 
   // Remount so accidental onToggle persistence cannot be hidden by local state.
-  await page.getByRole("button", { name: "Home", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Projects", exact: true })
+    .first()
+    .click();
   await page
     .getByRole("button", { name: "Messages", exact: true })
     .first()

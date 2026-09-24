@@ -1,5 +1,16 @@
+import { prepareMedia } from "./media-preparation.mjs";
+import {
+  prepareChannelKit,
+  decodeChannelKit,
+  admitChannelKit,
+  validCanvas,
+} from "./channel-kit.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validChannelCommand } from "./session-commands.mjs";
+import {
+  directMessageEvent,
+  directMessageReceipt,
+} from "./direct-messages.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
   validateWorkflowEvent,
@@ -55,7 +66,13 @@ import {
 } from "../src/features/relay/http-admission.ts";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
+import { createReadStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import {
+  mediaByteLimit,
+  UPLOAD_TIMEOUT_MS,
+} from "../src/features/relay/attachment-limits.ts";
 import dc from "node:diagnostics_channel";
 import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
@@ -64,7 +81,6 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
-  MAX_MEDIA_BYTES = 20 * 1024 * 1024,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 
@@ -238,7 +254,7 @@ async function relayAuthority(fetch, relay) {
 export function validMessageTemplate(event) {
   return (
     event &&
-    [7, 9].includes(event.kind) &&
+    [7, 9, 40003].includes(event.kind) &&
     typeof event.content === "string" &&
     event.content.trim().length > 0 &&
     Buffer.byteLength(event.content) <= 32000 &&
@@ -254,10 +270,10 @@ export function validMessageTemplate(event) {
     ).length === 1 &&
     (() => {
       const references = event.tags.filter((tag) => tag[0] === "e");
-      if (event.kind === 7)
+      if (event.kind === 7 || event.kind === 40003)
         return (
           event.content === event.content.trim() &&
-          validReactionContent(event.content) &&
+          (event.kind === 40003 || validReactionContent(event.content)) &&
           references.length === 1 &&
           references[0].length === 2 &&
           /^[0-9a-f]{64}$/.test(references[0][1])
@@ -275,6 +291,41 @@ export function validMessageTemplate(event) {
     })()
   );
 }
+/** Channel-local NIP-09 removal; the relay enforces authorship of each target. */
+export function validMessageDeletion(event) {
+  if (
+    event?.kind !== 5 ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length > 106 ||
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag.every((value) => typeof value === "string") &&
+        ["h", "e", "k", "client-id"].includes(tag[0]),
+    )
+  )
+    return false;
+  const channels = event.tags.filter(([name]) => name === "h");
+  const targets = event.tags.filter(([name]) => name === "e");
+  const kinds = event.tags.filter(([name]) => name === "k");
+  return (
+    channels.length === 1 &&
+    channels[0][1].length > 0 &&
+    channels[0][1].length <= 256 &&
+    targets.length > 0 &&
+    targets.length <= 100 &&
+    targets.every(([, id]) => /^[0-9a-f]{64}$/.test(id)) &&
+    new Set(targets.map(([, id]) => id)).size === targets.length &&
+    kinds.length > 0 &&
+    kinds.length <= 3 &&
+    kinds.every(([, kind]) => ["7", "9", "40002"].includes(kind))
+  );
+}
+
 /** Only explicit bot enrollment; never removal, role elevation or arbitrary kind-9000 tags. */
 export function validAgentEnrollment(event) {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -507,7 +558,10 @@ export function relayBrokerPlugin({
                 : {}),
             });
           }
-          if (route === "/api/relay/info" && req.method === "GET") {
+          if (
+            (route === "/api/relay/info" || route === "/api/relay/icon-info") &&
+            req.method === "GET"
+          ) {
             const response = await fetchUpstream(relay, {
               headers: { Accept: "application/nostr+json" },
               redirect: "error",
@@ -518,6 +572,9 @@ export function relayBrokerPlugin({
                 error: "Community discovery failed",
               });
             const info = await response.json();
+            // Saved-community icons are public NIP-11 metadata, not join admission.
+            if (route === "/api/relay/icon-info")
+              return json(res, 200, { icon: info?.icon });
             const gifSearchPath = relayKlipySearchPath(info);
             if (gifSearchPath)
               gifSearchPaths.set(relay, Promise.resolve(gifSearchPath));
@@ -550,10 +607,12 @@ export function relayBrokerPlugin({
             [
               "/api/relay/sidebar-preferences",
               "/api/relay/read-state-decode",
+              "/api/relay/channel-kit-decode",
             ].includes(route) &&
             req.method === "POST"
           ) {
             const readStateDecode = route === "/api/relay/read-state-decode";
+            const kitDecode = route === "/api/relay/channel-kit-decode";
             if (sidebarUploads >= SIDEBAR_UPLOAD_SLOTS)
               return json(res, 429, { error: "Sidebar decoder is busy" });
             sidebarUploads++;
@@ -567,7 +626,7 @@ export function relayBrokerPlugin({
                 bytes += Buffer.byteLength(part);
                 if (
                   bytes >
-                  (readStateDecode
+                  (readStateDecode || kitDecode
                     ? READ_STATE_DECODE_BYTES
                     : SIDEBAR_REQUEST_BYTES)
                 )
@@ -580,9 +639,11 @@ export function relayBrokerPlugin({
               return json(
                 res,
                 200,
-                readStateDecode
-                  ? decodeReadState(events, key)
-                  : decodeSidebarPreferences(events, key),
+                kitDecode
+                  ? decodeChannelKit(events, key, relay)
+                  : readStateDecode
+                    ? decodeReadState(events, key)
+                    : decodeSidebarPreferences(events, key),
               );
             } catch {
               if (!res.destroyed)
@@ -617,15 +678,21 @@ export function relayBrokerPlugin({
               viewer,
               ...(await getAuthority(relay)),
               relayUrl: relay,
+              directMessages: true,
               writeKinds: [
                 7,
                 9,
+                40003,
                 9000,
+                30078,
+                40100,
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               workflowReads: true,
+              attachmentUploads: true,
               sidebarPreferences: true,
+              channelKit: true,
               readState: true,
               agentLibrary: true,
               live: true,
@@ -668,7 +735,11 @@ export function relayBrokerPlugin({
               streamId = body.streamId;
               if (publishingPresence) {
                 status = body.status;
-                if (status !== "online" && status !== "away")
+                if (
+                  status !== "online" &&
+                  status !== "away" &&
+                  status !== "offline"
+                )
                   throw new Error("Invalid presence");
               }
               if (observing) observer = observerGeneration(body.observer);
@@ -906,11 +977,31 @@ export function relayBrokerPlugin({
           }
           if (route === "/api/relay/stats" && req.method === "GET")
             return json(res, 200, { ...stats, connects: upstream.connects() });
-          if (route === "/api/relay/upload" && req.method === "POST") {
+          if (
+            ["/api/relay/upload", "/api/relay/prepare-media"].includes(route) &&
+            req.method === "POST"
+          ) {
             if (attachmentUploads >= 2)
               return json(res, 429, { code: "capacity" });
             attachmentUploads++;
             try {
+              if (route === "/api/relay/prepare-media") {
+                await prepareMedia(
+                  req,
+                  cancel.signal,
+                  async (path, type, size, signal) => {
+                    signal.throwIfAborted();
+                    res.writeHead(200, {
+                      "Content-Type": type,
+                      "Content-Length": size,
+                      "Cache-Control": "no-store",
+                      "X-Content-Type-Options": "nosniff",
+                    });
+                    await pipeline(createReadStream(path), res, { signal });
+                  },
+                );
+                return;
+              }
               const result = await uploadAttachment(
                 req,
                 relay,
@@ -948,7 +1039,10 @@ export function relayBrokerPlugin({
                 content: "Get buzz-media",
                 tags: [
                   ["t", "get"],
-                  ["expiration", String(now + 120)],
+                  [
+                    "expiration",
+                    String(now + Math.ceil(UPLOAD_TIMEOUT_MS / 1000) + 60),
+                  ],
                   ["server", new URL(relay).host],
                 ],
               },
@@ -960,6 +1054,10 @@ export function relayBrokerPlugin({
               (typeof range !== "string" || !/^bytes=\d+-\d*$/.test(range))
             )
               return json(res, 416, { error: "Media range rejected" });
+            const mediaDeadline = AbortSignal.any([
+              cancel.signal,
+              AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+            ]);
             const upstream = await fetchUpstream(target, {
               headers: {
                 Authorization:
@@ -968,11 +1066,13 @@ export function relayBrokerPlugin({
                 ...(range ? { Range: range } : {}),
               },
               redirect: "error",
-              signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+              signal: mediaDeadline,
             });
             stats.media++;
-            if (!upstream.ok)
+            if (!upstream.ok) {
+              await upstream.body?.cancel();
               return json(res, upstream.status, { error: "Media read failed" });
+            }
             const type = upstream.headers.get("content-type") ?? "";
             const mediaType = type.split(";", 1)[0].trim().toLowerCase();
             const trustedType =
@@ -988,12 +1088,15 @@ export function relayBrokerPlugin({
             const streamable = video || audio;
             const download = !image && !streamable;
             const length = Number(upstream.headers.get("content-length"));
-            if (
-              Number.isFinite(length) &&
-              length > MAX_MEDIA_BYTES &&
-              !(streamable && upstream.status === 206)
-            )
+            // Audio is read-compatible, not part of attachment upload parity.
+            const limit =
+              audio && upstream.status !== 206
+                ? 20 * 1024 * 1024
+                : mediaByteLimit(mediaType);
+            if (Number.isFinite(length) && length > limit) {
+              await upstream.body?.cancel();
               return json(res, 413, { error: "Media budget exceeded" });
+            }
             const headers = {
               "Content-Type": download ? "application/octet-stream" : mediaType,
               "Cache-Control": "private, max-age=3600",
@@ -1002,34 +1105,37 @@ export function relayBrokerPlugin({
               ...(upstream.headers.get("content-length")
                 ? { "Content-Length": upstream.headers.get("content-length") }
                 : {}),
-              ...(!download && upstream.headers.get("content-range")
+              ...(upstream.headers.get("content-range")
                 ? { "Content-Range": upstream.headers.get("content-range") }
                 : {}),
-              ...(streamable
+              ...(upstream.headers.get("accept-ranges") || streamable
                 ? {
                     "Accept-Ranges":
                       upstream.headers.get("accept-ranges") ?? "bytes",
                   }
                 : {}),
             };
-            if (streamable) {
-              res.writeHead(upstream.status, headers);
-              if (!upstream.body) return res.end();
-              const stream = Readable.fromWeb(upstream.body);
-              // A range request may time out or be cancelled after headers. A
-              // piped Readable has no automatic error consumer; without this,
-              // Node treats the upstream abort as an uncaught process error and
-              // kills the live broker along with unrelated message traffic.
-              stream.once("error", () => res.destroy());
-              res.once("close", () => stream.destroy());
-              stream.pipe(res);
-              return;
+            res.writeHead(upstream.status, headers);
+            if (!upstream.body) return res.end();
+            let received = 0;
+            const meter = new Transform({
+              transform(chunk, _encoding, callback) {
+                received += chunk.length;
+                callback(
+                  received > limit ? new Error("Media budget exceeded") : null,
+                  chunk,
+                );
+              },
+            });
+            // All media/downloads use backpressure; failed streams cannot emit JSON after headers.
+            try {
+              await pipeline(Readable.fromWeb(upstream.body), meter, res, {
+                signal: mediaDeadline,
+              });
+            } catch {
+              res.destroy();
             }
-            const bytes = Buffer.from(await upstream.arrayBuffer());
-            if (bytes.length > MAX_MEDIA_BYTES)
-              return json(res, 413, { error: "Media budget exceeded" });
-            res.writeHead(200, headers);
-            return res.end(bytes);
+            return;
           }
           if (
             ![
@@ -1038,8 +1144,10 @@ export function relayBrokerPlugin({
               "/api/relay/sign",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
+              "/api/relay/channel-kit-prepare",
               "/api/relay/read-state-publish",
               "/api/relay/profile",
+              "/api/relay/direct-message",
               "/api/relay/authorize-agent",
               "/api/relay/claim",
               "/api/relay/accept-policy",
@@ -1063,6 +1171,16 @@ export function relayBrokerPlugin({
             filters = JSON.parse(raw);
           } catch {
             return json(res, 400, { error: "Filter body is not JSON" });
+          }
+          if (route === "/api/relay/channel-kit-prepare") {
+            try {
+              cancel.signal.throwIfAborted();
+              return json(res, 200, {
+                content: prepareChannelKit(filters, key, relay),
+              });
+            } catch {
+              return json(res, 400, { error: "Invalid channel recipe" });
+            }
           }
           if (route === "/api/relay/authorize-agent") {
             if (
@@ -1098,6 +1216,17 @@ export function relayBrokerPlugin({
             }
           }
           const profile = route === "/api/relay/profile";
+          const directMessage = route === "/api/relay/direct-message";
+          if (directMessage) {
+            try {
+              filters = directMessageEvent(filters, viewer, key);
+            } catch {
+              return json(res, 400, {
+                error: "Choose between one and eight other people.",
+                sent: false,
+              });
+            }
+          }
           const claim = route === "/api/relay/claim";
           const policy = route === "/api/relay/accept-policy";
           const gifs = route === "/api/relay/gifs";
@@ -1207,7 +1336,27 @@ export function relayBrokerPlugin({
                     "Agent enrollment or channel operation unavailable or invalid",
                   sent: false,
                 });
-            } else if (![7, 9].includes(filters?.kind)) {
+            } else if (filters?.kind === 30078 || filters?.kind === 40100) {
+              try {
+                if (
+                  !Number.isInteger(filters.created_at) ||
+                  Math.abs(filters.created_at - Date.now() / 1000) > 15 * 60
+                )
+                  throw new Error("Expired operation");
+                if (filters.kind === 30078)
+                  admitChannelKit(filters, key, relay);
+                else if (!validCanvas(filters))
+                  throw new Error("Invalid Canvas");
+              } catch {
+                return json(res, 400, {
+                  error: "Channel recipe or Canvas rejected",
+                  sent: false,
+                });
+              }
+            } else if (
+              ![7, 9, 40003].includes(filters?.kind) &&
+              !validMessageDeletion(filters)
+            ) {
               try {
                 validateWorkflowEvent(
                   { ...filters, pubkey: signing ? viewer : filters.pubkey },
@@ -1220,7 +1369,10 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
-            } else if (!validMessageTemplate(filters))
+            } else if (
+              [7, 9, 40003].includes(filters?.kind) &&
+              !validMessageTemplate(filters)
+            )
               return json(res, 400, { error: "Message rejected" });
             // Never sign or publish after the requesting browser has left.
             cancel.signal.throwIfAborted();
@@ -1245,6 +1397,7 @@ export function relayBrokerPlugin({
               return json(res, 400, { error: "Invalid outgoing signature" });
           } else if (
             !profile &&
+            !directMessage &&
             !claim &&
             !policy &&
             !gifs &&
@@ -1291,7 +1444,7 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile
+              : profile || directMessage
                 ? "/events"
                 : claim
                   ? "/api/invites/claim"
@@ -1418,6 +1571,15 @@ export function relayBrokerPlugin({
               if (presence && failure.quota === "api")
                 lane.pause(failure.retryAfterMs);
               return json(res, response.status, failure);
+            }
+            if (directMessage) {
+              try {
+                return json(res, 200, directMessageReceipt(text, filters.id));
+              } catch {
+                return json(res, 502, {
+                  error: "The direct message could not be opened. Try again.",
+                });
+              }
             }
             if (profile) {
               const receipt = JSON.parse(text);

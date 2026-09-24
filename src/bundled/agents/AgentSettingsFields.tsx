@@ -35,12 +35,6 @@ export function AgentSettingsFields({
   const [piProviders, setPiProviders] = useState<string[]>([]);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
-  const providerOverride = draft.environment.GOOSE_PROVIDER;
-  const provider = providerOverride ?? draft.provider;
-  const gooseCanBrowse =
-    provider === "databricks_v2" ||
-    (providerOverride === undefined &&
-      environmentKeys.includes("GOOSE_PROVIDER"));
   const buzzProvider =
     draft.environment.BUZZ_AGENT_PROVIDER ??
     (draft.provider || state.data?.agentDefaults?.provider);
@@ -92,39 +86,21 @@ export function AgentSettingsFields({
             piProviders={piProviders}
             onChange={onChange}
           />
-          {goose && !gooseCanBrowse ? (
-            <div className="space-y-2">
-              <Field label="Model">
-                <Input
-                  disabled={disabled}
-                  value={draft.model}
-                  placeholder="Enter a model ID for this provider"
-                  spellCheck={false}
-                  onChange={(event) => onChange({ model: event.target.value })}
-                />
-              </Field>
-              <p className="text-body-sm text-secondary">
-                Existing Goose credentials are reused. If this provider is not
-                configured yet, run goose configure before starting the agent.
-              </p>
-            </div>
-          ) : (
-            <AgentModelPicker
-              onPiProviders={setPiProviders}
-              disabled={disabled}
-              id={id}
-              savedRevision={savedRevision}
-              control={control}
-              defaults={state.data?.databricksDefaults}
-              defaultModel={
-                !goose && databricks && modelDefaultKnown
-                  ? state.data?.agentDefaults?.model
-                  : undefined
-              }
-              draft={draft}
-              onChange={onChange}
-            />
-          )}
+          <AgentModelPicker
+            onPiProviders={setPiProviders}
+            disabled={disabled}
+            id={id}
+            savedRevision={savedRevision}
+            control={control}
+            defaults={state.data?.databricksDefaults}
+            defaultModel={
+              !goose && databricks && modelDefaultKnown
+                ? state.data?.agentDefaults?.model
+                : undefined
+            }
+            draft={draft}
+            onChange={onChange}
+          />
           {pi && (
             <p className="text-body-sm text-secondary">
               Browse loads available models and providers from your local Pi

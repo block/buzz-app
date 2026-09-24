@@ -524,16 +524,20 @@ it("selects installed Goose with ACP arguments and saves its provider and model"
   );
   await userEvent.click(await screen.findByRole("option", { name: "Goose" }));
   expect(within(dialog).getByLabelText("LLM Provider")).toBeVisible();
-  expect(within(dialog).getByLabelText("Model")).toHaveValue("");
+  expect(within(dialog).getByRole("combobox", { name: "Model" })).toHaveValue(
+    "",
+  );
   await userEvent.click(
     within(dialog).getByRole("combobox", { name: "LLM Provider" }),
   );
   await userEvent.click(
     await screen.findByRole("option", { name: "OpenRouter" }),
   );
-  fireEvent.change(within(dialog).getByLabelText("Model"), {
+  const model = within(dialog).getByRole("combobox", { name: "Model" });
+  fireEvent.change(model, {
     target: { value: "anthropic/claude-sonnet-4" },
   });
+  fireEvent.blur(model);
   fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
   await within(dialog).findByText("Saved. Running work was not restarted.");
   expect(f.calls.find((call) => call.action === "save")?.payload).toMatchObject(
@@ -552,7 +556,7 @@ it("selects installed Goose with ACP arguments and saves its provider and model"
 
 for (const source of ["saved", "draft"] as const) {
   for (const provider of ["", "openai"] as const) {
-    it(`browses Goose models with a ${source} Databricks override and ${provider || "blank"} selector`, async () => {
+    it(`passes a ${source} Goose provider override with a ${provider || "blank"} selector to native discovery`, async () => {
       const run = vi.fn(async () => ({
         host: "",
         models: [{ id: "catalog.schema.model", name: "catalog.schema.model" }],
@@ -589,9 +593,6 @@ for (const source of ["saved", "draft"] as const) {
       fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
       const dialog = screen.getByRole("dialog", { name: "Edit agent" });
       if (source === "draft") {
-        expect(
-          within(dialog).queryByRole("button", { name: "Browse models" }),
-        ).not.toBeInTheDocument();
         fireEvent.click(
           within(dialog).getByRole("button", { name: "Environment" }),
         );
@@ -629,7 +630,7 @@ for (const source of ["saved", "draft"] as const) {
   }
 }
 
-it("uses a draft Goose provider override before the Databricks selector", async () => {
+it("keeps Goose model browsing available after a draft provider override", async () => {
   setup("ready", (fixture) => {
     Object.assign(fixture.agent.harness, {
       command: "/fixture/bin/goose",
@@ -660,9 +661,9 @@ it("uses a draft Goose provider override before the Databricks selector", async 
     { target: { value: "openai" } },
   );
   expect(
-    within(dialog).queryByRole("button", { name: "Browse models" }),
-  ).not.toBeInTheDocument();
-  expect(within(dialog).getByLabelText("Model")).toBeVisible();
+    within(dialog).getByRole("button", { name: "Browse models" }),
+  ).toBeVisible();
+  expect(within(dialog).getByRole("combobox", { name: "Model" })).toBeVisible();
 });
 
 it("creates a stopped Goose agent with the selected provider", async () => {
@@ -711,9 +712,11 @@ it("creates a stopped Goose agent with the selected provider", async () => {
   await userEvent.click(
     await screen.findByRole("option", { name: "OpenRouter" }),
   );
-  fireEvent.change(within(dialog).getByLabelText("Model"), {
+  const model = within(dialog).getByRole("combobox", { name: "Model" });
+  fireEvent.change(model, {
     target: { value: "anthropic/claude-sonnet-4" },
   });
+  fireEvent.blur(model);
   fireEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
   await waitFor(() => expect(commit).toHaveBeenCalledOnce());
   expect(commit.mock.calls[0]?.[1].harness).toMatchObject({

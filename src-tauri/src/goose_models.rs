@@ -8,6 +8,7 @@ const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 const METHOD: &str = "_goose/unstable/providers/supported-models/list";
 
 pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, String> {
+    let provider_id = context.provider_id.clone();
     let mut command = tokio::process::Command::new(context.command);
     command
         .arg("acp")
@@ -43,7 +44,7 @@ pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, Str
         "jsonrpc": "2.0",
         "id": 1,
         "method": METHOD,
-        "params": { "providerId": "databricks_v2" }
+        "params": { "providerId": provider_id }
     });
     stdin
         .write_all(format!("{request}\n").as_bytes())
@@ -68,7 +69,7 @@ pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, Str
             let value: Value = serde_json::from_str(&line)
                 .map_err(|_| "Goose returned an invalid model response")?;
             if value.get("id") == Some(&json!(1)) {
-                return parse_response(&value);
+                return parse_response(&value, &provider_id);
             }
         }
         Err("Goose did not return a model list".to_owned())
@@ -81,15 +82,21 @@ pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, Str
     response
 }
 
-fn parse_response(value: &Value) -> Result<Vec<String>, String> {
-    if value.get("error").is_some() {
-        return Err("Goose could not list Databricks v2 models. Check Goose sign-in with `goose configure`, then retry".into());
+fn parse_response(value: &Value, provider_id: &str) -> Result<Vec<String>, String> {
+    if let Some(error) = value.get("error") {
+        if error.get("code").and_then(Value::as_i64) == Some(-32000) {
+            return Err(
+                "Goose needs authentication for this provider. Run `goose configure`, then retry"
+                    .into(),
+            );
+        }
+        return Err("Goose could not list models for this provider. Check its setup with `goose configure` or try again when its API is available".into());
     }
     if value
         .get("result")
         .and_then(|result| result.get("providerId"))
         .and_then(Value::as_str)
-        != Some("databricks_v2")
+        != Some(provider_id)
     {
         return Err("Goose returned models for a different provider".into());
     }
@@ -121,14 +128,35 @@ mod tests {
     #[test]
     fn accepts_only_bounded_model_names() {
         assert_eq!(
-            parse_response(&json!({"result":{"providerId":"databricks_v2","models":["catalog.schema.goose-glm-5-3"]}})).unwrap(),
-            vec!["catalog.schema.goose-glm-5-3"]
+            parse_response(
+                &json!({"result":{"providerId":"anthropic","models":["claude-opus-4-8"]}}),
+                "anthropic"
+            )
+            .unwrap(),
+            vec!["claude-opus-4-8"]
         );
         assert!(parse_response(
-            &json!({"result":{"providerId":"databricks_v2","models":["bad\nname"]}})
+            &json!({"result":{"providerId":"anthropic","models":["bad\nname"]}}),
+            "anthropic"
         )
         .is_err());
-        assert!(parse_response(&json!({"error":{"message":"secret"}})).is_err());
+        assert!(
+            parse_response(&json!({"error":{"message":"secret"}}), "anthropic")
+                .unwrap_err()
+                .contains("goose configure")
+        );
+        let auth_error = parse_response(
+            &json!({"error":{"code":-32000,"data":"secret"}}),
+            "anthropic",
+        )
+        .unwrap_err();
+        assert!(auth_error.contains("needs authentication"));
+        assert!(!auth_error.contains("secret"));
+        assert!(parse_response(
+            &json!({"result":{"providerId":"openai","models":[]}}),
+            "anthropic"
+        )
+        .is_err());
     }
 
     #[cfg(unix)]
@@ -139,17 +167,18 @@ mod tests {
         let command = dir.path().join("goose");
         std::fs::write(
             &command,
-            "#!/bin/sh\nread request\ncase \"$request\" in\n  *supported-models/list*) printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"providerId\":\"databricks_v2\",\"models\":[\"catalog.schema.goose-glm-5-3\"]}}' ;;\nesac\n",
+            "#!/bin/sh\nread request\ncase \"$request\" in\n  *\\\"providerId\\\":\\\"openai\\\"*) printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"providerId\":\"openai\",\"models\":[\"gpt-6-sol\"]}}' ;;\nesac\n",
         )
         .unwrap();
         std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
         let result = fetch(GooseModelContext {
             command,
+            provider_id: "openai".into(),
             environment: Default::default(),
             model_overridden: false,
         })
         .await
         .unwrap();
-        assert_eq!(result, vec!["catalog.schema.goose-glm-5-3"]);
+        assert_eq!(result, vec!["gpt-6-sol"]);
     }
 }

@@ -217,14 +217,15 @@ containment on non-Unix platforms.
   Goose providers plus a custom ID. A missing CLI leaves Goose disabled until
   installation and desktop restart. Switching into or out of Goose supplies ACP
   arguments and clears the previous provider/model; selecting a Goose provider clears the
-  previous model. For Goose with Databricks v2, an explicit Browse asks Goose ACP
-  for its live supported-model list and searches it in the existing picker. The
+  previous model. For Goose, an explicit Browse asks Goose ACP for the selected
+  provider's supported-model list and searches it in the existing picker. The
   exact returned ID is saved; an unlisted ID remains possible but is flagged
-  after discovery. Saved write-only `GOOSE_PROVIDER` overrides keep Browse
-  reachable; native checks the effective provider before asking Goose. Goose
-  has no separate Refresh action because its catalog lookup can start OAuth.
-  Other Goose providers retain manual model entry. Existing Goose credentials
-  are reused; providers without local setup need `goose configure` before Start. Executable detection
+  after discovery. The picker shows at most ten matches while filtering the full
+  list. Saved write-only `GOOSE_PROVIDER` overrides remain native; native uses
+  the effective provider before asking Goose. Goose has no separate Refresh
+  action because its catalog lookup can start OAuth. Listing errors prompt the
+  user to check provider setup with `goose configure`; manual model entry remains
+  available. Existing Goose credentials are reused. Executable detection
   is not a sign-in or ACP readiness check. Custom command/provider values remain
   editable, including absolute paths. Buzz Agent retains on-demand Databricks
   model browsing. A Goose catalog entry does not establish caller EXECUTE permission

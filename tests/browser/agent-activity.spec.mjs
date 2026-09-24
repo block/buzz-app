@@ -3,6 +3,8 @@ import { open } from "./timeline.mjs";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 test.use({
   productionBroker: true,
+  // Navigation can publish read positions through the real broker.
+  readState: true,
   developmentReact: true,
   historyCounts: { alpha: 1, beta: 1 },
 });

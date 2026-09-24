@@ -381,26 +381,6 @@ fn workspace_policy_and_cache_are_canonical_and_separate() {
         b.cache("https://example.com").unwrap()
     );
 }
-#[path = "../../build_config.rs"]
-mod build_config;
-#[test]
-fn private_build_allowlist_excludes_secrets_and_does_not_rewrite_model() {
-    assert_eq!(
-        build_config::parse("").unwrap(),
-        (String::new(), String::new())
-    );
-    assert_eq!(build_config::parse("DATABRICKS_HOST=https://example.com\nDATABRICKS_MODEL=unused\nDATABRICKS_MODEL_FILTER=foo*").unwrap(),("https://example.com".into(),"foo*".into()));
-    for raw in [
-        "DATABRICKS_TOKEN=NEVER_PRINT",
-        "OTHER=NEVER_PRINT",
-        "DATABRICKS_HOST=x\nDATABRICKS_HOST=y",
-        "malformed",
-    ] {
-        assert!(!build_config::parse(raw)
-            .unwrap_err()
-            .contains("NEVER_PRINT"));
-    }
-}
 
 #[cfg(unix)]
 #[test]

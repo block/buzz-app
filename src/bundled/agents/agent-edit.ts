@@ -12,11 +12,8 @@ export interface AgentDraft {
   environment: Record<string, string | null>;
   databricks?: { host: string; filter: string } | null;
 }
-export function agentDraft(
-  agent: AgentView,
-  defaults?: { host: string; filter: string },
-): AgentDraft {
-  const databricks = agent.harness.databricks ?? defaults;
+export function agentDraft(agent: AgentView): AgentDraft {
+  const databricks = agent.harness.databricks;
   return {
     revision: agent.revision,
     name: agent.name,

@@ -523,6 +523,7 @@ name = "buzz-agent-controller"
 version = "0.1.0"
 dependencies = [
  "bech32",
+ "dotenvy",
  "getrandom 0.3.4",
  "libc",
  "secp256k1",
@@ -1179,6 +1180,12 @@ dependencies = [
  "selectors",
  "tendril",
 ]
+
+[[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "downcast-rs"

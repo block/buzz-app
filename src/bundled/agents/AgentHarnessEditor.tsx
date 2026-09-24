@@ -9,12 +9,14 @@ import type { AgentDraft } from "./agent-edit";
 export function AgentHarnessEditor({
   draft,
   options,
+  defaultProvider,
   onChange,
   disabled = false,
 }: {
   draft: AgentDraft;
   options: NonNullable<ControlSnapshot["harnessOptions"]>;
   disabled?: boolean;
+  defaultProvider?: string | undefined;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const harness = options.find((option) => option.command === draft.command);
@@ -39,7 +41,13 @@ export function AgentHarnessEditor({
         inputLabel="Custom provider"
         value={draft.provider}
         options={[
-          { value: "", label: "Not set" },
+          {
+            value: "",
+            label:
+              draft.command === "buzz-agent" && defaultProvider
+                ? `Build default (${defaultProvider})`
+                : "Not set",
+          },
           ...(harness?.providers ?? []),
         ]}
         onChange={(provider) => onChange({ provider })}

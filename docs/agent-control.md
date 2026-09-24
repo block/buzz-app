@@ -85,21 +85,57 @@ Choose a result or enter a custom ID (blank is allowed); Enter or leaving the fi
 commits typed text, Escape abandons the query. Save, close and reopen to check it.
 If no workspace is configured, set it under **Advanced model settings**.
 
-To avoid retyping nonsecret workspace/filter defaults, use the existing native
-build input in the shell that starts desktop (replace the example origin):
+### Nonsecret build defaults
 
-```sh
-export BUZZ_BUILD_AGENT_ENV="$(printf '%s\n' \
-  'DATABRICKS_HOST=https://workspace.example.com' \
-  'DATABRICKS_MODEL_FILTER=*')"
-bin/just desktop
+Native builds read these inputs from the repository-root, ignored `.env.local`,
+or from the build process environment. A process value wins **by presence**,
+including an empty value. Both `just desktop` and release Cargo/Tauri builds use
+the same controller-owned configuration. For example:
+
+```dotenv
+BUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2
+BUZZ_BUILD_AGENT_ENV='DATABRICKS_HOST=https://workspace.example.com
+DATABRICKS_MODEL=your-model-id
+DATABRICKS_MODEL_FILTER=team-*'
+# Optional capability: any present value, even empty/0/false, enables it.
+BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1
 ```
 
-This value contains `KEY=value` lines, not a file path. It is read at **native build
-time**, not by Vite from `.env.local`; changing it needs a native rebuild. Omit the
-filter line to use no filter. Saved per-agent settings/overrides retain precedence.
-Tokens/unknown keys are rejected; never put credentials here. The connection cache
-remains separate from old Buzz. No private host is committed to source.
+`BUZZ_BUILD_AGENT_ENV` is multiline `KEY=value` content, not a file path. Only
+`DATABRICKS_HOST`, `DATABRICKS_MODEL` and `DATABRICKS_MODEL_FILTER` are accepted;
+tokens, unknown/duplicate keys and malformed HTTPS origins fail the build without
+echoing values. These are **public, nonsecret defaults** compiled into the binary
+and available in the native editor snapshot. Never put credentials here. No
+organization-specific host, provider or model is supplied by the app.
+
+- Blank saved provider/model selectors inherit the build floor for `buzz-agent`
+  only (including its absolute executable path); other harnesses do not. Saved
+  selectors win over the floor, and saved `BUZZ_AGENT_PROVIDER`/`BUZZ_AGENT_MODEL`
+  environment overrides win over selectors, including explicit empty strings.
+  `DATABRICKS_MODEL` is a provider fallback below an explicit Model selector.
+- An absent saved Databricks pair inherits the build host/filter; an explicit
+  pair, including blanks, wins. Saved `DATABRICKS_HOST`/`DATABRICKS_MODEL_FILTER`
+  environment overrides win over either. The same resolution supplies model
+  discovery, credential requests and worker startup. Untouched Create or
+  name-only Edit/Save never copies build defaults into storage. Editing either
+  workspace/filter field intentionally saves **both displayed values**.
+- Presence of `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` clamps the local listener to
+  owner-only after saved settings/environment and removes its response allowlist.
+  This includes the runner's verified same-owner agent semantics. It does not
+  rewrite imported policy or saved records; remove the flag from both file and
+  process to disable the clamp. Empty/`0`/`false` do not disable it.
+
+Changing, adding or removing native inputs requires a **native rebuild and app
+restart**; Cargo tracks the file and all three process keys, including removal.
+Running agents are not hot-reconfigured. Explicit empty process values clear the
+provider or environment floor; boolean capabilities must be absent to disable.
+Runtime resources remain separately built from pinned sources with private build
+settings stripped. The app-owned relay/key/OAuth boundaries are unchanged:
+`BUZZ_RELAY_URL` is not an agent destination, saved destinations remain explicit,
+and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
+
+See [configuration parity](configuration.md) for development routing, release
+flag exclusions and the supported deployment boundary.
 
 ## Runtime boundary
 
@@ -224,10 +260,10 @@ resources. Production has no disposable storage override or preview launch mode.
 - Catalogs may be partial; no completeness claim. The pinned helper's labelled
   authenticated-empty defaults are omitted here because they are not discovered
   IDs. Empty/error states keep manual entry available.
-- Private build configuration may supply only nonsecret defaults through
-  `BUZZ_BUILD_AGENT_ENV` (`DATABRICKS_HOST`, `DATABRICKS_MODEL_FILTER`; the existing
-  `DATABRICKS_MODEL` convention is ignored, never chosen automatically). Unknown
-  or secret keys fail the build. Unset means no workspace; enter one explicitly if no default is configured.
+- [Nonsecret build defaults](#nonsecret-build-defaults) supply the workspace,
+  model fallback and filter without copying them into saved agents. Unknown or
+  secret build keys fail closed. With no saved or build workspace, enter one
+  explicitly before browsing models.
 
 ## Runtime resources
 

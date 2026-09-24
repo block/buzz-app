@@ -19,6 +19,7 @@ pub(crate) struct Snapshot {
     default_workspace: String,
     harness_options: &'static [HarnessOption],
     databricks_defaults: crate::agent_models::Defaults,
+    agent_defaults: buzz_agent_controller::BuildDefaults,
 }
 impl Snapshot {
     fn from(data: ControlSnapshot, import_available: bool, workspace: &std::path::Path) -> Self {
@@ -29,6 +30,7 @@ impl Snapshot {
             default_workspace: workspace.to_string_lossy().into_owned(),
             harness_options: HARNESS_OPTIONS,
             databricks_defaults: crate::agent_models::defaults(),
+            agent_defaults: buzz_agent_controller::build_defaults(),
         }
     }
 }

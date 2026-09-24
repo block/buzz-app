@@ -59,6 +59,7 @@ export function AgentSettingsFields({
             disabled={disabled}
             draft={draft}
             options={state.data?.harnessOptions ?? []}
+            defaultProvider={state.data?.agentDefaults?.provider}
             onChange={onChange}
           />
           <AgentModelPicker
@@ -67,11 +68,18 @@ export function AgentSettingsFields({
             savedRevision={savedRevision}
             control={control}
             defaults={state.data?.databricksDefaults}
+            defaultModel={state.data?.agentDefaults?.model}
             draft={draft}
             onChange={onChange}
           />
         </fieldset>
       </div>
+      {state.data?.agentDefaults?.ownerOnly && (
+        <p className="text-body-sm text-secondary">
+          This build allows instructions only from the owner and verified
+          same-owner agents.
+        </p>
+      )}
       <div className="-mx-2">
         <Accordion
           variant="form"

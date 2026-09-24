@@ -50,6 +50,7 @@ export interface ControlSnapshot {
   defaultWorkspace?: string;
   runtimeMessage?: string | null;
   databricksDefaults?: { host: string; filter: string };
+  agentDefaults?: { provider: string; model: string; ownerOnly: boolean };
 }
 export interface AgentEdit {
   name: string;

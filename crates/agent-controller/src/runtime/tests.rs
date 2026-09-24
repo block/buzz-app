@@ -673,3 +673,127 @@ fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
     assert_eq!(output.lines().nth(18), Some(""));
     controller.action(&a.id, Action::Stop).unwrap();
 }
+
+fn deployment_defaults() -> crate::BuildDefaults {
+    crate::BuildDefaults {
+        host: "https://build.example.com".into(),
+        filter: "team-*".into(),
+        model: "build-model".into(),
+        provider: "databricks_v2".into(),
+        owner_only: true,
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let bundle = bundle(dir.path());
+    let mut agent = agent(dir.path());
+    agent.harness.provider.clear();
+    agent.harness.model.clear();
+    agent.imported["record"]["respond_to"] = json!("anyone");
+    let before = serde_json::to_value(&agent).unwrap();
+    let defaults = deployment_defaults();
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let command = bundle
+        .command_with_defaults(&agent, &key, &defaults)
+        .unwrap();
+    let env: BTreeMap<_, _> = command
+        .get_envs()
+        .map(|(k, v)| (k.to_str().unwrap(), v.and_then(|v| v.to_str())))
+        .collect();
+    assert_eq!(env["BUZZ_AGENT_PROVIDER"], Some("databricks_v2"));
+    assert_eq!(env["BUZZ_AGENT_MODEL"], Some("build-model"));
+    assert_eq!(env["BUZZ_ACP_MODEL"], Some("build-model"));
+    assert_eq!(env["BUZZ_ACP_RESPOND_TO"], Some("owner-only"));
+    assert_eq!(env["BUZZ_ACP_ALLOWED_RESPOND_TO"], Some("owner-only"));
+    assert_eq!(
+        env.get("BUZZ_ACP_RESPOND_TO_ALLOWLIST").copied().flatten(),
+        None
+    );
+    let settings = databricks_with_defaults(&agent, &defaults)
+        .unwrap()
+        .unwrap();
+    let context =
+        model_context_with_defaults(&agent.harness, &agent.environment, &defaults).unwrap();
+    assert_eq!(context.host.as_deref(), Some(settings.host.as_str()));
+    assert_eq!(context.filter.as_deref(), Some(settings.filter.as_str()));
+    assert_eq!(settings.host, defaults.host);
+    assert_eq!(serde_json::to_value(&agent).unwrap(), before);
+    // Default-on is a presence capability; unmarked builds retain imported policy.
+    let public = crate::BuildDefaults::default();
+    let command = bundle.command_with_defaults(&agent, &key, &public).unwrap();
+    assert!(command
+        .get_envs()
+        .any(|(k, v)| k == "BUZZ_ACP_RESPOND_TO" && v == Some(std::ffi::OsStr::new("anyone"))));
+}
+
+#[test]
+fn saved_selectors_and_environment_override_build_floor_including_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = agent(dir.path());
+    let defaults = deployment_defaults();
+    agent.harness.provider = "databricks_v2".into();
+    agent.harness.databricks = Some(crate::connection::DatabricksSettings {
+        host: "https://saved.example.com".into(),
+        filter: "".into(),
+    });
+    let harness = defaults.resolve(&agent.harness, &agent.environment);
+    assert_eq!(harness.model, "test-model");
+    assert_eq!(
+        databricks_with_defaults(&agent, &defaults)
+            .unwrap()
+            .unwrap()
+            .host,
+        "https://saved.example.com"
+    );
+    agent.environment.insert(
+        "DATABRICKS_HOST".into(),
+        "https://override.example.com".into(),
+    );
+    let context =
+        model_context_with_defaults(&agent.harness, &agent.environment, &defaults).unwrap();
+    assert_eq!(
+        context.host.as_deref(),
+        Some("https://override.example.com")
+    );
+    assert_eq!(context.filter.as_deref(), Some(""));
+    agent
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "".into());
+    assert!(defaults
+        .resolve(&agent.harness, &agent.environment)
+        .model
+        .is_empty());
+    agent
+        .environment
+        .insert("DATABRICKS_HOST".into(), "".into());
+    assert!(databricks_with_defaults(&agent, &defaults).is_err());
+    agent
+        .environment
+        .insert("BUZZ_AGENT_PROVIDER".into(), "".into());
+    assert!(databricks_with_defaults(&agent, &defaults)
+        .unwrap()
+        .is_none());
+    assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+    agent.environment.remove("BUZZ_AGENT_PROVIDER");
+    agent
+        .environment
+        .insert("DATABRICKS_TOKEN".into(), "SYNTHETIC".into());
+    assert!(databricks_with_defaults(&agent, &defaults).is_err());
+    assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+}
+
+#[test]
+fn external_harnesses_never_receive_buzz_agent_build_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = agent(dir.path());
+    agent.harness.command = "/usr/local/bin/goose".into();
+    agent.harness.provider.clear();
+    agent.harness.model.clear();
+    let harness = deployment_defaults().resolve(&agent.harness, &agent.environment);
+    assert!(harness.provider.is_empty());
+    assert!(harness.model.is_empty());
+    assert!(harness.databricks.is_none());
+}

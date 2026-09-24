@@ -10,17 +10,26 @@ use std::sync::Arc;
 
 impl RuntimeBundle {
     fn command(&self, agent: &Agent, key: &crate::Secret) -> Result<Command> {
+        self.command_with_defaults(agent, key, &crate::build_defaults())
+    }
+    fn command_with_defaults(
+        &self,
+        agent: &Agent,
+        key: &crate::Secret,
+        defaults: &crate::BuildDefaults,
+    ) -> Result<Command> {
         agent.validate()?;
+        let harness = defaults.resolve(&agent.harness, &agent.environment);
         if key.pubkey() != agent.pubkey {
             return Err("Credential does not match the saved agent".into());
         }
         if !Path::new(&agent.workspace).is_dir() {
             return Err("Agent workspace does not exist".into());
         }
-        let worker = if agent.harness.command == "buzz-agent" {
+        let worker = if harness.command == "buzz-agent" {
             self.executable("buzz-agent")?
         } else {
-            let path = PathBuf::from(&agent.harness.command);
+            let path = PathBuf::from(&harness.command);
             if !path.is_absolute() {
                 return Err("Choose the installed harness's absolute executable path".into());
             }
@@ -35,12 +44,16 @@ impl RuntimeBundle {
             || record["persona_team_dir"]
                 .as_str()
                 .is_some_and(|s| !s.is_empty())
-            || agent.harness.provider == "relay-mesh"
+            || harness.provider == "relay-mesh"
             || !record["relay_mesh"].is_null()
         {
             return Err("This imported agent requires a remote/team/mesh integration not supported by the local controller".into());
         }
-        let respond_to = record["respond_to"].as_str().unwrap_or("owner-only");
+        let respond_to = if defaults.owner_only {
+            "owner-only"
+        } else {
+            record["respond_to"].as_str().unwrap_or("owner-only")
+        };
         if !matches!(respond_to, "owner-only" | "allowlist" | "anyone") {
             return Err("Invalid imported response policy".into());
         }
@@ -91,7 +104,7 @@ impl RuntimeBundle {
             .env("BUZZ_RELAY_URL", &agent.relay_url)
             .env("BUZZ_AUTH_TAG", agent.auth_tag.as_deref().unwrap_or(""))
             .env("BUZZ_ACP_AGENT_COMMAND", worker)
-            .env("BUZZ_ACP_AGENT_ARGS", agent.harness.args.join(","))
+            .env("BUZZ_ACP_AGENT_ARGS", harness.args.join(","))
             .env("BUZZ_ACP_SYSTEM_PROMPT", &agent.system_prompt)
             .env("BUZZ_ACP_DISPLAY_NAME", &agent.name)
             .env("BUZZ_ACP_LAZY_POOL", "true")
@@ -102,7 +115,12 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
             .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
             .env("BUZZ_ACP_RELAY_OBSERVER", "false");
-        let worker_name = Path::new(&agent.harness.command)
+        if defaults.owner_only {
+            command
+                .env("BUZZ_ACP_ALLOWED_RESPOND_TO", "owner-only")
+                .env_remove("BUZZ_ACP_RESPOND_TO_ALLOWLIST");
+        }
+        let worker_name = Path::new(&harness.command)
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("");
@@ -111,10 +129,10 @@ impl RuntimeBundle {
         let mapping = match worker_name {
             "buzz-agent" => Some(("BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER")),
             "goose" => Some(("GOOSE_MODEL", "GOOSE_PROVIDER")),
-            _ if !agent.harness.provider.is_empty() => return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into()),
+            _ if !harness.provider.is_empty() => return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into()),
             _ => None,
         };
-        let mut model = (!agent.harness.model.is_empty()).then_some(agent.harness.model.as_str());
+        let mut model = (!harness.model.is_empty()).then_some(harness.model.as_str());
         if let Some((model_key, provider_key)) = mapping {
             model = agent
                 .environment
@@ -125,9 +143,7 @@ impl RuntimeBundle {
                 .environment
                 .get(provider_key)
                 .map(String::as_str)
-                .or_else(|| {
-                    (!agent.harness.provider.is_empty()).then_some(agent.harness.provider.as_str())
-                });
+                .or_else(|| (!harness.provider.is_empty()).then_some(harness.provider.as_str()));
             if let Some(value) = model {
                 command.env(model_key, value);
             }
@@ -175,14 +191,21 @@ impl RuntimeBundle {
     }
 }
 fn effective_databricks(agent: &Agent) -> Result<Option<crate::connection::DatabricksSettings>> {
-    let buzz_agent = Path::new(&agent.harness.command)
+    databricks_with_defaults(agent, &crate::build_defaults())
+}
+fn databricks_with_defaults(
+    agent: &Agent,
+    defaults: &crate::BuildDefaults,
+) -> Result<Option<crate::connection::DatabricksSettings>> {
+    let harness = defaults.resolve(&agent.harness, &agent.environment);
+    let buzz_agent = Path::new(&harness.command)
         .file_name()
         .and_then(|s| s.to_str())
         == Some("buzz-agent");
     if !buzz_agent {
         return Ok(None);
     }
-    if !agent.harness.args.is_empty() {
+    if !harness.args.is_empty() {
         return Err(
             "Buzz Agent runs in ACP mode without arguments; use Connect for sign-in".into(),
         );
@@ -190,7 +213,7 @@ fn effective_databricks(agent: &Agent) -> Result<Option<crate::connection::Datab
     let provider = agent
         .environment
         .get("BUZZ_AGENT_PROVIDER")
-        .unwrap_or(&agent.harness.provider);
+        .unwrap_or(&harness.provider);
     if !matches!(
         provider.as_str(),
         "databricks_v2" | "databricks-v2" | "databricks"
@@ -200,7 +223,7 @@ fn effective_databricks(agent: &Agent) -> Result<Option<crate::connection::Datab
     if agent.environment.contains_key("DATABRICKS_TOKEN") {
         return Err("Remove DATABRICKS_TOKEN to use this app's persistent OAuth connection".into());
     }
-    let mut settings = agent.harness.databricks.clone().unwrap_or_default();
+    let mut settings = harness.databricks.clone().unwrap_or_default();
     if let Some(host) = agent.environment.get("DATABRICKS_HOST") {
         settings.host = host.clone();
     }
@@ -582,6 +605,14 @@ fn model_context(
     harness: &crate::HarnessEdit,
     environment: &BTreeMap<String, String>,
 ) -> Result<ModelContext> {
+    model_context_with_defaults(harness, environment, &crate::build_defaults())
+}
+fn model_context_with_defaults(
+    harness: &crate::HarnessEdit,
+    environment: &BTreeMap<String, String>,
+    defaults: &crate::BuildDefaults,
+) -> Result<ModelContext> {
+    let harness = defaults.resolve(harness, environment);
     if Path::new(&harness.command)
         .file_name()
         .and_then(|s| s.to_str())
@@ -592,7 +623,10 @@ fn model_context(
     let provider = environment
         .get("BUZZ_AGENT_PROVIDER")
         .unwrap_or(&harness.provider);
-    if provider != "databricks_v2" {
+    if !matches!(
+        provider.as_str(),
+        "databricks_v2" | "databricks-v2" | "databricks"
+    ) {
         return Err(
             "Effective provider is not Databricks v2; check the provider and environment overrides"
                 .into(),
@@ -602,13 +636,10 @@ fn model_context(
         return Err("A saved or draft token override conflicts with this app-isolated OAuth connection. Remove it explicitly or keep manual model entry".into());
     }
     Ok(ModelContext {
-        host: environment.get("DATABRICKS_HOST").cloned().or_else(|| {
-            harness
-                .databricks
-                .as_ref()
-                .map(|s| s.host.clone())
-                .filter(|h| !h.is_empty())
-        }),
+        host: environment
+            .get("DATABRICKS_HOST")
+            .cloned()
+            .or_else(|| harness.databricks.as_ref().map(|s| s.host.clone())),
         filter: environment
             .get("DATABRICKS_MODEL_FILTER")
             .cloned()

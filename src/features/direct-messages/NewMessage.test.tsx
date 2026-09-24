@@ -105,6 +105,7 @@ function setup() {
       operations = [];
       notifyOutbox();
     }),
+    recover: async () => {},
     acknowledge: vi.fn(async () => {
       operations = [];
       notifyOutbox();

@@ -1355,7 +1355,10 @@ export function relayBrokerPlugin({
               const authority = await getAuthority(relay);
               if (
                 !enrollment &&
-                !(authority.channelCreation && validChannelCommand(filters))
+                !(
+                  validChannelCommand(filters) &&
+                  (filters.kind === 9000 || authority.channelCreation)
+                )
               )
                 return json(res, 400, {
                   error:

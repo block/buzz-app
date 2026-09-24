@@ -121,9 +121,7 @@ it("shows the real rejection and retries without discarding the query", async ()
   await screen.findByText(/Only the owner/);
   expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
   t.fail("");
-  await t.user.click(
-    screen.getByRole("button", { name: "Retry", exact: true }),
-  );
+  await t.user.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByText("Morgan is in the channel.");
 });
 it("DMs are view-only and never search outside their members", async () => {

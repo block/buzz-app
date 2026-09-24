@@ -329,7 +329,7 @@ it("merges incoming traffic, stale reads, own echoes, and edit rollback through 
   expect(view.snapshot().events.filter((item) => item.id === id)).toHaveLength(
     1,
   );
-  const edit = h.session.messages.edit(id, "edited");
+  const edit = h.session.messages.edit(id, "edited", id);
   expect(
     h.session.channels.window("c").rows.find((row) => row.id === id)?.content,
   ).toBe("edited");
@@ -541,7 +541,7 @@ it("reuses the durable outbox for immediate thread replies, failed-row retry and
   ]);
   h.publications.shift()?.result.resolve();
   await flush();
-  const editId = h.session.messages.edit(id, "edited");
+  const editId = h.session.messages.edit(id, "edited", id);
   expect(thread.snapshot().replies[0]?.content).toBe("edited");
   await h.sign();
   const edit = h.publications.shift();

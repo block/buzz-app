@@ -1,0 +1,109 @@
+/* Shared by SearchField and the Emoji Mart shadow-root adapter. */
+.search-field {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  min-height: var(--size-control);
+  align-items: center;
+  gap: var(--space-row-gap);
+  border: 1px solid var(--border-prominent);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-control-inset);
+  background: var(--surface-panel);
+  color: var(--text-metadata);
+  font-family: var(--font-sans);
+  font-size: var(--text-body-sm);
+  font-weight: var(--text-body-sm--font-weight);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+
+.search-field:has([data-search-clear]) {
+  padding-right: var(--space-1);
+}
+
+.search-field input[type="search"] {
+  width: 0;
+  min-width: 0;
+  height: auto;
+  flex: 1;
+  order: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-standard);
+  font: inherit;
+  letter-spacing: inherit;
+  appearance: none;
+  transition: none;
+}
+
+.search-field input[type="search"]:focus {
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+html[data-keyboard-navigation] .search-field:has(input:focus-visible),
+:host([data-keyboard-navigation]) .search-field:has(input:focus-visible) {
+  /* Match the temporary global focus rule, including the shadow-root host. */
+  outline: none;
+}
+
+.search-field input[type="search"]::placeholder {
+  color: var(--text-metadata);
+  opacity: 1;
+}
+
+.search-field input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search-field > svg {
+  flex-shrink: 0;
+}
+
+.search-field [data-search-clear] {
+  position: static;
+  display: grid;
+  place-items: center;
+  flex: 0 0 var(--size-control-sm);
+  order: 2;
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-metadata);
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .search-field [data-search-clear]:hover:not(:disabled) {
+    background: var(--affordance-subtle-hover);
+  }
+}
+
+.search-field [data-search-clear]:active:not(:disabled) {
+  background: var(--affordance-subtle-pressed);
+}
+
+html[data-keyboard-navigation] .search-field [data-search-clear]:focus-visible,
+:host([data-keyboard-navigation])
+  .search-field
+  [data-search-clear]:focus-visible {
+  outline: none;
+}
+
+.search-field:has(input:disabled) {
+  opacity: 0.5;
+}
+.search-field:has(input[aria-invalid="true"]) {
+  border-color: var(--border-danger);
+}

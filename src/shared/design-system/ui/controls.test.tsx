@@ -143,31 +143,35 @@ test("radio and checkbox labels change the actual form values while disabled cho
   ).toEqual({ mode: "light", summary: "yes" });
 });
 
-test("search forwards keyboard events and ref, and clearing restores input focus", async () => {
-  const user = userEvent.setup();
-  const ref = createRef<HTMLElement>();
-  const onKeyDown = vi.fn();
-  function Example() {
-    const [value, setValue] = useState("draft");
-    return (
-      <SearchField
-        label="Notes"
-        value={value}
-        onValueChange={setValue}
-        inputRef={ref}
-        onKeyDown={onKeyDown}
-      />
-    );
-  }
-  render(<Example />);
-  const input = screen.getByRole("searchbox", { name: "Notes" });
-  expect(ref.current).toBe(input);
-  await user.click(screen.getByRole("button", { name: "Clear notes" }));
-  expect(input).toHaveValue("");
-  expect(input).toHaveFocus();
-  await user.keyboard("{Escape}");
-  expect(onKeyDown).toHaveBeenCalled();
-});
+test.each(["default", "capsule"] as const)(
+  "%s search forwards keyboard events and ref, and clearing restores input focus",
+  async (variant) => {
+    const user = userEvent.setup();
+    const ref = createRef<HTMLElement>();
+    const onKeyDown = vi.fn();
+    function Example() {
+      const [value, setValue] = useState("draft");
+      return (
+        <SearchField
+          variant={variant}
+          label="Notes"
+          value={value}
+          onValueChange={setValue}
+          inputRef={ref}
+          onKeyDown={onKeyDown}
+        />
+      );
+    }
+    render(<Example />);
+    const input = screen.getByRole("searchbox", { name: "Notes" });
+    expect(ref.current).toBe(input);
+    await user.click(screen.getByRole("button", { name: "Clear notes" }));
+    expect(input).toHaveValue("");
+    expect(input).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(onKeyDown).toHaveBeenCalled();
+  },
+);
 
 test.each([false, true])(
   "native reset restores uncontrolled choices and form values (external form: %s)",

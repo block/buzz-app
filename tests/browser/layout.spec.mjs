@@ -734,7 +734,7 @@ readingTest(
   },
 );
 
-test("Projects stays centered and page navigation survives plugin re-enable order", async ({
+test("Projects directory fits the workspace and page navigation survives plugin re-enable order", async ({
   page,
   app,
 }, testInfo) => {
@@ -758,7 +758,16 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     exact: true,
   });
   await expect(title).toBeVisible();
-  await expect(surface).toHaveText("Projects");
+  const directory = surface.locator(".projects-page");
+  const subtitle = surface.getByText("Recent projects and repositories", {
+    exact: true,
+  });
+  const empty = surface.getByText("No recent projects or repositories found.", {
+    exact: true,
+  });
+  await expect(subtitle).toBeVisible();
+  await expect(empty).toBeVisible();
+  await expect(title).toBeFocused();
   for (const [width, height] of [
     [1280, 832],
     [390, 844],
@@ -771,8 +780,20 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     near(bounds.y, workspace.y);
     near(bounds.width, workspace.width);
     near(bounds.height, workspace.height);
-    near(heading.x + heading.width / 2, bounds.x + bounds.width / 2);
-    near(heading.y + heading.height / 2, bounds.y + bounds.height / 2);
+    const padding = await directory.evaluate((element) => ({
+      left: Number.parseFloat(getComputedStyle(element).paddingLeft),
+      top: Number.parseFloat(getComputedStyle(element).paddingTop),
+    }));
+    near(heading.x, bounds.x + padding.left);
+    near(heading.y, bounds.y + padding.top);
+    const description = await box(subtitle);
+    const emptyState = await box(empty);
+    expect(description.y).toBeGreaterThanOrEqual(heading.y + heading.height);
+    expect(emptyState.y).toBeGreaterThanOrEqual(
+      description.y + description.height,
+    );
+    await expect(empty).toBeInViewport();
+    await expect(directory).toHaveCSS("overflow", "auto");
     await expect(surface).toHaveCSS("overflow", "hidden");
     await shellFits(page, width);
     await page.screenshot({

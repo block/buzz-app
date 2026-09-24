@@ -75,6 +75,8 @@ function fixture(t) {
   for (const cwd of [main, linked]) {
     runtimeFixture(cwd);
     for (const file of [
+      "desktop-build.mjs",
+      "desktop-config.mjs",
       "desktop-dev.mjs",
       "worktree-icon.mjs",
       "worktree-port.mjs",
@@ -156,7 +158,7 @@ test("failed generation warns, removes partial output, and falls back", (t) => {
   );
 });
 
-test("macOS launcher combines icon and port before explicit config and runner arguments", {
+test("macOS launchers preserve icon, port, explicit config and runner arguments", {
   skip: process.platform !== "darwin",
 }, (t) => {
   const { linked, git, run, render } = fixture(t);
@@ -171,10 +173,10 @@ test("macOS launcher combines icon and port before explicit config and runner ar
     "app-port",
     "$(pnpm injected)",
   ];
-  const launch = (...portArgs) => {
+  const launch = (...launcherArgs) => {
     const { stdout } = run(linked, [
       "scripts/desktop-dev.mjs",
-      ...portArgs,
+      ...launcherArgs,
       ...forwarded,
     ]);
     return { stdout, call: JSON.parse(stdout.trim().split("\n").at(-1)) };
@@ -183,16 +185,18 @@ test("macOS launcher combines icon and port before explicit config and runner ar
     devUrl: `http://localhost:${port}`,
     beforeDevCommand: `pnpm dev:desktop --port ${port}`,
   });
+  // The worktree's root selects its port.
+  const root = git("-C", linked, "rev-parse", "--show-toplevel");
+  const port = portForPath(root);
   // An explicit --port wins over the worktree-derived default.
   const explicit = launch("--port=1431");
   assert.deepEqual(explicit.call.slice(0, 3), ["tauri", "dev", "--config"]);
   const config = JSON.parse(explicit.call[3]);
   assert.equal(readFileSync(config.bundle.icon[0], "utf8"), "first-label");
-  assert.deepEqual(config.build, build(1431));
+  assert.deepEqual(config, { bundle: config.bundle, build: build(1431) });
   assert.deepEqual(explicit.call.slice(4), forwarded);
-  assert.doesNotMatch(explicit.stdout, /derived from worktree path/);
-  // Without --port, this linked worktree's own root selects the port.
-  const port = portForPath(git("-C", linked, "rev-parse", "--show-toplevel"));
+  // Nothing is derived here, so nothing is offered for override.
+  assert.doesNotMatch(explicit.stdout, /derived from the worktree path/);
   const derived = launch();
   assert.deepEqual(JSON.parse(derived.call[3]), {
     bundle: config.bundle,
@@ -202,10 +206,24 @@ test("macOS launcher combines icon and port before explicit config and runner ar
   assert.match(
     derived.stdout,
     new RegExp(
-      `^Desktop dev server on http://localhost:${port} \\(derived from worktree path; pass --port to override\\)$`,
+      `^Desktop dev server on http://localhost:${port} \\(derived from the worktree path; pass --port to override\\)$`,
       "m",
     ),
   );
+  const bundle = JSON.parse(
+    run(linked, ["scripts/desktop-build.mjs", ...forwarded]).stdout.trim(),
+  );
+  assert.deepEqual(bundle.slice(0, 6), [
+    "tauri",
+    "build",
+    "--debug",
+    "--bundles",
+    "app",
+    "--config",
+  ]);
+  assert.deepEqual(JSON.parse(bundle[6]), { bundle: config.bundle });
+  assert.deepEqual(bundle.slice(7), forwarded);
+  // A failed icon generation leaves the rest of the overlay in place.
   render("process.exit(1);");
   const fallback = launch();
   assert.deepEqual(JSON.parse(fallback.call[3]), { build: build(port) });

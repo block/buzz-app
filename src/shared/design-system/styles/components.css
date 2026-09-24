@@ -694,6 +694,17 @@
     color: var(--text-standard);
   }
 
+  .navigation-item[data-variant="option"] {
+    padding: var(--space-2);
+    transition: none;
+  }
+  .navigation-item[data-variant="option"]:focus-visible {
+    background: var(--affordance-floating-hover);
+    --text-metadata: var(--text-standard);
+    --text-subtle: var(--text-standard);
+    outline-offset: -2px;
+  }
+
   .navigation-item[data-inset] {
     padding-left: calc(var(--space-control-inset) + var(--space-4));
   }
@@ -729,26 +740,21 @@
 
 @layer components {
   /* The positioned portal owns the stacking context, not its popup child. */
-  .buzz-menu-positioner {
+  .buzz-menu-positioner,
+  .buzz-popover-positioner {
     z-index: var(--layer-popover);
   }
   .buzz-menu-popup {
     min-width: 11.5rem;
-    max-width: min(20rem, calc(100vw - var(--space-4)));
-    max-height: var(--available-height);
+    max-width: min(20rem, var(--available-width), calc(100vw - var(--space-4)));
+    max-height: min(24rem, var(--available-height));
     overflow-y: auto;
     padding: var(--space-1);
     @apply floating-surface;
     color: var(--text-standard);
-    transform-origin: var(--transform-origin);
-    transition:
-      opacity var(--duration-state) var(--easing-state),
-      transform var(--duration-state) var(--easing-state);
   }
-  .buzz-menu-popup[data-starting-style],
-  .buzz-menu-popup[data-ending-style] {
-    opacity: 0;
-    transform: scale(0.98);
+  .buzz-menu-popup[data-size="wide"] {
+    max-width: min(28rem, var(--available-width), calc(100vw - var(--space-4)));
   }
   .buzz-menu-item {
     display: flex;
@@ -767,8 +773,18 @@
     /* Keep the ring inside the scrollable popup's clipping edge. */
     outline-offset: -2px;
   }
-  .buzz-menu-item[data-highlighted] {
-    background: var(--affordance-subtle-hover);
+  /* Floating rows need more separation than controls on a darker panel.
+     Supporting copy follows the brighter fill so it remains readable. */
+  .buzz-menu-item[data-highlighted],
+  .buzz-menu-item[data-popup-open],
+  .buzz-select-option[data-highlighted],
+  .buzz-popover-popup .navigation-item:hover:not([data-selected]) {
+    --text-subtle: var(--text-standard);
+    --text-metadata: var(--text-standard);
+    background: var(--affordance-floating-hover);
+  }
+  .buzz-menu-item[data-tone="danger"] {
+    color: var(--text-danger);
   }
   .buzz-menu-item[data-disabled] {
     color: var(--text-unavailable);
@@ -783,16 +799,15 @@
     color: var(--text-subtle);
   }
   .buzz-menu-choice-label {
-    display: contents;
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-row-gap);
+    overflow-wrap: anywhere;
   }
   .buzz-menu-item-indicator:not([data-checked]) {
     visibility: hidden;
-  }
-  .buzz-menu-radio-dot {
-    width: 0.375rem;
-    height: 0.375rem;
-    border-radius: var(--radius-pill);
-    background: currentColor;
   }
   .buzz-menu-submenu-arrow,
   .buzz-menu-trailing {
@@ -809,9 +824,144 @@
     margin: var(--space-1) 0;
     background: var(--border-standard);
   }
+  .buzz-menu-note {
+    margin: 0;
+    padding: var(--space-2);
+    color: var(--text-subtle);
+    overflow-wrap: anywhere;
+  }
+  .buzz-popover-popup {
+    /* Persistent navigation selection must remain visible on the raised fill. */
+    --affordance-selected: var(--affordance-subtle-hover);
+    @apply floating-surface;
+    width: 20rem;
+    max-width: min(var(--available-width), calc(100vw - var(--space-4)));
+    max-height: var(--available-height);
+    overflow-y: auto;
+    padding: var(--space-4);
+    color: var(--text-standard);
+  }
+  .buzz-popover-popup[data-size="compact"] {
+    width: 14rem;
+  }
+  /* Short action surfaces pair 10px outer corners with 8px inner rows.
+     Content surfaces keep the panel recipe, regardless of viewport width. */
+  .buzz-menu-popup[data-size="compact"],
+  .buzz-popover-popup[data-size="compact"] {
+    --affordance-floating-hover: var(--affordance-subtle-hover);
+    border-radius: var(--radius-row);
+  }
+  .buzz-menu-popup[data-size="compact"] .buzz-menu-item,
+  .buzz-popover-popup[data-size="compact"] .navigation-item {
+    border-radius: calc(var(--radius-row) * 0.8);
+    transition: none;
+  }
+  .buzz-popover-popup[data-size="compact"] .navigation-item:focus-visible {
+    background: var(--affordance-floating-hover);
+    outline-offset: -2px;
+  }
+  .buzz-popover-popup[data-size="wide"] {
+    width: 24rem;
+  }
+  .buzz-popover-popup[data-padding="list"] {
+    padding: var(--space-1);
+  }
+  .buzz-popover-popup[data-padding="none"] {
+    padding: 0;
+  }
+  .buzz-popover-title {
+    margin: 0;
+  }
+  .buzz-popover-description {
+    margin: var(--space-2) 0 0;
+    color: var(--text-subtle);
+  }
+  .buzz-choice-row {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-row-gap);
+  }
+  .buzz-choice-row-leading {
+    display: flex;
+    flex: 0 0 auto;
+  }
+  .buzz-choice-row-content {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: var(--space-half);
+    overflow-wrap: anywhere;
+  }
+  .buzz-choice-row-description,
+  .buzz-choice-row-trailing {
+    color: var(--text-subtle);
+  }
+  .buzz-choice-row-trailing {
+    flex: 0 0 auto;
+  }
+  .buzz-menu-item[data-disabled]
+    :is(
+      .buzz-choice-row-description,
+      .buzz-choice-row-trailing,
+      .buzz-menu-icon
+    ) {
+    color: inherit;
+  }
+  /* Use the dropdown unblur and offset at half duration and distance. Move from
+     the actual placement side, including flipped popovers and submenus. */
+  .buzz-menu-popup,
+  .buzz-popover-popup {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+    transform-origin: var(--transform-origin);
+    transition:
+      opacity calc(var(--duration-state) / 2) var(--easing-state),
+      transform calc(var(--duration-state) / 2) var(--easing-settle),
+      filter calc(var(--duration-state) / 2) var(--easing-state);
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    opacity: 0;
+    filter: blur(var(--space-half));
+    transform: translateY(calc(-1 * var(--space-half)));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-side="top"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateY(var(--space-half));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-side="right"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateX(calc(-1 * var(--space-half)));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-side="left"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateX(var(--space-half));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-ending-style]) {
+    transition-duration: calc(var(--duration-fast) / 2);
+  }
+  html[data-keyboard-navigation] :is(.buzz-menu-popup, .buzz-popover-popup) {
+    transition: none;
+    transform: none;
+    filter: none;
+  }
   @media (prefers-reduced-motion: reduce) {
-    .buzz-menu-popup {
-      transition-duration: 0ms;
+    .buzz-menu-popup,
+    .buzz-popover-popup {
+      transition: none;
+      transform: none;
+      filter: none;
     }
   }
 }
@@ -882,7 +1032,6 @@
     cursor: default;
   }
   .buzz-select-option[data-highlighted] {
-    background: var(--affordance-subtle-hover);
     outline: none;
   }
   .buzz-select-option[data-selected] {

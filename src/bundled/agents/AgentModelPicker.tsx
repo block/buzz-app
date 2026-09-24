@@ -304,15 +304,26 @@ export function AgentModelPicker({
                   overflowY: "auto",
                 }}
               >
-                {(model: ModelCatalog["models"][number]) => (
-                  <Combobox.Item
-                    key={model.id}
-                    value={model}
-                    description={`${model.id}${!entries.some((entry) => entry.id === model.id) ? " · Custom ID" : ""}`}
-                  >
-                    {model.name}
-                  </Combobox.Item>
-                )}
+                {(model: ModelCatalog["models"][number]) => {
+                  const custom = !entries.some(
+                    (entry) => entry.id === model.id,
+                  );
+                  return (
+                    <Combobox.Item
+                      key={model.id}
+                      value={model}
+                      description={
+                        goose && model.name === model.id
+                          ? custom
+                            ? "Custom ID"
+                            : undefined
+                          : `${model.id}${custom ? " · Custom ID" : ""}`
+                      }
+                    >
+                      {model.name}
+                    </Combobox.Item>
+                  );
+                }}
               </Combobox.List>
             </Combobox.Popup>
           </Combobox.Root>

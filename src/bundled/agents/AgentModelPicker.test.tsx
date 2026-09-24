@@ -128,6 +128,7 @@ it("shows ten Goose models at a time and searches the full provider catalog", as
     const input = screen.getByRole("combobox", { name: "Model" });
     await waitFor(() => expect(input).toHaveAttribute("aria-expanded", "true"));
     expect(screen.getAllByRole("option")).toHaveLength(10);
+    expect(screen.getByRole("option", { name: /^model-00$/ })).toBeVisible();
     expect(screen.queryByRole("option", { name: /model-25/ })).toBeNull();
     await user.type(input, "model-25");
     await user.click(await screen.findByRole("option", { name: /model-25/ }));

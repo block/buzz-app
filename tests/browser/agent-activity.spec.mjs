@@ -688,6 +688,7 @@ test.describe("thread activity", () => {
       path: testInfo.outputPath("thread-activity-above-composer.png"),
     });
     await page.mouse.move(0, 0);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     sendTyping(root.id);
     await expect(entry).toBeVisible();

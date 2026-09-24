@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { createServices } from "./app/services";
 import { App } from "./app/App";
 import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/inter/wght-italic.css";
 import "@fontsource/jetbrains-mono/400.css";
 import { useKeyboardFocusVisibility } from "./shared/design-system/useKeyboardFocusVisibility";
 

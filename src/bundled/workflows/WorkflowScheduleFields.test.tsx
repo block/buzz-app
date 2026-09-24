@@ -72,29 +72,29 @@ it("builds weekly crons from weekday chips and keeps at least one day", async ()
   await user.click(preset("Weekly"));
   expect(onUpdate).toHaveBeenLastCalledWith({
     on: "schedule",
-    cron: "0 9 * * 1",
+    cron: "0 9 * * 2",
   });
   expect(screen.getByRole("group", { name: "Repeat on" })).toBeVisible();
   expect(day("Monday")).toBeChecked();
   expect(day("Friday")).not.toBeChecked();
 
   await user.click(day("Friday"));
-  expect(trigger()).toEqual({ on: "schedule", cron: "0 9 * * 1,5" });
+  expect(trigger()).toEqual({ on: "schedule", cron: "0 9 * * 2,6" });
   await user.click(day("Sunday"));
-  expect(trigger()).toEqual({ on: "schedule", cron: "0 9 * * 0,1,5" });
+  expect(trigger()).toEqual({ on: "schedule", cron: "0 9 * * 1,2,6" });
   await user.click(day("Monday"));
   await user.click(day("Sunday"));
-  expect(trigger()).toEqual({ on: "schedule", cron: "0 9 * * 5" });
+  expect(trigger()).toEqual({ on: "schedule", cron: "0 9 * * 6" });
   // The last selected day cannot be removed.
   await user.click(day("Friday"));
   expect(day("Friday")).toBeChecked();
-  expect(trigger()).toEqual({ on: "schedule", cron: "0 9 * * 5" });
+  expect(trigger()).toEqual({ on: "schedule", cron: "0 9 * * 6" });
 
   // A time input commits a whole value, not keystrokes.
   fireEvent.change(screen.getByLabelText("Run time (UTC)"), {
     target: { value: "14:30" },
   });
-  expect(trigger()).toEqual({ on: "schedule", cron: "30 14 * * 5" });
+  expect(trigger()).toEqual({ on: "schedule", cron: "30 14 * * 6" });
   expect(screen.getByLabelText("Run time (UTC)")).toHaveValue("14:30");
 });
 
@@ -176,4 +176,38 @@ it("disables every control", () => {
   }
   expect(day("Monday")).toBeDisabled();
   expect(screen.getByLabelText("Run time (UTC)")).toBeDisabled();
+});
+
+// Relay cron 0.16 ordinals, not JavaScript Date or Unix crontab ordinals.
+it.each([
+  ["Sunday", "1"],
+  ["Monday", "2"],
+  ["Tuesday", "3"],
+  ["Wednesday", "4"],
+  ["Thursday", "5"],
+  ["Friday", "6"],
+  ["Saturday", "7"],
+])("reads and writes %s using relay weekday %s", (name, ordinal) => {
+  render(<Harness initial={{ on: "schedule", cron: `0 9 * * ${ordinal}` }} />);
+  expect(day(name)).toBeChecked();
+  fireEvent.change(screen.getByLabelText("Run time (UTC)"), {
+    target: { value: "10:15" },
+  });
+  expect(trigger()).toEqual({ on: "schedule", cron: `15 10 * * ${ordinal}` });
+});
+
+it("opens a saved 1-5 range as Sunday through Thursday without changing it", () => {
+  const onUpdate = vi.fn();
+  render(
+    <Harness
+      initial={{ on: "schedule", cron: "0 9 * * 1-5" }}
+      onUpdate={onUpdate}
+    />,
+  );
+  for (const name of ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"])
+    expect(day(name)).toBeChecked();
+  expect(day("Friday")).not.toBeChecked();
+  expect(day("Saturday")).not.toBeChecked();
+  expect(trigger().cron).toBe("0 9 * * 1-5");
+  expect(onUpdate).not.toHaveBeenCalled();
 });

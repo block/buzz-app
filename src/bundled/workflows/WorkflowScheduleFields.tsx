@@ -14,13 +14,13 @@ import {
 } from "./workflowSchedule";
 
 const WEEKDAYS = [
-  ["0", "Sunday", "S"],
-  ["1", "Monday", "M"],
-  ["2", "Tuesday", "T"],
-  ["3", "Wednesday", "W"],
-  ["4", "Thursday", "T"],
-  ["5", "Friday", "F"],
-  ["6", "Saturday", "S"],
+  ["1", "Sunday", "S"],
+  ["2", "Monday", "M"],
+  ["3", "Tuesday", "T"],
+  ["4", "Wednesday", "W"],
+  ["5", "Thursday", "T"],
+  ["6", "Friday", "F"],
+  ["7", "Saturday", "S"],
 ] as const;
 
 const MONTH_DAY_GROUPS = [

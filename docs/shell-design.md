@@ -1,16 +1,17 @@
 # Shell design
 
 The shell is owned by `src/app/shell`, independently of relay operations and page
-content. `App.tsx` composes startup/recovery, built-in Home and Settings, and the
-existing contributed-page lifecycle. Home is a small scaffold landing page; it
-only links to available pages and Settings. Navigation removes disabled plugins
+content. `App.tsx` composes startup/recovery, built-in Settings, and the
+existing contributed-page lifecycle. Messages is the landing page; legacy Home
+targets resolve to Messages in the same visit. Channels is required, including
+when older preferences saved it disabled. Navigation removes disabled optional plugins
 from page choices; a retained destination whose provider is unavailable displays
 an explicit failure with retry instead of silently selecting another page.
 Browser controls, host shortcuts and toolbar arrows traverse the same visit history.
 Settings sections are destinations. Personal-space page visits use explicit null
 scope, distinct from a plugin's unspecified community scope. Focus-only skip links
 do not add visits. Plugin recovery remains available in Settings → Plugins without
-blocking Home, Profile or Appearance.
+blocking Profile or Appearance.
 
 See [design system and appearance](design-system.md) for Light/Dark settings,
 semantic tokens, UI authoring rules and the local component reference.
@@ -22,8 +23,8 @@ semantic tokens, UI authoring rules and the local component reference.
   styles live in Tailwind's base layer, so utilities can override them normally.
   Existing feature CSS variables remain available for incremental adoption.
 - `src/app/shell/presentation.ts` owns page labels, icons and navigation ordering.
-  Home comes first, then Messages and Projects; other contributed pages follow by
-  displayed label with a full contribution-key tie-breaker. Tabs, Home links and
+  Messages comes first, then Projects; other contributed pages follow by
+  displayed label with a full contribution-key tie-breaker. Tabs and
   page search share this policy, independent of plugin activation/re-enable order.
   Channels is presented as Messages. Legacy tone props are retained for
   compatibility; all pages share the supplied gradient and repeating CSS dots.
@@ -83,7 +84,8 @@ provides Automatic, Away and Appear offline choices: arrow keys move focus, and
 Enter/Space selects without closing the menu. See
 [presence ownership and limitations](presence.md). Escape, outside click and Tab
 leaving dismiss the menu; Escape returns focus to the avatar. Selecting Settings
-focuses the main region after the menu finishes closing.
+focuses the main region after the menu finishes closing, unless focus has already
+moved into the page.
 The avatar does not display the selected community's profile. It uses a configured
 HTTPS picture directly, with the name's first letter on a missing/failed picture
 or a person icon when unnamed. No sample person's photo is used as the user's
@@ -119,7 +121,7 @@ behind, never over, opaque cards; it makes no relay request at runtime.
 ## Review
 
 Run `just iterate` for UI changes and `just scan` for the broader review checks.
-Check Home, Messages, and Settings; toggle a bundled plugin off/on and confirm its
+Check Messages and Settings; toggle an optional bundled plugin off/on and confirm its
 navigation entry follows; inspect a narrow viewport. On macOS, verify titlebar
 alignment, dragging, each macOS title-bar double-click preference, and Settings
 access in a built app.
@@ -133,7 +135,7 @@ and the launched companion card. Below 1000px
 the right column overlays the conversation; below 650px it fills the page area.
 Each card contains its own overflow, keeping the composer and close control visible.
 Channels opts into the reusable companion prop and owns both cards, including a
-companion-only view without a selected channel or relay. Home/Settings and legacy
+companion-only view without a selected channel or relay. Settings and legacy
 pages use the host fallback frame; opening from those pages does not navigate away.
 Disabling Bestie removes its snake and open card without evicting a local link card.
 The shell supplies the outer page gutter. Channel previews, roster labels, and routine refresh

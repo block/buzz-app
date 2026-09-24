@@ -12,9 +12,10 @@ this is shared styling, not a second component registry or a parallel `core/` tr
 
 ## First release contract
 
-Settings → Appearance offers **Light** and **Dark**, defaulting to Light. The choice
+Settings → Appearance offers **Light**, **Dark**, and **System**, defaulting to Light. System
+follows the computer's color scheme as it changes. The choice
 is device-local (`buzz-appearance.v1` in browser-origin localStorage), not a community
-profile or relay event. There is no System mode, theme marketplace or appearance sync
+profile or relay event. There is no theme marketplace or appearance sync
 between devices. Another same-origin window observes saved changes without rebuilding
 pages or relay services. Failed storage reads open safely in Light; failed saves apply
 for this session and expose a retry in Appearance. Invalid stored values use Light.
@@ -215,3 +216,21 @@ The browser adoption regression changes semantic fill, type and spacing values
 and checks the actual Settings button, inline chips and production CSS inside
 message-history containers and anchored popups. It exists because DOM emulation
 cannot establish CSS layer ownership.
+
+## Message specimens
+
+`just design` includes **Product patterns → Messages**, a catalogue of current
+message content, attachments, delivery feedback, thread summaries, and membership
+activity. Examples render the production message components against local sample
+data; filters, narrow preview, and reset help compare states without a relay.
+
+Product specimens live in `tests/fixtures/message-gallery` and run in a separate
+iframe with the host stylesheet. `design:build` builds that document alongside the
+core viewer via `vite.message-gallery.config.ts`; the viewer's core-only bundle
+boundary remains intact. The iframe inherits the viewer's theme and fills the
+available viewport height.
+The gallery scrolls inside its isolated document so fullscreen media and its
+Close control stay visible. Theme changes reload sample state.
+
+This is a visual inventory, not live delivery or plugin validation. Composer,
+presence, unread tracking, and timeline pagination remain outside this first pass.

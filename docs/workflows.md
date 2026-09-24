@@ -11,7 +11,9 @@ See the [capability contract](../src/features/workflows/types.ts).
 - Channel-scoped saved configurations; new drafts start disabled.
 - Form editing for message/reaction/diff/schedule/webhook triggers and Send
   Message/Delay actions. Schedules offer repeat presets, weekday and
-  day-of-month pickers, a UTC run time and a five-field cron editor; six- and
+  day-of-month pickers, a UTC run time and a five-field cron editor. Numeric
+  weekdays follow the relay: Sunday=1 through Saturday=7; existing numeric
+  cron fields are not renumbered. Six- and
   seven-field cron stays in YAML. Other definitions stay in YAML; opening them
   does not rewrite their contents.
 - Save with the original owner/channel/UUID and signed `expected-revision`.
@@ -20,7 +22,9 @@ See the [capability contract](../src/features/workflows/types.ts).
 - Webhook triggers: the relay issues a secret once, when a workflow first
   gains the trigger. The save receipt hands it to a one-time dialog with the
   hook URL, masked value, reveal and copy; leaving before revealing or copying
-  asks for confirmation. The secret is held in memory until that dialog takes
+  asks for confirmation. Delivery stays mounted across channel/landing navigation;
+  pending secrets are shown sequentially, and session clear/access loss purges
+  any displayed value. The secret is held in memory until that dialog takes
   it and never enters the outbox journal, operation errors or logs. The hook
   URL needs the relay HTTP base the host advertises; without it the dialog
   shows the relative `/hooks/{id}` route only.
@@ -39,7 +43,9 @@ through generic Outbox Retry either; inspection and dismissal remain available.
 **Check saved configuration** resolves an unknown save only when a fresh verified
 head matches its owner, channel, UUID and exact signed revision. Missing/different
 heads retain the draft for review. Dismissal clears the notice and editor lock
-only after durable dismissal; it neither undoes nor repeats a command. Unknown
+only after durable dismissal; it neither undoes nor repeats a command. Exact
+readback does not retire a pending one-time-secret receipt, and a missing receipt
+does not undo verified configuration success. Unknown
 runs stay unknown: only a returned run ID identifies a requested run.
 
 Saving a configured enabled flag does not prove runtime activation or cancellation.
@@ -59,7 +65,11 @@ fixed upstream paths and bounded history/receipt bodies.
 ## Validation boundary
 
 Offline regressions cover the editor, exact-save recovery, uncertain commands,
-session isolation, broker authorization and history. This is not live acceptance:
+session isolation, broker authorization and history. The real-session browser
+journey covers navigating to the landing, exact readback before a held receipt,
+and subsequent masked secret delivery in Chromium and WebKit. Component tests
+cover sequential secrets, interruption, and purge after the dialog takes a value.
+This is not live acceptance:
 create → edit → run → inspect against an unchanged backend and packaged-native
 acceptance remain unverified. Live credentials, native launch and real workflow
 writes require separate consent; no backend work belongs to this plugin PR.

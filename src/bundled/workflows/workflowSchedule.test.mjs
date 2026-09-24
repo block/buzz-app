@@ -57,7 +57,7 @@ test("parses common cron shapes into preset fields", () => {
       frequency: "daily",
       monthDay: "1",
       time: "07:05",
-      weekday: "1",
+      weekday: "2",
     },
   );
   assert.deepEqual(
@@ -79,7 +79,7 @@ test("parses common cron shapes into preset fields", () => {
       frequency: "monthly",
       monthDay: "31",
       time: "00:00",
-      weekday: "1",
+      weekday: "2",
     },
   );
   // Named weekdays, a month restriction and out-of-range hours stay custom.
@@ -124,7 +124,9 @@ test("expands numeric weekday lists and ranges for the weekly picker", () => {
   assert.deepEqual(scheduleWeekdaysFromCronField("5,1,3,1"), ["1", "3", "5"]);
   assert.deepEqual(scheduleWeekdaysFromCronField("MON-FRI"), []);
   assert.deepEqual(scheduleWeekdaysFromCronField("5-1"), []);
-  assert.deepEqual(scheduleWeekdaysFromCronField("7"), []);
+  assert.deepEqual(scheduleWeekdaysFromCronField("7"), ["7"]);
+  assert.deepEqual(scheduleWeekdaysFromCronField("0"), []);
+  assert.deepEqual(scheduleWeekdaysFromCronField("0-6"), []);
 });
 
 test("switching schedule modes never emits cron and interval together", () => {

@@ -13,6 +13,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Select } from "../../shared/design-system/ui/Select";
 import { WorkflowChannel } from "./WorkflowChannel";
+import { WorkflowWebhookSecrets } from "./WorkflowWebhookSecrets";
 import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowLanding } from "./WorkflowLanding";
 import "./workflows.css";
@@ -224,6 +225,7 @@ export function WorkflowCommunity({
           viewer={viewer}
         />
       ) : null}
+      <WorkflowWebhookSecrets capability={capability} />
       <Dialog
         open={createOpen}
         onOpenChange={setCreateOpen}

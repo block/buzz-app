@@ -3,6 +3,8 @@
   "include": [
     "src/shared/design-system",
     "tests/fixtures/design-system",
+    "tests/fixtures/message-gallery",
+    "vite.message-gallery.config.ts",
     "vite.design.config.ts",
     "vitest.design.config.ts"
   ]

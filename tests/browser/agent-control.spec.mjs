@@ -164,7 +164,10 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await openImport(panel);
     await panel
       .getByRole("combobox", { name: "Source library", exact: true })
-      .selectOption("development");
+      .click();
+    await page
+      .getByRole("option", { name: "Development Buzz", exact: true })
+      .click();
     await panel
       .getByLabel("Destination community", { exact: true })
       .fill("wss://chosen.example");
@@ -909,10 +912,14 @@ for (const changed of ["destination", "source"]) {
       await expect(commit).toBeEnabled();
       if (changed === "destination")
         await destination.fill("wss://chosen.example");
-      else
+      else {
         await panel
           .getByRole("combobox", { name: "Source library", exact: true })
-          .selectOption("development");
+          .click();
+        await page
+          .getByRole("option", { name: "Development Buzz", exact: true })
+          .click();
+      }
       if (changed === "destination") {
         await expect(commit).toHaveCount(0);
         await preview.click();
@@ -950,10 +957,14 @@ for (const changed of ["destination", "source"]) {
       // Inputs remain editable during this read-only preview; writes remain blocked.
       if (changed === "destination")
         await destination.fill("wss://final.example");
-      else
+      else {
         await panel
           .getByRole("combobox", { name: "Source library", exact: true })
-          .selectOption("installed");
+          .click();
+        await page
+          .getByRole("option", { name: "Installed Buzz", exact: true })
+          .click();
+      }
       await page.evaluate(() => window.agentControlFixture.releasePreview());
       await expect(preview).toBeEnabled();
       await expect(commit).toHaveCount(0);

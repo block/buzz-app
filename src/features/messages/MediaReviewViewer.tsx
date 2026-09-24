@@ -35,6 +35,7 @@ type MediaReviewViewerProps = {
   messageId: string;
   initialTime: number;
   restoreFocus?: RefObject<HTMLElement | null>;
+  onOpenLink(url: string): boolean;
   close(): void;
 };
 
@@ -152,6 +153,7 @@ function ReviewShell({
   channelName,
   initialTime,
   close,
+  onOpenLink,
   view,
   rootId,
   replies = [],
@@ -264,6 +266,7 @@ function ReviewShell({
               selectedUrl={selectedImageUrl}
               select={setSelectedImageUrl}
               media={session.media}
+              onOpenLink={onOpenLink}
             />
           ) : null}
         </div>
@@ -328,11 +331,13 @@ function ImageReviewGallery({
   selectedUrl,
   select,
   media,
+  onOpenLink,
 }: {
   view: ThreadView;
   selectedUrl: string;
   select(url: string): void;
   media(url: string): string | undefined;
+  onOpenLink(url: string): boolean;
 }) {
   const thread = useSyncExternalStore(
     view.subscribe,
@@ -354,6 +359,7 @@ function ImageReviewGallery({
       selectedUrl={selectedUrl}
       media={media}
       select={select}
+      onOpenLink={onOpenLink}
     />
   );
 }

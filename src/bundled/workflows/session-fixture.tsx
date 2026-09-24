@@ -170,6 +170,15 @@ Object.assign(window, {
       finishPublish?.(
         'response:{"run_id":"33333333-3333-4333-8333-333333333333"}',
       ),
+    settleSave: () => {
+      if (lastPublished?.kind !== 30620) return;
+      finishPublish?.(
+        `response:${JSON.stringify({
+          workflow_id: lastPublished.tags.find(([key]) => key === "d")?.[1],
+          webhook_secret: "fixture-late-webhook-secret",
+        })}`,
+      );
+    },
     settleDelete: () => {
       const coordinate = lastPublished?.tags.find(([key]) => key === "a")?.[1];
       finishPublish?.(

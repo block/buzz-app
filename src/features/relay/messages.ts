@@ -1,7 +1,7 @@
 import { attachmentMessage, type UploadedAttachment } from "./attachments";
 import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventData } from "./events";
-import type { Outbox } from "./outbox";
+import type { Outbox, OutboxRecovery } from "./outbox";
 
 /** Domain convenience only. Delivery and read reconciliation remain session-owned. */
 export function createMessages(
@@ -41,19 +41,23 @@ export function createMessages(
       content: string,
       mentions: readonly string[] = [],
       attachments: readonly UploadedAttachment[] = [],
+      recovery?: OutboxRecovery,
     ) {
       if (!channelId) throw new Error("A channel is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
-      return writer(9, channelId).send({
-        kind: 9,
-        content: text(message.content),
-        tags: [
-          ["h", channelId],
-          ...mentionTags(channelId, mentions),
-          ...emojiTags(content),
-          ...message.tags,
-        ],
-      });
+      return writer(9, channelId).send(
+        {
+          kind: 9,
+          content: text(message.content),
+          tags: [
+            ["h", channelId],
+            ...mentionTags(channelId, mentions),
+            ...emojiTags(content),
+            ...message.tags,
+          ],
+        },
+        ...(recovery ? [recovery] : []),
+      );
     },
     reply(
       channelId: string,

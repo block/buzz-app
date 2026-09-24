@@ -157,7 +157,7 @@ test("schedule triggers need exactly one of cron or interval, with reference mes
   );
   assert.equal(
     refused("{ on: schedule, cron: '0 9 * * 8' }"),
-    "Unsupported cron expression: Weekday must be between 0 and 7. Use the YAML editor",
+    "Unsupported cron expression: Weekday must be between 1 and 7. Use the YAML editor",
   );
   // The relay accepts 6- and 7-field cron; Form mode leaves those to YAML.
   assert.equal(

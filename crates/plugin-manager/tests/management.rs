@@ -381,7 +381,7 @@ fn concurrent_changes_do_not_lose_installs() {
         for _ in 0..8 {
             scope.spawn(|| {
                 for _ in 0..5 {
-                    manager.change("disable", "buzz.channels").unwrap();
+                    manager.change("disable", "buzz.github").unwrap();
                     manager.change("enable", "example.page").unwrap();
                 }
             });
@@ -392,7 +392,7 @@ fn concurrent_changes_do_not_lose_installs() {
         !catalog
             .plugins
             .iter()
-            .find(|p| p.manifest.id == "buzz.channels")
+            .find(|p| p.manifest.id == "buzz.github")
             .unwrap()
             .enabled
     );
@@ -517,4 +517,52 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
         assert!(manager.install(&source).is_err());
     }
     drop(root);
+}
+
+#[test]
+fn channels_is_required_even_with_saved_disabled_settings() {
+    let (root, manager, _source) = fixture();
+    manager.change("disable", "buzz.github").unwrap();
+    let path = root.path().join("profiles/test/registry.json");
+    let mut saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    saved["bundledOverrides"]["buzz.channels"] = serde_json::json!(false);
+    let bytes = serde_json::to_vec(&saved).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    for _ in 0..2 {
+        let reopened = Manager::open(Some(root.path().into()), "test", false).unwrap();
+        let catalog = reopened.catalog().unwrap();
+        assert!(
+            catalog
+                .plugins
+                .iter()
+                .find(|p| p.manifest.id == "buzz.channels")
+                .unwrap()
+                .enabled
+        );
+        assert!(
+            !catalog
+                .plugins
+                .iter()
+                .find(|p| p.manifest.id == "buzz.github")
+                .unwrap()
+                .enabled
+        );
+        assert!(reopened
+            .change("disable", "buzz.channels")
+            .err()
+            .unwrap()
+            .contains("Channels is required"));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+    manager.change("enable", "buzz.github").unwrap();
+    assert!(
+        manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "buzz.channels")
+            .unwrap()
+            .enabled
+    );
 }

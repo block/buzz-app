@@ -354,7 +354,10 @@ test("real session page under StrictMode fences community changes, warns for dir
   await expect(button("New workflow")).toBeDisabled();
   await expect(button("Open Fixture A helper")).toBeVisible();
   await expect(
-    page.getByRole("switch", { name: "Enable Fixture A helper", exact: true }),
+    page.getByRole("switch", {
+      name: "Enabled in configuration: Fixture A helper",
+      exact: true,
+    }),
   ).toBeDisabled();
   await button("Open Fixture A helper").click();
   await expect(
@@ -526,7 +529,7 @@ test("landing activation confirms once and locks while delivery is unresolved", 
 }) => {
   await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
   const enable = page.getByRole("switch", {
-    name: "Enable Fixture A helper",
+    name: "Enabled in configuration: Fixture A helper",
     exact: true,
   });
   await enable.click();
@@ -555,7 +558,7 @@ test("landing keeps a succeeded toggle locked until its exact revision is read b
 }) => {
   await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
   const enable = page.getByRole("switch", {
-    name: "Enable Fixture A helper",
+    name: "Enabled in configuration: Fixture A helper",
     exact: true,
   });
   await enable.click();
@@ -573,7 +576,7 @@ test("landing keeps a succeeded toggle locked until its exact revision is read b
     .click();
   await expect(
     page.getByRole("switch", {
-      name: "Disable Fixture A helper",
+      name: "Enabled in configuration: Fixture A helper",
       exact: true,
     }),
   ).toBeEnabled();
@@ -595,7 +598,7 @@ test("landing keeps a workflow locked while deletion remains undismissed", async
   await button("Close editor").click();
   await button("Leave draft").click();
   const enable = page.getByRole("switch", {
-    name: "Enable Fixture A helper",
+    name: "Enabled in configuration: Fixture A helper",
     exact: true,
   });
   await expect(enable).toBeDisabled();
@@ -806,16 +809,17 @@ test("invalid timeout text stays in the draft and blocks saves in both editor mo
     await timeout.fill(input);
     await expect(timeout).toHaveValue(input);
     await expect(button("Save workflow")).toBeDisabled();
-    await expect(
-      page.getByRole("status").filter({ hasText: /timeout/ }),
-    ).toContainText("positive whole number");
+    await expect(timeout).toHaveAttribute("aria-invalid", "true");
+    await expect(timeout).toHaveAccessibleDescription(/positive whole number/);
     await page.getByRole("tab", { name: "YAML", exact: true }).click();
     expect(parseYaml(await yaml.inputValue()).steps[0].timeout_secs).toBe(
       input,
     );
     await expect(button("Save workflow")).toBeDisabled();
+    await expect(yaml).toHaveAttribute("aria-invalid", "true");
+    await expect(yaml).toHaveAccessibleDescription(/positive whole number/);
     await page.getByRole("tab", { name: "Form", exact: true }).click();
-    await page.getByText("Step options", { exact: true }).click();
+    await expect(timeout).toBeVisible();
     await expect(timeout).toHaveValue(input);
   }
   await button("Close editor").click();
@@ -824,7 +828,15 @@ test("invalid timeout text stays in the draft and blocks saves in both editor mo
   ).toBeVisible();
   await button("Keep editing").click();
   await expect(timeout).toHaveValue("9007199254740992");
-  await timeout.fill("5m");
+  await timeout.fill("");
+  await expect(timeout).toBeVisible();
+  await expect(timeout).toBeFocused();
+  for (const character of "5m") {
+    await page.keyboard.type(character);
+    await expect(timeout).toBeVisible();
+    await expect(timeout).toBeFocused();
+  }
+  await expect(timeout).toHaveValue("5m");
   await expect(button("Save workflow")).toBeEnabled();
   await button("Save workflow").click();
   await expect
@@ -836,6 +848,8 @@ test("invalid timeout text stays in the draft and blocks saves in both editor mo
   ).toBe(300);
   await page.evaluate(() => window.workflowFixture.finish("succeeded"));
   await expect(button("Save workflow")).toBeEnabled();
+  // Successful save mounts a fresh editor; opening its optional section is separate
+  // from keeping the current draft open throughout validation recovery.
   if (!(await timeout.isVisible()))
     await page.getByText("Step options", { exact: true }).click();
   await timeout.fill(" ");
@@ -903,7 +917,7 @@ test("schedule presets round-trip into YAML and warn before enabling a frequent 
   await page.getByLabel("Run time (UTC)", { exact: true }).fill("14:30");
   expect(await savedTrigger()).toEqual({
     on: "schedule",
-    cron: "30 14 * * 1,5",
+    cron: "30 14 * * 2,6",
   });
   await expect(preset("Weekly")).toBeChecked();
   await expect(page.getByRole("checkbox", { name: "Friday" })).toBeChecked();
@@ -1065,6 +1079,72 @@ test("a webhook save shows its one-time secret once and asks before leaving it b
   ).toBeUndefined();
   await expect(button("Save workflow")).toBeEnabled();
   expect(errors).toEqual([]);
+});
+
+// Browser boundary: the routed page must deliver a real session's late receipt
+// after its editor unmounts, without losing the dialog's focus/masking behavior.
+// Receipt and purge permutations belong in session/owner component tests.
+test("late webhook receipt survives navigation and exact readback on the landing", async ({
+  page,
+}) => {
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const caveat = page.getByText(
+    /Saving a disabled configuration does not confirm/,
+  );
+  await expect(caveat).toBeVisible();
+  await button("Open Fixture A helper").click();
+  await expect(caveat).toBeVisible();
+  await page.getByRole("tab", { name: "YAML", exact: true }).click();
+  const yaml = page.getByLabel("Workflow YAML", { exact: true });
+  await yaml.fill(
+    (await yaml.inputValue()).replace("on: message_posted", "on: webhook"),
+  );
+  await button("Save workflow").click();
+  try {
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.workflowSessionFixture.publications()),
+      )
+      .toBe(1);
+    await button("All workflows").click();
+    await page
+      .getByRole("alertdialog", { name: "Change channel?" })
+      .getByRole("button", { name: "Change channel", exact: true })
+      .click();
+    await expect(
+      page.getByRole("region", { name: "Workflow editor" }),
+    ).toHaveCount(0);
+    await page.evaluate(() => window.workflowSessionFixture.readback());
+    await button("Refresh workflows").click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.workflowSessionFixture.operations().at(-1)?.outcome,
+        ),
+      )
+      .toBe("succeeded");
+    await expect(
+      page.getByRole("dialog", { name: "Webhook ready" }),
+    ).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => window.workflowSessionFixture.settleSave());
+  }
+  const dialog = page.getByRole("dialog", { name: "Webhook ready" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId("webhook-secret")).toHaveText("•".repeat(24));
+  await dialog
+    .getByRole("button", { name: "Reveal webhook secret", exact: true })
+    .click();
+  await expect(dialog.getByTestId("webhook-secret")).toHaveText(
+    "fixture-late-webhook-secret",
+  );
+  await page.evaluate(() => window.workflowSessionFixture.state("retrying"));
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => window.workflowSessionFixture.state("connected"));
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(button("Refresh workflows")).toBeEnabled();
 });
 
 test("both Add actions allocate unused IDs after a very large parsed ID", async ({

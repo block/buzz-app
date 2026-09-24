@@ -3,6 +3,7 @@ import {
   FileTextIcon,
 } from "../../shared/design-system/icons/index";
 import type { Attachment } from "../relay/contracts";
+import { isProxySource, safeOpenUrl } from "./attachment-source";
 import styles from "./Messages.module.css";
 
 export function formatFileSize(size: number): string {
@@ -20,26 +21,6 @@ function mimeLabel(mime: string | undefined): string | undefined {
   if (subtype === "pdf") return "PDF file";
   if (!/^[a-z0-9]+$/i.test(subtype)) return undefined;
   return `${subtype.toUpperCase()} file`;
-}
-
-export function isProxySource(source: string): boolean {
-  try {
-    const hasWindow = typeof window !== "undefined";
-    const url = new URL(
-      source,
-      hasWindow ? window.location.href : "https://app.test",
-    );
-    const sameOrigin =
-      source.startsWith("/") ||
-      (hasWindow && url.origin === window.location.origin);
-    return (
-      sameOrigin &&
-      url.pathname.startsWith("/api/relay") &&
-      url.pathname.endsWith("/media")
-    );
-  } catch {
-    return false;
-  }
 }
 
 export function FileAttachment({
@@ -116,13 +97,4 @@ function UnavailableFileAttachment({ displayName }: { displayName: string }) {
       </span>
     </span>
   );
-}
-
-function safeOpenUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:";
-  } catch {
-    return false;
-  }
 }

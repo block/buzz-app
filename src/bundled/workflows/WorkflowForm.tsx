@@ -1,3 +1,4 @@
+import { Field } from "../../shared/design-system/ui/Field";
 import { useId } from "react";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -5,7 +6,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { WorkflowScheduleFields } from "./WorkflowScheduleFields";
-import { formWithStep } from "./editor-model";
+import { formWithStep, type WorkflowDraftIssue } from "./editor-model";
 import {
   ACTION_LABELS,
   isThreadReplyEligibleTrigger,
@@ -20,24 +21,34 @@ export function WorkflowForm({
   state,
   onChange,
   disabled,
+  issue,
 }: {
   state: WorkflowFormState;
   onChange: (next: WorkflowFormState) => void;
   disabled: boolean;
+  issue?: WorkflowDraftIssue | null;
 }) {
   const id = useId();
+  const stepError = (index: number, field: "text" | "duration" | "timeout") =>
+    issue &&
+    "stepIndex" in issue &&
+    issue.stepIndex === index &&
+    issue.field === field
+      ? issue.message
+      : undefined;
   return (
     <fieldset className="workflow-form" disabled={disabled}>
-      <label htmlFor={`${id}-1`} className="workflow-field">
-        Description
+      <Field label="Description">
         <Input
           id={`${id}-1`}
           value={state.description}
           onValueChange={(description) => onChange({ ...state, description })}
         />
-      </label>
+      </Field>
       <Select
         label="Trigger"
+        variant="field"
+        disabled={disabled}
         value={state.trigger.on}
         groups={[
           {
@@ -68,8 +79,7 @@ export function WorkflowForm({
         }}
       />
       {state.trigger.on === "reaction_added" && (
-        <label htmlFor={`${id}-2`} className="workflow-field">
-          Emoji (optional)
+        <Field label="Emoji (optional)">
           <Input
             id={`${id}-2`}
             value={state.trigger.emoji ?? ""}
@@ -77,7 +87,7 @@ export function WorkflowForm({
               onChange({ ...state, trigger: { ...state.trigger, emoji } })
             }
           />
-        </label>
+        </Field>
       )}
       {state.trigger.on === "schedule" ? (
         <WorkflowScheduleFields
@@ -93,20 +103,20 @@ export function WorkflowForm({
       ) : (
         <details>
           <summary>Trigger options</summary>
-          <label htmlFor={`${id}-3`} className="workflow-field">
-            Trigger condition (optional)
-            <Input
-              id={`${id}-3`}
-              value={state.trigger.filter ?? ""}
-              onValueChange={(filter) =>
-                onChange({ ...state, trigger: { ...state.trigger, filter } })
-              }
-            />
-            <span className="text-body-sm text-secondary">
-              An evalexpr expression; leave empty to match every event of this
-              type.
-            </span>
-          </label>
+          <div className="workflow-options">
+            <Field
+              label="Trigger condition (optional)"
+              description="An evalexpr expression; leave empty to match every event of this type."
+            >
+              <Input
+                id={`${id}-3`}
+                value={state.trigger.filter ?? ""}
+                onValueChange={(filter) =>
+                  onChange({ ...state, trigger: { ...state.trigger, filter } })
+                }
+              />
+            </Field>
+          </div>
         </details>
       )}
       <ol className="workflow-steps">
@@ -131,8 +141,7 @@ export function WorkflowForm({
             </div>
             {step.action === "send_message" ? (
               <>
-                <div className="workflow-field">
-                  <label htmlFor={`${id}-text-${step.id}`}>Message text</label>
+                <Field label="Message text" error={stepError(index, "text")}>
                   <Textarea
                     id={`${id}-text-${step.id}`}
                     value={step.text ?? ""}
@@ -146,7 +155,7 @@ export function WorkflowForm({
                       )
                     }
                   />
-                </div>
+                </Field>
                 {isThreadReplyEligibleTrigger(state.trigger.on) && (
                   <Switch
                     label="Reply in the triggering thread"
@@ -159,8 +168,10 @@ export function WorkflowForm({
                 )}
               </>
             ) : (
-              <label htmlFor={`${id}-6${step.id}`} className="workflow-field">
-                Delay duration
+              <Field
+                label="Delay duration"
+                error={stepError(index, "duration")}
+              >
                 <Input
                   id={`${id}-6${step.id}`}
                   value={step.duration ?? ""}
@@ -169,48 +180,54 @@ export function WorkflowForm({
                     onChange(formWithStep(state, step.id, { duration }))
                   }
                 />
-              </label>
+              </Field>
             )}
-            <details>
+            <details
+              ref={(element) => {
+                // Reveal errors without taking ownership of the native disclosure.
+                if (element && stepError(index, "timeout")) element.open = true;
+              }}
+            >
               <summary>Step options</summary>
-              <p className="text-mono-sm text-secondary">{step.id}</p>
-              <label htmlFor={`${id}-4${step.id}`} className="workflow-field">
-                Step name (optional)
-                <Input
-                  id={`${id}-4${step.id}`}
-                  value={step.name ?? ""}
-                  onValueChange={(name) =>
-                    onChange(formWithStep(state, step.id, { name }))
-                  }
-                />
-              </label>
-              {step.action === "send_message" && (
-                <label htmlFor={`${id}-5${step.id}`} className="workflow-field">
-                  Destination channel UUID (optional)
+              <div className="workflow-options">
+                <p className="text-mono-sm text-secondary">{step.id}</p>
+                <Field label="Step name (optional)">
                   <Input
-                    id={`${id}-5${step.id}`}
-                    value={step.channel ?? ""}
-                    onValueChange={(channel) =>
-                      onChange(formWithStep(state, step.id, { channel }))
+                    id={`${id}-4${step.id}`}
+                    value={step.name ?? ""}
+                    onValueChange={(name) =>
+                      onChange(formWithStep(state, step.id, { name }))
                     }
                   />
-                  <span className="text-body-sm text-secondary">
-                    Blank uses this workflow’s channel. The relay checks
-                    destination access.
-                  </span>
-                </label>
-              )}
-              <label htmlFor={`${id}-7${step.id}`} className="workflow-field">
-                Step timeout (optional)
-                <Input
-                  id={`${id}-7${step.id}`}
-                  value={step.timeoutSecs ?? ""}
-                  placeholder="30s"
-                  onValueChange={(timeoutSecs) =>
-                    onChange(formWithStep(state, step.id, { timeoutSecs }))
-                  }
-                />
-              </label>{" "}
+                </Field>
+                {step.action === "send_message" && (
+                  <Field
+                    label="Destination channel UUID (optional)"
+                    description="Blank uses this workflow’s channel. The relay checks destination access."
+                  >
+                    <Input
+                      id={`${id}-5${step.id}`}
+                      value={step.channel ?? ""}
+                      onValueChange={(channel) =>
+                        onChange(formWithStep(state, step.id, { channel }))
+                      }
+                    />
+                  </Field>
+                )}
+                <Field
+                  label="Step timeout (optional)"
+                  error={stepError(index, "timeout")}
+                >
+                  <Input
+                    id={`${id}-7${step.id}`}
+                    value={step.timeoutSecs ?? ""}
+                    placeholder="30s"
+                    onValueChange={(timeoutSecs) =>
+                      onChange(formWithStep(state, step.id, { timeoutSecs }))
+                    }
+                  />
+                </Field>
+              </div>
             </details>
           </li>
         ))}

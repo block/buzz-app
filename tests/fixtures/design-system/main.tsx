@@ -15,6 +15,7 @@ import "./styles.css";
 import { useKeyboardFocusVisibility } from "../../../src/shared/design-system/useKeyboardFocusVisibility";
 import { applyStoredColorScheme } from "../../../src/shared/design-system/theme/useColorScheme";
 import { DesignSystemLayout } from "./ui/DesignSystemLayout";
+import { FormsPage } from "./ui/FormsPage";
 import { OverviewPage } from "./ui/OverviewPage";
 import { ComponentDetailPage } from "./ui/ComponentDetailPage";
 import { ComponentsPage } from "./ui/ComponentsPage";
@@ -30,6 +31,7 @@ import { GlassPage } from "./ui/GlassPage";
 import { MotionPage } from "./ui/MotionPage";
 import { BaseUiPage } from "./ui/BaseUiPage";
 import { SystemDocumentPage } from "./ui/SystemDocumentPage";
+import { MessagesPage } from "./ui/MessagesPage";
 import { MissingPage } from "./ui/MissingPage";
 import { FoundationAlignmentPage } from "./ui/FoundationAlignmentPage";
 
@@ -50,6 +52,11 @@ const detail = createRoute({
 const pages = [
   createRoute({
     getParentRoute: () => design,
+    path: "forms",
+    component: FormsPage,
+  }),
+  createRoute({
+    getParentRoute: () => design,
     path: "/",
     component: OverviewPage,
   }),
@@ -59,6 +66,11 @@ const pages = [
     component: ComponentsPage,
   }),
   detail,
+  createRoute({
+    getParentRoute: () => design,
+    path: "messages",
+    component: MessagesPage,
+  }),
   createRoute({
     getParentRoute: () => design,
     path: "components/base-ui",

@@ -21,7 +21,8 @@ import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
 import { AudioAttachment } from "./AudioAttachment";
-import { FileAttachment, isProxySource } from "./FileAttachment";
+import { isProxySource } from "./attachment-source";
+import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
@@ -153,7 +154,16 @@ export const MessageRow = memo(function MessageRow({
       {row.diff.description && (
         <p className="text-body-sm">{row.diff.description}</p>
       )}
-      <pre className={styles.rawDiff}>{row.content || "No diff content"}</pre>
+      {/* biome-ignore lint/a11y/useSemanticElements: The raw scroll region preserves preformatted text and needs keyboard access. */}
+      <pre
+        className={styles.rawDiff}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: The raw scroll owner must support keyboard scrolling.
+        tabIndex={0}
+        role="region"
+        aria-label="Raw diff"
+      >
+        {row.content || "No diff content"}
+      </pre>
       {row.diff.truncated && (
         <p className="text-body-sm">
           Diff truncated. View the full diff at the source repository.
@@ -190,7 +200,7 @@ export const MessageRow = memo(function MessageRow({
       <div className={styles.message}>
         {clickable ? (
           <IconButton
-            size="large"
+            size="default"
             shape="round"
             aria-label={`View ${name} profile`}
             onClick={(event) => {
@@ -419,6 +429,7 @@ export const MessageRow = memo(function MessageRow({
             <Button
               variant="ghost"
               size="sm"
+              style={{ paddingInlineStart: "var(--space-1)" }}
               type="button"
               aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
               onClick={(event) => {

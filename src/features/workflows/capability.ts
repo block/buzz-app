@@ -353,7 +353,8 @@ export function createWorkflows({
             )
               continue;
             results.set(op.eventId, { outcome: "succeeded" });
-            receiptInterest.delete(op.eventId);
+            // Exact readback proves the configuration, not delivery of the
+            // one-time webhook secret. The pending receipt still owns that.
             changed = true;
           }
           if (changed) rebuild();
@@ -434,7 +435,8 @@ export function createWorkflows({
     receipt(event: EventData, message: string | undefined) {
       if (closed || !receiptInterest.delete(event.id)) return;
       if (message === undefined) {
-        results.delete(event.id);
+        if (results.get(event.id)?.outcome !== "succeeded")
+          results.delete(event.id);
         rebuild();
         return;
       }
@@ -479,7 +481,12 @@ export function createWorkflows({
       } catch {
         /* Do not leak receipt text into errors/journal. */
       }
-      results.set(event.id, result);
+      // An unavailable/malformed receipt cannot undo verified exact readback.
+      if (
+        result.outcome === "succeeded" ||
+        results.get(event.id)?.outcome !== "succeeded"
+      )
+        results.set(event.id, result);
       rebuild();
     },
     interrupt() {

@@ -24,7 +24,7 @@ test("Local Settings retain plugin recovery without blocking Profile and Appeara
   await expect(button(page, "Back up & reset settings")).toBeVisible();
   await button(page, "Back up & reset settings").click();
   await expect(
-    page.getByRole("switch", { name: "Enable Channels" }),
+    page.getByRole("switch", { name: "Enable Projects" }),
   ).toBeVisible();
 });
 

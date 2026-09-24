@@ -47,7 +47,8 @@ const FREQUENCY_INTERVALS: Partial<Record<ScheduleFormFrequency, string>> = {
 };
 
 const DEFAULT_TIME = "09:00";
-const DEFAULT_WEEKDAY = "1";
+// Relay cron ordinals: Sunday=1 through Saturday=7.
+const DEFAULT_WEEKDAY = "2";
 const DEFAULT_MONTH_DAY = "1";
 
 type ParsedCommonCron = {
@@ -61,12 +62,12 @@ type ParsedCommonCron = {
 export function scheduleWeekdaysFromCronField(field: string): string[] {
   const weekdays = new Set<number>();
   for (const segment of field.split(",")) {
-    if (/^[0-6]$/.test(segment)) {
+    if (/^[1-7]$/.test(segment)) {
       weekdays.add(Number(segment));
       continue;
     }
 
-    const range = /^([0-6])-([0-6])$/.exec(segment);
+    const range = /^([1-7])-([1-7])$/.exec(segment);
     if (!range || Number(range[1]) > Number(range[2])) return [];
     for (let day = Number(range[1]); day <= Number(range[2]); day += 1) {
       weekdays.add(day);

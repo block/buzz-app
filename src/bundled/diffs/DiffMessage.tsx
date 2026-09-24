@@ -67,9 +67,14 @@ export function DiffMessage({ message }: { message: ChannelMessage }) {
         {meta.description && (
           <p className={styles.description}>{meta.description}</p>
         )}
-        <div className={styles.preview}>
+        <section
+          className={styles.preview}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: The preview scroll owner must support keyboard scrolling.
+          tabIndex={0}
+          aria-label={`Diff preview: ${title}`}
+        >
           <DiffViewer {...viewer} />
-        </div>
+        </section>
         {warning}
       </section>
       <Dialog

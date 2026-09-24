@@ -1,5 +1,6 @@
 /** Host-owned, device-local appearance. Never depends on plugin/relay readiness. */
 export type ColorMode = "light" | "dark";
+export type ColorModePreference = ColorMode | "system";
 export const APPEARANCE_KEY = "buzz-appearance.v1";
 export const FONT_SCALE_KEY = "buzz-font-scale.v1";
 export const MIN_FONT_SCALE = 0.8;
@@ -16,8 +17,13 @@ export function parseFontScale(value: unknown): number {
 }
 export const parseColorMode = (value: unknown): ColorMode =>
   value === "dark" ? "dark" : "light";
+export const parseColorModePreference = (
+  value: unknown,
+): ColorModePreference =>
+  value === "system" ? "system" : parseColorMode(value);
 
 export interface AppearanceSnapshot {
+  readonly preference: ColorModePreference;
   readonly mode: ColorMode;
   readonly fontScale: number;
   readonly fontError: string | null;
@@ -27,7 +33,15 @@ export interface AppearanceSnapshot {
 export function createAppearance(
   host: Window | undefined = typeof window === "undefined" ? undefined : window,
 ) {
+  const systemScheme = host?.matchMedia?.("(prefers-color-scheme: dark)");
+  const resolvedMode = (preference: ColorModePreference): ColorMode =>
+    preference === "system"
+      ? systemScheme?.matches
+        ? "dark"
+        : "light"
+      : preference;
   let state: AppearanceSnapshot = {
+    preference: "light",
     mode: "light",
     error: null,
     fontScale: 1,
@@ -54,9 +68,13 @@ export function createAppearance(
   };
   const restore = () => {
     try {
+      const preference = parseColorModePreference(
+        host?.localStorage.getItem(APPEARANCE_KEY),
+      );
       state = {
         ...state,
-        mode: parseColorMode(host?.localStorage.getItem(APPEARANCE_KEY)),
+        preference,
+        mode: resolvedMode(preference),
         error: null,
       };
     } catch {
@@ -66,6 +84,13 @@ export function createAppearance(
           "Appearance could not be restored. Choose a mode to try saving it again.",
       };
     }
+    notify();
+  };
+  const onSystemSchemeChange = () => {
+    if (disposed || state.preference !== "system") return;
+    const mode = resolvedMode("system");
+    if (mode === state.mode) return;
+    state = { ...state, mode };
     notify();
   };
   const restoreFont = () => {
@@ -104,6 +129,7 @@ export function createAppearance(
   restore();
   restoreFont();
   host?.addEventListener("storage", onStorage);
+  systemScheme?.addEventListener("change", onSystemSchemeChange);
   return {
     snapshot: () => state,
     subscribe(listener: () => void) {
@@ -113,17 +139,23 @@ export function createAppearance(
         listeners.delete(listener);
       };
     },
-    setMode(mode: ColorMode) {
-      if (disposed || (mode !== "light" && mode !== "dark")) return;
+    setMode(preference: ColorModePreference) {
+      if (
+        disposed ||
+        (preference !== "light" &&
+          preference !== "dark" &&
+          preference !== "system")
+      )
+        return;
       let error: string | null = null;
       try {
         if (!host) throw new Error("No browser storage");
-        host.localStorage.setItem(APPEARANCE_KEY, mode);
+        host.localStorage.setItem(APPEARANCE_KEY, preference);
       } catch {
         error =
           "This appearance is active, but could not be saved on this device. Try again.";
       }
-      state = { ...state, mode, error };
+      state = { ...state, preference, mode: resolvedMode(preference), error };
       notify();
     },
     setFontScale(value: number) {
@@ -145,6 +177,7 @@ export function createAppearance(
     dispose() {
       disposed = true;
       host?.removeEventListener("storage", onStorage);
+      systemScheme?.removeEventListener("change", onSystemSchemeChange);
       listeners.clear();
     },
   };

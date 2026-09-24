@@ -160,6 +160,8 @@ for (const target of ["alpha", "profiles"]) {
       await page
         .getByRole("button", { name: "Channel settings", exact: true })
         .click();
+      await page.getByText("Diagnostics", { exact: true }).click();
+      await expect(warning).toHaveCount(1);
     }
     const beforeManual = requests().length;
     await page

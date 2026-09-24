@@ -324,7 +324,7 @@ function WorkflowCard({
             </div>
             <div className="workflow-card-switch">
               <Switch
-                aria-label={enabled ? `Disable ${name}` : `Enable ${name}`}
+                aria-label={`Enabled in configuration: ${name}`}
                 checked={enabled}
                 disabled={toggleDisabled}
                 onCheckedChange={(next) => {
@@ -342,6 +342,9 @@ function WorkflowCard({
             <div className="workflow-card-identity">
               <strong className="text-standard">#{channel.name}</strong>
               <span>{name}</span>
+              <span>
+                {enabled ? "Configured enabled" : "Configured disabled"}
+              </span>
               {readonly && <span>Read-only</span>}
             </div>
             <time
@@ -486,28 +489,35 @@ export function WorkflowLanding({
     operationRefreshKey,
   );
   return (
-    <div className="workflow-card-grid">
-      <Button
-        aria-label="New workflow"
-        data-workflow-create-card=""
-        disabled={!capability.availability.save || channels.length === 0}
-        onClick={onCreate}
-        variant="ghost"
-      >
-        <PlusIcon size={28} weight="bold" aria-hidden="true" />
-      </Button>
-      {channels.map((channel) => (
-        <WorkflowChannelCards
-          capability={capability}
-          channel={channel}
-          key={channel.id}
-          onOpen={onOpen}
-          onRetry={() => setRetryRequest((request) => request + 1)}
-          operations={operations}
-          snapshot={snapshots[channel.id]}
-          viewer={viewer}
-        />
-      ))}
-    </div>
+    <>
+      <p className="text-body-sm text-secondary">
+        These switches change configuration, not confirmed runtime state. Saving
+        a disabled configuration does not confirm that automatic runs have
+        stopped or cancel work already running.
+      </p>
+      <div className="workflow-card-grid">
+        <Button
+          aria-label="New workflow"
+          data-workflow-create-card=""
+          disabled={!capability.availability.save || channels.length === 0}
+          onClick={onCreate}
+          variant="ghost"
+        >
+          <PlusIcon size={28} weight="bold" aria-hidden="true" />
+        </Button>
+        {channels.map((channel) => (
+          <WorkflowChannelCards
+            capability={capability}
+            channel={channel}
+            key={channel.id}
+            onOpen={onOpen}
+            onRetry={() => setRetryRequest((request) => request + 1)}
+            operations={operations}
+            snapshot={snapshots[channel.id]}
+            viewer={viewer}
+          />
+        ))}
+      </div>
+    </>
   );
 }

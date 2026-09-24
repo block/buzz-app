@@ -19,10 +19,10 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   const frame = page.getByRole("region", { name: "Settings", exact: true });
   const content = page.getByRole("region", { name: "Plugins", exact: true });
   const row = content.getByRole("article").filter({
-    has: page.getByRole("heading", { name: "Channels", exact: true }),
+    has: page.getByRole("heading", { name: "GitHub", exact: true }),
   });
   const toggle = row.getByRole("switch", {
-    name: "Enable Channels",
+    name: "Enable GitHub",
     exact: true,
   });
   await expect(toggle).toHaveAttribute("aria-checked", "true");
@@ -201,7 +201,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(profileContent).toHaveCount(0);
     await expect(pluginContent).toBeVisible();
     await expect(
-      page.getByRole("switch", { name: "Enable Channels" }),
+      page.getByRole("switch", { name: "Enable Projects" }),
     ).toBeVisible();
     const settingsRegion = page.getByRole("region", {
       name: "Settings",
@@ -270,6 +270,8 @@ test("Settings edits the local profile inline without publishing to a community"
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("menu", { name: "Your account" })).toBeHidden();
+  await expect(page.getByRole("main")).toBeFocused();
   const name = page.getByRole("textbox", { name: "Display name", exact: true });
   const picture = page.getByRole("textbox", {
     name: "Picture URL (optional)",
@@ -280,6 +282,7 @@ test("Settings edits the local profile inline without publishing to a community"
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(button(page, "Edit profile")).toHaveCount(0);
   await name.fill("Do not save");
+  await expect(name).toHaveValue("Do not save");
   await button(page, "Plugins").click();
   await expect(name).toBeHidden();
   await button(page, "Profile").click();
@@ -289,10 +292,12 @@ test("Settings edits the local profile inline without publishing to a community"
   await name.fill("Discard when leaving Settings");
   await page
     .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Home", exact: true })
+    .getByRole("button", { name: "Projects", exact: true })
     .click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("menu", { name: "Your account" })).toBeHidden();
+  await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Browser Fixture");
   await name.fill("   ");
   await expect(save).toBeDisabled();
@@ -320,6 +325,8 @@ test("Settings edits the local profile inline without publishing to a community"
   await page.reload();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("menu", { name: "Your account" })).toBeHidden();
+  await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Updated local profile");
   expect(writes).toEqual([]);
 });

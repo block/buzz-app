@@ -82,7 +82,7 @@ test("whole-expression validation requires exactly five fields", () => {
   assert.match(cronExpressionError("0 0 9 * * 1-5"), /Found 6 fields\./);
   assert.equal(
     cronExpressionError("0 9 * * 8"),
-    "Weekday must be between 0 and 7.",
+    "Weekday must be between 1 and 7.",
   );
 });
 
@@ -97,4 +97,14 @@ test("splits and normalizes expressions without inventing fields", () => {
   assert.deepEqual(cronFieldsFromExpression(""), ["", "", "", "", ""]);
   assert.deepEqual(cronFieldsFromExpression("0 9"), ["0", "9", "", "", ""]);
   assert.equal(normalizeCronExpression("  0   9 *  * 1-5 "), "0 9 * * 1-5");
+});
+
+test("matches the relay weekday bounds, including ranges and lists", () => {
+  for (const weekday of ["0", "0-6", "1,0", "8"])
+    assert.equal(
+      cronExpressionError(`0 9 * * ${weekday}`),
+      "Weekday must be between 1 and 7.",
+    );
+  for (const weekday of ["1", "2", "7", "1-7", "SUN", "MON", "SAT"])
+    assert.equal(cronExpressionError(`0 9 * * ${weekday}`), null);
 });

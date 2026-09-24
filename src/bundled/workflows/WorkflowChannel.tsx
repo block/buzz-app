@@ -14,7 +14,6 @@ import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowEditor } from "./WorkflowEditor";
 import { WorkflowOperations } from "./WorkflowOperations";
 import { WorkflowRuns } from "./WorkflowRuns";
-import { WorkflowWebhookSecretDialog } from "./WorkflowWebhookSecretDialog";
 import { exactSaveReadback } from "./editor-model";
 import { DEFAULT_FORM_STATE, formStateToYaml } from "./workflowFormTypes";
 import { readWorkflowDocumentFields } from "./workflowYamlDocument";
@@ -78,10 +77,6 @@ export function WorkflowChannel({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [readRuns, setReadRuns] = useState(false);
-  const [secretDialog, setSecretDialog] = useState<{
-    eventId: string;
-    workflowId: string;
-  } | null>(null);
   const operation = draft?.operationId
     ? operations.find((item) => item.eventId === draft.operationId)
     : undefined;
@@ -92,19 +87,7 @@ export function WorkflowChannel({
     !!draft?.operationId && (!operation || operation.outcome === "pending");
   const readonly = !!draft?.original && draft.original.owner !== viewer;
   const dirty = !!draft && draft.yaml !== draft.initial;
-  const atRisk = dirty || !!draft?.operationId || secretDialog !== null;
-  // A succeeded save holding a one-time secret opens the dialog, which takes
-  // the secret itself on mount; the flag clears once taken.
-  const held = ownOperations.find(
-    (item) =>
-      item.action === "save" && item.outcome === "succeeded" && item.secretHeld,
-  );
-  const heldEventId = held?.eventId;
-  const heldWorkflowId = held?.workflow.id;
-  useEffect(() => {
-    if (heldEventId && heldWorkflowId)
-      setSecretDialog({ eventId: heldEventId, workflowId: heldWorkflowId });
-  }, [heldEventId, heldWorkflowId]);
+  const atRisk = dirty || !!draft?.operationId;
   const unresolvedWrite = ownOperations.some(
     (item) =>
       (item.outcome === "pending" || item.outcome === "unknown") &&
@@ -160,7 +143,6 @@ export function WorkflowChannel({
       setConfirmDelete(false);
       setReadRuns(false);
       setError(null);
-      setSecretDialog(null);
     }
   }, [snapshot?.status]);
   const dismiss = async (eventId: string) => {
@@ -279,33 +261,31 @@ export function WorkflowChannel({
   return (
     <section aria-label={`Workflows in ${channelName}`}>
       {!detailOnly && (
-        <>
-          <div className="workflow-toolbar">
-            <h2 className="text-heading">Saved configurations</h2>
-            <Button
-              disabled={snapshot.status === "loading"}
-              onClick={() => void refresh()}
-            >
-              Refresh configurations
-            </Button>
-            <Button
-              disabled={
-                !capability.availability.save ||
-                snapshot.status === "unavailable" ||
-                snapshot.status === "idle"
-              }
-              onClick={() => select("new")}
-            >
-              New workflow
-            </Button>
-          </div>
-          <p className="text-body-sm text-secondary">
-            Configured activation may differ from the existing backend’s runtime
-            state. Saving a disabled configuration does not confirm that
-            automatic runs have stopped or cancel work already running.
-          </p>
-        </>
+        <div className="workflow-toolbar">
+          <h2 className="text-heading">Saved configurations</h2>
+          <Button
+            disabled={snapshot.status === "loading"}
+            onClick={() => void refresh()}
+          >
+            Refresh configurations
+          </Button>
+          <Button
+            disabled={
+              !capability.availability.save ||
+              snapshot.status === "unavailable" ||
+              snapshot.status === "idle"
+            }
+            onClick={() => select("new")}
+          >
+            New workflow
+          </Button>
+        </div>
       )}
+      <p className="text-body-sm text-secondary">
+        Configured activation may differ from the existing backend’s runtime
+        state. Saving a disabled configuration does not confirm that automatic
+        runs have stopped or cancel work already running.
+      </p>
       {snapshot.status === "loading" && (
         <p role="status">Reading configurations…</p>
       )}
@@ -494,17 +474,6 @@ export function WorkflowChannel({
             action="Leave draft"
             onConfirm={() => open(pendingSelection)}
             onCancel={() => setPendingSelection(null)}
-          />
-        )}
-      {secretDialog &&
-        snapshot.status !== "idle" &&
-        snapshot.status !== "unavailable" && (
-          <WorkflowWebhookSecretDialog
-            key={secretDialog.eventId}
-            workflowId={secretDialog.workflowId}
-            hookUrl={capability.webhookUrl(secretDialog.workflowId)}
-            take={() => capability.takeWebhookSecret(secretDialog.eventId)}
-            onContinue={() => setSecretDialog(null)}
           />
         )}
     </section>

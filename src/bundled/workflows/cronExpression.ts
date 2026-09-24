@@ -26,7 +26,7 @@ export const CRON_FIELD_DEFINITIONS = [
     aliases: ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"],
     label: "Weekday",
     max: 7,
-    min: 0,
+    min: 1,
   },
 ] as const;
 

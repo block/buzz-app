@@ -123,9 +123,9 @@ test("malformed navigation addresses fail explicitly on cold and warm entry", as
     exact: true,
   });
   await expect(failed).toBeVisible({ timeout: 1500 });
-  await button(page, "Home").first().click();
-  await expect(failed).toBeHidden();
   await button(page, "Projects").first().click();
+  await expect(failed).toBeHidden();
+  await button(page, "Agents").first().click();
   await page.evaluate(() => {
     location.hash = "#buzz=%7B";
   });
@@ -134,7 +134,7 @@ test("malformed navigation addresses fail explicitly on cold and warm entry", as
   await expect(failed).toBeVisible();
   await button(page, "Go back").click();
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();
   await button(page, "Go forward").click();
   await expect(failed).toBeVisible();

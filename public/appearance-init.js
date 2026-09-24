@@ -3,7 +3,13 @@
 (() => {
   let mode = "light";
   try {
-    if (localStorage.getItem("buzz-appearance.v1") === "dark") mode = "dark";
+    const preference = localStorage.getItem("buzz-appearance.v1");
+    if (preference === "dark") mode = "dark";
+    if (
+      preference === "system" &&
+      matchMedia("(prefers-color-scheme: dark)").matches
+    )
+      mode = "dark";
   } catch {
     // Storage may be denied; the built-in light palette still opens safely.
   }

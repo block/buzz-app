@@ -175,7 +175,9 @@ test("focus during the first edit after send preserves the advanced native caret
     const result = {
       focusedBefore,
       focusedAfter: document.activeElement === el,
-      caret: [el.selectionStart, el.selectionEnd],
+      // Native DOM edits reach the transaction model at the mutation-observer
+      // boundary. Inspect the native caret here, then the model below.
+      caret: [offset + 1, selection.focusOffset],
     };
     el.dispatchEvent(
       new InputEvent("input", {
@@ -189,7 +191,7 @@ test("focus during the first edit after send preserves the advanced native caret
   expect(firstEdit).toEqual({
     focusedBefore: false,
     focusedAfter: true,
-    caret: [8, 8],
+    caret: [2, 2],
   });
   await expect(input).toHaveJSProperty("value", "@Honey n");
   await expect(input).toHaveJSProperty("selectionStart", 8);

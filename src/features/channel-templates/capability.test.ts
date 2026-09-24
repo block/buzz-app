@@ -31,6 +31,8 @@ function fixture() {
     snapshot: () => pending,
     subscribe: () => () => {},
     observeSend: () => () => {},
+    ready: async () => {},
+    acknowledge: async () => {},
     supports: () => true,
     send: vi.fn((value) => {
       const event = signed(viewer, { ...value, created_at: time++ });

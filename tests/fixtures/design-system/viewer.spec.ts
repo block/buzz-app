@@ -161,7 +161,7 @@ test("foundation proposals are independent, local, and usable in both modes", as
     if (await theme.count()) await theme.click();
     await expect(proposal.locator("[data-reading]")).toHaveCSS(
       "font-size",
-      "16px",
+      "14px",
     );
     await expect(proposal.locator(".alignment-project")).toHaveCSS(
       "row-gap",
@@ -179,7 +179,7 @@ test("foundation proposals are independent, local, and usable in both modes", as
     );
     await expect(proposal.locator("[data-reading]")).toHaveCSS(
       "font-size",
-      "16px",
+      "14px",
     );
     await expect(proposal.locator(".alignment-project")).toHaveCSS(
       "row-gap",
@@ -199,7 +199,7 @@ test("foundation proposals are independent, local, and usable in both modes", as
     );
     await expect(current.locator("[data-reading]")).toHaveCSS(
       "font-size",
-      "16px",
+      "14px",
     );
     await expect(current.locator(".alignment-project")).toHaveCSS(
       "row-gap",
@@ -316,8 +316,7 @@ test("switch keyboard activation matches pointer state and focus in both modes",
       await expect(switches.nth(1)).toBeFocused();
       await page.keyboard.press(`Shift+${tab}`);
       await expect(control).toBeFocused();
-      await expect(control).toHaveCSS("outline-style", "solid");
-      await expect(control).toHaveCSS("outline-width", "2px");
+      await expect(control).toHaveCSS("outline-style", "none");
       await page.keyboard.press("Space");
       await expect(control).not.toBeChecked();
       await page.keyboard.press("Enter");
@@ -354,9 +353,10 @@ test("viewer does not replace host styles or appearance ownership", async ({
   page,
   context,
 }) => {
-  await page.goto("http://localhost:1444");
+  const settings = `/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "settings" }))}`;
+  await page.goto(`http://localhost:1444${settings}`);
   await expect(
-    page.getByRole("heading", { name: "Make yourself at home." }),
+    page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   const readHost = () =>
     page.evaluate(() => ({
@@ -373,9 +373,9 @@ test("viewer does not replace host styles or appearance ownership", async ({
     }));
   const before = await readHost();
   expect(before.systemToken.trim()).toBe("#8e4ec6");
-  await page.goto("http://localhost:1445");
+  await page.goto(`http://localhost:1445${settings}`);
   await expect(
-    page.getByRole("heading", { name: "Make yourself at home." }),
+    page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   const sameOriginBefore = await readHost();
   const other = await context.newPage();
@@ -648,6 +648,9 @@ test("invalid input and textarea boundaries remain visible in both themes", asyn
     await expect(controls).toHaveCount(2);
     for (const control of await controls.all()) {
       await expect(control).toHaveAttribute("aria-invalid", "true");
+      await expect(control).toHaveCSS("border-top-width", "1px");
+      await expect(control).toHaveCSS("border-top-style", "solid");
+      await expect(control).toHaveCSS("box-shadow", "none");
       const ratio = await control.evaluate((element) => {
         const style = getComputedStyle(element);
         const luminance = (color: string) => {
@@ -843,7 +846,7 @@ test("button loading keeps focus and wrapping fits narrow enlarged layouts", asy
   await page.keyboard.press("Enter");
   await expect(save).toHaveAttribute("aria-busy", "true");
   await expect(save).toBeFocused();
-  await expect(save).toHaveCSS("outline-style", "solid");
+  await expect(save).toHaveCSS("outline-style", "none");
   await page.keyboard.press("Enter");
   await expect(save).toHaveAttribute("aria-busy", "true");
   await page
@@ -992,7 +995,7 @@ test("dialog motion retains exit presence and respects immediate interaction pat
 });
 
 // Real engines own :focus-visible, input modality and portal focus transfer.
-test("menu items retain keyboard-only focus rings through choices and submenus in both modes", async ({
+test("menu items retain keyboard navigation with hidden focus outlines in both modes", async ({
   page,
   browserName,
 }) => {
@@ -1034,17 +1037,15 @@ test("menu items retain keyboard-only focus rings through choices and submenus i
     await page.keyboard.press("ArrowDown");
     for (const item of [action, checkbox, submenu]) {
       await expect(item).toBeFocused();
-      await expect(item).toHaveCSS("outline-style", "solid");
-      await expect(item).toHaveCSS("outline-width", "2px");
+      await expect(item).toHaveCSS("outline-style", "none");
       if (item !== submenu) await page.keyboard.press("ArrowDown");
     }
     await page.keyboard.press("ArrowRight");
     await expect(recent).toBeFocused();
-    await expect(recent).toHaveCSS("outline-style", "solid");
-    await expect(recent).toHaveCSS("outline-width", "2px");
+    await expect(recent).toHaveCSS("outline-style", "none");
     await page.keyboard.press("ArrowDown");
     await expect(alpha).toBeFocused();
-    await expect(alpha).toHaveCSS("outline-style", "solid");
+    await expect(alpha).toHaveCSS("outline-style", "none");
     await page.keyboard.press("Escape");
     await expect(submenu).toBeFocused();
     await page.keyboard.press("Escape");
@@ -1158,6 +1159,109 @@ test("shared menus stay reachable near viewport edges and above a dialog", async
   await expect(page.getByRole("menu")).toHaveCount(0);
   await expect(dialog).toBeVisible();
   await expect(trigger).toBeFocused();
+});
+
+// Real iframe sizing, theme propagation, media decoding and built asset paths
+// require a browser; the specimen interactions only mutate local sample state.
+test("built Messages gallery renders isolated product states and follows viewer theme and width", async ({
+  page,
+}) => {
+  const failures: string[] = [];
+  const sockets: string[] = [];
+  page.on("pageerror", (error) => failures.push(error.message));
+  page.on("response", (response) => {
+    if (response.status() >= 400)
+      failures.push(`${response.status()} ${response.url()}`);
+  });
+  page.on("websocket", (socket) => sockets.push(socket.url()));
+  await page.goto(`${viewer}#/design/messages`);
+  const gallery = page.frameLocator('iframe[title="Message types and states"]');
+  await expect(gallery.locator(".message-gallery-example")).toHaveCount(33);
+  await expect(
+    gallery.getByRole("heading", { name: "Member removed", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() => page.locator("iframe").evaluate((el) => el.clientHeight))
+    .toBeLessThanOrEqual(900);
+  await gallery
+    .getByRole("button", { name: "Delivery states", exact: true })
+    .click();
+  const failed = gallery.getByRole("region", { name: "Failed", exact: true });
+  await expect(failed.getByRole("status")).toHaveText(
+    "Couldn’t send this message.",
+  );
+  await failed.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(failed.getByRole("status")).toHaveCount(0);
+  await gallery.getByRole("button", { name: "Reset examples" }).click();
+  await expect(failed.getByRole("status")).toHaveText(
+    "Couldn’t send this message.",
+  );
+  await gallery
+    .getByRole("button", { name: "Conversation context", exact: true })
+    .click();
+  await gallery.getByRole("button", { name: "View thread: 4 replies" }).click();
+  await expect(
+    gallery.getByRole("region", { name: "Sample thread replies" }),
+  ).toBeVisible();
+  await gallery.getByRole("button", { name: "Close replies" }).click();
+  await expect(
+    gallery.getByRole("region", { name: "Sample thread replies" }),
+  ).toHaveCount(0);
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    await expect(gallery.locator("html")).toHaveAttribute(
+      "data-color-mode",
+      mode,
+    );
+    await gallery
+      .getByRole("button", { name: "Attachments", exact: true })
+      .click();
+    const video = gallery
+      .getByRole("region", { name: "Video attachment", exact: true })
+      .locator("video");
+    await expect
+      .poll(() => video.evaluate((el) => (el as HTMLVideoElement).readyState))
+      .toBeGreaterThanOrEqual(2);
+    for (const width of [390, 800, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect
+        .poll(() =>
+          gallery
+            .locator("body")
+            .evaluate((el) => el.scrollWidth <= window.innerWidth),
+        )
+        .toBe(true);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        )
+        .toBe(true);
+    }
+  }
+  await gallery
+    .getByRole("button", { name: "Content and identity", exact: true })
+    .click();
+  await gallery.getByRole("button", { name: "Narrow preview" }).click();
+  await expect
+    .poll(() =>
+      gallery
+        .locator(".message-gallery-examples")
+        .evaluate((el) => el.clientWidth),
+    )
+    .toBeLessThanOrEqual(390);
+  await expect(
+    gallery.getByRole("button", { name: "View Sam Rivera profile" }),
+  ).toBeVisible();
+  await expect(
+    gallery.getByRole("img", { name: ":landscape:", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(gallery.locator(".message-gallery-example")).toHaveCount(33);
+  expect(failures).toEqual([]);
+  expect(sockets).toEqual([]);
 });
 
 // Real layout/focus coverage: a DOM emulator cannot prove portal stacking or scroll reachability.
@@ -1285,4 +1389,154 @@ test("toast recovery stays reachable across themes, sizes, keyboard scrolling an
     .getByRole("link", { name: "Button", exact: true })
     .click();
   await expect(region).toHaveCount(0); // Leaving the owner clears the stack.
+});
+
+// Cross-document fullscreen placement and native focus restoration require a browser.
+test("Messages gallery fullscreen stays reachable and returns focus to its trigger", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/messages`);
+  const gallery = page.frameLocator('iframe[title="Message types and states"]');
+  for (const width of [1280, 800, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const category of ["All messages", "Attachments"]) {
+      await gallery
+        .getByRole("button", { name: category, exact: true })
+        .click();
+      const trigger = gallery
+        .getByRole("button", { name: "Open video fullscreen", exact: true })
+        .first();
+      await trigger.click();
+      const dialog = gallery.getByRole("dialog", {
+        name: "Video attachment",
+        exact: true,
+      });
+      const close = dialog.getByRole("button", {
+        name: "Close fullscreen viewer",
+        exact: true,
+      });
+      await expect(dialog).toBeInViewport({ ratio: 1 });
+      await expect(close).toBeInViewport({ ratio: 1 });
+      await expect(close).toBeFocused();
+      await expect(dialog.locator("video")).toBeInViewport({ ratio: 1 });
+      await expect
+        .poll(() =>
+          dialog
+            .locator("video")
+            .evaluate(
+              (video) =>
+                video instanceof HTMLVideoElement &&
+                video.readyState >= 2 &&
+                video.videoWidth > 0 &&
+                video.currentTime > 0,
+            ),
+        )
+        .toBe(true);
+      await close.click();
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+      await trigger.press("Enter");
+      await expect(dialog).toBeInViewport({ ratio: 1 });
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    }
+  }
+});
+
+// Real engines own transition presence, filtering, portal dismissal, and focus.
+test("form choice popups settle, retain exit presence, and respect immediate motion", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/forms`);
+  // Select retains a hidden portal to measure labels; Combobox unmounts it.
+  // Both must remove the active surface after its exit completes.
+  const popup = page.locator(
+    ".buzz-select-positioner:not([hidden]) .buzz-select-popup",
+  );
+  await page.evaluate(() => {
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        if (
+          !(event.target instanceof HTMLElement) ||
+          !event.target.matches(".buzz-select-popup")
+        )
+          return;
+        for (const animation of event.target.getAnimations()) animation.pause();
+      },
+      true,
+    );
+  });
+  const finish = () =>
+    page.evaluate(() => {
+      for (const animation of document.getAnimations()) animation.finish();
+    });
+  const paused = () =>
+    expect
+      .poll(() =>
+        popup.evaluate((el) =>
+          el
+            .getAnimations()
+            .some((animation) => animation.playState === "paused"),
+        ),
+      )
+      .toBe(true);
+  try {
+    for (const name of ["Destination", "Searchable destination"]) {
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      const field = page.getByRole("combobox", { name, exact: true }).first();
+      await field.click();
+      await paused();
+      await expect(popup).toHaveCSS(
+        "transition-duration",
+        "0.15s, 0.15s, 0.15s",
+      );
+      const frames = await popup.evaluate((el) =>
+        el
+          .getAnimations()
+          .flatMap((animation) =>
+            (animation.effect as KeyframeEffect).getKeyframes(),
+          ),
+      );
+      expect(frames.some((frame) => frame.filter === "blur(4px)")).toBe(true);
+      expect(
+        frames.some(
+          (frame) =>
+            typeof frame.transform === "string" &&
+            /translateY\(-?4px\)/.test(frame.transform),
+        ),
+      ).toBe(true);
+      await finish();
+      await expect(popup).toHaveCSS("filter", "blur(0px)");
+      await expect(popup).toHaveCSS("opacity", "1");
+      await page.getByRole("option", { name: /^Product team/ }).click();
+      await expect(popup).toHaveAttribute("data-ending-style", "");
+      await paused();
+      await expect(popup).toHaveCSS("transition-duration", "0.12s");
+      await finish();
+      await expect(popup).toHaveCount(0);
+      await expect(field).toBeFocused();
+
+      await page.keyboard.press("Tab");
+      await field.focus();
+      await field.press("ArrowDown");
+      await expect(popup).toBeVisible();
+      await expect(popup).toHaveCSS("transition-duration", "0s");
+      await expect(popup).toHaveCSS("filter", "none");
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await field.click();
+      await expect(popup).toBeVisible();
+      await expect(popup).toHaveCSS("transition-duration", "0s");
+      await expect(popup).toHaveCSS("filter", "none");
+      await expect(popup).toHaveCSS("transform", "none");
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+    }
+  } finally {
+    await finish();
+  }
 });

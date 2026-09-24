@@ -178,6 +178,8 @@ fn existing_agent_can_discover_before_completing_advanced_selection() {
     });
     let id = seed(dir.path());
     let mut req = request(dir.path(), &id, "refresh");
+    // Catalog lookup uses the provider connection, not the agent's ACP argv.
+    req["edit"]["harness"]["args"] = json!(["--legacy-argument"]);
     req["edit"]["harness"]["model"] = json!("");
     req["edit"]["harness"]["configuration"] =
         json!({"mode":"advanced","effort":{"kind":"unsupported"}});

@@ -38,6 +38,7 @@ async fn probe(context: &Context, args: &[&str]) -> Result<(bool, Vec<u8>), Mode
     let mut command = context.cli_command()?;
     command
         .args(args)
+        .env_remove("SSH_AUTH_SOCK")
         .stdin(Stdio::null())
         .stdout(Stdio::from(OwnedFd::from(writer)))
         .stderr(Stdio::from(OwnedFd::from(stderr)));

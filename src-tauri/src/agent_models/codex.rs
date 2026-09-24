@@ -1,5 +1,7 @@
 //! Codex's ACP catalog is authoritative for advertised choices, not entitlement.
 #[cfg(unix)]
+mod diagnostics;
+#[cfg(unix)]
 mod readiness;
 
 use super::contracts::EffortOption;
@@ -142,6 +144,7 @@ mod unix {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     struct Session {
         process: ContainedProcess,
+        diagnostics: diagnostics::Diagnostics,
         stream: BufReader<tokio::net::UnixStream>,
         next: u64,
         remaining: usize,
@@ -158,7 +161,9 @@ mod unix {
                 .args(&context.args)
                 .stdin(Stdio::from(OwnedFd::from(input)))
                 .stdout(Stdio::from(OwnedFd::from(child)))
-                .stderr(Stdio::null());
+                // Discovery never performs Git operations or needs SSH credentials.
+                .env_remove("SSH_AUTH_SOCK");
+            let diagnostics = diagnostics::Diagnostics::capture(&mut command)?;
             parent.set_nonblocking(true).map_err(|_| {
                 ModelError::new("unavailable", "Could not configure Codex transport.")
             })?;
@@ -168,6 +173,7 @@ mod unix {
             let process = ContainedProcess::spawn(&mut command)?;
             Ok(Self {
                 process,
+                diagnostics,
                 stream: BufReader::new(stream),
                 next: 0,
                 remaining: 4 * 1024 * 1024,
@@ -261,9 +267,17 @@ mod unix {
         context: Context,
         selected: Option<String>,
     ) -> Result<Catalog, ModelError> {
+        execute_with_budget(context, selected, Duration::from_secs(60)).await
+    }
+    pub(super) async fn execute_with_budget(
+        context: Context,
+        selected: Option<String>,
+        budget: Duration,
+    ) -> Result<Catalog, ModelError> {
         readiness::login(&context).await?;
         let mut session = Session::spawn(&context)?;
-        let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let deadline = tokio::time::Instant::now() + budget;
+        let result = async {
             let initial = tokio::time::timeout(Duration::from_secs(30), async {
             let initialized = session
                 .rpc(
@@ -303,12 +317,22 @@ mod unix {
             if selections.len() > 512 {
                 return Err(ModelError::new("unavailable", "Codex advertised too many models to inspect. Update the adapter and retry."));
             }
+            // Unvisited selections stay unknown if the session or catalog budget expires.
+            for model in &mut available {
+                if selections.contains(&model.id) {
+                    model.error = Some("Codex has not confirmed this model’s configuration. Refresh to retry.".into());
+                }
+            }
             let mut base_options = std::collections::HashMap::<String, Value>::new();
             for selected in selections {
                 let session_id = initial["sessionId"].as_str().ok_or_else(|| {
                     ModelError::new("unavailable", "Codex did not return a session ID.")
                 })?;
-                let selection = tokio::time::timeout(Duration::from_secs(15), async {
+                let selection_deadline = deadline.min(tokio::time::Instant::now() + Duration::from_secs(15));
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+                let selection = tokio::time::timeout_at(selection_deadline, async {
                     // Buzz's legacy catalog includes model[effort] IDs. Discover
                     // the base model's options before accepting the encoded effort.
                     let legacy = model_option(&initial, &selected).is_none();
@@ -349,12 +373,17 @@ mod unix {
                         session.rpc("session/set_model", json!({"sessionId":session_id,"modelId":selected}), "model").await?;
                     }
                     apply_effort(&mut available, &updated, &selected)
-                }).await.map_err(|_| ModelError::new("model", "Codex model selection timed out.")).and_then(|result| result);
+                }).await;
+                // A cancelled RPC may have consumed a partial response. Never reuse
+                // that stream: return the catalog collected so far and stop the child.
+                let Ok(selection) = selection else { break };
                 if selection.is_err() {
                     if let Some(model) = available.iter_mut().find(|m| m.id == selected) {
                         model.effort = EffortOptions::Unknown;
                         model.error = Some("Codex could not confirm this model's configuration. Choose another listed model or refresh to retry.".into());
                     }
+                } else if let Some(model) = available.iter_mut().find(|m| m.id == selected) {
+                    model.error = None;
                 }
 
             }
@@ -370,11 +399,10 @@ mod unix {
                 model_overridden: false,
                 disconnected: false,
             })
-        })
-        .await
-        .map_err(|_| ModelError::new("timeout", "Codex discovery timed out. Refresh to retry."));
+        }.await;
         session.process.stop()?;
-        result?
+        let diagnostic = session.diagnostics.finish().await;
+        result.map_err(|error: ModelError| error.with_diagnostic(diagnostic))
     }
 }
 
@@ -382,6 +410,7 @@ mod unix {
 mod tests {
     use super::*;
     use buzz_agent_controller::{AiConfiguration, EffortSelection, HarnessEdit};
+    use std::future::Future;
     use std::{collections::BTreeMap, os::unix::fs::PermissionsExt};
 
     fn fixture(login: bool) -> (tempfile::TempDir, Context) {
@@ -405,6 +434,7 @@ if sys.argv[1:2] == ['cli']:
     os.execv(cli, [cli] + sys.argv[2:])
 assert os.path.realpath(os.environ['CODEX_HOME']) == os.getcwd() + '/config'
 assert 'BUZZ_PRIVATE_KEY' not in os.environ
+assert 'SSH_AUTH_SOCK' not in os.environ
 for line in sys.stdin:
     request = json.loads(line)
     method = request['method']
@@ -441,6 +471,7 @@ for line in sys.stdin:
             }),
         };
         let environment = BTreeMap::from([
+            ("SSH_AUTH_SOCK".into(), "fixture-socket".into()),
             ("CODEX_PATH".into(), cli.to_string_lossy().into_owned()),
             (
                 "CODEX_HOME".into(),
@@ -724,20 +755,87 @@ for line in sys.stdin:
             .is_err());
     }
     #[tokio::test]
-    async fn hung_selection_retains_catalog_after_its_bounded_timeout() {
+    async fn hung_selection_stops_session_and_retains_completed_and_unvisited_models() {
         let (dir, context) = fixture(true);
-        std::fs::write(dir.path().join("hold-selection"), "").unwrap();
-        let catalog = execute(context, "second".into()).await.unwrap();
-        assert_eq!(catalog.models.len(), 2);
-        assert!(catalog.models[1].error.is_some());
+        let script = std::fs::read_to_string(&context.adapter)
+            .unwrap()
+            .replace(
+                "{'value':'second','name':'Second'}]",
+                "{'value':'second','name':'Second'},{'value':'third','name':'Third'}]",
+            )
+            .replace(
+                "if os.path.exists('hold-selection'): time.sleep(120)",
+                "if request['params']['value'] == 'second': time.sleep(120)",
+            );
+        std::fs::write(&context.adapter, script).unwrap();
+        let catalog = discover(context, None).await.unwrap();
+        assert_eq!(catalog.models.len(), 3);
         assert!(catalog
             .validate_selection(
-                "second",
+                "first",
                 &EffortSelection::Value {
-                    value: "high".into()
+                    value: "low".into()
                 }
             )
-            .is_err());
+            .is_ok());
+        for model in &catalog.models[1..] {
+            assert!(model.error.is_some());
+            assert!(matches!(model.effort, EffortOptions::Unknown));
+        }
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| *line == "session/set_config_option")
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn exhausted_catalog_budget_returns_advertised_choices_without_probing() {
+        let (dir, context) = fixture(true);
+        let catalog = unix::execute_with_budget(context, None, Duration::ZERO)
+            .await
+            .unwrap();
+        assert_eq!(catalog.models.len(), 2);
+        assert!(catalog.models.iter().all(|model| model.error.is_some()));
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert!(!calls.contains("session/set_config_option"));
+    }
+    #[tokio::test]
+    async fn discovery_stderr_is_actionable_but_never_exposes_raw_output() {
+        for (output, expected) in [
+            ("Error loading configuration: secret-fixture", "CODEX_HOME"),
+            ("Cannot find module secret-fixture", "installation"),
+            ("unrecognized secret-fixture", "exited before responding"),
+        ] {
+            let (_dir, context) = fixture(true);
+            std::fs::write(
+                &context.adapter,
+                format!("#!/bin/sh\necho '{output}' >&2\nexit 1\n"),
+            )
+            .unwrap();
+            let error = execute(context, "second".into()).await.err().unwrap();
+            assert!(error.to_string().contains(expected), "{error}");
+            assert!(!error.to_string().contains("secret-fixture"));
+        }
+    }
+    #[tokio::test]
+    async fn excessive_discovery_stderr_is_bounded_without_blocking_transport() {
+        let (_dir, context) = fixture(true);
+        std::fs::write(
+            &context.adapter,
+            "#!/usr/bin/python3\nimport sys\nsys.stderr.write('x' * (5 * 1024 * 1024))\n",
+        )
+        .unwrap();
+        let error = execute(context, "second".into()).await.err().unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("diagnostics exceeded their size limit"),
+            "{error}"
+        );
     }
     #[tokio::test]
     async fn oversized_transport_response_is_bounded() {
@@ -768,6 +866,40 @@ for line in sys.stdin:
         edit["harness"]["configuration"]["effort"]["value"] = json!("high");
         assert!(prepare(edit).is_ok());
         assert!(has_prepared_identity(&host));
+    }
+    #[tokio::test]
+    async fn creation_waits_for_catalog_ticket_then_revalidates() {
+        let (dir, context) = fixture(true);
+        let host = super::super::ModelHost::new(Ok(dir.path().join("store")));
+        let ticket = host.begin().unwrap();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let owner = host.clone();
+        let browsing = tokio::spawn(async move {
+            owner
+                .run(ticket, async move {
+                    started.send(()).unwrap();
+                    gate.await.unwrap();
+                    Err(ModelError::new("unavailable", "Fixture catalog finished"))
+                })
+                .await
+        });
+        ready.await.unwrap();
+        let edit = serde_json::from_value(json!({"name":"Codex fixture", "workspace":dir.path(), "systemPrompt":"", "harness":{"command":context.adapter,"args":[],"provider":"","model":"second","configuration":{"mode":"advanced","effort":{"kind":"value","value":"high"}}}, "environment":{"CODEX_HOME":dir.path().join("config")}})).unwrap();
+        let mut validation = Box::pin(host.validate_creation(&edit));
+        std::future::poll_fn(|cx| {
+            assert!(validation.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        assert!(!dir.path().join("calls").exists());
+        release.send(()).unwrap();
+        assert!(browsing.await.unwrap().is_err());
+        validation.await.unwrap();
+        assert!(std::fs::read_to_string(dir.path().join("calls"))
+            .unwrap()
+            .contains("session/set_config_option"));
+        assert!(host.begin().is_ok());
     }
     #[tokio::test]
     async fn cancelling_probe_reaps_adapter() {

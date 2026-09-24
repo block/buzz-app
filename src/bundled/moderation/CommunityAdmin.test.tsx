@@ -429,51 +429,61 @@ it("locks an open invite dialog after an accepted add whose refresh fails", asyn
   expect(calls.filter((c) => c.route === "invite")).toHaveLength(1);
 });
 
-it("qualifies namesakes through roster actions, confirmation and the write", async () => {
-  const user = userEvent.setup();
-  const bobA = "a".repeat(64);
-  const bobB = "b".repeat(64);
-  const calls = broker({
-    member: () => Response.json({ accepted: true, message: "" }),
-  });
-  const { relay: data } = relay(
-    owner,
-    [
-      snapshot([
-        ["member", owner, "owner"],
-        ["member", bobA, "member"],
-        ["member", bobB, "member"],
+it.each([
+  ["equal", "Bob"],
+  ["visually identical", "Bob\u200B"],
+])(
+  "qualifies %s namesakes through roster actions, confirmation and the write",
+  async (_, nameB) => {
+    const user = userEvent.setup();
+    const bobA = "a".repeat(64);
+    const bobB = "b".repeat(64);
+    const calls = broker({
+      member: () => Response.json({ accepted: true, message: "" }),
+    });
+    const { relay: data } = relay(
+      owner,
+      [
+        snapshot([
+          ["member", owner, "owner"],
+          ["member", bobA, "member"],
+          ["member", bobB, "member"],
+        ]),
+      ],
+      new Map([
+        [bobA, { name: "Bob" }],
+        [bobB, { name: nameB }],
       ]),
-    ],
-    new Map([
-      [bobA, { name: "Bob" }],
-      [bobB, { name: "Bob" }],
-    ]),
-  );
-  render(<CommunityAdmin relay={data} active={() => true} />);
-  const keys = publicKeyLabels([bobA, bobB]);
-  const labelB = `Bob · ${keys.get(bobB)}`;
-  expect(keys.get(bobA)).not.toBe(keys.get(bobB));
-  expect(
-    await screen.findByRole("button", {
-      name: `Actions for Bob · ${keys.get(bobA)}`,
-    }),
-  ).toBeVisible();
-  await user.click(
-    screen.getByRole("button", { name: `Actions for ${labelB}` }),
-  );
-  await user.click(await screen.findByRole("menuitem", { name: "Make admin" }));
-  const dialog = await screen.findByRole("alertdialog");
-  expect(dialog).toHaveTextContent(`Make admin: ${labelB}?`);
-  await user.click(within(dialog).getByRole("button", { name: "Make admin" }));
-  await waitFor(() =>
-    expect(calls.find((c) => c.route === "member")?.body).toEqual({
-      action: "role",
-      pubkey: bobB,
-      role: "admin",
-    }),
-  );
-});
+    );
+    render(<CommunityAdmin relay={data} active={() => true} />);
+    const keys = publicKeyLabels([owner, bobA, bobB]);
+    const labelB = `${nameB} · ${keys.get(bobB)}`;
+    expect(keys.get(bobA)).not.toBe(keys.get(bobB));
+    expect(
+      await screen.findByRole("button", {
+        name: `Actions for Bob · ${keys.get(bobA)}`,
+      }),
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: `Actions for ${labelB}` }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Make admin" }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(`Make admin: ${labelB}?`);
+    await user.click(
+      within(dialog).getByRole("button", { name: "Make admin" }),
+    );
+    await waitFor(() =>
+      expect(calls.find((c) => c.route === "member")?.body).toEqual({
+        action: "role",
+        pubkey: bobB,
+        role: "admin",
+      }),
+    );
+  },
+);
 
 it("shows a distinguishing key for every invite choice and the selected chip", async () => {
   const user = userEvent.setup();

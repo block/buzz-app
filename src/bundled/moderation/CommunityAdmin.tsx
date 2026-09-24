@@ -173,18 +173,9 @@ function Members({
   const locked = stale || refreshing;
   const baseName = (pubkey: string) =>
     profiles.get(pubkey)?.name || formatPublicKey(pubkey) || pubkey;
-  // Namesakes get a key qualifier so privileged actions name one identity.
-  const namesakes = new Map<string, string[]>();
-  for (const { pubkey } of members ?? [])
-    namesakes.set(baseName(pubkey), [
-      ...(namesakes.get(baseName(pubkey)) ?? []),
-      pubkey,
-    ]);
-  const qualifiers = new Map<string, string>();
-  for (const keys of namesakes.values())
-    if (keys.length > 1)
-      for (const [key, value] of publicKeyLabels(keys))
-        qualifiers.set(key, value);
+  // Every target gets a key qualifier: self-declared names can look identical
+  // without being equal strings, so privileged actions must name one identity.
+  const qualifiers = publicKeyLabels((members ?? []).map((m) => m.pubkey));
   const name = (pubkey: string) => {
     const base = baseName(pubkey);
     const qualifier = qualifiers.get(pubkey);

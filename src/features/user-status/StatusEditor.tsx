@@ -189,21 +189,6 @@ export function StatusEditor({
               onChange={(event) => setText(event.target.value)}
             />
           </InputGroup>
-          {pickerOpen && (
-            <EmojiPicker
-              session={session}
-              scope={scope}
-              disabled={busy}
-              reaction
-              insert={setEmoji}
-              externalTrigger={{
-                ref: emojiTrigger,
-                id: pickerId,
-                close: () => setPickerOpen(false),
-                finalFocus: () => emojiTrigger.current ?? false,
-              }}
-            />
-          )}
           <div className={styles.section}>
             <span className="text-label-sm text-subtle">Duration</span>
             <MenuRoot>
@@ -270,6 +255,21 @@ export function StatusEditor({
             </div>
           )}
         </fieldset>
+        {pickerOpen && (
+          <EmojiPicker
+            session={session}
+            scope={scope}
+            disabled={busy}
+            reaction
+            insert={setEmoji}
+            externalTrigger={{
+              ref: emojiTrigger,
+              id: pickerId,
+              close: () => setPickerOpen(false),
+              finalFocus: () => emojiTrigger.current ?? false,
+            }}
+          />
+        )}
         {error && (
           <p className={styles.error} role="alert">
             {error}

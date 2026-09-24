@@ -19,8 +19,10 @@ import {
   keypair,
   type Key,
   profile,
+  roster,
   signed,
 } from "../../features/relay/testing";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import { ProfilePanel } from "./ProfilePanel";
 
 const relayKey = keypair();
@@ -54,9 +56,11 @@ function mount(
   {
     archiveAuthority,
     wrap,
+    library,
   }: {
     archiveAuthority?: string;
     wrap?: (session: RelaySession) => RelaySession;
+    library?: string;
   } = {},
 ) {
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
@@ -69,9 +73,18 @@ function mount(
     query,
     media: () => undefined,
     ...(archiveAuthority ? { archiveAuthority } : {}),
+    ...(library
+      ? {
+          readAgentLibrary: async () => ({
+            definitions: [],
+            identities: [{ pubkey: library, name: "Library agent" }],
+          }),
+        }
+      : {}),
     subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
   });
   owners.push(owner);
+  if (library) void owner.session.agentLibrary.refresh();
   const snapshot = {
     status: "ready" as const,
     generation: 1,
@@ -155,28 +168,27 @@ it("reports an unknown owner when no relay view is available, then retries", asy
   const observe = vi.fn(() => {
     throw new Error("Relay view capacity unavailable");
   });
-  mount(
-    agent,
-    (filter) =>
-      kind0(filter) ? [profile(agent, { name: "Helper", is_agent: true })] : [],
-    {
-      wrap: (session) => {
-        let calls = 0;
-        return Object.create(session, {
-          observe: {
-            value: (filters: readonly ReadFilter[]) =>
-              calls++ ? session.observe(filters) : observe(),
-          },
-        });
-      },
+  // A library-known agent with no public profile: no directory head to fall back on.
+  mount(agent, () => [], {
+    library: agent.pubkey,
+    wrap: (session) => {
+      let calls = 0;
+      return Object.create(session, {
+        observe: {
+          value: (filters: readonly ReadFilter[]) =>
+            calls++ ? session.observe(filters) : observe(),
+        },
+      });
     },
-  );
+  });
 
   const identity = await screen.findByRole("region", {
     name: "Agent identity",
   });
-  expect(identity).toHaveTextContent(
-    "Unknown — could not read this profile's attestation.",
+  await waitFor(() =>
+    expect(identity).toHaveTextContent(
+      "Unknown — could not read this profile's attestation.",
+    ),
   );
   await userEvent
     .setup()
@@ -233,8 +245,9 @@ function live(agent: Key, first: RelayEvent, archives = false) {
         : [];
     }),
   );
+  const viewer = keypair().pubkey;
   const owner = createRelaySession({
-    viewer: keypair().pubkey,
+    viewer,
     relayAuthor: relayKey.pubkey,
     scope: "wss://relay.example.test",
     ...(archives ? { archiveAuthority: relayKey.pubkey } : {}),
@@ -264,14 +277,21 @@ function live(agent: Key, first: RelayEvent, archives = false) {
     close() {},
     context: { channelId: "c", canOpen: () => true, open: () => true },
   };
-  const mounted = render(<ProfilePanel {...props} />);
+  let mounted = render(<ProfilePanel {...props} />);
   return {
     session: owner.session,
+    viewer,
     query,
-    receive: (event: RelayEvent) =>
+    receive: (...events: RelayEvent[]) =>
       act(async () => {
-        callbacks.receive([event]);
+        callbacks.receive(events);
       }),
+    close() {
+      mounted.unmount();
+    },
+    open() {
+      mounted = render(<ProfilePanel {...props} />);
+    },
     setLatest(event: RelayEvent) {
       latest = event;
     },
@@ -288,8 +308,12 @@ function live(agent: Key, first: RelayEvent, archives = false) {
   };
 }
 const ownerButton = (owner: Key) => ({
-  name: `Open owner profile: ${owner.pubkey.slice(0, 10)}…`,
+  name: `Open owner profile: ${formatPublicKey(owner.pubkey)}`,
 });
+const agentReads = (query: ReturnType<typeof live>["query"]) =>
+  query.mock.calls.filter(([filters]) =>
+    filters.some((filter) => filter.kinds?.includes(0)),
+  ).length;
 const archiveReads = (query: ReturnType<typeof live>["query"]) =>
   query.mock.calls.filter(([filters]) =>
     filters.some((filter) => filter.kinds?.includes(13535)),
@@ -450,4 +474,74 @@ it("settles a known agent with no public profile as not verified", async () => {
     ),
   );
   expect(identity).not.toHaveTextContent("Checking…");
+});
+
+it("keeps the newer signed head after closing, cache eviction and a stale reopen read", async () => {
+  const agent = keypair();
+  const a = keypair();
+  const sender = keypair();
+  const h = live(agent, timedProfile(agent, [auth(agent, a)], 100));
+  await screen.findByRole("button", ownerButton(a));
+  // The relay keeps serving the older attested head; live saw its removal.
+  await h.receive(roster(relayKey, "c", [h.viewer, sender.pubkey]));
+  await h.receive(timedProfile(agent, [], 101));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("region", { name: "Agent identity" }),
+    ).toHaveTextContent("Not verified — no valid owner"),
+  );
+  h.close();
+  // Churn the session's 8 MiB recent-event cache past the t=101 profile.
+  for (let batch = 0; batch < 9; batch++)
+    await h.receive(
+      ...Array.from({ length: 80 }, (_, index) =>
+        signed(sender, {
+          kind: 9,
+          created_at: 200 + batch * 80 + index,
+          content: "x".repeat(12000),
+          tags: [["h", "c"]],
+        }),
+      ),
+    );
+  const probe = h.session.observe([
+    { kinds: [0], authors: [agent.pubkey], limit: 1 },
+  ]);
+  expect(probe.snapshot().events).toHaveLength(0);
+  probe.dispose();
+  const reads = agentReads(h.query);
+  h.open();
+  const identity = await screen.findByRole("region", {
+    name: "Agent identity",
+  });
+  // The reopened view's read returns the stale t=100 attested profile.
+  await waitFor(() => expect(agentReads(h.query)).toBeGreaterThan(reads));
+  await act(async () => {});
+  await waitFor(() =>
+    expect(identity).toHaveTextContent("Not verified — no valid owner"),
+  );
+  expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
+});
+
+it("uses the directory's signed head when no relay view is available", async () => {
+  const agent = keypair();
+  const owner = keypair();
+  mount(
+    agent,
+    (filter) =>
+      kind0(filter) ? [agentProfile(agent, [auth(agent, owner)])] : [],
+    {
+      wrap: (session) =>
+        Object.create(session, {
+          observe: {
+            value: () => {
+              throw new Error("Relay view capacity unavailable");
+            },
+          },
+        }),
+    },
+  );
+  await screen.findByRole("button", ownerButton(owner));
+  expect(
+    screen.queryByRole("button", { name: "Retry agent details" }),
+  ).toBeNull();
 });

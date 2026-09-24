@@ -10,6 +10,7 @@ import type {
   RelaySession,
 } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import styles from "./Profiles.module.css";
 
 type ProfileView = ReturnType<RelaySession["observe"]>;
@@ -59,6 +60,9 @@ export function ProfileAgentIdentity({
     view?.snapshot ?? fallback,
   );
   // Provenance belongs to the winning signed kind 0 alone, never a display projection.
+  // The directory's retained head outlives this view, so a reopened pane cannot
+  // accept an older response than the profile the rest of the session shows.
+  const head = session.profiles.event?.(pubkey);
   const latest = events.events
     .filter(
       (event) =>
@@ -66,7 +70,7 @@ export function ProfileAgentIdentity({
         event.pubkey === pubkey &&
         event.delivery !== "failed",
     )
-    .reduce<EventData | undefined>(newer, undefined);
+    .reduce<EventData | undefined>(newer, head);
   const [verified, setVerified] = useState<{ id: string; owner?: string }>();
   useEffect(() => {
     if (!latest) return;
@@ -166,7 +170,7 @@ function OwnerLink({
   const identityName = useIdentityNames(session.names);
   const name = identityName(
     owner,
-    profiles.get(owner)?.name ?? `${owner.slice(0, 10)}…`,
+    profiles.get(owner)?.name ?? formatPublicKey(owner) ?? owner,
   );
   const target = profileTarget(owner);
   return (

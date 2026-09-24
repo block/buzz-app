@@ -294,6 +294,7 @@ it.each(["image", "video"] as const)(
             messageId={exactTarget ? exact.id : root.id}
             initialTime={5}
             close={() => {}}
+            onOpenLink={() => false}
           />,
           { reactStrictMode: true },
         );

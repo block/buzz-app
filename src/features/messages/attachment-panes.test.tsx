@@ -236,6 +236,7 @@ it.each([false, true])(
             messageId={h.root.id}
             initialTime={0}
             close={() => {}}
+            onOpenLink={() => false}
           />
         </OuterComposer>
       </StrictMode>,

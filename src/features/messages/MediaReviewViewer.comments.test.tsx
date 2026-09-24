@@ -94,6 +94,7 @@ async function setupReview({
       messageId={root.id}
       initialTime={72}
       close={() => {}}
+      onOpenLink={() => false}
     />,
   );
   return { owner, root, sign, user };

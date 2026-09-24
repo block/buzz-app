@@ -168,28 +168,22 @@ impl HttpTransport for ReqwestTransport {
 }
 
 pub async fn get_auth_status() -> SessionStatus {
-    let origin = match configured_origin_from_env() {
-        Ok(origin) => origin,
+    let url = match builderlab_url_from_env() {
+        Ok(url) => url,
         Err(status) => return status,
     };
     let transport = match ReqwestTransport::new() {
         Ok(transport) => transport,
         Err(message) => return SessionStatus::Error { message },
     };
-    check_auth_me_session(&SystemKeychain, &transport, &origin, SystemTime::now()).await
+    check_auth_me_session(&SystemKeychain, &transport, &url, SystemTime::now()).await
 }
 
-fn configured_origin_from_env() -> Result<String, SessionStatus> {
+fn builderlab_url_from_env() -> Result<String, SessionStatus> {
     let Some(raw_url) = std::env::var_os("BUILDERLAB_URL") else {
         return Err(SessionStatus::NotConfigured);
     };
-    let raw_url = raw_url.to_string_lossy();
-    configured_origin(&raw_url).map_err(|message| SessionStatus::Error { message })
-}
-
-fn configured_origin(value: &str) -> Result<String, String> {
-    service_url(value)?;
-    Ok(value.to_owned())
+    Ok(raw_url.to_string_lossy().into_owned())
 }
 
 pub async fn list_agents(
@@ -600,7 +594,6 @@ mod tests {
 
     #[tokio::test]
     async fn checks_auth_me_endpoint_with_cli_credential() {
-        let origin = configured_origin(BASE).unwrap();
         let keychain = FakeKeychain {
             value: Some(TEST_CREDENTIAL.as_bytes().to_vec()),
             ..Default::default()
@@ -610,7 +603,7 @@ mod tests {
             br#"{"subject":"deployment-scoped-user","roles":["ROLE_USER"]}"#,
         );
         assert_eq!(
-            check_auth_me_session(&keychain, &transport, &origin, now()).await,
+            check_auth_me_session(&keychain, &transport, BASE, now()).await,
             SessionStatus::Available
         );
         assert_eq!(

@@ -53,18 +53,18 @@ section. It shows only claims backed by verifiable relay evidence:
 - **Owner** comes from the NIP-OA `auth` tag on the identity's own winning
   signature-verified kind 0 (newest `created_at`, lower id on ties). A
   session-owned `session.observe` view supplies that event: it merges live
-  events, refreshes on reconnect and resets on purge. The profile directory's
-  retained signed head also seeds that choice, so reopening the pane after
-  cache eviction never accepts an older response than the profile the session
-  already shows. Verification is bound
+  events, refreshes on reconnect and resets on purge. While that view is live,
+  the profile directory's retained signed head also seeds that choice, so
+  reopening the pane after cache eviction never accepts an older response than
+  the profile the session already shows. Verification is bound
   to that exact event id, so an auth-only change or a lagging older read
   never keeps or restores a previous owner. It requires exactly one tag,
   owner ≠ agent, conditions evaluated against the event, and a valid BIP-340
   signature over `nostr:agent-auth:<agent>:<conditions>`. A verified owner is
   shown as "Authorized by …", never as the author. It opens the owner's
   profile in the same slot when the host can open it. A missing or invalid
-  tag reads **Not verified**, and a failed read or unavailable view with no
-  retained head reads **Unknown**. Without a profile name, the owner is shown
+  tag reads **Not verified**, and a failed read with no retained head or an
+  unavailable view reads **Unknown**. Without a profile name, the owner is shown
   with `formatPublicKey`. The existing `isAgent` shape check, avatar shape and local
   library never supply an owner.
 - **Archive** reuses the relay-scoped `session.archives` snapshot:

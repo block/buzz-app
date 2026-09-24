@@ -522,7 +522,7 @@ it("keeps the newer signed head after closing, cache eviction and a stale reopen
   expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
 });
 
-it("uses the directory's signed head when no relay view is available", async () => {
+it("stays unknown without a relay view even when the directory holds a head", async () => {
   const agent = keypair();
   const owner = keypair();
   mount(
@@ -540,8 +540,14 @@ it("uses the directory's signed head when no relay view is available", async () 
         }),
     },
   );
-  await screen.findByRole("button", ownerButton(owner));
+  await screen.findByRole("heading", { name: "Helper" });
+  const identity = screen.getByRole("region", { name: "Agent identity" });
+  // No view can signal an auth-only removal, so the directory head is not trusted here.
+  expect(identity).toHaveTextContent(
+    "Unknown — could not read this profile's attestation.",
+  );
+  expect(screen.queryByRole("button", ownerButton(owner))).toBeNull();
   expect(
-    screen.queryByRole("button", { name: "Retry agent details" }),
-  ).toBeNull();
+    screen.getByRole("button", { name: "Retry agent details" }),
+  ).toBeInTheDocument();
 });

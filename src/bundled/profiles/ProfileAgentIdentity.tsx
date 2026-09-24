@@ -62,7 +62,8 @@ export function ProfileAgentIdentity({
   // Provenance belongs to the winning signed kind 0 alone, never a display projection.
   // The directory's retained head outlives this view, so a reopened pane cannot
   // accept an older response than the profile the rest of the session shows.
-  const head = session.profiles.event?.(pubkey);
+  // Only a live view re-renders on auth-only head changes; without one, stay Unknown.
+  const head = view ? session.profiles.event?.(pubkey) : undefined;
   const latest = events.events
     .filter(
       (event) =>

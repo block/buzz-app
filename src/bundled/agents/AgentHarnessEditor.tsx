@@ -19,10 +19,13 @@ export function AgentHarnessEditor({
   disabled?: boolean;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
-  const executable = draft.command.split("/").at(-1);
+  const executable = draft.command.replaceAll("\\", "/").split("/").at(-1);
   const harness =
     options.find((option) => option.command === draft.command) ??
-    options.find((option) => option.command.split("/").at(-1) === executable);
+    options.find(
+      (option) =>
+        option.command.replaceAll("\\", "/").split("/").at(-1) === executable,
+    );
   const external = harness?.label === "Goose" || harness?.label === "Pi";
   return (
     <div className="space-y-4">

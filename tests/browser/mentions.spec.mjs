@@ -157,9 +157,42 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       2,
     );
     const chip = input.locator(".inline-chip").first();
+    const recipients = page.getByRole("region", {
+      name: "Explicit mentions",
+    });
+    await expect(recipients.getByRole("button")).toHaveCount(2);
     await expect(
-      page.getByRole("region", { name: "Notification recipients" }),
-    ).toHaveCount(0);
+      recipients.locator('.buzz-avatar[data-avatar-shape="circle"]'),
+    ).toHaveCount(1);
+    await expect(
+      recipients.locator('.buzz-avatar[data-avatar-shape="squircle"]'),
+    ).toHaveCount(1);
+    await expect
+      .poll(() =>
+        recipients
+          .locator("img")
+          .evaluateAll(
+            (images) =>
+              images.length === 2 &&
+              images.every((image) => image.complete && image.naturalWidth > 0),
+          ),
+      )
+      .toBe(true);
+    const mentionTool = page.getByRole("button", {
+      name: "Mention a member",
+      exact: true,
+    });
+    const emojiTool = page.getByRole("button", {
+      name: "Insert emoji",
+      exact: true,
+    });
+    await mentionTool.focus();
+    for (const recipient of await recipients.getByRole("button").all()) {
+      await page.keyboard.press("Tab");
+      await expect(recipient).toBeFocused();
+    }
+    await page.keyboard.press("Tab");
+    await expect(emojiTool).toBeFocused();
     const chipRoles = await chip.evaluate((element) => {
       const probe = document.createElement("span");
       probe.style.backgroundColor = "var(--affordance-accent)";
@@ -188,6 +221,17 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
             bounds.x + bounds.width,
           );
         }
+        // Avatars stay beside @, before Emoji, even on the narrow composer.
+        const mentionBox = await mentionTool.boundingBox();
+        const recipientsBox = await recipients.boundingBox();
+        const emojiBox = await emojiTool.boundingBox();
+        expect(recipientsBox.x).toBeGreaterThanOrEqual(
+          mentionBox.x + mentionBox.width,
+        );
+        expect(recipientsBox.x + recipientsBox.width).toBeLessThanOrEqual(
+          emojiBox.x,
+        );
+        expect(Math.abs(recipientsBox.y - mentionBox.y)).toBeLessThanOrEqual(2);
         await expect(input).toHaveJSProperty("value", "@Honey @Honey 😀");
       }
     }
@@ -235,6 +279,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(page.getByRole("textbox").locator(".inline-chip")).toHaveCount(
       1,
     );
+    await expect(recipients.getByRole("button")).toHaveCount(1);
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
@@ -278,6 +323,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toBeDisabled();
+    await expect(recipients.getByRole("button")).toBeDisabled();
     expect(
       await page.evaluate(() => window.mentionFixture.disabledCalls),
     ).toEqual([{ inputDisabled: true, text: false, mention: false }]);
@@ -287,6 +333,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(page.getByRole("textbox").locator(".inline-chip")).toHaveCount(
       1,
     );
+    await expect(recipients.getByRole("button")).toHaveCount(1);
     await page
       .getByRole("button", { name: "Toggle disabled", exact: true })
       .click();
@@ -294,6 +341,32 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey @Honey ");
+    await recipients
+      .getByRole("button", {
+        name: `Remove mention Honey ${keys.first}`,
+        exact: true,
+      })
+      .click();
+    await expect(page.getByRole("textbox")).toHaveJSProperty(
+      "value",
+      "@Honey @Honey ",
+    );
+    await expect(recipients.getByRole("button")).toHaveCount(1);
+    await page
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.mentionFixture.publications.length),
+      )
+      .toBe(3);
+    const afterRemoval = await page.evaluate(() =>
+      window.mentionFixture.publications.at(-1),
+    );
+    expect(afterRemoval.content).toBe("@Honey @Honey");
+    expect(afterRemoval.tags.filter(([tag]) => tag === "p")).toEqual([
+      ["p", keys.second],
+    ]);
     expect(errors).toEqual([]);
   } finally {
     await server.close();
@@ -386,6 +459,92 @@ test("selected mentions inside code remain visible through draft restore and cha
         await page.getByRole("button", { name: "Toggle thread" }).click();
     }
   } finally {
+    await server.close();
+  }
+});
+
+// Browser-only contract: qualifiers remain visible without hover at touch width.
+test("namesake recipient qualifiers remain visible on touch after live name changes", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?identity-names`,
+    );
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "dark";
+    });
+    const keys = await page.evaluate(() => [
+      window.mentionFixture.first,
+      window.mentionFixture.second,
+    ]);
+    const choose = async (key) => {
+      await page
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .tap();
+      await page
+        .getByRole("region", { name: "Mention a member or agent" })
+        .getByRole("button", { name: new RegExp(key) })
+        .tap();
+    };
+    await choose(keys[0]);
+    await choose(keys[1]);
+    const input = page.getByRole("textbox");
+    const chips = input.locator(".inline-chip");
+    const labels = keys.map(
+      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
+    );
+    await expect(chips).toHaveText(labels);
+    await page.evaluate(() => window.mentionFixture.collide(true));
+    await expect(chips).toHaveText(labels);
+    for (const chip of await chips.all()) {
+      await expect(chip).toBeVisible();
+      expect(
+        await chip.evaluate((el) => {
+          const rect = el.getBoundingClientRect();
+          return rect.left >= 0 && rect.right <= innerWidth;
+        }),
+      ).toBe(true);
+    }
+    await page.screenshot({
+      path: test.info().outputPath("recipient-qualifiers-touch.png"),
+    });
+    await input.evaluate((el) => el.setSelectionRange(7, 13));
+    await input.press("Backspace");
+    await expect(chips).toHaveText(["@Honey"]);
+    await choose(keys[1]);
+    await expect(chips).toHaveText(labels);
+    await page.evaluate(() => window.mentionFixture.collide(false));
+    await expect(chips).toHaveText(labels);
+    await expect(input).toHaveJSProperty("value", "@Honey @Honey  ");
+    await page.getByRole("button", { name: "Send message", exact: true }).tap();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.mentionFixture.publications.length),
+      )
+      .toBe(1);
+    const notified = await page.evaluate(() =>
+      window.mentionFixture.publications[0].tags
+        .filter((tag) => tag[0] === "p")
+        .map((tag) => tag[1]),
+    );
+    expect(notified.sort()).toEqual(keys.sort());
+  } finally {
+    await context.close();
     await server.close();
   }
 });

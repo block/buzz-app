@@ -338,7 +338,10 @@ test("profiles primary actions through production broker and built app", async (
   // Finite-fetch quiescence excludes reading dwell and the five-second sync
   // timer. Establish the same explicit mark-through outcome on both arms, then
   // observe durable reconciliation. This is outside the primary-action timings.
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", {
       name: "Mark read through loaded messages",

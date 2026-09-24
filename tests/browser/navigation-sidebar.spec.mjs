@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { expectPhosphor } from "./phosphor.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 test.use({
   largeSidebar: true,
@@ -120,7 +121,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     .poll(async () => (await sidebar.boundingBox())?.width)
     .toBeGreaterThan(keyboardWidth + 100);
   const resized = await sidebar.boundingBox();
-  await button(page, "Home").first().click();
+  await button(page, "Projects").first().click();
   await button(page, "Messages").first().click();
   await expect
     .poll(async () => (await sidebar.boundingBox())?.width)
@@ -188,17 +189,23 @@ sessionSidebar(
     const regular = page.locator('[data-channel-id="beta"]');
     const disclosure = page.getByRole("button", { name: /sessions in/ });
     const x = async (locator) => (await locator.boundingBox())?.x;
+    const centerX = async (locator) => {
+      const bounds = await locator.boundingBox();
+      if (!bounds) throw new Error("Sidebar icon has no visible bounds");
+      return bounds.x + bounds.width / 2;
+    };
     const label = (row) => row.locator(".navigation-item-label");
 
     await expect(parent).toBeVisible();
     await expect(child).toBeVisible();
     await expect(regular).toBeVisible();
-    const regularIconX = await x(regular.locator("svg").first());
-    const parentIconX = await x(disclosure.locator("svg:visible"));
+    await expectPhosphor(regular.locator("svg").first(), "hash");
+    const regularIconX = await centerX(regular.locator("svg").first());
+    const parentIconX = await centerX(disclosure.locator("svg:visible"));
     expect(parentIconX).toBeCloseTo(regularIconX, 0);
 
     await parent.hover();
-    const chevronX = await x(disclosure.locator("svg:visible"));
+    const chevronX = await centerX(disclosure.locator("svg:visible"));
     expect(chevronX).toBeCloseTo(regularIconX, 0);
     expect(await x(label(parent))).toBeCloseTo(await x(label(regular)), 0);
     expect(await x(label(child))).toBeCloseTo(await x(label(regular)), 0);
@@ -207,6 +214,15 @@ sessionSidebar(
       "xpath=ancestor::*[@data-channel-sidebar-row]",
     );
     const more = page.getByRole("button", { name: /More options for/ }).first();
+    await expect(more).toHaveAttribute("data-icon-shape", "round");
+    const [parentSurfaceBox, moreBox] = await Promise.all([
+      parentSurface.boundingBox(),
+      more.boundingBox(),
+    ]);
+    expect(parentSurfaceBox.x + parentSurfaceBox.width).toBeCloseTo(
+      moreBox.x + moreBox.width,
+      0,
+    );
     expect(
       await more.evaluate(
         (action, row) => row.contains(action),
@@ -227,6 +243,115 @@ sessionSidebar(
     const draft = page.getByRole("button", { name: /New session draft in/ });
     await expect(draft).toBeVisible();
     expect(await x(label(draft))).toBeCloseTo(await x(label(regular)), 0);
+
+    await child.click();
+    await expectPhosphor(
+      page
+        .getByRole("article", { name: "Conversation" })
+        .locator(".panel-header-title > svg"),
+      "lock",
+    );
+  },
+);
+
+sessionSidebar(
+  "session rows use pill hovers and Channels opens the shared creation dialog",
+  async ({ page, app }) => {
+    await page.goto(app.origin);
+    await button(page, "Messages").first().click();
+    const child = page.locator('[data-channel-id="alpha"]');
+    await expect(child).toBeVisible();
+    await child.hover();
+    await expect(child).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+
+    const channels = page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .locator("details")
+      .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+    const summary = channels.locator("summary");
+    const create = page.getByRole("button", { name: "Create channel" });
+    const createContainer = create.locator("..");
+    await expect(createContainer).toHaveCSS("opacity", "0");
+    await summary.hover();
+    await expect(createContainer).toHaveCSS("opacity", "1");
+    await expect(create).toHaveAttribute("data-icon-shape", "round");
+    const [summaryBox, createBox] = await Promise.all([
+      summary.boundingBox(),
+      create.boundingBox(),
+    ]);
+    expect(summaryBox.x + summaryBox.width).toBeCloseTo(
+      createBox.x + createBox.width,
+      0,
+    );
+    await create.click();
+
+    const dialog = page.getByRole("dialog", { name: "Create a channel" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("textbox", { name: "Name" })).toBeFocused();
+    await expect(dialog.getByRole("radio", { name: /Ongoing/ })).toBeChecked();
+    await expect(
+      dialog.getByRole("switch", { name: "Private" }),
+    ).not.toBeChecked();
+    await expect(
+      dialog.getByRole("textbox", { name: "Description" }),
+    ).toHaveCount(0);
+    const addDescription = dialog.getByRole("button", {
+      name: "Add a description",
+    });
+    const formTypography = await Promise.all(
+      [
+        addDescription,
+        dialog.getByText("Name", { exact: true }),
+        dialog.getByText("Private", { exact: true }),
+        dialog.getByText("Ongoing", { exact: true }),
+      ].map((element) =>
+        element.evaluate((node) => {
+          const style = getComputedStyle(node);
+          return { color: style.color, fontSize: style.fontSize };
+        }),
+      ),
+    );
+    const placeholderColor = await dialog
+      .getByRole("textbox", { name: "Name" })
+      .evaluate((node) => getComputedStyle(node, "::placeholder").color);
+    const tertiaryColor = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--text-tertiary)";
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    });
+    expect(formTypography[0].color).toBe(formTypography[1].color);
+    expect(placeholderColor).toBe(tertiaryColor);
+    expect(formTypography[2].fontSize).toBe(formTypography[3].fontSize);
+    await expect(addDescription).toHaveCSS("border-radius", "0px");
+    await addDescription.hover();
+    await expect(addDescription).toHaveCSS("text-decoration-line", "underline");
+    await expect(addDescription).toHaveCSS(
+      "background-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    await addDescription.click();
+    await expect(
+      dialog.getByRole("textbox", { name: "Description" }),
+    ).toBeFocused();
+    await dialog.getByRole("radio", { name: /Temporary/ }).click();
+    await expect(
+      dialog.getByRole("radio", { name: /Temporary/ }),
+    ).toBeChecked();
+    await dialog.getByRole("switch", { name: "Private" }).click();
+    await expect(dialog.getByRole("switch", { name: "Private" })).toBeChecked();
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toHaveCount(0);
+    await dialog
+      .getByRole("button", { name: "Close channel creation" })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    await expect(create).toBeFocused();
+    await page
+      .getByRole("article", { name: "Conversation" })
+      .hover({ position: { x: 20, y: 20 } });
+    await expect(createContainer).toHaveCSS("opacity", "0");
   },
 );
 
@@ -241,7 +366,7 @@ test("session actions follow the Sessions plugin availability", async ({
   ).toBeVisible();
 
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   const plugins = page.getByRole("region", { name: "Plugins", exact: true });
   const sessions = plugins.getByRole("article").filter({
@@ -305,7 +430,7 @@ test("channel navigation preserves sidebar DOM, group state and scroll", async (
   );
 });
 
-for (const destination of ["Home", "Projects", "Settings", "Back/Forward"]) {
+for (const destination of ["Projects", "Settings", "Back/Forward"]) {
   test(`sidebar state survives Messages → ${destination} → Messages`, async ({
     page,
     app,
@@ -320,14 +445,16 @@ for (const destination of ["Home", "Projects", "Settings", "Back/Forward"]) {
     const leave = async () => {
       if (destination === "Settings") {
         await button(page, "Your profile").click();
-        await button(page, "Settings").click();
+        await page
+          .getByRole("menuitem", { name: "Settings", exact: true })
+          .click();
         await expect(
           page.getByRole("heading", { name: "Settings", exact: true }),
         ).toBeVisible();
       } else {
         await button(
           page,
-          destination === "Back/Forward" ? "Home" : destination,
+          destination === "Back/Forward" ? "Projects" : destination,
         )
           .first()
           .click();
@@ -364,6 +491,39 @@ for (const destination of ["Home", "Projects", "Settings", "Back/Forward"]) {
   });
 }
 
+test("community rail stays visible across pages and switches without a picker", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const rail = page.getByRole("navigation", {
+    name: "Communities",
+    exact: true,
+  });
+  await expect(
+    rail.getByRole("button", { name: "Switch to Primary" }),
+  ).toHaveAttribute("aria-current", "true");
+  await rail.getByRole("button", { name: "Switch to Secondary" }).click();
+  await expect(
+    rail.getByRole("button", { name: "Switch to Secondary" }),
+  ).toHaveAttribute("aria-current", "true");
+  await button(page, "Projects").first().click();
+  await expect(rail).toBeVisible();
+  await expect(button(page, "Switch community")).toHaveCount(0);
+  await rail.getByRole("button", { name: "Personal space" }).click();
+  await expect(
+    rail.getByRole("button", { name: "Personal space" }),
+  ).toHaveAttribute("aria-current", "true");
+  await rail.getByRole("button", { name: "Add a community" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Add a community", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    rail.getByRole("button", { name: "Add a community" }),
+  ).toBeFocused();
+});
+
 test("sidebar view state does not leak across communities", async ({
   page,
   app,
@@ -375,14 +535,12 @@ test("sidebar view state does not leak across communities", async ({
     .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
   await group.locator("summary").click();
   await expect(group).not.toHaveAttribute("open");
-  await button(page, "Switch community").click();
   await button(page, "Switch to Secondary").click();
-  await expect(button(page, "Switch community")).toHaveAttribute(
-    "title",
-    "Secondary",
+  await expect(button(page, "Switch to Secondary")).toHaveAttribute(
+    "aria-current",
+    "true",
   );
   await expect(group).toHaveAttribute("open");
-  await button(page, "Switch community").click();
   await button(page, "Switch to Primary").click();
   await expect(group).not.toHaveAttribute("open");
 });
@@ -395,7 +553,7 @@ test("legacy filters are ignored and invalid saved sidebar fields fall back", as
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const group = sidebar.locator("details").first();
   await group.locator("summary").click();
-  await button(page, "Home").first().click();
+  await button(page, "Projects").first().click();
   await page.evaluate(() => {
     const key = Object.keys(localStorage).find((key) =>
       key.includes('"channel-sidebar"'),
@@ -422,4 +580,37 @@ test("legacy filters are ignored and invalid saved sidebar fields fall back", as
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
+});
+
+test("rail loads relay-owned image icons for inactive communities without acquiring sessions", async ({
+  page,
+  app,
+}) => {
+  const rasterIcon =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y79d4sAAAAASUVORK5CYII=";
+  const emojiSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#ffe75c"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">🐝</text></svg>';
+  const emojiIcon = `data:image/svg+xml,${encodeURIComponent(emojiSvg)}`;
+  const infoRequests = [];
+  await page.route("**/api/relay/*/icon-info", (route) => {
+    infoRequests.push(route.request().url());
+    const icon = route.request().url().includes("primary")
+      ? rasterIcon
+      : emojiIcon;
+    return route.fulfill({ json: { icon } });
+  });
+  await open(page, app);
+  const rail = page.getByRole("navigation", { name: "Communities" });
+  for (const [name, icon] of [
+    ["Primary", rasterIcon],
+    ["Secondary", emojiIcon],
+  ]) {
+    const image = rail
+      .getByRole("button", { name: `Switch to ${name}` })
+      .locator("img");
+    await expect(image).toHaveAttribute("src", icon);
+    await expect(image).toHaveAttribute("data-loaded", "true");
+  }
+  expect(infoRequests).toHaveLength(2);
+  expect(app.report.sessions).toEqual(["primary"]);
 });

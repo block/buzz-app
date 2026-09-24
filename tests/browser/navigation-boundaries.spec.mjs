@@ -55,7 +55,19 @@ test("Messages default resolution returns opened to cold and warm callers withou
   page,
   app,
 }) => {
-  await page.goto(app.origin);
+  await page.goto(
+    `${app.origin}/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.projects",
+        pageId: "projects",
+      }),
+    )}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Messages", exact: true }).first(),
   ).toBeVisible();
@@ -79,19 +91,22 @@ test("Messages default resolution returns opened to cold and warm callers withou
     ).toBeVisible();
     await page.getByRole("button", { name: "Go back", exact: true }).click();
     await expect(
-      page.getByRole("heading", {
-        name: "Make yourself at home.",
-        exact: true,
-      }),
+      page.getByRole("heading", { name: "Projects", exact: true }),
     ).toBeVisible();
   }
 });
 
-test("Alt arrows preserve composer editing while deliberate history shortcuts still navigate", async ({
+test("native Alt arrows preserve composer editing; deliberate history shortcuts navigate", async ({
   page,
   app,
 }) => {
   await open(page, app);
+  const nav = page.getByRole("navigation", { name: "Pages", exact: true });
+  await nav.getByRole("button", { name: "Projects", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible();
+  await nav.getByRole("button", { name: "Messages", exact: true }).click();
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,

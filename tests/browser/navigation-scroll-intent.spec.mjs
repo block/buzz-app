@@ -28,7 +28,7 @@ for (const action of [
       element.scrollTop = 900;
       element.dispatchEvent(new Event("scroll"));
     });
-    await button(page, "Home").first().click();
+    await button(page, "Projects").first().click();
     await expect(sidebar).toHaveCount(0);
     let release;
     const held = new Promise((resolve) => {

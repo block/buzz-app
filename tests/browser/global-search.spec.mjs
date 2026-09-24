@@ -1,40 +1,37 @@
 import { test, expect } from "./fixture.mjs";
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
-// Browser layout and DOM focus across the portal cannot be proved in jsdom.
-test("top-bar search and avatar share a vertical center", async ({
-  page,
-  app,
-}) => {
-  await page.goto(app.origin);
-  // A photo has different inline baseline behavior from the initial-letter fallback.
-  await page.route("https://avatar.invalid/photo.svg", (route) =>
-    route.fulfill({
-      contentType: "image/svg+xml",
-      body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="navy"/></svg>',
-    }),
-  );
-  await page.evaluate(() => {
-    const key = Object.keys(localStorage).find((key) =>
-      key.startsWith("buzz-client.v1:"),
+test.describe("photo avatar", () => {
+  test.use({ profilePicture: "https://avatar.invalid/photo.svg" });
+
+  // Browser layout and DOM focus across the portal cannot be proved in jsdom.
+  test("top-bar search and avatar share a vertical center", async ({
+    page,
+    app,
+  }) => {
+    // A photo has different inline baseline behavior from the initial-letter fallback.
+    await page.route("https://avatar.invalid/photo.svg", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="navy"/></svg>',
+      }),
     );
-    const saved = JSON.parse(localStorage.getItem(key));
-    saved.profile.picture = "https://avatar.invalid/photo.svg";
-    localStorage.setItem(key, JSON.stringify(saved));
+    // Seed the photo before startup; reloading here can retire a stream while
+    // its initial control request is still in flight.
+    await page.goto(app.origin);
+    await expect(button(page, "Your profile").locator("img")).toHaveAttribute(
+      "data-loaded",
+      "true",
+    );
+    const search = await button(page, "Search Buzz").boundingBox();
+    const profile = await button(page, "Your profile").boundingBox();
+    expect(search).not.toBeNull();
+    expect(profile).not.toBeNull();
+    expect(search.y + search.height / 2).toBeCloseTo(
+      profile.y + profile.height / 2,
+      1,
+    );
   });
-  await page.reload();
-  await expect(button(page, "Your profile").locator("img")).toHaveAttribute(
-    "data-loaded",
-    "true",
-  );
-  const search = await button(page, "Search Buzz").boundingBox();
-  const profile = await button(page, "Your profile").boundingBox();
-  expect(search).not.toBeNull();
-  expect(profile).not.toBeNull();
-  expect(search.y + search.height / 2).toBeCloseTo(
-    profile.y + profile.height / 2,
-    1,
-  );
 });
 
 test("search arrows traverse pages and conversations, Enter opens and Escape restores focus", async ({
@@ -51,16 +48,19 @@ test("search arrows traverse pages and conversations, Enter opens and Escape res
   await expect(input).toHaveAttribute("autocapitalize", "off");
   await expect(input).toHaveAttribute("autocomplete", "off");
   await expect(input).toBeFocused();
-  const home = dialog.getByRole("option", { name: "Home", exact: true });
   const messages = dialog.getByRole("option", {
     name: "Messages",
     exact: true,
   });
+  const projects = dialog.getByRole("option", {
+    name: "Projects",
+    exact: true,
+  });
   for (const [key, result] of [
-    ["ArrowDown", home],
     ["ArrowDown", messages],
-    ["ArrowUp", home],
-    ["ArrowUp", home],
+    ["ArrowDown", projects],
+    ["ArrowUp", messages],
+    ["ArrowUp", messages],
   ]) {
     await input.press(key);
     await expect(input).toBeFocused();

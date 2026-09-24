@@ -54,7 +54,7 @@ for (const mode of ["light", "dark"]) {
       "color",
       mode === "light" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)",
     );
-    await expect(region).toHaveCSS("font-size", "16px");
+    await expect(region).toHaveCSS("font-size", "14px");
     await expect(
       panel.getByRole("heading", { name: "Fixture Reader", exact: true }),
     ).toHaveCSS("font-size", "24px");
@@ -77,16 +77,34 @@ for (const mode of ["light", "dark"]) {
         : "Tab",
     );
     await copy.focus();
+    await expect(copy).toBeFocused();
     await expect(copy).toHaveCSS("outline-width", "2px");
     await page.mouse.click(2, 2);
     await copy.focus();
     await expect(copy).toHaveCSS("outline-style", "none");
-    // The host preference scales type once, not control geometry.
+    // Text controls can grow beyond their minimum to contain enlarged type.
     const modifier = process.platform === "darwin" ? "Meta" : "Control";
     await page.keyboard.press(`${modifier}+=`);
-    await expect(region).toHaveCSS("font-size", "17.6px");
+    await expect(region).toHaveCSS("font-size", "15.4px");
     await expect(key).toHaveCSS("font-size", "13.2px");
-    await expect(copy).toHaveCSS("height", "32px");
+    await expect(copy).toHaveCSS("min-height", "32px");
+    await expect
+      .poll(() =>
+        copy.evaluate((element) => {
+          const button = element.getBoundingClientRect();
+          const label = element
+            .querySelector(".buzz-button-label")
+            .getBoundingClientRect();
+          return (
+            button.height >= 32 &&
+            label.top >= button.top &&
+            label.bottom <= button.bottom &&
+            label.left >= button.left &&
+            label.right <= button.right
+          );
+        }),
+      )
+      .toBe(true);
     await page.keyboard.press(`${modifier}+0`);
     for (const width of [1280, 900, 390]) {
       await page.setViewportSize({ width, height: 800 });

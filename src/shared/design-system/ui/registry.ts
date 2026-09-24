@@ -54,6 +54,7 @@ export const BASE_UI_PARTS = {
     docs: "accordion",
     module: "@base-ui/react/accordion",
   },
+  toast: { name: "Toast", docs: "toast", module: "@base-ui/react/toast" },
   tooltip: {
     name: "Tooltip",
     docs: "tooltip",
@@ -111,6 +112,20 @@ export type ComponentDefinition = {
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
   {
+    slug: "toast",
+    name: "Toast",
+    purpose:
+      "Compact feedback without moving the page or hiding recovery actions.",
+    behavior:
+      "Base UI owns announcements, focus, expiry and dismissal; unresolved recovery stays visible",
+    variants: ["transient", "actionable", "dismissible"],
+    status: "core",
+    collection: "components",
+    source: "shared/design-system/ui/Toast.tsx",
+    baseUi: [BASE_UI_PARTS.toast],
+    composes: ["icon-button"],
+  },
+  {
     slug: "alert-dialog",
     name: "AlertDialog",
     purpose: "Confirm a consequential action before continuing.",
@@ -141,7 +156,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
       "Base UI owns focus, positioning, dismissal and transition presence; shared motion tokens animate entry and exit",
-    variants: ["default", "motion none"],
+    variants: ["default", "expanded", "motion none"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Dialog.tsx",
@@ -292,6 +307,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "ghost",
       "destructive",
       "outline",
+      "inverted",
+      "link",
       "size: sm | md | lg",
       "loading",
     ],
@@ -308,14 +325,18 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose: "A compact icon-only action that always owns an accessible label.",
     behavior: "Composes Buzz Button",
     variants: [
-      "quiet",
+      "prominent",
+      "subtle",
       "ghost",
-      "solid",
+      "inverted",
+      "destructive",
+      "outline",
+      "link",
       "tint",
       "chrome",
       "shape: round (default) | control",
-      "compact: 16px artwork, 32px target, Phosphor artwork",
-      "toolbar: 16px artwork, 32px target, Phosphor artwork",
+      "size: sm (32px) | md (40px) | lg (52px)",
+      "legacy aliases: quiet, solid, compact, toolbar, default, large",
     ],
     status: "proposed",
     collection: "components",
@@ -444,8 +465,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     collection: "components",
     owner: "desktop-new Messages",
     source: "shared/design-system/ui/SearchField.tsx",
-    baseUi: [BASE_UI_PARTS.field, BASE_UI_PARTS.input],
-    composes: ["icon-button"],
+    baseUi: [BASE_UI_PARTS.input],
+    composes: ["field", "icon-button"],
   },
   {
     slug: "navigation-section",
@@ -506,7 +527,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     collection: "components",
     source: "shared/design-system/ui/Combobox.tsx",
     baseUi: [BASE_UI_PARTS.combobox],
-    composes: ["icon-button"],
+    composes: ["field", "icon-button"],
   },
   {
     slug: "menu",
@@ -539,7 +560,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     owner: "desktop-new Design system",
     source: "shared/design-system/ui/Select.tsx",
     baseUi: [BASE_UI_PARTS.select],
-    composes: ["button"],
+    composes: ["field", "button"],
   },
 ];
 

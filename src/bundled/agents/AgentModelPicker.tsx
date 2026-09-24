@@ -2,7 +2,7 @@ import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useId } from "react";
 import type {
   AgentControl,
   ControlSnapshot,
@@ -28,6 +28,7 @@ export function AgentModelPicker({
   defaults: ControlSnapshot["databricksDefaults"];
   onChange(patch: Partial<AgentDraft>): void;
 }) {
+  const statusId = useId();
   const host = draft.databricks?.host ?? defaults?.host ?? "";
   const filter = draft.databricks?.filter ?? defaults?.filter ?? "";
   const [catalog, setCatalog] = useState<{
@@ -199,6 +200,7 @@ export function AgentModelPicker({
             <Combobox.Control
               label="Model"
               triggerLabel="Browse models"
+              aria-describedby={status ? statusId : undefined}
               loading={busy}
               onBrowse={() => {
                 if (supported && !fresh && attempted.current !== key)
@@ -241,7 +243,11 @@ export function AgentModelPicker({
           </Combobox.Root>
         </div>
         {status && (
-          <p role="status" className="text-body-sm text-secondary">
+          <p
+            id={statusId}
+            role="status"
+            className="text-body-sm text-secondary"
+          >
             {status}
           </p>
         )}

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { worktreeIcon } from "./worktree-icon.mjs";
+import { worktreePort } from "./worktree-port.mjs";
 
 const args = process.argv.slice(2);
 const forwarded = [];
@@ -25,9 +26,10 @@ for (; index < args.length && args[index] !== "--"; index++) {
   }
 }
 
+const help = forwarded.some((arg) => arg === "--help" || arg === "-h");
 // Prepare resources before Tauri can compile or observe an already-running Vite.
 // Its dev-server readiness timeout must not include a cold runtime build.
-if (!forwarded.some((arg) => arg === "--help" || arg === "-h")) {
+if (!help) {
   const prepared = spawnSync(
     process.execPath,
     [fileURLToPath(new URL("./build-agent-runtime.mjs", import.meta.url))],
@@ -37,21 +39,25 @@ if (!forwarded.some((arg) => arg === "--help" || arg === "-h")) {
   if (prepared.signal) process.kill(process.pid, prepared.signal);
   if (prepared.status !== 0) process.exit(prepared.status ?? 1);
 }
+const root = fileURLToPath(new URL("../", import.meta.url));
 const config = {};
-const icon = worktreeIcon(fileURLToPath(new URL("../", import.meta.url)));
+const icon = worktreeIcon(root);
 if (icon) config.bundle = { icon: [icon] };
-if (port !== undefined) {
-  // Tauri's own --port controls its static-file server, not our Vite server.
-  config.build = {
-    devUrl: `http://localhost:${port}`,
-    beforeDevCommand: `pnpm dev:desktop --port ${port}`,
-  };
-}
-if (Object.keys(config).length) {
-  // Prepend: Tauri treats everything after a bare positional as runner args.
-  // Explicit user configs merge afterward and retain precedence.
-  forwarded.unshift("--config", JSON.stringify(config));
-}
+// Tauri's own --port controls its static-file server, not our Vite server.
+// Without --port, each worktree derives its own stable port; vite.config.ts
+// derives the same one, so devUrl and Vite's strict port cannot disagree.
+const devPort = port ?? worktreePort(root);
+config.build = {
+  devUrl: `http://localhost:${devPort}`,
+  beforeDevCommand: `pnpm dev:desktop --port ${devPort}`,
+};
+if (port === undefined && !help)
+  console.log(
+    `Desktop dev server on ${config.build.devUrl} (derived from worktree path; pass --port to override)`,
+  );
+// Prepend: Tauri treats everything after a bare positional as runner args.
+// Explicit user configs merge afterward and retain precedence.
+forwarded.unshift("--config", JSON.stringify(config));
 // Runner/application arguments after -- belong to Tauri, including any --port.
 forwarded.push(...args.slice(index));
 const result = spawnSync("pnpm", ["tauri", "dev", ...forwarded], {

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { Context } from "@deepseek-ai/cordis";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -9,8 +11,13 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { PageSearch } from "./PageSearch";
+import { PageSearch, type SearchServices } from "./PageSearch";
 import type { RegisteredPage } from "../../features/pages/service";
+import {
+  createShortcutBindings,
+  SHORTCUT_BINDINGS_KEY,
+} from "../../features/shortcuts/preferences";
+import { ShortcutsService } from "../../features/shortcuts/service";
 
 afterEach(() => {
   cleanup();
@@ -25,11 +32,28 @@ it("keeps typing focus while arrows select results and Enter opens the selection
   });
   const select = vi.fn();
   const user = userEvent.setup();
-  render(<PageSearch pages={[]} onSelect={select} />);
+  render(
+    <PageSearch
+      pages={[
+        {
+          key: "buzz.channels/channels",
+          pluginId: "buzz.channels",
+          id: "channels",
+          title: "Channels",
+          revision: "bundled",
+          component: () => null,
+        },
+      ]}
+      onSelect={select}
+    />,
+  );
   await user.click(screen.getByRole("button", { name: "Search Buzz" }));
   const dialog = await screen.findByRole("dialog", { name: "Search Buzz" });
   const input = within(dialog).getByRole("combobox", { name: "Search Buzz" });
-  const home = within(dialog).getByRole("option", { name: "Home" });
+  const messages = within(dialog).getByRole("option", { name: "Messages" });
+  expect(
+    within(dialog).queryByRole("option", { name: "Home" }),
+  ).not.toBeInTheDocument();
   const settings = within(dialog).getByRole("option", { name: "Settings" });
   for (const [attribute, value] of Object.entries({
     spellcheck: "false",
@@ -40,11 +64,11 @@ it("keeps typing focus while arrows select results and Enter opens the selection
     expect(input).toHaveAttribute(attribute, value);
   await vi.waitFor(() => expect(input).toHaveFocus());
   for (const [key, result] of [
-    ["ArrowDown", home],
+    ["ArrowDown", messages],
     ["ArrowDown", settings],
     ["ArrowDown", settings],
-    ["ArrowUp", home],
-    ["ArrowUp", home],
+    ["ArrowUp", messages],
+    ["ArrowUp", messages],
   ] as const) {
     await user.keyboard(`{${key}}`);
     expect(input).toHaveFocus();
@@ -59,10 +83,10 @@ it("keeps typing focus while arrows select results and Enter opens the selection
     fireEvent.keyDown(input, { key: "ArrowDown", [modifier]: true });
     fireEvent.keyDown(input, { key: "Enter", [modifier]: true });
   }
-  expect(home).toHaveAttribute("aria-selected", "true");
-  expect(home).toHaveAttribute("data-selected", "true");
+  expect(messages).toHaveAttribute("aria-selected", "true");
+  expect(messages).toHaveAttribute("data-selected", "true");
   expect(settings).toHaveAttribute("aria-selected", "false");
-  expect(home).not.toHaveAttribute("aria-current", "page");
+  expect(messages).not.toHaveAttribute("aria-current", "page");
   expect(select).not.toHaveBeenCalled();
   await user.keyboard("{ArrowDown}{Enter}");
   expect(select).toHaveBeenCalledExactlyOnceWith("settings");
@@ -148,4 +172,82 @@ it("invalidates selection when result identities change, even at the same index"
   expect(input).not.toHaveAttribute("aria-activedescendant");
   await user.keyboard("{ArrowUp}{Enter}");
   expect(select).toHaveBeenCalledExactlyOnceWith("test/first");
+});
+
+it("shows the live search shortcut in the trigger hint and follows a rebind", async () => {
+  Object.defineProperty(navigator, "platform", {
+    configurable: true,
+    value: "MacIntel",
+  });
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  try {
+    // Only the shortcut services are read while the dialog is closed.
+    render(
+      <PageSearch
+        pages={[]}
+        onSelect={vi.fn()}
+        services={
+          { shortcuts, shortcutBindings: bindings } as unknown as SearchServices
+        }
+      />,
+    );
+    // The title renders as a focus/hover tooltip rather than a native attribute.
+    const user = userEvent.setup();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Search Buzz" })).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Search Buzz (⌘K)",
+    );
+    act(() =>
+      bindings.set("global-search", { key: "p", mod: true, shift: true }),
+    );
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Search Buzz (⇧⌘P)");
+    act(() => bindings.reset());
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Search Buzz (⌘K)");
+  } finally {
+    Reflect.deleteProperty(navigator, "platform");
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+it("renders a restored prototype-named search key and remains resettable", async () => {
+  localStorage.setItem(
+    SHORTCUT_BINDINGS_KEY,
+    JSON.stringify({ "global-search": { key: "constructor", mod: true } }),
+  );
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  try {
+    render(
+      <PageSearch
+        pages={[]}
+        onSelect={vi.fn()}
+        services={
+          { shortcuts, shortcutBindings: bindings } as unknown as SearchServices
+        }
+      />,
+    );
+    const user = userEvent.setup();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Search Buzz" })).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("constructor");
+    act(() => bindings.reset());
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Ctrl+K");
+  } finally {
+    bindings.dispose();
+    localStorage.clear();
+    await root.fiber.dispose();
+  }
 });

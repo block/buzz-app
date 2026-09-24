@@ -1,3 +1,4 @@
+import type { AgentControl } from "../agents/control";
 import type { IdentityNames } from "../identity-names/service";
 import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
@@ -33,6 +34,7 @@ export function provideRelay(
   connect?: (signal: AbortSignal) => Promise<ReadTransport>,
   presenceActivity?: PresenceActivity,
   identityNames?: IdentityNames,
+  agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
 ) {
   let disposed = false;
   let generation = 0;
@@ -90,6 +92,7 @@ export function provideRelay(
             store.dispose();
             store = createRelaySession(transport, {
               identityNames,
+              agentChoices,
               ...(presenceActivity ? { presenceActivity } : {}),
               prepared: true,
               // Keep intent preparation, but do not fetch every unopened channel.

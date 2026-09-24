@@ -27,6 +27,7 @@ export const historySize = 640;
 export const test = base.extend({
   productionBroker: [false, { option: true }],
   actionProfile: [false, { option: true }],
+  profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
   presenceThreadAuthors: [0, { option: true }],
@@ -39,6 +40,7 @@ export const test = base.extend({
   savedSidebar: [false, { option: true }],
   expectedPageFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
+  iconCongestion: [false, { option: true }],
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
@@ -54,6 +56,7 @@ export const test = base.extend({
       browser,
       productionBroker,
       actionProfile,
+      profilePicture,
       readState,
       threadUnread,
       presenceThreadAuthors,
@@ -66,6 +69,7 @@ export const test = base.extend({
       savedSidebar,
       expectedPageFailure,
       largeSidebar,
+      iconCongestion,
       dmLabels,
       tallMessages,
       membershipActivity,
@@ -753,6 +757,37 @@ export const test = base.extend({
         relay.publish(community, event);
         return;
       }
+      if ([7, 5].includes(event.kind)) {
+        const channel = event.tags.find(([name]) => name === "h")?.[1];
+        const history = histories.get(`${community}/${channel}`);
+        expect(history).toBeDefined();
+        const ids = event.tags
+          .filter(([name]) => name === "e")
+          .map(([, id]) => id);
+        expect(ids.length).toBeGreaterThan(0);
+        for (const id of ids) {
+          const target = [
+            ...history,
+            ...[...threadReplies.values()].flat(),
+          ].find((row) => row.id === id);
+          expect(target).toBeDefined();
+          expect(target.tags).toContainEqual(["h", channel]);
+          if (event.kind === 7) expect(target.kind).toBe(9);
+          else {
+            expect(target.pubkey).toBe(viewer);
+            expect([7, 9]).toContain(target.kind);
+            expect(event.tags).toContainEqual(["k", String(target.kind)]);
+          }
+        }
+        if (event.kind === 7) expect(ids).toHaveLength(1);
+        if (!history.some((row) => row.id === event.id)) {
+          history.push(event);
+          targetEvents.push(event);
+        }
+        report.publications.push({ community, event });
+        relay.publish(community, event);
+        return;
+      }
       expect(event.kind).toBe(30078);
       expect(event.tags).toContainEqual(["t", "read-state"]);
       const blob = JSON.parse(
@@ -840,7 +875,10 @@ export const test = base.extend({
           throw new Error(`Unexpected community: ${request.url}`);
         if (route === "gif-info" && request.method === "GET")
           return send(response, {});
-        if (route === "info" && request.method === "GET")
+        if (
+          (route === "info" || route === "icon-info") &&
+          request.method === "GET"
+        )
           return send(response, { policy: null });
         if (route === "session") {
           report.sessions.push(community);
@@ -956,6 +994,10 @@ export const test = base.extend({
         send(response, { error: String(error) }, 500);
       }
     };
+    const heldIcons = [];
+    const iconRequests = [];
+    const foregroundRequests = [];
+    let iconsReleased = false;
     let server;
     try {
       server = await preview({
@@ -964,6 +1006,21 @@ export const test = base.extend({
           {
             name: "fixture-relay",
             async configurePreviewServer(server) {
+              if (iconCongestion) {
+                server.middlewares.use((req, res, next) => {
+                  if (req.url?.includes("/icon-info")) {
+                    iconRequests.push(req.url);
+                    if (iconsReleased) return send(res, {});
+                    heldIcons.push(res);
+                    return;
+                  }
+                  if (req.url === "/foreground-probe") {
+                    foregroundRequests.push(req.url);
+                    return send(res, { reached: true });
+                  }
+                  next();
+                });
+              }
               if (relay) {
                 report.brokerRequests = [];
                 server.middlewares.use((req, res, next) => {
@@ -1037,26 +1094,46 @@ export const test = base.extend({
         }
       });
       await page.addInitScript(
-        ({ viewer }) => {
+        ({ viewer, profilePicture, iconCongestion }) => {
           const key = `buzz-client.v1:${viewer}`;
           if (!localStorage.getItem(key))
             localStorage.setItem(
               key,
               JSON.stringify({
-                profile: { name: "Browser Fixture", picture: "" },
-                memberships: [
-                  { id: "primary", name: "Primary" },
-                  { id: "secondary", name: "Secondary" },
-                ],
+                profile: { name: "Browser Fixture", picture: profilePicture },
+                memberships: iconCongestion
+                  ? [
+                      { id: "primary", name: "Primary" },
+                      { id: "secondary", name: "Secondary" },
+                      ...Array.from({ length: 6 }, (_, index) => ({
+                        id: `https://saved-${index}.example`,
+                        name: `Saved ${index}`,
+                      })),
+                    ]
+                  : [
+                      { id: "primary", name: "Primary" },
+                      { id: "secondary", name: "Secondary" },
+                    ],
                 selected: "primary",
               }),
             );
         },
-        { viewer },
+        { viewer, profilePicture, iconCongestion },
       );
       await use({
         origin,
         report,
+        iconCongestion: iconCongestion
+          ? {
+              iconRequests,
+              foregroundRequests,
+              release() {
+                iconsReleased = true;
+                for (const response of heldIcons)
+                  if (!response.writableEnded) send(response, {});
+              },
+            }
+          : undefined,
         pending,
         histories,
         presenceThread,
@@ -1265,6 +1342,9 @@ export const test = base.extend({
         ),
       ).toEqual([]);
     } finally {
+      if (iconCongestion)
+        for (const response of heldIcons)
+          if (!response.writableEnded) send(response, {});
       await writeFile(
         testInfo.outputPath("evidence.json"),
         JSON.stringify(report, null, 2),

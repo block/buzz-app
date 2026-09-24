@@ -1,4 +1,12 @@
 @layer components {
+  /* A reserved border fades at the field perimeter without changing its geometry.
+     Composite fields own one stroke around the input and its actions. */
+  .buzz-input,
+  .buzz-textarea,
+  .buzz-input-group {
+    --border: transparent;
+    transition: border-color var(--duration-field-focus) var(--easing-state);
+  }
   .buzz-field {
     display: grid;
     gap: var(--space-2);
@@ -25,26 +33,42 @@
     width: 100%;
     min-width: 0;
     min-height: var(--size-control);
-    border: 1px solid var(--border-prominent);
+    border: 1px solid var(--border);
     border-radius: var(--radius-control);
-    padding: var(--space-2) var(--space-3);
-    background: var(--surface-panel);
+    padding: max(var(--space-1), calc((var(--size-control) - 1lh - 2px) / 2))
+      var(--space-control-inset);
+    background: var(--surface-inset);
     color: var(--text-standard);
   }
   .buzz-textarea {
     min-height: 6rem;
+    padding: var(--space-control-inset);
     resize: vertical;
+  }
+  /* Restyle the native grip, retaining the browser's resize hit target. */
+  .buzz-textarea::-webkit-resizer {
+    background:
+      linear-gradient(
+        135deg,
+        transparent 45%,
+        var(--text-metadata) 45% 55%,
+        transparent 55% 70%,
+        var(--text-metadata) 70% 80%,
+        transparent 80%
+      )
+      right var(--space-1) bottom var(--space-1) / var(--space-2) var(--space-2)
+      no-repeat;
   }
   .buzz-textarea[data-variant="code"] {
     @apply text-mono;
   }
   .buzz-input::placeholder,
   .buzz-textarea::placeholder {
-    color: var(--text-subtle);
+    color: var(--text-metadata);
   }
   .buzz-input:is([data-invalid], [aria-invalid="true"]),
   .buzz-textarea:is([data-invalid], [aria-invalid="true"]) {
-    border-color: var(--border-danger);
+    --border: var(--border-danger);
   }
   .buzz-input:disabled,
   .buzz-textarea:disabled {
@@ -146,6 +170,21 @@
     display: flex;
     flex-shrink: 0;
   }
+  .buzz-dropdown-chevron {
+    transform: rotate(0deg);
+    transition: transform var(--duration-state) var(--easing-settle);
+  }
+  [aria-expanded="true"] .buzz-dropdown-chevron {
+    transform: rotate(180deg);
+  }
+  html[data-keyboard-navigation] .buzz-dropdown-chevron {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-dropdown-chevron {
+      transition: none;
+    }
+  }
   .buzz-select-positioner {
     z-index: var(--layer-popover);
   }
@@ -153,26 +192,97 @@
     width: var(--anchor-width);
     overflow-wrap: anywhere;
   }
-  .buzz-combobox-control {
-    position: relative;
-    min-width: 0;
-  }
-  .buzz-combobox-control > .buzz-input {
-    padding-inline-end: calc(var(--size-control-sm) + var(--space-2));
-  }
-  .buzz-combobox-trigger {
-    position: absolute;
-    inset-inline-end: var(--space-1);
-    top: 50%;
-    transform: translateY(-50%);
-  }
   .buzz-combobox-empty:not(:empty) {
     padding: var(--space-2) var(--space-3);
     color: var(--text-subtle);
   }
   .buzz-combobox-option {
-    flex-direction: column;
     align-items: start;
+  }
+  .buzz-combobox-item-content {
+    display: grid;
     gap: var(--space-1);
+    flex: 1;
+    min-width: 0;
+  }
+  .buzz-combobox-indicator {
+    flex-shrink: 0;
+    padding-top: var(--space-1);
+  }
+  .buzz-combobox-indicator:not([data-selected]) {
+    visibility: hidden;
+  }
+  .buzz-select-option[data-disabled] {
+    color: var(--text-unavailable);
+    cursor: not-allowed;
+  }
+  .buzz-select-value[data-placeholder] {
+    color: var(--text-metadata);
+  }
+
+  .buzz-input-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    width: 100%;
+    min-height: var(--size-control);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    padding-inline: var(--space-control-inset);
+    background: var(--surface-inset);
+    color: var(--text-subtle);
+  }
+  .buzz-input-group:has(.buzz-input-trailing) {
+    padding-inline-end: calc(var(--space-1) - 1px);
+  }
+  .buzz-input-group > .buzz-input {
+    flex: 1;
+    min-width: 0;
+    width: 0;
+    min-height: calc(var(--size-control) - 2px);
+    border: 0;
+    border-radius: 0;
+    padding-inline: 0;
+    background: transparent;
+  }
+  .buzz-input-leading {
+    display: flex;
+    flex-shrink: 0;
+  }
+  .buzz-input-trailing {
+    display: flex;
+    width: var(--size-control-sm);
+    flex-shrink: 0;
+  }
+  .buzz-input-group:has(input:is([data-invalid], [aria-invalid="true"])) {
+    --border: var(--border-danger);
+  }
+  .buzz-input-group:has(input:disabled) {
+    background: var(--affordance-disabled);
+    color: var(--text-unavailable);
+  }
+  .buzz-input-group input::-webkit-search-cancel-button {
+    display: none;
+  }
+  html[data-keyboard-navigation] .buzz-input-group > .buzz-input:focus-visible {
+    outline-offset: 0;
+  }
+
+  .buzz-input:where(:focus, [data-popup-open]),
+  .buzz-textarea:where(:focus),
+  .buzz-input-group:where(:focus-within) {
+    --border: var(--border-prominent);
+  }
+  html[data-keyboard-navigation]
+    :is(.buzz-input, .buzz-textarea, .buzz-input-group) {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-input,
+    .buzz-textarea,
+    .buzz-input-group {
+      transition: none;
+    }
   }
 }

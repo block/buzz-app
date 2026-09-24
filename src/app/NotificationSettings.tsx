@@ -1,3 +1,4 @@
+import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Switch } from "../shared/design-system/ui/Switch";
 import { Button } from "../shared/design-system/ui/Button";
 import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
@@ -7,8 +8,10 @@ import styles from "./NotificationSettings.module.css";
 
 export function NotificationSettings({
   notifications,
+  active = true,
 }: {
   notifications: NotificationsService;
+  active?: boolean;
 }) {
   const state = useSyncExternalStore(
     notifications.subscribe,
@@ -118,28 +121,33 @@ export function NotificationSettings({
           Message alerts cover the selected community while Buzz is running.
           Reading history and reconnecting stay quiet.
         </p>
-        <UnreadIndicatorSettings indicator={notifications.indicator} />
-        {state.preferencesError && (
-          <div role="alert" className="notice">
-            <p>{state.preferencesError}</p>
+        <UnreadIndicatorSettings
+          indicator={notifications.indicator}
+          active={active}
+        />
+        {active && state.preferencesError && (
+          <ToastNotice
+            title="Notification choices weren’t saved"
+            description={state.preferencesError}
+          >
             <Button
               type="button"
+              size="sm"
               onClick={() => notifications.updatePreferences({})}
             >
               Retry saving choices
             </Button>{" "}
             <Button
               type="button"
+              size="sm"
               onClick={() => notifications.reloadPreferences()}
             >
               Reload saved choices
             </Button>
-          </div>
+          </ToastNotice>
         )}
-        {state.error && (
-          <p role="alert" className="notice">
-            {state.error}
-          </p>
+        {active && state.error && (
+          <ToastNotice title="Notification failed" description={state.error} />
         )}
       </div>
     </section>

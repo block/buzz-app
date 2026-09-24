@@ -30,6 +30,34 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.deepEqual(services.pages.snapshot(), []);
     await settle();
     assert.equal(services.pages.snapshot().length, 5);
+    assert.deepEqual(services.channelTemplates.snapshot(), []);
+    assert.deepEqual(
+      services.settingsCards.snapshot().map((card) => card.pluginId),
+      ["buzz.channels"],
+    );
+    await services.plugins.change("enable", "buzz.channel-templates");
+    await vi.waitFor(() =>
+      assert.equal(services.channelTemplates.snapshot().length, 1),
+    );
+    const originalTemplates = services.channelTemplates.snapshot()[0];
+    assert.ok(
+      services.settingsCards
+        .snapshot()
+        .some((card) => card.pluginId === "buzz.channel-templates"),
+    );
+    await services.plugins.change("disable", "buzz.channel-templates");
+    assert.deepEqual(services.channelTemplates.snapshot(), []);
+    assert.deepEqual(
+      services.settingsCards.snapshot().map((card) => card.pluginId),
+      ["buzz.channels"],
+    );
+    await services.plugins.change("enable", "buzz.channel-templates");
+    await vi.waitFor(() =>
+      assert.equal(services.channelTemplates.snapshot().length, 1),
+    );
+    assert.notEqual(services.channelTemplates.snapshot()[0], originalTemplates);
+    await services.plugins.change("disable", "buzz.channel-templates");
+
     await vi.waitFor(() =>
       assert.equal(services.conversation.tools.snapshot().length, 2),
     );
@@ -223,9 +251,14 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       ),
     );
     await services.plugins.change("disable", "buzz.workflows");
-    await services.plugins.change("disable", "buzz.channels");
-    const [projects] = services.pages.snapshot();
-    assert.equal(services.pages.snapshot().length, 1);
+    assert.equal(
+      await services.plugins.change("disable", "buzz.channels"),
+      false,
+    );
+    const projects = services.pages
+      .snapshot()
+      .find((page) => page.pluginId === "buzz.projects");
+    assert.equal(services.pages.snapshot().length, 2);
     assert.equal(projects.pluginId, "buzz.projects");
     assert.equal(projects.id, "projects");
     assert.equal(projects.title, "Projects");
@@ -235,10 +268,15 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       /^<div class="[^"]*"><section aria-label="Projects" data-buzz-surface="" class="panel"><div[^>]*><h1[^>]*>Projects<\/h1><\/div><\/section><\/div>$/,
     );
     await services.plugins.change("disable", "buzz.projects");
-    assert.deepEqual(services.pages.snapshot(), []);
+    assert.deepEqual(
+      services.pages.snapshot().map((page) => page.pluginId),
+      ["buzz.channels"],
+    );
     await services.plugins.change("enable", "buzz.projects");
     await vi.waitFor(() => {
-      const [restored] = services.pages.snapshot();
+      const restored = services.pages
+        .snapshot()
+        .find((page) => page.pluginId === "buzz.projects");
       assert.equal(restored?.pluginId, "buzz.projects");
       assert.notEqual(restored, projects);
     });
@@ -249,4 +287,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       Object.defineProperty(globalThis, "localStorage", originalStorage);
     else delete globalThis.localStorage;
   }
-});
+  // A real Vite server, the whole service graph and every page render take
+  // seconds alone, so the default budget expires under a parallel suite.
+}, 30_000);

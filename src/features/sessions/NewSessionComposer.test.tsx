@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { composerDOMFixture } from "../messages/composer-testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -7,6 +8,7 @@ import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
 import { NewSessionComposer } from "./NewSessionComposer";
 
+composerDOMFixture();
 afterEach(cleanup);
 beforeEach(() => localStorage.clear());
 const parent = {
@@ -29,11 +31,14 @@ function setup(available = true) {
     addAgents: vi.fn(async () => {}),
     create: vi.fn<RelaySession["workSessions"]["create"]>(() => "c".repeat(64)),
     invite: vi.fn(() => "e".repeat(64)),
-    delivered: vi.fn(async () => {}),
+    delivered: vi.fn<RelaySession["workSessions"]["delivered"]>(async () => {}),
     refresh: vi.fn(async () => {}),
-    failed: () => false,
+    failed: (_id: string) => false,
+    discardFailed: vi.fn(async (_id: string) => {}),
   };
-  const messages = { send: vi.fn(() => "d".repeat(64)) };
+  const messages = {
+    send: vi.fn<RelaySession["messages"]["send"]>(() => "d".repeat(64)),
+  };
   let channelSnapshot = { channels: [{ id: "", members: parent.members }] };
   const profileSnapshot = new Map();
   const session = {
@@ -53,7 +58,8 @@ function setup(available = true) {
       snapshot: () => profileSnapshot,
       subscribe: () => () => {},
     },
-    agentLibrary: {
+    agentChoices: {
+      retain: () => () => {},
       snapshot: () => agents,
       subscribe: () => () => {},
       refresh: async () => {},
@@ -68,9 +74,13 @@ function setup(available = true) {
   } as unknown as RelaySession;
   return { session, workSessions, messages };
 }
-it.each([true, false])(
-  "admits only explicit mentions when they override the picker (child: %s)",
-  async (child) => {
+it.each(
+  [true, false].flatMap((child) =>
+    [false, true].map((removeMention) => ({ child, removeMention })),
+  ),
+)(
+  "routes explicit mentions or the picker after removal: child=$child, removed=$removeMention",
+  async ({ child, removeMention }) => {
     const test = setup(),
       onStarted = vi.fn(),
       user = userEvent.setup();
@@ -104,6 +114,26 @@ it.each([true, false])(
     expect(
       screen.getByRole("textbox", { name: "Message this session" }),
     ).toHaveTextContent("Plan the release");
+    if (removeMention) {
+      const remove = screen.getByRole("button", {
+        name: `Remove mention Member agent ${"a".repeat(64)}`,
+      });
+      await user.hover(remove);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Remove explicit mention of Member agent (aaaaaaaa)",
+      );
+      await user.click(remove);
+      expect(screen.getByRole("textbox")).toHaveProperty(
+        "value",
+        "@Member agent Plan the release",
+      );
+      expect(
+        screen.getByRole("textbox").querySelector(".inline-chip"),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("region", { name: "Explicit mentions" }),
+      ).not.toBeInTheDocument();
+    }
     await user.click(screen.getByRole("textbox"));
     await user.keyboard("{Enter}");
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
@@ -113,18 +143,24 @@ it.each([true, false])(
       "@Member agent Plan the release",
       child ? parent.id : undefined,
     );
-    expect(test.workSessions.invite).not.toHaveBeenCalled();
+    const recipient = (removeMention ? "b" : "a").repeat(64);
+    if (removeMention && !child)
+      expect(test.workSessions.invite).toHaveBeenCalledExactlyOnceWith(
+        id,
+        recipient,
+      );
+    else expect(test.workSessions.invite).not.toHaveBeenCalled();
     expect(test.workSessions.addAgents.mock.calls).toEqual(
-      (child ? [parent.id, id] : [id]).map((target) => [
+      (child ? [parent.id, id] : removeMention ? [] : [id]).map((target) => [
         target,
-        ["a".repeat(64)],
+        [recipient],
         expect.any(Function),
       ]),
     );
     expect(test.messages.send).toHaveBeenCalledWith(
       id,
       "@Member agent Plan the release",
-      ["a".repeat(64)],
+      [recipient],
     );
   },
 );
@@ -526,5 +562,46 @@ it.each(
         ["a".repeat(64)],
       );
     }
+  },
+);
+
+it.each([false, true])(
+  "keeps edits after discarding a failed session send and remounting, child=%s",
+  async (child) => {
+    const t = setup();
+    const user = userEvent.setup();
+    const onStarted = vi.fn();
+    const id = "d".repeat(64);
+    let failed = true;
+    t.workSessions.failed = (eventId) => failed && eventId === id;
+    t.workSessions.discardFailed = vi.fn(async () => {
+      failed = false;
+    });
+    t.workSessions.delivered.mockImplementation(async (eventId) => {
+      if (failed && eventId === id) throw new Error("Not sent");
+    });
+    const mount = () =>
+      render(
+        <NewSessionComposer
+          session={t.session}
+          scope="test"
+          parent={child ? parent : undefined}
+          onStarted={onStarted}
+        />,
+      );
+    const page = mount();
+    await user.type(screen.getByRole("textbox"), "Original draft");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Edit and retry" }),
+    );
+    await user.clear(screen.getByRole("textbox"));
+    await user.type(screen.getByRole("textbox"), "Corrected draft");
+    page.unmount();
+    mount();
+    expect(screen.getByRole("textbox")).toHaveTextContent("Corrected draft");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+    expect(t.messages.send.mock.calls[1]?.[1]).toBe("Corrected draft");
   },
 );

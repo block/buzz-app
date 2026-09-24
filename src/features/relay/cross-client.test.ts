@@ -157,15 +157,32 @@ describe("cross-client rich content compatibility", () => {
     });
   });
 
-  it("does not admit kind 40008 diff rows into the channel fold", () => {
+  it("admits kind 40008 diff rows as raw patch content with file metadata", () => {
+    const content =
+      "@@ -1 +1 @@\n-![old](https://relay.test/old.png)\n+new text\n";
     const diff = signed(alice, {
       kind: 40008,
-      content: JSON.stringify({ patches: [] }),
+      content,
       created_at: 10,
-      tags: [["h", channel]],
+      tags: [
+        ["h", channel],
+        ["file", "src/example.ts"],
+        ["description", "Update example"],
+      ],
     });
 
-    expect(foldMessages(channel, relay.pubkey, [diff])).toEqual([]);
+    expect(foldMessages(channel, relay.pubkey, [diff])).toEqual([
+      expect.objectContaining({
+        id: diff.id,
+        content,
+        attachments: [],
+        diff: expect.objectContaining({
+          filePath: "src/example.ts",
+          description: "Update example",
+          truncated: false,
+        }),
+      }),
+    ]);
   });
 
   it("renders spoiler syntax as ordinary literal text", () => {

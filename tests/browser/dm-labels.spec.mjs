@@ -49,11 +49,16 @@ for (const cold of [false, true]) {
         ).toBeVisible();
         app.relay.holdProfiles(app.participants);
       }
+      await expect((cold ? fallback : dm).locator(".buzz-avatar")).toHaveText(
+        cold ? app.participants[0][0].toUpperCase() : "A",
+      );
       const before = labelReads().length;
       app.omitChannel("beta");
       // The deployed deletion trigger is not under test. Exercise the real
       // refresh -> roster omission -> session purge -> page/hook recovery path.
-      await page.getByLabel("Conversation options", { exact: true }).click();
+      await page
+        .getByRole("button", { name: "Channel settings", exact: true })
+        .click();
       await page.getByText("Diagnostics", { exact: true }).click();
       await page
         .getByRole("button", { name: "Refresh channels", exact: true })
@@ -69,7 +74,9 @@ for (const cold of [false, true]) {
       app.relay.releaseProfiles();
       await expect(dm).toBeVisible();
       await expect(fallback).toHaveCount(0);
-      await page.getByLabel("Conversation options", { exact: true }).click();
+      await page
+        .getByRole("button", { name: "Channel settings", exact: true })
+        .click();
       await dm.click();
       await expect(
         page
@@ -77,6 +84,8 @@ for (const cold of [false, true]) {
           .getByRole("heading", { level: 2 }),
       ).toHaveText("Alice Fixture");
       expect(labelReads()).toHaveLength(before + 1);
+      await expect(dm.locator(".buzz-avatar")).toHaveText("A");
+      expect(app.report.presenceSnapshots).toHaveLength(0);
     } finally {
       app.relay.releaseProfiles();
     }

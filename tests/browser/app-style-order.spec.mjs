@@ -4,13 +4,13 @@ import { test, expect } from "./source-fixture.mjs";
 // Composer layer-order coverage belongs with the rich-editor integration.
 test("app startup preserves shared shell control styling", async ({ page }) => {
   await page.goto("/");
-  const home = page
+  const projects = page
     .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Home", exact: true });
+    .getByRole("button", { name: "Projects", exact: true });
   const messages = page
     .getByRole("navigation", { name: "Pages" })
     .getByRole("button", { name: "Messages", exact: true });
-  await expect(home).toBeVisible();
+  await expect(projects).toBeVisible();
   for (const dark of [false, true]) {
     await page.evaluate((dark) => {
       document.documentElement.classList.toggle("dark", dark);
@@ -18,8 +18,8 @@ test("app startup preserves shared shell control styling", async ({ page }) => {
     }, dark);
     for (const width of [390, 820, 1440]) {
       await page.setViewportSize({ width, height: 950 });
-      await expect(home).toHaveCSS("border-top-width", "0px");
-      await expect(messages).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(messages).toHaveCSS("border-top-width", "0px");
+      await expect(projects).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       const controls = [
         page.getByRole("button", { name: "Go back", exact: true }),
         page.getByRole("button", { name: "Go forward", exact: true }),
@@ -28,10 +28,21 @@ test("app startup preserves shared shell control styling", async ({ page }) => {
       for (const control of controls) {
         await expect(control).toBeVisible();
         await expect(control).toHaveCSS("padding-left", "0px");
-        // Shared controls reserve a transparent border for outline variants.
-        await expect(control).toHaveCSS("border-top-width", "1px");
-        await expect(control).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+        // Shared controls draw outlines with an inset shadow, not a border.
+        await expect(control).toHaveCSS("border-top-width", "0px");
       }
+      const search = controls[2];
+      const glassHover = await search.evaluate((element) => {
+        const probe = document.createElement("span");
+        probe.style.backgroundColor = "var(--bg-glass-primary-hover)";
+        element.append(probe);
+        const color = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return color;
+      });
+      await search.hover();
+      await expect(search).toHaveCSS("background-color", glassHover);
+      await page.mouse.move(0, 0);
     }
   }
 });

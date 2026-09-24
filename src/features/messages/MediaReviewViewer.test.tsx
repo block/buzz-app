@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
@@ -82,6 +89,7 @@ it("keeps fullscreen comment avatar hints in sync without loading the agent libr
         channelName="One"
         messageId={root.id}
         initialTime={0}
+        onOpenLink={() => false}
         close={() => {}}
       />
     </StrictMode>,
@@ -129,6 +137,47 @@ it("keeps fullscreen comment avatar hints in sync without loading the agent libr
   expect(readAgentLibrary).toHaveBeenCalledTimes(2);
 });
 
+it("wires image review links to the viewer host opener", async () => {
+  const viewer = keypair();
+  const image = {
+    url: "https://fixture.test/image.png",
+    kind: "image" as const,
+  };
+  const root = message(viewer, "one", "Image", 1, [
+    ["imeta", `url ${image.url}`, "m image/png"],
+  ]);
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: keypair().pubkey,
+    media: (url) => url,
+    async query(filters) {
+      if (filters.some((filter) => filter.ids?.includes(root.id)))
+        return [root];
+      return [];
+    },
+  });
+  owners.push(owner);
+  const open = vi.fn(() => true);
+  render(
+    <MediaReviewViewer
+      attachment={image}
+      session={owner.session}
+      scope="image-open-test"
+      channelId="one"
+      channelName="One"
+      messageId={root.id}
+      initialTime={0}
+      onOpenLink={open}
+      close={() => {}}
+    />,
+  );
+  const link = await screen.findByRole("link", {
+    name: "Open image in browser",
+  });
+  expect(fireEvent.click(link)).toBe(false);
+  expect(open).toHaveBeenCalledWith(image.url);
+});
+
 it("excludes generic files from the image review grid", async () => {
   const viewer = keypair();
   const image = {
@@ -163,6 +212,7 @@ it("excludes generic files from the image review grid", async () => {
       channelName="One"
       messageId={root.id}
       initialTime={0}
+      onOpenLink={() => false}
       close={() => {}}
     />,
   );

@@ -9,6 +9,8 @@ type ButtonVariant =
   | "ghost"
   | "destructive"
   | "outline"
+  | "inverted"
+  | "link"
   | "primary"
   | "quiet";
 type ButtonSize = "sm" | "md" | "lg" | "compact" | "default";

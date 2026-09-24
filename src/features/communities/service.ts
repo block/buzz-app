@@ -1,4 +1,5 @@
 // FOUNDATION: Client identity and membership selection outlive community query sessions.
+import type { AgentControl } from "../agents/control";
 import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
 import { Context } from "@deepseek-ai/cordis";
@@ -27,6 +28,8 @@ export function createCommunities(
   ctx: Context,
   live: boolean,
   identityNames?: IdentityNames,
+  openRelay = "",
+  agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
 ) {
   let state: ClientSnapshot = {
     ...empty(),
@@ -89,6 +92,7 @@ export function createCommunities(
         (signal) => connectBrokerTransport("", signal, id),
         presenceActivity,
         identityNames,
+        agentChoices,
       );
       sessions.set(id, session);
       session.subscribe(() => {
@@ -120,10 +124,10 @@ export function createCommunities(
           throw new Error("Invalid local identity");
         if (disposed) return;
         let saved = empty();
+        let seeded = false;
         try {
-          const raw = JSON.parse(
-            localStorage.getItem(`buzz-client.v1:${viewer}`) ?? "null",
-          );
+          const stored = localStorage.getItem(`buzz-client.v1:${viewer}`);
+          const raw = JSON.parse(stored ?? "null");
           if (raw)
             saved = {
               profile: {
@@ -177,6 +181,14 @@ export function createCommunities(
                 : [],
               selected: null,
             };
+          else if (openRelay && stored === null) {
+            // Development opt-in for a viewer with no saved record on this origin.
+            // Any stored record, including Personal space or one this reader
+            // cannot understand, wins over the seed.
+            const { id, name } = communityDestination(openRelay);
+            saved = { ...saved, memberships: [{ id, name }], selected: id };
+            seeded = true;
+          }
           if (typeof raw?.selected === "string") {
             try {
               saved.selected = communityDestination(raw.selected).id;
@@ -190,8 +202,10 @@ export function createCommunities(
         }
         if (!saved.memberships.some((m) => m.id === saved.selected))
           saved.selected = null;
+        presenceActivity.setViewer(viewer);
         if (saved.selected) acquire(saved.selected);
-        update({ ...saved, viewer, status: "ready" }, false);
+        // A seeded record is saved once so later configuration changes cannot revoke it.
+        update({ ...saved, viewer, status: "ready" }, seeded);
       })
       .catch((error) => {
         if (!disposed)
@@ -206,6 +220,7 @@ export function createCommunities(
     return Promise.all(scopes.map((scope) => scope.fiber.dispose()));
   });
   return {
+    presence: presenceActivity,
     relay,
     snapshot: () => state,
     subscribe(fn: () => void) {

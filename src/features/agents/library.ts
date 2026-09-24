@@ -80,10 +80,10 @@ export function createAgentLibrary(
     queries: Object.freeze({
       snapshot: () => snapshot,
       refresh,
-      retain() {
+      retain({ refresh: refreshOnRetain = true } = {}) {
         const demand = {};
         demands.add(demand);
-        void refresh();
+        if (refreshOnRetain) void refresh();
         return () => {
           demands.delete(demand);
         };
@@ -98,7 +98,9 @@ export function createAgentLibrary(
     }),
     clear,
     reconnect() {
-      if (demands.size) void refresh();
+      // Initial establishment can follow a completed activation read. A real
+      // disconnect clears this snapshot; only then is fresh inventory needed.
+      if (demands.size && snapshot.status !== "ready") void refresh();
     },
     dispose() {
       closed = true;

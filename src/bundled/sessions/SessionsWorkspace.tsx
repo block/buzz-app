@@ -1,7 +1,8 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Panel } from "../../shared/design-system/ui/Panel";
-import { HashIcon, PlusIcon } from "../../shared/design-system/icons/index";
+import { PlusIcon } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../../features/channels/channel-icon";
 import type { ReactNode } from "react";
 import styles from "./SessionsWorkspace.module.css";
 
@@ -10,6 +11,7 @@ export type SessionListItem = Readonly<{
   id: string;
   title: string;
   parentName?: string;
+  parentPrivate?: true;
   content?: ReactNode;
 }>;
 
@@ -38,28 +40,33 @@ export function SessionsWorkspace({
           </Button>
           <h2 className={styles.historyHeading}>Previous sessions</h2>
           <nav className={styles.history} aria-label="Previous sessions">
-            {sessions.map((session) => (
-              <NavigationItem
-                type="button"
-                key={session.id}
-                aria-current={session.id === selected ? "page" : undefined}
-                selected={session.id === selected}
-                onClick={() => onSelect(session.id)}
-                label={
-                  <span className={styles.historyLabel}>
-                    {session.parentName && (
-                      <small className={styles.parentChannel}>
-                        <HashIcon size={12} aria-hidden="true" />
-                        <span>{session.parentName}</span>
-                      </small>
-                    )}
-                    <span className={styles.sessionRow}>
-                      {session.content ?? <span>{session.title}</span>}
+            {sessions.map((session) => {
+              const ParentChannelIcon = channelIcon({
+                private: session.parentPrivate,
+              });
+              return (
+                <NavigationItem
+                  type="button"
+                  key={session.id}
+                  aria-current={session.id === selected ? "page" : undefined}
+                  selected={session.id === selected}
+                  onClick={() => onSelect(session.id)}
+                  label={
+                    <span className={styles.historyLabel}>
+                      {session.parentName && (
+                        <small className={styles.parentChannel}>
+                          <ParentChannelIcon size={12} aria-hidden="true" />
+                          <span>{session.parentName}</span>
+                        </small>
+                      )}
+                      <span className={styles.sessionRow}>
+                        {session.content ?? <span>{session.title}</span>}
+                      </span>
                     </span>
-                  </span>
-                }
-              />
-            ))}
+                  }
+                />
+              );
+            })}
             {listStatus ??
               (!sessions.length && (
                 <p className={styles.listMessage}>

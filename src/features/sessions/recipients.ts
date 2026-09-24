@@ -5,14 +5,14 @@ import type { ChannelSummary, Profile } from "../relay/contracts";
 export function sessionAgents(
   channel: ChannelSummary | undefined,
   profiles: ReadonlyMap<string, Profile>,
-  library: AgentLibrarySnapshot,
+  library: AgentLibrarySnapshot & { complete?: boolean },
   viewer: string | undefined,
 ): readonly string[] | undefined {
   if (!channel?.members) return;
   const known = new Set(library.identities.map((agent) => agent.pubkey));
   const members = [...new Set(channel.members)].filter((key) => key !== viewer);
   if (
-    library.status !== "ready" &&
+    (library.status !== "ready" || library.complete === false) &&
     members.some((key) => !known.has(key) && !profiles.get(key)?.isAgent)
   )
     return;
@@ -24,7 +24,7 @@ export function sessionAgents(
 export function sessionRecipients(
   channel: ChannelSummary | undefined,
   profiles: ReadonlyMap<string, Profile>,
-  library: AgentLibrarySnapshot,
+  library: AgentLibrarySnapshot & { complete?: boolean },
   viewer: string | undefined,
   explicit: readonly string[],
 ): readonly string[] {

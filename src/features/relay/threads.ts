@@ -6,13 +6,15 @@ import type { LocalEvents } from "./outbox";
 import type { RelayReader } from "./reader";
 import { byteSize } from "./budget";
 import { foldMessages } from "./fold";
+import { shareMessageRows } from "./row-identity";
 
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
 const PAGE_SIZE = 50;
 const MAX_PAGES = 10;
 const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
-const contentKind = (event: EventData) => [9, 40002].includes(event.kind);
+const contentKind = (event: EventData) =>
+  [9, 40002, 40008].includes(event.kind);
 const inChannel = (event: EventData, channelId: string) =>
   event.tags.some(([name, value]) => name === "h" && value === channelId);
 const compare = (a: EventData, b: EventData) =>
@@ -124,6 +126,23 @@ export function createThreadView({
       ...new Map(batches.flat().map((event) => [event.id, event])).values(),
     ];
   }
+  function notifyListeners() {
+    for (const listener of listeners) notify(listener);
+  }
+  function publishStatus(patch: Partial<ThreadSnapshot>) {
+    if (disposed) return;
+    snapshot = Object.freeze({
+      ...snapshot,
+      ...patch,
+      ...(exact
+        ? {
+            target: targetStatus === "ready" ? snapshot.target : undefined,
+            targetStatus,
+          }
+        : {}),
+    });
+    notifyListeners();
+  }
   function publish(patch: Partial<ThreadSnapshot> = {}) {
     if (disposed) return;
     const operations = canAccess() ? (local?.snapshot() ?? []) : [];
@@ -139,23 +158,26 @@ export function createThreadView({
     ))
       inputs.set(event.id, event);
     const deliveries = new Map(operations.map((item) => [item.event.id, item]));
-    const rows = foldMessages(
-      channelId,
-      relayAuthor,
-      rootUnavailable && !exact ? [] : [...inputs.values()],
-      {
-        includeReplies: true,
-      },
-    ).map((row) => {
-      const item = deliveries.get(row.id);
-      return item
-        ? Object.freeze({
-            ...row,
-            delivery: item.delivery,
-            deliveryError: item.error,
-          })
-        : row;
-    });
+    const rows = shareMessageRows(
+      snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
+      foldMessages(
+        channelId,
+        relayAuthor,
+        rootUnavailable && !exact ? [] : [...inputs.values()],
+        {
+          includeReplies: true,
+        },
+      ).map((row) => {
+        const item = deliveries.get(row.id);
+        return item
+          ? Object.freeze({
+              ...row,
+              delivery: item.delivery,
+              deliveryError: item.error,
+            })
+          : row;
+      }),
+    );
     // Thread forward order differs from channel-history's descending-ID tiebreak.
     const target =
       targetStatus === "ready"
@@ -165,22 +187,27 @@ export function createThreadView({
     const readable = rows.filter(
       (row) => !exact || row.id !== messageId || targetStatus === "ready",
     );
-    const replies = readable
+    const nextReplies = readable
       .filter(
         (row) =>
           row.id !== rootId && (!rootUnavailable || row.id === messageId),
       )
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    const replies =
+      snapshot.replies.length === nextReplies.length &&
+      snapshot.replies.every((row, index) => row === nextReplies[index])
+        ? snapshot.replies
+        : Object.freeze(nextReplies);
     snapshot = Object.freeze({
       ...snapshot,
       ...patch,
       root: !rootUnavailable
         ? readable.find((row) => row.id === rootId)
         : undefined,
-      replies: Object.freeze(replies),
+      replies,
       ...(exact ? { target, targetStatus } : {}),
     });
-    for (const listener of listeners) notify(listener);
+    notifyListeners();
   }
   function retain(events: readonly RelayEvent[], commit = true) {
     if (events.length > MAX_EVENTS || byteSize(events) > MAX_BYTES) {
@@ -262,7 +289,7 @@ export function createThreadView({
     // Repair retains already-verified presentation; only a new/unavailable
     // selection waits for its initial fold. Never unmount a reader on reconnect.
     if (exact && replace && targetStatus !== "ready") targetStatus = "loading";
-    publish({ status: "loading", error: undefined });
+    publishStatus({ status: "loading", error: undefined });
     try {
       if (exact && replace) {
         const response = await reader.read(
@@ -353,7 +380,7 @@ export function createThreadView({
           [
             { ids: [rootId], "#h": [channelId], limit: 1 },
             {
-              kinds: [9, 40002],
+              kinds: [9, 40002, 40008],
               "#h": [channelId],
               "#e": [rootId],
               depth_limit: 100,
@@ -433,7 +460,7 @@ export function createThreadView({
     } catch (error) {
       if (active()) {
         if (targetStatus === "loading") targetStatus = "error";
-        publish({ status: "error", error: String(error) });
+        publishStatus({ status: "error", error: String(error) });
       }
     } finally {
       if (controller === owned) {

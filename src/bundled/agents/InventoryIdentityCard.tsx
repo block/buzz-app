@@ -1,0 +1,264 @@
+import { npubEncode } from "nostr-tools/nip19";
+import type {
+  AgentControl,
+  AgentControlState,
+  AgentView,
+  ImportSource,
+} from "../../features/agents/control";
+import type { RelaySession } from "../../features/relay/session";
+import type { Profile } from "../../features/relay/contracts";
+import { mediaUrl } from "../../features/relay/transport";
+import { CaretDownIcon } from "../../shared/design-system/icons/index";
+import { Button } from "../../shared/design-system/ui/Button";
+import { AgentCard } from "./AgentCard";
+import { ManagedAgentActions } from "./ManagedAgentActions";
+import { localHereGroup, type inventoryDecision } from "./inventory-decisions";
+import type { AgentInventoryIdentity } from "./inventory-model";
+
+/** One complete inventory identity; source selection belongs to the enclosing inventory. */
+export function InventoryIdentityCard({
+  row,
+  decision,
+  community,
+  state,
+  control,
+  session,
+  destination,
+  publicProfiles,
+  sourceProfiles,
+  edit,
+  importedId,
+  onUseHere,
+  onImport,
+  selectedSource,
+  onSourceChange,
+}: {
+  row: AgentInventoryIdentity;
+  decision: ReturnType<typeof inventoryDecision>;
+  community: string;
+  state: AgentControlState;
+  control: AgentControl;
+  session: RelaySession;
+  destination: string;
+  publicProfiles: ReadonlyMap<string, Profile>;
+  sourceProfiles: ReadonlyMap<string, Profile & { community: string }>;
+  edit(agent: AgentView, avatar?: string): void;
+  importedId: string | null;
+  onUseHere(
+    pubkey: string,
+    action: "use" | "clone",
+    source?: ImportSource,
+  ): void;
+  onImport(pubkey: string, source?: ImportSource): void;
+  selectedSource: ImportSource | undefined;
+  onSourceChange(source: ImportSource): void;
+}) {
+  const data = state.data;
+  if (!data) return null;
+  const sourceProfile = sourceProfiles.get(row.pubkey);
+  const avatar =
+    row.avatar ??
+    publicProfiles.get(row.pubkey)?.picture ??
+    sourceProfile?.picture;
+  const imageCommunity =
+    sourceProfile && sourceProfile.picture === avatar
+      ? sourceProfile.community
+      : undefined;
+  const tile = decision.group === localHereGroup;
+  const setupHere = row.localSetups.get(destination);
+  const selected = selectedSource;
+  const source =
+    row.oldBuzzSources.length === 1
+      ? row.oldBuzzSources[0]
+      : selected && row.oldBuzzSources.includes(selected)
+        ? selected
+        : undefined;
+  const needsSource = !row.localIdentity && row.oldBuzzSources.length > 1;
+  const cloneAction = (!!row.localIdentity ||
+    row.oldBuzzSources.length > 0) && (
+    <Button
+      variant="subtle"
+      size="compact"
+      title="Create a new agent from this agent’s name and instructions, with a new identity and key. Memories and history are not copied."
+      disabled={
+        state.busy ||
+        state.status !== "ready" ||
+        (row.localIdentity
+          ? !data.localInventoryActions || !control.localCloneSettings
+          : !control.cloneSettings) ||
+        !destination ||
+        (needsSource && !source)
+      }
+      onClick={() =>
+        onUseHere(row.pubkey, "clone", row.localIdentity ? undefined : source)
+      }
+    >
+      Clone
+    </Button>
+  );
+  return (
+    <AgentCard
+      layout={tile ? "tile" : "row"}
+      headingLevel={community ? 4 : 3}
+      name={row.displayName}
+      avatar={avatar}
+      media={
+        imageCommunity
+          ? (url, size) =>
+              mediaUrl(
+                url,
+                (target) =>
+                  `/api/relay/${encodeURIComponent(imageCommunity)}/media?url=${encodeURIComponent(target)}`,
+                imageCommunity,
+                size,
+              )
+          : undefined
+      }
+      identities={[{ pubkey: row.pubkey, name: row.displayName }]}
+      session={session}
+      editable={setupHere ? [setupHere] : []}
+      onEdit={setupHere ? edit : undefined}
+    >
+      {setupHere && (
+        <ManagedAgentActions
+          key={setupHere.id}
+          agent={setupHere}
+          showCommunity={destination !== community}
+          state={state}
+          control={control}
+          imported={setupHere.id === importedId}
+        />
+      )}
+      {row.unconfiguredSetups.map((agent) => (
+        <p key={agent.id} role="status" className="m-0 break-all text-body-sm">
+          Earlier import needs setup: {agent.relayUrl || "No saved community"}.
+          Connect to the intended community and choose Use here. It stays
+          stopped.
+        </p>
+      ))}
+      <div
+        className={
+          tile ? "flex min-w-0 flex-wrap items-center gap-2" : "contents"
+        }
+      >
+        {needsSource && (
+          <label className="agent-control-field">
+            <span className="sr-only">Old Buzz installation</span>
+            <select
+              value={source ?? ""}
+              disabled={state.busy || state.status !== "ready"}
+              onChange={(event) => {
+                const next = event.target.value as ImportSource;
+                onSourceChange(next);
+              }}
+            >
+              <option value="" disabled>
+                Choose an installation
+              </option>
+              {row.oldBuzzSources.map((value) => (
+                <option key={value} value={value}>
+                  {value === "installed"
+                    ? "Installed Buzz"
+                    : "Development Buzz"}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {decision.action === "import" && (
+          <Button
+            variant="primary"
+            size="compact"
+            title="Bring this agent into this app with its existing identity and key. It stays stopped in your chosen community until you start it."
+            disabled={
+              state.busy ||
+              state.status !== "ready" ||
+              data.importAvailable === false ||
+              (needsSource && !source)
+            }
+            onClick={() => onImport(row.pubkey, source)}
+          >
+            Import
+          </Button>
+        )}
+        {decision.action === "use" && (
+          <>
+            <Button
+              size="compact"
+              disabled={
+                state.busy ||
+                state.status !== "ready" ||
+                !!decision.blocked ||
+                !data.localInventoryActions ||
+                !control.configureHere
+              }
+              onClick={() => onUseHere(row.pubkey, "use")}
+            >
+              Use here
+            </Button>
+            {decision.blocked && <p role="status">{decision.blocked}</p>}
+            {!data.localInventoryActions && (
+              <p>
+                Restart an updated desktop build to use local inventory actions.
+              </p>
+            )}
+          </>
+        )}
+        {(tile || decision.action === "clone") && cloneAction}
+      </div>
+      {decision.action === "wait" && (
+        <p role="status" className="m-0 text-body-sm text-secondary">
+          {decision.blocked}
+        </p>
+      )}
+      <details
+        className={
+          tile
+            ? "min-w-0 text-body-sm text-secondary"
+            : "agent-inventory-details min-w-0 text-body-sm text-secondary"
+        }
+      >
+        <summary
+          className="cursor-pointer"
+          aria-label={tile ? undefined : `Details for ${row.displayName}`}
+        >
+          {tile ? (
+            "Identity & sources"
+          ) : (
+            <CaretDownIcon size={18} aria-hidden="true" />
+          )}
+        </summary>
+        <div className="flex min-w-0 flex-col gap-2 pt-2">
+          {[...row.knownCommunities]
+            .filter(
+              (community) =>
+                community && !(setupHere && community === destination),
+            )
+            .map((community) => (
+              <p key={community} className="m-0 break-all">
+                {community}
+              </p>
+            ))}
+          {row.oldBuzzSources.length > 0 && (
+            <p className="m-0">
+              {row.oldBuzzSources
+                .map((source) =>
+                  source === "installed"
+                    ? "Installed Buzz"
+                    : "Development Buzz",
+                )
+                .join(" · ")}
+            </p>
+          )}
+          {!tile && decision.action !== "clone" && cloneAction}
+          <p
+            className="m-0 select-all break-all text-mono-sm"
+            data-public-key=""
+          >
+            {npubEncode(row.pubkey)}
+          </p>
+        </div>
+      </details>
+    </AgentCard>
+  );
+}

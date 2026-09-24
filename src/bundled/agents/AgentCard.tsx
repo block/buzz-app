@@ -14,29 +14,36 @@ export function AgentCard({
   avatar,
   identities,
   session,
+  media,
   editable = [],
   onEdit,
   children,
+  layout = "tile",
+  headingLevel = 3,
 }: {
   children?: ReactNode;
+  layout?: "tile" | "row";
+  headingLevel?: 3 | 4;
   name: string;
   avatar?: string | undefined;
   identities: AgentLibrary["identities"];
   session?: RelaySession;
+  media?: RelaySession["media"] | undefined;
   editable?: AgentView[];
   onEdit?: ((agent: AgentView, avatar?: string) => void) | undefined;
 }) {
+  const Heading = headingLevel === 4 ? "h4" : "h3";
   const trigger = useRef<HTMLButtonElement>(null);
   const source = avatarSource(avatar);
   const picture = source?.startsWith("data:")
     ? source
     : source
-      ? session?.media(source, "small")
+      ? (media ?? session?.media)?.(source, "small")
       : undefined;
   return (
     <article
       aria-label={`Agent ${name}`}
-      className="relative flex min-w-0 flex-col gap-4 rounded-2xl border border-primary p-4"
+      className={`relative min-w-0 ${layout === "row" ? "agent-inventory-row" : "flex flex-col gap-3 rounded-2xl border border-primary p-4"}`}
     >
       {onEdit && (
         <div className="absolute right-2 top-2">
@@ -107,7 +114,7 @@ export function AgentCard({
       <div
         className={
           children
-            ? "flex min-w-0 items-center gap-3 pr-6"
+            ? `flex min-w-0 items-center gap-3 ${onEdit ? "pr-6" : ""}`
             : "flex flex-1 flex-col gap-4"
         }
       >
@@ -122,15 +129,25 @@ export function AgentCard({
             alt={name}
             fallback={name}
             src={picture ?? null}
-            size="large"
+            size={layout === "row" ? "default" : "large"}
             shape="squircle"
           />
         </div>
-        <h3 className="m-0 min-w-0 truncate text-label" title={name}>
+        <Heading className="m-0 min-w-0 truncate text-label" title={name}>
           {name}
-        </h3>
+        </Heading>
       </div>
-      {children}
+      {children && (
+        <div
+          className={
+            layout === "row"
+              ? `flex min-w-0 flex-wrap items-center gap-2 ${onEdit ? "pr-8" : ""}`
+              : "flex min-w-0 flex-col gap-3"
+          }
+        >
+          {children}
+        </div>
+      )}
       {identities.length && !children ? (
         <Accordion
           items={[

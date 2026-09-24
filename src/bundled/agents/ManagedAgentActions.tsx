@@ -16,6 +16,7 @@ export function ManagedAgentActions({
   imported,
   destination = "",
   owner = "",
+  showCommunity = true,
 }: {
   agent: AgentView;
   state: AgentControlState;
@@ -23,6 +24,7 @@ export function ManagedAgentActions({
   imported: boolean;
   destination?: string;
   owner?: string;
+  showCommunity?: boolean;
 }) {
   const [settingUp, setSettingUp] = useState(false);
   const details = useRef<HTMLDivElement>(null);
@@ -51,18 +53,20 @@ export function ManagedAgentActions({
     void control.action(agent.id, action).catch(() => {});
   };
   return (
-    <div ref={details} tabIndex={-1} className="flex flex-col gap-4">
+    <div ref={details} tabIndex={-1} className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
-        <p className="m-0 break-all text-body-sm text-secondary">
-          {agent.relayUrl}
-        </p>
+        {showCommunity && (
+          <p className="m-0 break-all text-body-sm text-secondary">
+            {agent.relayUrl}
+          </p>
+        )}
         <p className="m-0 text-body-sm">
           {state.status === "error" && "Last known: "}
           {agentProcessLabel(agent)}
         </p>
       </div>
       {imported && !agent.enabled && (
-        <p role="status">
+        <p role="status" className="m-0 text-body-sm">
           Imported, not started.{" "}
           {agent.configured === false
             ? "Choose Use here to set up this identity in a community."
@@ -86,16 +90,16 @@ export function ManagedAgentActions({
           <p>Update the desktop app to set up this imported identity.</p>
         ))}
       {agent.enabled && (
-        <p className="text-body-sm text-secondary">Starts with this app.</p>
+        <p className="m-0 text-body-sm text-secondary">Starts with this app.</p>
       )}
       {agent.error && (
-        <p role="alert" className="break-words text-body-sm">
+        <p role="alert" className="m-0 break-words text-body-sm">
           {agent.error}
         </p>
       )}
       {agent.profilePending && (
         <div className="space-y-2">
-          <p role="status">
+          <p role="status" className="m-0 text-body-sm">
             Agent saved. Publish its profile so people can find it by name.
           </p>
           <Button
@@ -130,7 +134,7 @@ export function ManagedAgentActions({
         </Button>
       </div>
       {startBlock && agent.status !== "running" && (
-        <p className="text-body-sm text-secondary">{startBlock}</p>
+        <p className="m-0 text-body-sm text-secondary">{startBlock}</p>
       )}
     </div>
   );

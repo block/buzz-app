@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -31,6 +32,8 @@ export function AgentSettingsFields({
   environmentKeys?: string[];
   onChange(patch: Partial<AgentDraft>): void;
 }) {
+  const [piProviders, setPiProviders] = useState<string[]>([]);
+  const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
   const providerOverride = draft.environment.GOOSE_PROVIDER;
   const provider = providerOverride ?? draft.provider;
@@ -66,6 +69,7 @@ export function AgentSettingsFields({
             disabled={disabled}
             draft={draft}
             options={state.data?.harnessOptions ?? []}
+            piProviders={piProviders}
             onChange={onChange}
           />
           {goose && !gooseCanBrowse ? (
@@ -86,6 +90,7 @@ export function AgentSettingsFields({
             </div>
           ) : (
             <AgentModelPicker
+              onPiProviders={setPiProviders}
               disabled={disabled}
               id={id}
               savedRevision={savedRevision}
@@ -94,6 +99,13 @@ export function AgentSettingsFields({
               draft={draft}
               onChange={onChange}
             />
+          )}
+          {pi && (
+            <p className="text-body-sm text-secondary">
+              Browse loads available models and providers from your local Pi
+              configuration, including extensions. Configure sign-in in Pi
+              first. Save keeps changes for the next Start or Restart.
+            </p>
           )}
         </fieldset>
       </div>
@@ -134,9 +146,10 @@ export function AgentSettingsFields({
                     onChange={(environment) => onChange({ environment })}
                   />
                   <p className="text-body-sm text-secondary">
-                    Environment overrides take precedence over provider and
-                    model selections. Arguments are passed literally, not
-                    through a shell.
+                    {pi
+                      ? 'Pi needs both Provider and Model to override its defaults. Advanced Pi options follow --; for example: ["--", "--extension", "/absolute/path/to/extension.ts"]. PI_CODING_AGENT_DIR can select a local Pi configuration directory.'
+                      : "Environment overrides take precedence over provider and model selections."}{" "}
+                    Arguments are passed literally, not through a shell.
                   </p>
                 </div>
               ),

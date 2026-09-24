@@ -248,6 +248,39 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
 ) -> Result<Catalog, String> {
     let host = state.inner().clone();
     let controller = agents.inner().clone();
+    if request.edit.as_ref().is_some_and(|e| {
+        std::path::Path::new(&e.harness.command)
+            .file_name()
+            .and_then(|n| n.to_str())
+            == Some("buzz-pi-acp")
+    }) {
+        let prepared = controller.pi_model_context(
+            request.id.as_deref(),
+            request.expected_revision,
+            request.edit.clone().unwrap(),
+        );
+        return host
+            .run(ticket, async move {
+                if request.action == Operation::Disconnect {
+                    return Err("Pi credentials are managed by Pi".into());
+                }
+                let models = crate::pi_models::fetch(prepared?)
+                    .await?
+                    .into_iter()
+                    .map(|id| Model {
+                        name: id.clone(),
+                        id,
+                    })
+                    .collect();
+                Ok(Catalog {
+                    host: String::new(),
+                    models,
+                    model_overridden: false,
+                    disconnected: false,
+                })
+            })
+            .await;
+    }
     let goose = request.edit.as_ref().is_some_and(|edit| {
         std::path::Path::new(&edit.harness.command)
             .file_name()

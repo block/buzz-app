@@ -119,6 +119,8 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
             "providers":[{"value":"databricks_v2", "label":"Databricks v2"}]
         })
     );
+    assert_eq!(before["harnessOptions"][2]["label"], "Pi");
+    assert_eq!(before["harnessOptions"][2]["defaultArgs"], json!([]));
     assert_eq!(before["harnessOptions"][1]["label"], "Goose");
     assert_eq!(before["harnessOptions"][1]["defaultArgs"], json!(["acp"]));
     assert_eq!(

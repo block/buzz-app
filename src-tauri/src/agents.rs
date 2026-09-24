@@ -111,6 +111,10 @@ const GOOSE_PROVIDERS: &[ProviderOption] = &[
 
 fn harness_options() -> Vec<HarnessOption> {
     let goose = installed_goose();
+    let pi = buzz_agent_controller::installed("buzz-pi-acp");
+    let pi_available = pi.is_some()
+        && buzz_agent_controller::installed("pi").is_some()
+        && buzz_agent_controller::installed("node").is_some();
     vec![
         HarnessOption {
             command: "buzz-agent".into(),
@@ -132,42 +136,42 @@ fn harness_options() -> Vec<HarnessOption> {
             default_args: &["acp"],
             providers: GOOSE_PROVIDERS,
         },
+        HarnessOption {
+            command: pi.map_or_else(
+                || "buzz-pi-acp".into(),
+                |p| p.to_string_lossy().into_owned(),
+            ),
+            label: "Pi",
+            available: pi_available,
+            default_args: &[],
+            providers: &[
+                ProviderOption {
+                    value: "anthropic",
+                    label: "Anthropic",
+                },
+                ProviderOption {
+                    value: "openai",
+                    label: "OpenAI",
+                },
+                ProviderOption {
+                    value: "openai-codex",
+                    label: "OpenAI Codex",
+                },
+                ProviderOption {
+                    value: "google",
+                    label: "Google",
+                },
+                ProviderOption {
+                    value: "openrouter",
+                    label: "OpenRouter",
+                },
+            ],
+        },
     ]
 }
 
 fn installed_goose() -> Option<PathBuf> {
-    let mut directories = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        directories.push(PathBuf::from(home).join(".local/bin"));
-    }
-    directories.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
-    directories.extend([
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]);
-    directories
-        .into_iter()
-        .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.join("goose"))
-        .find(|path| {
-            let Ok(metadata) = path.metadata() else {
-                return false;
-            };
-            if !metadata.is_file() {
-                return false;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                true
-            }
-        })
+    buzz_agent_controller::installed("goose")
 }
 
 struct Host {
@@ -327,6 +331,18 @@ impl AgentHost {
         self.with(|host| match (id, revision) {
             (Some(id), Some(revision)) => host.controller.goose_model_context(id, revision, edit),
             (None, None) => Controller::draft_goose_model_context(edit),
+            _ => Err("Invalid agent model context".into()),
+        })
+    }
+    pub(crate) fn pi_model_context(
+        &self,
+        id: Option<&str>,
+        revision: Option<u64>,
+        edit: AgentEdit,
+    ) -> Result<buzz_agent_controller::pi::PiContext, String> {
+        self.with(|host| match (id, revision) {
+            (Some(id), Some(revision)) => host.controller.pi_model_context(id, revision, edit),
+            (None, None) => Controller::draft_pi_model_context(edit),
             _ => Err("Invalid agent model context".into()),
         })
     }

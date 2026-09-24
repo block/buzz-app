@@ -123,3 +123,73 @@ it("preserves Goose settings while editing a custom executable path", async () =
     model: "m",
   });
 });
+
+it("switching Pi, Goose and Buzz resets incompatible selections and uses each harness arguments", async () => {
+  let current = {
+    ...agentDraft(controlFixture().agent),
+    command: "buzz-agent",
+    provider: "databricks_v2",
+    model: "old",
+    args: "[]",
+  };
+  function Editor() {
+    const [draft, setDraft] = useState(current);
+    current = draft;
+    return (
+      <AgentHarnessEditor
+        draft={draft}
+        options={[
+          {
+            command: "buzz-agent",
+            label: "Buzz Agent",
+            providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+            defaultArgs: [],
+          },
+          {
+            command: "/local/goose",
+            label: "Goose",
+            providers: [],
+            defaultArgs: ["acp"],
+          },
+          {
+            command: "/local/buzz-pi-acp",
+            label: "Pi",
+            providers: [{ value: "anthropic", label: "Anthropic" }],
+            defaultArgs: [],
+          },
+        ]}
+        piProviders={["extension"]}
+        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+      />
+    );
+  }
+  const user = userEvent.setup();
+  render(<Editor />);
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Pi" }));
+  expect(current).toMatchObject({
+    command: "/local/buzz-pi-acp",
+    args: "[]",
+    provider: "",
+    model: "",
+  });
+  await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
+  await user.click(await screen.findByRole("option", { name: "extension" }));
+  expect(current.provider).toBe("extension");
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Goose" }));
+  expect(current).toMatchObject({
+    command: "/local/goose",
+    args: '["acp"]',
+    provider: "",
+    model: "",
+  });
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Buzz Agent" }));
+  expect(current).toMatchObject({
+    command: "buzz-agent",
+    args: "[]",
+    provider: "databricks_v2",
+    model: "",
+  });
+});

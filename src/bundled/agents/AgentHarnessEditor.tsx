@@ -9,19 +9,21 @@ import { isGoose, type AgentDraft } from "./agent-edit";
 export function AgentHarnessEditor({
   draft,
   options,
+  piProviders = [],
   onChange,
   disabled = false,
 }: {
   draft: AgentDraft;
+  piProviders?: string[];
   options: NonNullable<ControlSnapshot["harnessOptions"]>;
   disabled?: boolean;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
+  const executable = draft.command.split("/").at(-1);
   const harness =
     options.find((option) => option.command === draft.command) ??
-    (isGoose(draft.command)
-      ? options.find((option) => isGoose(option.command))
-      : undefined);
+    options.find((option) => option.command.split("/").at(-1) === executable);
+  const external = harness?.label === "Goose" || harness?.label === "Pi";
   return (
     <div className="space-y-4">
       <ConfigChoice
@@ -37,14 +39,14 @@ export function AgentHarnessEditor({
         }))}
         onChange={(command, pickedOption) => {
           const option = options.find((item) => item.command === command);
-          const enteringGoose = isGoose(command);
-          const leavingGoose = isGoose(draft.command);
+          const enteringExternal =
+            option?.label === "Goose" || option?.label === "Pi";
           onChange({
             command,
-            ...(pickedOption && (enteringGoose || leavingGoose)
+            ...(pickedOption && (enteringExternal || external)
               ? {
                   args: JSON.stringify(option?.defaultArgs ?? []),
-                  provider: enteringGoose
+                  provider: enteringExternal
                     ? ""
                     : (option?.providers[0]?.value ?? ""),
                   model: "",
@@ -60,20 +62,37 @@ export function AgentHarnessEditor({
           Install the Goose CLI to use it as a harness.
         </p>
       )}
+      {options.some(
+        (option) => option.label === "Pi" && option.available === false,
+      ) && (
+        <p className="text-body-sm text-secondary">
+          Install Pi, buzz-pi-acp and Node.js, then reopen the desktop app to
+          use Pi.
+        </p>
+      )}
       <ConfigChoice
         disabled={disabled}
-        label={isGoose(draft.command) ? "LLM Provider" : "Provider"}
+        key={harness?.label ?? draft.command}
+        label={external ? "LLM Provider" : "Provider"}
         customLabel="Custom provider / current value"
         inputLabel="Custom provider"
         value={draft.provider}
         options={[
           { value: "", label: "Not set" },
           ...(harness?.providers ?? []),
+          ...(harness?.label === "Pi"
+            ? piProviders
+                .filter(
+                  (p) =>
+                    !harness.providers.some((option) => option.value === p),
+                )
+                .map((value) => ({ value, label: value }))
+            : []),
         ]}
         onChange={(provider) =>
           onChange({
             provider,
-            ...(isGoose(draft.command) ? { model: "" } : {}),
+            ...(external ? { model: "" } : {}),
           })
         }
       />

@@ -249,16 +249,16 @@ it.each(["image", "video"] as const)(
       ]);
       const reply =
         scenario === "same-second"
-          ? Array.from({ length: 16 }, (_, nonce) =>
-              message(viewer, "channel", "Latest own reply", 10, [
-                ["e", root.id, "", "reply"],
-                ["nonce", String(nonce)],
-              ]),
-            ).find((event) => event.id.localeCompare(root.id) < 0)
+          ? message(viewer, "channel", "Latest own reply", 10, [
+              ["e", root.id, "", "reply"],
+              // Fixed fixtures place the reply ID below its same-second root.
+              ["nonce", kind === "image" ? "31" : "0"],
+            ])
           : message(viewer, "channel", "Latest own reply", 12, [
               ["e", root.id, "", "reply"],
             ]);
-      assert.exists(reply);
+      if (scenario === "same-second")
+        expect(reply.id.localeCompare(root.id)).toBeLessThan(0);
       const foreign = message(other, "channel", "Newer other reply", 13, [
         ["e", root.id, "", "reply"],
       ]);

@@ -137,6 +137,7 @@ test.describe("menu placement lifetime", () => {
           sections: [{ id: "work", name: "Work", order: 0 }],
           assignments: { beta: "work" },
           starred: stars,
+          muted: [],
         },
       });
     });

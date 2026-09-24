@@ -2,6 +2,7 @@ import {
   Component,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -20,16 +21,22 @@ import { Button } from "../../shared/design-system/ui/Button";
 import {
   ContextMenuRoot,
   MenuItem,
+  MenuIcon,
   MenuPopup,
+  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
+  BellIcon,
+  BellSlashIcon,
   CaretRightIcon,
   PlusIcon,
 } from "../../shared/design-system/icons/index";
+import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
+import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
 import { SidebarSectionIcon } from "../../bundled/channels/SidebarSectionIcon";
@@ -137,6 +144,13 @@ function ReadySidebar({
 }) {
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const mute = useOptimisticMute(queries.sidebarPreferences.setMute);
+  const rowMenuGeneration = useRef(0);
+  const [readWrite, setReadWrite] = useState<{
+    pending: boolean;
+    error?: string;
+  }>();
+  const [rowFocus, setRowFocus] = useState<string>();
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
@@ -315,6 +329,7 @@ function ReadySidebar({
           })),
           assignments: groups.assignments,
           starred: preferences.data?.starred ?? [],
+          muted: preferences.data?.muted ?? [],
         }
       : preferences.data,
     hiddenDms.hiddenIds,
@@ -341,20 +356,95 @@ function ReadySidebar({
         </MenuItem>,
       );
     }
+    const muteable =
+      queries.sidebarPreferences.muteWritable && !!preferences.data;
+    const readable = queries.unread.sync().capability === "frontier-sync";
+    if (actions.length && (muteable || readable))
+      actions.push(<MenuSeparator key="attention-separator" />);
+    if (muteable) {
+      const intent = mute.intents.get(channel.id);
+      const muted = intent?.pending
+        ? intent.muted
+        : (preferences.data?.muted.includes(channel.id) ?? false);
+      actions.push(
+        <MenuItem
+          key="mute"
+          closeOnClick={false}
+          disabled={readWrite?.pending ?? false}
+          onClick={() => changeMute(channel.id, channel.name, !muted)}
+        >
+          <MenuIcon>
+            {muted ? <BellIcon size={14} /> : <BellSlashIcon size={14} />}
+          </MenuIcon>
+          {muted ? "Unmute" : "Mute"}
+        </MenuItem>,
+      );
+    }
+    if (readable)
+      actions.push(
+        <ChannelReadMenuItem
+          key="read"
+          unread={queries.unread}
+          channelId={channel.id}
+          pending={readWrite?.pending ?? false}
+          run={(action) => runReadAction(channel.id, action)}
+        />,
+      );
     return actions;
   };
   const {
     rowMenu,
     open: openMenu,
-    close: closeRowMenu,
+    close: closeMenu,
   } = useChannelRowMenu(sections, rowActions);
   const openRowMenu = useCallback(
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
       startingSession.current = false;
+      rowMenuGeneration.current++;
+      setReadWrite(undefined);
       openMenu(channel, sectionKey, anchor);
     },
     [openMenu],
   );
+  const closeRowMenu = useCallback(() => {
+    rowMenuGeneration.current++;
+    setReadWrite(undefined);
+    closeMenu();
+  }, [closeMenu]);
+  useLayoutEffect(() => {
+    if (!rowFocus) return;
+    sidebar.list.current
+      ?.querySelector<HTMLButtonElement>(
+        `[data-channel-id="${CSS.escape(rowFocus)}"]`,
+      )
+      ?.focus({ preventScroll: true });
+    setRowFocus(undefined);
+  }, [rowFocus, sidebar.list]);
+  const runReadAction = async (
+    channelId: string,
+    action: () => Promise<unknown>,
+  ) => {
+    const generation = rowMenuGeneration.current;
+    setReadWrite({ pending: true });
+    try {
+      await action();
+      if (!mounted.current || generation !== rowMenuGeneration.current) return;
+      // Startup can move the row; resolve its current owner after the commit.
+      setRowFocus(channelId);
+      closeRowMenu();
+    } catch (error) {
+      if (!mounted.current || generation !== rowMenuGeneration.current) return;
+      setReadWrite({
+        pending: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  const changeMute = (channelId: string, name: string, muted: boolean) => {
+    mute.change(channelId, name, muted);
+    setRowFocus(channelId);
+    closeRowMenu();
+  };
   return (
     <>
       <div className="shell-sidebar" style={{ width: sidebar.width }}>
@@ -577,6 +667,10 @@ function ReadySidebar({
                             }
                           >
                             {actions}
+                            {readWrite?.pending && <p role="status">Saving…</p>}
+                            {readWrite?.error && (
+                              <p role="alert">{readWrite.error}</p>
+                            )}
                           </MenuPopup>
                         </ContextMenuRoot>
                       );
@@ -596,9 +690,39 @@ function ReadySidebar({
                 <p className={styles.empty}>No channels yet.</p>
               )}
             </SidebarUnread>
+            {[...mute.intents.values()]
+              .filter((intent) => !intent.pending)
+              .map((intent) => (
+                <ToastNotice
+                  key={intent.channelId}
+                  title={`Couldn’t ${intent.muted ? "mute" : "unmute"} ${intent.name}`}
+                  description={intent.error ?? "Please try again."}
+                  tone="warning"
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() =>
+                      changeMute(intent.channelId, intent.name, intent.muted)
+                    }
+                  >
+                    Retry
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      mute.dismiss(intent.channelId);
+                      setRowFocus(intent.channelId);
+                    }}
+                  >
+                    Dismiss
+                  </Button>
+                </ToastNotice>
+              ))}
             {preferences.status === "error" ? (
               <ToastNotice
-                title="Saved groups and stars couldn’t refresh"
+                title="Saved sidebar preferences couldn’t refresh"
                 description="Your conversations are still available."
                 tone="warning"
               >

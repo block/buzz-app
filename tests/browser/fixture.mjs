@@ -802,6 +802,25 @@ export const test = base.extend({
         return;
       }
       expect(event.kind).toBe(30078);
+      const sidebarCoordinate = event.tags.find(([name]) => name === "d")?.[1];
+      if (sidebarCoordinate === "channel-mutes") {
+        expect(event.tags).toContainEqual(["t", sidebarCoordinate]);
+        const blob = JSON.parse(
+          nip44.v2.decrypt(
+            event.content,
+            nip44.v2.utils.getConversationKey(userKey, viewer),
+          ),
+        );
+        readEvents.get(community).set(sidebarCoordinate, event);
+        report.sidebarPublications ??= [];
+        report.sidebarPublications.push({
+          community,
+          coordinate: sidebarCoordinate,
+          event,
+          blob,
+        });
+        return;
+      }
       expect(event.tags).toContainEqual(["t", "read-state"]);
       const blob = JSON.parse(
         nip44.v2.decrypt(
@@ -1330,10 +1349,25 @@ export const test = base.extend({
         observerFailures.splice(match, 1);
         return true;
       };
+      // Consume each deliberately injected mute failure by exact request URL.
+      const muteFailures = [...(report.sidebarMuteFailures ?? [])];
+      const injectedMuteFailure = (message, index) => {
+        if (
+          !/^Failed to load resource: the server responded with a status of 502/.test(
+            message,
+          )
+        )
+          return false;
+        const match = muteFailures.indexOf(consoleLocations.get(index));
+        if (match < 0) return false;
+        muteFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
+            !injectedMuteFailure(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

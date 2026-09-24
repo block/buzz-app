@@ -285,6 +285,7 @@ export function ChannelMembersDialog({
         if (!open) close();
       }}
       title="Channel members"
+      height="stable"
       description={channel?.name}
       closeLabel="Close channel members"
       initialFocus={input}
@@ -323,7 +324,7 @@ export function ChannelMembersDialog({
             </Button>
           </p>
         )}
-        <div className="-mx-3 max-h-[50vh] overflow-y-auto px-1 py-1 max-[480px]:-mx-1">
+        <div className="-mx-3 px-1 py-1 max-[480px]:-mx-1">
           <h3 className="px-control-inset pb-2 text-caption text-subtle">
             Members · {members.size}
           </h3>

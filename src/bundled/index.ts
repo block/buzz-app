@@ -35,6 +35,8 @@ import hostedManifest from "./hosted-communities/manifest.json";
 import * as hosted from "./hosted-communities";
 import sessionsManifest from "./sessions/manifest.json";
 import * as sessions from "./sessions";
+import moderationManifest from "./moderation/manifest.json";
+import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
   {
@@ -63,4 +65,5 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...workflowsManifest, apiVersion: 1 }, module: workflows },
   { manifest: { ...sessionsManifest, apiVersion: 1 }, module: sessions },
   { manifest: { ...hostedManifest, apiVersion: 1 }, module: hosted },
+  { manifest: { ...moderationManifest, apiVersion: 1 }, module: moderation },
 ];

@@ -4,6 +4,7 @@ import type { RelayReader } from "./reader.ts";
 export const SIDEBAR_COORDINATES = [
   "channel-sections",
   "channel-stars",
+  "channel-mutes",
 ] as const;
 export type SidebarPreferences = Readonly<{
   sections: readonly Readonly<{
@@ -14,7 +15,12 @@ export type SidebarPreferences = Readonly<{
   }>[];
   assignments: Readonly<Record<string, string>>;
   starred: readonly string[];
+  muted: readonly string[];
 }>;
+export type SidebarMuteMutator = (
+  intent: Readonly<{ channelId: string; muted: boolean }>,
+  signal: AbortSignal,
+) => Promise<readonly string[]>;
 export type SidebarDecoder = (
   events: readonly RelayEvent[],
   signal: AbortSignal,
@@ -34,15 +40,18 @@ function text(value: unknown, max = 256): string {
 export function projectSidebarPreferences(
   sections: unknown,
   stars: unknown,
+  mutes?: unknown,
 ): SidebarPreferences {
   const result: {
     sections: { id: string; name: string; icon?: string; order: number }[];
     assignments: Record<string, string>;
     starred: string[];
+    muted: string[];
   } = {
     sections: [],
     assignments: {},
     starred: [],
+    muted: [],
   };
   if (sections !== undefined) {
     const data = object(sections);
@@ -97,6 +106,24 @@ export function projectSidebarPreferences(
       )
         throw new Error("Invalid sidebar star");
       if (entry.starred) result.starred.push(id);
+    }
+  }
+  if (mutes !== undefined) {
+    const data = object(mutes);
+    if (data.version !== 1) throw new Error("Unsupported channel mutes");
+    const entries = Object.entries(object(data.channels));
+    if (entries.length > 500) throw new Error("Channel mute budget exceeded");
+    for (const [id, raw] of entries) {
+      text(id);
+      const entry = object(raw);
+      if (
+        typeof entry.muted !== "boolean" ||
+        typeof entry.updatedAt !== "number" ||
+        !Number.isFinite(entry.updatedAt) ||
+        entry.updatedAt < 0
+      )
+        throw new Error("Invalid channel mute");
+      if (entry.muted) result.muted.push(id);
     }
   }
   return result;

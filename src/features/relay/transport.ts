@@ -17,7 +17,12 @@ import {
   readSnapshotText,
 } from "./read-state-snapshot";
 import type { AgentLibraryReader } from "../agents/library";
-import type { SidebarDecoder, SidebarPreferences } from "./sidebar-preferences";
+import {
+  projectSidebarPreferences,
+  type SidebarMuteMutator,
+  type SidebarDecoder,
+  type SidebarPreferences,
+} from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
 import {
@@ -89,6 +94,7 @@ export interface ReadTransport {
     string,
     "online" | "away" | "offline" | "unknown"
   > | null>;
+  readonly writeSidebarMute?: SidebarMuteMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -247,6 +253,7 @@ export async function connectBrokerTransport(
     live?: boolean;
     presence?: boolean;
     sidebarPreferences?: boolean;
+    sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
@@ -560,6 +567,26 @@ export async function connectBrokerTransport(
               session.readStateCommunity as string,
               signal,
             );
+          },
+        }
+      : {}),
+    ...(session.sidebarMuteWrites
+      ? {
+          async writeSidebarMute(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-mute`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: publicationHeaders(),
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok)
+              throw new Error((await readApiFailure(result)).error);
+            return projectSidebarPreferences(
+              undefined,
+              undefined,
+              await result.json(),
+            ).muted;
           },
         }
       : {}),

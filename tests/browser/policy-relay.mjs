@@ -195,9 +195,10 @@ export function policyRelay({
           );
         }
         if (filters.length !== 1) {
-          // The read-only sidebar projection reads the two exact coordinates.
-          expect(filters).toHaveLength(2);
+          // Sidebar preferences read only these three exact own-author coordinates.
+          expect(filters).toHaveLength(3);
           expect(filters.map((filter) => filter["#d"]?.[0]).sort()).toEqual([
+            "channel-mutes",
             "channel-sections",
             "channel-stars",
           ]);

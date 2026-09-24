@@ -12,7 +12,7 @@ import {
 import { XIcon } from "../../shared/design-system/icons/index";
 import { createPortal } from "react-dom";
 import type { ConversationExtensions } from "../conversation/contracts";
-import type { Attachment } from "../relay/contracts";
+import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
@@ -107,11 +107,17 @@ function ResolvedReview({
         retry={view.refresh}
       />
     );
-  const threadRows = [
-    snapshot.root,
-    snapshot.target,
-    ...snapshot.replies,
-  ].filter((row): row is NonNullable<typeof row> => !!row);
+  const replies = [snapshot.target, ...snapshot.replies]
+    .filter(
+      (row): row is NonNullable<typeof row> =>
+        !!row && row.id !== snapshot.root?.id,
+    )
+    .filter(
+      (row, index, rows) =>
+        rows.findIndex((item) => item.id === row.id) === index,
+    )
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  const threadRows = [snapshot.root, ...replies];
   const attachmentAvailable = threadRows.some((row) =>
     row.attachments.some((item) => item.url === props.attachment.url),
   );
@@ -129,13 +135,8 @@ function ResolvedReview({
       {...props}
       view={view}
       rootId={snapshot.root.id}
-      replies={
-        snapshot.target &&
-        snapshot.target.id !== snapshot.root.id &&
-        !snapshot.replies.some((row) => row.id === snapshot.target?.id)
-          ? [...snapshot.replies, snapshot.target]
-          : snapshot.replies
-      }
+      editMessages={threadRows}
+      replies={replies}
       limited={snapshot.limited}
       timecodesSeekable={videoUrls.size === 1}
     />
@@ -154,6 +155,7 @@ function ReviewShell({
   view,
   rootId,
   replies = [],
+  editMessages = [],
   limited = false,
   timecodesSeekable = false,
   loading = false,
@@ -165,6 +167,7 @@ function ReviewShell({
 }: ActiveReviewProps & {
   view?: ThreadView;
   rootId?: string;
+  editMessages?: readonly ChannelMessage[];
   replies?: ReturnType<ThreadView["snapshot"]>["replies"];
   limited?: boolean;
   timecodesSeekable?: boolean;
@@ -301,6 +304,7 @@ function ReviewShell({
                 channelId={channelId}
                 channelName={channelName}
                 threadRootId={rootId}
+                editMessages={editMessages}
                 {...(attachment.kind === "video" && includeTime
                   ? { mediaTimeSeconds: currentTime }
                   : {})}

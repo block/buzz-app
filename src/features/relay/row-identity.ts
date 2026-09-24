@@ -23,6 +23,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.authorId === right.authorId &&
     left.createdAt === right.createdAt &&
     left.content === right.content &&
+    left.sourceContent === right.sourceContent &&
     left.agentEnvelope === right.agentEnvelope &&
     !!left.diff === !!right.diff &&
     left.diff?.filePath === right.diff?.filePath &&

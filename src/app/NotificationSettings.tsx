@@ -44,7 +44,7 @@ export function NotificationSettings({
             ? "Buzz sends alerts and badges for new activity in the selected community while it’s running. Manage app permissions and sounds in your system settings."
             : "Buzz sends alerts and badges for new activity in the selected community while it’s running. Manage app permissions in your system settings."}
         </p>
-        <div className="divide-y divide-line">
+        <div className={styles.preferenceList}>
           {state.categories.map(({ key, label }) => (
             <PreferenceRow
               key={key}

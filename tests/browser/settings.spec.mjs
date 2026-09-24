@@ -437,7 +437,7 @@ test("Settings loads and publishes the selected community profile", async ({
   ]);
 });
 
-test("community setup reuses profile fields without changing the local default", async ({
+test("discarding community setup leaves the published profile unchanged", async ({
   page,
   app,
 }) => {
@@ -473,7 +473,7 @@ test("community setup reuses profile fields without changing the local default",
   await button(page, "Close").click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(name).toHaveValue("Browser Fixture");
+  await expect(name).toHaveValue("Fixture Reader");
   await expect(picture).toHaveValue("");
   expect(writes).toEqual([]);
 });

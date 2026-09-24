@@ -883,8 +883,13 @@ sidebarActions(
           page.getByRole("complementary", { name: "Thread", exact: true }),
         ).toBeVisible();
       } else if (action === "message") {
-        await page.locator("summary", { hasText: /^DMs$/ }).hover();
-        await button(page, "New message").click();
+        const sidebar = page.getByRole("navigation", {
+          name: "Subscribed channels",
+        });
+        await sidebar.locator("summary", { hasText: /^Messages$/ }).hover();
+        await sidebar
+          .getByRole("button", { name: "New message", exact: true })
+          .click();
         await expect(
           page.getByRole("region", { name: "New message", exact: true }),
         ).toBeVisible();

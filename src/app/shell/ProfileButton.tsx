@@ -1,36 +1,24 @@
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { useId, useRef, useSyncExternalStore } from "react";
+import {
+  CheckIcon,
+  GearIcon,
+  UserIcon,
+} from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
-import { GearIcon, UserIcon } from "../../shared/design-system/icons/index";
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuItem,
+  MenuIcon,
+  MenuSeparator,
+  MenuTrailing,
+} from "../../shared/design-system/ui/Menu";
 import type { Communities } from "../../features/communities/service";
-import { useRelayConnection } from "../../features/relay/react";
-
-const statusLabels = {
-  online: "Online",
-  away: "Away",
-  offline: "Offline",
-  unknown: "Status unavailable",
-} as const;
-
-const statusColors = {
-  online: "var(--status-online)",
-  away: "var(--status-away)",
-  offline: "var(--status-offline)",
-} as const;
-
-const statusTextColors = {
-  online: "var(--text-success)",
-  away: "var(--text-warning)",
-  offline: "var(--text-subtle)",
-} as const;
+import styles from "./ProfileButton.module.css";
 
 export function ProfileButton({
   communities,
@@ -41,126 +29,160 @@ export function ProfileButton({
   settingsSelected: boolean;
   onSettings(): void;
 }) {
-  const { profile } = useSyncExternalStore(
+  const { profile, viewer } = useSyncExternalStore(
     communities.subscribe,
     communities.snapshot,
   );
-  const connection = useRelayConnection(communities.relay);
-  const viewer = connection.status === "ready" ? connection.viewer : undefined;
-  const subscribeStatus = useCallback(
-    (listener: () => void) =>
-      viewer
-        ? connection.session.presence.subscribe(viewer, listener, true)
-        : () => {},
-    [connection.session, viewer],
+  const presence = useSyncExternalStore(
+    communities.presence.subscribe,
+    communities.presence.snapshot,
   );
-  const readStatus = useCallback(
-    () => (viewer ? connection.session.presence.status(viewer) : "unknown"),
-    [connection.session, viewer],
-  );
-  const status = useSyncExternalStore(subscribeStatus, readStatus);
-  const statusBadge = status === "unknown" ? undefined : status;
-  const [open, setOpen] = useState(false);
-  const container = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const id = useId();
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = (event: Event) => {
-      if (!container.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      trigger.current?.focus();
-    };
-    document.addEventListener("pointerdown", dismiss);
-    document.addEventListener("focusin", dismiss);
-    document.addEventListener("keydown", onEscape);
-    return () => {
-      document.removeEventListener("pointerdown", dismiss);
-      document.removeEventListener("focusin", dismiss);
-      document.removeEventListener("keydown", onEscape);
-    };
-  }, [open]);
+  const label = { online: "Active", away: "Away", offline: "Offline" }[
+    presence.status
+  ];
+  const openingSettings = useRef(false);
+  const accountLabel = useId();
+  const avatar =
+    viewer || profile.picture.startsWith("https://") || profile.name ? (
+      <Avatar
+        src={
+          profile.picture.startsWith("https://") ? profile.picture : undefined
+        }
+        alt=""
+        fallback={profile.name || "?"}
+        size="fill"
+        {...(viewer ? { statusBadge: presence.status } : {})}
+      />
+    ) : (
+      <UserIcon aria-hidden="true" size={19} />
+    );
   return (
-    <div ref={container} className="relative flex items-center">
-      <IconButton
-        type="button"
-        ref={trigger}
-        onClick={(event) => {
-          event.currentTarget.focus();
-          setOpen((value) => !value);
-        }}
-        aria-label="Your profile"
-        aria-expanded={open}
-        aria-controls={id}
-        title={profile.name || "Your profile"}
-        variant={statusBadge ? "ghost" : "chrome"}
-        style={statusBadge ? { background: "transparent" } : undefined}
-        shape="round"
-        icon={
-          /* Keep pointer-origin Tab traversal rooted at the button in WebKit. */
-          <span className="pointer-events-none flex size-full items-center justify-center rounded-full">
-            {statusBadge ||
-            profile.picture.startsWith("https://") ||
-            profile.name ? (
-              <Avatar
-                src={
-                  profile.picture.startsWith("https://")
-                    ? profile.picture
-                    : undefined
-                }
-                alt=""
-                fallback={profile.name || "?"}
-                size="fill"
-                {...(statusBadge ? { statusBadge } : {})}
-              />
-            ) : (
-              <UserIcon aria-hidden="true" size={19} />
-            )}
-          </span>
+    <MenuRoot
+      modal={false}
+      onOpenChange={(open) => {
+        if (open) openingSettings.current = false;
+      }}
+      onOpenChangeComplete={(open) => {
+        // Let the menu finish its keyboard handling before handing focus to
+        // the page. Other dismissals retain the shared menu's focus behavior.
+        if (!open && openingSettings.current)
+          document.getElementById("main-content")?.focus();
+      }}
+    >
+      <MenuTrigger
+        render={
+          <IconButton
+            type="button"
+            aria-label="Your profile"
+            title={profile.name || "Your profile"}
+            variant={viewer ? "ghost" : "chrome"}
+            data-profile-status-avatar={viewer ? "" : undefined}
+            shape="round"
+            icon={
+              <span
+                className="pointer-events-none relative flex size-full items-center justify-center rounded-full"
+                role="img"
+                aria-label={viewer ? `Your status: ${label}` : "Your avatar"}
+              >
+                {avatar}
+              </span>
+            }
+          />
         }
       />
-      <nav
-        id={id}
-        aria-label="Your account"
-        hidden={!open}
-        className="absolute top-full right-0 mt-2 w-56 max-w-[calc(100vw-2rem)] popover-surface p-2"
+      <MenuPopup
+        align="end"
+        sideOffset={8}
+        aria-labelledby={accountLabel}
+        finalFocus={() => !openingSettings.current}
       >
-        <div className="px-3 py-2">
-          <p className="m-0 truncate text-label-sm">
-            {profile.name || "Your account"}
-          </p>
-          <p
-            className="m-0 mt-1 flex items-center gap-2 text-body-sm text-secondary"
-            style={
-              statusBadge ? { color: statusTextColors[statusBadge] } : undefined
-            }
-          >
-            {statusBadge && (
-              <span
-                aria-hidden="true"
-                className="size-2 shrink-0 rounded-full"
-                style={{ backgroundColor: statusColors[statusBadge] }}
-              />
+        <span id={accountLabel} className="sr-only">
+          Your account
+        </span>
+        <div className="flex items-center gap-3 px-3 py-2">
+          <span className="relative flex size-9 shrink-0 items-center justify-center">
+            {avatar}
+          </span>
+          <div className="min-w-0">
+            <p className="m-0 truncate text-label-sm">
+              {profile.name || "Your account"}
+            </p>
+            {viewer && (
+              <p className="m-0 text-body-sm text-subtle">
+                <span
+                  className={styles.statusText}
+                  data-status={presence.status}
+                >
+                  {label}
+                </span>{" "}
+                · On this device
+              </p>
             )}
-            {statusLabels[status]}
-          </p>
+          </div>
         </div>
-        <NavigationItem
-          type="button"
+        {viewer && (
+          <>
+            <MenuSeparator />
+            <MenuRadioGroup
+              value={presence.preference}
+              onValueChange={(value) =>
+                communities.presence.setPreference(value)
+              }
+              aria-label="Presence"
+            >
+              {(
+                [
+                  [
+                    "auto",
+                    presence.preference === "auto" ? presence.status : "online",
+                    "Automatic",
+                  ],
+                  ["away", "away", "Away"],
+                  ["offline", "offline", "Appear offline"],
+                ] as const
+              ).map(([value, status, name]) => (
+                <MenuRadioItem key={value} value={value} closeOnClick={false}>
+                  <span
+                    className={styles.statusDot}
+                    data-status={status}
+                    aria-hidden="true"
+                  />
+                  {name}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+            <p className="mx-3 my-2 max-w-56 text-body-sm text-subtle">
+              Automatic follows activity in Buzz. Other devices may differ.
+            </p>
+            {presence.error && (
+              <p
+                role="alert"
+                className="mx-3 my-2 max-w-56 text-body-sm text-danger"
+              >
+                {presence.error}
+              </p>
+            )}
+          </>
+        )}
+        <MenuSeparator />
+        <MenuItem
           aria-current={settingsSelected ? "page" : undefined}
-          selected={settingsSelected}
-          label="Settings"
-          icon={<GearIcon aria-hidden="true" size={17} />}
           onClick={() => {
-            setOpen(false);
+            openingSettings.current = true;
             onSettings();
-            document.getElementById("main-content")?.focus();
           }}
-        />
-      </nav>
-    </div>
+        >
+          <MenuIcon>
+            <GearIcon aria-hidden="true" size={17} />
+          </MenuIcon>
+          Settings
+          {settingsSelected && (
+            <MenuTrailing>
+              <CheckIcon aria-hidden="true" size={14} />
+            </MenuTrailing>
+          )}
+        </MenuItem>
+      </MenuPopup>
+    </MenuRoot>
   );
 }

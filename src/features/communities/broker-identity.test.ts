@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import type { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -8,22 +8,56 @@ import type { Plugin, UserConfigFnPromise, ViteDevServer } from "vite";
 import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
 import viteConfig from "../../../vite.config";
 
-// Mock only the credential boundary. The Vite config, plugin registration,
-// default identity loader and public-key match are the production path.
-vi.mock("node:child_process", async (original) => ({
-  ...(await original<typeof import("node:child_process")>()),
-  execFileSync: vi.fn(),
+// The broker picks its credential reader from process.platform at call time.
+// Every case pins the platform explicitly so the suite proves the same thing
+// on the Ubuntu CI runner as on a developer's Mac. Hoisted because the module
+// mock below consults this table while vite.config's imports are still loading.
+const { readCredential, readers } = vi.hoisted(() => ({
+  readCredential: vi.fn<typeof execFileSync>(),
+  readers: {
+    darwin: {
+      command: "/usr/bin/security",
+      args: [
+        "find-generic-password",
+        "-s",
+        "buzz-desktop",
+        "-a",
+        "secrets",
+        "-w",
+      ],
+      failure: "Keychain read unavailable or declined; no credential fallback",
+    },
+    linux: {
+      command: "secret-tool",
+      args: ["lookup", "service", "buzz-desktop", "username", "secrets"],
+      failure: "Secret service read unavailable",
+    },
+  } as const,
 }));
-const readCredential = vi.mocked(execFileSync);
+// Mock only the credential boundary: the OS readers above are routed to
+// readCredential, so its call log is exactly the set of Keychain and secret
+// service reads. Every other execFileSync reaches the real binary, and the Vite
+// config, plugin registration, default identity loader and public-key match
+// are the production path.
+vi.mock("node:child_process", async (original) => {
+  const actual = await original<typeof import("node:child_process")>();
+  const commands = new Set<string>(
+    Object.values(readers).map((reader) => reader.command),
+  );
+  return {
+    ...actual,
+    execFileSync: (...call: Parameters<typeof actual.execFileSync>) =>
+      commands.has(call[0])
+        ? readCredential(...call)
+        : actual.execFileSync(...call),
+  };
+});
 const config = viteConfig as UserConfigFnPromise;
 const fixture = generateSecretKey();
 const viewer = getPublicKey(fixture);
 const credential = JSON.stringify({ identity: nip19.nsecEncode(fixture) });
 const servers: ReturnType<typeof createServer>[] = [];
 
-// The broker picks its credential reader from process.platform at call time.
-// Every case pins the platform explicitly so the suite proves the same thing
-// on the Ubuntu CI runner as on a developer's Mac.
 const realPlatform = process.platform;
 function onPlatform(platform: NodeJS.Platform) {
   Object.defineProperty(process, "platform", {
@@ -33,25 +67,6 @@ function onPlatform(platform: NodeJS.Platform) {
     configurable: true,
   });
 }
-const readers = {
-  darwin: {
-    command: "/usr/bin/security",
-    args: [
-      "find-generic-password",
-      "-s",
-      "buzz-desktop",
-      "-a",
-      "secrets",
-      "-w",
-    ],
-    failure: "Keychain read unavailable or declined; no credential fallback",
-  },
-  linux: {
-    command: "secret-tool",
-    args: ["lookup", "service", "buzz-desktop", "username", "secrets"],
-    failure: "Secret service read unavailable",
-  },
-} as const;
 const platforms = Object.keys(readers) as (keyof typeof readers)[];
 
 beforeEach(() => {

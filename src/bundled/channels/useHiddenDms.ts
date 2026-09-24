@@ -140,7 +140,8 @@ export function useHiddenDms(
       show(messages.map((message) => message.channelId)),
     );
     const stopOutgoing = session.outbox?.observeSend((event) => {
-      if (event.kind !== 9 && event.kind !== 40002) return;
+      if (event.kind !== 9 && event.kind !== 40002 && event.kind !== 40008)
+        return;
       const destinations = event.tags.filter(([name]) => name === "h");
       const id = destinations.length === 1 ? destinations[0]?.[1] : undefined;
       const hiddenAtSend = current.current.find((entry) => entry.id === id);
@@ -182,7 +183,7 @@ export function useHiddenDms(
             const events = await session.read(
               [
                 {
-                  kinds: [9, 40002],
+                  kinds: [9, 40002, 40008],
                   "#h": [id],
                   limit: entry.knownIds ? 50 : 100,
                 },

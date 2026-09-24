@@ -16,6 +16,7 @@ const nonIconDependencies = new Set([
   "@emoji-mart/data",
   "@fontsource-variable/inter",
   "@fontsource/jetbrains-mono",
+  "@jsquash/webp", // Lossless media encoder, not an icon catalog.
   "@noble/curves",
   "@playwright/test",
   "@tailwindcss/postcss",
@@ -41,6 +42,7 @@ const nonIconDependencies = new Set([
   "nostr-tools",
   "postcss",
   "react",
+  "react-diff-view", // Patch tables/parser, not an icon library.
   "react-dom",
   "react-markdown",
   "remark-breaks",

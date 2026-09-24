@@ -486,9 +486,10 @@ test("viewer does not replace host styles or appearance ownership", async ({
   page,
   context,
 }) => {
-  await page.goto("http://localhost:1444");
+  const settings = `/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "settings" }))}`;
+  await page.goto(`http://localhost:1444${settings}`);
   await expect(
-    page.getByRole("heading", { name: "Make yourself at home." }),
+    page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   const readHost = () =>
     page.evaluate(() => ({
@@ -505,9 +506,9 @@ test("viewer does not replace host styles or appearance ownership", async ({
     }));
   const before = await readHost();
   expect(before.systemToken.trim()).toBe("#8e4ec6");
-  await page.goto("http://localhost:1445");
+  await page.goto(`http://localhost:1445${settings}`);
   await expect(
-    page.getByRole("heading", { name: "Make yourself at home." }),
+    page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   const sameOriginBefore = await readHost();
   const other = await context.newPage();
@@ -1313,7 +1314,7 @@ test("built Messages gallery renders isolated product states and follows viewer 
   ).toBeVisible();
   await expect
     .poll(() => page.locator("iframe").evaluate((el) => el.clientHeight))
-    .toBeGreaterThan(3000);
+    .toBeLessThanOrEqual(900);
   await gallery
     .getByRole("button", { name: "Delivery states", exact: true })
     .click();
@@ -1520,4 +1521,57 @@ test("toast recovery stays reachable across themes, sizes, keyboard scrolling an
     .getByRole("link", { name: "Button", exact: true })
     .click();
   await expect(region).toHaveCount(0); // Leaving the owner clears the stack.
+});
+
+// Cross-document fullscreen placement and native focus restoration require a browser.
+test("Messages gallery fullscreen stays reachable and returns focus to its trigger", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/messages`);
+  const gallery = page.frameLocator('iframe[title="Message types and states"]');
+  for (const width of [1280, 800, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const category of ["All messages", "Attachments"]) {
+      await gallery
+        .getByRole("button", { name: category, exact: true })
+        .click();
+      const trigger = gallery
+        .getByRole("button", { name: "Open video fullscreen", exact: true })
+        .first();
+      await trigger.click();
+      const dialog = gallery.getByRole("dialog", {
+        name: "Video attachment",
+        exact: true,
+      });
+      const close = dialog.getByRole("button", {
+        name: "Close fullscreen viewer",
+        exact: true,
+      });
+      await expect(dialog).toBeInViewport({ ratio: 1 });
+      await expect(close).toBeInViewport({ ratio: 1 });
+      await expect(close).toBeFocused();
+      await expect(dialog.locator("video")).toBeInViewport({ ratio: 1 });
+      await expect
+        .poll(() =>
+          dialog
+            .locator("video")
+            .evaluate(
+              (video) =>
+                video instanceof HTMLVideoElement &&
+                video.readyState >= 2 &&
+                video.videoWidth > 0 &&
+                video.currentTime > 0,
+            ),
+        )
+        .toBe(true);
+      await close.click();
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+      await trigger.press("Enter");
+      await expect(dialog).toBeInViewport({ ratio: 1 });
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    }
+  }
 });

@@ -10,9 +10,9 @@ export function useKnownAgentPubkeys(
   profiles: ReadonlyMap<string, Profile>,
 ): ReadonlySet<string> {
   const library = useSyncExternalStore(
-    session.agentLibrary.subscribe,
-    session.agentLibrary.snapshot,
-    session.agentLibrary.snapshot,
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
+    session.agentChoices.snapshot,
   );
   return useMemo(
     () => knownAgentPubkeys(profiles, library),

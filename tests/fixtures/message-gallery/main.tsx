@@ -1,7 +1,7 @@
 import "../../../src/shared/styles/globals.css";
 import "@fontsource-variable/inter/wght.css";
 import "@fontsource/jetbrains-mono/400.css";
-import { StrictMode, useEffect, useRef, useState } from "react";
+import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MessageRow } from "../../../src/features/messages/MessageRow";
 import { MembershipRow } from "../../../src/features/messages/MembershipRow";
@@ -170,28 +170,11 @@ function Specimen({ example }: { example: Example }) {
 
 function Gallery() {
   useKeyboardFocusVisibility();
-  const root = useRef<HTMLDivElement>(null);
   const [group, setGroup] = useState("all");
   const [narrow, setNarrow] = useState(false);
   const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    const element = root.current;
-    if (!element) return;
-    const report = () =>
-      window.parent.postMessage(
-        {
-          type: "message-gallery-height",
-          height: element.getBoundingClientRect().height,
-        },
-        window.location.origin,
-      );
-    const observer = new ResizeObserver(report);
-    observer.observe(element);
-    report();
-    return () => observer.disconnect();
-  }, []);
   return (
-    <div ref={root} className="message-gallery">
+    <div className="message-gallery">
       <div data-buzz-ui="" className="message-gallery-controls">
         <fieldset
           aria-label="Message categories"

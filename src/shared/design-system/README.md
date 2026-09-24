@@ -23,7 +23,8 @@ bin/pnpm design:dev
 ```
 
 Open http://localhost:1442/tests/fixtures/design-system.html.
-The same fixture URL works under the normal web dev server.
+The same fixture path works under the normal web dev server, at the
+worktree-derived port `just web` prints.
 
 ```sh
 bin/pnpm design:typecheck

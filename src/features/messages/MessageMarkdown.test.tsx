@@ -232,7 +232,7 @@ describe("mounted Markdown preparation", () => {
           row={{
             ...initial.row,
             delivery: "seen",
-            reactions: [{ content: "👍" }],
+            reactions: [{ content: "👍", events: [] }],
           }}
         />
       </StrictMode>,
@@ -832,4 +832,55 @@ it("keeps the agent icon without presenting an unavailable profile action", () =
   );
   expect(html).not.toContain("<button");
   expect(html).not.toContain('aria-label="View');
+});
+
+it("keeps explicit profile identities visible but inert when Profiles is unavailable", () => {
+  const target = profileTarget(mic);
+  const view = renderDom(
+    <MessageMarkdown
+      {...props(`[@Mic](${target})`, {
+        patch: { mentions: [] },
+        canOpenLink: () => false,
+      })}
+    />,
+  );
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
+  expect(view.container.textContent).toContain(target);
+  view.rerender(
+    <MessageMarkdown
+      {...props(`[@Mic](${target})`, {
+        patch: { mentions: [] },
+        interactive: false,
+      })}
+    />,
+  );
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
+  expect(view.container.textContent).toContain("Mic");
+});
+
+it.each([
+  "nostr:npub1invalid",
+  "nostr:nsec1invalid",
+  "nostr:note1invalid",
+  `${profileTarget(mic)}?relay=https://example.test`,
+  "javascript:alert%281%29",
+  "data:text/html,hello",
+])(
+  "does not open unsupported or malformed identity destinations: %s",
+  (target) => {
+    const html = render(`[@Mic](${target})`, { patch: { mentions: [] } });
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("href=");
+    expect(html).toContain("@Mic");
+  },
+);
+
+it("keeps explicit profile links literal inside code", () => {
+  const link = `[@Mic](${profileTarget(mic)})`;
+  const html = render(`\`${link}\``, { patch: { mentions: [] } });
+  expect(html).not.toContain("<button");
+  expect(html).not.toContain("href=");
+  expect(html).toContain(link);
 });

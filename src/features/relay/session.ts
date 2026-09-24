@@ -1,4 +1,13 @@
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import type { AgentControl } from "../agents/control";
+import { createAgentChoices, templateAgentChoices } from "../agents/choices";
+import { parseLineup } from "../channel-templates/model";
+import { createChannelKit } from "../channel-templates/capability";
+import {
+  createChannelSetup,
+  personalGroups,
+  type ChannelCreationInput,
+} from "../channel-templates/setup";
 import { createPresence } from "../presence/presence";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
@@ -33,6 +42,7 @@ import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
+import { UploadError } from "./attachments";
 import type { ReadTransport } from "./transport";
 import type { LiveSnapshot, LiveSubscription } from "./live";
 import {
@@ -68,12 +78,6 @@ export type EventViewSnapshot = Readonly<{
   error?: string | undefined;
 }>;
 
-type ChannelCreationInput = Readonly<{
-  name: string;
-  description?: string | undefined;
-  visibility: "open" | "private";
-  ttlSeconds?: number | undefined;
-}>;
 type PendingChannelCreation = Readonly<{
   signature: string;
   id: string;
@@ -157,6 +161,9 @@ export function createRelaySession(
   transport: ReadTransport | null,
   options: ChannelStoreOptions & {
     identityNames?: IdentityNames | undefined;
+    agentChoices?:
+      | Pick<AgentControl, "snapshot" | "subscribe" | "refresh">
+      | undefined;
     presenceActivity?: PresenceActivity;
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
@@ -166,6 +173,11 @@ export function createRelaySession(
 ) {
   let closed = false;
   const lifetime = new AbortController();
+  let uploadLifetime = new AbortController();
+  function cancelUploads() {
+    uploadLifetime.abort();
+    uploadLifetime = new AbortController();
+  }
   const profiling =
     options.profiling ?? transport?.profiling ?? createRelayProfiler();
   const requests = createRelayReader(transport, { profiling });
@@ -201,6 +213,7 @@ export function createRelaySession(
   const views = new Map<() => void, (clear?: boolean) => void>();
   const threads = new Set<ReturnType<typeof createThreadView>>();
   const writer = transport?.writer;
+  const uploadAttachment = transport?.uploadAttachment;
   const writes =
     transport && writer
       ? createOutbox(
@@ -209,6 +222,7 @@ export function createRelaySession(
             ...writer,
             async sign(template, signal) {
               validateMentionEvent(template);
+              validateCanvasWrite(template);
               workflows.validate({
                 ...template,
                 id: "",
@@ -232,12 +246,20 @@ export function createRelaySession(
             onReceipt: (event, message) => workflows.receipt(event, message),
             preparePublish: async (event, signal) => {
               workflows.validate(event);
+              if (event.kind === 40100) {
+                const id = event.tags.find((t) => t[0] === "h")?.[1];
+                if (!id) throw new Error("Canvas has no channel");
+                await workSessions.refreshMembership(id);
+                signal.throwIfAborted();
+                validateCanvasWrite(event);
+              }
               const checkMentions = await prepareMentionPublication(
                 event,
                 signal,
               );
               return () => {
                 workflows.validate(event);
+                validateCanvasWrite(event);
                 checkMentions?.();
               };
             },
@@ -286,6 +308,7 @@ export function createRelaySession(
     revoking++;
     try {
       accessEpoch++;
+      cancelUploads();
       typing.clear();
       // Filters cannot tell us ownership of broad/ID/reference reads. Infrequent
       // authoritative access loss cancels them all, not merely explicit #h reads.
@@ -360,14 +383,14 @@ export function createRelaySession(
           filter.search !== undefined &&
           !filter["#h"]?.length &&
           !!filter.kinds?.length &&
-          filter.kinds.every((kind) => [9, 40002].includes(kind)),
+          filter.kinds.every((kind) => [9, 40002, 40008].includes(kind)),
       )
     ) {
       const ids = [
         ...new Set(
           events.flatMap((event) => {
             const tags = event.tags.filter(([name]) => name === "h");
-            return [9, 40002].includes(event.kind) &&
+            return [9, 40002, 40008].includes(event.kind) &&
               tags.length === 1 &&
               tags[0]?.[1]
               ? [tags[0][1]]
@@ -476,6 +499,12 @@ export function createRelaySession(
   const profiles = createProfileDirectory(verified, localViews, notify);
   const emoji = createEmojiDirectory(verified, notify);
   const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
+  const agentChoices = createAgentChoices({
+    scope: `${transport?.scope ?? transport?.relayAuthor}:${transport?.viewer}`,
+    library: agentLibrary.queries,
+    native: options.agentChoices,
+    signal: lifetime.signal,
+  });
   const nameSource = {
     profiles: profiles.queries,
     agentLibrary: agentLibrary.queries,
@@ -626,6 +655,12 @@ export function createRelaySession(
       throw new Error(
         "A selected recipient is no longer a channel member; remove them or refresh membership",
       );
+  }
+  function validateCanvasWrite(event: Pick<EventData, "kind" | "tags">) {
+    if (event.kind !== 40100) return;
+    const id = event.tags.find((t) => t[0] === "h")?.[1];
+    if (!id || closed || !channels.canParticipate(id))
+      throw new Error("Canvas access changed; your draft is kept");
   }
   function validateMentionEvent(event: Pick<EventData, "kind" | "tags">) {
     if (event.kind !== 9) return;
@@ -806,19 +841,149 @@ export function createRelaySession(
           event.pubkey === transport.viewer,
       );
     },
-    () => {
-      const library = agentLibrary.queries.snapshot();
-      return library.status === "ready"
-        ? library.identities.map((agent) => agent.pubkey)
-        : [];
-    },
+    () => agentChoices.snapshot().identities.map((agent) => agent.pubkey),
     transport?.relayAuthor,
   );
+  const channelKit = createChannelKit({
+    host: transport?.channelKit,
+    reader: verified,
+    outbox: writes?.outbox,
+    local: writes?.local,
+    ready: writes?.ready,
+    viewer: transport?.viewer ?? "",
+    community: transport?.scope ?? "",
+    signal: lifetime.signal,
+    canWrite: (id) => !closed && channels.canParticipate(id),
+    delivered: workSessions.delivered,
+  });
+  const channelSetup =
+    transport && writes && transport.channelKit
+      ? createChannelSetup({
+          scope: `${transport.scope ?? transport.relayAuthor}:${transport.viewer}`,
+          outbox: writes.outbox,
+          local: writes.local,
+          signal: lifetime.signal,
+          create: (id, input) =>
+            workSessions.createChannel(
+              id,
+              input.name,
+              input.visibility,
+              input.description,
+              input.ttlSeconds,
+            ),
+          delivered: workSessions.delivered,
+          confirm: channelKit.confirm,
+          refresh: (id, member) => workSessions.refresh(id, { member }, false),
+          canvasHead: async (id) => (await channelKit.canvas.read(id))?.id,
+          async preflight(input) {
+            if (
+              !input.name.trim() ||
+              [...input.name.trim()].length > 120 ||
+              (input.description &&
+                ([...input.description].length > 1000 ||
+                  input.description.includes("Buzz session ("))) ||
+              !["open", "private"].includes(input.visibility) ||
+              (input.ttlSeconds !== undefined &&
+                (!Number.isInteger(input.ttlSeconds) ||
+                  input.ttlSeconds <= 0 ||
+                  input.ttlSeconds > 2_147_483_647))
+            )
+              throw new Error(
+                "Check the channel name, description, privacy and duration before creating it",
+              );
+            if (!workSessions.available)
+              throw new Error("Channel creation is unavailable");
+            const setup = input.setup;
+            if (!setup) return;
+            parseLineup({ ...setup, teamIds: [] });
+            if (
+              ![setup.groupId, setup.templateId].every(
+                (id) =>
+                  typeof id === "string" &&
+                  (id === "" || /^[a-zA-Z0-9_-]{1,128}$/.test(id)),
+              )
+            )
+              throw new Error("Invalid template or group selection");
+            if (setup.canvas && !channelKit.canvas.available)
+              throw new Error("Canvas writing is unavailable");
+            if (setup.agents.length && !writes.outbox.supports(9000))
+              throw new Error("Agent membership is unavailable");
+            if (setup.agents.length) {
+              await agentChoices.refresh();
+              await archives.queries.refresh();
+              lifetime.signal.throwIfAborted();
+              if (archives.queries.snapshot().status !== "ready")
+                throw new Error(
+                  "Agent archive state is unavailable; refresh before creating this lineup",
+                );
+              // Re-read native state after awaits; process running is not eligibility.
+              const available = new Set(
+                templateAgentChoices(
+                  agentChoices.snapshot(),
+                  channels.queries.list(),
+                ).map((a) => a.pubkey),
+              );
+              if (
+                setup.agents.some(
+                  (key) =>
+                    !available.has(key) ||
+                    archives.queries.state(key) !== "not-archived",
+                )
+              )
+                throw new Error(
+                  "A selected agent is unavailable in this community. Refresh agents or remove it before creating the channel.",
+                );
+            }
+            if (setup.groupId) {
+              await channelKit.capability.refresh();
+              if (channelKit.capability.snapshot().status !== "ready")
+                throw new Error(
+                  "Personal groups could not be refreshed; no channel was created",
+                );
+              const entry = personalGroups(
+                channelKit.capability.snapshot().entries,
+              );
+              if (
+                entry?.record.value.type !== "groups" ||
+                !entry.record.value.groups.some((g) => g.id === setup.groupId)
+              )
+                throw new Error("The destination group is unavailable");
+            }
+          },
+          async place(id, groupId) {
+            await channelKit.capability.refresh();
+            const state = channelKit.capability.snapshot();
+            if (state.status !== "ready")
+              throw new Error("Personal group placement could not be loaded");
+            const entry = personalGroups(state.entries);
+            if (
+              entry?.record.value.type !== "groups" ||
+              !entry.record.value.groups.some((g) => g.id === groupId)
+            )
+              throw new Error(
+                "The destination group was removed; keep the partial channel and choose its group separately",
+              );
+            if (entry.record.value.assignments[id] === groupId) return;
+            await channelKit.capability.save(
+              {
+                ...entry.record.value,
+                assignments: {
+                  ...entry.record.value.assignments,
+                  [id]: groupId,
+                },
+              },
+              entry.eventId,
+            );
+          },
+        })
+      : undefined;
   let pendingChannelCreation: PendingChannelCreation | undefined =
     restoredChannelCreation(writes?.local);
   let restoredOperation = pendingChannelCreation?.operation;
   const pendingCreation = () => {
-    const restored = restoredChannelCreation(writes?.local);
+    const candidate = restoredChannelCreation(writes?.local);
+    const restored =
+      candidate?.id === channelSetup?.completedId() ? undefined : candidate;
     if (restored?.operation !== restoredOperation) {
       restoredOperation = restored?.operation;
       pendingChannelCreation = restored;
@@ -827,11 +992,30 @@ export function createRelaySession(
   };
   const channelCreation = Object.freeze({
     available: workSessions.available,
-    subscribe: (listener: () => void) =>
-      writes?.local.subscribe(listener) ?? (() => {}),
-    snapshot: () => pendingCreation()?.input,
+    subscribe: (listener: () => void) => {
+      const local = writes?.local.subscribe(listener);
+      const setup = channelSetup?.subscribe(listener);
+      return () => {
+        local?.();
+        setup?.();
+      };
+    },
+    snapshot: () => channelSetup?.snapshot() ?? pendingCreation()?.input,
+    partialChannel: () => channelSetup?.channelId(),
+    keepPartial: () => channelSetup?.keepPartial(),
     async create(input: ChannelCreationInput) {
       if (!transport) throw new Error("The community connection changed.");
+      if (input.setup || channelSetup?.snapshot()) {
+        if (!channelSetup)
+          throw new Error("Template setup is unavailable on this host");
+        await writes?.ready;
+        const previous = pendingCreation();
+        if (previous && !channelSetup.snapshot())
+          throw new Error(
+            "Resume the previous channel creation before applying a template",
+          );
+        return channelSetup.run(input, transport.viewer);
+      }
       const normalized: ChannelCreationInput = {
         name: input.name.trim(),
         visibility: input.visibility,
@@ -889,6 +1073,7 @@ export function createRelaySession(
   const session = Object.freeze({
     presence,
     viewer: transport?.viewer,
+    scope: readScope,
     /** Verified new live-route messages, after reconciliation. Never history or local intent. */
     subscribeIncoming(listener: IncomingListener) {
       if (closed) return () => {};
@@ -899,11 +1084,33 @@ export function createRelaySession(
     },
     typing: typing.capability,
     channelCreation,
+    channelKit: channelKit.capability,
+    canvas: channelKit.canvas,
     workSessions,
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
     live,
     profiling,
+    attachments:
+      uploadAttachment && writes?.outbox.supports(9)
+        ? Object.freeze({
+            async upload(file: File, channelId: string, signal: AbortSignal) {
+              const combined = AbortSignal.any([
+                signal,
+                lifetime.signal,
+                uploadLifetime.signal,
+              ]);
+              combined.throwIfAborted();
+              if (!channelId || closed || !channels.canParticipate(channelId))
+                throw new UploadError("denied");
+              const result = await uploadAttachment(file, combined);
+              combined.throwIfAborted();
+              if (!channels.canParticipate(channelId))
+                throw new UploadError("denied");
+              return result;
+            },
+          })
+        : undefined,
     messages: createMessages(
       writes?.outbox,
       transport?.viewer,
@@ -913,7 +1120,8 @@ export function createRelaySession(
         retainedEvent(id),
       emoji.tags,
       validateMentions,
-      (id) => channels.canParticipate(id),
+      (id) => !closed && channels.canParticipate(id),
+      transport?.scope,
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
@@ -988,6 +1196,7 @@ export function createRelaySession(
     profiles: profiles.queries,
     emoji: emoji.queries,
     agentLibrary: agentLibrary.queries,
+    agentChoices,
     workflows: workflows.capability,
     agentActivity: activity.queries,
     archives: archives.queries,
@@ -1292,7 +1501,9 @@ export function createRelaySession(
                   ([name]) => name === "h",
                 );
                 return (
-                  (event.kind === 9 || event.kind === 40002) &&
+                  (event.kind === 9 ||
+                    event.kind === 40002 ||
+                    event.kind === 40008) &&
                   event.pubkey !== transport.viewer &&
                   destinations.length === 1 &&
                   destinations[0]?.[1] === provenance.channelId &&
@@ -1470,11 +1681,13 @@ export function createRelaySession(
     session,
     async clearCache() {
       accessEpoch++;
+      cancelUploads();
       cacheClearEpoch++;
       activity.clear();
       presence.clear();
       typing.clear();
       sidebarPreferences.clear();
+      channelKit.clear();
       // New windows must not yield to or receive errors from retired owners.
       catchups.clear();
       catchupQueue.clear();

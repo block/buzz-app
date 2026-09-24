@@ -502,3 +502,25 @@ it("keeps a saved record, including Personal space, instead of the configured re
     JSON.stringify(saved),
   );
 });
+
+it("hydrates presence intent before acquiring a retained session and keeps it across communities", async () => {
+  const client = setup();
+  localStorage.setItem(`buzz-presence.v1:${viewer}`, "offline");
+  await flush();
+  expect(client.presence.status()).toBe("offline");
+  client.joined(
+    { id: "primary", name: "Primary" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  client.joined(
+    { id: "secondary", name: "Secondary" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  expect(client.presence.status()).toBe("offline");
+  client.presence.setPreference("away");
+  client.select("primary");
+  expect(client.presence.status()).toBe("away");
+  expect(localStorage.getItem(`buzz-presence.v1:${viewer}`)).toBe("away");
+});

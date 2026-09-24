@@ -6,7 +6,7 @@ const key = "buzz-appearance.v1";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function settings(page) {
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Appearance").click();
 }
 async function expectMode(page, mode) {
@@ -318,18 +318,10 @@ test("compiled host preserves compatibility utility meanings", async ({
   }
 });
 
-test("shared type and spacing reach Home and the real message timeline", async ({
+test("shared type and spacing reach the real message timeline", async ({
   page,
   app,
 }) => {
-  await page.goto(app.origin);
-  await button(page, "Home").click();
-  await expect(
-    page.getByRole("heading", { name: "Make yourself at home." }),
-  ).toHaveCSS("font-size", "56px");
-  await expect(
-    page.getByRole("heading", { name: "Make yourself at home." }),
-  ).toHaveCSS("line-height", "56px");
   await open(page, app);
   const history = page.getByRole("region", { name: "Channel message history" });
   const message = history.locator("[data-message-id] p").first();

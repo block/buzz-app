@@ -1,6 +1,7 @@
 import { assert, describe, expect, it } from "vitest";
 import { parseAttachments } from "./fold";
 import { foldMessages } from "./fold";
+import { shareMessageRows } from "./row-identity";
 import { foldProfiles } from "./profiles";
 import { DiscoveryState } from "./discovery";
 import {
@@ -19,6 +20,44 @@ const relay = keypair(),
 const channel = "chan-1";
 
 describe("message fold", () => {
+  it("preserves diff patch bytes and signed metadata without Markdown attachment projection", () => {
+    const content =
+      "@@ -1 +1 @@\n-![old](https://example.com/old.png)\n+<script>alert(1)</script>  \n";
+    const event = signed(alice, {
+      kind: 40008,
+      content,
+      tags: [
+        ["h", channel],
+        ["file", "README.md"],
+        ["repo", "javascript:alert(1)"],
+        ["commit", "abcdef0"],
+        ["description", "Raw <code>"],
+        ["truncated", "true"],
+      ],
+    });
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row).toMatchObject({
+      content,
+      attachments: [],
+      diff: {
+        filePath: "README.md",
+        repoUrl: "javascript:alert(1)",
+        commitSha: "abcdef0",
+        description: "Raw <code>",
+        truncated: true,
+      },
+    });
+    expect(row?.attachmentContentRemoved).toBeUndefined();
+    expect(Object.isFrozen(row?.diff)).toBe(true);
+    const untagged = signed(alice, {
+      kind: 40008,
+      content,
+      tags: [["h", channel]],
+    });
+    expect(
+      foldMessages(channel, relay.pubkey, [untagged])[0]?.diff,
+    ).toMatchObject({ truncated: false });
+  });
   it("orders rows chronologically with id tiebreak and excludes other channels and non-broadcast replies", () => {
     const a = message(alice, channel, "a", 20),
       b = message(bob, channel, "b", 10),
@@ -184,6 +223,7 @@ describe("message fold", () => {
     );
     const [row] = foldMessages(channel, relay.pubkey, [event]);
     expect(row?.content).toBe("See  now");
+    expect(row?.sourceContent).toBe(event.content);
     expect(row?.attachments).toEqual([
       { url: `https://relay.test/files/${hash}`, kind: "image" },
     ]);
@@ -1008,4 +1048,35 @@ it("uses attachment name precedence link label before filename before basename",
     "File Name.pdf",
     "three.pdf",
   ]);
+});
+
+it("retains latest raw edit source through attachment projection and row sharing", () => {
+  const url = "https://relay.test/media/report.pdf";
+  const original = message(alice, channel, `Caption [Report](${url})`, 10, [
+    ["imeta", `url ${url}`, "m application/pdf"],
+  ]);
+  const edit = (content: string, created_at: number) =>
+    signed(alice, {
+      kind: 40003,
+      content,
+      created_at,
+      tags: [
+        ["h", channel],
+        ["e", original.id],
+      ],
+    });
+  const first = edit(`Caption [Report](${url} "Old title")`, 11);
+  const second = edit(`Caption [Report](${url} "New title")`, 12);
+  const before = foldMessages(channel, relay.pubkey, [original, first]);
+  const next = foldMessages(channel, relay.pubkey, [original, first, second]);
+  expect(next[0]?.content).toBe(before[0]?.content);
+  expect(next[0]?.attachments).toEqual(before[0]?.attachments);
+  expect(next[0]?.sourceContent).toBe(second.content);
+  expect(shareMessageRows(before, next)[0]).toBe(next[0]);
+  expect(
+    shareMessageRows(
+      next,
+      foldMessages(channel, relay.pubkey, [original, first, second]),
+    ),
+  ).toBe(next);
 });

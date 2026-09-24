@@ -175,7 +175,12 @@ export const groups: Group[] = [
         "Reactions",
         "Reaction tokens below the body, as currently rendered.",
         "This is ready to ship.",
-        { reactions: [{ content: "🎉" }, { content: "👍" }, { content: "❤️" }] },
+        {
+          reactions: ["🎉", "👍", "❤️"].map((content, index) => ({
+            content,
+            events: [{ id: `sample-reaction-${index}`, authorId: teammate }],
+          })),
+        },
       ),
       single(
         "thread",

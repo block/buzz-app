@@ -64,6 +64,8 @@ import { DropboxLogoIcon as PhosphorDropboxLogoIcon } from "@phosphor-icons/reac
 export const DropboxLogoIcon = defineIcon("phosphor", PhosphorDropboxLogoIcon);
 import { FigmaLogoIcon as PhosphorFigmaLogoIcon } from "@phosphor-icons/react/dist/csr/FigmaLogo";
 export const FigmaLogoIcon = defineIcon("phosphor", PhosphorFigmaLogoIcon);
+import { PaperclipIcon as PhosphorPaperclipIcon } from "@phosphor-icons/react/dist/csr/Paperclip";
+export const PaperclipIcon = defineIcon("phosphor", PhosphorPaperclipIcon);
 import { FileTextIcon as PhosphorFileTextIcon } from "@phosphor-icons/react/dist/csr/FileText";
 export const FileTextIcon = defineIcon("phosphor", PhosphorFileTextIcon);
 import { FolderOpenIcon as PhosphorFolderOpenIcon } from "@phosphor-icons/react/dist/csr/FolderOpen";
@@ -200,3 +202,9 @@ export const GitHubIssueIcon = defineIcon("custom", GitHubIssueArtwork, {
 
 import { CircleNotchIcon as PhosphorCircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";
 export const CircleNotchIcon = defineIcon("phosphor", PhosphorCircleNotchIcon);
+
+import { PencilSimpleIcon as PhosphorPencilSimpleIcon } from "@phosphor-icons/react/dist/csr/PencilSimple";
+export const PencilSimpleIcon = defineIcon(
+  "phosphor",
+  PhosphorPencilSimpleIcon,
+);

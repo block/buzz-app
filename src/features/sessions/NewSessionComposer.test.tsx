@@ -53,7 +53,8 @@ function setup(available = true) {
       snapshot: () => profileSnapshot,
       subscribe: () => () => {},
     },
-    agentLibrary: {
+    agentChoices: {
+      retain: () => () => {},
       snapshot: () => agents,
       subscribe: () => () => {},
       refresh: async () => {},

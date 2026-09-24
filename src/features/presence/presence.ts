@@ -195,8 +195,12 @@ export function createPresence(
               if (!valid()) return;
               let delay = minute();
               try {
-                if ((await publish(activity.status(), owned.signal)) === null)
-                  delay = 5000 + Math.random() * 1000;
+                const status = activity.status();
+                const accepted = await publish(status, owned.signal);
+                // Offline is a clear, not a lease. Keep the lock, but stop
+                // renewing once accepted; failed/unsent clears still retry.
+                if (accepted === true && status === "offline") return;
+                if (accepted === null) delay = 5000 + Math.random() * 1000;
               } catch {
                 /* Lossy; next renewal owns current state. */
               }

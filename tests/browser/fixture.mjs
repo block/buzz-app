@@ -1121,6 +1121,7 @@ export const test = base.extend({
         { viewer, profilePicture, iconCongestion },
       );
       await use({
+        sign: (template) => finalizeEvent(template, userKey),
         origin,
         report,
         iconCongestion: iconCongestion

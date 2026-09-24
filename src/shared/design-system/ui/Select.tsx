@@ -23,6 +23,8 @@ export function Select({
   required,
   readOnly,
   placeholder,
+  valueLabel,
+  valueTitle,
 }: {
   label: string;
   description?: ReactNode;
@@ -31,7 +33,10 @@ export function Select({
   required?: boolean;
   readOnly?: boolean;
   placeholder?: string;
-  variant?: "inline" | "field";
+  /** Compact display text; option labels retain their full meaning. */
+  valueLabel?: string;
+  valueTitle?: string;
+  variant?: "inline" | "field" | "compact";
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];
@@ -57,8 +62,12 @@ export function Select({
           if (next !== null) onValueChange(next);
         }}
       >
-        {variant === "inline" && (
-          <BaseSelect.Label className="text-primary">{label}</BaseSelect.Label>
+        {variant !== "field" && (
+          <BaseSelect.Label
+            className={variant === "compact" ? "sr-only" : "text-primary"}
+          >
+            {label}
+          </BaseSelect.Label>
         )}
         {variant === "field" ? (
           <BaseSelect.Trigger
@@ -81,11 +90,26 @@ export function Select({
         ) : (
           <BaseSelect.Trigger
             render={(props) => (
-              <Button {...props} variant="ghost">
+              <Button
+                {...props}
+                variant="ghost"
+                size={variant === "compact" ? "sm" : "md"}
+              >
                 <BaseSelect.Value
+                  className={
+                    variant === "compact" ? "buzz-select-value" : undefined
+                  }
+                  title={
+                    variant === "compact"
+                      ? (valueTitle ??
+                        items.find((item) => item.value === value)?.label)
+                      : undefined
+                  }
                   placeholder={selectedValue === null ? placeholder : undefined}
                   data-placeholder={selectedValue === null ? "" : undefined}
-                />
+                >
+                  {valueLabel}
+                </BaseSelect.Value>
                 <BaseSelect.Icon>
                   <CaretDownIcon
                     size={14}

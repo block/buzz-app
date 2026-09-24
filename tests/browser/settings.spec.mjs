@@ -139,7 +139,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   await page.goto(app.origin);
   const avatar = button(page, "Your profile");
   const account = page.getByRole("menu", {
-    name: /Browser Fixture|Updated local profile/,
+    name: "Browser Fixture",
   });
   const settings = account.getByRole("menuitem", {
     name: "Settings",
@@ -342,7 +342,7 @@ test("Settings edits the local profile inline without publishing to a community"
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
-    page.getByRole("menu", { name: /Browser Fixture|Updated local profile/ }),
+    page.getByRole("menu", { name: "Browser Fixture" }),
   ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   const name = page.getByRole("textbox", { name: "Display name", exact: true });
@@ -370,7 +370,7 @@ test("Settings edits the local profile inline without publishing to a community"
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
-    page.getByRole("menu", { name: /Browser Fixture|Updated local profile/ }),
+    page.getByRole("menu", { name: "Browser Fixture" }),
   ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Browser Fixture");
@@ -401,7 +401,7 @@ test("Settings edits the local profile inline without publishing to a community"
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
-    page.getByRole("menu", { name: /Browser Fixture|Updated local profile/ }),
+    page.getByRole("menu", { name: "Updated local profile" }),
   ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Updated local profile");

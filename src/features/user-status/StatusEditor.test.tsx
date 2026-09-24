@@ -49,6 +49,9 @@ it("calculates the selected preset at save time after a quick choice is edited",
     target: { value: "Design review" },
   });
   await user.click(screen.getByRole("button", { name: "Duration: Today" }));
+  expect(
+    screen.queryByRole("menuitemradio", { name: "Don’t clear" }),
+  ).not.toBeInTheDocument();
   await user.click(
     await screen.findByRole("menuitemradio", { name: "8 hours" }),
   );

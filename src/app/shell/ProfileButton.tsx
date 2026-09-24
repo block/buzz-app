@@ -64,6 +64,7 @@ export function ProfileButton({
   const [menuOpen, setMenuOpen] = useState(false);
   const openingSettings = useRef(false);
   const accountLabel = useId();
+  const statusUnavailable = useId();
   const avatar =
     picture || name ? (
       <Avatar src={picture || undefined} alt="" fallback={name} size="fill" />
@@ -200,6 +201,9 @@ export function ProfileButton({
                       ? `Set a status: ${[status.emoji, status.text].filter(Boolean).join(" ")}`
                       : "Set a status"
                   }
+                  aria-describedby={
+                    !session.statuses.writable ? statusUnavailable : undefined
+                  }
                   closeOnClick={false}
                   disabled={statusEditor.loading || !session.statuses.writable}
                   onClick={async () => {
@@ -229,7 +233,10 @@ export function ProfileButton({
                 </MenuItem>
               </div>
               {!session.statuses.writable && (
-                <p className="mx-3 my-2 max-w-56 text-body-sm text-muted">
+                <p
+                  id={statusUnavailable}
+                  className="mx-3 my-2 max-w-56 text-body-sm text-muted"
+                >
                   Status updates are unavailable in this community.
                 </p>
               )}

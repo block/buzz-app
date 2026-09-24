@@ -178,7 +178,9 @@ it.each(["escape", "outside", "reopen"])(
     );
     try {
       expect(view.container.querySelector('img[src^="http:"]')).toBeNull();
-      await user.click(screen.getByRole("button", { name: "Your profile" }));
+      act(() => screen.getByRole("button", { name: "Your profile" }).focus());
+      await user.keyboard("{Enter}");
+      await screen.findByRole("menu", { name: "Local" });
       await user.click(screen.getByRole("menuitem", { name: "Set a status" }));
       expect(current).toHaveBeenCalledOnce();
       if (dismiss === "outside")
@@ -189,8 +191,11 @@ it.each(["escape", "outside", "reopen"])(
           screen.queryByRole("menu", { name: "Local" }),
         ).not.toBeInTheDocument(),
       );
-      if (dismiss === "reopen")
-        await user.click(screen.getByRole("button", { name: "Your profile" }));
+      if (dismiss === "reopen") {
+        act(() => screen.getByRole("button", { name: "Your profile" }).focus());
+        await user.keyboard("{Enter}");
+        await screen.findByRole("menu", { name: "Local" });
+      }
       await act(async () => release());
       expect(
         screen.queryByRole("dialog", { name: "Set a status" }),

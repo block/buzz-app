@@ -1728,3 +1728,65 @@ test.each([
     }
   },
 );
+
+test("admin refusals are read through the bounded error reader", async () => {
+  let pulled = 0;
+  const { h, post } = await communityAdmin(
+    () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            pulled++;
+            // Would be 4 MiB if fully consumed; the valid-looking prefix must not survive.
+            if (pulled > 1024) return controller.close();
+            controller.enqueue(
+              new TextEncoder().encode(
+                pulled === 1
+                  ? '{"error":"invalid: cannot remove yourself","pad":"'
+                  : "x".repeat(4096),
+              ),
+            );
+          },
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ),
+  );
+  try {
+    for (const [route, body] of [
+      ["member", { action: "remove", pubkey: "a".repeat(64) }],
+      ["invite", { ttl_secs: 3600 }],
+    ]) {
+      pulled = 0;
+      const response = await post(route, body);
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("Relay request failed (400)");
+      expect(pulled).toBeLessThan(8);
+    }
+  } finally {
+    await h.close();
+  }
+});
+
+test("relay quota on admin routes stays a quota failure, not a refusal", async () => {
+  const { h, post } = await communityAdmin(() =>
+    Response.json(
+      { error: "rate-limited: quota exceeded; retry in 5s" },
+      { status: 429 },
+    ),
+  );
+  try {
+    const response = await post("invite", { ttl_secs: 3600 });
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({
+      error: "rate-limited: quota exceeded; retry in 5s",
+      quota: "api",
+    });
+    // The shared lane is paused: the next admin request is not sent upstream.
+    const paused = await post("invite", { ttl_secs: 3600 });
+    expect(paused.status).toBe(429);
+    expect(await paused.json()).toMatchObject({ paused: true, sent: false });
+    expect(h.calls).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});

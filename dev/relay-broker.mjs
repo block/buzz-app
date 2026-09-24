@@ -1615,7 +1615,7 @@ export function relayBrokerPlugin({
             const body = workflowPath ? undefined : JSON.stringify(filters);
             const admissionStart = performance.now();
             let connectsBefore, upstreamStart;
-            let response, relayReason;
+            let response;
             const requestSignal = AbortSignal.any([
               cancel.signal,
               AbortSignal.timeout(
@@ -1666,17 +1666,11 @@ export function relayBrokerPlugin({
                 body,
                 redirect: "error",
                 signal: requestSignal,
-              }).then(async (response) => {
+              }).then((response) => {
                 timings.push(
                   `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
                 );
-                if (!(invite || member) || response.ok) return response;
-                // Admission reduces failures to a summary; keep exact relay refusals.
-                const text = await response.text();
-                try {
-                  relayReason = adminReason(JSON.parse(text));
-                } catch {}
-                return new Response(text, response);
+                return response;
               });
             };
             response = presence
@@ -1689,6 +1683,7 @@ export function relayBrokerPlugin({
                     req.headers["x-buzz-read-priority"] === "background"
                     ? "background"
                     : "foreground",
+                  invite || member ? adminReason : undefined,
                 );
             const text = memory
               ? await memoryResponseText(response)
@@ -1715,13 +1710,14 @@ export function relayBrokerPlugin({
             stats.queries++;
             if (!response.ok) {
               stats.errors++;
-              let failure;
+              let failure, body;
               try {
-                failure = apiFailure(response.status, JSON.parse(text));
-              } catch {
-                failure = apiFailure(response.status, undefined);
-              }
-              if (relayReason) failure = { ...failure, error: relayReason };
+                body = JSON.parse(text);
+              } catch {}
+              failure = apiFailure(response.status, body);
+              // Admission already bounded the body and kept only an allowed refusal.
+              const reason = (invite || member) && adminReason(body);
+              if (reason) failure = { ...failure, error: reason };
               if (presence && failure.quota === "api")
                 lane.pause(failure.retryAfterMs);
               return json(res, response.status, failure);

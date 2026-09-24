@@ -225,3 +225,79 @@ it("confirms member removal and shows the relay's refusal", async () => {
     pubkey: member,
   });
 });
+
+it("keeps an accepted removal when the refresh fails and retries read-only", async () => {
+  const user = userEvent.setup();
+  const calls = broker({
+    member: () => Response.json({ accepted: true, message: "" }),
+  });
+  const { relay: data, read } = relay(owner);
+  render(<CommunityAdmin relay={data} active={() => true} />);
+  const menus = await screen.findAllByRole("button", { name: /^Actions for / });
+  read.mockRejectedValueOnce(new Error("relay unavailable"));
+  await user.click(menus[1] as HTMLElement);
+  await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Remove",
+    }),
+  );
+  expect(
+    await screen.findByText("Change accepted by the relay."),
+  ).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not load members: relay unavailable The list below may be out of date.",
+  );
+  // A stale list offers no further destructive commands.
+  expect(screen.queryAllByRole("button", { name: /^Actions for / })).toEqual(
+    [],
+  );
+  read.mockResolvedValueOnce([
+    snapshot([
+      ["member", owner, "owner"],
+      ["member", admin, "admin"],
+    ]),
+  ]);
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(screen.getAllByRole("button", { name: /^Actions for / })).toHaveLength(
+    1,
+  );
+  expect(calls.filter((c) => c.route === "member")).toHaveLength(1);
+});
+
+it("picks up a promotion made elsewhere when refreshed", async () => {
+  const user = userEvent.setup();
+  broker({});
+  const { relay: data, read } = relay(member);
+  render(<CommunityAdmin relay={data} active={() => true} />);
+  await screen.findByText(
+    "Only community owners and admins can invite people or manage members.",
+  );
+  read.mockResolvedValueOnce([
+    snapshot([
+      ["member", owner, "owner"],
+      ["member", member, "admin"],
+    ]),
+  ]);
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(
+    await screen.findByRole("button", { name: "Invite to community" }),
+  ).toBeVisible();
+});
+
+it("recovers from an initial read failure on retry", async () => {
+  const user = userEvent.setup();
+  broker({});
+  const { relay: data, read } = relay(owner);
+  read.mockRejectedValueOnce(new Error("offline"));
+  render(<CommunityAdmin relay={data} active={() => true} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not load members: offline",
+  );
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(
+    await screen.findByRole("button", { name: "Invite to community" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+});

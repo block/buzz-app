@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { decode } from "nostr-tools/nip19";
 import { communityFromScope } from "../../features/relay/gifs";
 import { useRelayConnection } from "../../features/relay/react";
@@ -99,69 +105,113 @@ function Members({
 }) {
   const [members, setMembers] = useState<Member[] | null>();
   const [error, setError] = useState("");
+  // A failed read never erases a confirmed write; it only marks the list stale.
+  const [readError, setReadError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [inviting, setInviting] = useState(false);
+  const reading = useRef<AbortController | null>(null);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
-  const load = useCallback(
-    async (signal?: AbortSignal) => {
+  /** Read-only roster refresh; the newest request wins and never rethrows. */
+  const refresh = useCallback(async () => {
+    reading.current?.abort();
+    const controller = new AbortController();
+    reading.current = controller;
+    const { signal } = controller;
+    setRefreshing(true);
+    try {
       const author = await relayAuthor(community);
       const events = await session.read(
         [{ kinds: [MEMBERSHIP_KIND], authors: [author], limit: 1 }],
-        { fresh: true, ...(signal ? { signal } : {}) },
+        { fresh: true, signal },
       );
       const latest = [...events].sort((a, b) => b.created_at - a.created_at)[0];
       const next = latest ? membersFromSnapshot(latest, author) : null;
-      if (!signal?.aborted) setMembers(next);
+      if (signal.aborted) return;
+      setMembers(next);
+      setReadError("");
       if (next) void session.profiles.ensure(next.map((m) => m.pubkey));
-    },
-    [session, community],
-  );
+    } catch (reason) {
+      if (signal.aborted) return;
+      setMembers((current) => current ?? null);
+      setReadError(`Could not load members: ${message(reason)}`);
+    } finally {
+      if (!signal.aborted) setRefreshing(false);
+    }
+  }, [session, community]);
   useEffect(() => {
-    const controller = new AbortController();
-    load(controller.signal).catch((reason) => {
-      if (!controller.signal.aborted) {
-        setMembers(null);
-        setError(`Could not load members: ${message(reason)}`);
-      }
-    });
-    return () => controller.abort();
-  }, [load]);
+    void refresh();
+    return () => reading.current?.abort();
+  }, [refresh]);
   const role = members?.find((m) => m.pubkey === viewer)?.role;
   const manager = role === "owner" || role === "admin";
+  const stale = !!readError;
   const name = (pubkey: string) =>
     profiles.get(pubkey)?.name || formatPublicKey(pubkey) || pubkey;
+  /** Sends one command. Rejects only when the write itself is not confirmed. */
   async function apply(change: MemberChange) {
     if (!active()) return;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
-      await changeMember(community, change);
-      await load();
-    } catch (reason) {
-      setError(message(reason));
-      throw reason;
+      try {
+        await changeMember(community, change);
+      } catch (reason) {
+        setError(message(reason));
+        throw reason;
+      }
+      setNotice("Change accepted by the relay.");
+      // Stay busy until the roster reflects the write, so no stale row acts.
+      await refresh();
     } finally {
       setBusy(false);
     }
   }
+  const refreshButton = (
+    <Button
+      loading={refreshing}
+      disabled={refreshing || busy}
+      onClick={() => void refresh()}
+    >
+      {readError ? "Retry" : "Refresh"}
+    </Button>
+  );
+  const status = (
+    <>
+      {notice && (
+        <p role="status" className="m-0 text-body-sm">
+          {notice}
+        </p>
+      )}
+      {readError && (
+        <p role="alert" className="m-0 text-body-sm">
+          {readError}
+          {members ? " The list below may be out of date." : ""}
+        </p>
+      )}
+    </>
+  );
   if (members === undefined) return <p role="status">Loading members…</p>;
-  if (members === null)
+  if (members === null || !manager)
     return (
-      <p role={error ? "alert" : "status"}>
-        {error ||
-          "This community does not publish a member list, so it has no member administration."}
-      </p>
-    );
-  if (!manager)
-    return (
-      <p role="status">
-        Only community owners and admins can invite people or manage members.
-      </p>
+      <div className="mt-4 flex flex-col items-start gap-3">
+        {status}
+        {!readError && (
+          <p role="status" className="m-0">
+            {members === null
+              ? "This community does not publish a member list, so it has no member administration."
+              : "Only community owners and admins can invite people or manage members."}
+          </p>
+        )}
+        {refreshButton}
+      </div>
     );
   const needle = query.trim().toLowerCase();
   const shown = members
@@ -184,11 +234,13 @@ function Members({
   } as const;
   return (
     <>
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex justify-end gap-2">
+        {refreshButton}
         <Button variant="primary" onClick={() => setInviting(true)}>
           Invite to community
         </Button>
       </div>
+      {status}
       {error && (
         <p role="alert" className="text-body-sm">
           {error}
@@ -206,11 +258,10 @@ function Members({
         />
         <ul className="m-0 mt-3 list-none p-0" aria-label="Members">
           {shown.map((member) => {
-            const actions = allowedActions(
-              role,
-              member,
-              member.pubkey === viewer,
-            );
+            // A stale list must not offer another destructive command.
+            const actions = stale
+              ? []
+              : allowedActions(role, member, member.pubkey === viewer);
             const label = name(member.pubkey);
             return (
               <li key={member.pubkey} className="flex items-center gap-3 py-2">

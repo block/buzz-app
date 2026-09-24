@@ -36,17 +36,23 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   );
   // Real wheel input must reveal a complete row inside the clipped solid frame.
   // Merely finding a control in the DOM, or scrolling it into a thin strip, fails.
-  for (let gesture = 0; gesture < 12; gesture++) {
+  const visibleTop = Math.max(bounds.y, 0);
+  const visibleBottom = Math.min(bounds.y + bounds.height, 400);
+  for (let gesture = 0; gesture < 30; gesture++) {
     const target = await row.boundingBox();
     if (
-      target.y >= bounds.y &&
-      target.y + target.height <= bounds.y + bounds.height
+      target.y >= visibleTop + 8 &&
+      target.y + target.height <= visibleBottom - 8
     )
       break;
+    const distance =
+      target.y < visibleTop + 8
+        ? target.y - visibleTop - 8
+        : target.y + target.height - visibleBottom + 8;
     const before = await scroller.evaluate((element) => element.scrollTop);
     await page.mouse.wheel(
       0,
-      bounds.height * (target.y < bounds.y ? -0.4 : 0.4),
+      Math.sign(distance) * Math.max(Math.abs(distance), 24),
     );
     await expect
       .poll(() => scroller.evaluate((element) => element.scrollTop))
@@ -280,6 +286,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await tab();
     await expect(
       sections.getByRole("button", { name: "Notifications", exact: true }),
+    ).toBeFocused();
+    await tab();
+    await expect(
+      sections.getByRole("button", { name: "Hosted communities", exact: true }),
     ).toBeFocused();
     await tab();
     await expect(

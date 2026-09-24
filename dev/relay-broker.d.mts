@@ -13,4 +13,8 @@ export function relayBrokerPlugin(options?: {
   ) => Promise<{ relayAuthor: string; archiveAuthority?: string }>;
   upstreamFetch?: typeof fetch;
   socketFactory?: (url: string) => WebSocket;
+  builderlab?: {
+    fetch?: typeof fetch;
+    open?: (url: string) => Promise<void>;
+  };
 }): Plugin;

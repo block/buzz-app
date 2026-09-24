@@ -1453,17 +1453,7 @@ export const test = base.extend({
             throw new Error("Typing fixture requires production broker");
           const event = sign(
             kind,
-            [
-              ["h", channel],
-              ...(root
-                ? parent && parent !== root
-                  ? [
-                      ["e", root, "", "root"],
-                      ["e", parent, "", "reply"],
-                    ]
-                  : [["e", root, "", "reply"]]
-                : []),
-            ],
+            [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
             kind === 20002 ? "" : "Fixture completion",
             typingKeys[author],
             Math.floor(Date.now() / 1000) - age,

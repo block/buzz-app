@@ -1178,7 +1178,7 @@ function ChannelWorkspace({
                           <MenuSubmenu>
                             <MenuSubmenuTrigger>
                               <MenuIcon>
-                                <ArrowsDownUpIcon size={20} />
+                                <ArrowsDownUpIcon size={14} />
                               </MenuIcon>
                               Sort
                             </MenuSubmenuTrigger>

@@ -190,7 +190,7 @@ it("reconciles retained channel reactions through confirmation and access loss",
   expect(h.session.channels.window("c").rows[0]?.id).toBe(root.id);
   const id = h.session.messages.react(root.id, "👍");
   expect(h.session.channels.window("c").rows[0]?.reactions).toEqual([
-    { content: "👍" },
+    { content: "👍", events: [{ id, authorId: viewer.pubkey }] },
   ]);
   await flush();
   await flush();
@@ -207,7 +207,7 @@ it("reconciles retained channel reactions through confirmation and access loss",
   await flush();
   expect(h.session.outbox?.snapshot()).toHaveLength(0);
   expect(h.session.channels.window("c").rows[0]?.reactions).toEqual([
-    { content: "👍" },
+    { content: "👍", events: [{ id, authorId: viewer.pubkey }] },
   ]);
   h.live.receive([roster(relay, "c", [], 2)]);
   expect(h.session.channels.window("c").rows).toEqual([]);

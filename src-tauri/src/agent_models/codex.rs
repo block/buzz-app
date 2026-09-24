@@ -1,4 +1,7 @@
 //! Codex's ACP catalog is authoritative for advertised choices, not entitlement.
+#[cfg(unix)]
+mod readiness;
+
 use super::contracts::EffortOption;
 use super::{Catalog, CatalogIntegration, Discovery, EffortOptions, Model, ModelError};
 use buzz_agent_controller::{codex::Context, ContainedProcess};
@@ -258,42 +261,18 @@ mod unix {
         context: Context,
         selected: Option<String>,
     ) -> Result<Catalog, ModelError> {
-        let mut command = context.command(&context.cli)?;
-        command
-            .args(["login", "status"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let mut login = ContainedProcess::spawn(&mut command)?;
-        let authenticated = tokio::time::timeout(Duration::from_secs(15), async {
-            loop {
-                if let Some(success) = login.exit_success()? {
-                    return Ok::<_, String>(success);
-                }
-                tokio::time::sleep(Duration::from_millis(40)).await;
-            }
-        })
-        .await
-        .map_err(|_| {
-            ModelError::new(
-                "timeout",
-                "Codex login check timed out. Retry after checking the CLI.",
-            )
-        })??;
-        login.stop()?;
-        if !authenticated {
-            return Err(ModelError::new("unavailable", "Codex login check did not succeed. Run codex login in the same configuration context, then refresh. Check the CLI configuration if login still fails."));
-        }
+        readiness::login(&context).await?;
         let mut session = Session::spawn(&context)?;
         let result = tokio::time::timeout(Duration::from_secs(60), async {
             let initial = tokio::time::timeout(Duration::from_secs(30), async {
-            session
+            let initialized = session
                 .rpc(
                     "initialize",
                     json!({"protocolVersion":1,"clientCapabilities":{}}),
                     "unavailable",
                 )
                 .await?;
+            readiness::adapter(&initialized)?;
             session
                 .rpc(
                     "session/new",
@@ -412,7 +391,7 @@ mod tests {
         std::fs::write(
             &cli,
             format!(
-                "#!/bin/sh\n[ \"$CODEX_HOME\" -ef \"$PWD/config\" ] || exit 2\nexit {}\n",
+                "#!/bin/sh\n[ \"$1\" = -V ] && {{ echo 'codex-cli 0.151.0'; exit 0; }}\n[ \"$CODEX_HOME\" -ef \"$PWD/config\" ] || exit 2\nexit {}\n",
                 if login { 0 } else { 1 }
             ),
         )
@@ -421,6 +400,9 @@ mod tests {
         let adapter = dir.path().join("codex-acp");
         std::fs::write(&adapter, r#"#!/usr/bin/python3
 import json, sys, os, time
+if sys.argv[1:2] == ['cli']:
+    cli = os.path.join(os.path.dirname(__file__), 'codex')
+    os.execv(cli, [cli] + sys.argv[2:])
 assert os.path.realpath(os.environ['CODEX_HOME']) == os.getcwd() + '/config'
 assert 'BUZZ_PRIVATE_KEY' not in os.environ
 for line in sys.stdin:
@@ -428,7 +410,7 @@ for line in sys.stdin:
     method = request['method']
     with open('calls', 'a') as calls: calls.write(method + '\n')
     model = {'configId':'model', 'category':'model', 'currentValue':'first', 'options':[{'value':'first','name':'First'},{'value':'second','name':'Second'}]}
-    if method == 'initialize': result = {'protocolVersion':1}
+    if method == 'initialize': result = {'protocolVersion':1, 'agentInfo':{'name':'@agentclientprotocol/codex-acp','version':'1.3.0'}}
     elif method == 'session/new': result = {'sessionId':'fixture', 'models': {'availableModels': [{'modelId':'second[high]', 'name':'Second (high)'}] if os.path.exists('legacy-model') else []}, 'configOptions':[model, {'id':'effort','category':'thought_level','currentValue':'low','options':[{'value':'low','name':'Low'}]}]}
     elif method == 'session/set_config_option':
         if os.path.exists('hold-selection'): time.sleep(120)
@@ -458,10 +440,13 @@ for line in sys.stdin:
                 },
             }),
         };
-        let environment = BTreeMap::from([(
-            "CODEX_HOME".into(),
-            dir.path().join("config").to_string_lossy().into_owned(),
-        )]);
+        let environment = BTreeMap::from([
+            ("CODEX_PATH".into(), cli.to_string_lossy().into_owned()),
+            (
+                "CODEX_HOME".into(),
+                dir.path().join("config").to_string_lossy().into_owned(),
+            ),
+        ]);
         let context = Context::new(&harness, &environment, dir.path().to_str().unwrap()).unwrap();
         (dir, context)
     }
@@ -636,6 +621,89 @@ for line in sys.stdin:
         let error = execute(context, "second".into()).await.err().unwrap();
         assert_eq!(serde_json::to_value(error).unwrap()["code"], "unavailable");
     }
+    #[tokio::test]
+    async fn login_failures_are_distinct_sanitized_and_do_not_start_adapter() {
+        for (script, expected) in [
+            ("echo 'Not logged in' >&2; exit 1", "authentication"),
+            (
+                "echo 'Error loading configuration: secret-fixture' >&2; exit 1",
+                "configuration",
+            ),
+            ("echo 'secret-fixture' >&2; exit 2", "unavailable"),
+            (
+                "exec /usr/bin/python3 -c \"print('secret-fixture' * 2000)\"",
+                "unavailable",
+            ),
+        ] {
+            let (dir, context) = fixture(true);
+            std::fs::write(&context.cli, format!("#!/bin/sh\n[ \"$1\" = -V ] && {{ echo 'codex-cli 0.151.0'; exit 0; }}\n{script}\n")).unwrap();
+            let error = execute(context, "second".into()).await.err().unwrap();
+            let error = serde_json::to_value(error).unwrap();
+            assert_eq!(error["code"], expected);
+            assert!(!error.to_string().contains("secret-fixture"));
+            assert!(!dir.path().join("calls").exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_or_malformed_cli_is_unknown_not_logged_out() {
+        for script in [None, Some("#!/bin/sh\necho malformed-version\n")] {
+            let (dir, context) = fixture(true);
+            if let Some(script) = script {
+                std::fs::write(&context.cli, script).unwrap();
+            } else {
+                std::fs::remove_file(&context.cli).unwrap();
+            }
+            let error = execute(context, String::new()).await.err().unwrap();
+            assert_eq!(serde_json::to_value(error).unwrap()["code"], "unavailable");
+            assert!(!dir.path().join("calls").exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_adapter_fails_before_session_creation() {
+        for info in [
+            json!({"name":"@agentclientprotocol/codex-acp", "version":"0.16.0"}),
+            json!({"name":"@agentclientprotocol/codex-acp", "version":"malformed"}),
+            json!({"name":"@agentclientprotocol/codex-acp"}),
+            json!({"name":"other", "version":"1.3.0"}),
+        ] {
+            let (dir, context) = fixture(true);
+            let script = std::fs::read_to_string(&context.adapter).unwrap().replace(
+                "{'name':'@agentclientprotocol/codex-acp','version':'1.3.0'}",
+                &info.to_string(),
+            );
+            std::fs::write(&context.adapter, script).unwrap();
+            assert!(execute(context, "second".into()).await.is_err());
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join("calls")).unwrap(),
+                "initialize\n"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn login_timeout_reaps_child_and_remains_unknown() {
+        let (dir, context) = fixture(true);
+        std::fs::write(
+            &context.cli,
+            "#!/bin/sh\n[ \"$1\" = -V ] && { echo 'codex-cli 0.151.0'; exit 0; }\necho $$ > login-pid\n/bin/sleep 60 &\necho $! > login-child-pid\nwait\n",
+        )
+        .unwrap();
+        let error = execute(context, "second".into()).await.err().unwrap();
+        assert_eq!(serde_json::to_value(error).unwrap()["code"], "timeout");
+        for filename in ["login-pid", "login-child-pid"] {
+            let pid = std::fs::read_to_string(dir.path().join(filename)).unwrap();
+            let status = std::process::Command::new("/bin/kill")
+                .args(["-0", pid.trim()])
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(!status.success());
+        }
+        assert!(!dir.path().join("calls").exists());
+    }
+
     #[tokio::test]
     async fn rejected_model_retains_recovery_choices_and_safe_error() {
         let (dir, context) = fixture(true);

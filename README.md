@@ -288,6 +288,7 @@ controls are included. Keep Buzz running for existing agents to answer selected
 
 ## Project resources
 
+- [Contextual identity names: cross-client spec and fixtures](docs/identity-names.md)
 - [Contributing](docs/contributing.md)
 - [Project leads](CODEOWNERS)
 - [Governance](GOVERNANCE.md)

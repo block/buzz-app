@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { npubEncode } from "nostr-tools/nip19";
 import { resolveIdentityNames, type NamingIdentity } from "./policy";
@@ -215,4 +216,39 @@ it("rechecks generated labels against aliases and keeps human priority", () => {
   expect(
     resolveIdentityNames([...rows, person(c, literal)], me).get(c)?.name,
   ).toBe(literal);
+});
+
+const conformance = JSON.parse(
+  readFileSync(
+    new URL("../../../docs/identity-names.fixtures.json", import.meta.url),
+    "utf8",
+  ),
+) as {
+  version: number;
+  cases: {
+    name: string;
+    identities: NamingIdentity[];
+    viewer?: string;
+    candidates?: string[];
+    expected: Record<string, { name: string; qualifier: string | null }>;
+  }[];
+};
+it("loads the supported portable naming contract", () => {
+  expect(conformance.version).toBe(1);
+  expect(conformance.cases.length).toBeGreaterThan(0);
+});
+it.each(conformance.cases)("portable conformance: $name", (fixture) => {
+  const actual = resolveIdentityNames(
+    fixture.identities,
+    fixture.viewer,
+    fixture.candidates,
+  );
+  expect(
+    Object.fromEntries(
+      [...actual].map(([key, value]) => [
+        key,
+        { name: value.name, qualifier: value.qualifier ?? null },
+      ]),
+    ),
+  ).toEqual(fixture.expected);
 });

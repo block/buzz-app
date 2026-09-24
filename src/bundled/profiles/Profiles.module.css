@@ -157,17 +157,3 @@
   margin: 0;
   color: var(--text-subtle);
 }
-.agentIdentity dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--space-2) var(--space-4);
-  margin: 0;
-}
-.agentIdentity dt {
-  color: var(--text-subtle);
-}
-.agentIdentity dd {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}

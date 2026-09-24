@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { bytesToHex } from "nostr-tools/utils";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { attestedOwner } from "../../features/agents/owner-attestation";
 import { profileTarget } from "../../features/profiles/target";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import type { LiveCallbacks } from "../../features/relay/live";
@@ -32,10 +33,36 @@ import {
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { ProfilePanel } from "./ProfilePanel";
 
+vi.mock("../../features/agents/owner-attestation", async (original) => {
+  const actual =
+    await original<typeof import("../../features/agents/owner-attestation")>();
+  return { attestedOwner: vi.fn(actual.attestedOwner) };
+});
+const verify = vi.mocked(attestedOwner);
+/** Completion barrier: verification of exactly `event` (after call `since`) has
+ * finished and React has committed its result. */
+async function verifiedFor(event: RelayEvent, since = 0) {
+  await waitFor(() =>
+    expect(
+      verify.mock.calls
+        .slice(since)
+        .some(([seen]) => (seen as RelayEvent).id === event.id),
+    ).toBe(true),
+  );
+  await act(async () => {
+    await Promise.all(
+      verify.mock.results.slice(since).map((result) => result.value),
+    );
+  });
+}
+const identityRegion = () =>
+  screen.queryByRole("region", { name: "Agent identity" });
+
 const relayKey = keypair();
 const owners: { dispose(): void }[] = [];
 afterEach(() => {
   cleanup();
+  verify.mockClear();
   for (const owner of owners.splice(0)) owner.dispose();
 });
 
@@ -61,25 +88,24 @@ function mount(
   target: Key,
   respond: (filter: ReadFilter) => RelayEvent[],
   {
-    archiveAuthority,
     wrap,
     library,
+    viewer = keypair().pubkey,
   }: {
-    archiveAuthority?: string;
     wrap?: (session: RelaySession) => RelaySession;
     library?: string;
+    viewer?: string;
   } = {},
 ) {
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
     filters.flatMap((filter) => respond(filter)),
   );
   const owner = createRelaySession({
-    viewer: keypair().pubkey,
+    viewer,
     relayAuthor: relayKey.pubkey,
     scope: "wss://relay.example.test",
     query,
     media: () => undefined,
-    ...(archiveAuthority ? { archiveAuthority } : {}),
     ...(library
       ? {
           readAgentLibrary: async () => ({
@@ -95,6 +121,7 @@ function mount(
   const snapshot = {
     status: "ready" as const,
     generation: 1,
+    viewer,
     session: wrap ? wrap(owner.session) : owner.session,
   };
   const relay: RelayData = {
@@ -117,95 +144,52 @@ function mount(
 }
 const kind0 = (filter: ReadFilter) => filter.kinds?.includes(0);
 
-it("shows a verified owner with profile ingress and relay archive state", async () => {
+it("shows a verified owner as Managed by with profile ingress", async () => {
   const agent = keypair();
   const owner = keypair();
-  const archive = signed(relayKey, {
-    kind: 13535,
-    content: "",
-    tags: [["-"], ["p", agent.pubkey]],
-  });
-  const { open } = mount(
-    agent,
-    (filter) =>
-      filter.kinds?.includes(13535)
-        ? [archive]
-        : filter.authors?.includes(owner.pubkey)
-          ? [profile(owner, { name: "Owner Olivia" })]
-          : kind0(filter)
-            ? [agentProfile(agent, [auth(agent, owner)])]
-            : [],
-    { archiveAuthority: relayKey.pubkey },
+  const { open } = mount(agent, (filter) =>
+    filter.authors?.includes(owner.pubkey)
+      ? [profile(owner, { name: "Owner Olivia" })]
+      : kind0(filter)
+        ? [agentProfile(agent, [auth(agent, owner)])]
+        : [],
   );
-  const identity = await screen.findByRole("region", {
-    name: "Agent identity",
-  });
   const ownerLink = await screen.findByRole("button", {
     name: "Open owner profile: Owner Olivia",
   });
-  expect(identity).toHaveTextContent("Authorized by Owner Olivia");
-  await waitFor(() =>
-    expect(identity).toHaveTextContent("Archived on this relay"),
-  );
+  expect(identityRegion()).toHaveTextContent("Managed byOwner Olivia");
+  expect(identityRegion()).not.toHaveTextContent("(you)");
   await userEvent.setup().click(ownerLink);
   expect(open).toHaveBeenCalledWith(profileTarget(owner.pubkey));
+});
+
+it("marks the owner as you when the viewer owns the agent", async () => {
+  const agent = keypair();
+  const owner = keypair();
+  mount(
+    agent,
+    (filter) =>
+      filter.authors?.includes(owner.pubkey)
+        ? [profile(owner, { name: "Owner Olivia" })]
+        : kind0(filter)
+          ? [agentProfile(agent, [auth(agent, owner)])]
+          : [],
+    { viewer: owner.pubkey },
+  );
+  await screen.findByRole("button", {
+    name: "Open owner profile: Owner Olivia (you)",
+  });
+  expect(identityRegion()).toHaveTextContent("Managed byOwner Olivia (you)");
 });
 
 it("does not trust a well-formed attestation with an invalid signature", async () => {
   const agent = keypair();
   const owner = keypair();
-  mount(agent, (filter) =>
-    kind0(filter) ? [agentProfile(agent, [auth(agent, owner, keypair())])] : [],
-  );
-  const identity = await screen.findByRole("region", {
-    name: "Agent identity",
-  });
-  await waitFor(() =>
-    expect(identity).toHaveTextContent(
-      "Not verified — no valid owner attestation.",
-    ),
-  );
-  expect(identity).toHaveTextContent("ArchiveUnknown");
-  expect(identity).not.toHaveTextContent("Authorized by");
+  const forged = agentProfile(agent, [auth(agent, owner, keypair())]);
+  mount(agent, (filter) => (kind0(filter) ? [forged] : []));
+  await verifiedFor(forged);
+  expect(identityRegion()).toBeNull();
   expect(screen.queryByRole("button", { name: /owner profile/ })).toBeNull();
-});
-
-it("reports an unknown owner when no relay view is available, then retries", async () => {
-  const agent = keypair();
-  const observe = vi.fn(() => {
-    throw new Error("Relay view capacity unavailable");
-  });
-  // A library-known agent with no public profile: no directory head to fall back on.
-  mount(agent, () => [], {
-    library: agent.pubkey,
-    wrap: (session) => {
-      let calls = 0;
-      return Object.create(session, {
-        observe: {
-          value: (filters: readonly ReadFilter[]) =>
-            calls++ ? session.observe(filters) : observe(),
-        },
-      });
-    },
-  });
-
-  const identity = await screen.findByRole("region", {
-    name: "Agent identity",
-  });
-  await waitFor(() =>
-    expect(identity).toHaveTextContent(
-      "Unknown — could not read this profile's attestation.",
-    ),
-  );
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Retry agent details" }));
-  await waitFor(() =>
-    expect(identity).toHaveTextContent(
-      "Not verified — no valid owner attestation.",
-    ),
-  );
-  expect(observe).toHaveBeenCalledTimes(1);
 });
 
 it("adds no agent section or reads for a profile without an agent hint", async () => {
@@ -231,33 +215,19 @@ function timedProfile(
     created_at: time,
   });
 }
-function live(agent: Key, first: RelayEvent, archives = false) {
+function live(agent: Key, first: RelayEvent) {
   let latest = first;
   let callbacks!: LiveCallbacks;
-  let archiveOffline = true;
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
-    filters.flatMap((filter) => {
-      if (filter.kinds?.includes(13535)) {
-        if (archiveOffline) throw new Error("offline");
-        return [
-          signed(relayKey, {
-            kind: 13535,
-            content: "",
-            tags: [["-"], ["p", agent.pubkey]],
-          }),
-        ];
-      }
-      return kind0(filter) && filter.authors?.includes(agent.pubkey)
-        ? [latest]
-        : [];
-    }),
+    filters.flatMap((filter) =>
+      kind0(filter) && filter.authors?.includes(agent.pubkey) ? [latest] : [],
+    ),
   );
   const viewer = keypair().pubkey;
   const owner = createRelaySession({
     viewer,
     relayAuthor: relayKey.pubkey,
     scope: "wss://relay.example.test",
-    ...(archives ? { archiveAuthority: relayKey.pubkey } : {}),
     query,
     media: () => undefined,
     subscribe: (next) => {
@@ -302,9 +272,6 @@ function live(agent: Key, first: RelayEvent, archives = false) {
     setLatest(event: RelayEvent) {
       latest = event;
     },
-    recoverArchives() {
-      archiveOffline = false;
-    },
     reopen() {
       mounted.unmount();
       render(<ProfilePanel {...props} />);
@@ -320,10 +287,6 @@ const ownerButton = (owner: Key) => ({
 const agentReads = (query: ReturnType<typeof live>["query"]) =>
   query.mock.calls.filter(([filters]) =>
     filters.some((filter) => filter.kinds?.includes(0)),
-  ).length;
-const archiveReads = (query: ReturnType<typeof live>["query"]) =>
-  query.mock.calls.filter(([filters]) =>
-    filters.some((filter) => filter.kinds?.includes(13535)),
   ).length;
 
 it.each(["remove", "duplicate", "replace"])(
@@ -348,12 +311,11 @@ it.each(["remove", "duplicate", "replace"])(
     if (mode === "duplicate")
       expect(h.session.profiles.snapshot().get(agent.pubkey)).toBe(before);
     h.rerender();
-    const identity = screen.getByRole("region", { name: "Agent identity" });
     if (mode === "replace") await screen.findByRole("button", ownerButton(b));
-    else
-      await waitFor(() =>
-        expect(identity).toHaveTextContent("Not verified — no valid owner"),
-      );
+    else {
+      await verifiedFor(next);
+      expect(identityRegion()).toBeNull();
+    }
     expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
   },
 );
@@ -364,12 +326,11 @@ it("does not resurrect older provenance from a lagging finite read", async () =>
   const h = live(agent, timedProfile(agent, [auth(agent, a)], 100));
   await screen.findByRole("button", ownerButton(a));
   // Live knows the newer profile; the finite replica still serves the older head.
-  await h.receive(timedProfile(agent, [], 101, "Renamed"));
+  const renamed = timedProfile(agent, [], 101, "Renamed");
+  await h.receive(renamed);
   await screen.findByRole("heading", { name: "Renamed" });
-  const identity = screen.getByRole("region", { name: "Agent identity" });
-  await waitFor(() =>
-    expect(identity).toHaveTextContent("Not verified — no valid owner"),
-  );
+  await verifiedFor(renamed);
+  expect(identityRegion()).toBeNull();
   expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
 });
 
@@ -391,46 +352,7 @@ it("uses the lower event id between equal-time profiles", async () => {
   expect(screen.queryByRole("button", ownerButton(loser))).toBeNull();
 });
 
-it("retries a failed archive read from the pane", async () => {
-  const agent = keypair();
-  const owner = keypair();
-  const h = live(agent, timedProfile(agent, [auth(agent, owner)], 100), true);
-  const retry = await screen.findByRole("button", {
-    name: "Retry agent details",
-  });
-  const identity = screen.getByRole("region", { name: "Agent identity" });
-  expect(identity).toHaveTextContent("ArchiveUnknown");
-  h.recoverArchives();
-  await userEvent.setup().click(retry);
-  await waitFor(() =>
-    expect(identity).toHaveTextContent("Archived on this relay"),
-  );
-  expect(archiveReads(h.query)).toBe(2);
-  expect(
-    screen.queryByRole("button", { name: "Retry agent details" }),
-  ).toBeNull();
-});
-
-it("retries a failed archive read once when the profile is reopened", async () => {
-  const agent = keypair();
-  const owner = keypair();
-  const h = live(agent, timedProfile(agent, [auth(agent, owner)], 100), true);
-  await screen.findByRole("button", { name: "Retry agent details" });
-  // The failure stays visible; no automatic retry loop.
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(archiveReads(h.query)).toBe(1);
-  h.recoverArchives();
-  h.reopen();
-  const identity = await screen.findByRole("region", {
-    name: "Agent identity",
-  });
-  await waitFor(() =>
-    expect(identity).toHaveTextContent("Archived on this relay"),
-  );
-  expect(archiveReads(h.query)).toBe(2);
-});
-
-it("settles a known agent with no public profile as not verified", async () => {
+it("shows no owner for a known agent with no public profile", async () => {
   const agent = keypair();
   const owner = createRelaySession({
     viewer: keypair().pubkey,
@@ -474,13 +396,9 @@ it("settles a known agent with no public profile as not verified", async () => {
   );
   await waitFor(() => expect(observed?.snapshot().status).toBe("ready"));
   expect(observed?.snapshot().events).toHaveLength(0);
-  const identity = screen.getByRole("region", { name: "Agent identity" });
-  await waitFor(() =>
-    expect(identity).toHaveTextContent(
-      "Not verified — no valid owner attestation.",
-    ),
-  );
-  expect(identity).not.toHaveTextContent("Checking…");
+  await act(async () => {});
+  expect(identityRegion()).toBeNull();
+  expect(verify).not.toHaveBeenCalled();
 });
 
 it("keeps the newer signed head after closing, cache eviction and a stale reopen read", async () => {
@@ -491,12 +409,10 @@ it("keeps the newer signed head after closing, cache eviction and a stale reopen
   await screen.findByRole("button", ownerButton(a));
   // The relay keeps serving the older attested head; live saw its removal.
   await h.receive(roster(relayKey, "c", [h.viewer, sender.pubkey]));
-  await h.receive(timedProfile(agent, [], 101));
-  await waitFor(() =>
-    expect(
-      screen.getByRole("region", { name: "Agent identity" }),
-    ).toHaveTextContent("Not verified — no valid owner"),
-  );
+  const removed = timedProfile(agent, [], 101);
+  await h.receive(removed);
+  await verifiedFor(removed);
+  expect(identityRegion()).toBeNull();
   h.close();
   // Churn the session's 8 MiB recent-event cache past the t=101 profile.
   for (let batch = 0; batch < 9; batch++)
@@ -516,20 +432,17 @@ it("keeps the newer signed head after closing, cache eviction and a stale reopen
   expect(probe.snapshot().events).toHaveLength(0);
   probe.dispose();
   const reads = agentReads(h.query);
+  const since = verify.mock.calls.length;
   h.open();
-  const identity = await screen.findByRole("region", {
-    name: "Agent identity",
-  });
   // The reopened view's read returns the stale t=100 attested profile.
   await waitFor(() => expect(agentReads(h.query)).toBeGreaterThan(reads));
   await act(async () => {});
-  await waitFor(() =>
-    expect(identity).toHaveTextContent("Not verified — no valid owner"),
-  );
+  await verifiedFor(removed, since);
+  expect(identityRegion()).toBeNull();
   expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
 });
 
-it("stays unknown without a relay view even when the directory holds a head", async () => {
+it("shows no owner without a relay view even when the directory holds a head", async () => {
   const agent = keypair();
   const owner = keypair();
   mount(
@@ -548,15 +461,10 @@ it("stays unknown without a relay view even when the directory holds a head", as
     },
   );
   await screen.findByRole("heading", { name: "Helper" });
-  const identity = screen.getByRole("region", { name: "Agent identity" });
+  await act(async () => {});
   // No view can signal an auth-only removal, so the directory head is not trusted here.
-  expect(identity).toHaveTextContent(
-    "Unknown — could not read this profile's attestation.",
-  );
-  expect(screen.queryByRole("button", ownerButton(owner))).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Retry agent details" }),
-  ).toBeInTheDocument();
+  expect(identityRegion()).toBeNull();
+  expect(verify).not.toHaveBeenCalled();
 });
 
 it("follows an auth-only head restored from disk while the pane is mounted", async () => {
@@ -564,7 +472,9 @@ it("follows an auth-only head restored from disk while the pane is mounted", asy
   const a = keypair();
   const viewer = keypair();
   const attested = timedProfile(agent, [auth(agent, a)], 100);
-  const removed = timedProfile(agent, [], 101);
+  // Same owner key, forged signature: the displayed profile is identical, so only
+  // the directory's winning-event notification can drive the pane.
+  const removed = timedProfile(agent, [auth(agent, a, keypair())], 101);
   let releaseDisk!: (records: SavedHead[]) => void;
   const disk = new Promise<SavedHead[]>((resolve) => {
     releaseDisk = resolve;
@@ -642,18 +552,14 @@ it("follows an auth-only head restored from disk while the pane is mounted", asy
       profiles: [removed],
     },
   ]);
-  const identity = screen.getByRole("region", { name: "Agent identity" });
-  await waitFor(() =>
-    expect(identity).toHaveTextContent(
-      "Not verified — no valid owner attestation.",
-    ),
-  );
+  await verifiedFor(removed);
+  expect(identityRegion()).toBeNull();
   expect(owner.session.profiles.event?.(agent.pubkey)?.id).toBe(removed.id);
   expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
 });
 
 it.each(["remove", "replace", "equal-time removal"])(
-  "stays unknown at the real view cap through an auth-only %s, then Retry recovers",
+  "shows no owner at the real view cap through an auth-only %s, then a reopen recovers",
   async (mode) => {
     const agent = keypair();
     const a = keypair();
@@ -678,43 +584,39 @@ it.each(["remove", "replace", "equal-time removal"])(
     try {
       for (;;) fillers.push(h.session.observe([{ kinds: [1], limit: 1 }]));
     } catch {}
+    const atCap = verify.mock.calls.length;
     try {
       h.open();
-      const identity = await screen.findByRole("region", {
-        name: "Agent identity",
-      });
-      const unknown = async () => {
-        await waitFor(() =>
-          expect(identity).toHaveTextContent(
-            "Unknown — could not read this profile's attestation.",
-          ),
-        );
-        expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
+      // Without a view nothing is verified, so no owner can appear later either.
+      const empty = async () => {
+        await screen.findByRole("heading", { name: "Helper" });
+        await act(async () => {});
+        expect(identityRegion()).toBeNull();
+        expect(verify.mock.calls.length).toBe(atCap);
       };
-      await unknown();
+      await empty();
       // The relay keeps serving the older attested head; live delivers the change.
       await h.receive(next);
       expect(h.session.profiles.event?.(agent.pubkey)?.id).toBe(next.id);
-      await unknown();
-      const retry = () =>
-        userEvent
-          .setup()
-          .click(screen.getByRole("button", { name: "Retry agent details" }));
-      await retry();
-      await unknown();
+      await empty();
+      h.close();
+      h.open();
+      await empty();
       fillers.pop()?.dispose();
-      await retry();
+      h.close();
+      const since = verify.mock.calls.length;
+      h.open();
       if (mode === "replace") await screen.findByRole("button", ownerButton(b));
-      else
-        await waitFor(() =>
-          expect(identity).toHaveTextContent("Not verified — no valid owner"),
-        );
+      else {
+        await verifiedFor(next, since);
+        expect(identityRegion()).toBeNull();
+      }
       expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
       // The recovered view keeps following later auth-only changes.
-      await h.receive(timedProfile(agent, [], 102));
-      await waitFor(() =>
-        expect(identity).toHaveTextContent("Not verified — no valid owner"),
-      );
+      const later = timedProfile(agent, [], 102);
+      await h.receive(later);
+      await verifiedFor(later, since);
+      expect(identityRegion()).toBeNull();
     } finally {
       for (const filler of fillers) filler.dispose();
     }

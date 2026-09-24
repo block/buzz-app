@@ -183,6 +183,7 @@ function ProfileDetails({
                   <ProfileAgentIdentity
                     session={session}
                     pubkey={pubkey}
+                    viewer={viewer}
                     context={context}
                   />
                 )}

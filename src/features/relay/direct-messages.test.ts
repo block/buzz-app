@@ -30,7 +30,12 @@ function setup(options: { badRoster?: boolean; untrusted?: boolean } = {}) {
     if (filters.some((f) => f.kinds?.includes(0)))
       return [
         profile(viewer, { name: "Me" }),
-        profile(other, { name: "Other", is_agent: true }),
+        profile(other, {
+          name: "Other",
+          picture: "https://example.com/avatar.png",
+          is_agent: true,
+          about: "Unused biography",
+        }),
       ];
     return discovery;
   });
@@ -145,7 +150,14 @@ it("reads paginated verified profiles, excludes the viewer, and cancels with the
   try {
     const page = await t.dm.people("Other", 2, new AbortController().signal);
     expect(page).toEqual({
-      people: [{ pubkey: t.other.pubkey, name: "Other", isAgent: true }],
+      people: [
+        {
+          pubkey: t.other.pubkey,
+          name: "Other",
+          picture: "https://example.com/avatar.png",
+          isAgent: true,
+        },
+      ],
       hasMore: false,
     });
     expect(

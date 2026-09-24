@@ -56,6 +56,10 @@ const sections: Section[] = developerMode
   ? [...baseSections, { id: "developer", label: "Developer", icon: WrenchIcon }]
   : baseSections;
 
+export function isSettingsSectionId(value: string): boolean {
+  return sections.some((section) => section.id === value);
+}
+
 export function Settings({
   cards,
   plugins,

@@ -13,24 +13,37 @@ export function BuilderLabSettings({ active = true }: { active?: boolean }) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
 
   useEffect(() => {
-    if (!active || state.kind !== "idle") return;
+    if (!active) {
+      setState({ kind: "idle" });
+      return;
+    }
+
+    let cancelled = false;
     setState({ kind: "loading" });
     if (!isTauri()) {
       setState({
         status: "error",
         message: "BuilderLab login status is available in the desktop app.",
       });
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
     void invoke<BuilderLabStatus>("builderlab_session_status")
-      .then(setState)
+      .then((status) => {
+        if (!cancelled) setState(status);
+      })
       .catch(() =>
+        !cancelled &&
         setState({
           status: "error",
           message: "Could not check the BuilderLab login status.",
         }),
       );
-  }, [active, state.kind]);
+    return () => {
+      cancelled = true;
+    };
+  }, [active]);
 
   return (
     <section aria-labelledby="builderlab-settings-title">

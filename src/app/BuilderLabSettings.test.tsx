@@ -17,8 +17,10 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-it("checks once when the tab becomes active and shows the logged-in result", async () => {
-  vi.mocked(invoke).mockResolvedValue({ status: "available" });
+it("rechecks status each time the tab becomes active", async () => {
+  vi.mocked(invoke)
+    .mockResolvedValueOnce({ status: "available" })
+    .mockResolvedValueOnce({ status: "loggedOut" });
   const { rerender } = render(<BuilderLabSettings active={false} />);
   rerender(<BuilderLabSettings active />);
   expect(screen.getByRole("status")).toHaveTextContent(
@@ -32,7 +34,15 @@ it("checks once when the tab becomes active and shows the logged-in result", asy
   expect(invoke).toHaveBeenCalledOnce();
   rerender(<BuilderLabSettings active={false} />);
   rerender(<BuilderLabSettings active />);
-  expect(invoke).toHaveBeenCalledOnce();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Checking BuilderLab login",
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Login to BuilderLab via the bl cli",
+    ),
+  );
+  expect(invoke).toHaveBeenCalledTimes(2);
 });
 
 it("shows the CLI login guidance for a missing credential", async () => {

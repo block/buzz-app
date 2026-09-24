@@ -10,8 +10,9 @@ use zeroize::Zeroizing;
 
 const KEYCHAIN_SERVICE: &str = "com.squareup.builderbot.cli-auth";
 const PROFILE: &str = "default";
-const CLI_SERVICE_PATH: &str = "/api/goose";
+const SERVICE_PATH: &str = "/api/goose";
 const ENDPOINT_PATH: &str = "/v3/beekeeper/list-agents";
+const AUTH_ME_ENDPOINT_PATH: &str = "/v1/auth/me";
 const SESSION_HEADER: &str = "X-BB-Session-Credential";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -77,6 +78,12 @@ pub struct HttpResponse {
 pub struct HttpError;
 
 pub trait HttpTransport: Send + Sync {
+    fn get<'a>(
+        &'a self,
+        url: &'a str,
+        credential: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, HttpError>> + Send + 'a>>;
+
     fn post<'a>(
         &'a self,
         url: &'a str,
@@ -100,6 +107,26 @@ impl ReqwestTransport {
 }
 
 impl HttpTransport for ReqwestTransport {
+    fn get<'a>(
+        &'a self,
+        url: &'a str,
+        credential: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, HttpError>> + Send + 'a>> {
+        Box::pin(async move {
+            let response = self
+                .client
+                .get(url)
+                .header("Accept", "application/json")
+                .header(SESSION_HEADER, credential)
+                .send()
+                .await
+                .map_err(|_| HttpError)?;
+            let status = response.status().as_u16();
+            let body = response.bytes().await.map_err(|_| HttpError)?.to_vec();
+            Ok(HttpResponse { status, body })
+        })
+    }
+
     fn post<'a>(
         &'a self,
         url: &'a str,
@@ -123,20 +150,24 @@ impl HttpTransport for ReqwestTransport {
     }
 }
 
-pub async fn check_from_env() -> SessionStatus {
-    let Some(raw_url) = std::env::var_os("BUILDERLAB_URL") else {
-        return SessionStatus::NotConfigured;
-    };
-    let raw_url = raw_url.to_string_lossy();
-    let base = match service_url(&raw_url) {
+pub async fn get_auth_status() -> SessionStatus {
+    let base = match configured_base_from_env() {
         Ok(base) => base,
-        Err(message) => return SessionStatus::Error { message },
+        Err(status) => return status,
     };
     let transport = match ReqwestTransport::new() {
         Ok(transport) => transport,
         Err(message) => return SessionStatus::Error { message },
     };
-    check_session(&SystemKeychain, &transport, &base, SystemTime::now()).await
+    check_auth_me_session(&SystemKeychain, &transport, &base, SystemTime::now()).await
+}
+
+fn configured_base_from_env() -> Result<String, SessionStatus> {
+    let Some(raw_url) = std::env::var_os("BUILDERLAB_URL") else {
+        return Err(SessionStatus::NotConfigured);
+    };
+    let raw_url = raw_url.to_string_lossy();
+    service_url(&raw_url).map_err(|message| SessionStatus::Error { message })
 }
 
 pub async fn check_session(
@@ -150,19 +181,9 @@ pub async fn check_session(
         Err(message) => return SessionStatus::Error { message },
     };
     let account = format!("{PROFILE}@{base}");
-    let credential = match keychain.read(KEYCHAIN_SERVICE, &account) {
-        Ok(Some(value)) => match parse_credential(&value, now) {
-            Ok(value) => value,
-            Err(CredentialError::Expired | CredentialError::Invalid) => {
-                return SessionStatus::LoggedOut
-            }
-        },
-        Ok(None) => return SessionStatus::LoggedOut,
-        Err(KeychainError::Unavailable) => {
-            return SessionStatus::Error {
-                message: "BuilderLab login is unavailable on this platform".into(),
-            }
-        }
+    let credential = match session_credential(keychain, &account, now) {
+        Ok(credential) => credential,
+        Err(status) => return status,
     };
     let endpoint = format!("{base}{ENDPOINT_PATH}");
     let response = match transport.post(&endpoint, &credential).await {
@@ -193,6 +214,66 @@ pub async fn check_session(
     }
 }
 
+pub async fn check_auth_me_session(
+    keychain: &dyn Keychain,
+    transport: &dyn HttpTransport,
+    base: &str,
+    now: SystemTime,
+) -> SessionStatus {
+    let base = match service_url(base) {
+        Ok(base) => base,
+        Err(message) => return SessionStatus::Error { message },
+    };
+    let account = format!("{PROFILE}@{base}");
+    let credential = match session_credential(keychain, &account, now) {
+        Ok(credential) => credential,
+        Err(status) => return status,
+    };
+    let endpoint = format!("{base}{AUTH_ME_ENDPOINT_PATH}");
+    let response = match transport.get(&endpoint, &credential).await {
+        Ok(response) => response,
+        Err(HttpError) => {
+            return SessionStatus::Error {
+                message: "Could not connect to BuilderLab".into(),
+            }
+        }
+    };
+    if matches!(response.status, 401 | 403) {
+        return SessionStatus::LoggedOut;
+    }
+    if !StatusCode::from_u16(response.status)
+        .map(|status| status.is_success())
+        .unwrap_or(false)
+    {
+        return SessionStatus::Error {
+            message: "BuilderLab rejected the session check".into(),
+        };
+    }
+    if valid_auth_me_response(&response.body) {
+        SessionStatus::Available
+    } else {
+        SessionStatus::Error {
+            message: "BuilderLab returned an invalid session response".into(),
+        }
+    }
+}
+
+fn session_credential(
+    keychain: &dyn Keychain,
+    account: &str,
+    now: SystemTime,
+) -> Result<Zeroizing<String>, SessionStatus> {
+    match keychain.read(KEYCHAIN_SERVICE, account) {
+        Ok(Some(value)) => parse_credential(&value, now).map_err(|error| match error {
+            CredentialError::Expired | CredentialError::Invalid => SessionStatus::LoggedOut,
+        }),
+        Ok(None) => Err(SessionStatus::LoggedOut),
+        Err(KeychainError::Unavailable) => Err(SessionStatus::Error {
+            message: "BuilderLab login is unavailable on this platform".into(),
+        }),
+    }
+}
+
 fn service_url(value: &str) -> Result<String, String> {
     let mut url = Url::parse(value)
         .map_err(|_| "BUILDERLAB_URL must be a credential-free HTTPS URL".to_owned())?;
@@ -206,7 +287,7 @@ fn service_url(value: &str) -> Result<String, String> {
         return Err("BUILDERLAB_URL must be a credential-free HTTPS URL".into());
     }
     if url.path().trim_end_matches('/').is_empty() {
-        url.set_path(CLI_SERVICE_PATH);
+        url.set_path(SERVICE_PATH);
     }
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
@@ -265,6 +346,18 @@ fn valid_list_agents_response(body: &[u8]) -> bool {
     status_valid && object.get("agents").is_none_or(Value::is_array)
 }
 
+fn valid_auth_me_response(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .get("subject")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .is_some_and(|subject| !subject.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,9 +390,23 @@ mod tests {
     struct FakeTransport {
         response: Result<HttpResponse, HttpError>,
         calls: Mutex<Vec<(String, String)>>,
+        get_calls: Mutex<Vec<(String, String)>>,
     }
 
     impl HttpTransport for FakeTransport {
+        fn get<'a>(
+            &'a self,
+            url: &'a str,
+            credential: &'a str,
+        ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, HttpError>> + Send + 'a>> {
+            self.get_calls
+                .lock()
+                .unwrap()
+                .push((url.into(), credential.into()));
+            let response = self.response.clone();
+            Box::pin(async move { response })
+        }
+
         fn post<'a>(
             &'a self,
             url: &'a str,
@@ -321,6 +428,7 @@ mod tests {
                 body: body.into(),
             }),
             calls: Mutex::new(Vec::new()),
+            get_calls: Mutex::new(Vec::new()),
         }
     }
 
@@ -407,6 +515,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn checks_auth_me_endpoint_with_cli_credential() {
+        let keychain = FakeKeychain {
+            value: Some(TEST_CREDENTIAL.as_bytes().to_vec()),
+            ..Default::default()
+        };
+        let transport = transport(
+            200,
+            br#"{"subject":"deployment-scoped-user","roles":["ROLE_USER"]}"#,
+        );
+        assert_eq!(
+            check_auth_me_session(&keychain, &transport, BASE, now()).await,
+            SessionStatus::Available
+        );
+        assert_eq!(
+            *transport.get_calls.lock().unwrap(),
+            vec![(
+                format!("https://app.builderlab.xyz/api/goose{AUTH_ME_ENDPOINT_PATH}"),
+                TEST_CREDENTIAL.into()
+            )]
+        );
+        assert!(transport.calls.lock().unwrap().is_empty());
+        assert_eq!(
+            *keychain.calls.lock().unwrap(),
+            vec![(
+                KEYCHAIN_SERVICE.into(),
+                "default@https://app.builderlab.xyz/api/goose".into()
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_me_maps_unauthorized_invalid_success_and_transport_errors() {
+        let keychain = FakeKeychain {
+            value: Some(TEST_CREDENTIAL.as_bytes().to_vec()),
+            ..Default::default()
+        };
+        for status in [401, 403] {
+            assert_eq!(
+                check_auth_me_session(&keychain, &transport(status, b"{}"), BASE, now()).await,
+                SessionStatus::LoggedOut
+            );
+        }
+        assert!(matches!(
+            check_auth_me_session(&keychain, &transport(200, b"{}"), BASE, now()).await,
+            SessionStatus::Error { .. }
+        ));
+        let network = FakeTransport {
+            response: Err(HttpError),
+            calls: Mutex::new(Vec::new()),
+            get_calls: Mutex::new(Vec::new()),
+        };
+        assert!(matches!(
+            check_auth_me_session(&keychain, &network, BASE, now()).await,
+            SessionStatus::Error { .. }
+        ));
+    }
+
+    #[tokio::test]
     async fn maps_missing_expired_unauthorized_malformed_and_transport_failures() {
         let missing = FakeKeychain::default();
         let success = transport(200, br#"{"status":"SUCCESS"}"#);
@@ -448,6 +614,7 @@ mod tests {
         let network = FakeTransport {
             response: Err(HttpError),
             calls: Mutex::new(Vec::new()),
+            get_calls: Mutex::new(Vec::new()),
         };
         assert!(matches!(
             check_session(&keychain, &network, BASE, now()).await,

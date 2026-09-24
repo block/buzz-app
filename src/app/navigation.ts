@@ -10,7 +10,7 @@ import { communityDestination } from "../features/communities/destination";
 import type { OpenTarget } from "../features/navigation/targets";
 import type { PageNavigation } from "../features/navigation/service";
 import type { OpenFailure } from "../features/navigation/controller";
-import { developerMode } from "./Settings";
+import { isSettingsSectionId } from "./Settings";
 
 const channelsKey = "buzz.channels/channels";
 export function useAppNavigation(services: AppServices) {
@@ -79,16 +79,7 @@ export function useAppNavigation(services: AppServices) {
   if (
     target.kind === "settings" &&
     target.section &&
-    ![
-      "profile",
-      "plugins",
-      "appearance",
-      "shortcuts",
-      "messages",
-      "notifications",
-      "builderlab",
-    ].includes(target.section) &&
-    !(developerMode && target.section === "developer")
+    !isSettingsSectionId(target.section)
   )
     failure = "unavailable";
   // Legacy Home targets (including unaddressed startup) resolve to Messages.

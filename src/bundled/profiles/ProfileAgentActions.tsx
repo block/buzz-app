@@ -73,6 +73,7 @@ export function ProfileAgentActions({
             <Button
               ref={stopButton}
               size="compact"
+              focusableWhenDisabled
               disabled={!canStopAgent(state, agent.id)}
               onClick={() => act("stop")}
             >
@@ -80,6 +81,7 @@ export function ProfileAgentActions({
             </Button>
             <Button
               size="compact"
+              focusableWhenDisabled
               disabled={!!startBlock}
               onClick={() => act("restart")}
             >

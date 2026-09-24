@@ -179,7 +179,8 @@ Host failures remain visible with snapshot uncertainty for the matched agent.
 Known unmatched profiles suppress unrelated controller errors; an initial read
 failure still offers Retry while ownership is unknown. Start stays focusable but
 inactive while pending, and moves focus to Stop if success removes the focused
-Start button. It does not steal focus moved elsewhere during the wait.
+Start button. It does not steal focus moved elsewhere during the wait. Stop and
+Restart retain focus when disabled or pending without allowing activation.
 `agentLaunchBlock` centralizes the launch gates used by Profiles and Agents.
 Retired relay
 presentations cannot dispatch commands. The separate runtime child owns badges

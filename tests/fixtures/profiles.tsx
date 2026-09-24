@@ -177,12 +177,14 @@ const native = controlFixture();
 native.agent.pubkey = mic.pubkey;
 native.agent.status = "stopped";
 native.agent.enabled = false;
-let releaseStart: (() => void) | undefined;
+let releaseLaunch: (() => void) | undefined;
+const commands: string[] = [];
 const action = native.host.action;
 native.host.action = async (id, command) => {
-  if (command === "start")
+  commands.push(command);
+  if (command === "start" || command === "restart")
     await new Promise<void>((resolve) => {
-      releaseStart = resolve;
+      releaseLaunch = resolve;
     });
   return action(id, command);
 };
@@ -227,10 +229,11 @@ const providers = new TemplateProvidersService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
-    startPending: () => !!releaseStart,
-    finishStart: () => {
-      releaseStart?.();
-      releaseStart = undefined;
+    commands: () => [...commands],
+    launchPending: () => !!releaseLaunch,
+    finishLaunch: () => {
+      releaseLaunch?.();
+      releaseLaunch = undefined;
     },
     contexts,
     targets: {

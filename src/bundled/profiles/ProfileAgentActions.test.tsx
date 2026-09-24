@@ -130,8 +130,14 @@ it("blocks runtime-unavailable and transitioning launches but preserves recovery
   expect(
     await screen.findByText("Runtime resources are missing."),
   ).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Restart" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Stop" })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   h.data.runtimeAvailable = true;
   h.agent.status = "starting";
   await act(() => h.control.refresh());
@@ -139,7 +145,10 @@ it("blocks runtime-unavailable and transitioning launches but preserves recovery
     "aria-disabled",
     "true",
   );
-  expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Restart" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(
     screen.getByText("Waiting for the process transition."),
   ).toBeInTheDocument();
@@ -155,8 +164,14 @@ it("disables duplicate pending commands, reports failure, and requires explicit 
   render(h.panel());
   await user.click(await screen.findByRole("button", { name: "Stop" }));
   try {
-    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Restart" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(
       screen.getByText("Waiting for the host to confirm…"),
     ).toBeInTheDocument();
@@ -173,11 +188,20 @@ it("disables duplicate pending commands, reports failure, and requires explicit 
   expect(
     screen.getByText(/Showing the last host snapshot/),
   ).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Stop" })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Restart" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   await user.click(screen.getByRole("button", { name: "Retry status" }));
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled(),
+    expect(screen.getByRole("button", { name: "Restart" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    ),
   );
   await user.click(screen.getByRole("button", { name: "Restart" }));
   expect(action).toHaveBeenLastCalledWith(h.agent.id, "restart");
@@ -204,11 +228,20 @@ it("allows recovery Stop during a pending Start and ignores its late failure", a
       "aria-disabled",
       "true",
     );
-    expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Restart" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Stop" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     await user.click(screen.getByRole("button", { name: "Stop" }));
     expect(action).toHaveBeenLastCalledWith(h.agent.id, "stop");
-    expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restart" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   } finally {
     await act(async () => pending.reject("Retired launch failed."));
   }
@@ -239,7 +272,9 @@ it("recovers an initial read failure without inferring ownership and stops polli
   expect(read).toHaveBeenCalledTimes(1);
   vi.useRealTimers();
   await user.click(screen.getByRole("button", { name: "Retry status" }));
-  expect(await screen.findByRole("button", { name: "Stop" })).toBeEnabled();
+  expect(
+    await screen.findByRole("button", { name: "Stop" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
 });
 
 it("fences retired relay clicks and tracks profile, community, reconnect and disconnect changes", async () => {
@@ -261,13 +296,17 @@ it("fences retired relay clicks and tracks profile, community, reconnect and dis
       generation: 2,
     }),
   );
-  expect(await screen.findByRole("button", { name: "Stop" })).toBeEnabled();
+  expect(
+    await screen.findByRole("button", { name: "Stop" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
   view.rerender(h.panel("ef".repeat(32)));
   expect(
     screen.queryByRole("button", { name: "Stop" }),
   ).not.toBeInTheDocument();
   view.rerender(h.panel());
-  expect(await screen.findByRole("button", { name: "Stop" })).toBeEnabled();
+  expect(
+    await screen.findByRole("button", { name: "Stop" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
   act(() => h.switchScope({ status: "disconnected" }));
   expect(
     screen.queryByRole("button", { name: "Stop" }),
@@ -343,7 +382,9 @@ it("keeps unrelated command failures off a known non-owned profile", async () =>
   ).not.toBeInTheDocument();
   view.rerender(h.panel());
   expect(screen.getByText(/Unrelated launch failed/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Retry status" })).toBeEnabled();
+  expect(
+    screen.getByRole("button", { name: "Retry status" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
 });
 
 it.each([false, true])(

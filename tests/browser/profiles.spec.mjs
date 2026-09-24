@@ -254,7 +254,7 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
 
 // Native button disabling/removal can move focus differently from jsdom. Exercise
 // actual keyboard focus in both engines with a gated synthetic host, not real agents.
-test("local Start retains keyboard focus through pending and success without stealing focus", async ({
+test("local agent actions retain keyboard focus through pending and success without stealing focus", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/profiles.html?agent-actions");
@@ -267,25 +267,47 @@ test("local Start retains keyboard focus through pending and success without ste
   await start.focus();
   await start.press("Enter");
   try {
-    await page.waitForFunction(() => window.profilesFixture.startPending());
+    await page.waitForFunction(() => window.profilesFixture.launchPending());
     await expect(start).toBeDisabled();
     await expect(start).toBeFocused();
   } finally {
-    await page.evaluate(() => window.profilesFixture.finishStart());
+    await page.evaluate(() => window.profilesFixture.finishLaunch());
   }
   await expect(start).toHaveCount(0);
   await expect(stop).toBeFocused();
   await stop.press("Enter");
   await expect(start).toBeEnabled();
+  await expect(stop).toBeDisabled();
+  await expect(stop).toBeFocused();
+  await stop.press("Enter");
   await start.focus();
   await start.press("Enter");
   const copy = page.getByRole("button", { name: "Copy npub" });
   try {
-    await page.waitForFunction(() => window.profilesFixture.startPending());
+    await page.waitForFunction(() => window.profilesFixture.launchPending());
     await copy.focus();
   } finally {
-    await page.evaluate(() => window.profilesFixture.finishStart());
+    await page.evaluate(() => window.profilesFixture.finishLaunch());
   }
   await expect(start).toHaveCount(0);
   await expect(copy).toBeFocused();
+  const restart = panel.getByRole("button", { name: "Restart", exact: true });
+  await restart.focus();
+  await restart.press("Enter");
+  try {
+    await page.waitForFunction(() => window.profilesFixture.launchPending());
+    await expect(restart).toBeDisabled();
+    await expect(restart).toBeFocused();
+    await restart.press("Enter");
+  } finally {
+    await page.evaluate(() => window.profilesFixture.finishLaunch());
+  }
+  await expect(restart).toBeEnabled();
+  await expect(restart).toBeFocused();
+  expect(await page.evaluate(() => window.profilesFixture.commands())).toEqual([
+    "start",
+    "stop",
+    "start",
+    "restart",
+  ]);
 });

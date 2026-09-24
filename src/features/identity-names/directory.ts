@@ -94,12 +94,18 @@ export function createNameProvider(
         }
         // View-local labels (authored draft text or cross-community management rows)
         // supplement display facts only; they never select recipients or grant control.
-        for (const fact of displayFacts ?? []) {
+        const displayed = (displayFacts ?? []).map((fact) => {
           const key = fact.pubkey.toLowerCase();
-          identities.set(key, { ...identities.get(key), ...fact, pubkey: key });
-        }
+          return { ...identities.get(key), ...fact, pubkey: key };
+        });
+        const displayedKeys = new Set(displayed.map((fact) => fact.pubkey));
         const resolved = policy.resolve(
-          [...identities.values()],
+          [
+            ...[...identities.values()].filter(
+              (row) => !displayedKeys.has(row.pubkey),
+            ),
+            ...displayed,
+          ],
           source.viewer,
           selection,
         );

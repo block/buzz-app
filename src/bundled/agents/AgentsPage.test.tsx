@@ -808,3 +808,70 @@ it("qualifies management identities while keeping configured names and edit targ
   expect(within(dialog).getByText(/^Fixture agent · /)).toBeVisible();
   expect(within(dialog).getByLabelText("Name")).toHaveValue(f.agent.name);
 });
+
+it("keeps collisions across different cross-community aliases and edits the exact configuration", async () => {
+  const { f } = setup("ready", (fixture) => {
+    fixture.agent.name = "Honey";
+    fixture.data.agents.push(
+      {
+        ...structuredClone(fixture.agent),
+        id: "namesake",
+        pubkey: "bb".repeat(32),
+      },
+      {
+        ...structuredClone(fixture.agent),
+        id: "alias-a",
+        name: "Juniper",
+        relayUrl: "wss://aliases.example",
+      },
+      {
+        ...structuredClone(fixture.agent),
+        id: "alias-b",
+        pubkey: "bb".repeat(32),
+        name: "Juniper",
+        relayUrl: "wss://aliases.example",
+      },
+    );
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("article", { name: /^Agent Honey · / }),
+    ).toHaveLength(3),
+  );
+  const honey = screen.getAllByRole("article", { name: /^Agent Honey · / });
+  const juniper = screen.getAllByRole("article", { name: /^Agent Juniper · / });
+  expect(juniper).toHaveLength(2);
+  expect(
+    new Set(honey.map((card) => card.getAttribute("aria-label"))).size,
+  ).toBe(2);
+  expect(
+    new Set(juniper.map((card) => card.getAttribute("aria-label"))).size,
+  ).toBe(2);
+  const user = userEvent.setup();
+  const aliasCard = juniper[0];
+  if (!aliasCard) throw Error("Missing alias card");
+  await user.click(
+    within(aliasCard).getByRole("button", {
+      name: /^Actions for Juniper · /,
+    }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Juniper");
+  await user.clear(within(dialog).getByLabelText("Name"));
+  await user.type(within(dialog).getByLabelText("Name"), "Updated alias");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  );
+  await waitFor(() =>
+    expect(f.calls).toContainEqual(
+      expect.objectContaining({
+        action: "save",
+        payload: expect.objectContaining({
+          id: "alias-a",
+          edit: expect.objectContaining({ name: "Updated alias" }),
+        }),
+      }),
+    ),
+  );
+});

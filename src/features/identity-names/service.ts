@@ -8,6 +8,8 @@ import { createContributions } from "../../plugins/contributions";
 
 export type NamingPolicy = {
   id: string;
+  /** Compare all displayed aliases across distinct keys; return each key's last
+   * supplied alias. Repeated configurations of one key are not namesakes. */
   resolve(
     identities: readonly NamingIdentity[],
     viewer?: string,

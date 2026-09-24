@@ -2360,9 +2360,12 @@ it("uses the full channel choice set for one selected chip and follows membershi
   expect(label()).toBe("@Honey");
   expect(h.input()).toHaveValue(source);
   h.submit();
-  expect(h.messages.send).toHaveBeenCalledWith("channel", source, [
-    second.pubkey,
-  ]);
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    source,
+    [second.pubkey],
+    [],
+  );
   h.unmount();
   names.dispose();
 });

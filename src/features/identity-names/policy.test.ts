@@ -177,3 +177,42 @@ it("terminates when literal human names exhaust the full key and fallback counte
   expect(result.slice(2)).toEqual(occupied.map((row) => row.name));
   expect(new Set(result).size).toBe(rows.length);
 });
+
+it("compares all aliases while returning the last requested alias for each key", () => {
+  const rows = [
+    agent(a, me),
+    agent(b, me),
+    { ...agent(a, me), name: "Juniper" },
+    { ...agent(b, me), name: "Juniper" },
+  ];
+  for (const ordered of [rows, [...rows].reverse()]) {
+    for (const requested of rows) {
+      const resolved = resolveIdentityNames([...ordered, requested], me);
+      expect(resolved.get(requested.pubkey)?.name).toBe(
+        `${requested.name} · ${suffix(requested.pubkey)}`,
+      );
+    }
+  }
+  const oneKey = [
+    agent(a, me),
+    { ...agent(a, me), name: "Juniper" },
+    agent(a, me),
+  ];
+  expect(resolveIdentityNames(oneKey, me).get(a)?.name).toBe("Honey");
+});
+
+it("rechecks generated labels against aliases and keeps human priority", () => {
+  const literal = `Honey · ${suffix(a)}`;
+  const rows = [
+    agent(a, me),
+    agent(b, me),
+    person(c, literal),
+    person(c, "Juniper"),
+  ];
+  const names = resolveIdentityNames(rows, me);
+  expect(names.get(a)?.name).toBe(`Honey · ${npubEncode(a).slice(-5)}`);
+  expect(names.get(c)?.name).toBe("Juniper");
+  expect(
+    resolveIdentityNames([...rows, person(c, literal)], me).get(c)?.name,
+  ).toBe(literal);
+});

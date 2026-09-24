@@ -22,9 +22,20 @@ export function resolveIdentityNames(
   );
   const selected =
     candidates && new Set(candidates.map((key) => key.toLowerCase()));
-  const rows = [...unique]
-    .filter(([key]) => !selected || selected.has(key))
-    .map(([key, identity]) => {
+  // Compare every displayed alias, but repeated configurations of one key
+  // are not competing identities. The last alias supplies that key's result.
+  const aliases = new Map(
+    identities.map((identity) => [
+      JSON.stringify([identity.pubkey.toLowerCase(), identity.name.trim()]),
+      { ...identity, ownerPubkey: identity.ownerPubkey?.toLowerCase() },
+    ]),
+  );
+  const rows = [...aliases.values()]
+    .filter(
+      (identity) => !selected || selected.has(identity.pubkey.toLowerCase()),
+    )
+    .map((identity) => {
+      const key = identity.pubkey.toLowerCase();
       const mine =
         !!viewer && (key === viewer || identity.ownerPubkey === viewer);
       return {
@@ -46,13 +57,17 @@ export function resolveIdentityNames(
       group.push(row);
       groups.set(row.label, group);
     }
-    const collisions = [...groups.values()].filter((group) => group.length > 1);
+    const collisions = [...groups.values()].filter(
+      (group) => new Set(group.map((row) => row.key)).size > 1,
+    );
     if (!collisions.length) break;
     for (const group of collisions) {
       const best = Math.min(...group.map((row) => row.priority));
-      const winner = group.filter((row) => row.priority === best);
+      const winners = new Set(
+        group.filter((row) => row.priority === best).map((row) => row.key),
+      );
       const changing = group.filter(
-        (row) => winner.length !== 1 || row !== winner[0],
+        (row) => winners.size !== 1 || !winners.has(row.key),
       );
       let qualified = false;
       for (const row of changing) {
@@ -88,6 +103,10 @@ export function resolveIdentityNames(
     }
   }
   return new Map(
-    rows.map((row) => [row.key, { name: row.label, qualifier: row.suffix }]),
+    rows
+      .filter(
+        (row) => row.identity.name.trim() === unique.get(row.key)?.name.trim(),
+      )
+      .map((row) => [row.key, { name: row.label, qualifier: row.suffix }]),
   );
 }

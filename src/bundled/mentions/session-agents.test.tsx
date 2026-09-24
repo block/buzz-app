@@ -183,6 +183,7 @@ it.each([true, false])(
       channels: [
         {
           id: "parent",
+          name: "Session",
           channelType: "session",
           members: ["a".repeat(64)],
           ...(parent ? { parentChannelId: "parent-channel" } : {}),

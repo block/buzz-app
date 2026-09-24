@@ -98,6 +98,7 @@ export function ChannelMembersDialog({
   const [nameError, setNameError] = useState("");
   const [rosterBusy, setRosterBusy] = useState(true);
   const [refresh, setRefresh] = useState(0);
+  const [nameRefresh, setNameRefresh] = useState(0);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -165,7 +166,7 @@ export function ChannelMembersDialog({
     };
   }, [session, channelId, refresh]);
   const memberKey = channel?.members?.join(":") ?? "";
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh explicitly retries missing names.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nameRefresh explicitly retries missing names.
   useEffect(() => {
     if (!memberKey) return;
     let current = true;
@@ -181,7 +182,7 @@ export function ChannelMembersDialog({
     return () => {
       current = false;
     };
-  }, [session, memberKey, refresh]);
+  }, [session, memberKey, nameRefresh]);
   const known = new Map(
     agents.identities.map((agent) => [agent.pubkey, agent]),
   );
@@ -403,7 +404,7 @@ export function ChannelMembersDialog({
         {nameError && (
           <p role="status" className="text-body-sm text-subtle">
             {nameError}{" "}
-            <Button onClick={() => setRefresh((value) => value + 1)}>
+            <Button onClick={() => setNameRefresh((value) => value + 1)}>
               Retry names
             </Button>
           </p>

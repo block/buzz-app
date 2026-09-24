@@ -37,6 +37,7 @@ async function setup(
   let failure = "";
   let applyAddition = true;
   let searchFailure = false;
+  let nameRetry: Promise<void> | undefined;
   let release: (() => void) | undefined;
   const publish = vi.fn(async (_event: RelayEvent) => {
     if (failure) throw new PublishRejected(failure);
@@ -58,8 +59,10 @@ async function setup(
         (filter) =>
           filter.kinds?.includes(0) && filter.authors?.includes(viewer.pubkey),
       )
-    )
+    ) {
+      await nameRetry;
       throw new Error("Names unavailable");
+    }
     return [
       roster(relay, id, members, clock),
       signed(relay, {
@@ -129,6 +132,9 @@ async function setup(
     },
     fail: (value: string) => {
       failure = value;
+    },
+    holdNames: (pending: Promise<void>) => {
+      nameRetry = pending;
     },
     failSearch: () => {
       searchFailure = true;
@@ -225,6 +231,53 @@ it("optional member-name failure does not block a verified addition", async () =
   await screen.findByText("Morgan is in the channel.");
   expect(t.publish).toHaveBeenCalledOnce();
 });
+
+it.each(["pending", "failed"])(
+  "retrying optional names keeps Add usable while names are %s without refreshing membership",
+  async (state) => {
+    const t = await setup("stream", true);
+    const add = await t.search();
+    await vi.waitFor(() => expect(add).toBeEnabled());
+    const rosterReads = () =>
+      t.query.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.kinds?.includes(39002)),
+      ).length;
+    const nameReads = () =>
+      t.query.mock.calls.filter(([filters]) =>
+        filters.some(
+          (filter) =>
+            filter.kinds?.includes(0) &&
+            filter.authors?.includes(t.viewer.pubkey),
+        ),
+      ).length;
+    const beforeRoster = rosterReads();
+    const beforeNames = nameReads();
+    let release!: () => void;
+    t.holdNames(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    try {
+      await t.user.click(screen.getByRole("button", { name: "Retry names" }));
+      await vi.waitFor(() => expect(nameReads()).toBe(beforeNames + 1));
+      expect(rosterReads()).toBe(beforeRoster);
+      expect(add).toBeEnabled();
+      expect(screen.queryByText("Loading members…")).not.toBeInTheDocument();
+      if (state === "failed") {
+        await act(async () => release());
+        await screen.findByText(/Some names could not load/);
+        expect(rosterReads()).toBe(beforeRoster);
+        expect(add).toBeEnabled();
+      }
+      await t.user.click(add);
+      await screen.findByText("Morgan is in the channel.");
+      expect(t.publish).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => release());
+    }
+  },
+);
 
 it("finishes confirmed local-agent startup after closing and reopening during publication", async () => {
   const t = await setup("stream", false, true);

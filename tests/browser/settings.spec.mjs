@@ -99,6 +99,9 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     name: "Set a status",
     exact: true,
   });
+  const availability = account.getByRole("button", {
+    name: "Availability: Online",
+  });
   await expect(avatar).toHaveAttribute("aria-expanded", "false");
   await expect(
     page.getByRole("menuitem", { name: "Settings", exact: true }),
@@ -108,8 +111,13 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await avatar.click();
     await expect(account).toBeInViewport();
     await expect(avatar).toHaveAttribute("aria-expanded", "true");
+    await expect(availability).toBeFocused();
     await page.keyboard.press("ArrowDown");
-    await expect(statusEntry).toBeFocused();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Automatic", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(availability).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(account).toBeHidden();
     await expect(avatar).toBeFocused();
@@ -121,10 +129,12 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(account).toBeHidden();
     await avatar.focus();
     await page.keyboard.press("Enter");
+    await expect(availability).toBeFocused();
+    await page.keyboard.press("End");
+    await expect(settings).toBeFocused();
+    await page.keyboard.press("Home");
     await expect(statusEntry).toBeFocused();
     await page.keyboard.press("ArrowDown");
-    await expect(settings).toBeFocused();
-    await page.keyboard.press("End");
     await expect(settings).toBeFocused();
     await page.keyboard.press("Home");
     await expect(statusEntry).toBeFocused();
@@ -136,7 +146,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   }
   await avatar.focus();
   await page.keyboard.press("Enter");
-  await expect(statusEntry).toBeFocused();
+  await expect(availability).toBeFocused();
   await page.keyboard.press("End");
   await expect(settings).toBeFocused();
   await page.keyboard.press("Enter");

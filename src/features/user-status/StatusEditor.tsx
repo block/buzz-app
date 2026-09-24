@@ -115,7 +115,6 @@ export function StatusEditor({
     <Dialog
       open
       title="Set a status"
-      description="Let others know what you're up to."
       closeLabel="Close status editor"
       onOpenChange={(open) => {
         if (!open) close();

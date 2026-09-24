@@ -10,6 +10,7 @@ import {
   developerMode,
   settingsSections as sections,
 } from "./settingsSections";
+import { SquaresFourIcon } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";

@@ -103,6 +103,7 @@ pub trait HttpTransport: Send + Sync {
         &'a self,
         url: &'a str,
         credential: &'a str,
+        body: &'a Value,
     ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, HttpError>> + Send + 'a>>;
 }
 
@@ -146,6 +147,7 @@ impl HttpTransport for ReqwestTransport {
         &'a self,
         url: &'a str,
         credential: &'a str,
+        body: &'a Value,
     ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, HttpError>> + Send + 'a>> {
         Box::pin(async move {
             let response = self
@@ -154,7 +156,7 @@ impl HttpTransport for ReqwestTransport {
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
                 .header(SESSION_HEADER, credential)
-                .json(&serde_json::json!({ "include_instructions": true }))
+                .json(body)
                 .send()
                 .await
                 .map_err(|_| HttpError)?;
@@ -197,17 +199,16 @@ pub async fn list_agents(
         base,
         LIST_AGENTS_ENDPOINT_PATH,
         now,
-        RequestMethod::Post,
+        RequestMethod::Post(serde_json::json!({ "include_instructions": true })),
     )
     .await
     .map_err(ListAgentsError::from)?;
     parse_list_agents_response(&response.body).ok_or(ListAgentsError::InvalidResponse)
 }
 
-#[derive(Clone, Copy)]
 enum RequestMethod {
     Get,
-    Post,
+    Post(Value),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -268,7 +269,7 @@ async fn authenticated_request(
     let endpoint = format!("{base}{endpoint_path}");
     let response = match method {
         RequestMethod::Get => transport.get(&endpoint, &credential).await,
-        RequestMethod::Post => transport.post(&endpoint, &credential).await,
+        RequestMethod::Post(body) => transport.post(&endpoint, &credential, &body).await,
     }
     .map_err(|HttpError| SessionRequestError::Transport)?;
     if matches!(response.status, 401 | 403) {
@@ -454,6 +455,7 @@ mod tests {
         response: Result<HttpResponse, HttpError>,
         calls: Mutex<Vec<(String, String)>>,
         get_calls: Mutex<Vec<(String, String)>>,
+        post_bodies: Mutex<Vec<Value>>,
     }
 
     impl HttpTransport for FakeTransport {
@@ -474,11 +476,13 @@ mod tests {
             &'a self,
             url: &'a str,
             credential: &'a str,
+            body: &'a Value,
         ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, HttpError>> + Send + 'a>> {
             self.calls
                 .lock()
                 .unwrap()
                 .push((url.into(), credential.into()));
+            self.post_bodies.lock().unwrap().push(body.clone());
             let response = self.response.clone();
             Box::pin(async move { response })
         }
@@ -492,6 +496,7 @@ mod tests {
             }),
             calls: Mutex::new(Vec::new()),
             get_calls: Mutex::new(Vec::new()),
+            post_bodies: Mutex::new(Vec::new()),
         }
     }
 
@@ -582,6 +587,10 @@ mod tests {
                 TEST_CREDENTIAL.into()
             )]
         );
+        assert_eq!(
+            *transport.post_bodies.lock().unwrap(),
+            vec![serde_json::json!({ "include_instructions": true })]
+        );
     }
 
     #[tokio::test]
@@ -651,6 +660,7 @@ mod tests {
             response: Err(HttpError),
             calls: Mutex::new(Vec::new()),
             get_calls: Mutex::new(Vec::new()),
+            post_bodies: Mutex::new(Vec::new()),
         };
         assert!(matches!(
             check_auth_me_session(&keychain, &network, BASE, now()).await,
@@ -728,6 +738,7 @@ mod tests {
             response: Err(HttpError),
             calls: Mutex::new(Vec::new()),
             get_calls: Mutex::new(Vec::new()),
+            post_bodies: Mutex::new(Vec::new()),
         };
         assert_eq!(
             list_agents(&keychain, &network, BASE, now()).await,

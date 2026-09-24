@@ -1,7 +1,10 @@
 import {
   BrowserIcon,
   ChatsCircleIcon,
+  FolderSimpleIcon,
   GearIcon,
+  LightningIcon,
+  RobotIcon,
 } from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 
@@ -35,7 +38,14 @@ export function pagePresentation(page: RegisteredPage) {
   if (page.id === "channels") return shellPresentation.channels;
   return {
     label: page.title,
-    icon: BrowserIcon,
+    icon:
+      page.key === "buzz.projects/projects"
+        ? FolderSimpleIcon
+        : page.key === "buzz.agents/agents"
+          ? RobotIcon
+          : page.key === "buzz.workflows/workflows"
+            ? LightningIcon
+            : BrowserIcon,
     tone: page.layout === "workspace" ? "lime" : "sky",
   };
 }

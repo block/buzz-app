@@ -4,6 +4,7 @@
 .root {
   height: 100%;
   min-height: 0;
+  container-type: inline-size;
   color: var(--text-standard);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
@@ -14,18 +15,13 @@
 }
 .board {
   display: grid;
-  grid-template-columns:
-    minmax(124px, min(var(--channel-sidebar-width, 260px), calc(100% - 336px)))
-    var(--space-panel-gap)
-    minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
   position: relative;
   overflow: hidden;
 }
 .withPanel {
-  grid-template-columns:
-    minmax(124px, min(var(--channel-sidebar-width, 260px), calc(100% - 652px)))
-    var(--space-panel-gap) minmax(320px, 1.1fr) minmax(316px, 1fr);
+  grid-template-columns: minmax(320px, 1.1fr) minmax(316px, 1fr);
 }
 .sidebar,
 .conversation {
@@ -40,6 +36,10 @@
   --sidebar-padding: var(--space-2);
   --channel-row-radius: calc(var(--radius-panel) - var(--sidebar-padding));
   padding: var(--sidebar-padding);
+  color: var(--text-standard);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
 }
 .channelListFrame {
   position: relative;
@@ -197,12 +197,13 @@ html[data-keyboard-navigation]
   position: relative;
   z-index: 4;
   align-self: stretch;
-  width: 16px;
+  width: var(--space-4);
+  flex-shrink: 0;
   justify-self: center;
   height: 100%;
   padding: 0;
   border: 0;
-  margin: 0;
+  margin: 0 calc((var(--space-panel-gap) - var(--space-4)) / 2);
   background: transparent;
   cursor: col-resize;
   touch-action: none;
@@ -266,7 +267,7 @@ html[data-keyboard-navigation]
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
 .panelStack {
-  grid-column: 4;
+  grid-column: 2;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -326,33 +327,41 @@ html[data-keyboard-navigation]
 @media (max-width: 1000px) {
   .board,
   .withPanel {
-    grid-template-columns:
-      minmax(
-        124px,
-        min(var(--channel-sidebar-width, 260px), calc(100% - 336px))
-      )
-      var(--space-panel-gap)
-      minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
   .withPanel .panelStack {
     position: absolute;
-    grid-column: 3;
+    grid-column: 1;
     inset: 0 0 0 auto;
     width: min(420px, 100%);
     z-index: 2;
     box-shadow: var(--elevation-dock);
     margin-left: 0;
   }
-  .withPanel .sidebarResizeHandle {
-    z-index: 1;
+}
+/* A widened persistent sidebar can leave less room than viewport width implies. */
+@container (max-width: 651px) {
+  .withPanel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .withPanel .panelStack {
+    position: absolute;
+    grid-column: 1;
+    inset: 0 0 0 auto;
+    width: min(420px, 100%);
+    z-index: 2;
+    box-shadow: var(--elevation-dock);
+    margin-left: 0;
   }
 }
 @media (max-width: 650px) {
   .board,
   .withPanel {
-    grid-template-columns: 124px 4px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
   .sidebarResizeHandle {
+    width: 4px;
+    margin: 0;
     visibility: hidden;
     pointer-events: none;
   }

@@ -247,7 +247,7 @@ async function open(page, app) {
   await page.goto(app.origin);
   await page
     .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Messages", exact: true })
+    .getByRole("button", { name: "Projects", exact: true })
     .click();
   const header = page.locator("summary", { hasText: "DMs" });
   await header.hover();

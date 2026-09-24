@@ -68,10 +68,36 @@ async function link(page, app, target) {
   ).toBeVisible();
 }
 async function shellFits(page, width) {
-  const tabs = await box(
+  const pages = await box(
     page.getByRole("navigation", { name: "Pages", exact: true }),
   );
-  near(tabs.x + tabs.width / 2, width / 2);
+  const sidebar = await box(
+    page.getByRole("complementary", { name: "Channel sidebar" }),
+  );
+
+  expect(pages.x).toBeGreaterThanOrEqual(sidebar.x);
+  expect(pages.x + pages.width).toBeLessThanOrEqual(sidebar.x + sidebar.width);
+  const channels = page.getByRole("navigation", {
+    name: "Subscribed channels",
+  });
+  if (await channels.count()) {
+    const channelBox = await box(channels);
+    expect(pages.y + pages.height).toBeLessThanOrEqual(channelBox.y);
+    expect(channelBox.height).toBeGreaterThan(40);
+  }
+  // At short heights the page list scrolls independently, not over the channels.
+  const pageList = page.getByRole("navigation", { name: "Pages", exact: true });
+  const lastPage = pageList.getByRole("button").last();
+  await lastPage.scrollIntoViewIfNeeded();
+  await expect(lastPage).toBeInViewport();
+  await pageList.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(
+    page
+      .locator(".shell-header")
+      .getByRole("navigation", { name: "Pages", exact: true }),
+  ).toHaveCount(0);
   const actions = await box(page.locator(".shell-actions"));
   const communities = await box(
     page.getByRole("navigation", { name: "Communities", exact: true }),
@@ -82,8 +108,7 @@ async function shellFits(page, width) {
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
     .toBe(width);
   if (width > 700) {
-    expect(communities.x + communities.width).toBeLessThan(tabs.x);
-    expect(tabs.x + tabs.width).toBeLessThan(actions.x);
+    expect(communities.x + communities.width).toBeLessThan(sidebar.x);
   }
 }
 
@@ -131,7 +156,7 @@ scroll(
   },
 );
 
-test("bento surfaces, centered tabs, real link panel and compact community navigation", async ({
+test("bento surfaces, sidebar pages, real link panel and compact community navigation", async ({
   page,
   app,
 }, testInfo) => {
@@ -252,8 +277,9 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   await link(page, app, "https://github.com/block/buzz/pull/3");
   await expect(button(page, "Close channel panel")).toBeInViewport();
   const narrow = await box(panel(page));
-  near(narrow.x, 8 + rail.width);
-  near(narrow.width, 374 - rail.width);
+  const narrowConversation = await box(conversation);
+  near(narrow.x, narrowConversation.x);
+  near(narrow.width, narrowConversation.width);
   await button(page, "Close channel panel").click();
   await expect(composer).toBeInViewport();
   await button(page, "Search Buzz").click();
@@ -316,17 +342,18 @@ test("narrow link panels begin after the rendered sidebar", async ({
   near(conversation.x - sidebar.x - sidebar.width, 8);
   near(dock.x, conversation.x);
   expect(dock.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
+  // Separate stacking contexts: assert actual hit testing, not unrelated z-index numbers.
+  const close = button(page, "Close channel panel");
   expect(
-    await page
-      .getByRole("separator", { name: "Resize channel sidebar" })
-      .evaluate((element) => Number(getComputedStyle(element).zIndex)),
-  ).toBeLessThan(
-    await panel(page).evaluate((element) =>
-      Number(
-        getComputedStyle(element.closest('[class*="_panelStack_"]')).zIndex,
-      ),
-    ),
-  );
+    await close.evaluate((element) => {
+      const r = element.getBoundingClientRect();
+      return element.contains(
+        document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2),
+      );
+    }),
+  ).toBe(true);
+  await close.click();
+  await expect(panel(page)).toHaveCount(0);
 });
 
 readingTest(
@@ -761,3 +788,73 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   await search.getByRole("option", { name: "Projects", exact: true }).click();
   await expect(title).toBeVisible();
 });
+
+// Real App navigation must retire page-local targets, without closing the
+// independently owned companion intent. Each return stays in Channels.
+const sidebarActions = test.extend({
+  productionBroker: true,
+  readState: true,
+  threadUnread: true,
+  largeSidebar: true,
+  historyCounts: { alpha: 20, beta: 1 },
+});
+sidebarActions(
+  "sidebar activity and compose routes retire local link panels, not companion intent",
+  async ({ page, app }) => {
+    await open(page, app);
+    const bestie = page.getByRole("complementary", {
+      name: "Bestie",
+      exact: true,
+    });
+    await button(page, "Bestie").click();
+    await expect(bestie).toBeVisible();
+    const alpha = page.locator('button[data-channel-id="alpha"]');
+    for (const [index, action] of [
+      "activity",
+      "message",
+      "session",
+    ].entries()) {
+      await link(page, app, `https://github.com/block/buzz/pull/${20 + index}`);
+      if (action === "activity") {
+        await alpha.hover();
+        await page
+          .getByRole("dialog", { name: "Activity in Alpha" })
+          .getByRole("button", { name: /Open unread thread from/ })
+          .first()
+          .click();
+        await expect(
+          page.getByRole("complementary", { name: "Thread", exact: true }),
+        ).toBeVisible();
+      } else if (action === "message") {
+        await page.locator("summary", { hasText: /^DMs$/ }).hover();
+        await button(page, "New message").click();
+        await expect(
+          page.getByRole("region", { name: "New message", exact: true }),
+        ).toBeVisible();
+      } else {
+        await alpha.hover();
+        await alpha.click({ button: "right" });
+        await page
+          .getByRole("menuitem", { name: "New session", exact: true })
+          .click();
+        await expect(
+          page.getByRole("region", {
+            name: "New session in Alpha",
+            exact: true,
+          }),
+        ).toBeVisible();
+      }
+      await expect(panel(page)).toHaveCount(0);
+      await expect(button(page, "Bestie")).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+      await button(page, "Go back").click();
+      await expect(
+        page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+      ).toBeVisible();
+      await expect(panel(page)).toHaveCount(0);
+      await expect(bestie).toBeVisible();
+    }
+  },
+);

@@ -50,6 +50,7 @@ function setupReview(initialTime = 7) {
       channelName="One"
       messageId={root.id}
       initialTime={initialTime}
+      onOpenLink={() => false}
       close={() => {}}
     />,
   );

@@ -1,3 +1,4 @@
+import { homeEnabled } from "./launch";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
@@ -23,7 +24,7 @@ export function App({ services }: { services: AppServices }) {
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
   const route = useAppNavigation(services);
   const launcher = usePanelLauncher(services.panels, startup === "ready");
-  const home = route.target.kind === "home";
+  const home = homeEnabled && route.target.kind === "home";
   const settings = route.target.kind === "settings";
   const select = route.select;
   useEffect(
@@ -86,7 +87,9 @@ export function App({ services }: { services: AppServices }) {
         }
       >
         <AgentWakeNotice control={services.agentControl} />
-        {route.failure || route.state.status === "failed" ? (
+        {startup === "recovery" && !settings && !home ? (
+          <RecoveryScreen plugins={plugins} />
+        ) : route.failure || route.state.status === "failed" ? (
           <div role="alert" className="notice">
             <h1>This destination couldn’t open</h1>
             <p>
@@ -97,8 +100,11 @@ export function App({ services }: { services: AppServices }) {
             <Button type="button" onClick={route.retry}>
               Retry navigation
             </Button>
-            <Button type="button" onClick={() => select("home")}>
-              Go Home
+            <Button
+              type="button"
+              onClick={() => select(homeEnabled ? "home" : "settings")}
+            >
+              {homeEnabled ? "Go Home" : "Open Settings"}
             </Button>
           </div>
         ) : settings ? (
@@ -121,8 +127,6 @@ export function App({ services }: { services: AppServices }) {
           />
         ) : home ? (
           <Home pages={route.pages} onSelect={select} />
-        ) : startup === "recovery" ? (
-          <RecoveryScreen plugins={plugins} />
         ) : route.waiting || startup === "loading" ? (
           <p role="status">Opening destination…</p>
         ) : route.page ? (

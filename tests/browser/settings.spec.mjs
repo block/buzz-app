@@ -276,7 +276,7 @@ test("Settings edits the local profile inline without publishing to a community"
   await name.fill("Discard when leaving Settings");
   await page
     .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Home", exact: true })
+    .getByRole("button", { name: "Projects", exact: true })
     .click();
   await button(page, "Your profile").click();
   await button(page, "Settings").click();

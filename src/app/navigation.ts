@@ -1,3 +1,4 @@
+import { homeEnabled } from "./launch";
 import {
   useEffect,
   useLayoutEffect,
@@ -44,7 +45,8 @@ export function useAppNavigation(services: AppServices) {
       )
     : undefined;
   let failure: OpenFailure | undefined;
-  let waiting = false;
+  const hiddenHome = !homeEnabled && target.kind === "home";
+  let waiting = hiddenHome;
   if (scope === null) {
     waiting = client.status === "loading" || client.selected !== null;
   } else if (scope) {
@@ -89,6 +91,17 @@ export function useAppNavigation(services: AppServices) {
     !(developerMode && target.section === "developer")
   )
     failure = "unavailable";
+  // Resolve in place before paint: startup, links and history share one policy.
+  // Keep the caller and visit rather than adding a redirect to browser history.
+  useLayoutEffect(() => {
+    if (hiddenHome)
+      services.navigationHost.resolve(state.attempt, {
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+      });
+  }, [services, state.attempt, hiddenHome]);
   const owner = useMemo(
     () => ({ attempt: state.attempt, page, waiting, failure }),
     [state.attempt, page, waiting, failure],

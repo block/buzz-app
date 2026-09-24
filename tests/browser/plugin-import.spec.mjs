@@ -325,7 +325,7 @@ test("leaving Settings discards a late preview without installing", async ({
   await expect(page.getByText(/Reading plugin folders/)).toBeVisible();
   await page
     .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Home", exact: true })
+    .getByRole("button", { name: "Projects", exact: true })
     .click();
   await page.evaluate(() => window.resolveImport());
   await expect

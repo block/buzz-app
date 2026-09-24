@@ -121,7 +121,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     .poll(async () => (await sidebar.boundingBox())?.width)
     .toBeGreaterThan(keyboardWidth + 100);
   const resized = await sidebar.boundingBox();
-  await button(page, "Home").first().click();
+  await button(page, "Projects").first().click();
   await button(page, "Messages").first().click();
   await expect
     .poll(async () => (await sidebar.boundingBox())?.width)
@@ -430,7 +430,7 @@ test("channel navigation preserves sidebar DOM, group state and scroll", async (
   );
 });
 
-for (const destination of ["Home", "Projects", "Settings", "Back/Forward"]) {
+for (const destination of ["Projects", "Settings", "Back/Forward"]) {
   test(`sidebar state survives Messages → ${destination} → Messages`, async ({
     page,
     app,
@@ -452,7 +452,7 @@ for (const destination of ["Home", "Projects", "Settings", "Back/Forward"]) {
       } else {
         await button(
           page,
-          destination === "Back/Forward" ? "Home" : destination,
+          destination === "Back/Forward" ? "Projects" : destination,
         )
           .first()
           .click();
@@ -520,7 +520,7 @@ test("legacy filters are ignored and invalid saved sidebar fields fall back", as
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const group = sidebar.locator("details").first();
   await group.locator("summary").click();
-  await button(page, "Home").first().click();
+  await button(page, "Projects").first().click();
   await page.evaluate(() => {
     const key = Object.keys(localStorage).find((key) =>
       key.includes('"channel-sidebar"'),

@@ -254,12 +254,12 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   await button(page, "Search Buzz").click();
   await page
     .getByRole("dialog", { name: "Search Buzz" })
-    .getByRole("option", { name: "Home", exact: true })
+    .getByRole("option", { name: "Projects", exact: true })
     .click();
   await expect(
     page
       .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Home" }),
+      .getByRole("button", { name: "Projects" }),
   ).toHaveAttribute("aria-current", "page");
   await button(page, "Your profile").click();
   await button(page, "Settings").click();
@@ -699,14 +699,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
   const nav = page.getByRole("navigation", { name: "Pages", exact: true });
-  const titles = [
-    "Home",
-    "Messages",
-    "Projects",
-    "Agents",
-    "Sessions",
-    "Workflows",
-  ];
+  const titles = ["Messages", "Projects", "Agents", "Sessions", "Workflows"];
   await expect(nav.getByRole("button")).toHaveText(titles);
   await nav.getByRole("button", { name: "Projects", exact: true }).click();
   const surface = page.getByRole("region", { name: "Projects", exact: true });
@@ -746,7 +739,6 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   });
   await projects.click();
   await expect(nav.getByRole("button")).toHaveText([
-    "Home",
     "Messages",
     "Agents",
     "Sessions",
@@ -761,7 +753,6 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   });
   await channels.click();
   await expect(nav.getByRole("button")).toHaveText([
-    "Home",
     "Projects",
     "Agents",
     "Sessions",
@@ -769,15 +760,6 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   ]);
   await channels.click();
   await expect(nav.getByRole("button")).toHaveText(titles);
-  await nav.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page.getByRole("main").getByRole("button")).toHaveText([
-    "Messages",
-    "Projects",
-    "Agents",
-    "Sessions",
-    "Workflows",
-    "Make it yours · Settings",
-  ]);
   await button(page, "Search Buzz").click();
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const pageResults = search.locator("section").filter({

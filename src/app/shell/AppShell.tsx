@@ -1,3 +1,4 @@
+import { homeEnabled } from "../launch";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { ReactNode } from "react";
 import { HouseIcon } from "../../shared/design-system/icons/index";
@@ -76,15 +77,17 @@ export function AppShell({
           />
         </div>
         <nav aria-label="Pages" className="shell-pages">
-          <NavigationItem
-            type="button"
-            variant="pill"
-            aria-current={selected === "home" ? "page" : undefined}
-            onClick={() => onSelect("home")}
-            selected={selected === "home"}
-            label="Home"
-            icon={<HouseIcon aria-hidden="true" size={15} />}
-          />
+          {homeEnabled && (
+            <NavigationItem
+              type="button"
+              variant="pill"
+              aria-current={selected === "home" ? "page" : undefined}
+              onClick={() => onSelect("home")}
+              selected={selected === "home"}
+              label="Home"
+              icon={<HouseIcon aria-hidden="true" size={15} />}
+            />
+          )}
           {orderPages(pages).map((page) => {
             const { label, icon: Icon } = pagePresentation(page);
             return (

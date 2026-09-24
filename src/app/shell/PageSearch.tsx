@@ -1,3 +1,4 @@
+import { homeEnabled } from "../launch";
 import {
   useCallback,
   useEffect,
@@ -82,7 +83,7 @@ export function PageSearch({
     services?.shortcutBindings.snapshot ?? noOverrides,
   );
   const destinations: SearchDestination[] = [
-    { key: "home", ...shellPresentation.home },
+    ...(homeEnabled ? [{ key: "home", ...shellPresentation.home }] : []),
     ...orderPages(pages).map((page) => ({
       key: page.key,
       ...pagePresentation(page),

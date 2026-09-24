@@ -580,6 +580,29 @@ mod tests {
         assert!(installed.enabled);
         assert!(installed.previous.is_some());
     }
+    #[test]
+    fn folder_skips_hidden_descendants_but_accepts_a_hidden_selection() {
+        let root = tempfile::tempdir().unwrap();
+        plugin(root.path(), "", "example.root");
+        plugin(root.path(), "dist", "example.root");
+        plugin(root.path(), ".cache/built", "example.root");
+        let worktree = plugin(root.path(), ".claude/worktrees/feature", "example.root");
+        plugin(&worktree, "dist", "example.root");
+        let paths = |directory: &Path| {
+            prepare_folder(directory)
+                .unwrap()
+                .preview
+                .candidates
+                .into_iter()
+                .map(|candidate| candidate.path)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths(root.path()), [".", "dist"]);
+        assert_eq!(
+            paths(&root.path().join(".claude")),
+            ["worktrees/feature", "worktrees/feature/dist"]
+        );
+    }
     #[cfg(unix)]
     #[test]
     fn folder_never_follows_symlinks_or_reads_special_files() {

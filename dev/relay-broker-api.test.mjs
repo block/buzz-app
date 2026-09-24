@@ -1181,3 +1181,56 @@ test.each(["sign", "publish"])(
     }
   },
 );
+
+test("edit capability signs and publishes canonical replacements, rejecting malformed edits locally", async () => {
+  const h = await harness(success);
+  try {
+    await h.start();
+    expect((await (await h.get("session")).json()).writeKinds).toContain(40003);
+    const template = {
+      ...h.event,
+      kind: 40003,
+      content: "corrected **message**",
+      tags: [
+        ["h", "c"],
+        ["e", h.event.id],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({
+      kind: 40003,
+      content: template.content,
+      tags: template.tags,
+      pubkey: h.event.pubkey,
+    });
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [["h", "c"]],
+        [
+          ["h", "c"],
+          ["e", "bad"],
+        ],
+        [
+          ["h", "c"],
+          ["e", h.event.id, "", "reply"],
+        ],
+        [...event.tags, ["e", "a".repeat(64)]],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+      expect((await h.post(route, { ...event, content: " " })).status).toBe(
+        400,
+      );
+      expect(
+        (await h.post(route, { ...event, content: "x".repeat(32001) })).status,
+      ).toBe(400);
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});

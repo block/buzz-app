@@ -1,3 +1,6 @@
+import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
+import { npubEncode } from "nostr-tools/nip19";
+import type { ChannelMessage } from "../relay/contracts";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -12,6 +15,7 @@ import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
   PaperclipIcon,
+  PencilSimpleIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
 import { ComposerAttachments } from "./ComposerAttachments";
@@ -77,6 +81,8 @@ export type MessageComposerProps = {
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
+  /** Threads supply their own retained rows; channels use the shared window. */
+  editMessages?: readonly ChannelMessage[] | undefined;
   onOpenLink?: ((target: string) => boolean) | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
@@ -117,6 +123,7 @@ function Composer({
   channelName,
   label: customLabel,
   onSend,
+  editMessages,
   onOpenLink,
   canOpenLink,
   threadRootId,
@@ -174,11 +181,6 @@ function Composer({
     (item) => item.id === channelId,
   )?.parentChannelId;
   const agentChoices = inviteAgents || !!sessionConversation;
-  const editingDisabled =
-    disabled || admitting || sending || !!submission?.locked;
-  const label =
-    customLabel ??
-    (threadRootId ? "Reply to thread" : `Message #${channelName}`);
   const [value, updateDraft] = useState(() =>
     mentionDraft(
       readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
@@ -220,10 +222,45 @@ function Composer({
     history.current.future = [];
     valueRef.current = next;
     updateDraft(next);
-    writeView(scope, draftKey, next);
+    if (!editing.target) writeView(scope, draftKey, next);
     return true;
   };
   const [error, setError] = useState<string>();
+  const beforeEdit = useRef<
+    { value: MentionDraft; history: typeof history.current } | undefined
+  >(undefined);
+  const editing = useMessageEdit(session, () => {
+    const saved = beforeEdit.current;
+    if (!saved) return;
+    valueRef.current = saved.value;
+    updateDraft(saved.value);
+    history.current = saved.history;
+    beforeEdit.current = undefined;
+    setError(undefined);
+    caret.current = saved.value.text.length;
+    completion.invalidate();
+  });
+  const editableRows = () =>
+    editMessages ??
+    (threadRootId
+      ? []
+      : (session.channels.window?.(channelId).rows ?? [])
+    ).filter((row) => sessionConversation || !row.threadRootId);
+  const editDisabled =
+    disabled ||
+    !!list.channels.find((channel) => channel.id === channelId)?.archived ||
+    !!list.channels.find((channel) => channel.id === channelId)?.readOnly;
+  const editingDisabled =
+    disabled ||
+    admitting ||
+    sending ||
+    !!submission?.locked ||
+    (editing.target && (editing.locked || editDisabled)) ||
+    false;
+  const label = editing.target
+    ? "Edit message"
+    : (customLabel ??
+      (threadRootId ? "Reply to thread" : `Message #${channelName}`));
   const attachments = useAttachmentDraft(
     session,
     `${scope}:${draftKey}`,
@@ -237,11 +274,15 @@ function Composer({
   }, [disabled, attachments.store]);
   const dragging = useFileDrop(
     form,
-    canAttach && !editingDisabled,
+    canAttach && !editingDisabled && !editing.target,
     attachFiles,
   );
   function attachFiles(files: readonly File[]) {
     if (editingDisabled || !files.length) return;
+    if (editing.target) {
+      setError("Finish editing before attaching new files.");
+      return;
+    }
     if (!canAttach) {
       setError(
         submission
@@ -341,7 +382,7 @@ function Composer({
     });
     valueRef.current = next.draft;
     updateDraft(next.draft);
-    writeView(scope, draftKey, next.draft);
+    if (!editing.target) writeView(scope, draftKey, next.draft);
     caret.current = undefined;
     restoreSelection.current = { start: next.start, end: next.end };
     completion.invalidate();
@@ -362,6 +403,11 @@ function Composer({
       typeof text !== "string"
     )
       return false;
+    // Edits replace prose; they do not change the original notification recipients.
+    if (editing.target && recipient) {
+      text = `nostr:${npubEncode(recipient.pubkey)} `;
+      recipient = undefined;
+    }
     const current = valueRef.current;
     const start = range?.start ?? caret.current ?? input.current.selectionStart;
     const end = range?.end ?? caret.current ?? input.current.selectionEnd;
@@ -461,6 +507,14 @@ function Composer({
     setError(undefined);
   }
   async function send() {
+    if (editing.target) {
+      if (!editDisabled)
+        editing.save(
+          valueRef.current.text,
+          editableRows().find((row) => row.id === editing.target?.id),
+        );
+      return;
+    }
     if (
       disabled ||
       admission.current ||
@@ -622,7 +676,7 @@ function Composer({
             type="button"
             aria-label="Attach files"
             title="Attach files"
-            disabled={editingDisabled}
+            disabled={editingDisabled || !!editing.target}
             onClick={() => picker.current?.click()}
             icon={<PaperclipIcon size={16} />}
           />
@@ -651,6 +705,21 @@ function Composer({
         ref={form}
         className={styles.composer}
         data-file-drag={dragging || undefined}
+        data-editing={!!editing.target || undefined}
+        onKeyDown={(event) => {
+          if (
+            editing.target &&
+            event.key === "Escape" &&
+            !event.defaultPrevented &&
+            !event.nativeEvent.isComposing &&
+            event.nativeEvent.keyCode !== 229 &&
+            !completion.composing.current
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!editing.busy) editing.close();
+          }
+        }}
         onPasteCapture={(event) => {
           const files = Array.from(event.clipboardData.items)
             .filter((item) => item.kind === "file")
@@ -662,14 +731,32 @@ function Composer({
           attachFiles(files);
         }}
         aria-label={
-          threadRootId ? "Reply to thread" : `Send a message to ${channelName}`
+          editing.target
+            ? "Edit message"
+            : threadRootId
+              ? "Reply to thread"
+              : `Send a message to ${channelName}`
         }
         onSubmit={(event) => {
           event.preventDefault();
           send();
         }}
       >
-        {!disabled && !submission && (
+        {editing.target && (
+          <div className={styles.composerEditHeader}>
+            <PencilSimpleIcon size={18} />
+            <span>Editing message</span>
+            <IconButton
+              type="button"
+              size="sm"
+              aria-label={editing.locked ? "Close edit" : "Cancel edit"}
+              disabled={editing.busy}
+              onClick={editing.close}
+              icon={<XIcon size={18} />}
+            />
+          </div>
+        )}
+        {!disabled && !submission && !editing.target && (
           <TypingIndicator
             session={session}
             channelId={channelId}
@@ -688,7 +775,7 @@ function Composer({
             scope={scope}
             channelId={channelId}
             threadRootId={threadRootId}
-            inviteAgents={agentChoices}
+            inviteAgents={agentChoices && !editing.target}
             replace={replaceCompletion}
           />
         )}
@@ -785,6 +872,39 @@ function Composer({
               }
               if (completion.keys.current?.(event)) return;
               if (
+                event.key === "ArrowUp" &&
+                !event.shiftKey &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.repeat &&
+                !event.defaultPrevented &&
+                !editingDisabled &&
+                !editDisabled &&
+                !submission &&
+                !editing.target &&
+                event.currentTarget.value === "" &&
+                !valueRef.current.recipients.length &&
+                !attachments.items.length
+              ) {
+                const target = lastEditableMessage(session, editableRows());
+                if (target) {
+                  event.preventDefault();
+                  completion.invalidate();
+                  beforeEdit.current = {
+                    value: valueRef.current,
+                    history: history.current,
+                  };
+                  const next = mentionDraft(editing.start(target));
+                  valueRef.current = next;
+                  updateDraft(next);
+                  history.current = { past: [], future: [] };
+                  caret.current = next.text.length;
+                  setError(undefined);
+                }
+                return;
+              }
+              if (
                 event.key === "Enter" &&
                 !event.shiftKey &&
                 !event.altKey &&
@@ -792,12 +912,13 @@ function Composer({
                 !event.metaKey
               ) {
                 event.preventDefault();
-                send();
+                if (!event.repeat || !editing.target) send();
               }
             }}
           />
         </div>
-        {threadRootId &&
+        {!editing.target &&
+          threadRootId &&
           mediaTimeSeconds !== undefined &&
           !hideMediaTimeIndicator && (
             <div className={styles.mediaComposerAnchor}>
@@ -822,7 +943,7 @@ function Composer({
                 channelId={channelId}
                 threadRootId={threadRootId}
                 disabled={editingDisabled}
-                inviteAgents={agentChoices}
+                inviteAgents={agentChoices && !editing.target}
                 insertText={(text) => insert(text)}
                 insertMention={insertMention}
                 focus={() => input.current?.focus()}
@@ -831,29 +952,31 @@ function Composer({
               renderLeadingTools(null)
             )}
           </div>
-          {trailingTool ??
-            (sessionConversation ? (
-              <SessionAgentControl
-                session={session}
-                channelId={channelId}
-                value={selectedAgent}
-                onChange={selectAgent}
-                disabled={editingDisabled}
-              />
-            ) : (
-              <span className={styles.composerHint}>
-                Shift + Enter for a new line
-              </span>
-            ))}
+          {!editing.target &&
+            (trailingTool ??
+              (sessionConversation ? (
+                <SessionAgentControl
+                  session={session}
+                  channelId={channelId}
+                  value={selectedAgent}
+                  onChange={selectAgent}
+                  disabled={editingDisabled}
+                />
+              ) : (
+                <span className={styles.composerHint}>
+                  Shift + Enter for a new line
+                </span>
+              )))}
           <IconButton
             variant="tint"
             size="toolbar"
             shape="round"
             type="submit"
-            aria-label="Send message"
-            title="Send message"
+            aria-label={editing.target ? "Save changes" : "Send message"}
+            title={editing.target ? "Save changes" : "Send message"}
             disabled={
               disabled ||
+              (!!editing.target && (editing.locked || editDisabled)) ||
               admitting ||
               sending ||
               submission?.disabled ||
@@ -863,7 +986,21 @@ function Composer({
             icon={<ArrowUpIcon size={16} />}
           />
         </div>
-        {error && <p role="alert">{error}</p>}
+        {(error || editing.error) && (
+          <p role="alert">{error ?? editing.error}</p>
+        )}
+        {editing.retryable && (
+          <>
+            <p role="status">Your edit is still in the outbox.</p>
+            <Button
+              type="button"
+              disabled={editDisabled}
+              onClick={editing.retry}
+            >
+              Retry edit
+            </Button>
+          </>
+        )}
         {error && session.emoji?.snapshot().status === "error" && (
           <Button
             type="button"

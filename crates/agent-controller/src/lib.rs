@@ -12,6 +12,10 @@ mod process;
 mod runtime;
 mod secret;
 mod store;
+#[cfg(unix)]
+mod supervisor;
+#[cfg(unix)]
+pub use supervisor::dispatch as dispatch_agent_supervisor;
 
 pub use bundle::RuntimeBundle;
 pub use config::{AgentEdit, AgentView, ControlSnapshot, HarnessEdit, ProcessStatus};

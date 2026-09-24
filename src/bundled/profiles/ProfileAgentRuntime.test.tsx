@@ -25,16 +25,26 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
 
-function relayAt(scope: string) {
+function relayAt(scope: string, knownAgent = false) {
   const owner = createRelaySession(null);
   owners.push(owner);
   const listeners = new Set<() => void>();
+  // Signed agent metadata makes ProfileInstances a second native reader.
+  const profiles = new Map([
+    [agentKey, { name: "Fixture agent", isAgent: true }],
+  ]);
+  const session = knownAgent
+    ? ({
+        ...owner.session,
+        profiles: { ...owner.session.profiles, snapshot: () => profiles },
+      } as RelaySnapshot["session"])
+    : owner.session;
   let snapshot: RelaySnapshot = {
     status: "ready",
     generation: 1,
     scope,
     viewer,
-    session: owner.session,
+    session,
   };
   const relay: RelayData = {
     snapshot: () => snapshot,
@@ -256,7 +266,7 @@ it("explains an unavailable runtime on a known agent", async () => {
 it("requests a read on each Info open, coalescing re-entry while one is pending", async () => {
   const { control, reads, settle, data, agent } = heldHost();
   agent.relayUrl = "wss://relay.example.test";
-  mount(control, relayAt(home).relay);
+  mount(control, relayAt(home, true).relay);
   const reenter = async () => {
     await userEvent.click(screen.getByRole("tab", { name: "Channels" }));
     expect(screen.queryByRole("region", { name: "Local agent" })).toBeNull();
@@ -264,6 +274,10 @@ it("requests a read on each Info open, coalescing re-entry while one is pending"
     await act(async () => {});
   };
   await vi.waitFor(() => expect(reads).toHaveLength(1));
+  // Both sections requested a refresh; the held read is shared.
+  expect(
+    screen.getByRole("region", { name: "Linked agent instances" }),
+  ).toHaveTextContent("Loading managed agents…");
   await reenter();
   expect(reads).toHaveLength(1);
   await settle(0, data);

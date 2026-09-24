@@ -43,7 +43,12 @@ export function createWorkSessions(
         throw new DOMException("Channel addition cancelled", "AbortError");
     };
     check();
-    const source = writer(addition);
+    // Recipe and Canvas saves share delivery, not channel-creation authority.
+    if (signal.aborted || !outbox)
+      throw new Error(
+        "The community connection cannot confirm this operation.",
+      );
+    const source = addition ? writer(true) : outbox;
     const journal = receipts ?? source;
     const existing = journal.snapshot().find((item) => item.event.id === id);
     if (!existing) {

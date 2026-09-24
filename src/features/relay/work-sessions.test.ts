@@ -841,3 +841,29 @@ it.each([true, false])(
     }
   },
 );
+
+it("confirms shared delivery without channel-creation authority while additions remain gated", async () => {
+  const test = setup(false);
+  await expect(test.service.delivered(event.id)).resolves.toBeUndefined();
+  await expect(
+    test.service.delivered(event.id, () => true, true),
+  ).rejects.toThrow(/cannot add agents/);
+  test.controller.abort();
+  await expect(test.service.delivered(event.id)).rejects.toThrow(
+    /cannot confirm/,
+  );
+});
+
+it("rejects an addition cancelled during delivery readback", async () => {
+  const test = setup();
+  test.setItems([]);
+  let active = true;
+  test.reader.read.mockImplementationOnce(async () => {
+    active = false;
+    return [event];
+  });
+  await expect(
+    test.service.delivered(event.id, () => active, true),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(test.outbox.retry).not.toHaveBeenCalled();
+});

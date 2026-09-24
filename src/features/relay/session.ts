@@ -49,6 +49,10 @@ import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
+import {
+  activeSidebarAssignment,
+  readActiveSidebarGroups,
+} from "./sidebar-personal-groups";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
@@ -897,77 +901,6 @@ export function createRelaySession(
         "A selected recipient is no longer a channel member; remove them or refresh membership",
       );
   }
-  const sidebarPreferences = createSidebarPreferencesStore(
-    async (signal?: AbortSignal) => {
-      const decode = transport?.decodeSidebarPreferences;
-      if (closed || !transport || !decode)
-        throw new Error(
-          "Saved sidebar preferences are unavailable in this host",
-        );
-      const combined = AbortSignal.any([
-        lifetime.signal,
-        AbortSignal.timeout(10_000),
-        ...(signal ? [signal] : []),
-      ]);
-      return readSidebarPreferences(
-        {
-          read: async (filters, settings) => {
-            const epoch = accessEpoch;
-            const cleared = cacheClearEpoch;
-            try {
-              return await verified.read(filters, settings);
-            } catch (error) {
-              if (
-                readErrorKind(error) !== "cancelled" ||
-                combined.aborted ||
-                epoch === accessEpoch ||
-                cleared !== cacheClearEpoch
-              )
-                throw error;
-              // Initial roster authority can cancel this account-owned read.
-              // Retry once under current access, sharing the original deadline.
-              return verified.read(filters, settings);
-            }
-          },
-        },
-        transport.viewer,
-        decode,
-        combined,
-      );
-    },
-    !!transport?.decodeSidebarPreferences,
-    notify,
-    (() => {
-      const write = transport?.writeSidebarMute;
-      return write
-        ? (intent, signal) =>
-            write(
-              intent,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-            )
-        : undefined;
-    })(),
-    (() => {
-      const write = transport?.writeSidebarSort;
-      return write
-        ? (group, mode, sectionIds, signal) =>
-            write(
-              group,
-              mode,
-              sectionIds,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-            )
-        : undefined;
-    })(),
-  );
   const workSessions = createWorkSessions(
     writes?.outbox,
     channels.queries,
@@ -1004,6 +937,116 @@ export function createRelaySession(
     signal: lifetime.signal,
     canWrite: (id) => !closed && channels.canParticipate(id),
     delivered: workSessions.delivered,
+  });
+  const sidebarPreferences = createSidebarPreferencesStore(
+    async (signal?: AbortSignal) => {
+      const decode = transport?.decodeSidebarPreferences;
+      if (closed || !transport || !decode)
+        throw new Error(
+          "Saved sidebar preferences are unavailable in this host",
+        );
+      const combined = AbortSignal.any([
+        lifetime.signal,
+        AbortSignal.timeout(10_000),
+        ...(signal ? [signal] : []),
+      ]);
+      const legacy = await readSidebarPreferences(
+        {
+          read: async (filters, settings) => {
+            const epoch = accessEpoch;
+            const cleared = cacheClearEpoch;
+            try {
+              return await verified.read(filters, settings);
+            } catch (error) {
+              if (
+                readErrorKind(error) !== "cancelled" ||
+                combined.aborted ||
+                epoch === accessEpoch ||
+                cleared !== cacheClearEpoch
+              )
+                throw error;
+              // Initial roster authority can cancel this account-owned read.
+              // Retry once under current access, sharing the original deadline.
+              return verified.read(filters, settings);
+            }
+          },
+        },
+        transport.viewer,
+        decode,
+        combined,
+      );
+      return readActiveSidebarGroups(channelKit.capability, legacy, combined);
+    },
+    !!transport?.decodeSidebarPreferences,
+    (() => {
+      const write = transport?.writeSidebarAssignment;
+      return write
+        ? activeSidebarAssignment(channelKit.capability, (intent, signal) =>
+            write(
+              intent,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            ),
+          )
+        : undefined;
+    })(),
+    (() => {
+      const write = transport?.writeSidebarStar;
+      return write
+        ? (intent, signal) =>
+            write(
+              intent,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
+    notify,
+    (() => {
+      const write = transport?.writeSidebarMute;
+      return write
+        ? (intent, signal) =>
+            write(
+              intent,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
+    (() => {
+      const write = transport?.writeSidebarSort;
+      return write
+        ? (group, mode, sectionIds, signal) =>
+            write(
+              group,
+              mode,
+              sectionIds,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
+  );
+  let groupHead: string | undefined;
+  const stopSidebarGroups = channelKit.capability.subscribe(() => {
+    const state = channelKit.capability.snapshot();
+    if (state.status !== "ready") return;
+    const head = personalGroups(state.entries)?.eventId;
+    if (head === groupHead) return;
+    groupHead = head;
+    void sidebarPreferences.queries.refresh();
   });
   const channelSetup =
     transport && writes && transport.channelKit
@@ -2017,6 +2060,7 @@ export function createRelaySession(
       }
     },
     dispose() {
+      stopSidebarGroups();
       closed = true;
       typing.dispose();
       lifetime.abort();

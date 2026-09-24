@@ -22,16 +22,18 @@ import type { OpenTarget } from "../navigation/targets";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
-  MenuItem,
+  MenuGroup,
+  MenuGroupLabel,
   MenuIcon,
+  MenuItem,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
   MenuPopup,
   MenuRoot,
   MenuTrigger,
-  MenuSubmenu,
-  MenuSubmenuTrigger,
-  MenuSubmenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary } from "../relay/contracts";
@@ -45,16 +47,19 @@ import {
   ArrowsDownUpIcon,
   DotsThreeIcon,
   PlusIcon,
+  FolderSimpleIcon,
 } from "../../shared/design-system/icons/index";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
 import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
-import { SidebarSectionIcon } from "../../bundled/channels/SidebarSectionIcon";
+import { SidebarGroupIcon } from "../../bundled/channels/SidebarGroupIcon";
+import { CreateSidebarSection } from "../../bundled/channels/CreateSidebarSection";
+import { useSidebarStartup } from "../../bundled/channels/useSidebarStartup";
+import { projectPersonalGroups } from "../relay/sidebar-personal-groups";
 import { useChannelLabels } from "../../bundled/channels/useChannelLabels";
 import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
-import { useSidebarStartup } from "../../bundled/channels/useSidebarStartup";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import {
   sidebarSections,
@@ -265,6 +270,9 @@ function ReadySidebar({
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const createChannelTrigger = useRef<HTMLButtonElement>(null);
   const startingSession = useRef(false);
+  const pendingCreate = useRef<ChannelSummary | undefined>(undefined);
+  const [creatingFor, setCreatingFor] = useState<ChannelSummary>();
+
   const [initialGroup, setInitialGroup] = useState("");
   const [kitError, setKitError] = useState("");
   const pendingChannelCreation = useSyncExternalStore(
@@ -403,19 +411,18 @@ function ReadySidebar({
     select(id);
     sidebar.toggle("channels", true);
   };
-  const displayedPreferences = groups
-    ? {
-        ...preferences.data,
-        sections: groups.groups.map((g, order) => ({
-          id: g.id,
-          name: g.name,
-          order,
-        })),
-        assignments: groups.assignments,
-        starred: preferences.data?.starred ?? [],
-        muted: preferences.data?.muted ?? [],
-      }
-    : preferences.data;
+  // The independent personal catalog remains readable when legacy preferences
+  // fail. This fallback is presentation-only: the store still gates moves until
+  // a successful retry and owns every optimistic placement when writable.
+  const displayedPreferences =
+    groups && !preferences.writable
+      ? {
+          ...preferences.data,
+          ...projectPersonalGroups(groups),
+          starred: preferences.data?.starred ?? [],
+          muted: preferences.data?.muted ?? [],
+        }
+      : preferences.data;
   const sections = startup.ready
     ? sidebarSections(
         sidebarChannels,
@@ -423,6 +430,38 @@ function ReadySidebar({
         new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
       )
     : [];
+  const focusChannelPlacement = (channelId: string) => {
+    const data = queries.sidebarPreferences.snapshot().data;
+    const sectionId = data?.assignments[channelId];
+    const sectionKey = data?.starred.includes(channelId)
+      ? "starred"
+      : sectionId
+        ? `group:${sectionId}`
+        : "channels";
+    sidebar.toggle(sectionKey, true);
+    setRowFocus(channelId);
+  };
+  const moveChannel = (
+    channelId: string,
+    operation: () => Promise<unknown>,
+  ) => {
+    const saving = operation(); // Publishes optimistic placement synchronously.
+    closeRowMenu();
+    focusChannelPlacement(channelId);
+    void saving.catch(() => {
+      // The session exposes retry even after page/menu unmount. Restore a row
+      // focus lost to rollback, but never steal focus from another control.
+      if (
+        sidebar.list.current?.isConnected &&
+        document.activeElement === document.body
+      )
+        focusChannelPlacement(channelId);
+    });
+  };
+  const assignGroup = (channelId: string, sectionId?: string) =>
+    moveChannel(channelId, () => preferences.assign(channelId, sectionId));
+  const setChannelStar = (channelId: string, starred: boolean) =>
+    moveChannel(channelId, () => preferences.setStar(channelId, starred));
   const closeSectionMenu = useCallback(() => setSectionMenu(undefined), []);
   const setSectionSort = (key: string, mode: "alpha" | "recent") => {
     // The session applies the choice immediately and owns rollback/retry state.
@@ -437,7 +476,7 @@ function ReadySidebar({
   };
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
-  const rowActions = (channel: ChannelSummary) => {
+  const rowActions = (channel: ChannelSummary, sectionKey: string) => {
     const actions: ReactNode[] = [];
     if (
       sessionsEnabled &&
@@ -455,6 +494,98 @@ function ReadySidebar({
         >
           New session
         </MenuItem>,
+      );
+    }
+    if (
+      preferences.writable &&
+      preferences.starWritable &&
+      preferences.data &&
+      channel.channelType !== "dm" &&
+      channel.channelType !== "forum"
+    ) {
+      const currentSectionId = sectionKey.startsWith("group:")
+        ? sectionKey.slice("group:".length)
+        : undefined;
+      const starred = sectionKey === "starred";
+      if (actions.length) actions.push(<MenuSeparator key="group-actions" />);
+      actions.push(
+        <MenuSubmenu key="move-channel">
+          <MenuSubmenuTrigger>
+            <MenuIcon>
+              <FolderSimpleIcon size={14} />
+            </MenuIcon>
+            Move channel
+          </MenuSubmenuTrigger>
+          <MenuSubmenuPopup
+            aria-label={`Move ${channel.name} to section`}
+            // The root restores by channel identity after relocation;
+            // a nested popup must not refocus its retired trigger.
+            finalFocus={false}
+          >
+            <MenuGroup>
+              <MenuGroupLabel>Move to…</MenuGroupLabel>
+            </MenuGroup>
+            <MenuRadioGroup
+              value={
+                starred
+                  ? "starred"
+                  : currentSectionId
+                    ? `group:${currentSectionId}`
+                    : "channels"
+              }
+              onValueChange={(destination) => {
+                if (destination === "starred")
+                  void setChannelStar(channel.id, !starred);
+                else {
+                  const groupId = destination.slice("group:".length);
+                  void assignGroup(
+                    channel.id,
+                    groupId === currentSectionId ? undefined : groupId,
+                  );
+                }
+              }}
+            >
+              <MenuRadioItem value="starred" closeOnClick={false}>
+                <MenuIcon>★</MenuIcon>
+                Starred
+              </MenuRadioItem>
+              {preferences.data?.sections.map((group) => (
+                <MenuRadioItem
+                  key={group.id}
+                  value={`group:${group.id}`}
+                  closeOnClick={false}
+                >
+                  {group.icon && (
+                    <MenuIcon>
+                      <SidebarGroupIcon icon={group.icon} session={queries} />
+                    </MenuIcon>
+                  )}
+                  {group.name}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+            <MenuSeparator />
+            <MenuItem
+              onClick={() => {
+                pendingCreate.current = channel;
+              }}
+            >
+              <MenuIcon>＋</MenuIcon>Create new…
+            </MenuItem>
+            {(starred || currentSectionId) && (
+              <MenuItem
+                closeOnClick={false}
+                onClick={() => {
+                  if (starred) void setChannelStar(channel.id, false);
+                  else void assignGroup(channel.id);
+                }}
+              >
+                Remove from{" "}
+                {sections.find((section) => section.key === sectionKey)?.title}
+              </MenuItem>
+            )}
+          </MenuSubmenuPopup>
+        </MenuSubmenu>,
       );
     }
     const muteable =
@@ -524,15 +655,23 @@ function ReadySidebar({
     setReadWrite(undefined);
     closeMenu();
   }, [closeMenu]);
+  const rowMenuClosed = useCallback((channelId: string) => {
+    if (pendingCreate.current?.id === channelId) {
+      setCreatingFor(pendingCreate.current);
+      pendingCreate.current = undefined;
+    }
+  }, []);
   const rowMenuFinalFocus = useCallback(
     (channelId: string) =>
-      startingSession.current
-        ? (document
-            .getElementById("new-session-prompt")
-            ?.querySelector<HTMLElement>('[role="textbox"]') ?? false)
-        : (sidebar.list.current?.querySelector<HTMLButtonElement>(
-            `[data-channel-id="${CSS.escape(channelId)}"]`,
-          ) ?? false),
+      pendingCreate.current
+        ? false
+        : startingSession.current
+          ? (document
+              .getElementById("new-session-prompt")
+              ?.querySelector<HTMLElement>('[role="textbox"]') ?? false)
+          : (sidebar.list.current?.querySelector<HTMLButtonElement>(
+              `[data-channel-id="${CSS.escape(channelId)}"]`,
+            ) ?? false),
     [sidebar.list],
   );
   useLayoutEffect(() => {
@@ -601,6 +740,26 @@ function ReadySidebar({
                 });
               }
             }
+          }}
+        />
+      )}
+      {creatingFor && (
+        <CreateSidebarSection
+          channelName={creatingFor.name}
+          maxLength={preferences.data?.groupSource === "personal" ? 120 : 256}
+          create={(section) => {
+            // The modal can outlive the snapshot that admitted its menu. Check
+            // the live gate before handing its draft to the optimistic store.
+            if (!queries.sidebarPreferences.writable) return false;
+            moveChannel(creatingFor.id, () =>
+              preferences.createAndAssign(creatingFor.id, section),
+            );
+            setCreatingFor(undefined);
+            return true;
+          }}
+          close={() => {
+            focusChannelPlacement(creatingFor.id);
+            setCreatingFor(undefined);
           }}
         />
       )}
@@ -691,7 +850,7 @@ function ReadySidebar({
                         aria-hidden="true"
                       />
                       {section.icon && (
-                        <SidebarSectionIcon
+                        <SidebarGroupIcon
                           icon={section.icon}
                           session={queries}
                         />
@@ -853,7 +1012,7 @@ function ReadySidebar({
                         sessions?.some((child) => child.id === current?.id)
                           ? current?.id
                           : undefined;
-                      const actions = rowActions(channel);
+                      const actions = rowActions(channel, section.key);
                       const menuEnabled = actions.length > 0;
                       const menuOpen =
                         menuEnabled &&
@@ -902,6 +1061,7 @@ function ReadySidebar({
                             ) : undefined
                           }
                           onCloseMenu={closeRowMenu}
+                          onMenuClosed={rowMenuClosed}
                           menuFinalFocus={rowMenuFinalFocus}
                         />
                       );
@@ -909,17 +1069,14 @@ function ReadySidebar({
                   </details>
                 );
               })}
-              {list.status === "loading" && !list.channels.length && (
-                <p className={styles.empty}>Loading your channels…</p>
+              {!startup.ready && (
+                <p className={styles.empty} role="status">
+                  Loading your sidebar…
+                </p>
               )}
               {list.status === "error" && (
                 <p role="alert" className={styles.empty}>
                   {list.error}
-                </p>
-              )}
-              {!startup.ready && (
-                <p className={styles.empty} role="status">
-                  Loading your sidebar…
                 </p>
               )}
               {startup.ready && list.status === "ready" && !channels.length && (
@@ -987,6 +1144,42 @@ function ReadySidebar({
                     Dismiss
                   </Button>
                 </ToastNotice>
+              ))}
+            {preferences.moves
+              ?.filter((move) => !move.pending)
+              .map((move) => (
+                <div
+                  key={move.id}
+                  className={styles.preferenceNotice}
+                  role="alert"
+                >
+                  <p>
+                    Couldn’t save the move for{" "}
+                    {channels.find(({ id }) => id === move.channelId)?.name ??
+                      "this channel"}
+                    . {move.error}
+                  </p>
+                  <p>
+                    The previous placement is shown. A partial save may already
+                    exist on the relay.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      moveChannel(move.channelId, () =>
+                        preferences.retryMove(move.channelId),
+                      )
+                    }
+                  >
+                    Retry move
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => preferences.dismissMoveError(move.channelId)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
               ))}
             {startup.ready && preferences.status === "error" ? (
               <ToastNotice

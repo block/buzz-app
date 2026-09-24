@@ -1,4 +1,4 @@
-import { useIdentityNames } from "../identity-names/react";
+import { useChannelIdentityNames } from "../identity-names/react";
 import { useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import styles from "./TypingIndicator.module.css";
@@ -17,7 +17,7 @@ export function TypingIndicator({
     session.typing.subscribe,
     session.typing.snapshot,
   );
-  const resolveName = useIdentityNames(session.names);
+  const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,

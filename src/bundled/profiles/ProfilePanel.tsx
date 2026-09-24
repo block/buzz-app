@@ -3,7 +3,7 @@ import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
-import { useIdentityNames } from "../../features/identity-names/react";
+import { useChannelIdentityNames } from "../../features/identity-names/react";
 import {
   PresenceIndicator,
   usePresenceStatus,
@@ -123,7 +123,7 @@ function ProfileDetails({
     }
   }
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
-  const identityName = useIdentityNames(session.names);
+  const identityName = useChannelIdentityNames(session, context?.channelId);
   const name = identityName(pubkey, profile?.name ?? "Unknown profile");
   const activity = activityTarget(pubkey, context?.channelId);
   const picture = profile?.picture
@@ -256,6 +256,8 @@ function ProfileDetails({
                 navigation={navigation}
                 communityOrigin={communityOrigin}
                 viewer={viewer}
+                control={control}
+                scope={scope}
               />
             )}
           </div>

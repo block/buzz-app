@@ -40,6 +40,8 @@ export type Profile = Readonly<{
   about?: string;
   /** Self-declared display hint, not proof of ownership, membership or authority. */
   isAgent?: true;
+  /** Owner named by the profile auth tag; display metadata, never authorization. */
+  ownerPubkey?: string;
 }>;
 export type Attachment = Readonly<{
   url: string;

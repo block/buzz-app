@@ -1,4 +1,4 @@
-import { useIdentityNames } from "../../features/identity-names/react";
+import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
@@ -43,7 +43,7 @@ export function ActivityAccessory({
         .ensure(keys.split(":"), "background")
         .catch(() => {});
   }, [session.profiles, keys]);
-  const resolveName = useIdentityNames(session.names);
+  const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useMemo(
     () => selectProfiles(session.profiles, keys ? keys.split(":") : []),
     [session.profiles, keys],

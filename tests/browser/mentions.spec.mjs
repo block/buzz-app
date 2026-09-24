@@ -38,11 +38,9 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         name: "Mention a member or agent",
       });
       await expect(
-        picker.getByRole("button", { name: `Honey ${key}`, exact: true }),
+        picker.getByRole("button", { name: new RegExp(key) }),
       ).toBeVisible();
-      await picker
-        .getByRole("button", { name: `Honey ${key}`, exact: true })
-        .click();
+      await picker.getByRole("button", { name: new RegExp(key) }).click();
     };
     const order = () =>
       page
@@ -54,48 +52,11 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     const input = page.getByRole("textbox", { name: "Message #General" });
     await choose(keys.first);
     await expect(input.locator(".inline-chip")).toHaveText("@Honey");
-    await page.emulateMedia({ reducedMotion: "no-preference" });
-    await page.evaluate(() => {
-      window.qualifierReveals = [];
-      document.addEventListener("animationstart", (event) => {
-        if (event.animationName !== "inline-chip-qualifier-reveal") return;
-        window.qualifierReveals.push(event.target);
-        for (const animation of event.target.getAnimations()) {
-          animation.pause();
-          animation.currentTime = 0;
-        }
-      });
-    });
     await choose(keys.second);
-    const labels = [keys.first, keys.second].map(
-      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
-    );
+    const labels = ["@Honey", "@Honey (agent)"];
     await expect(input.locator(".inline-chip")).toHaveText(labels);
-    await expect
-      .poll(() => page.evaluate(() => window.qualifierReveals.length))
-      .toBe(1);
-    const widths = await input
-      .locator(".inline-chip-qualifier")
-      .first()
-      .evaluate((element) => {
-        const animation = element.getAnimations()[0];
-        const start = element.getBoundingClientRect().width;
-        const duration = animation.effect.getTiming().duration;
-        animation.currentTime = duration / 2;
-        const middle = element.getBoundingClientRect().width;
-        animation.finish();
-        return { start, middle, end: element.getBoundingClientRect().width };
-      });
-    expect(widths.start).toBeLessThan(widths.middle);
-    expect(widths.middle).toBeLessThan(widths.end);
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await expect(input.locator(".inline-chip-qualifier").first()).toHaveCSS(
-      "animation-name",
-      "none",
-    );
-    await expect(
-      input.locator(".inline-chip-qualifier").last(),
-    ).not.toHaveAttribute("data-reveal");
+    // The complete choice set already qualifies the agent before selection.
+    await expect(input.locator("[data-reveal]")).toHaveCount(0);
     // Copy serializes authored source, not the visible namesake qualifiers.
     await input.focus();
     await input.press("ControlOrMeta+a");
@@ -129,10 +90,6 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(input).toHaveJSProperty("value", "@Honey @Honey ");
     await expect(input.locator(".inline-chip")).toHaveText(labels);
     await expect(input.locator("[data-reveal]")).toHaveCount(0);
-    await expect(input.locator(".inline-chip-qualifier").first()).toHaveCSS(
-      "animation-name",
-      "none",
-    );
     // Undo restores the former selected range. Continue the original typing journey at its end.
     await input.evaluate((element) =>
       element.setSelectionRange(element.value.length, element.value.length),
@@ -398,9 +355,7 @@ test("selected mentions inside code remain visible through draft restore and cha
       window.mentionFixture.second,
     ]);
     const input = page.getByRole("textbox");
-    const labels = keys.map(
-      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
-    );
+    const labels = ["@Honey", "@Honey (agent)"];
     for (const reply of [false, true]) {
       await input.fill("` `");
       await input.evaluate((element) => element.setSelectionRange(1, 1));
@@ -410,7 +365,7 @@ test("selected mentions inside code remain visible through draft restore and cha
           .click();
         await page
           .getByRole("region", { name: "Mention a member or agent" })
-          .getByRole("button", { name: `Honey ${key}`, exact: true })
+          .getByRole("button", { name: new RegExp(key) })
           .click();
       }
       const source = "`@Honey @Honey  `";
@@ -501,15 +456,48 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
         .getByRole("button", { name: new RegExp(key) })
         .tap();
     };
+    await page.evaluate(() => window.mentionFixture.collide(false));
     await choose(keys[0]);
     await choose(keys[1]);
     const input = page.getByRole("textbox");
     const chips = input.locator(".inline-chip");
-    const labels = keys.map(
-      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
-    );
-    await expect(chips).toHaveText(labels);
+    const labels = keys.map((key) => `@Honey · ${npubEncode(key).slice(-4)}`);
+    await expect(chips).toHaveText(["@Honey", "@Other Honey"]);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.evaluate(() => {
+      window.qualifierReveals = [];
+      document.addEventListener("animationstart", (event) => {
+        if (event.animationName !== "inline-chip-qualifier-reveal") return;
+        window.qualifierReveals.push(event.target);
+        for (const animation of event.target.getAnimations()) {
+          animation.pause();
+          animation.currentTime = 0;
+        }
+      });
+    });
     await page.evaluate(() => window.mentionFixture.collide(true));
+    await expect
+      .poll(() => page.evaluate(() => window.qualifierReveals.length))
+      .toBe(2);
+    const widths = await input
+      .locator(".inline-chip-qualifier")
+      .first()
+      .evaluate((element) => {
+        const animation = element.getAnimations()[0];
+        const start = element.getBoundingClientRect().width;
+        const duration = animation.effect.getTiming().duration;
+        animation.currentTime = duration / 2;
+        const middle = element.getBoundingClientRect().width;
+        animation.finish();
+        return { start, middle, end: element.getBoundingClientRect().width };
+      });
+    expect(widths.start).toBeLessThan(widths.middle);
+    expect(widths.middle).toBeLessThan(widths.end);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(input.locator(".inline-chip-qualifier").first()).toHaveCSS(
+      "animation-name",
+      "none",
+    );
     await expect(chips).toHaveText(labels);
     for (const chip of await chips.all()) {
       await expect(chip).toBeVisible();
@@ -525,11 +513,11 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
     });
     await input.evaluate((el) => el.setSelectionRange(7, 13));
     await input.press("Backspace");
-    await expect(chips).toHaveText(["@Honey"]);
+    await expect(chips).toHaveText([labels[0]]);
     await choose(keys[1]);
     await expect(chips).toHaveText(labels);
     await page.evaluate(() => window.mentionFixture.collide(false));
-    await expect(chips).toHaveText(labels);
+    await expect(chips).toHaveText(["@Honey", "@Other Honey"]);
     await expect(input).toHaveJSProperty("value", "@Honey @Honey  ");
     await page.getByRole("button", { name: "Send message", exact: true }).tap();
     await expect

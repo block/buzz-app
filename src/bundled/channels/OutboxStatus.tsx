@@ -49,6 +49,7 @@ export function OutboxStatus({
               }
             </span>{" "}
             {!isWorkflowOperation(item.event) &&
+              !item.guarded &&
               (item.delivery === "failed" || item.delivery === "unknown") && (
                 <Button
                   type="button"
@@ -56,6 +57,13 @@ export function OutboxStatus({
                 >
                   Retry
                 </Button>
+              )}{" "}
+            {item.guarded &&
+              (item.delivery === "failed" || item.delivery === "unknown") && (
+                <span>
+                  Retry from the channel or agent profile after checking
+                  membership.
+                </span>
               )}{" "}
             {item.delivery !== "sending" && (
               <Button

@@ -135,3 +135,15 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+
+.memoryEntry {
+  overflow-wrap: anywhere;
+}
+.memoryEntry summary {
+  cursor: pointer;
+}
+.memoryBody {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}

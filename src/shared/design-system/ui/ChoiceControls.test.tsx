@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { useState } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { Select } from "./Select";
@@ -230,7 +230,7 @@ it("read-only and disabled options cannot change the selected value", async () =
   expect(change).not.toHaveBeenCalled();
 });
 
-it.each(["inline", "field"] as const)(
+it.each(["inline", "field", "compact"] as const)(
   "preserves an explicit empty-string choice in the %s Select",
   async (variant) => {
     const user = userEvent.setup();
@@ -291,4 +291,50 @@ it("shows the placeholder when an empty value has no matching option", async () 
   await user.click(trigger);
   await user.click(await screen.findByRole("option", { name: "One" }));
   expect(trigger).toHaveTextContent("One");
+});
+
+it("keeps compact choices labelled and opens by click and keyboard", async () => {
+  const user = userEvent.setup();
+  function Example() {
+    const [value, setValue] = useState("one");
+    return (
+      <Select
+        label="Assignee for Review"
+        variant="compact"
+        value={value}
+        valueLabel={value === "one" ? "First" : "Second"}
+        valueTitle={`Identity: ${value}`}
+        groups={[{ label: "", options }]}
+        onValueChange={setValue}
+      />
+    );
+  }
+  render(<Example />);
+  const trigger = screen.getByRole("combobox", { name: "Assignee for Review" });
+  expect(screen.getByText("Assignee for Review")).toHaveClass("sr-only");
+  expect(trigger).toHaveAttribute("data-size", "sm");
+  expect(trigger).toHaveAttribute("data-variant", "ghost");
+  await user.click(trigger);
+  await user.click(await screen.findByRole("option", { name: "Two" }));
+  expect(trigger).toHaveTextContent("Second");
+  expect(trigger.querySelector("[title]")).toHaveAttribute(
+    "title",
+    "Identity: two",
+  );
+  expect(trigger).toHaveFocus();
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Two" })).toHaveFocus(),
+  );
+  await user.keyboard("{Home}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "One" })).toHaveFocus(),
+  );
+  await user.keyboard("{Enter}");
+  expect(trigger).toHaveTextContent("First");
+  await user.keyboard("{ArrowDown}");
+  await screen.findByRole("listbox");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
 });

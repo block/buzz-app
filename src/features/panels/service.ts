@@ -25,7 +25,7 @@ export type ChannelPanelContext = Readonly<{
 export type ChannelLauncherProps = {
   context: ChannelPanelContext;
   pressed: boolean;
-  /** Toggles this exact contribution in the page-owned bottom drawer. */
+  /** Toggles this exact contribution in the page-owned channel panel. */
   toggle(target: string): void;
   /** False after this page binding or exact contribution is retired. */
   available(): boolean;
@@ -45,6 +45,8 @@ export type Panel = Readonly<{
   launcher?: Readonly<{ icon: string; target: string }>;
   // Optional channel-header launcher. The page supplies context and owns placement.
   channelLauncher?: ComponentType<ChannelLauncherProps>;
+  /** Channel launchers default to the bottom drawer; side reuses the companion column. */
+  channelPlacement?: "bottom" | "side";
   component: ComponentType<PanelProps>;
 }>;
 export type RegisteredPanel = Contribution<Panel>;
@@ -101,6 +103,12 @@ export class PanelsService extends Service implements Panels {
       typeof panel.channelLauncher !== "function"
     )
       throw new Error("A channel launcher needs a component");
+    if (
+      panel.channelPlacement !== undefined &&
+      panel.channelPlacement !== "bottom" &&
+      panel.channelPlacement !== "side"
+    )
+      throw new Error("A channel placement must be bottom or side");
     this.panels.register(this.ctx, {
       ...panel,
       ...(panel.launcher && { launcher: Object.freeze({ ...panel.launcher }) }),

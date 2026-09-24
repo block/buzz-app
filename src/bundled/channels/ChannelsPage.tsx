@@ -969,7 +969,7 @@ function ChannelWorkspace({
   );
   return (
     <div
-      className={`${styles.board} ${!composingMessage && (showingSettings || panel || showingThread || companion) ? styles.withPanel : ""}`}
+      className={`${styles.board} ${!composingMessage && (showingSettings || panel || showingThread || companion || drawer.side) ? styles.withPanel : ""}`}
       style={
         {
           "--channel-sidebar-width": `${sidebar.width}px`,
@@ -1450,7 +1450,11 @@ function ChannelWorkspace({
       )}
       {!composingMessage &&
         !showingMediaReview &&
-        (showingSettings || panel || showingThread || companion) && (
+        (showingSettings ||
+          panel ||
+          showingThread ||
+          companion ||
+          drawer.side) && (
           <div className={styles.panelStack}>
             {showingSettings && (
               <ChannelSettingsPanel
@@ -1604,6 +1608,11 @@ function ChannelWorkspace({
                   close={close}
                   closeLabel="Close channel panel"
                 />
+              </div>
+            )}
+            {drawer.side && (
+              <div className={styles.retainedPanel} hidden={showingSettings}>
+                {drawer.side}
               </div>
             )}
             {companion && (

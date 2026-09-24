@@ -74,10 +74,33 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
     expect(await page.evaluate(() => window.agentModelsFixture.calls)).toEqual(
       [],
     );
+    // Only this geometry check opts into a catalog larger than the popup.
+    await page.evaluate(() => window.agentModelsFixture.mode("many"));
     await browse.click();
     await expect(
       page.getByRole("option", { name: /Friendly Model/ }),
     ).toBeVisible();
+    const list = page.getByRole("listbox");
+    await expect(page.getByRole("option")).toHaveCount(21);
+    const bounds = await list.evaluate((element) => ({
+      height: element.clientHeight,
+      content: element.scrollHeight,
+    }));
+    expect(bounds.height).toBeLessThanOrEqual(320);
+    expect(bounds.content).toBeGreaterThan(bounds.height);
+    const lastModel = page.getByRole("option", { name: /Catalog Model 20/ });
+    await lastModel.scrollIntoViewIfNeeded();
+    await expect
+      .poll(() => list.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    await search.fill("Catalog Model 20");
+    await expect(lastModel).toBeVisible();
+    await expect(
+      page.getByRole("option", { name: /Friendly Model/ }),
+    ).toHaveCount(0);
+    await search.press("Escape");
+    await browse.click();
+    await page.evaluate(() => window.agentModelsFixture.mode("success"));
     await expect(model).toHaveValue("custom.keep");
     await page.getByRole("option", { name: /Friendly Model/ }).click();
     await expect(model).toHaveValue("catalog.schema.real-model");

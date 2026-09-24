@@ -59,14 +59,17 @@ const test = base.extend({
       releaseDirectory = () => {};
     let backgroundReady = Promise.resolve(),
       releaseBackground = () => {};
-    const socket = brokerSocket(async (event) => {
-      if (hold)
+    const publish = async (event) => {
+      // The app can publish read state while a message is in flight. Only hold
+      // the message: otherwise a second publication replaces its release gate.
+      if (hold && event.kind === 9)
         await new Promise((resolve) => {
           release = resolve;
         });
       events.push(event);
       return "saved";
-    });
+    };
+    const socket = brokerSocket(publish);
     const broker = relayBrokerPlugin({
       relayUrl: fixtureRelayUrl,
       communityAliases: fixtureAliases,
@@ -229,6 +232,8 @@ const test = base.extend({
         holdDelivery: () => {
           hold = true;
         },
+        publishReadState: () =>
+          publish(sign(key, 30078, [["d", "fixture-read-state"]])),
         confirm: () => {
           hold = false;
           release();
@@ -564,6 +569,8 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     .poll(() => app.publications.filter((event) => event.kind === 9).length)
     .toBe(2);
   await expect(sidebarDm).toBeVisible();
+  // A concurrent non-message write must not replace the held message's gate.
+  await app.publishReadState();
   app.confirm();
   await expect(
     page.locator("[data-message-id]", { hasText: "Another message" }),

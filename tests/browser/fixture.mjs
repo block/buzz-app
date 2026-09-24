@@ -896,7 +896,7 @@ export const test = base.extend({
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
-            writeKinds: sessionChannels.length ? [9, 9007] : [9],
+            writeKinds: sessionChannels.length ? [9, 9007, 30315] : [9, 30315],
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });

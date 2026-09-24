@@ -1523,6 +1523,30 @@ async function communityAdmin(respond) {
   };
 }
 
+test("invite claim forwards relay-shaped v1 and v2 codes", async () => {
+  const { h, post } = await communityAdmin((call) =>
+    call.url.endsWith("/api/invites/claim")
+      ? Response.json({ status: "joined" })
+      : new Response(null, { status: 404 }),
+  );
+  try {
+    for (const code of ["v2.mvQwZTr9C31MUkGj_-", "eyJjIjoxfQ.bWFj"]) {
+      const response = await post("claim", { code });
+      expect(response.status).toBe(200);
+      expect(h.calls.at(-1)).toMatchObject({
+        url: `${fixtureRelayUrl}/api/invites/claim`,
+        body: { code },
+      });
+    }
+    const calls = h.calls.length;
+    for (const code of ["", "a b", "a/b", "x".repeat(257)])
+      expect((await post("claim", { code })).status).toBe(400);
+    expect(h.calls).toHaveLength(calls);
+  } finally {
+    await h.close();
+  }
+});
+
 test("invite mint forwards only bounded ttl/max_uses and returns the relay invite", async () => {
   const minted = {
     code: "abc",

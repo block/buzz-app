@@ -1411,7 +1411,8 @@ export function relayBrokerPlugin({
           if (claim || policy) {
             if (
               typeof filters?.code !== "string" ||
-              !/^[a-zA-Z0-9_-]{1,256}$/.test(filters.code)
+              // Relay codes are base64url segments joined by "." (v1 `payload.mac`, v2 `v2.secret`).
+              !/^[a-zA-Z0-9._-]{1,256}$/.test(filters.code)
             )
               return json(res, 400, { error: "Invalid invite code" });
             filters = policy

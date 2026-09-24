@@ -444,6 +444,7 @@ it("sends channel messages and thread replies through real form and keyboard eve
     "channel",
     "channel draft",
     [],
+    [],
   );
   expect(h.messages.reply).not.toHaveBeenCalled();
   h.retarget({ threadRootId: "root" });
@@ -458,6 +459,7 @@ it("sends channel messages and thread replies through real form and keyboard eve
     "channel",
     "root",
     "thread draft\n",
+    [],
     [],
   );
   expect(h.messages.send).toHaveBeenCalledTimes(1);
@@ -568,7 +570,7 @@ it.each([undefined, "root"])(
     h.fill("@Honey prose only");
     h.submit();
     expect(
-      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
+      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.[root ? 3 : 2],
     ).toEqual([]);
     h.fill("Please help ");
     await h.user.click(screen.getByRole("button", { name: "First Honey" }));
@@ -587,7 +589,7 @@ it.each([undefined, "root"])(
     ).toHaveLength(2);
     h.submit();
     expect(
-      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
+      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.[root ? 3 : 2],
     ).toEqual([first.pubkey, second.pubkey]);
     expect(h.input()).toHaveValue("");
     h.unmount();
@@ -595,7 +597,7 @@ it.each([undefined, "root"])(
     h.fill("@Honey typed after send");
     h.submit();
     expect(
-      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
+      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.[root ? 3 : 2],
     ).toEqual([]);
   },
 );
@@ -670,6 +672,7 @@ it("restores live profile avatars with one removal control per exact recipient",
     "channel",
     "@Honey @Honey @Honey ",
     [first.pubkey],
+    [],
   );
   expect(
     screen.queryByRole("region", { name: "Explicit mentions" }),
@@ -698,7 +701,7 @@ it.each([
     h.fill(`${prefix}@Honey ${suffix}`);
     expect(h.input().querySelector(".inline-chip")).toBeNull();
     h.submit();
-    expect(h.messages.send.mock.calls.at(-1)?.at(-1)).toEqual([]);
+    expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([]);
     h.fill(`${prefix}${suffix}`);
     h.input().setSelectionRange(prefix.length, prefix.length);
     act(() => {
@@ -720,10 +723,12 @@ it.each([
     h = mount();
     check();
     h.submit();
-    expect(h.messages.send).toHaveBeenCalledWith("channel", text, [
-      first.pubkey,
-      second.pubkey,
-    ]);
+    expect(h.messages.send).toHaveBeenCalledWith(
+      "channel",
+      text,
+      [first.pubkey, second.pubkey],
+      [],
+    );
   },
 );
 
@@ -765,7 +770,7 @@ it.each([undefined, "root"])(
     ).toBeVisible();
     h.submit();
     expect(
-      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
+      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.[root ? 3 : 2],
     ).toEqual([first.pubkey]);
   },
 );
@@ -803,10 +808,12 @@ it("qualifies both namesakes retroactively without changing source and removes q
   expect(h.input()).toHaveValue("@Honey @Honey  ");
   expect(h.input().textContent).not.toContain("npub");
   h.submit();
-  expect(h.messages.send).toHaveBeenCalledWith("channel", "@Honey @Honey  ", [
-    first.pubkey,
-    first.pubkey,
-  ]);
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    "@Honey @Honey  ",
+    [first.pubkey, first.pubkey],
+    [],
+  );
 });
 
 it.each([0, 7])(
@@ -845,7 +852,7 @@ it("replacing an inline mention with ordinary prose removes notification intent"
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   h.fill("no recipient now");
   h.submit();
-  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([]);
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   expect(
     within(h.input()).getByRole("img", { name: "Person Honey" }),
@@ -856,7 +863,7 @@ it("replacing an inline mention with ordinary prose removes notification intent"
   });
   expect(within(h.input()).queryByRole("img")).not.toBeInTheDocument();
   h.submit();
-  expect(h.messages.send.mock.calls[1]?.at(-1)).toEqual([]);
+  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([]);
 });
 
 it("ambiguous namesake replacement cannot notify the wrong remaining identity", async () => {
@@ -865,7 +872,7 @@ it("ambiguous namesake replacement cannot notify the wrong remaining identity", 
   await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
   h.fill("@Honey help");
   h.submit();
-  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([]);
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
 });
 
 it("serializes tool commands in one React batch and rejects malformed recipients", () => {
@@ -886,6 +893,7 @@ it("serializes tool commands in one React batch and rejects malformed recipients
     "channel",
     "Hi there @Honey and @Honey ",
     [first.pubkey, second.pubkey],
+    [],
   );
 });
 
@@ -934,6 +942,7 @@ it("keeps custom emoji text readable and sends repeated shortcodes unchanged", (
     "channel",
     ":party::party:",
     [],
+    [],
   );
 });
 
@@ -948,6 +957,7 @@ it("renders a leading custom emoji inline without changing trailing text", () =>
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
     ":bufo:lakjsdlkjflakjsdf",
+    [],
     [],
   );
 });
@@ -1070,7 +1080,9 @@ for (const threadRootId of [undefined, "f".repeat(64)])
       const send = threadRootId ? h.messages.reply : h.messages.send;
       expect(send).toHaveBeenCalledOnce();
       expect(retry).not.toHaveBeenCalled();
-      expect(send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+      expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([
+        first.pubkey,
+      ]);
       // Native evidence now shares the ordinary remember-agent classification.
       expect(h.input().value).toBe("@Honey ");
     } finally {
@@ -1306,12 +1318,14 @@ it.each(
         root,
         removeMention ? "Keep going @Honey " : "Keep going ",
         [first.pubkey],
+        [],
       );
     else
       expect(view.messages.send).toHaveBeenCalledExactlyOnceWith(
         "channel",
         removeMention ? "Keep going @Honey " : "Keep going ",
         [first.pubkey],
+        [],
       );
     expect(session.workSessions.addAgents).not.toHaveBeenCalled();
   },
@@ -1357,9 +1371,12 @@ it("routes to the avatar choice and lets an explicit mention override it", async
   );
   await view.user.type(view.input(), "Hello");
   await view.user.keyboard("{Enter}");
-  expect(view.messages.send).toHaveBeenLastCalledWith("channel", "Hello", [
-    second.pubkey,
-  ]);
+  expect(view.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    "Hello",
+    [second.pubkey],
+    [],
+  );
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Change agent: Fizz" }),
@@ -1372,6 +1389,7 @@ it("routes to the avatar choice and lets an explicit mention override it", async
       "channel",
       expect.any(String),
       [first.pubkey],
+      [],
     ),
   );
   await waitFor(() =>
@@ -1388,9 +1406,12 @@ it("routes to the avatar choice and lets an explicit mention override it", async
   expect(view.input().querySelector(".inline-chip")).toBeNull();
   view.submit();
   await waitFor(() =>
-    expect(view.messages.send).toHaveBeenLastCalledWith("channel", "@Honey ", [
-      second.pubkey,
-    ]),
+    expect(view.messages.send).toHaveBeenLastCalledWith(
+      "channel",
+      "@Honey ",
+      [second.pubkey],
+      [],
+    ),
   );
   expect(session.workSessions.addAgents).not.toHaveBeenCalled();
 });
@@ -1488,7 +1509,7 @@ it.each([undefined, "root"])(
     h.submit();
     expect(h.input()).toHaveValue("@Honey @Honey @Honey hello");
     h.submit();
-    expect(send.mock.calls.at(-1)?.at(-1)).toEqual([
+    expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([
       first.pubkey,
       second.pubkey,
       second.pubkey,
@@ -1514,7 +1535,9 @@ it.each([undefined, "root"])(
     h.retarget({ channelId: "channel" });
     expect(h.input()).toHaveValue("@Honey ");
     h.submit();
-    expect(send.mock.calls.at(-1)?.at(-1)).toEqual([second.pubkey]);
+    expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([
+      second.pubkey,
+    ]);
     h.input().setSelectionRange(0, 6);
     act(() => {
       h.commands().insertText("Honey");
@@ -1522,7 +1545,7 @@ it.each([undefined, "root"])(
     expect(h.input()).toHaveValue("Honey ");
     expect(within(h.input()).queryByRole("img")).not.toBeInTheDocument();
     h.submit();
-    expect(send.mock.calls.at(-1)?.at(-1)).toEqual([]);
+    expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([]);
     expect(h.input()).toHaveValue("");
   },
 );
@@ -1540,7 +1563,7 @@ it("opt-out changes future prefills, not the current draft, and re-enable revive
   setRememberAgentsPreference(false);
   expect(h.input()).toHaveValue("@Honey ");
   h.submit();
-  expect(h.messages.send.mock.calls.at(-1)?.at(-1)).toEqual([second.pubkey]);
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([second.pubkey]);
   expect(h.input()).toHaveValue("");
   setRememberAgentsPreference(true);
   expect(h.input()).toHaveValue("");
@@ -1645,7 +1668,7 @@ it("keeps inline recipient identity and source stable through directory collisio
   act(() => h.commands().insertText(""));
   expect(labels()).toEqual(["@Honey"]);
   h.submit();
-  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
   h.unmount();
   names.dispose();
 });

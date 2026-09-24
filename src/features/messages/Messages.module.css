@@ -1076,6 +1076,11 @@ button.mediaPreview {
   color: var(--text-inverse);
 }
 
+.composer[data-file-drag] {
+  border-color: var(--border-focus);
+  background: var(--surface-inset);
+}
+
 .messageActions {
   @apply popover-surface;
   display: flex;

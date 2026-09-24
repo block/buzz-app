@@ -61,6 +61,7 @@ import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
+import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
@@ -1098,7 +1099,13 @@ function ChannelWorkspace({
         setWidth={sidebar.setWidth}
       />
       <Panel as="article" aria-label="Conversation">
-        <div className={styles.conversation}>
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: file-drop fallback; the composer also provides a keyboard-accessible picker. */}
+        <div
+          className={styles.conversation}
+          data-attachment-drop-zone=""
+          onDragOver={rejectUnhandledFileDrop}
+          onDrop={rejectUnhandledFileDrop}
+        >
           {drafting && current ? (
             <NewSessionView parentName={current.name}>
               <NewSessionComposer

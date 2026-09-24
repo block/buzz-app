@@ -234,7 +234,7 @@ test("media proxy returns generic files as neutralized authenticated downloads",
     );
     expect(response.headers.get("content-disposition")).toBe("attachment");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(response.headers.get("accept-ranges")).toBeNull();
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
     expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
     expect(h.calls).toHaveLength(1);
   } finally {
@@ -375,22 +375,107 @@ test("media proxy keeps raster images inline with exact bytes", async () => {
   }
 });
 
-test("media proxy rejects oversized generic files", async () => {
-  const h = await harness(
-    () =>
-      new Response(null, {
-        headers: {
-          "Content-Type": "application/zip",
-          "Content-Length": String(20 * 1024 * 1024 + 1),
-        },
-      }),
+test.each([
+  ["application/zip", 100],
+  ["image/png", 50],
+  ["image/gif", 10],
+  ["video/mp4", 500],
+])(
+  "media proxy rejects %s above its %i MiB declared budget",
+  async (type, mib) => {
+    let cancelled = false;
+    const h = await harness(
+      () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": type,
+              "Content-Length": String(mib * 1024 * 1024 + 1),
+            },
+          },
+        ),
+    );
+    try {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+      );
+      expect(response.status).toBe(413);
+      expect(await response.json()).toEqual({ error: "Media budget exceeded" });
+      expect(cancelled).toBe(true);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test("unknown-length media is metered, cancelled on overflow and leaves the broker usable", async () => {
+  let cancelled = false;
+  let oversized = true;
+  const chunk = new Uint8Array(1024 * 1024);
+  const h = await harness(() =>
+    oversized
+      ? new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.enqueue(chunk);
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { headers: { "Content-Type": "image/gif" } },
+        )
+      : new Response("ok", { headers: { "Content-Type": "text/plain" } }),
   );
   try {
-    const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/archive.zip`)}`,
-    );
-    expect(response.status).toBe(413);
-    expect(await response.json()).toEqual({ error: "Media budget exceeded" });
+    // Either the initial read or the body must fail: an over-budget stream must
+    // never complete successfully after headers have already reached the client.
+    await expect(
+      (async () => {
+        const response = await h.get("media?url=/media/file.gif");
+        await response.arrayBuffer();
+      })(),
+    ).rejects.toThrow();
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+    oversized = false;
+    const next = await h.get("media?url=/media/file.txt");
+    expect(next.headers.get("content-disposition")).toBe("attachment");
+    expect(await next.text()).toBe("ok");
+  } finally {
+    await h.close();
+  }
+});
+
+test("media deadline cancels the response pipeline after headers", async () => {
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  let cancelled = false;
+  const h = await harness(
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1]));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { headers: { "Content-Type": "video/mp4" } },
+      ),
+  );
+  try {
+    const response = await h.get("media?url=/media/clip.mp4");
+    const reader = response.body.getReader();
+    expect((await reader.read()).value).toEqual(new Uint8Array([1]));
+    deadline.abort();
+    await expect(reader.read()).rejects.toThrow();
+    await vi.waitFor(() => expect(cancelled).toBe(true));
   } finally {
     await h.close();
   }

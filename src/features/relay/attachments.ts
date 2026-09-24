@@ -1,7 +1,17 @@
+import {
+  isHeic,
+  isVoiceNote,
+  videoDemuxer,
+  VIDEO_PREPARATION_MS,
+} from "./video-preparation";
 import { safeAttachmentName } from "./message-content";
 
-export const UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
-export const UPLOAD_TIMEOUT_MS = 120_000;
+import {
+  mediaByteLimit,
+  UPLOAD_MAX_BYTES,
+  UPLOAD_TIMEOUT_MS,
+} from "./attachment-limits";
+export { UPLOAD_MAX_BYTES, UPLOAD_TIMEOUT_MS };
 export type UploadedAttachment = Readonly<{
   name: string;
   url: string;
@@ -15,7 +25,12 @@ export type AttachmentUpload = (
 ) => Promise<UploadedAttachment>;
 export const UPLOAD_FAILURES = {
   unavailable: "Uploads are unavailable on this connection.",
-  size: "Choose a file between 1 byte and 20 MB.",
+  size: "File exceeds the supported limit: images 50 MiB, GIFs 10 MiB, documents 100 MiB, videos 500 MiB. The relay may enforce a lower limit.",
+  image: "Image conversion failed. This HEIC/HEIF photo could not be prepared.",
+  ffmpeg:
+    "Media conversion requires ffmpeg on this computer. Install it, then restart the app’s dev server.",
+  video:
+    "Video preparation failed. This recording could not be converted to MP4.",
   capacity: "Uploads are busy. Retry this file shortly.",
   metadata:
     "This file needs metadata cleanup before it can be uploaded. Choose an exported copy without metadata, or remove it for now.",
@@ -49,7 +64,7 @@ export function validateUploadResult(
     !/^[0-9a-f]{64}$/.test(v.sha256) ||
     !Number.isSafeInteger(size) ||
     size < 1 ||
-    size > UPLOAD_MAX_BYTES
+    size > mediaByteLimit(v.type)
   )
     throw new UploadError("invalid");
   let url: URL;
@@ -84,6 +99,71 @@ function attachmentMarkdown(name: string, result: UploadedAttachment) {
   const image = /^(image\/(png|jpeg|gif|webp)|video\/mp4)$/.test(result.type);
   return `${image ? "!" : ""}[${label}](<${result.url}>)`;
 }
+/** Local preparation returns bytes; the existing upload still hashes/signs those exact bytes. */
+async function prepareMedia(
+  file: File,
+  endpoint: string,
+  signal: AbortSignal,
+): Promise<File> {
+  const header = new Uint8Array(await file.slice(0, 4096).arrayBuffer());
+  signal.throwIfAborted();
+  const voice = isVoiceNote(file.name);
+  const heic = !voice && isHeic(header, file.name);
+  if (voice && file.size > 128 * 1024 * 1024) throw new UploadError("size");
+  if (!heic && !voice && !videoDemuxer(header)) {
+    if (file.type.startsWith("video/")) throw new UploadError("video");
+    return file;
+  }
+  const bounded = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(VIDEO_PREPARATION_MS),
+  ]);
+  const response = await fetch(`${endpoint}/prepare-media`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "X-Attachment-Name": encodeURIComponent(file.name),
+    },
+    body: file,
+    signal: bounded,
+  });
+  const type = heic ? "image/jpeg" : "video/mp4";
+  if (!response.ok || response.headers.get("content-type") !== type) {
+    await response.body?.cancel();
+    throw new UploadError(
+      response.status === 503
+        ? "ffmpeg"
+        : response.status === 413
+          ? "size"
+          : response.status === 429
+            ? "capacity"
+            : heic
+              ? "image"
+              : "video",
+    );
+  }
+  const length = Number(response.headers.get("content-length"));
+  if (
+    !Number.isSafeInteger(length) ||
+    length < 1 ||
+    length > mediaByteLimit(type)
+  ) {
+    await response.body?.cancel();
+    throw new UploadError("size");
+  }
+  // The host bounds and streams output. Blob consumption avoids JS chunk arrays
+  // and lets the browser manage the prepared file's backing storage.
+  const blob = await response.blob();
+  bounded.throwIfAborted();
+  if (blob.size !== length) throw new UploadError("invalid");
+  const name = file.name.replace(/\.[^.]+$/, "") || "Attachment";
+  return new File([blob], `${name}.${heic ? "jpg" : "mp4"}`, {
+    type,
+    lastModified: file.lastModified,
+  });
+}
+
 export function brokerUpload(
   endpoint: string,
   origin: string,
@@ -92,6 +172,8 @@ export function brokerUpload(
     signal.throwIfAborted();
     if (!file.size || file.size > UPLOAD_MAX_BYTES)
       throw new UploadError("size");
+    file = await prepareMedia(file, endpoint, signal);
+    signal.throwIfAborted();
     const bounded = AbortSignal.any([
       signal,
       AbortSignal.timeout(UPLOAD_TIMEOUT_MS),

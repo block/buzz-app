@@ -17,6 +17,7 @@ import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
 import { useKnownAgentPubkeys } from "../agents/use-known";
+import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { MessageComposer } from "./MessageComposer";
 import { ImageReviewStage } from "./ImageReviewStage";
 import { MessageRow } from "./MessageRow";
@@ -263,7 +264,13 @@ function ReviewShell({
             />
           ) : null}
         </div>
-        <aside className={styles.mediaReviewConversation}>
+        <aside
+          className={styles.mediaReviewConversation}
+          aria-label="Media comments"
+          data-attachment-drop-zone=""
+          onDragOver={rejectUnhandledFileDrop}
+          onDrop={rejectUnhandledFileDrop}
+        >
           {rootId && source ? (
             <>
               <ReviewComments

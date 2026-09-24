@@ -106,6 +106,35 @@ do not delete or replace its Keychain entry. Environment variables override
 an existing supported credential, live development is unavailable; shell and
 fixture tests still work.
 
+Media attachments in live development need `ffmpeg` on the server’s PATH for
+video, HEIC/HEIF, and the existing `voice-note-*.wav` exception (macOS:
+`brew install ffmpeg`; Linux: your distribution’s ffmpeg package). The broker
+prepares canonical H.264/AAC MP4 or single-frame JPEG before upload hashes/signs
+those exact bytes. Missing tools and unsupported codecs fail visibly. No generic
+audio conversion or recording UI is added.
+
+JPEG/PNG/WebP cleanup preserves orientation and alpha; GIF/APNG/WebP structural
+cleanup preserves animation. Animated images requiring ICC or EXIF orientation
+transforms reject rather than silently change appearance. Snapshot PNG manifests
+survive cleanup. A lazy, cancellable lossless WebP encoder covers still-image pixel
+cleanup on WebKit, which lacks a canvas WebP encoder.
+
+Final-file defaults match old Buzz: 50 MiB images, 10 MiB GIFs, 100 MiB generic
+files, 500 MiB videos. The relay remains authoritative and can enforce lower
+limits, 25-million-pixel images, and video codec/duration/resolution constraints.
+The client separately bounds source files at 500 MiB (voice notes: 128 MiB), ten
+files per draft, and 1,000 MiB retained sources per session. These source/batch
+safety budgets are not old-relay final-byte limits. Preparation can grow or shrink
+files. Browser Blobs still retain complete prepared payloads; only the broker's
+transfer buffers are streaming. Private spool files and conversion children are
+request-owned, cancelled on disconnect and cleaned before admission is released.
+
+Picker/paste/drop share the same tab-local draft. Files must finish uploading
+before Send; navigation pauses unfinished uploads for explicit Retry. Reload loses
+unsent files. Background Send, attachment-first new sessions and UX polish are
+separate work. Live uploads currently use the development broker, not a packaged
+native upload implementation.
+
 The broker supports reads, live traffic and basic message sending **as your real
 account**. Profile changes and invite admission can also write to real communities.
 Use **Switch community → Add a community** and type the community's `wss://` or

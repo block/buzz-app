@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "Buzz Foundation",
+        "dragDropEnabled": false,
         "width": 1200,
         "height": 800,
         "titleBarStyle": "Overlay",
@@ -26,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' blob:; connect-src ipc: http://ipc.localhost https://api.github.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      "csp": "default-src 'self'; script-src 'self' blob: 'wasm-unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:"
     }
   },
   "bundle": {

@@ -730,7 +730,11 @@ export function relayBrokerPlugin({
               streamId = body.streamId;
               if (publishingPresence) {
                 status = body.status;
-                if (status !== "online" && status !== "away")
+                if (
+                  status !== "online" &&
+                  status !== "away" &&
+                  status !== "offline"
+                )
                   throw new Error("Invalid presence");
               }
               if (observing) observer = observerGeneration(body.observer);

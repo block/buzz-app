@@ -38,7 +38,7 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   await expect(draft).toHaveValue("Keep the page instance");
   await button(page, "Notes").click();
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
   await expect(button(page, "Notes")).toHaveCount(0);

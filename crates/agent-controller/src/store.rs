@@ -6,6 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +24,20 @@ struct Document {
 pub struct Store {
     root: PathBuf,
     _lock: File,
+    importing: Arc<AtomicBool>,
+}
+// Hold across unlocked credential I/O and the final store write. Dropping any
+// intermediate import value releases the reservation, including on failure.
+pub(crate) struct ImportReservation(Arc<AtomicBool>);
+impl ImportReservation {
+    pub(crate) fn belongs_to(&self, store: &Store) -> bool {
+        Arc::ptr_eq(&self.0, &store.importing)
+    }
+}
+impl Drop for ImportReservation {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 impl Store {
     pub fn open(root: PathBuf) -> Result<Self> {
@@ -52,9 +70,19 @@ impl Store {
             .map_err(|_| "Could not open agent storage lock")?;
         lock.try_lock()
             .map_err(|_| "Another Buzz app owns this agent storage")?;
-        let store = Self { root, _lock: lock };
+        let store = Self {
+            root,
+            _lock: lock,
+            importing: Arc::default(),
+        };
         store.read()?;
         Ok(store)
+    }
+    pub(crate) fn reserve_import(&self) -> Result<ImportReservation> {
+        self.importing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| "Another import is in progress; wait for it to finish")?;
+        Ok(ImportReservation(self.importing.clone()))
     }
     pub fn root(&self) -> &Path {
         &self.root

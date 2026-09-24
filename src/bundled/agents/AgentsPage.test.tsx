@@ -830,6 +830,36 @@ it("shows Harness, Provider and Model in order while preserving settings on Save
   ).toBeVisible();
 });
 
+it("does not offer an identity for import when its key is already set up in another community", async () => {
+  setup("ready", (fixture) => {
+    fixture.data.agents.push({
+      ...structuredClone(fixture.agent),
+      id: "held-elsewhere",
+      pubkey: "CD".repeat(32),
+      relayUrl: "wss://elsewhere.example",
+      enabled: false,
+      status: "stopped",
+      runningRevision: null,
+    });
+  });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Not imported from old Buzz" }),
+  );
+  fireEvent.change(screen.getByLabelText("Destination community"), {
+    target: { value: "wss://third.example" },
+  });
+  for (let load = 0; load < 2; load++) {
+    fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+    expect(
+      await screen.findByText(
+        "No agents left to import from this library for this community.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Import Fixture agent" }),
+    ).toBeNull();
+  }
+});
 it("credential import keeps real Stop controls reachable without trapping the editor", async () => {
   let releaseImport!: () => void;
   const gate = new Promise<void>((resolve) => {

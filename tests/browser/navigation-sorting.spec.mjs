@@ -215,14 +215,19 @@ test("section sort applies immediately, rolls back on failure, and persists retr
 
 // The production portal/action wiring and broker retry boundary are browser
 // contracts; state-machine ordering remains covered by the session test.
-test("offers a dismissible retry when Recent activity cannot refresh", async ({
+test("retires Recent failures on A–Z and recovers selected ordering on retry", async ({
   page,
   app,
 }) => {
   let attempts = 0;
+  let releaseFailure;
+  let failureGate = new Promise((resolve) => {
+    releaseFailure = resolve;
+  });
   await page.route("**/channel-activity", async (route) => {
     attempts++;
-    if (attempts === 1) {
+    if (attempts <= 3) {
+      await failureGate;
       app.report.sidebarActivityFailures ??= [];
       app.report.sidebarActivityFailures.push(route.request().url());
       await route.fulfill({
@@ -234,50 +239,82 @@ test("offers a dismissible retry when Recent activity cannot refresh", async ({
     }
     await route.fulfill({ response: await route.fetch() });
   });
-  let releaseSort;
-  const holdSort = new Promise((resolve) => {
-    releaseSort = resolve;
-  });
-  await page.route("**/sidebar-sort", async (route) => {
-    const response = await route.fetch();
-    await holdSort;
-    await route.fulfill({ response });
-  });
   await open(page, app);
   const channels = page.locator('[data-sidebar-section="channels"]');
-  await channels
-    .getByRole("button", { name: "More actions for Channels" })
-    .click();
-  await page
-    .getByRole("menu", { name: "More actions for Channels", exact: true })
-    .getByRole("menuitem", { name: "Sort", exact: true })
-    .focus();
-  await page.keyboard.press("ArrowRight");
-  try {
-    await page
-      .getByRole("menu", { name: "Sort", exact: true })
-      .getByRole("menuitemradio", { name: "Recent" })
+  const rows = channels.locator("[data-channel-id]");
+  const order = () =>
+    rows.evaluateAll((elements) => elements.map((el) => el.dataset.channelId));
+  await expect(rows.first()).toBeVisible();
+  const alphaOrder = await order();
+  const menu = page.getByRole("menu", { name: "Sort", exact: true });
+  async function openSort() {
+    await channels
+      .getByRole("button", { name: "More actions for Channels" })
       .click();
-
-    const notifications = page.getByRole("region", {
-      name: "App notifications",
+    await page
+      .getByRole("menu", { name: "More actions for Channels", exact: true })
+      .getByRole("menuitem", { name: "Sort", exact: true })
+      .focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(menu).toBeVisible();
+  }
+  async function setSort(mode) {
+    await openSort();
+    const saved = page.waitForResponse("**/sidebar-sort");
+    await menu.getByRole("menuitemradio", { name: mode }).click();
+    const response = await saved;
+    expect(response.ok()).toBe(true);
+    await response.finished();
+    await expect(menu).not.toBeVisible();
+  }
+  const notifications = page.getByRole("region", { name: "App notifications" });
+  const warning = notifications.getByText("Couldn’t refresh recent activity");
+  async function failRecent(expectedAttempts) {
+    failureGate = new Promise((resolve) => {
+      releaseFailure = resolve;
     });
-    await expect(
-      notifications.getByText("Couldn’t refresh recent activity"),
-    ).toBeVisible();
+    await setSort("Recent");
+    await expect.poll(() => attempts).toBe(expectedAttempts);
+    // Settle the save before rejecting history, so its publication cannot
+    // trigger an incidental retry and conceal the explicit recovery boundary.
+    releaseFailure();
+    await expect(warning).toBeVisible();
+  }
+  try {
+    await failRecent(1);
     await expect(
       notifications.getByText("Sections sorted by Recent may be out of date."),
     ).toBeVisible();
+    await setSort("A–Z");
+    await expect(warning).toHaveCount(0);
+    await expect.poll(order).toEqual(alphaOrder);
+
+    await failRecent(2);
+    await notifications
+      .getByRole("button", { name: "Dismiss notification" })
+      .click();
+    await expect(warning).toHaveCount(0);
+    await setSort("A–Z");
+    await failRecent(3);
+    await openSort();
     await expect(
-      notifications.getByRole("button", { name: "Dismiss notification" }),
-    ).toBeVisible();
+      menu.getByRole("menuitemradio", { name: "Recent" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
     await notifications.getByRole("button", { name: "Retry" }).click();
-    await expect.poll(() => attempts).toBe(2);
+    await expect.poll(() => attempts).toBe(4);
+    await expect(warning).toHaveCount(0);
+    await expect
+      .poll(async () => (await order()).slice(0, 3))
+      .toEqual(["willow", "maple", "cedar"]);
+    await openSort();
     await expect(
-      notifications.getByText("Couldn’t refresh recent activity"),
-    ).toHaveCount(0);
+      menu.getByRole("menuitemradio", { name: "Recent" }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(app.report.unexpected).toEqual([]);
   } finally {
-    releaseSort();
+    releaseFailure();
   }
 });
 

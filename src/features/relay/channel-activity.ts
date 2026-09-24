@@ -117,7 +117,7 @@ export function createChannelActivity(
       generation++;
       active?.abort();
       active = undefined;
-      if (status === "loading") {
+      if (status === "loading" || status === "error") {
         status = "idle";
         publish();
       }

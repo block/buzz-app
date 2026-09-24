@@ -125,10 +125,15 @@ it("retries failed Recent activity after an explicit roster refresh", async () =
   const h = setup();
   try {
     await h.initial();
+    h.live().receive([message(h.peer, "alpha", "last good", 50)]);
     await h.preferences.setSort("channels", "recent", []);
     take(h.pending).reject(new Error("offline"));
     await flush();
     expect(h.channels.list().activityStatus).toBe("error");
+    expect(h.preferences.snapshot().data?.sort).toEqual({ channels: "recent" });
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(50);
 
     h.channels.refreshList?.();
     h.wire
@@ -142,9 +147,63 @@ it("retries failed Recent activity after an explicit roster refresh", async () =
     await flush();
     expect(h.activity).toHaveBeenCalledTimes(2);
     expect(h.channels.list().activityStatus).toBe("loading");
-    take(h.pending).resolve([]);
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(50);
+    take(h.pending).resolve([
+      message(h.peer, "alpha", "last good", 50),
+      message(h.peer, "beta", "recovered", 100),
+    ]);
     await flush();
     expect(h.channels.list().activityStatus).toBe("ready");
+    expect(h.preferences.snapshot().data?.sort).toEqual({ channels: "recent" });
+    expect(
+      h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
+    ).toBe(100);
+  } finally {
+    h.owner.dispose();
+  }
+});
+it("retires failed activity only when the last Recent demand ends and recovers on re-entry", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    h.live().receive([message(h.peer, "alpha", "last good", 50)]);
+    await h.preferences.setSort("channels", "recent", []);
+    await h.preferences.setSort("dms", "recent", []);
+    take(h.pending).reject(new Error("offline"));
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("error");
+
+    // Another section still needs Recent; its fresh failure must remain visible.
+    await h.preferences.setSort("channels", "alpha", []);
+    take(h.pending).reject(new Error("still offline"));
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("error");
+    await h.preferences.setSort("dms", "alpha", []);
+    expect(h.channels.list().activityStatus).toBe("idle");
+    expect(h.preferences.snapshot().data?.sort).toEqual({});
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(50);
+    expect(h.activity).toHaveBeenCalledTimes(2);
+
+    await h.preferences.setSort("channels", "recent", []);
+    expect(h.channels.list().activityStatus).toBe("loading");
+    take(h.pending).reject(new Error("fresh failure"));
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("error");
+    await h.preferences.setSort("channels", "alpha", []);
+    expect(h.channels.list().activityStatus).toBe("idle");
+    await h.preferences.setSort("channels", "recent", []);
+    expect(h.activity).toHaveBeenCalledTimes(4);
+    take(h.pending).resolve([message(h.peer, "alpha", "recovered", 120)]);
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("ready");
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(120);
+    expect(h.preferences.snapshot().data?.sort).toEqual({ channels: "recent" });
   } finally {
     h.owner.dispose();
   }

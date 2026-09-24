@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useSyncExternalStore } from "react";
 import type {
   AgentControl,
@@ -22,6 +23,7 @@ export function AgentsPage({
   control?: AgentControl;
 }) {
   const connection = useRelayConnection(relay);
+  const resolveName = useIdentityNames(connection.session.names);
   let importDestination = "";
   if (
     connection.viewer &&
@@ -60,18 +62,20 @@ export function AgentsPage({
             {control ? (
               <AgentControlPanel
                 control={control}
+                resolveName={resolveName}
                 importDestination={importDestination}
                 createOwner={
                   connection.status === "ready" ? connection.viewer : undefined
                 }
               >
-                {(state, edit, importedId) =>
+                {(state, edit, importedId, label) =>
                   state.status === "unavailable" ? (
                     library
                   ) : (
                     <ManagedAgents
                       key={`${connection.scope}:${connection.generation}`}
                       state={state}
+                      label={label}
                       edit={edit}
                       importedId={importedId}
                       control={control}
@@ -101,7 +105,9 @@ function ManagedAgents({
   importedId,
   control,
   connection,
+  label,
 }: {
+  label(agent: AgentView): string;
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
   importedId: string | null;
@@ -140,7 +146,7 @@ function ManagedAgents({
           return (
             <AgentCard
               key={agent.id}
-              name={agent.name}
+              name={label(agent)}
               avatar={avatar}
               identities={[agent]}
               session={connection.session}

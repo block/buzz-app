@@ -1,4 +1,4 @@
-import { useIdentityNames } from "../identity-names/react";
+import { useChannelIdentityNames } from "../identity-names/react";
 import { useSyncExternalStore, type ReactNode } from "react";
 import { AtIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import type { RelaySession } from "../relay/session";
@@ -94,6 +94,7 @@ export function ReferenceText({
   extensions,
   session,
   scope,
+  channelId,
   interactive = true,
 }: {
   text: string;
@@ -104,9 +105,10 @@ export function ReferenceText({
   extensions?: ConversationExtensions | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
+  channelId?: string | undefined;
   interactive?: boolean;
 }) {
-  const resolveName = useIdentityNames(session?.names);
+  const resolveName = useChannelIdentityNames(session, channelId);
   const references = messageReferences(
     text,
     mentions,

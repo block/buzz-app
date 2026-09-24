@@ -27,7 +27,8 @@ export type OutgoingEvent = Readonly<{
   signed?: RelayEvent;
   recovery?: OutboxRecovery | undefined;
   /** A caller-scoped admission requires renewed live eligibility for retry. */
-  guarded?: boolean;  delivery: Delivery;
+  guarded?: boolean;
+  delivery: Delivery;
   error?: string | undefined;
 }>;
 export interface Outbox {
@@ -45,7 +46,8 @@ export interface Outbox {
     active?: () => boolean,
   ): string;
   acknowledge(id: string): Promise<void>;
-  retry(id: string, active?: () => boolean): void;  dismiss(id: string): Promise<void>;
+  retry(id: string, active?: () => boolean): void;
+  dismiss(id: string): Promise<void>;
 }
 type SendObserver = (
   event: EventData,
@@ -282,7 +284,8 @@ export function createOutbox(
       }),
       ...(signed ? { signed } : {}),
       ...(item.recovery ? { recovery: recoveryValue(item.recovery) } : {}),
-      ...(item.guarded ? { guarded: true } : {}),      delivery:
+      ...(item.guarded ? { guarded: true } : {}),
+      delivery:
         item.delivery === "seen" && signed
           ? "seen"
           : item.delivery === "failed"
@@ -537,7 +540,8 @@ export function createOutbox(
     supports: (kind: number) =>
       !closed && (!writer.kinds || writer.kinds.includes(kind)),
     async ready() {
-      await ready;      if (closed) throw abortError();
+      await ready;
+      if (closed) throw abortError();
       if (storageError) throw new Error(storageError);
     },
     async acknowledge(id: string) {
@@ -606,7 +610,8 @@ export function createOutbox(
             delivery: "sending" as const,
             ...(savedRecovery ? { recovery: savedRecovery } : {}),
             ...(active ? { guarded: true } : {}),
-          }),        ]);
+          }),
+        ]);
         notify();
       });
       const intent = ready.then(() => {

@@ -876,7 +876,7 @@ it("fences caller-scoped admission before signing and at publisher entry", async
     ],
   };
   let active = true;
-  const first = h.outbox.send(template, () => active);
+  const first = h.outbox.send(template, undefined, () => active);
   active = false;
   await vi.waitFor(() =>
     expect(
@@ -965,6 +965,7 @@ it("does not replay a guarded addition through generic retry or after hydration"
         ["p", "a".repeat(64)],
       ],
     },
+    undefined,
     () => active,
   );
   active = false;

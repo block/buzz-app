@@ -10,12 +10,14 @@ This action is offered for any public identity: it does not infer that the ident
 is an owned/running agent. Missing telemetry is explained by the activity panel.
 
 Guarded invitations that fail or have an unknown outcome remain saved in the
-outbox. Its generic Retry action is withheld for these records: a renewed add
-through the channel composer or managed-agent profile rechecks current
-eligibility and reuses the exact saved event while it is still within the relay's
-15-minute timestamp window. After that, check membership; if absent, remove the
-expired “Add agent” item from Outbox and add the agent again. Older unguarded
-invitation records are promoted to guarded intent when reused through this flow.
+outbox. Its generic Retry action is withheld for these records. Retrying the
+add from the managed-agent profile rechecks current eligibility and reuses the
+exact saved event while it is still within the relay's 15-minute timestamp
+window. The ordinary channel composer uses a separate invitation path; it does
+not renew or reuse these guarded profile invitations. After expiry, check
+membership; if absent, remove the expired “Add agent” item from Outbox and
+add the agent again from the managed-agent profile. Older unguarded invitation
+records can be promoted to guarded intent when reused through that profile flow.
 Remove from outbox does not revoke an invitation already dispatched to the relay.
 
 ## Boundaries

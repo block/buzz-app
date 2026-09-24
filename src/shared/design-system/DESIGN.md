@@ -270,6 +270,14 @@ Route navigation uses NavigationItem with aria-current instead. NavigationItem
 forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
 
+## Menu row corners
+
+Every shared menu item uses `--radius-pill` on all four corners. First, middle and
+last rows keep the same fully rounded highlight, so moving between them does not
+change its shape. Direct items, grouped choices and submenu triggers share this
+recipe. Do not add positional or feature-local radius overrides, derive a special
+menu inset radius, or change the global row radius to correct a menu.
+
 ## Align row content, not state backgrounds
 
 When composing NavigationItem lists inside dialogs or padded panels, align the

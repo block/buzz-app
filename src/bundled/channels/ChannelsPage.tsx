@@ -9,6 +9,11 @@ import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  ContextMenuRoot,
+  MenuItem,
+  MenuPopup,
+} from "../../shared/design-system/ui/Menu";
 import { useChannelPanels } from "./useChannelPanels";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -67,10 +72,14 @@ import { MessageComposer } from "../../features/messages/MessageComposer";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
-import type { Attachment } from "../../features/relay/contracts";
+import type {
+  Attachment,
+  ChannelSummary,
+} from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
+import { useChannelRowMenu } from "./useChannelRowMenu";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import { isChannelSectionKey, sidebarSections } from "./sidebar-sections";
 import { useHiddenDms } from "./useHiddenDms";
@@ -261,6 +270,7 @@ function ChannelWorkspace({
   );
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const createChannelTrigger = useRef<HTMLButtonElement>(null);
+  const startingSession = useRef(false);
   const pendingChannelCreation = useSyncExternalStore(
     queries.channelCreation.subscribe,
     queries.channelCreation.snapshot,
@@ -921,6 +931,42 @@ function ChannelWorkspace({
       : preferences.data,
     hiddenDms.hiddenIds,
   );
+  // Compose actual items here; menu availability is their count, not the policy
+  // of any one action. Sibling actions keep their own eligibility checks.
+  const rowActions = (channel: ChannelSummary) => {
+    const actions: ReactNode[] = [];
+    if (
+      sessionsEnabled &&
+      channel.channelType !== "dm" &&
+      channel.channelType !== "session" &&
+      !channel.archived
+    ) {
+      actions.push(
+        <MenuItem
+          key="new-session"
+          onClick={() => {
+            startingSession.current = true;
+            startSession(channel.id);
+          }}
+        >
+          New session
+        </MenuItem>,
+      );
+    }
+    return actions;
+  };
+  const {
+    rowMenu,
+    open: openMenu,
+    close: closeRowMenu,
+  } = useChannelRowMenu(sections, rowActions);
+  const openRowMenu = useCallback(
+    (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
+      startingSession.current = false;
+      openMenu(channel, sectionKey, anchor);
+    },
+    [openMenu],
+  );
   return (
     <div
       className={`${styles.board} ${!composingMessage && (showingSettings || panel || showingThread || companion) ? styles.withPanel : ""}`}
@@ -1083,7 +1129,13 @@ function ChannelWorkspace({
                       sessions?.some((child) => child.id === current?.id)
                         ? current?.id
                         : undefined;
-                    return (
+                    const actions = rowActions(channel);
+                    const menuEnabled = actions.length > 0;
+                    const menuOpen =
+                      menuEnabled &&
+                      rowMenu?.channelId === channel.id &&
+                      rowMenu.sectionKey === section.key;
+                    const channelItem = (
                       <ChannelSidebarItem
                         profile={
                           channel.channelType === "dm" &&
@@ -1095,7 +1147,6 @@ function ChannelWorkspace({
                         channel={channel}
                         session={queries}
                         working={workingChannels.has(channel.id)}
-                        sessionsEnabled={sessionsEnabled}
                         selected={composingMessage ? undefined : selected}
                         collapsed={sidebar.collapsed.includes(
                           `session-children:${channel.id}`,
@@ -1108,7 +1159,40 @@ function ChannelWorkspace({
                         onNewSession={startSession}
                         onOpenThread={openActivityThread}
                         onHideDm={hiddenDms.hide}
+                        menuEnabled={menuEnabled}
+                        sectionKey={section.key}
+                        onOpenMenu={openRowMenu}
                       />
+                    );
+                    if (!menuEnabled) return channelItem;
+                    return (
+                      <ContextMenuRoot
+                        key={channel.id}
+                        open={menuOpen}
+                        onOpenChange={(open) => {
+                          if (open) openRowMenu(channel, section.key);
+                          else if (menuOpen) closeRowMenu();
+                        }}
+                      >
+                        {channelItem}
+                        <MenuPopup
+                          aria-label={`Actions for ${channel.name}`}
+                          anchor={menuOpen ? rowMenu.anchor : undefined}
+                          finalFocus={() =>
+                            startingSession.current
+                              ? (document
+                                  .getElementById("new-session-prompt")
+                                  ?.querySelector<HTMLElement>(
+                                    '[role="textbox"]',
+                                  ) ?? false)
+                              : (sidebar.list.current?.querySelector<HTMLButtonElement>(
+                                  `[data-channel-id="${CSS.escape(channel.id)}"]`,
+                                ) ?? false)
+                          }
+                        >
+                          {actions}
+                        </MenuPopup>
+                      </ContextMenuRoot>
                     );
                   })}
                 </details>

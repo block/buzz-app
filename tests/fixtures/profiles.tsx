@@ -1,3 +1,4 @@
+import { controlFixture } from "../../src/features/agents/control-testing";
 // Real ChannelsPage, thread reader, shared directory, panel registry and plugin lifecycle.
 // Only the transport is synthetic. No dev broker, saved identity or live relay.
 import { StrictMode, useLayoutEffect, useState } from "react";
@@ -39,6 +40,7 @@ const viewer = keypair(),
   mic = keypair(),
   pinky = keypair(),
   missing = keypair();
+const actionsProbe = new URLSearchParams(location.search).has("agent-actions");
 const root = message(viewer, "one", "Hello @Mic", 10, [["p", mic.pubkey]]);
 const unknown = message(missing, "one", "Unknown author", 11);
 const reply = message(viewer, "one", "Thread @Pinky", 12, [
@@ -171,7 +173,22 @@ context.provide("relay", relay);
 const navigationHost = createNavigationController(createMemoryHistory());
 context.provide("navigation", navigationHost.navigation);
 context.effect(() => () => navigationHost.dispose());
-const agentControl = createAgentControl(null);
+const native = controlFixture();
+native.agent.pubkey = mic.pubkey;
+native.agent.status = "stopped";
+native.agent.enabled = false;
+let releaseLaunch: (() => void) | undefined;
+const commands: string[] = [];
+const action = native.host.action;
+native.host.action = async (id, command) => {
+  commands.push(command);
+  if (command === "start" || command === "restart")
+    await new Promise<void>((resolve) => {
+      releaseLaunch = resolve;
+    });
+  return action(id, command);
+};
+const agentControl = createAgentControl(actionsProbe ? native.host : null);
 context.provide("agentControl", agentControl);
 context.effect(() => () => agentControl.dispose());
 const contexts: PanelContext[] = [];
@@ -212,6 +229,12 @@ const providers = new TemplateProvidersService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    commands: () => [...commands],
+    launchPending: () => !!releaseLaunch,
+    finishLaunch: () => {
+      releaseLaunch?.();
+      releaseLaunch = undefined;
+    },
     contexts,
     targets: {
       viewer: profileTarget(viewer.pubkey),

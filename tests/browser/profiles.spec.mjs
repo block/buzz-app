@@ -251,3 +251,98 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
   expect(await invoke()).toBe(false);
   await expect(panel).toHaveCount(0);
 });
+
+// Native button disabling/removal can move focus differently from jsdom. Exercise
+// actual keyboard focus in both engines with a gated synthetic host, not real agents.
+test("local agent actions retain keyboard focus through pending and success without stealing focus", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/profiles.html?agent-actions");
+  await page
+    .getByRole("button", { name: "View Mic profile", exact: true })
+    .click();
+  const panel = page.getByRole("region", { name: "Local agent actions" });
+  const start = panel.getByRole("button", { name: "Start", exact: true });
+  const stop = panel.getByRole("button", { name: "Stop", exact: true });
+  await start.focus();
+  await start.press("Enter");
+  try {
+    await page.waitForFunction(() => window.profilesFixture.launchPending());
+    await expect(start).toBeDisabled();
+    await expect(start).toBeFocused();
+  } finally {
+    await page.evaluate(() => window.profilesFixture.finishLaunch());
+  }
+  await expect(start).toHaveCount(0);
+  await expect(stop).toBeFocused();
+  await stop.press("Enter");
+  await expect(start).toBeEnabled();
+  await expect(stop).toBeDisabled();
+  await expect(stop).toBeFocused();
+  await stop.press("Enter");
+  await start.focus();
+  await start.press("Enter");
+  const copy = page.getByRole("button", { name: "Copy npub" });
+  try {
+    await page.waitForFunction(() => window.profilesFixture.launchPending());
+    await copy.focus();
+  } finally {
+    await page.evaluate(() => window.profilesFixture.finishLaunch());
+  }
+  await expect(start).toHaveCount(0);
+  await expect(copy).toBeFocused();
+  const restart = panel.getByRole("button", { name: "Restart", exact: true });
+  await restart.focus();
+  await restart.press("Enter");
+  try {
+    await page.waitForFunction(() => window.profilesFixture.launchPending());
+    await expect(restart).toBeDisabled();
+    await expect(restart).toBeFocused();
+    await restart.press("Enter");
+  } finally {
+    await page.evaluate(() => window.profilesFixture.finishLaunch());
+  }
+  await expect(restart).toBeEnabled();
+  await expect(restart).toBeFocused();
+  expect(await page.evaluate(() => window.profilesFixture.commands())).toEqual([
+    "start",
+    "stop",
+    "start",
+    "restart",
+  ]);
+});
+
+// Switching profile tabs must release the actions view, not its app-owned command.
+test("local agent command survives Info tab unmount without stealing tab focus", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/profiles.html?agent-actions");
+  await page
+    .getByRole("button", { name: "View Mic profile", exact: true })
+    .click();
+  const actions = page.getByRole("region", { name: "Local agent actions" });
+  await actions
+    .getByRole("button", { name: "Start", exact: true })
+    .press("Enter");
+  const channels = page.getByRole("tab", { name: "Channels", exact: true });
+  const info = page.getByRole("tab", { name: "Info", exact: true });
+  try {
+    await page.waitForFunction(() => window.profilesFixture.launchPending());
+    await channels.click();
+    await expect(actions).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => window.profilesFixture.finishLaunch());
+  }
+  await expect(channels).toBeFocused();
+  await info.click();
+  await expect(
+    actions.getByRole("button", { name: "Start", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    actions.getByRole("button", { name: "Stop", exact: true }),
+  ).toBeEnabled();
+  await expect(info).toBeFocused();
+  expect(await page.evaluate(() => window.profilesFixture.commands())).toEqual([
+    "start",
+  ]);
+});

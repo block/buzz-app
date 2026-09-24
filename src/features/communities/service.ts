@@ -1,4 +1,5 @@
 // FOUNDATION: Client identity and membership selection outlive community query sessions.
+import type { AgentControl } from "../agents/control";
 import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
 import { Context } from "@deepseek-ai/cordis";
@@ -28,6 +29,7 @@ export function createCommunities(
   live: boolean,
   identityNames?: IdentityNames,
   openRelay = "",
+  agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
 ) {
   let state: ClientSnapshot = {
     ...empty(),
@@ -90,6 +92,7 @@ export function createCommunities(
         (signal) => connectBrokerTransport("", signal, id),
         presenceActivity,
         identityNames,
+        agentChoices,
       );
       sessions.set(id, session);
       session.subscribe(() => {
@@ -199,6 +202,7 @@ export function createCommunities(
         }
         if (!saved.memberships.some((m) => m.id === saved.selected))
           saved.selected = null;
+        presenceActivity.setViewer(viewer);
         if (saved.selected) acquire(saved.selected);
         // A seeded record is saved once so later configuration changes cannot revoke it.
         update({ ...saved, viewer, status: "ready" }, seeded);
@@ -216,6 +220,7 @@ export function createCommunities(
     return Promise.all(scopes.map((scope) => scope.fiber.dispose()));
   });
   return {
+    presence: presenceActivity,
     relay,
     snapshot: () => state,
     subscribe(fn: () => void) {

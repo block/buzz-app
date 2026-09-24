@@ -42,6 +42,9 @@ const page = {
 let closed = false;
 const browser = {
   newPage: () => operation("newPage", page),
+  startTracing: () => operation("startTracing"),
+  stopTracing: () =>
+    operation("stopTracing", Buffer.from('{"traceEvents":[]}\n')),
   async close() {
     closed = true;
     process.send({ type: "browserClosed" });

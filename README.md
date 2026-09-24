@@ -23,15 +23,18 @@ See [contributing](docs/contributing.md) for exact pins, registry settings,
 and the pinned pnpm package's Intel Mac limitation.
 
 Both commands forward arguments to their development tool (Vite or Tauri).
-Select a port (default: 1430) with `just web --port 1431` or
-`just desktop --port 1432`. Browser servers prefer the requested port and
+The default port is derived from the worktree's path, giving each checkout a
+stable default that normally avoids collisions between parallel worktrees;
+`just desktop` prints the URL it chose. Override it with `just web --port 1431`
+or `just desktop --port 1432`. Browser servers prefer the requested port and
 use the next open port automatically; desktop requires the exact port to be free and keeps
-Vite and the native window on the same URL. To run multiple desktop copies,
-use a different port in each terminal/worktree:
+Vite and the native window on the same URL. Use an explicit port if two paths
+collide, another process occupies the default, or you start a second instance
+from the same checkout:
 
 ```sh
-just desktop --port 1430
-# In another terminal/worktree:
+just desktop
+# A second instance from the same checkout:
 just desktop --port 1431
 ```
 
@@ -90,9 +93,10 @@ in the non-live shell/fixture state.
    just desktop
    ```
 
-   Open the Local URL printed by `just web`; parallel worktrees may use a port
-   above the requested port. If 1430 is busy, use `just desktop --port 1431`
-   (or another free port) instead of stopping the other copy.
+   Open the Local URL printed by `just web`. Each worktree derives a stable
+   default port from its path, but two paths can still collide. If the default
+   is busy, use `just desktop --port 1431` (or another free port) instead of
+   stopping the other copy.
 
 The broker reads the existing Keychain credential only after validating the
 public pin, refuses mismatches and never falls back to another credential. If it
@@ -101,6 +105,35 @@ do not delete or replace its Keychain entry. Environment variables override
 `.env.local`. Restart the dev server after changing the configuration. Without
 an existing supported credential, live development is unavailable; shell and
 fixture tests still work.
+
+Media attachments in live development need `ffmpeg` on the server’s PATH for
+video, HEIC/HEIF, and the existing `voice-note-*.wav` exception (macOS:
+`brew install ffmpeg`; Linux: your distribution’s ffmpeg package). The broker
+prepares canonical H.264/AAC MP4 or single-frame JPEG before upload hashes/signs
+those exact bytes. Missing tools and unsupported codecs fail visibly. No generic
+audio conversion or recording UI is added.
+
+JPEG/PNG/WebP cleanup preserves orientation and alpha; GIF/APNG/WebP structural
+cleanup preserves animation. Animated images requiring ICC or EXIF orientation
+transforms reject rather than silently change appearance. Snapshot PNG manifests
+survive cleanup. A lazy, cancellable lossless WebP encoder covers still-image pixel
+cleanup on WebKit, which lacks a canvas WebP encoder.
+
+Final-file defaults match old Buzz: 50 MiB images, 10 MiB GIFs, 100 MiB generic
+files, 500 MiB videos. The relay remains authoritative and can enforce lower
+limits, 25-million-pixel images, and video codec/duration/resolution constraints.
+The client separately bounds source files at 500 MiB (voice notes: 128 MiB), ten
+files per draft, and 1,000 MiB retained sources per session. These source/batch
+safety budgets are not old-relay final-byte limits. Preparation can grow or shrink
+files. Browser Blobs still retain complete prepared payloads; only the broker's
+transfer buffers are streaming. Private spool files and conversion children are
+request-owned, cancelled on disconnect and cleaned before admission is released.
+
+Picker/paste/drop share the same tab-local draft. Files must finish uploading
+before Send; navigation pauses unfinished uploads for explicit Retry. Reload loses
+unsent files. Background Send, attachment-first new sessions and UX polish are
+separate work. Live uploads currently use the development broker, not a packaged
+native upload implementation.
 
 The broker supports reads, live traffic and basic message sending **as your real
 account**. Profile changes and invite admission can also write to real communities.
@@ -113,7 +146,7 @@ Messages, choose a channel, and click a GitHub reference. See
 [the channel extension contract and data budgets](docs/channels.md) for ownership,
 performance, validation, and limitations.
 
-Home, Channels, and GitHub can each be toggled independently in Settings.
+Messages is the landing page. Channels is required and cannot be disabled; optional plugins such as GitHub can be toggled in Settings.
 
 See [client and community ownership](docs/communities.md) for the minimal join/profile flow, session scopes, and switching checks.
 

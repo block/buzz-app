@@ -1,4 +1,6 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
+import { SettingsCardsService } from "../features/settings/service";
+import { TemplateProvidersService } from "../features/channel-templates/provider";
 import { IdentityNamesService } from "../features/identity-names/service";
 import { bindAgentMentions } from "../features/agents/mention-wake";
 import { provideAgentControl } from "../features/agents/control-service";
@@ -35,12 +37,15 @@ export function createServices() {
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
   const conversation = new ConversationService(ctx);
+  const settingsCards = new SettingsCardsService(ctx);
+  const channelTemplates = new TemplateProvidersService(ctx);
   const identityNames = new IdentityNamesService(ctx);
   const communities = createCommunities(
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
     identityNames,
     import.meta.env.VITE_BUZZ_OPEN_RELAY ?? "",
+    agentControl,
   );
   const relay = communities.relay;
   ctx.effect(() => bindAgentMentions(agentControl, communities));
@@ -65,6 +70,8 @@ export function createServices() {
     shortcuts,
     shortcutBindings,
     conversation,
+    settingsCards,
+    channelTemplates,
     pages,
     panels,
     plugins,

@@ -16,6 +16,7 @@ import {
   useRelayConnection,
 } from "../../features/relay/react";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
+import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { readView, writeView } from "../../shared/view-state";
 import { SessionsWorkspace } from "./SessionsWorkspace";
@@ -204,7 +205,13 @@ function SessionWork({
     [navigator, targetForLink],
   );
   return (
-    <div className={styles.work}>
+    // biome-ignore lint/a11y/noStaticElementInteractions: pane file-drop fallback; the composer provides a keyboard-accessible picker.
+    <div
+      className={styles.work}
+      data-attachment-drop-zone=""
+      onDragOver={rejectUnhandledFileDrop}
+      onDrop={rejectUnhandledFileDrop}
+    >
       <SessionHeading channel={channel} parentName={parentName} />
       <SessionColumn>
         <div className={styles.timeline}>

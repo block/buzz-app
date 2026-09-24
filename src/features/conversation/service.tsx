@@ -13,10 +13,13 @@ import type {
   ComposerCompletion,
   InlineRenderer,
   LinkRenderer,
+  MessageRenderer,
   ContributionReader,
 } from "./contracts";
 
 export type Conversation = {
+  messages: ContributionReader<MessageRenderer>;
+  registerMessage(renderer: MessageRenderer): void;
   accessories: ContributionReader<ComposerAccessory>;
   registerAccessory(accessory: ComposerAccessory): void;
   tools: ContributionReader<ComposerTool>;
@@ -43,7 +46,8 @@ function validate(
     | InlineRenderer
     | ComposerCompletion
     | ComposerAccessory
-    | LinkRenderer,
+    | LinkRenderer
+    | MessageRenderer,
 ) {
   if (
     !value ||
@@ -57,6 +61,8 @@ function validate(
     );
 }
 export class ConversationService extends Service implements Conversation {
+  readonly messages;
+  private readonly messageEntries;
   readonly tools;
   readonly accessories;
   private readonly accessoryEntries;
@@ -69,6 +75,12 @@ export class ConversationService extends Service implements Conversation {
   private readonly linkEntries;
   constructor(ctx: Context) {
     super(ctx, "conversation");
+    const messages = createContributions<MessageRenderer>(ctx);
+    this.messageEntries = messages;
+    this.messages = {
+      snapshot: messages.snapshot,
+      subscribe: messages.subscribe,
+    };
     const accessories = createContributions<ComposerAccessory>(ctx);
     this.accessoryEntries = accessories;
     this.accessories = {
@@ -90,6 +102,12 @@ export class ConversationService extends Service implements Conversation {
     const links = createContributions<LinkRenderer>(ctx);
     this.linkEntries = links;
     this.links = { snapshot: links.snapshot, subscribe: links.subscribe };
+  }
+  registerMessage(value: MessageRenderer) {
+    validate(value);
+    if (typeof value.matches !== "function")
+      throw new Error("A message renderer needs a matcher");
+    this.messageEntries.register(this.ctx, value);
   }
   registerAccessory(value: ComposerAccessory) {
     validate(value);

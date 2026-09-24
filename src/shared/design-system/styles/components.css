@@ -162,6 +162,13 @@
     border-radius: var(--radius-pill);
   }
 
+  .buzz-button[data-icon-variant="ghost"][data-selected],
+  .buzz-button[data-icon-variant="ghost"][data-selected]:hover:not(
+    [data-disabled]
+  ) {
+    background: var(--affordance-selected);
+  }
+
   /* Buzz's existing composer and workspace treatments remain explicit. */
   .buzz-button[data-icon-variant="tint"] {
     background: var(--affordance-accent);

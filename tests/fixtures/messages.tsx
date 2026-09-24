@@ -214,7 +214,7 @@ const owner = createRelaySession({
     });
   },
   writer: {
-    kinds: [7, 9],
+    kinds: [5, 7, 9],
     async sign(template) {
       const event = signed(viewer, template);
       report.signings.push(event.id);

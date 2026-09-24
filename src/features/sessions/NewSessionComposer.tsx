@@ -116,7 +116,7 @@ export function NewSessionComposer({
     save(current);
     try {
       if (parent && !current.messageId && recipients.length) {
-        await session.agentLibrary.refresh();
+        await session.agentChoices.refresh();
         if (!mounted.current) return;
         await session.workSessions.addAgents(
           parent.id,
@@ -180,9 +180,9 @@ export function NewSessionComposer({
             throw new Error("Refresh session participants before sending.");
           await Promise.all([
             session.profiles.ensure(channel.members, "background"),
-            session.agentLibrary.snapshot().status === "ready"
+            session.agentChoices.snapshot().status === "ready"
               ? Promise.resolve()
-              : session.agentLibrary.refresh(),
+              : session.agentChoices.refresh(),
           ]);
           if (!mounted.current) return;
           recipients = [
@@ -191,7 +191,7 @@ export function NewSessionComposer({
                 .list()
                 .channels.find((item) => item.id === current.id),
               session.profiles.snapshot(),
-              session.agentLibrary.snapshot(),
+              session.agentChoices.snapshot(),
               session.viewer,
               recipients,
             ),

@@ -353,9 +353,10 @@ test("viewer does not replace host styles or appearance ownership", async ({
   page,
   context,
 }) => {
-  await page.goto("http://localhost:1444");
+  const settings = `/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "settings" }))}`;
+  await page.goto(`http://localhost:1444${settings}`);
   await expect(
-    page.getByRole("heading", { name: "Make yourself at home." }),
+    page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   const readHost = () =>
     page.evaluate(() => ({
@@ -372,9 +373,9 @@ test("viewer does not replace host styles or appearance ownership", async ({
     }));
   const before = await readHost();
   expect(before.systemToken.trim()).toBe("#8e4ec6");
-  await page.goto("http://localhost:1445");
+  await page.goto(`http://localhost:1445${settings}`);
   await expect(
-    page.getByRole("heading", { name: "Make yourself at home." }),
+    page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   const sameOriginBefore = await readHost();
   const other = await context.newPage();

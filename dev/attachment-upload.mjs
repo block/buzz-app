@@ -1,8 +1,15 @@
-import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { finished } from "node:stream/promises";
 import { finalizeEvent } from "nostr-tools";
-
-export const UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
-export const UPLOAD_TIMEOUT_MS = 120_000;
+import { receiveAttachment } from "./attachment-file.mjs";
+import {
+  imageType,
+  mediaByteLimit,
+  UPLOAD_MAX_BYTES,
+  UPLOAD_TIMEOUT_MS,
+} from "../src/features/relay/attachment-limits.ts";
+import { videoDemuxer } from "../src/features/relay/video-preparation.ts";
+export { UPLOAD_MAX_BYTES, UPLOAD_TIMEOUT_MS };
 export class UploadError extends Error {
   constructor(code, status = 400) {
     super(`Attachment upload: ${code}`);
@@ -23,22 +30,20 @@ export async function uploadAttachment(req, relay, key, fetchUpstream, signal) {
     signal,
     AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
   ]);
-  const abort = () => req.destroy();
-  bounded.addEventListener("abort", abort, { once: true });
+  const spool = await receiveAttachment(
+    req,
+    UPLOAD_MAX_BYTES,
+    bounded,
+    () => new UploadError("size", 413),
+  );
+  let body;
   try {
     bounded.throwIfAborted();
-    const chunks = [];
-    const hash = createHash("sha256");
-    let size = 0;
-    for await (const chunk of req) {
-      size += chunk.length;
-      if (size > UPLOAD_MAX_BYTES) throw new UploadError("size", 413);
-      hash.update(chunk);
-      chunks.push(chunk);
-    }
-    if (!size) throw new UploadError("size", 413);
-    bounded.throwIfAborted();
-    const sha256 = hash.digest("hex");
+    const { size, sha256 } = spool;
+    const detected =
+      imageType(spool.header) ??
+      (videoDemuxer(spool.header) ? "video/mp4" : "application/octet-stream");
+    if (size > mediaByteLimit(detected)) throw new UploadError("size", 413);
     const now = Math.floor(Date.now() / 1000);
     const event = finalizeEvent(
       {
@@ -49,22 +54,36 @@ export async function uploadAttachment(req, relay, key, fetchUpstream, signal) {
           ["t", "upload"],
           ["x", sha256],
           ["server", new URL(relay).host],
-          ["expiration", String(now + 300)],
+          [
+            "expiration",
+            String(now + Math.ceil(UPLOAD_TIMEOUT_MS / 1000) + 60),
+          ],
         ],
       },
       key,
     );
-    const response = await fetchUpstream(`${relay}/upload`, {
-      method: "PUT",
-      redirect: "error",
-      signal: bounded,
-      headers: {
-        "Content-Type": type,
-        "X-SHA-256": sha256,
-        Authorization: `Nostr ${Buffer.from(JSON.stringify(event)).toString("base64url")}`,
-      },
-      body: Buffer.concat(chunks, size),
-    });
+    body = createReadStream(spool.path, { signal: bounded });
+    // Attach before fetch: cancellation can race stream opening.
+    const closed = finished(body).catch(() => {});
+    let response;
+    try {
+      response = await fetchUpstream(`${relay}/upload`, {
+        method: "PUT",
+        redirect: "error",
+        signal: bounded,
+        headers: {
+          "Content-Type": type,
+          "Content-Length": String(size),
+          "X-SHA-256": sha256,
+          Authorization: `Nostr ${Buffer.from(JSON.stringify(event)).toString("base64url")}`,
+        },
+        body,
+        duplex: "half",
+      });
+    } finally {
+      body.destroy();
+      await closed;
+    }
     // These statuses do not need error text; cancel rather than read their bodies.
     const status = response.status;
     if (!response.ok && ![400, 415, 422].includes(status)) {
@@ -121,6 +140,6 @@ export async function uploadAttachment(req, relay, key, fetchUpstream, signal) {
       throw new UploadError("invalid", 502);
     return { url: url.href, type: v.type, size, sha256 };
   } finally {
-    bounded.removeEventListener("abort", abort);
+    await spool.cleanup();
   }
 }

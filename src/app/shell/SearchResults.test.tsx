@@ -71,7 +71,7 @@ it("shows the real read failure, retains conversation choices, and retries to an
     const request = wire.next();
     expect(request.filters).toEqual([
       {
-        kinds: [40002, 9], // The real reader canonicalizes set order.
+        kinds: [40002, 40008, 9], // The real reader canonicalizes set order.
         search: "wes-cr",
         search_mode: "prefix",
         limit: 20,

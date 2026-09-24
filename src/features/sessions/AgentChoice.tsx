@@ -5,7 +5,7 @@ import {
   CheckIcon,
   CaretUpIcon,
 } from "../../shared/design-system/icons/index";
-import { useEffect, useSyncExternalStore } from "react";
+import { useAgentChoices } from "../agents/use-choices";
 import { Menu } from "@base-ui/react/menu";
 import type { RelaySession } from "../relay/session";
 import { Avatar } from "../../shared/Avatar";
@@ -53,15 +53,8 @@ export function AgentChoice({
   side?: "top" | "bottom";
 }) {
   const resolveName = useIdentityNames(session.names);
-  const library = session.agentLibrary;
-  const agents = useSyncExternalStore(
-    library.subscribe,
-    library.snapshot,
-    library.snapshot,
-  );
-  useEffect(() => {
-    if (agents.status === "idle") void library.refresh();
-  }, [library, agents.status]);
+  const library = session.agentChoices;
+  const agents = useAgentChoices(session);
   const identities = agents.identities.map((agent) => ({
     ...agent,
     name: resolveName(agent.pubkey, agent.name),
@@ -224,14 +217,14 @@ export function AgentChoice({
               <p role="status">Loading agents…</p>
             )}
             {agents.status === "ready" && !agents.identities.length && (
-              <p role="status">No agents found in your Buzz library.</p>
+              <p role="status">No agents available in this community.</p>
             )}
             {agents.status === "unavailable" && (
               <p role="status">
                 Your agent library isn’t available on this connection.
               </p>
             )}
-            {agents.status === "error" && (
+            {(agents.status === "error" || !!agents.error) && (
               <Menu.Item
                 className={`${completion.option} ${styles.agentOption}`}
                 closeOnClick={false}

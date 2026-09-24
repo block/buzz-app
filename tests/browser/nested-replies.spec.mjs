@@ -92,6 +92,27 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   ).toHaveCount(0);
   await nestedRow.hover();
   await nestedRow.getByRole("button", { name: "Reply", exact: true }).click();
+  // Main's Up-to-edit shares this composer; cancel must retain the nested target
+  // and the native draft history, rather than sending the draft to the root.
+  await editor.fill("Unsent nested draft");
+  await editor.fill("");
+  await editor.press("ArrowUp");
+  const editInput = panel.getByRole("textbox", {
+    name: "Edit message",
+    exact: true,
+  });
+  await expect(editInput).toBeFocused();
+  await expect(editInput).toHaveJSProperty("value", "Nested browser reply");
+  await expect(
+    panel.getByRole("button", { name: "Cancel reply target" }),
+  ).toHaveCount(0);
+  await editInput.press("Escape");
+  await expect(editor).toBeFocused();
+  await expect(
+    panel.getByRole("button", { name: "Cancel reply target" }),
+  ).toBeVisible();
+  await editor.press("ControlOrMeta+z");
+  await expect(editor).toHaveJSProperty("value", "Unsent nested draft");
   await editor.fill("Grandchild browser reply");
   let releaseGrandchild;
   let grandchildRequested = false;
@@ -128,6 +149,10 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   const grandchild = app.report.publications.find(
     ({ event }) => event?.content === "Grandchild browser reply",
   ).event;
+  expect(grandchild.tags.filter(([key]) => key === "e")).toEqual([
+    ["e", root.id, "", "root"],
+    ["e", nested.id, "", "reply"],
+  ]);
   const grandchildRow = panel.locator(`[data-message-id="${grandchild.id}"]`);
   await expect(grandchildRow).toBeInViewport();
   await expect(editor).toBeFocused();

@@ -8,6 +8,7 @@ use browser::{
 mod agent_models;
 mod agents;
 mod deep_links;
+mod builderlab;
 mod dock;
 mod notifications;
 mod terminal;
@@ -19,6 +20,7 @@ use agents::{
     agent_control_creation_profile, agent_control_import_commit, agent_control_import_preview,
     agent_control_save, agent_control_snapshot, AgentHost,
 };
+use builderlab::builderlab_session_status;
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
@@ -366,7 +368,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         terminal_write,
         terminal_resize,
         terminal_close,
-        terminal_close_owner
+        terminal_close_owner,
+        builderlab_session_status
     ]
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

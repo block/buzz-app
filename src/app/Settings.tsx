@@ -13,6 +13,7 @@ import {
   BellIcon,
   ChatCircleIcon,
   KeyboardIcon,
+  PlugIcon,
   WrenchIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
@@ -31,6 +32,7 @@ import { DeveloperSettings } from "./DeveloperSettings";
 import { MessageSettings } from "./MessageSettings";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
+import { BuilderLabSettings } from "./BuilderLabSettings";
 
 type Section = { id: string; label: string; icon: typeof UserIcon };
 
@@ -41,6 +43,7 @@ const baseSections: Section[] = [
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
   { id: "messages", label: "Messages", icon: ChatCircleIcon },
   { id: "notifications", label: "Notifications", icon: BellIcon },
+  { id: "builderlab", label: "BuilderLab", icon: PlugIcon },
 ];
 
 // DEV alone is not enough: packaged desktop builds load a production bundle
@@ -163,6 +166,9 @@ export function Settings({
             </div>
             <div hidden={selected !== "profile"}>
               <ProfileSettings communities={communities} />
+            </div>
+            <div hidden={selected !== "builderlab"}>
+              <BuilderLabSettings active={selected === "builderlab"} />
             </div>
             {developerMode && (
               <div hidden={selected !== "developer"}>

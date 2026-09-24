@@ -536,6 +536,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-builderlab-client"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "buzz-foundation"
 version = "0.0.0"
 dependencies = [
@@ -543,6 +557,7 @@ dependencies = [
  "block2",
  "buzz-agent",
  "buzz-agent-controller",
+ "buzz-builderlab-client",
  "buzzodz-plugins",
  "futures-lite",
  "gtk",

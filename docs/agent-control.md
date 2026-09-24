@@ -1,8 +1,8 @@
 # Local agent controls
 
 The Agents page uses one app-owned native controller for creating, importing,
-editing and running local agents. Managed cards are keyed by exact identity and
-community. Browser-only access keeps the read-only old library; it cannot run
+editing and running local agents. Inventory cards join records by exact public key;
+managed actions remain keyed by native identity/community record. Browser-only access keeps the read-only old library; it cannot run
 agents. The only product entry point is ordinary desktop startup.
 
 ## Normal desktop workflow
@@ -16,11 +16,12 @@ configuration and persistent native settings. Coordinate the native rebuild/rela
 quit other Foundation copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
 
-Open **Agents → My agents** for imported identities, their destination community,
-process evidence and visible **Start / Stop**. **Edit** remains secondary in the
-card’s three-dot menu. Same-key identities at different destinations have separate
-cards; actions use native ID/revision, never the display name. Managed controls
-remain available when the old library is disconnected, unavailable or archived.
+Open **Agents** for discovered and imported identities grouped by known community
+associations. Each identity card keeps the configured destinations’ **Start / Stop**
+controls. **Edit** remains secondary in the card’s three-dot menu. Actions use native
+ID/revision, never the display name. Older hosts without parked inventory retain
+the **My agents** and read-only library sections. Managed controls remain available
+when discovery is disconnected, unavailable or archived.
 
 **Add agent** shares the Edit fields and model browser. In the development desktop,
 Create generates a native key, obtains the captured viewer's owner authorization,
@@ -35,15 +36,34 @@ existing agents and profile retry remain intact.
 The dev broker and native host must both support this flow. Packaged human
 signing remains unavailable.
 
-**Not imported from old Buzz** is a separate collapsible section. Expanding it
-loads installed identities for the connected community; already-managed exact
-identities are excluded. Each remaining row says **Not imported** and has its own
-**Import** action. Source/destination overrides and source warnings stay under
-Import options. Import focuses the imported card and says **Imported, not started**.
-It does not start a listener, invite an agent or change the old library.
+**Clone to this community** opens the existing creation dialog with only the old
+agent’s name and resolved instructions. Review that text for embedded secrets.
+Runtime settings and workspace use this app’s defaults and remain editable.
+Clone generates a new native identity; it does not copy identity keys, environment
+values, command arguments, paths, history or membership. Saving leaves the new
+agent stopped. The source is read-only and no legacy credential access occurs.
+
+**Import** preserves the selected old-installation identity and private key. It
+requires an explicit destination and a fresh source/destination-bound preview.
+Successful import saves a configured, stopped setup. It does not start a listener,
+invite an agent, or modify the source installation. An identity already held
+locally cannot be imported again into another community; use **Clone** instead.
+The native prepare and commit boundaries both enforce that exact-key rule.
+
+The unified inventory offers Import only under **Available to import**, once per
+exact public key. Multiple old installations require an explicit source choice.
+The selected row opens the import review. Source read failures remain visible.
+Older hosts retain the separate installation browser as a compatibility path.
+
+**Use here** is recovery for older incomplete local imports, not a normal next
+step after Import. It retains the identity/key, requires owner-authorized community
+confirmation, and leaves the recovered setup stopped. Native code refuses a new
+community when that identity already has a configured setup elsewhere. A retry
+for the already recovered destination is harmless. Existing historical setups
+remain visible and controllable; this rule does not move or delete them.
 
 To use an agent, open a channel and select it from **@ mentions**. The chooser
-includes this app's managed agents in that same community. A nonmember is labeled
+includes this app's configured managed agents in that same community. A nonmember is labeled
 **Adds to channel when you send**. Selection alone does nothing; Send adds the agent
 through the existing outbox, verifies membership, then sends the message. Failed or
 unconfirmed additions keep the draft and expose the error; Send retries the same
@@ -53,7 +73,7 @@ again; an unknown outcome is never silently replaced. Channel and thread compose
 share this behavior. DMs and
 other-community agents are excluded. No Agents-page channel picker is needed.
 
-A confirmed outgoing channel or thread mention now starts an exact imported local
+Once an identity is configured by Import or legacy **Use here** recovery, a confirmed outgoing channel or thread mention starts that exact local
 agent (public key + community), without a separate Start click. Import itself
 remains non-starting. Stop cancels earlier pending mention wakes and active work;
 a later deliberate mention can start the agent again. Plain name text without
@@ -177,8 +197,10 @@ resources. Production has no disposable storage override or preview launch mode.
   Saved `BUZZ_AGENT_MODEL`/`BUZZ_AGENT_PROVIDER` (buzz-agent) and
   `GOOSE_MODEL`/`GOOSE_PROVIDER` (Goose) overrides win over Model/Provider
   selectors; blank selectors do not erase them. ACP uses the same effective model.
-- Import previews only the chosen installed/development library and requires an
-  explicit secure **Destination community** origin. Old Buzz ignores saved relay
+- Local browsing reads only the chosen installed/development library without a
+  destination. Native keeps no pending import for that read and invalidates any
+  prior import token. An actionable import preview requires an explicit secure
+  **Destination community** origin. Old Buzz ignores saved relay
   pins at runtime; blank, stale or malformed saved pins do not route or hide
   identities here. Native validates the chosen destination, shows it beside each
   exact key, and retains it with the preview token through commit. Source or
@@ -347,3 +369,47 @@ import can leave create-only app custody for retry but no enabled/configured age
 No remote/team/mesh runtime or conditional attestation is added. Synthetic checks
 do not establish actual Keychain ACLs, production TLS/inference, live replies,
 forced native quit, signed packaging or other-platform behavior.
+
+### Community setup confirmation
+
+Local installation import validates the source configuration, owner authorization
+and private key. It does not require relay inventory or a community confirmation.
+The imported agent stays stopped.
+
+For explicit setup in a community, the broker can sign the selected owner's
+intent for an identity/community pair. Native code verifies that signature against
+the retained source-owner authorization. This does not establish channel membership,
+key availability or exclusive community membership. It does not reserve a community
+before import. Setup recovery cannot add another community to an identity that
+already has a configured setup elsewhere; copying that agent requires Clone.
+
+Joined-community discovery reads each joined community's scoped inventory without
+selecting it or opening a relay session. Exact keys appear once with all known
+associations. Each failed community read has its own warning and Refresh retry;
+successful reads remain visible. Discovery does not provide credentials, an import
+source, or permission to extend an existing local identity into another community.
+
+### Local inventory actions
+
+Startup copies only identity names, public keys and source labels into a durable
+inventory. It does not read keys, configure a setup, or start an imported agent.
+Import copies the selected local key and settings, independent of relay inventory.
+New imports require a destination and are saved configured but stopped.
+**Use here** only recovers older incomplete imports. **Start** remains a separate
+action; a later deliberate mention can also start a configured agent. Existing
+saved setups without the configured flag keep their prior behavior.
+
+The unified card's **Import** opens the existing installation form with its exact
+identity and known local source selected. The source remains editable. **Clone**
+from a local source or imported identity opens a review of only its name and
+instructions; creation generates a fresh key. Clone never imports the old key.
+
+Community groups show known associations, not exclusive membership or admission.
+An inventory failure does not block local Import or setup confirmation. Configured
+setups show Start, Stop and Edit only in the current community. Other-community
+local agents offer Clone to bring a new identity here, without changing the source.
+Archived discovery rows remain hidden after sources join, except where local
+controls must remain reachable. Linked profiles remain visible on identity cards.
+
+Before starting an imported identity, stop the old agent and disable its automatic
+startup in the old application. Do not run duplicate copies of the same identity.

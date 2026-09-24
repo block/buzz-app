@@ -110,3 +110,55 @@ fn unclosed_unrelated_quotes_never_promote_embedded_settings() {
         assert!(load(&path, |_| None).unwrap().is_empty());
     }
 }
+
+#[test]
+fn whole_dotenv_records_never_promote_embedded_build_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env.local");
+    for value in [
+        "\"literal ` inside quote\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n\"",
+        "`foo\"second`\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n\"",
+        "\"first\"\"second\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n\"",
+        "prefix\"second\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n\"",
+        "foo\\ #\"more\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n\"",
+        "'first'\"second\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n\"",
+        "prefix'second\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n'",
+        "\"first \"#\"second\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n\"",
+    ] {
+        let record = format!("OTHER={value}\n");
+        // Pin the lexical contract to the actual decoder, not our scanner.
+        let decoded: Vec<_> = dotenvy::from_read_iter(record.as_bytes())
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].0, "OTHER");
+        std::fs::write(
+            &path,
+            format!("{record}INVALID=bar baz\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\n"),
+        )
+        .unwrap();
+        let values = load(&path, |_| None).unwrap();
+        assert_eq!(values.len(), 1, "{record}");
+        assert_eq!(values["BUZZ_BUILD_BUZZ_AGENT_PROVIDER"], "databricks_v2");
+        let values = load(&path, |key| {
+            (key == "BUZZ_BUILD_BUZZ_AGENT_PROVIDER").then(String::new)
+        })
+        .unwrap();
+        assert_eq!(values.len(), 1, "{record}");
+        assert_eq!(values["BUZZ_BUILD_BUZZ_AGENT_PROVIDER"], "");
+    }
+}
+
+#[test]
+fn selected_adjacent_segments_and_unrelated_comments_keep_record_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env.local");
+    std::fs::write(&path, "OTHER=value # ignored \"quote\nBUZZ_BUILD_AGENT_ENV=DATABRICKS_MODEL='build-model'\"\nDATABRICKS_MODEL_FILTER=team-*\"\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=data\"bricks\"_v2\n").unwrap();
+    let values = load(&path, |_| None).unwrap();
+    assert_eq!(values.len(), 2);
+    assert_eq!(values["BUZZ_BUILD_BUZZ_AGENT_PROVIDER"], "databricks_v2");
+    assert_eq!(
+        parse(&values["BUZZ_BUILD_AGENT_ENV"]).unwrap(),
+        (String::new(), "team-*".into(), "build-model".into())
+    );
+}

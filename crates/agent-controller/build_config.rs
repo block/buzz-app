@@ -43,34 +43,45 @@ pub fn load(
             .next()
             .unwrap_or("");
         let selected = KEYS.contains(&key) && !values.contains_key(key);
-        let mut end = line_end;
-        // Skip whole quoted records, including unrelated multiline values. A
-        // build-looking line inside another value must never become a setting.
-        if let Some((_, value)) = rest[..line_end].split_once('=') {
-            let value = value.trim_start();
-            if let Some(quote @ ('\'' | '"' | '`')) = value.chars().next() {
-                let offset = rest[..line_end].len() - value.len();
-                let mut escaped = false;
-                let close = rest[offset + 1..].char_indices().find_map(|(i, c)| {
-                    if escaped {
-                        escaped = false;
-                        return None;
-                    }
-                    if c == '\\' {
-                        escaped = true;
-                        return None;
-                    }
-                    (c == quote).then_some(offset + 1 + i)
-                });
-                if let Some(close) = close {
-                    end = rest[close..]
-                        .find('\n')
-                        .map_or(rest.len(), |i| close + i + 1);
-                } else if selected {
-                    return Err("Invalid native build .env.local");
-                } else {
-                    end = rest.len();
+        // Follow dotenvy's whole-record quote/escape/comment boundaries, not
+        // just the first quoted segment. Also conservatively contain backtick
+        // records used by other dev loaders (dotenvy does not decode them).
+        let mut end = rest.len();
+        let mut quote = None;
+        let mut escaped = false;
+        let mut whitespace = false;
+        let mut backtick = false;
+        let mut comment = false;
+        for (i, c) in rest.char_indices() {
+            // Backtick containment must never mask dotenvy's quote state.
+            if c == '`' && !escaped && !comment && (quote.is_none() || backtick) {
+                backtick = !backtick;
+            }
+            if comment {
+                comment = c != '\n';
+            } else if escaped {
+                escaped = false;
+                whitespace = false;
+            } else if c == '\\' {
+                escaped = true;
+                whitespace = false;
+            } else if let Some(open) = quote {
+                if c == open {
+                    quote = None;
                 }
+            } else if whitespace && c == '#' {
+                comment = true;
+                whitespace = false;
+            } else if matches!(c, '\'' | '"') {
+                quote = Some(c);
+                whitespace = false;
+            } else {
+                // Match dotenvy's one-character WhiteSpace state.
+                whitespace = !whitespace && c.is_whitespace() && !matches!(c, '\n' | '\r');
+            }
+            if c == '\n' && quote.is_none() && !escaped && !backtick {
+                end = i + 1;
+                break;
             }
         }
         if selected {

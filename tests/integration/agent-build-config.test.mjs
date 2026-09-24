@@ -99,6 +99,27 @@ test("Cargo rebuilds the real controller's nonsecret defaults from local config 
   );
   assert.ifError(tests.error);
   assert.equal(tests.status, 0, tests.stdout + tests.stderr);
+  for (const value of [
+    '"first""second\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n"',
+    'prefix"second\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n"',
+    'foo\\ #"more\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n"',
+  ]) {
+    writeFileSync(
+      local,
+      `OTHER=${value}\nUNRELATED=bar baz\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\n`,
+    );
+    assert.deepEqual(
+      run(),
+      {
+        host: "",
+        filter: "",
+        model: "",
+        provider: "databricks_v2",
+        ownerOnly: false,
+      },
+      "embedded policy text must not become a compiled setting",
+    );
+  }
   writeDefaults("changed");
   expected.host = "https://changed.example.com";
   assert.deepEqual(

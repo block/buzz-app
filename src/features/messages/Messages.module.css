@@ -1145,7 +1145,7 @@ button.mediaPreview {
     11px 13px,
     17px 11px,
     13px 17px;
-  animation: spoiler-twinkle 1.7s ease-in-out infinite alternate;
+  animation: spoiler-twinkle 0.65s ease-in-out infinite alternate;
 }
 .spoilerMask::after {
   background-position:
@@ -1153,7 +1153,7 @@ button.mediaPreview {
     3px 2px,
     7px 5px;
   animation-delay: -1.1s;
-  animation-duration: 2.3s;
+  animation-duration: 0.9s;
   animation-direction: alternate-reverse;
 }
 .spoilerMask:hover,

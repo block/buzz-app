@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { activityPreview } from "./activity-preview";
 
 const now = Date.parse("2026-09-24T14:00:00Z");
@@ -60,7 +60,7 @@ it("joins message chunks and updates tool titles/statuses without duplicating ro
     { label: "Tool completed", text: "Run tests" },
   ]);
 });
-it("scopes mixed batch children before parsing and excludes foreign identities and unscoped data", () => {
+it("scopes mixed batch children before projecting and excludes foreign identities and unscoped data", () => {
   const batch = row({
     kind: "batch",
     payload: {
@@ -131,4 +131,135 @@ it("preserves interleaved message chunks even after three other items update", (
   expect(activityPreview(rows, "agent", "alpha").at(-1)?.text).toBe(
     "First last",
   );
+});
+
+it("reads scoped batch fields without serializing ignored nested results", () => {
+  // Compact wire JSON stays small even when excluded diagnostic data is deep.
+  const nested = `${"[".repeat(1500)}0${"]".repeat(1500)}`;
+  const safe = event({
+    sessionUpdate: "tool_call",
+    toolCallId: "tool",
+    title: "Safe title",
+    status: "completed",
+    rawOutput: "NESTED_RESULT",
+  });
+  const record = row({ kind: "batch", payload: { events: [safe] } });
+  record.plaintext = record.plaintext.replace('"NESTED_RESULT"', nested);
+  const stringify = vi.spyOn(JSON, "stringify");
+  try {
+    const items = activityPreview([record], "agent", "alpha");
+    // Identity tuples may be serialized, but never whole telemetry objects or
+    // indentation-expanded diagnostic JSON.
+    const serialized = stringify.mock.calls.map(([value, , space]) => ({
+      value,
+      space,
+    }));
+    expect(
+      serialized.every(
+        ({ value, space }) =>
+          space === undefined &&
+          Array.isArray(value) &&
+          value.every(
+            (part) => typeof part === "string" || typeof part === "number",
+          ),
+      ),
+    ).toBe(true);
+    expect(items).toMatchObject([
+      { text: "Safe title", label: "Tool completed" },
+    ]);
+  } finally {
+    stringify.mockRestore();
+  }
+});
+
+it("rejects nested scope hints, foreign envelopes and malformed batch children", () => {
+  const hidden = event(chunk("hidden"), null);
+  const batch = {
+    kind: "batch",
+    channelId: "alpha",
+    payload: {
+      events: [
+        null,
+        [],
+        { ...hidden, payload: { ...hidden.payload, channelId: "alpha" } },
+        {
+          kind: "batch",
+          channelId: "alpha",
+          payload: { events: [event(chunk("nested"))] },
+        },
+        event(chunk("foreign channel"), "beta"),
+      ],
+    },
+  };
+  expect(
+    activityPreview(
+      [
+        row(batch),
+        row(
+          {
+            kind: "batch",
+            payload: { events: [event(chunk("foreign agent"))] },
+          },
+          "2",
+          "other",
+        ),
+        { ...row(null), plaintext: "{" },
+        row({ kind: "batch", channelId: "alpha", payload: { events: {} } }),
+      ],
+      "agent",
+      "alpha",
+    ),
+  ).toEqual([]);
+});
+
+it.each(["tool_call", "tool_call_update"])(
+  "splits unkeyed text at a same-turn %s boundary",
+  (sessionUpdate) => {
+    const unkeyed = (text: string) => ({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text },
+    });
+    const rows = [
+      row(event(unkeyed("Before tool. ")), "1"),
+      row(
+        event({ sessionUpdate, toolCallId: "tool", title: "Run tests" }),
+        "2",
+      ),
+      row(event(unkeyed("After tool.")), "3"),
+    ];
+    expect(
+      activityPreview(rows, "agent", "alpha").map(({ text }) => text),
+    ).toEqual(["Before tool. ", "Run tests", "After tool."]);
+  },
+);
+
+it("preserves keyed interleaving and isolates unkeyed tool boundaries by session and turn", () => {
+  const tool = event({
+    sessionUpdate: "tool_call",
+    toolCallId: "tool",
+    title: "Run tests",
+  });
+  for (const between of [
+    tool,
+    { ...tool, turnId: "other" },
+    { ...tool, sessionId: "other" },
+  ]) {
+    const keyed = [
+      row(event(chunk("Before ")), "1"),
+      row(between, "2"),
+      row(event(chunk("after")), "3"),
+    ];
+    expect(activityPreview(keyed, "agent", "alpha").at(-1)?.text).toBe(
+      "Before after",
+    );
+    if (between !== tool) {
+      const unkeyed = keyed.map((record) => ({
+        ...record,
+        plaintext: record.plaintext.replace(',"messageId":"message"', ""),
+      }));
+      expect(activityPreview(unkeyed, "agent", "alpha").at(-1)?.text).toBe(
+        "Before after",
+      );
+    }
+  }
 });

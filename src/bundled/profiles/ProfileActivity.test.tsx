@@ -264,3 +264,48 @@ it("renders live text safely and clears content on profile changes and access lo
   act(f.deny);
   expect(screen.queryByRole("list")).not.toBeInTheDocument();
 });
+
+it("renders separate unkeyed segments and a safe tool from a deeply nested batch", () => {
+  const f = fixture();
+  f.listening();
+  render(f.view());
+  let rawOutput: unknown = "excluded result";
+  for (let i = 0; i < 1500; i++) rawOutput = [rawOutput];
+  const event = (update: unknown) => ({
+    kind: "acp_read",
+    channelId: "channel-a",
+    sessionId: "session",
+    turnId: "turn",
+    payload: { method: "session/update", params: { update } },
+  });
+  const chunk = (text: string) =>
+    event({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text },
+    });
+  act(() =>
+    f.send(agent, null, "batch", {
+      events: [
+        chunk("Before tool."),
+        event({
+          sessionUpdate: "tool_call",
+          toolCallId: "tool",
+          title: "Safe title",
+          status: "completed",
+          rawOutput,
+        }),
+        chunk("After tool."),
+      ],
+    }),
+  );
+  expect(
+    screen.getAllByRole("listitem").map((item) => item.textContent),
+  ).toEqual([
+    "AssistantBefore tool.",
+    "Tool completedSafe title",
+    "AssistantAfter tool.",
+  ]);
+  expect(f.owner.queries.snapshot().records).toHaveLength(1);
+  act(f.deny);
+  expect(screen.queryByRole("list")).not.toBeInTheDocument();
+});

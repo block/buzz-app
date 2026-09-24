@@ -8,10 +8,14 @@ When Agent Activity is enabled and the host supplies conversation context, **Vie
 activity** opens its raw panel for this exact identity and originating channel.
 The Info tab's “Latest activity” card shows up to three recently updated assistant
 messages or tool titles/statuses from the existing session-owned records, restricted
-to this exact public key and originating channel (including threads). Text chunks
-are joined by session/turn/message identity; tool updates reuse the tool identity.
-Each item retains at most 600 trailing characters plus a truncation marker and
-renders at most three lines. Plain text only: no HTML, images or active links.
+to this exact public key and originating channel (including threads). Retained text
+chunks are joined by session/turn/message identity; without a message identity,
+tool updates separate text segments within that turn. Tool updates reuse the tool
+identity.
+Each item shows at most 600 trailing characters of retained text, with a marker
+when the preview clips that text, and renders at most three lines. Earlier chunks
+may have left the session journal; the preview cannot identify missing history.
+Plain text only: no HTML, images or active links.
 Prompts, thinking, arguments, raw results and unsupported records are omitted;
 “View activity” retains the raw destination. This is a bounded preview, not a full
 transcript or history backfill. The timestamp includes visible content updates as

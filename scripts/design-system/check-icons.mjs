@@ -56,6 +56,7 @@ const nonIconDependencies = new Set([
   "prosemirror-state",
   "prosemirror-view",
   "react",
+  "react-diff-view", // Patch tables/parser, not an icon library.
   "react-dom",
   "react-markdown",
   "remark-breaks",

@@ -15,6 +15,7 @@ import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
 import { profileTarget } from "../profiles/target";
+import { MessageBody } from "../conversation/MessageBody";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
@@ -129,7 +130,7 @@ export const MessageRow = memo(function MessageRow({
     row.agentEnvelope || agentPubkeys?.has(row.authorId)
       ? "squircle"
       : "circle";
-  const timeReply = parseMediaTimeReply(row.content);
+  const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
@@ -147,6 +148,33 @@ export const MessageRow = memo(function MessageRow({
       ?.readOnly
   );
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  const body = row.diff ? (
+    <div>
+      <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
+      {row.diff.description && (
+        <p className="text-body-sm">{row.diff.description}</p>
+      )}
+      <pre className={styles.rawDiff}>{row.content || "No diff content"}</pre>
+      {row.diff.truncated && (
+        <p className="text-body-sm">
+          Diff truncated. View the full diff at the source repository.
+        </p>
+      )}
+    </div>
+  ) : (
+    <MessageMarkdown
+      directory={directory}
+      session={session}
+      scope={scope}
+      row={displayRow}
+      extensions={extensions}
+      media={media}
+      onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
+      participantProfiles={participantProfiles}
+      largeEmoji={emojiOnly}
+    />
+  );
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -267,18 +295,13 @@ export const MessageRow = memo(function MessageRow({
               </Button>
             </span>
           )}
-          <MessageMarkdown
-            directory={directory}
-            session={session}
-            scope={scope}
-            row={displayRow}
-            extensions={extensions}
-            media={media}
-            onOpenLink={onOpenLink}
-            canOpenLink={canOpenLink}
-            participantProfiles={participantProfiles}
-            largeEmoji={emojiOnly}
-          />
+          {extensions?.messages ? (
+            <MessageBody registry={extensions.messages} message={row}>
+              {body}
+            </MessageBody>
+          ) : (
+            body
+          )}
           <DeliveryNotice row={row} retry={retry} />
           {row.attachments.map((attachment) => {
             const url = safeMessageUrl(attachment.url);

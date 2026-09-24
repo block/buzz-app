@@ -47,6 +47,8 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 pub fn bundled_manifests() -> Vec<Manifest> {
     vec![
+        serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
+            .expect("bundled diffs manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/channel-templates/manifest.json"
         ))

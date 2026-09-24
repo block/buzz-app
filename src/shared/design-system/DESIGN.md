@@ -157,6 +157,9 @@ close button and actions. Pending operations set preventClose so Escape and the
 close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
+Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
+the body scrolls while the shared title and close action remain available. This
+changes only size, not modal ownership or dismissal behavior.
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
 the close button so its hit area does not enlarge the text gap. The body owns

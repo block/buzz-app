@@ -179,7 +179,7 @@ export async function threadSample(
             assert.equal(page.thread_cursor, data.replies[cursor]?.created_at);
           }
           assert.deepEqual(page, {
-            kinds: [40002, 9],
+            kinds: [40002, 40008, 9],
             "#h": ["a"],
             "#e": [data.root.id],
             depth_limit: 100,

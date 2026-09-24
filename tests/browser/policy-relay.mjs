@@ -148,7 +148,9 @@ export function policyRelay({
             "#h": replies["#h"],
             limit: 1,
           });
-          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([9, 40002]);
+          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([
+            9, 40002, 40008,
+          ]);
           for (const filter of filters)
             report.queries.push({
               community: communityOf(url),

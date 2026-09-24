@@ -25,6 +25,12 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.content === right.content &&
     left.sourceContent === right.sourceContent &&
     left.agentEnvelope === right.agentEnvelope &&
+    !!left.diff === !!right.diff &&
+    left.diff?.filePath === right.diff?.filePath &&
+    left.diff?.repoUrl === right.diff?.repoUrl &&
+    left.diff?.commitSha === right.diff?.commitSha &&
+    left.diff?.description === right.diff?.description &&
+    left.diff?.truncated === right.diff?.truncated &&
     left.membership?.type === right.membership?.type &&
     left.membership?.actor === right.membership?.actor &&
     left.membership?.target === right.membership?.target &&

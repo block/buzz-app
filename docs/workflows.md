@@ -9,7 +9,7 @@ See the [capability contract](../src/features/workflows/types.ts).
 ## Scope
 
 - Channel-scoped saved configurations; new drafts start disabled.
-- Form editing for message/reaction/diff/schedule triggers and Send
+- Form editing for message/reaction/diff/schedule/webhook triggers and Send
   Message/Delay actions. Schedules offer repeat presets, weekday and
   day-of-month pickers, a UTC run time and a five-field cron editor; six- and
   seven-field cron stays in YAML. Other definitions stay in YAML; opening them
@@ -17,11 +17,17 @@ See the [capability contract](../src/features/workflows/types.ts).
 - Save with the original owner/channel/UUID and signed `expected-revision`.
   Warn before enabling an unfiltered message trigger or a schedule that runs
   hourly or more often, not on ordinary enabled edits.
+- Webhook triggers: the relay issues a secret once, when a workflow first
+  gains the trigger. The save receipt hands it to a one-time dialog with the
+  hook URL, masked value, reveal and copy; leaving before revealing or copying
+  asks for confirmation. The secret is held in memory until that dialog takes
+  it and never enters the outbox journal, operation errors or logs. The hook
+  URL needs the relay HTTP base the host advertises; without it the dialog
+  shows the relative `/hooks/{id}` route only.
 - Confirmed deletion request, manual run, and on-demand run/trace history in
   20-row pages with the relay's exact `(before,beforeId)` cursor.
-- No approval UI, webhook-secret handling, lifecycle negotiation, alternative
-  signed-host adapter or plugin command-replay API. Webhook-trigger saves are
-  blocked at both the editor and signing boundary, including raw YAML.
+- No approval UI, lifecycle negotiation, alternative signed-host adapter,
+  plugin command-replay API or JSON trigger inputs.
 
 ## Recovery and limits
 

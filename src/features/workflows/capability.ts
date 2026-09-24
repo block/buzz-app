@@ -11,6 +11,7 @@ import type {
 } from "./types";
 import {
   definition,
+  hookUrl,
   isWorkflowOperation,
   parseRuns,
   record,
@@ -27,6 +28,7 @@ export function createWorkflows({
   outbox,
   local,
   host,
+  relayHttpUrl,
   canAccess,
   notify = (listener: () => void) => listener(),
 }: {
@@ -35,6 +37,8 @@ export function createWorkflows({
   outbox: Outbox | undefined;
   local: LocalEvents | undefined;
   host: WorkflowHost | undefined;
+  /** Relay HTTP base for display only; hook URLs are never fetched from here. */
+  relayHttpUrl?: string | undefined;
   canAccess(channel: string): boolean;
   notify?: (listener: () => void) => void;
 }) {
@@ -52,6 +56,9 @@ export function createWorkflows({
     error?: string;
   };
   const results = new Map<string, Result>();
+  // One-time webhook secrets, keyed by save event ID, live here and nowhere
+  // else: not in results, operations, the journal or any error text.
+  const secrets = new Map<string, string>();
   const receiptInterest = new Set<string>();
   const availability = Object.freeze({
     definitions: !!reader,
@@ -102,6 +109,7 @@ export function createWorkflows({
                   outcome,
                   ...(result?.runId ? { runId: result.runId } : {}),
                   ...(error !== undefined ? { error } : {}),
+                  ...(secrets.has(item.event.id) ? { secretHeld: true } : {}),
                 }),
               ];
             })
@@ -109,6 +117,7 @@ export function createWorkflows({
         );
     const active = new Set(operations.map((op) => op.eventId));
     for (const id of results.keys()) if (!active.has(id)) results.delete(id);
+    for (const id of secrets.keys()) if (!active.has(id)) secrets.delete(id);
     for (const listener of listeners) notify(listener);
   }
   const stop = local?.subscribe(rebuild);
@@ -382,6 +391,16 @@ export function createWorkflows({
     trigger(workflow) {
       return send(46020, workflow);
     },
+    takeWebhookSecret(eventId) {
+      const secret = secrets.get(eventId);
+      if (secret === undefined) return undefined;
+      secrets.delete(eventId);
+      rebuild();
+      return secret;
+    },
+    webhookUrl(workflowId) {
+      return relayHttpUrl ? hookUrl(relayHttpUrl, workflowId) : undefined;
+    },
     operations: Object.freeze<WorkflowCapability["operations"]>({
       snapshot: () => operations,
       subscribe(listener) {
@@ -434,11 +453,20 @@ export function createWorkflows({
             (event.kind === 46020
               ? value.workflow_id === undefined ||
                 value.workflow_id === reference.id
-              : value.workflow_id === reference.id) &&
-            value.webhook_secret === undefined
+              : value.workflow_id === reference.id)
           ) {
-            if (event.kind === 30620) result = { outcome: "succeeded" };
-            else if (
+            const secret = value.webhook_secret;
+            // Only a save receives a secret, and only when the workflow first
+            // gains a webhook trigger. Hold it for one UI take; never store it
+            // on the result.
+            if (event.kind === 30620) {
+              if (secret === undefined || typeof secret === "string") {
+                result = { outcome: "succeeded" };
+                if (typeof secret === "string") secrets.set(event.id, secret);
+              }
+            } else if (secret !== undefined) {
+              /* Unexpected secret on a run or deletion: stay unknown. */
+            } else if (
               event.kind === 46020 &&
               typeof value.run_id === "string" &&
               UUID.test(value.run_id)
@@ -461,6 +489,7 @@ export function createWorkflows({
     },
     clear() {
       results.clear();
+      secrets.clear();
       receiptInterest.clear();
       for (const owned of views) owned.clear();
       rebuild();
@@ -472,6 +501,7 @@ export function createWorkflows({
       closed = true;
       for (const owned of [...views]) owned.dispose();
       results.clear();
+      secrets.clear();
       receiptInterest.clear();
       stop?.();
       rebuild();

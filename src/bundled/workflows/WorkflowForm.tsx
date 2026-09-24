@@ -52,6 +52,10 @@ export function WorkflowForm({
             label: "Time",
             options: [{ value: "schedule", label: "Schedule" }],
           },
+          {
+            label: "Integrations",
+            options: [{ value: "webhook", label: "Webhook" }],
+          },
         ]}
         onValueChange={(value) => {
           if (disabled || !isTriggerType(value)) return;
@@ -81,6 +85,11 @@ export function WorkflowForm({
           trigger={state.trigger}
           onUpdate={(trigger) => onChange({ ...state, trigger })}
         />
+      ) : state.trigger.on === "webhook" ? (
+        <p className="text-body-sm text-secondary">
+          A unique URL is generated after creation. Its address and one-time
+          secret are shown once, after the first save.
+        </p>
       ) : (
         <details>
           <summary>Trigger options</summary>

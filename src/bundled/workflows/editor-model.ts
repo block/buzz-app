@@ -63,16 +63,6 @@ export function draftError(yaml: string): string | null {
   }
 }
 
-/** No secret display exists in this slice: do not offer webhook-trigger writes. */
-export function hasWebhookTrigger(yaml: string): boolean {
-  try {
-    const data = parseDocument(yaml).toJS();
-    return data?.trigger?.on === "webhook";
-  } catch {
-    return false;
-  }
-}
-
 export function formWithStep(
   state: WorkflowFormState,
   id: string,

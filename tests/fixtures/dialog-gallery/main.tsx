@@ -196,7 +196,9 @@ function Gallery() {
                   <option value="dark">Dark</option>
                 </select>
               </label>
-              {(selected.id === "enable" || selected.id === "dismiss") && (
+              {(selected.id === "enable" ||
+                selected.id === "dismiss" ||
+                selected.id === "webhook") && (
                 <label>
                   State{" "}
                   <select
@@ -209,6 +211,8 @@ function Gallery() {
                         <option value="schedule">Scheduled trigger</option>
                         <option value="message">Every message</option>
                       </>
+                    ) : selected.id === "webhook" ? (
+                      <option value="noaddress">No relay address</option>
                     ) : (
                       <>
                         <option value="pending">Pending</option>

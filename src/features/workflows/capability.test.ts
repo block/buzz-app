@@ -16,7 +16,7 @@ const disposers: (() => void)[] = [];
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
 });
-function setup() {
+function setup(relayHttpUrl?: string) {
   const key = keypair();
   let saved: readonly OutgoingEvent[] = [],
     allowed = true;
@@ -55,6 +55,7 @@ function setup() {
       runs: async () => ({ runs: [], next: null }),
     },
     canAccess: () => allowed,
+    relayHttpUrl,
   });
   disposers.push(() => {
     workflows.dispose();
@@ -178,15 +179,83 @@ it("explicit rejection is rejected, not unknown; revocation fences late receipts
   expect(h.saved().some((row) => row.event.id === id)).toBe(true);
   expect(JSON.stringify(h.saved())).not.toContain("PRIVATE");
 });
-it("webhook saves are blocked through raw YAML; stale/legacy deletion receipt never proves deletion", async () => {
+it("a secret-bearing save receipt succeeds; the secret is taken once and never journaled or surfaced", async () => {
+  const h = setup("https://relay.test");
+  const operation = h.capability.save({
+    channelId,
+    yaml: yaml.replace("message_posted", "webhook"),
+    existing: h.definition,
+  });
+  await flush();
+  expect(h.publish).toHaveBeenCalledTimes(1);
+  expect(h.publish.mock.calls[0]?.[0]?.content).toContain("on: webhook");
+  h.settle(
+    `response:${JSON.stringify({ workflow_id: id, webhook_secret: "PRIVATE-SECRET" })}`,
+  );
+  await flush();
+  const settled = h.capability.operations.snapshot()[0];
+  expect(settled).toMatchObject({
+    eventId: operation,
+    outcome: "succeeded",
+    secretHeld: true,
+  });
+  expect(settled?.error).toBeUndefined();
+  expect(JSON.stringify(h.capability.operations.snapshot())).not.toContain(
+    "PRIVATE",
+  );
+  expect(JSON.stringify(h.saved())).not.toContain("PRIVATE");
+  expect(h.capability.webhookUrl(id)).toBe(`https://relay.test/hooks/${id}`);
+  expect(() => h.capability.webhookUrl("../admin")).toThrow();
+  expect(h.capability.takeWebhookSecret("f".repeat(64))).toBeUndefined();
+  expect(h.capability.takeWebhookSecret(operation)).toBe("PRIVATE-SECRET");
+  expect(h.capability.operations.snapshot()[0]).toMatchObject({
+    eventId: operation,
+    outcome: "succeeded",
+  });
+  expect(h.capability.operations.snapshot()[0]?.secretHeld).toBeUndefined();
+  expect(h.capability.takeWebhookSecret(operation)).toBeUndefined();
+  expect(JSON.stringify(h.saved())).not.toContain("PRIVATE");
+});
+it("a non-string secret keeps the save unknown; clear() forgets a held secret", async () => {
   const h = setup();
-  expect(() =>
-    h.capability.save({
-      channelId,
-      yaml: yaml.replace("message_posted", "webhook"),
-    }),
-  ).toThrow("secret");
-  expect(h.publish).not.toHaveBeenCalled();
+  const first = h.capability.save({
+    channelId,
+    yaml,
+    existing: h.definition,
+  });
+  await flush();
+  h.settle(
+    `response:${JSON.stringify({ workflow_id: id, webhook_secret: 42 })}`,
+  );
+  await flush();
+  expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
+  expect(h.capability.operations.snapshot()[0]?.secretHeld).toBeUndefined();
+  expect(h.capability.takeWebhookSecret(first)).toBeUndefined();
+  expect(h.capability.webhookUrl(id)).toBeUndefined();
+  const second = h.capability.save({
+    channelId,
+    yaml,
+    existing: h.definition,
+  });
+  await flush();
+  h.settle(
+    `response:${JSON.stringify({ workflow_id: id, webhook_secret: "PRIVATE-SECRET" })}`,
+  );
+  await flush();
+  expect(h.capability.operations.snapshot()[1]).toMatchObject({
+    eventId: second,
+    outcome: "succeeded",
+    secretHeld: true,
+  });
+  h.clear();
+  expect(h.capability.takeWebhookSecret(second)).toBeUndefined();
+  expect(
+    h.capability.operations.snapshot().some((item) => item.secretHeld),
+  ).toBe(false);
+  expect(JSON.stringify(h.saved())).not.toContain("PRIVATE");
+});
+it("stale/legacy deletion receipt never proves deletion", async () => {
+  const h = setup();
   h.capability.delete(h.definition);
   await flush();
   h.settle("");

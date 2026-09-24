@@ -6,7 +6,7 @@ import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowForm } from "./WorkflowForm";
-import { draftError, hasWebhookTrigger } from "./editor-model";
+import { draftError } from "./editor-model";
 import { getWorkflowActivationWarning } from "./workflowActivationWarning";
 import {
   formStateToYaml,
@@ -57,10 +57,6 @@ export function WorkflowEditor({
         ? parsed.state
         : null;
   const error = draftError(yaml);
-  const secretGate = hasWebhookTrigger(yaml)
-    ? "Webhook-trigger saves are unavailable until secure one-time-secret display is supported."
-    : undefined;
-  const unavailable = blocked || secretGate;
   const mutateForm = (state: WorkflowFormState) => {
     const next = formStateToYaml(state);
     setFormDraft(state);
@@ -80,7 +76,7 @@ export function WorkflowEditor({
   };
   const warning = getWorkflowActivationWarning(yaml);
   const submit = () => {
-    if (readOnly || busy || locked || unavailable || error) return;
+    if (readOnly || busy || locked || blocked || error) return;
     const wasEnabled =
       initialYaml !== undefined &&
       readWorkflowDocumentFields(initialYaml).enabled !== false;
@@ -167,15 +163,15 @@ export function WorkflowEditor({
           {error}
         </p>
       )}
-      {unavailable && (
+      {blocked && (
         <p role="status" className="text-secondary">
-          {unavailable}
+          {blocked}
         </p>
       )}
       {!readOnly && (
         <Button
           variant="primary"
-          disabled={busy || locked || !!unavailable || !!error}
+          disabled={busy || locked || !!blocked || !!error}
           onClick={submit}
         >
           {busy ? "Saving…" : "Save workflow"}

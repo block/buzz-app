@@ -119,10 +119,11 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
   await yaml.fill(
     (await yaml.inputValue()).replace("on: message_posted", "on: webhook"),
   );
-  expect(await button("Save workflow").isDisabled()).toBe(true);
-  await expect
-    .poll(() => page.getByText(/Webhook-trigger saves are unavailable/).count())
-    .toBe(1);
+  // Webhook drafts save like any other; the relay issues the secret on the first save.
+  await expect(button("Save workflow")).toBeEnabled();
+  await expect(
+    page.getByText(/Webhook-trigger saves are unavailable/),
+  ).toHaveCount(0);
   for (const width of [390, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     expect(
@@ -749,6 +750,113 @@ test("schedule presets round-trip into YAML and warn before enabling a frequent 
     parseYaml(await page.evaluate(() => window.workflowFixture.input().yaml))
       .trigger,
   ).toEqual({ on: "schedule", interval: "1h" });
+  expect(errors).toEqual([]);
+});
+
+test("a webhook save shows its one-time secret once and asks before leaving it behind", async ({
+  page,
+}) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.addInitScript(() => {
+    window.__copied = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text) => {
+          window.__copied.push(text);
+        },
+      },
+    });
+  });
+  await page.goto(url);
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const yaml = page.getByLabel("Workflow YAML", { exact: true });
+  const tab = (name) => page.getByRole("tab", { name, exact: true });
+  const reply = page.getByRole("switch", {
+    name: "Reply in the triggering thread",
+  });
+  const secretValue = "fixture-webhook-secret-2f6c";
+  const hookUrl =
+    "https://relay.example.test/hooks/66666666-6666-4666-8666-666666666666";
+
+  await button("New workflow").click();
+  await page.getByLabel("Workflow name", { exact: true }).fill("Hook helper");
+  await button("Add Send Message").click();
+  await page.getByLabel("Message text", { exact: true }).fill("Hook received");
+  await reply.click();
+  await expect(reply).toBeChecked();
+  await page.getByRole("combobox", { name: "Trigger", exact: true }).click();
+  await page.getByRole("option", { name: "Webhook", exact: true }).click();
+  await expect(
+    page.getByText(/A unique URL is generated after creation/),
+  ).toBeVisible();
+  await expect(reply).toHaveCount(0);
+  await expect(page.getByText("Trigger options", { exact: true })).toHaveCount(
+    0,
+  );
+  await tab("YAML").click();
+  const parsed = parseYaml(await yaml.inputValue());
+  expect(parsed.trigger).toEqual({ on: "webhook" });
+  expect(parsed.steps[0]).not.toHaveProperty("reply_in_thread");
+  await tab("Form").click();
+  await button("Save workflow").click();
+  await expect
+    .poll(() => page.evaluate(() => window.workflowFixture.calls.save))
+    .toBe(1);
+  await button("Complete save with webhook secret").click();
+
+  const dialog = page.getByRole("dialog", { name: "Webhook ready" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId("webhook-url")).toHaveText(hookUrl);
+  await expect(dialog.getByTestId("webhook-secret")).toHaveText("•".repeat(24));
+  expect(await page.evaluate(() => window.workflowFixture.calls.take)).toBe(1);
+  expect(await dialog.textContent()).not.toContain(secretValue);
+  // Dismissing before revealing or copying asks first; going back keeps the dialog.
+  await page.keyboard.press("Escape");
+  const confirm = page.getByRole("alertdialog", {
+    name: "Continue without this secret?",
+  });
+  await expect(confirm).toBeVisible();
+  await confirm.getByRole("button", { name: "Go back", exact: true }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Reveal webhook secret" }).click();
+  await expect(dialog.getByTestId("webhook-secret")).toHaveText(secretValue);
+  await dialog.getByRole("button", { name: "Hide webhook secret" }).click();
+  await expect(dialog.getByTestId("webhook-secret")).toHaveText("•".repeat(24));
+  await dialog
+    .getByRole("button", { name: "Copy secret", exact: true })
+    .click();
+  await expect(dialog.getByRole("status")).toHaveText("Secret copied.");
+  await dialog.getByRole("button", { name: "Copy URL", exact: true }).click();
+  await expect(dialog.getByRole("status")).toHaveText("URL copied.");
+  expect(await page.evaluate(() => window.__copied)).toEqual([
+    secretValue,
+    hookUrl,
+  ]);
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+
+  // The hand-off happened once (StrictMode included) and nothing retains the value.
+  expect(await page.evaluate(() => window.workflowFixture.calls.take)).toBe(1);
+  const operations = await page.evaluate(() =>
+    window.workflowFixture.capability.operations.snapshot(),
+  );
+  expect(operations.at(-1)).toMatchObject({
+    action: "save",
+    outcome: "succeeded",
+  });
+  expect(operations.at(-1)).not.toHaveProperty("secretHeld");
+  expect(JSON.stringify(operations)).not.toContain(secretValue);
+  expect(
+    await page.evaluate(
+      (id) => window.workflowFixture.capability.takeWebhookSecret(id),
+      operations.at(-1).eventId,
+    ),
+  ).toBeUndefined();
+  await expect(button("Save workflow")).toBeEnabled();
   expect(errors).toEqual([]);
 });
 

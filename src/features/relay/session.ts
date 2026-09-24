@@ -553,6 +553,7 @@ export function createRelaySession(
     outbox: writes?.outbox,
     local: localViews,
     host: transport?.workflows,
+    relayHttpUrl: transport?.relayHttpUrl,
     canAccess: (channelId) => channels.canParticipate(channelId),
     notify,
   });

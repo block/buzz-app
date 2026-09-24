@@ -29,6 +29,13 @@ function Fixture() {
         <Button onClick={() => fixture.finish("succeeded", false)}>
           Complete concurrent head
         </Button>
+        <Button
+          onClick={() =>
+            fixture.finish("succeeded", true, "fixture-webhook-secret-2f6c")
+          }
+        >
+          Complete save with webhook secret
+        </Button>
         <Button onClick={() => fixture.finish("rejected")}>
           Reject operation
         </Button>

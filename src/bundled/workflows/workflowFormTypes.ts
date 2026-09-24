@@ -12,6 +12,7 @@ export const TRIGGER_TYPES = [
   "reaction_added",
   "diff_posted",
   "schedule",
+  "webhook",
 ] as const;
 export type TriggerType = (typeof TRIGGER_TYPES)[number];
 
@@ -21,11 +22,11 @@ export function isTriggerType(value: string): value is TriggerType {
 
 /**
  * The relay accepts reply_in_thread only on message-bearing triggers
- * (message_posted, reaction_added, diff_posted); a schedule has no message to
- * reply to.
+ * (message_posted, reaction_added, diff_posted); a schedule or webhook has no
+ * message to reply to.
  */
 export function isThreadReplyEligibleTrigger(trigger: TriggerType): boolean {
-  return trigger !== "schedule";
+  return trigger !== "schedule" && trigger !== "webhook";
 }
 
 export const ACTION_TYPES = ["delay", "send_message"] as const;
@@ -124,7 +125,8 @@ export function formStateToYaml(state: WorkflowFormState): string {
     // The relay refuses cron and interval together; emit exactly one.
     if (state.trigger.cron) trigger.cron = state.trigger.cron;
     else if (state.trigger.interval) trigger.interval = state.trigger.interval;
-  } else {
+  } else if (state.trigger.on !== "webhook") {
+    // A webhook carries nothing but `on`; the relay owns its URL and secret.
     if (state.trigger.filter) trigger.filter = state.trigger.filter;
     if (state.trigger.on === "reaction_added" && state.trigger.emoji) {
       trigger.emoji = state.trigger.emoji;
@@ -172,6 +174,7 @@ const TRIGGER_KEYS: Record<TriggerType, ReadonlySet<string>> = {
   reaction_added: new Set(["on", "emoji", "filter"]),
   diff_posted: new Set(["on", "filter"]),
   schedule: new Set(["on", "cron", "interval"]),
+  webhook: new Set(["on"]),
 };
 const COMMON_STEP_KEYS = ["id", "name", "action", "if", "timeout_secs"];
 const ACTION_STEP_KEYS: Record<ActionType, ReadonlySet<string>> = {

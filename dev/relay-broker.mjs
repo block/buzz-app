@@ -674,6 +674,8 @@ export function relayBrokerPlugin({
               viewer,
               ...(await getAuthority(relay)),
               relayUrl: relay,
+              // Display base for relay HTTP routes such as /hooks/{workflow_id}.
+              relayHttpUrl: relay,
               writeKinds: [
                 7,
                 9,

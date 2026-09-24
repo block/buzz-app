@@ -267,6 +267,8 @@ it("existing backend signs only canonical workflow sign/publish with exact own e
     ]);
     for (const input of [
       template(),
+      // Webhook saves are ordinary saves; the relay hands the secret back in the receipt.
+      { ...template(), content: yaml.replace("message_posted", "webhook") },
       template(46020),
       {
         ...template(5),
@@ -285,7 +287,7 @@ it("existing backend signs only canonical workflow sign/publish with exact own e
       expect(await t.writer.publish(event, signal())).toBe("workflow-result");
       expect(h.publications.at(-1)).toEqual(JSON.parse(JSON.stringify(event)));
     }
-    expect(h.publications).toHaveLength(3);
+    expect(h.publications).toHaveLength(4);
     expect(h.calls).toHaveLength(0);
   } finally {
     live?.dispose();
@@ -303,13 +305,6 @@ const invalidCommands = [
         ["h", runId],
         ["d", "name"],
       ],
-    }),
-  ],
-  [
-    "webhook",
-    () => ({
-      ...template(),
-      content: yaml.replace("message_posted", "webhook"),
     }),
   ],
   [

@@ -47,6 +47,7 @@ const acceptedFixtures = [
   `name: Standup\ntrigger: { on: schedule, cron: '0 9 * * 1-5' }\nsteps: [{ id: prompt, action: send_message, text: Standup time }]\n`,
   `name: Tick\nenabled: false\ntrigger: { on: schedule, interval: 30m }\nsteps: [{ id: s1, action: send_message, text: tick }, { id: wait, action: delay, duration: 1m }]\n`,
   `name: Aliases\ntrigger: { on: schedule, cron: '0 */2 1,15 JAN,MAR MON-FRI' }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
+  `name: Hook\ntrigger: { on: webhook }\nsteps: [{ id: s1, action: send_message, text: hi }, { id: wait, action: delay, duration: 2s }]\n`,
 ];
 
 test("accepted Form fixtures survive a semantic YAML round trip", () => {
@@ -390,14 +391,61 @@ test("new workflow drafts start explicitly disabled", () => {
   assert.equal(parseYaml(formStateToYaml(DEFAULT_FORM_STATE)).enabled, false);
 });
 
-test("unsupported legacy triggers and actions remain YAML-only without parsing into form state", () => {
-  for (const trigger of ["webhook"]) {
-    const yaml = `# retained\nname: Advanced\ntrigger: { on: ${trigger} }\nsteps: [{id: s1, action: send_message, text: hi}]\n`;
+test("webhook triggers carry only `on`, refuse threaded replies and serialize nothing else", () => {
+  assert.equal(isThreadReplyEligibleTrigger("webhook"), false);
+  for (const field of [
+    "filter: 'true'",
+    "emoji: eyes",
+    "cron: '0 9 * * *'",
+    "secret: abc",
+  ]) {
+    const yaml = `# retained\nname: Hook\ntrigger: { on: webhook, ${field} }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`;
     const result = yamlToFormState(yaml);
     assert.equal(result.ok, false);
-    assert.match(result.error, /Unsupported trigger.*YAML editor/);
+    assert.match(
+      result.error,
+      /^Unsupported webhook trigger field "\w+" — use the YAML editor$/,
+    );
     assert.match(yaml, /# retained/);
   }
+  const refused = yamlToFormState(
+    `name: Hook\ntrigger: { on: webhook }\nsteps: [{ id: s1, action: send_message, text: hi, reply_in_thread: true }]\n`,
+  );
+  assert.equal(refused.ok, false);
+  assert.equal(
+    refused.error,
+    "reply_in_thread is not supported for webhook triggers — use the YAML editor",
+  );
+  const explicitFalse = accepted(
+    `name: Hook\ntrigger: { on: webhook }\nsteps: [{ id: s1, action: send_message, text: hi, reply_in_thread: false }]\n`,
+  );
+  // The parser fills every trigger key; only `on` may carry a value.
+  assert.deepEqual(JSON.parse(JSON.stringify(explicitFalse.trigger)), {
+    on: "webhook",
+  });
+  assert.equal(explicitFalse.steps[0].replyInThread, false);
+  const switched = withTriggerType(
+    sendMessageState({ replyInThread: true }),
+    "webhook",
+  );
+  assert.deepEqual(switched.trigger, { on: "webhook" });
+  assert.equal(switched.steps[0].replyInThread, false);
+  const generated = parseYaml(formStateToYaml(switched));
+  assert.deepEqual(generated.trigger, { on: "webhook" });
+  assert.equal(generated.steps[0].reply_in_thread, undefined);
+  // Stale trigger fields left in state never reach the YAML for a webhook.
+  assert.deepEqual(
+    parseYaml(
+      formStateToYaml({
+        ...switched,
+        trigger: { on: "webhook", filter: "stale", emoji: "eyes" },
+      }),
+    ).trigger,
+    { on: "webhook" },
+  );
+});
+
+test("unsupported legacy actions remain YAML-only without parsing into form state", () => {
   for (const action of [
     "send_dm",
     "call_webhook",

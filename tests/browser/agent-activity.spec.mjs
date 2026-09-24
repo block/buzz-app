@@ -339,6 +339,23 @@ it("profile activity opens the exact agent and originating channel before its fi
   app,
 }, testInfo) => {
   await open(page, app);
+  // The production broker advertises read-state writes even without the
+  // readState fixture option. Exercise that publication before profile activity.
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await page.getByText("Diagnostics", { exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Mark read through loaded messages",
+      exact: true,
+    })
+    .click();
+  await expect.poll(() => app.report.readPublications.length).toBe(1);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const agentKey = generateSecretKey();
   const agent = getPublicKey(agentKey);

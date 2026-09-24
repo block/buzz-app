@@ -581,6 +581,10 @@ material belongs to the draft, not the optional tool. Add these contracts agains
 real workflows rather than declaring the toolbar a universal editor API.
 
 
+## Desktop browser
+
+Plugins can render the host-provided [`browser.View` component](browser.md) inside a panel. It opens HTTP(S) pages beside the conversation on macOS desktop. The host owns website rendering, navigation controls, and native session cleanup. Remote pages receive no Buzz IPC bridge; plugin JavaScript remains trusted same-process code. The [capability guide](browser.md#try-the-capability-with-a-local-plugin) includes a complete local-plugin example and installation steps.
+
 ## In-app keyboard shortcuts
 
 The host composes one `ShortcutsService` in `app/services.ts`. Plugins declare

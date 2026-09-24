@@ -79,6 +79,16 @@ it("only hints the compiled model when the current provider and overrides can us
     },
     {
       provider: "databricks_v2",
+      draft: { command: "/local/bin/buzz-pi-acp" },
+      hint: false,
+    },
+    {
+      provider: "databricks_v2",
+      draft: { command: "/local/bin/buzz-pi-acp", provider: "databricks_v2" },
+      hint: false,
+    },
+    {
+      provider: "databricks_v2",
       draft: { command: "custom-acp" },
       hint: false,
     },

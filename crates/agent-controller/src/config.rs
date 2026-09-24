@@ -179,14 +179,7 @@ impl Agent {
         if let Some(settings) = &self.harness.databricks {
             settings.validate()?;
         }
-        if self.environment.len() > 128 {
-            return Err("Too many environment entries".into());
-        }
-        for (key, value) in &self.environment {
-            validate_env_key(key)?;
-            text(value, 32 * 1024, "Environment value")?;
-        }
-        Ok(())
+        validate_environment(&self.environment)
     }
 }
 pub(crate) fn canonical_key(key: &str) -> bool {
@@ -228,6 +221,16 @@ fn text(value: &str, limit: usize, label: &str) -> Result<()> {
     } else {
         Ok(())
     }
+}
+pub(crate) fn validate_environment(environment: &BTreeMap<String, String>) -> Result<()> {
+    if environment.len() > 128 {
+        return Err("Too many environment entries".into());
+    }
+    for (key, value) in environment {
+        validate_env_key(key)?;
+        text(value, 32 * 1024, "Environment value")?;
+    }
+    Ok(())
 }
 fn validate_env_key(key: &str) -> Result<()> {
     let upper = key.to_ascii_uppercase();

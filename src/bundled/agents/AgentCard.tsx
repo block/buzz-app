@@ -27,8 +27,10 @@ export function AgentCard({
   editable = [],
   onEdit,
   children,
+  identityLabel = (identity) => identity.name,
 }: {
   children?: ReactNode;
+  identityLabel?: (identity: { pubkey: string; name: string }) => string;
   name: string;
   avatar?: string | undefined;
   identities: AgentLibrary["identities"];
@@ -76,7 +78,7 @@ export function AgentCard({
                       "Edit"
                     ) : (
                       <ChoiceRow
-                        label={`Edit ${agent.name}`}
+                        label={`Edit ${identityLabel(agent)}`}
                         description={
                           <>
                             <span className="block break-all text-body-sm text-secondary">
@@ -150,7 +152,7 @@ export function AgentCard({
                   {identities.map((identity) => (
                     <li key={identity.pubkey}>
                       <span className="font-semibold text-primary">
-                        {identity.name}
+                        {identityLabel(identity)}
                       </span>
                       <p className="m-0 mt-1 select-all break-all text-mono-sm">
                         {identity.pubkey}

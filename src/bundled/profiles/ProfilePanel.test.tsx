@@ -7,7 +7,7 @@ import { bindNames } from "../../features/identity-names/service";
 import { profileTarget } from "../../features/profiles/target";
 import { ProfilePanel } from "./ProfilePanel";
 
-import { agentDirectory } from "../agents/directory";
+import { agentDirectory } from "../../features/identity-names/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { keypair, profile } from "../../features/relay/testing";
 

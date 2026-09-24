@@ -60,9 +60,10 @@ export function AgentChoice({
   const resolveName = useIdentityNames(session.names);
   const library = session.agentChoices;
   const agents = useAgentChoices(session);
+  const candidates = agents.identities.map((agent) => agent.pubkey);
   const identities = agents.identities.map((agent) => ({
     ...agent,
-    name: resolveName(agent.pubkey, agent.name),
+    name: resolveName(agent.pubkey, agent.name, candidates),
   }));
   const selected = identities.find((agent) => agent.pubkey === value);
   function picture(avatar?: string) {
@@ -133,10 +134,6 @@ export function AgentChoice({
               sessionMembers,
               parentMembers,
             );
-            const duplicateName = agents.identities.some(
-              (other) =>
-                other.pubkey !== agent.pubkey && other.name === agent.name,
-            );
             return (
               <MenuRadioItem
                 key={agent.pubkey}
@@ -153,7 +150,7 @@ export function AgentChoice({
                       shape="squircle"
                     />
                   }
-                  label={`${agent.name}${duplicateName ? ` · ${agent.pubkey.slice(0, 8)}` : ""}`}
+                  label={agent.name}
                   description={
                     admission === "channel"
                       ? "Adds to channel"

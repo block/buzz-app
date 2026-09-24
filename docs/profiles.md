@@ -1,13 +1,48 @@
 # Profiles: viewing public identities
 
-The bundled `buzz.profiles` plugin supplies a minimal, read-only panel for any
+The bundled `buzz.profiles` plugin supplies a profile panel for any
 public identity, human or agent. It uses the current session's shared profile
 directory. Agents retains agent-specific configuration/operations; this slice
 adds no ownership/running badge, editor, agent-library read or execution API.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
+The Info tab's “Latest activity” card shows up to three recently updated assistant
+messages or tool titles/statuses from the existing session-owned records, restricted
+to this exact public key and originating channel (including threads). Retained text
+chunks are joined by session/turn/message identity; without a message identity,
+tool updates separate text segments within that turn. Tool updates reuse the tool
+identity.
+Each item shows at most 600 trailing characters of retained text, with a marker
+when the preview clips that text, and renders at most three lines. Earlier chunks
+may have left the session journal; the preview cannot identify missing history.
+Plain text only: no HTML, images or active links.
+Prompts, thinking, arguments, raw results and unsupported records are omitted;
+“View activity” retains the raw destination. This is a bounded preview, not a full
+transcript or history backfill. The timestamp includes visible content updates as
+well as turn signals. It uses a short date and time rather than
+a relative age that could become stale between snapshot updates. No context means
+no preview, never an all-channel fallback. Connecting, disconnected, unavailable
+and empty states are explicit. Counts and detailed explanations stay in the
+activity panel; the preview does not infer idle state or successful completion.
+
 This action is offered for any public identity: it does not infer that the identity
-is an owned/running agent. Missing telemetry is explained by the activity panel.
+is an owned/running agent. Public agent hints never grant telemetry access. The
+existing observer admission and session access-reset/generation fences remain the
+authority; the child adds no library read, capture lease, socket, timer or store.
+Disabling Agent Activity removes the preview/action and clears capture. Profile
+opening subscribes only to the existing snapshot; it never starts telemetry.
+Raw records, channel switching and live-feed retry remain in the activity panel.
+
+Guarded invitations that fail or have an unknown outcome remain saved in the
+outbox. Its generic Retry action is withheld for these records. Retrying the
+add from the managed-agent profile rechecks current eligibility and reuses the
+exact saved event while it is still within the relay's 15-minute timestamp
+window. The ordinary channel composer uses a separate invitation path; it does
+not renew or reuse these guarded profile invitations. After expiry, check
+membership; if absent, remove the expired “Add agent” item from Outbox and
+add the agent again from the managed-agent profile. Older unguarded invitation
+records can be promoted to guarded intent when reused through that profile flow.
+Remove from outbox does not revoke an invitation already dispatched to the relay.
 
 ## Boundaries
 
@@ -39,7 +74,7 @@ is an owned/running agent. Missing telemetry is explained by the activity panel.
 
 ## UI and iteration
 
-Avatar, name, about, exact copyable npub, and an optional contextual activity action. Shared design-system Avatar and
+Avatar, name, about, exact copyable npub, and an optional compact activity preview/action. Shared design-system Avatar and
 Button use the host-loaded styles directly. The profile content marks its
 `data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet
 owns layout, not component overrides. No new theme owner, second global reset or
@@ -88,7 +123,8 @@ heads: `live-session.test.ts` forces overlapping unread reads for 1, 2 and 130
 channels; `sidebar-unread.spec.mjs` holds unread evidence through real EOSE and
 checks its badges without retries. Access-loss/disconnect cancellation is unchanged.
 Broad scan and native build/package acceptance remain deferred to an agreed
-integration batch. No sending/signing behavior changed.
+integration batch. The earlier read-only profile slice changed no sending/signing
+behavior; the managed-agent admission described below does.
 
 ## Info, channels and linked instances
 
@@ -112,5 +148,14 @@ section stays hidden for a non-agent without a match. It never derives ownership
 from the old Buzz library, self-declared profile markers, or names. The Agents
 page route opens management, not a per-instance page.
 
-The Info tab keeps the public key and linked instances; the Channels tab is read-only.
-Neither list is a cross-community/global directory.
+The Info tab keeps the public key and linked instances. The Channels tab offers
+**Add to channel** only for an exact native-managed identity in this community
+that is also a managed session choice. It offers loaded, classified stream/forum
+channels with a roster, excluding archived, hidden, read-only and already-member
+rows. On submission it refreshes native evidence, then checks current agent,
+session and channel eligibility across the fresh roster read and at publisher
+entry. The relay still decides permission; local evidence does not grant it.
+Before publisher entry, navigation or loss of eligibility stops the write. Once
+publication begins, leaving the tab cannot undo the request; the session outbox
+retains its outcome and an unconfirmed result requires checking membership
+before attempting again. Neither list is a cross-community/global directory.

@@ -414,6 +414,39 @@
   }
 }
 
+/* Keep gallery overlays inside the visible document, including narrow layouts. */
+.design-system-shell:has(.messages-page) {
+  height: 100dvh;
+  overflow: hidden;
+}
+.design-system-content:has(.messages-page) {
+  min-height: 0;
+}
+.design-system-reading-column:has(> .messages-page) {
+  height: 100%;
+}
+.messages-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.messages-page > .component-page-heading {
+  flex-shrink: 0;
+}
+.messages-page > iframe {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+}
+@media (max-width: 63.999rem) {
+  .design-system-shell:has(.messages-page) > .design-system-nav {
+    max-height: 25dvh;
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+}
+
 /* Form documentation layout only; controls come from the shared system. */
 .form-doc-toolbar {
   display: flex;

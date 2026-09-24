@@ -705,6 +705,7 @@ function Composer({
         />
         <div className={styles.composerInput}>
           <RichComposerInput
+            inviteAgents={agentChoices}
             ref={input}
             id={inputId}
             disabled={editingDisabled}

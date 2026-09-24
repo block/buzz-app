@@ -6,7 +6,7 @@ import type {
   AgentControl,
   AgentControlState,
 } from "../../features/agents/control";
-import type { AgentDraft } from "./agent-edit";
+import { isGoose, type AgentDraft } from "./agent-edit";
 import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
 import { AgentModelPicker } from "./AgentModelPicker";
@@ -31,6 +31,13 @@ export function AgentSettingsFields({
   environmentKeys?: string[];
   onChange(patch: Partial<AgentDraft>): void;
 }) {
+  const goose = isGoose(draft.command);
+  const providerOverride = draft.environment.GOOSE_PROVIDER;
+  const provider = providerOverride ?? draft.provider;
+  const gooseCanBrowse =
+    provider === "databricks_v2" ||
+    (providerOverride === undefined &&
+      environmentKeys.includes("GOOSE_PROVIDER"));
   return (
     <div className="min-w-0">
       <div className="min-w-0 space-y-section-gap">
@@ -61,15 +68,33 @@ export function AgentSettingsFields({
             options={state.data?.harnessOptions ?? []}
             onChange={onChange}
           />
-          <AgentModelPicker
-            disabled={disabled}
-            id={id}
-            savedRevision={savedRevision}
-            control={control}
-            defaults={state.data?.databricksDefaults}
-            draft={draft}
-            onChange={onChange}
-          />
+          {goose && !gooseCanBrowse ? (
+            <div className="space-y-2">
+              <Field label="Model">
+                <Input
+                  disabled={disabled}
+                  value={draft.model}
+                  placeholder="Enter a model ID for this provider"
+                  spellCheck={false}
+                  onChange={(event) => onChange({ model: event.target.value })}
+                />
+              </Field>
+              <p className="text-body-sm text-secondary">
+                Existing Goose credentials are reused. If this provider is not
+                configured yet, run goose configure before starting the agent.
+              </p>
+            </div>
+          ) : (
+            <AgentModelPicker
+              disabled={disabled}
+              id={id}
+              savedRevision={savedRevision}
+              control={control}
+              defaults={state.data?.databricksDefaults}
+              draft={draft}
+              onChange={onChange}
+            />
+          )}
         </fieldset>
       </div>
       <div className="-mx-2">

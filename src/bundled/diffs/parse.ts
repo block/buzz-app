@@ -12,13 +12,22 @@ export function parsePatch(content: string): FileData[] | undefined {
     // The parser accepts incomplete hunks. Do not present a cut-off patch as a
     // complete change; the raw fallback preserves even its final partial line.
     const complete = files.every((file) =>
-      file.hunks.every(
-        (hunk) =>
+      file.hunks.every((hunk) => {
+        // gitdiff-parser 0.3.1 treats explicit ,0 as the omitted-count default
+        // of 1. Restore header counts before validating or rendering the hunk.
+        const counts = /^@@\s+-\d+(?:,(\d+))?\s+\+\d+(?:,(\d+))?\s+@@/.exec(
+          hunk.content,
+        );
+        if (!counts) return false;
+        hunk.oldLines = Number(counts[1] ?? 1);
+        hunk.newLines = Number(counts[2] ?? 1);
+        return (
           hunk.changes.filter((change) => change.type !== "insert").length ===
             hunk.oldLines &&
           hunk.changes.filter((change) => change.type !== "delete").length ===
-            hunk.newLines,
-      ),
+            hunk.newLines
+        );
+      }),
     );
     return files.length && complete ? files : undefined;
   } catch {

@@ -14,6 +14,68 @@ it("parses multiple files and preserves change line numbers", () => {
 });
 it.each([
   [
+    "new file",
+    "/dev/null",
+    "b/a.ts",
+    "-0,0 +1,2",
+    "+one\n+two",
+    0,
+    2,
+    "insert",
+    1,
+  ],
+  [
+    "deleted file",
+    "a/a.ts",
+    "/dev/null",
+    "-1,2 +0,0",
+    "-one\n-two",
+    2,
+    0,
+    "delete",
+    1,
+  ],
+  [
+    "zero-context insertion",
+    "a/a.ts",
+    "b/a.ts",
+    "-3,0 +4,2",
+    "+one\n+two",
+    0,
+    2,
+    "insert",
+    4,
+  ],
+  [
+    "zero-context deletion",
+    "a/a.ts",
+    "b/a.ts",
+    "-4,2 +3,0",
+    "-one\n-two",
+    2,
+    0,
+    "delete",
+    4,
+  ],
+])(
+  "preserves explicit zero counts for %s",
+  (_name, oldPath, newPath, range, lines, oldLines, newLines, type, lineNumber) => {
+    const files = parsePatch(
+      `diff --git a/a.ts b/a.ts\n--- ${oldPath}\n+++ ${newPath}\n@@ ${range} @@\n${lines}\n`,
+    );
+    expect(files).toHaveLength(1);
+    expect(files?.[0]?.hunks[0]).toMatchObject({
+      oldLines,
+      newLines,
+      changes: [
+        { type, content: "one", lineNumber },
+        { type, content: "two", lineNumber: lineNumber + 1 },
+      ],
+    });
+  },
+);
+it.each([
+  [
     "rename",
     "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts\n",
     "old.ts → new.ts",

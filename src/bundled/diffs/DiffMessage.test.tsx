@@ -74,6 +74,24 @@ it("renders a signed patch, removes its renderer on disable and restores it on r
   await screen.findByRole("button", { name: "Expand diff" });
   expect(h.container.querySelector(".diff-unified")).not.toBeNull();
 });
+it.each([
+  ["new file", "/dev/null", "b/a.ts", "-0,0 +1", "+new", "insert"],
+  ["deleted file", "a/a.ts", "/dev/null", "-1 +0,0", "-old", "delete"],
+  ["zero-context insertion", "a/a.ts", "b/a.ts", "-3,0 +4", "+new", "insert"],
+  ["zero-context deletion", "a/a.ts", "b/a.ts", "-4 +3,0", "-old", "delete"],
+])(
+  "renders %s as a rich diff rather than raw fallback",
+  async (_name, oldPath, newPath, range, line, type) => {
+    const patch = `diff --git a/a.ts b/a.ts\n--- ${oldPath}\n+++ ${newPath}\n@@ ${range} @@\n${line}\n`;
+    const h = mount(diffs, patch);
+    await screen.findByRole("button", { name: "Expand diff" });
+    expect(h.container.querySelector("table.diff-unified")).not.toBeNull();
+    expect(h.container.querySelector(`.diff-code-${type}`)?.textContent).toBe(
+      line.slice(1),
+    );
+    expect(h.container.querySelector("pre")).toBeNull();
+  },
+);
 it("retains raw malformed content and rejects unsafe repository URLs", async () => {
   const patch =
     "<script>alert(1)</script> ![image](https://example.com/no.png)\n";

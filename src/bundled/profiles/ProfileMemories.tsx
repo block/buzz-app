@@ -59,10 +59,6 @@ export function ProfileMemories({
       aria-label="Agent memories"
       className="flex min-w-0 flex-col gap-3"
     >
-      <p className="m-0 text-body-sm text-secondary">
-        Memories shared with your account in this community. This is a snapshot,
-        not a complete history.
-      </p>
       {loading ? (
         <p role="status">Loading memories…</p>
       ) : snapshot.status === "unavailable" ? (
@@ -84,7 +80,7 @@ export function ProfileMemories({
           Couldn’t load memories. Check your connection and try again.
         </p>
       ) : snapshot.status === "idle" ? (
-        <p>Memory data was cleared. Refresh to request a new snapshot.</p>
+        <p>Memory data was cleared. Retry to load memories again.</p>
       ) : (
         <>
           {snapshot.listing?.partial && (
@@ -115,17 +111,12 @@ export function ProfileMemories({
           ))}
         </>
       )}
-      {snapshot?.status !== "unavailable" && (
-        <Button
-          size="compact"
-          disabled={loading}
-          onClick={() => state?.refresh()}
-        >
-          {snapshot?.status === "error" ||
-          snapshot?.status === "denied" ||
-          snapshot?.status === "blocked"
-            ? "Retry memories"
-            : "Refresh memories"}
+      {(snapshot?.status === "error" ||
+        snapshot?.status === "denied" ||
+        snapshot?.status === "blocked" ||
+        snapshot?.status === "idle") && (
+        <Button size="compact" onClick={() => state?.refresh()}>
+          Retry memories
         </Button>
       )}
     </section>

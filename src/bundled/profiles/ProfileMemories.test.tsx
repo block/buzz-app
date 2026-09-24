@@ -76,9 +76,13 @@ it("mounts lazily through the actual profile tab, displays plain text and releas
   await user.click(screen.getByText("Core memory"));
   expect(screen.getByText(memoryBody)).toBeVisible();
   expect(page.container.querySelector("script")).toBeNull();
+  expect(screen.queryByText(/Memories shared with your account/)).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /(?:Refresh|Retry) memories/ }),
+  ).toBeNull();
   await act(() => h.clearCache());
   expect(screen.queryByText(memoryBody)).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Refresh memories" }));
+  await user.click(screen.getByRole("button", { name: "Retry memories" }));
   await screen.findByText("Core memory");
   const calls = read.mock.calls.length;
   await user.click(screen.getByRole("tab", { name: "Info" }));
@@ -103,9 +107,7 @@ it("held reads show loading, reject late completions after target/session switch
   );
   await waitFor(() => expect(pending.length).toBeGreaterThan(0));
   expect(screen.getByRole("status")).toHaveTextContent("Loading memories");
-  expect(
-    screen.getByRole("button", { name: "Refresh memories" }),
-  ).toBeDisabled();
+  expect(screen.queryByRole("button")).toBeNull();
   page.rerender(
     <StrictMode>
       <ProfileMemories session={second.session} pubkey={agent.pubkey} />
@@ -170,11 +172,14 @@ it("distinguishes denial, error, partial and successful empty and retries withou
   await user.click(screen.getByRole("button", { name: "Retry memories" }));
   await screen.findByText("No readable entries in this partial snapshot.");
   expect(screen.getByRole("status")).toHaveTextContent("may be incomplete");
-  await user.click(screen.getByRole("button", { name: "Refresh memories" }));
+  expect(screen.queryByRole("button")).toBeNull();
+  await act(() => h.clearCache());
+  await user.click(screen.getByRole("button", { name: "Retry memories" }));
   await screen.findByText(
     "No memories were returned for your account in this community.",
   );
   expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.queryByRole("button")).toBeNull();
 });
 it("unsupported and self profiles never issue reads", async () => {
   const read = vi.fn<MemoryReader>().mockResolvedValue(listing),
@@ -287,7 +292,7 @@ it("explains live admission before connection and during retry without claiming 
   await screen.findByText("Core memory");
   act(() => live.state({ status: "retrying", routes: [] }));
   expect(screen.queryByText(memoryBody)).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Refresh memories" }));
+  await user.click(screen.getByRole("button", { name: "Retry memories" }));
   expect(screen.getByRole("status")).toHaveTextContent(
     "Memory reads are paused",
   );

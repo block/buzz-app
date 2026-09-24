@@ -49,7 +49,7 @@ it("merges exact keys, preserves namesakes and includes stopped native-only agen
   native.dispose();
 });
 
-it.each(["loading", "failed"])(
+it.each(["loading", "failed", "partial"])(
   "keeps explicit native selection usable but blocks ambiguous automatic recipients with legacy %s",
   async (mode) => {
     const fixture = controlFixture();
@@ -61,6 +61,12 @@ it.each(["loading", "failed"])(
         await new Promise<void>((resolve) => {
           settle = resolve;
         });
+      if (mode === "partial")
+        return {
+          definitions: [],
+          identities: [],
+          error: "Local library unavailable",
+        };
       throw new Error("unavailable legacy source");
     });
     const lifetime = new AbortController();
@@ -72,7 +78,7 @@ it.each(["loading", "failed"])(
     });
     const pending = choices.refresh();
     await Promise.resolve();
-    if (mode === "failed") await pending;
+    if (mode !== "loading") await pending;
     const state = choices.snapshot();
     const unknownLegacy = "cd".repeat(32);
     const channel = {
@@ -101,7 +107,9 @@ it.each(["loading", "failed"])(
       settle();
       await pending;
     }
-    expect(choices.snapshot().error).toContain("Could not read");
+    expect(choices.snapshot().error).toContain(
+      mode === "partial" ? "Local library unavailable" : "Could not read",
+    );
     lifetime.abort();
     library.dispose();
     native.dispose();

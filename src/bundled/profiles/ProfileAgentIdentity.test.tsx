@@ -199,7 +199,11 @@ it("adds no agent section or reads for a profile without an agent hint", async (
   );
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
-  expect(query).toHaveBeenCalledTimes(1);
+  const filters = query.mock.calls.flatMap(([filters]) => filters);
+  expect(filters.filter(kind0)).toHaveLength(1);
+  expect(filters.filter((filter) => !kind0(filter))).toEqual([
+    { kinds: [30315], authors: [person.pubkey], "#d": ["general"], limit: 1 },
+  ]);
 });
 
 function timedProfile(

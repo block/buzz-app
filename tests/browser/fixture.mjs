@@ -543,6 +543,14 @@ export const test = base.extend({
             filter["#d"]?.includes(event.tags.find(([k]) => k === "d")?.[1]),
         );
       }
+      if (filter.kinds?.includes(30175) || filter.kinds?.includes(30177)) {
+        expect(filter).toEqual({
+          authors: [viewer],
+          kinds: [30175, 30177],
+          limit: 200,
+        });
+        return [];
+      }
       if (filter.kinds?.includes(30030)) {
         expect(filter).toEqual({
           kinds: [30030],

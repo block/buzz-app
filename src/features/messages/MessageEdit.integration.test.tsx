@@ -294,7 +294,6 @@ it.each(["image", "video"] as const)(
         await authorize(owner);
         render(
           <MediaReviewViewer
-            onOpenLink={() => false}
             attachment={attachment}
             session={owner.session}
             scope={`media-edit-${kind}-${scenario}`}

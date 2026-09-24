@@ -89,7 +89,6 @@ async function setupReview({
   const user = userEvent.setup();
   render(
     <MediaReviewViewer
-      onOpenLink={() => false}
       attachment={attachment}
       session={owner.session}
       scope={`review-${kind}`}

@@ -21,6 +21,8 @@ async function expectNonPaging(page, app) {
 }
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
+const companionLauncher = (page, name) =>
+  button(page, name).and(page.locator("button[aria-expanded]"));
 const box = async (locator) => {
   const bounds = await locator.boundingBox();
   expect(bounds).not.toBeNull();
@@ -510,7 +512,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
     name: "Bestie",
     exact: true,
   });
-  const launch = button(page, "Bestie");
+  const launch = companionLauncher(page, "Bestie");
   await expect(launch).toBeVisible();
   await expect(bestie).toHaveCount(0);
   await launch.click();
@@ -673,14 +675,14 @@ readingTest(
     await settle(page);
     const saved = await upper(page);
     await expectNonPaging(page, app);
-    await button(page, "Bestie").click();
+    await companionLauncher(page, "Bestie").click();
     await settle(page);
     await expectAnchor(page, saved);
     await button(page, "Close Bestie panel").click();
     await settle(page);
     await expectAnchor(page, saved);
     await link(page, app, "https://github.com/block/buzz/pull/6");
-    await button(page, "Bestie").click();
+    await companionLauncher(page, "Bestie").click();
     for (const [width, height] of [
       [800, 600],
       [480, 400],
@@ -705,7 +707,7 @@ readingTest(
     await open(page, app);
     await settle(page);
     const original = await upper(page);
-    await button(page, "Bestie").click();
+    await companionLauncher(page, "Bestie").click();
     await settle(page);
     const history = page.getByRole("region", {
       name: "Channel message history",

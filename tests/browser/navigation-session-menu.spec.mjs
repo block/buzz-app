@@ -28,8 +28,9 @@ test("channel context menu opens and resumes a session draft without a row menu 
     exact: true,
   });
   await beta.hover();
+  // Message rows use page-owned context menus; section actions remain separate.
   await expect(
-    sidebar.getByRole("button", { name: /More options/ }),
+    sidebar.getByRole("button", { name: /More options for (Alpha|Beta)/ }),
   ).toHaveCount(0);
   await beta.click({ button: "right" });
   await expect(start).toBeVisible();

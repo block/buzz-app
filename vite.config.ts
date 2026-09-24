@@ -1,5 +1,7 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
+import { worktreePort } from "./scripts/worktree-port.mjs";
 import {
   parseCommunityAliases,
   relayOrigin,
@@ -32,6 +34,20 @@ export default defineConfig(async ({ command, mode }) => {
         communityAliases: aliases,
       }),
     );
+  const profileReadyToken = process.env.BUZZ_PROFILE_VITE_READY_TOKEN;
+  if (profileReadyToken)
+    plugins.push({
+      name: "buzz-profile-ready",
+      configureServer(server) {
+        server.httpServer?.once("listening", () => {
+          const address = server.httpServer?.address();
+          if (address && typeof address === "object")
+            console.log(
+              `BUZZ_PROFILE_VITE_READY:${profileReadyToken}:${JSON.stringify(address)}`,
+            );
+        });
+      },
+    });
   return {
     plugins,
     define: {
@@ -46,7 +62,9 @@ export default defineConfig(async ({ command, mode }) => {
     },
     clearScreen: false,
     server: {
-      port: 1430,
+      // Derived from this checkout's path, exactly as `just desktop` does, so
+      // each worktree has its own stable default. The CLI's --port still wins.
+      port: worktreePort(fileURLToPath(new URL(".", import.meta.url))),
       strictPort: false,
       watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
     },

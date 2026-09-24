@@ -10,7 +10,7 @@ test("shared tokens reach app controls without history or chip overrides", async
 }) => {
   await page.goto(app.origin);
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Appearance", exact: true }).click();
   const reset = page.getByRole("button", {
     name: "Reset text size",
@@ -55,12 +55,7 @@ test("shared tokens reach app controls without history or chip overrides", async
     chip.dataset.state = "resolved";
     chip.textContent = "Reference";
     probes.append(chip);
-    for (const name of [
-      "emojiPopover",
-      "mentionPopover",
-      "popup",
-      "diagnosticsMenu",
-    ]) {
+    for (const name of ["emojiPopover", "mentionPopover", "popup"]) {
       const selector = selectors.find((s) =>
         new RegExp(`\\._${name}_`).test(s),
       );
@@ -118,12 +113,7 @@ test("shared tokens reach app controls without history or chip overrides", async
         "background-color",
         "rgb(11, 22, 33)",
       );
-      for (const name of [
-        "emojiPopover",
-        "mentionPopover",
-        "popup",
-        "diagnosticsMenu",
-      ]) {
+      for (const name of ["emojiPopover", "mentionPopover", "popup"]) {
         const surface = page.locator(`#probe-${name}`);
         await expect(surface).toHaveCSS("background-color", "rgb(23, 45, 67)");
         await expect(surface).toHaveCSS("border-top-color", "rgb(45, 67, 89)");

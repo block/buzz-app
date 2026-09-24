@@ -48,16 +48,19 @@ test("search arrows traverse pages and conversations, Enter opens and Escape res
   await expect(input).toHaveAttribute("autocapitalize", "off");
   await expect(input).toHaveAttribute("autocomplete", "off");
   await expect(input).toBeFocused();
-  const home = dialog.getByRole("option", { name: "Home", exact: true });
   const messages = dialog.getByRole("option", {
     name: "Messages",
     exact: true,
   });
+  const projects = dialog.getByRole("option", {
+    name: "Projects",
+    exact: true,
+  });
   for (const [key, result] of [
-    ["ArrowDown", home],
     ["ArrowDown", messages],
-    ["ArrowUp", home],
-    ["ArrowUp", home],
+    ["ArrowDown", projects],
+    ["ArrowUp", messages],
+    ["ArrowUp", messages],
   ]) {
     await input.press(key);
     await expect(input).toBeFocused();

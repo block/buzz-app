@@ -368,8 +368,17 @@ not claim complete history. Decryption, uploads and server-derived aggregate cal
 `session.messages.send(channelId, text)`, `.reply(channelId, resolvedRootId, text)`,
 `.edit(messageId, text)` and `.retry(id)`
 are domain conveniences over the same outbox. Editing requires a retained message
-owned by the viewer and a transport that supports kind 40003. The dev broker still
-advertises only kind 9. Generic plugins can use `outbox.send` directly.
+owned by the viewer and a transport that supports kind 40003. The dev broker
+advertises edits and validates one canonical target reference before signing or
+publishing. Generic plugins can use `outbox.send` directly.
+
+In an empty composer, unmodified Up arrow opens the latest eligible own message
+from that channel or thread in the same editor. Enter/the send arrow saves;
+Escape or × cancels. Edits retain raw attachment Markdown and leave original
+notification recipients unchanged. Edit text never overwrites the new-message
+draft or its undo history. Pending edits lock the editor until delivery; failed
+or unknown outcomes offer retry of the same outbox event. Missing or concurrently
+changed targets are rejected without losing the user's input.
 
 Persistence uses incremental asynchronous IndexedDB transactions partitioned by
 community and viewer. Only changed records are written; the earlier localStorage
@@ -623,7 +632,7 @@ replay-completeness guarantee.
 ### User attention during recovery
 
 The warning banner is for failures needing attention. Routine setup and bounded
-automatic WebSocket quota recovery stay in Conversation options → Diagnostics.
+automatic WebSocket quota recovery stay in Channel Settings → Diagnostics.
 A supported quota refusal remains recorded while waiting/retrying and is cleared
 only by fresh EOSE, not by sending another REQ or clicking Retry. Diagnostics
 labels the original rejection as historical text, not a live countdown.

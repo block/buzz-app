@@ -81,7 +81,9 @@ while :; do /bin/sleep 0.1; done
         )
     })
     .collect();
-    fs::write(directory.join("manifest.json"), serde_json::to_vec(&json!({"version":1,"revision":"84b0fd04b7831657df2873c3a835412f47cebb03","target":env!("BUZZ_RUNTIME_TARGET"),"files":files})).unwrap()).unwrap();
+    let source: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../runtime/agent-runtime.json")).unwrap();
+    fs::write(directory.join("manifest.json"), serde_json::to_vec(&json!({"version":1,"revision":source["revision"],"target":env!("BUZZ_RUNTIME_TARGET"),"files":files})).unwrap()).unwrap();
     RuntimeBundle::new(directory.into()).unwrap()
 }
 fn wait_for_contents<T>(path: &Path, parse: impl Fn(&str) -> Option<T>) -> T {
@@ -505,6 +507,22 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
     controller.action(&a.id, Action::Stop).unwrap();
     assert!(!temp.exists());
     controller.disconnect("https://example.com").unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn bundle_rejects_a_revision_different_from_the_runtime_spec() {
+    let tools = tempfile::tempdir().unwrap();
+    bundle(tools.path());
+    let path = tools.path().join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    manifest["revision"] = json!("0".repeat(40));
+    fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert!(matches!(
+        RuntimeBundle::new(tools.path().into()),
+        Err(error) if error == "Runtime target/revision does not match this app"
+    ));
 }
 
 #[test]

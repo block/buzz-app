@@ -4,6 +4,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { createAgentChoices } from "../agents/choices";
 import { createAgentLibrary } from "../agents/library";
 import type { RelaySession } from "../relay/session";
 import { AgentChoice, agentAdmission } from "./AgentChoice";
@@ -17,7 +18,13 @@ it("reloads the selected agent after the connection clears the library", async (
     identities: [{ pubkey, name: "Selected agent" }],
   }));
   const library = createAgentLibrary(read);
-  const session = { agentLibrary: library.queries } as RelaySession;
+  const session = {
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+  } as RelaySession;
   const view = render(
     <StrictMode>
       <AgentChoice session={session} value={pubkey} onChange={vi.fn()} />
@@ -47,7 +54,15 @@ it("opens the avatar menu and changes the chosen agent without submitting", asyn
   render(
     <form onSubmit={onSubmit}>
       <AgentChoice
-        session={{ agentLibrary: library.queries } as RelaySession}
+        session={
+          {
+            agentChoices: createAgentChoices({
+              scope: "test",
+              library: library.queries,
+              signal: new AbortController().signal,
+            }),
+          } as RelaySession
+        }
         value=""
         onChange={onChange}
       />

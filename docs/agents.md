@@ -73,6 +73,43 @@ packaged acceptance and the final integration gate remain outstanding. Earlier
 envelope/fixture validation does not certify the later compatibility adapter.
 
 
+## Shared agent selection
+
+`session.agentChoices` is the canonical read-only selection projection. Templates,
+mention pickers, the session agent chooser and their admission checks use it—not
+`agentLibrary` directly. It combines ready legacy identities and ready native
+identities in this exact community, deduplicated by public key. Native process
+status is not selection eligibility; stopped/native-only agents remain selectable.
+`agentLibrary` remains the old-library compatibility/import source. Agents management
+and the shared display-name resolver keep their own distinct presentation contracts.
+
+Do not build another agent inventory in a plugin. Retain the shared projection only
+while needed; explicit Refresh retries source failures. Retaining choices preserves
+ready evidence across menu remounts. Ordinary mentions subscribe to cached legacy
+hints without loading that library; session/template selectors ensure it on demand.
+Both use the app-owned native controller's idle-only ensure, not refresh-on-keystroke.
+The existing app controller
+owns native reads/processes, while the session projection adds no runner, polling,
+directory scan or signing authority. Session retirement revokes its candidates.
+A failed source contributes no stale candidates; another ready source can remain
+usable, with partial failures surfaced through Retry. `status: ready` means usable,
+not complete: automatic-recipient inference must honor `complete`, and automatic
+saved-template resolution must wait for required pending identity/roster evidence.
+
+Action policy stays explicit: ordinary member mentions use the channel roster and
+never acquire template archive gates. Ordinary nonmember enrollment admits managed
+same-community identities; session invitations also allow existing legacy choices.
+Templates additionally require verified non-archived state, and legacy-only choices
+need visible community membership. Save-as-template discloses an incomplete inferred
+lineup when either inventory or roster evidence is partial; it never claims a full
+channel-membership copy. Shared choice visibility is not permission to grant access.
+
+Regression sources: `features/agents/choices.test.ts` and
+`bundled/channel-templates/agent-selection.test.tsx`, plus existing chooser,
+composer and session-admission tests. These exercise shared selection and session admission, not native execution.
+Native/ACP acceptance and packaged validation remain separate gates; local hook
+and hosted CI results are recorded in the pull request.
+
 ## Exact channel-member mentions
 
 The shared channel summary now exposes exact members from its existing verified
@@ -85,14 +122,14 @@ profiles only on demand, and keeps selected identity spans in scoped drafts.
 Typing a name alone does not notify anyone. Editing a selected span removes its
 notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
-than guess. Even a same-text replacement drops the edited identity. Explicit recipient
-avatars beside the @ tool show who will be notified. Hover or keyboard focus shows
-an × removal cue; removing a recipient leaves the prose intact. Repeated mentions
-of one identity share one avatar. These controls remain available without Mentions.
+than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes
+selected together receive visible key qualifiers; editing a selected span removes
+its notification intent. Chips remain available without the Mentions chooser.
 
 After an accepted send, the next draft starts with the exact selected agent-name
 mentions, deduplicated by key. Agent classification uses already-cached profile hints
-or the local library, not a new lookup or permission grant. Human recipients and
+or the shared agent-choice projection (legacy and native), not a new lookup or
+permission grant. Human recipients and
 plain typed names are not carried forward. The prefill is an ordinary scoped draft:
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
 **Settings → Messages → Remember mentioned agents** defaults on and is saved on this
@@ -356,6 +393,16 @@ review remain separate gates. Packaged native activity without the development
 broker remains unsupported.
 
 ### Shared identity names
+
+Distinct agent keys with the same displayed name receive a short npub suffix,
+regardless of their profile links. Names are compared after trimming outer
+whitespace, with case preserved. Directory qualifiers use a middle-dot separator
+(`Honey · 2abc`). Unique displayed names have no suffix. These display labels are
+not serialized into mentions. The composer retains its existing inline-chip
+qualifiers for selected namesakes, independently of live directory labels. Collision
+checks include hidden library identities and ready native identities in the
+current community, using the same native/inventory/public-profile precedence.
+Name edits update the suffixes; they never merge identities or profile groups.
 
 The Agents plugin supplies display names through the app-owned identity-name
 service. Each relay session binds its own view. A ready native record takes

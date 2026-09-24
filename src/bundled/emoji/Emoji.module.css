@@ -24,6 +24,7 @@
   /* Tabs already own the 16px gap between the strip and its panel. */
   --picker-search-top: 0px;
 }
+
 .emojiPopover [role="tablist"] {
   margin: var(--space-3) var(--space-3) 0;
 }

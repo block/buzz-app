@@ -1,8 +1,16 @@
+import { personalGroups } from "../../features/channel-templates/setup";
+import type { TemplateProviders } from "../../features/channel-templates/provider";
+import { OwnedContribution } from "../../plugins/OwnedContribution";
+import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
+import { Select } from "../../shared/design-system/ui/Select";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
+import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import {
@@ -54,6 +62,7 @@ import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
+import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
@@ -61,8 +70,10 @@ import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
+import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import { isChannelSectionKey, sidebarSections } from "./sidebar-sections";
+import { useHiddenDms } from "./useHiddenDms";
 import { SidebarSectionIcon } from "./SidebarSectionIcon";
 import {
   CreateChannelDialog,
@@ -77,6 +88,7 @@ import {
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
+  providers,
   extensions,
   relay,
   panels,
@@ -85,6 +97,7 @@ export function ChannelsPage({
   navigation,
   navigator,
 }: {
+  providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
@@ -123,7 +136,7 @@ export function ChannelsPage({
               {session.status === "connecting"
                 ? "Connecting to your relay…"
                 : (session.error ??
-                  "Use Switch community at the top left to choose or add a community. Your profile and settings work without a community.")}
+                  "Use the left community rail to choose or add a community. Your profile and settings work without a community.")}
             </p>
             {session.status === "error" && (
               <>
@@ -142,6 +155,7 @@ export function ChannelsPage({
         </PanelFrame>
       ) : (
         <ChannelWorkspace
+          providers={providers}
           extensions={extensions}
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
@@ -160,6 +174,7 @@ export function ChannelsPage({
 }
 
 function ChannelWorkspace({
+  providers,
   extensions,
   queries,
   relay,
@@ -171,6 +186,7 @@ function ChannelWorkspace({
   navigator,
   viewer,
 }: {
+  providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
   companion?: ReactNode;
   scope: string;
@@ -182,21 +198,53 @@ function ChannelWorkspace({
   panels: Panels;
   sessionsEnabled: boolean;
 }) {
+  const [localNewMessage, setLocalNewMessage] = useState(false);
+  const [preparingDm, setPreparingDm] = useState<{
+    existing: Set<string>;
+    members: Set<string | undefined>;
+  }>();
+  const composingMessage = navigator
+    ? navigation?.target.kind === "page" &&
+      navigation.target.route?.params === "new-message"
+    : localNewMessage;
+  useEffect(() => {
+    if (!composingMessage) setPreparingDm(undefined);
+  }, [composingMessage]);
   const list = useChannelList(queries.channels);
-  const activity = useSyncExternalStore(
-    queries.agentActivity.subscribe,
-    queries.agentActivity.snapshot,
-    queries.agentActivity.snapshot,
+  const workingIds = useSyncExternalStore(
+    queries.agentActivity.subscribeWorking,
+    queries.agentActivity.workingSnapshot,
+    queries.agentActivity.workingSnapshot,
   );
-  const workingChannels = new Set([
-    ...activity.turns
-      .filter((turn) => turn.state === "working")
-      .map((turn) => turn.channelId),
-    ...activity.typing
-      .filter((entry) => !entry.threadRootId)
-      .map((entry) => entry.channelId),
-  ]);
+  const workingChannels = useMemo(
+    () => new Set<string>(JSON.parse(workingIds)),
+    [workingIds],
+  );
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const kitState = useSyncExternalStore(
+    queries.channelKit.subscribe,
+    queries.channelKit.snapshot,
+  );
+  const templateProviders = useSyncExternalStore(
+    providers.subscribe,
+    providers.snapshot,
+  );
+  const templateProvider =
+    templateProviders.length === 1 ? templateProviders[0] : undefined;
+  useEffect(() => {
+    // Initial channel discovery cancels in-flight reads as it settles access.
+    // Start the optional catalog afterward so opening Messages cannot strand it.
+    if (list.status === "ready") queries.channelKit.ensure();
+  }, [queries, list.status]);
+  const groupEntry = personalGroups(kitState.entries);
+  const personal =
+    groupEntry?.record.value.type === "groups"
+      ? groupEntry.record.value
+      : undefined;
+  const [canvasOpen, setCanvasOpen] = useState(false);
+  const [initialGroup, setInitialGroup] = useState("");
+  const [kitError, setKitError] = useState("");
+  const hiddenDms = useHiddenDms(scope, queries, list);
   useEffect(() => {
     void queries.emoji.ensure();
   }, [queries]);
@@ -259,6 +307,7 @@ function ChannelWorkspace({
   }>();
   const select = useCallback(
     (id: string) => {
+      setLocalNewMessage(false);
       setDraftParent(undefined);
       navigate(id);
       setThread(undefined);
@@ -271,10 +320,22 @@ function ChannelWorkspace({
     scope,
     list.status === "ready" && preferences.status !== "loading",
   );
-  const channels = useChannelLabels(
+  const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
     queries.profiles,
     queries.names,
+  );
+  const childSessions = useRef(new Map<string, typeof channels>());
+  // While composing, suppress a newly opened DM until the first send confirms.
+  // Leaving this route resumes the normal signed-discovery sidebar.
+  const sidebarChannels = channels.filter(
+    (channel) =>
+      !composingMessage ||
+      !preparingDm ||
+      preparingDm.existing.has(channel.id) ||
+      channel.channelType !== "dm" ||
+      channel.members?.length !== preparingDm.members.size ||
+      !channel.members.every((member) => preparingDm.members.has(member)),
   );
   const childrenByParent = useMemo(() => {
     const children = new Map<string, typeof channels>();
@@ -284,11 +345,19 @@ function ChannelWorkspace({
       siblings.push(item);
       children.set(item.parentChannelId, siblings);
     }
-    for (const siblings of children.values())
+    for (const [parent, siblings] of children) {
       siblings.sort(
         (a, b) =>
           (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.id.localeCompare(b.id),
       );
+      const previous = childSessions.current.get(parent);
+      if (
+        previous?.length === siblings.length &&
+        siblings.every((child, index) => child === previous[index])
+      )
+        children.set(parent, previous);
+    }
+    childSessions.current = children;
     return children;
   }, [channels]);
   const requestedChannel =
@@ -348,6 +417,10 @@ function ChannelWorkspace({
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
+    if (composingMessage) {
+      navigation?.complete({ status: "opened" });
+      return;
+    }
     if (requestedChannel && !resolving && list.status === "ready" && !current)
       navigation?.complete({ status: "failed", reason: "unavailable" });
     if (!requestedChannel && !current && list.status === "ready")
@@ -365,6 +438,7 @@ function ChannelWorkspace({
       });
     }
   }, [
+    composingMessage,
     requestedChannel,
     resolving,
     current,
@@ -382,6 +456,22 @@ function ChannelWorkspace({
       ? navigation.target.threadRootId
       : undefined;
   const currentId = current?.id;
+  const [settings, setSettings] = useState<{
+    channelId: string | undefined;
+    entryId: string | undefined;
+  }>();
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const showingSettings =
+    !!settings &&
+    settings.channelId === currentId &&
+    settings.entryId === navigation?.entryId;
+  useEffect(() => {
+    if (settings && !showingSettings) setSettings(undefined);
+  }, [settings, showingSettings]);
+  const closeSettings = () => {
+    setSettings(undefined);
+    settingsTrigger.current?.focus({ preventScroll: true });
+  };
   const drafting =
     !!draftParent && draftParent === currentId && !requestedMessage;
   useEffect(() => {
@@ -393,6 +483,12 @@ function ChannelWorkspace({
       navigation.complete({ status: "opened" });
   }, [drafting, navigation]);
   const flatSession = current?.channelType === "session";
+  const onComposerSend = useComposerSent(
+    currentId,
+    flatSession && !!requestedMessage,
+    setSent,
+    select,
+  );
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
@@ -484,6 +580,7 @@ function ChannelWorkspace({
   }, []);
   const startSession = useCallback(
     (parentId: string) => {
+      setSettings(undefined);
       select(parentId);
       setDraftParent(parentId);
       sidebar.toggle(`session-children:${parentId}`, true);
@@ -524,17 +621,46 @@ function ChannelWorkspace({
   useEffect(() => {
     if (opened && !panel) open(undefined);
   }, [opened, panel, open]);
+  const [replyRequest, setReplyRequest] = useState<{
+    channelId: string;
+    messageId: string;
+    entryId: string | undefined;
+    sequence: number;
+  }>();
+  const activeEntryId = navigator?.snapshot().entry.id;
+  useEffect(() => {
+    if (
+      replyRequest &&
+      (replyRequest.channelId !== currentId ||
+        replyRequest.entryId !== activeEntryId)
+    )
+      setReplyRequest(undefined);
+  }, [currentId, activeEntryId, replyRequest]);
   const openThread = useCallback(
-    (messageId: string, threadRootId: string) => {
+    (messageId: string, threadRootId: string, intent?: "reply") => {
       if (!currentId) return;
+      const requestReply = () =>
+        setReplyRequest((previous) =>
+          intent === "reply"
+            ? {
+                channelId: currentId,
+                messageId,
+                entryId: navigator?.snapshot().entry.id,
+                sequence: (previous?.sequence ?? 0) + 1,
+              }
+            : undefined,
+        );
+      setSettings(undefined);
       const target = navigator?.snapshot().entry.target;
       if (
         target?.kind === "conversation" &&
         target.channelId === currentId &&
         target.messageId === messageId &&
         target.threadRootId === threadRootId
-      )
+      ) {
+        requestReply();
         return;
+      }
       threadTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -553,6 +679,7 @@ function ChannelWorkspace({
           },
         });
       } else setThread({ channelId: currentId, messageId });
+      requestReply();
       open(undefined);
     },
     [currentId, navigator, viewer, scope, open],
@@ -577,6 +704,7 @@ function ChannelWorkspace({
   const openMediaReview = useCallback(
     (messageId: string, attachment: Attachment, initialTime: number) => {
       if (!current) return;
+      setSettings(undefined);
       mediaReviewTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -606,6 +734,7 @@ function ChannelWorkspace({
   }, [mediaReview, list]);
   const openActivityThread = useCallback(
     (channelId: string, rootId: string) => {
+      setSettings(undefined);
       threadTrigger.current =
         sidebar.list.current?.querySelector<HTMLElement>(
           `[data-channel-id="${CSS.escape(channelId)}"]`,
@@ -632,6 +761,7 @@ function ChannelWorkspace({
     [navigate, navigator, viewer, scope, sidebar.list, open],
   );
   const closeThread = () => {
+    setReplyRequest(undefined);
     if (showingThread?.navigation && current) select(current.id);
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
@@ -698,6 +828,7 @@ function ChannelWorkspace({
       const candidate = panels.resolve(url);
       const context = linkContext.current;
       if (context.channelId && candidate) {
+        setSettings(undefined);
         panelTrigger.current =
           document.activeElement instanceof HTMLElement
             ? document.activeElement
@@ -772,10 +903,27 @@ function ChannelWorkspace({
         : undefined,
     [scope, viewer, current, showingThread],
   );
-  const drawer = useChannelPanels(panels, drawerContext);
+  const drawer = useChannelPanels(panels, drawerContext, () =>
+    setSettings(undefined),
+  );
+  const sections = sidebarSections(
+    sidebarChannels,
+    personal
+      ? {
+          sections: personal.groups.map((g, order) => ({
+            id: g.id,
+            name: g.name,
+            order,
+          })),
+          assignments: personal.assignments,
+          starred: preferences.data?.starred ?? [],
+        }
+      : preferences.data,
+    hiddenDms.hiddenIds,
+  );
   return (
     <div
-      className={`${styles.board} ${panel || showingThread || companion ? styles.withPanel : ""}`}
+      className={`${styles.board} ${!composingMessage && (showingSettings || panel || showingThread || companion) ? styles.withPanel : ""}`}
       style={
         {
           "--channel-sidebar-width": `${sidebar.width}px`,
@@ -784,8 +932,57 @@ function ChannelWorkspace({
     >
       <Panel as="aside" aria-label="Channel sidebar">
         <div className={styles.sidebar}>
+          {kitState.status === "error" && (
+            <p role="alert">
+              {kitState.error}{" "}
+              <Button onClick={() => void queries.channelKit.refresh()}>
+                Retry templates
+              </Button>
+            </p>
+          )}
+          {kitError && <p role="alert">{kitError}</p>}
+          {pendingChannelCreation && (
+            <div>
+              <Button size="sm" onClick={() => setCreateChannelOpen(true)}>
+                Resume unfinished channel setup
+              </Button>
+              {queries.channelCreation.partialChannel() && (
+                <>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const id = queries.channelCreation.partialChannel();
+                      if (id) select(id);
+                    }}
+                  >
+                    Open partial channel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      if (
+                        window.confirm(
+                          "Keep this channel without finishing setup? Existing members and Canvas stay; pending outbox writes are not cancelled.",
+                        )
+                      ) {
+                        try {
+                          const id =
+                            await queries.channelCreation.keepPartial();
+                          if (id) select(id);
+                        } catch (error) {
+                          setKitError(String(error));
+                        }
+                      }
+                    }}
+                  >
+                    Keep partial channel
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
           <SidebarUnread listRef={sidebar.list}>
-            {sidebarSections(channels, preferences.data).map((section) => {
+            {sections.map((section) => {
               const showsCreateChannel = isChannelSectionKey(section.key);
               return (
                 <details
@@ -832,7 +1029,47 @@ function ChannelWorkspace({
                             event.preventDefault();
                             event.stopPropagation();
                             createChannelTrigger.current = event.currentTarget;
+                            setInitialGroup(
+                              personal && section.key.startsWith("group:")
+                                ? section.key.slice(6)
+                                : "",
+                            );
                             setCreateChannelOpen(true);
+                          }}
+                          icon={<PlusIcon size={16} aria-hidden="true" />}
+                        />
+                      </span>
+                    )}
+                    {section.key === "dms" && (
+                      <span className={styles.sectionAction}>
+                        <IconButton
+                          type="button"
+                          size="compact"
+                          shape="round"
+                          aria-label="New message"
+                          title="New message"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setThread(undefined);
+                            open(undefined);
+                            setDraftParent(undefined);
+                            setLocalNewMessage(true);
+                            if (navigator && viewer)
+                              void navigator.open({
+                                version: 1,
+                                kind: "page",
+                                pluginId: "buzz.channels",
+                                pageId: "channels",
+                                scope: {
+                                  viewer,
+                                  communityOrigin: scope.slice(
+                                    0,
+                                    -(viewer.length + 1),
+                                  ),
+                                },
+                                route: { version: 1, params: "new-message" },
+                              });
                           }}
                           icon={<PlusIcon size={16} aria-hidden="true" />}
                         />
@@ -848,12 +1085,18 @@ function ChannelWorkspace({
                         : undefined;
                     return (
                       <ChannelSidebarItem
+                        profile={
+                          channel.channelType === "dm" &&
+                          channel.participants?.length === 1
+                            ? dmProfiles.get(channel.participants[0] ?? "")
+                            : undefined
+                        }
                         key={channel.id}
                         channel={channel}
                         session={queries}
                         working={workingChannels.has(channel.id)}
                         sessionsEnabled={sessionsEnabled}
-                        selected={selected}
+                        selected={composingMessage ? undefined : selected}
                         collapsed={sidebar.collapsed.includes(
                           `session-children:${channel.id}`,
                         )}
@@ -864,6 +1107,7 @@ function ChannelWorkspace({
                         onSelect={select}
                         onNewSession={startSession}
                         onOpenThread={openActivityThread}
+                        onHideDm={hiddenDms.hide}
                       />
                     );
                   })}
@@ -882,20 +1126,23 @@ function ChannelWorkspace({
               <p className={styles.empty}>No channels yet.</p>
             )}
           </SidebarUnread>
-          {preferences.status !== "ready" && (
-            <div className={styles.preferenceNotice} role="status">
+          {preferences.status === "error" ? (
+            <ToastNotice
+              title="Saved groups and stars couldn’t refresh"
+              description="Your conversations are still available."
+              tone="warning"
+            >
+              <Button type="button" size="sm" onClick={preferences.reload}>
+                Retry
+              </Button>
+            </ToastNotice>
+          ) : preferences.status !== "ready" ? (
+            <p className={styles.preferenceNotice} role="status">
               {preferences.status === "loading"
                 ? "Loading saved groups and stars…"
-                : preferences.status === "unsupported"
-                  ? "Saved groups and stars aren’t supported by this host yet."
-                  : "Couldn’t refresh saved groups and stars. Your conversations are still available."}
-              {preferences.status === "error" && (
-                <Button type="button" onClick={preferences.reload}>
-                  Retry
-                </Button>
-              )}
-            </div>
-          )}
+                : "Saved groups and stars aren’t supported by this host yet."}
+            </p>
+          ) : null}
         </div>
       </Panel>
       <CreateChannelDialog
@@ -904,14 +1151,58 @@ function ChannelWorkspace({
         onCreate={createChannel}
         pending={pendingChannelCreation}
         finalFocus={createChannelTrigger}
+        session={queries}
+        providers={providers}
+        groups={personal}
+        initialGroup={initialGroup}
+        groupsReady={kitState.status === "ready"}
       />
+      {current && !current.readOnly && canvasOpen && (
+        <ChannelCanvasDialog
+          key={`${scope}:${current.id}`}
+          canvas={queries.canvas}
+          scope={scope}
+          channelId={current.id}
+          open={canvasOpen}
+          onOpenChange={setCanvasOpen}
+        />
+      )}
       <ChannelSidebarResizeHandle
         width={sidebar.width}
         setWidth={sidebar.setWidth}
       />
       <Panel as="article" aria-label="Conversation">
-        <div className={styles.conversation}>
-          {drafting && current ? (
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: file-drop fallback; the composer also provides a keyboard-accessible picker. */}
+        <div
+          className={styles.conversation}
+          data-attachment-drop-zone=""
+          onDragOver={rejectUnhandledFileDrop}
+          onDrop={rejectUnhandledFileDrop}
+        >
+          {composingMessage ? (
+            <NewMessage
+              session={queries}
+              scope={scope}
+              extensions={extensions}
+              onPreparing={(pubkeys) =>
+                setPreparingDm((previous) => ({
+                  existing:
+                    previous?.existing ??
+                    new Set(
+                      queries.channels
+                        .list()
+                        .channels.map((channel) => channel.id),
+                    ),
+                  members: new Set([viewer, ...pubkeys]),
+                }))
+              }
+              onStarted={(channelId, id) => {
+                setPreparingDm(undefined);
+                setSent({ channelId, id });
+                select(channelId);
+              }}
+            />
+          ) : drafting && current ? (
             <NewSessionView parentName={current.name}>
               <NewSessionComposer
                 extensions={extensions}
@@ -951,71 +1242,24 @@ function ChannelWorkspace({
                   actions={
                     <>
                       {drawer.launchers}
-                      <details className={styles.diagnostics}>
-                        <summary
-                          aria-label="Conversation options"
-                          title="Conversation options"
-                        >
-                          <DotsThreeIcon size={19} aria-hidden="true" />
-                        </summary>
-                        <div className={styles.diagnosticsMenu}>
-                          <UnreadOptions
-                            session={queries}
-                            channelId={current?.id}
-                          />
-                          <details>
-                            <summary>Diagnostics</summary>
-                            <LiveStatus
-                              live={queries.live}
-                              channelId={current?.id}
-                              partialRoster={list.coverage === "partial"}
-                              diagnostics
-                            />
-                            <p>
-                              {list.coverage === "partial"
-                                ? "Partial roster"
-                                : "Roster"}{" "}
-                              · {channels.length} channels
-                            </p>
-                            <Button
-                              type="button"
-                              onClick={() => queries.channels.refreshList?.()}
-                            >
-                              Refresh channels
-                            </Button>
-                            {preferences.error && (
-                              <p>Saved groups and stars: {preferences.error}</p>
-                            )}
-                            {preferences.status !== "unsupported" && (
-                              <Button
-                                type="button"
-                                disabled={preferences.status === "loading"}
-                                onClick={preferences.reload}
-                              >
-                                Refresh groups and stars
-                              </Button>
-                            )}
-                            {current && (
-                              <Button
-                                type="button"
-                                onClick={() =>
-                                  queries.channels.refresh?.(current.id)
-                                }
-                              >
-                                Refresh messages
-                              </Button>
-                            )}
-                            {queries.outbox ? (
-                              <OutboxStatus
-                                outbox={queries.outbox}
-                                profiling={queries.profiling}
-                              />
-                            ) : (
-                              <RelayTimings profiling={queries.profiling} />
-                            )}
-                          </details>
-                        </div>
-                      </details>
+                      <IconButton
+                        ref={settingsTrigger}
+                        size="toolbar"
+                        aria-label="Channel settings"
+                        title="Channel settings"
+                        aria-expanded={showingSettings}
+                        onClick={() => {
+                          if (showingSettings) closeSettings();
+                          else {
+                            drawer.close();
+                            setSettings({
+                              channelId: currentId,
+                              entryId: navigation?.entryId,
+                            });
+                          }
+                        }}
+                        icon={<DotsThreeIcon size={19} aria-hidden="true" />}
+                      />
                     </>
                   }
                 />
@@ -1096,10 +1340,7 @@ function ChannelWorkspace({
                         ? "Message this session"
                         : undefined
                     }
-                    onSend={(id) => {
-                      setSent({ channelId: current.id, id });
-                      if (flatSession && requestedMessage) select(current.id);
-                    }}
+                    onSend={onComposerSend}
                   />
                 )}
               </SessionColumn>
@@ -1119,45 +1360,175 @@ function ChannelWorkspace({
           messageId={showingMediaReview.messageId}
           initialTime={showingMediaReview.initialTime}
           restoreFocus={mediaReviewTrigger}
+          onOpenLink={openLink}
           close={() => setMediaReview(undefined)}
         />
       )}
-      {!showingMediaReview && (panel || showingThread || companion) && (
-        <div className={styles.panelStack}>
-          {showingThread && (
-            <ThreadPanel
-              sessionConversation={current?.channelType === "session"}
-              extensions={extensions}
-              session={queries}
-              scope={scope}
-              channelName={current?.name ?? ""}
-              channelId={showingThread.channelId}
-              messageId={showingThread.messageId}
-              navigation={showingThread.navigation}
-              close={closeThread}
-              onOpenLink={openLink}
-              onOpenMediaReview={openMediaReview}
-              canOpenLink={canOpenLink}
-            />
-          )}
+      {!composingMessage &&
+        !showingMediaReview &&
+        (showingSettings || panel || showingThread || companion) && (
+          <div className={styles.panelStack}>
+            {showingSettings && (
+              <ChannelSettingsPanel
+                setupTools={
+                  current && (
+                    <div style={{ display: "grid", gap: "var(--space-3)" }}>
+                      {!current.readOnly && (
+                        <Button onClick={() => setCanvasOpen(true)}>
+                          Canvas
+                        </Button>
+                      )}
+                      {templateProvider && (
+                        <OwnedContribution
+                          key={current.id}
+                          entry={templateProvider}
+                          registry={providers}
+                        >
+                          {(entry, active) => {
+                            const SaveAs = entry.saveAs;
+                            return (
+                              <SaveAs
+                                session={queries}
+                                channel={current}
+                                active={active}
+                              />
+                            );
+                          }}
+                        </OwnedContribution>
+                      )}
+                      {personal && (
+                        <Select
+                          label="Personal group"
+                          variant="field"
+                          value={personal.assignments[current.id] ?? ""}
+                          groups={[
+                            {
+                              label: "",
+                              options: [
+                                { value: "", label: "No group" },
+                                ...personal.groups.map((g) => ({
+                                  value: g.id,
+                                  label: g.name,
+                                })),
+                              ],
+                            },
+                          ]}
+                          onValueChange={async (groupId) => {
+                            const assignments = { ...personal.assignments };
+                            if (groupId) assignments[current.id] = groupId;
+                            else delete assignments[current.id];
+                            setKitError("");
+                            try {
+                              await queries.channelKit.save(
+                                { ...personal, assignments },
+                                groupEntry?.eventId,
+                              );
+                            } catch (error) {
+                              setKitError(String(error));
+                            }
+                          }}
+                        />
+                      )}
+                      {kitError && <p role="alert">{kitError}</p>}
+                    </div>
+                  )
+                }
+                key={currentId ?? "channels"}
+                channel={current}
+                close={closeSettings}
+              >
+                <UnreadOptions session={queries} channelId={current?.id} />
+                <LiveStatus
+                  live={queries.live}
+                  channelId={current?.id}
+                  partialRoster={list.coverage === "partial"}
+                  diagnostics
+                />
+                <p>
+                  {list.coverage === "partial" ? "Partial roster" : "Roster"} ·{" "}
+                  {channels.length} channels
+                </p>
+                <Button
+                  type="button"
+                  onClick={() => queries.channels.refreshList?.()}
+                >
+                  Refresh channels
+                </Button>
+                {preferences.error && (
+                  <p>Saved groups and stars: {preferences.error}</p>
+                )}
+                {preferences.status !== "unsupported" && (
+                  <Button
+                    type="button"
+                    disabled={preferences.status === "loading"}
+                    onClick={preferences.reload}
+                  >
+                    Refresh groups and stars
+                  </Button>
+                )}
+                {current && (
+                  <Button
+                    type="button"
+                    onClick={() => queries.channels.refresh?.(current.id)}
+                  >
+                    Refresh messages
+                  </Button>
+                )}
+                {queries.outbox ? (
+                  <OutboxStatus
+                    outbox={queries.outbox}
+                    profiling={queries.profiling}
+                  />
+                ) : (
+                  <RelayTimings profiling={queries.profiling} />
+                )}
+              </ChannelSettingsPanel>
+            )}
+            {showingThread && (
+              <div className={styles.retainedPanel} hidden={showingSettings}>
+                <ThreadPanel
+                  sessionConversation={current?.channelType === "session"}
+                  extensions={extensions}
+                  session={queries}
+                  scope={scope}
+                  channelName={current?.name ?? ""}
+                  channelId={showingThread.channelId}
+                  messageId={showingThread.messageId}
+                  navigation={showingThread.navigation}
+                  replyRequest={
+                    replyRequest?.channelId === showingThread.channelId &&
+                    replyRequest.messageId === showingThread.messageId &&
+                    replyRequest.entryId === showingThread.navigation?.entryId
+                      ? replyRequest.sequence
+                      : undefined
+                  }
+                  close={closeThread}
+                  onOpenLink={openLink}
+                  onOpenMediaReview={openMediaReview}
+                  canOpenLink={canOpenLink}
+                />
+              </div>
+            )}
 
-          {panel && opened && (
-            <PanelCard
-              key="target"
-              panel={panel}
-              target={opened.target}
-              context={panelContext}
-              close={close}
-              closeLabel="Close channel panel"
-            />
-          )}
-          {companion && (
-            <div key="companion" className={styles.companion}>
-              {companion}
-            </div>
-          )}
-        </div>
-      )}
+            {panel && opened && (
+              <div className={styles.retainedPanel} hidden={showingSettings}>
+                <PanelCard
+                  key="target"
+                  panel={panel}
+                  target={opened.target}
+                  context={panelContext}
+                  close={close}
+                  closeLabel="Close channel panel"
+                />
+              </div>
+            )}
+            {companion && (
+              <div key="companion" className={styles.companion}>
+                {companion}
+              </div>
+            )}
+          </div>
+        )}
     </div>
   );
 }
@@ -1289,7 +1660,7 @@ const ChannelBody = memo(function ChannelBody({
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   onOpenThread?:
-    | ((messageId: string, threadRootId: string) => void)
+    | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
   onOpenMediaReview(
     messageId: string,

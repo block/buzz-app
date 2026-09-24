@@ -2,6 +2,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  type RefObject,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -38,14 +39,21 @@ export function EmojiPicker({
   disabled,
   insert,
   reaction = false,
+  externalTrigger,
 }: {
   session: RelaySession;
   scope: string;
   disabled: boolean;
   insert(value: string): void;
   reaction?: boolean;
+  externalTrigger?: {
+    ref: RefObject<HTMLButtonElement | null>;
+    id: string;
+    close(): void;
+    finalFocus(): HTMLButtonElement | false;
+  };
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!externalTrigger);
   const [tab, setTab] = useState<"emoji" | "gifs">("emoji");
   const [gifAvailability, setGifAvailability] = useState<{
     community: string;
@@ -194,6 +202,8 @@ export function EmojiPicker({
   );
   const picker = (
     <Popover.Popup
+      id={externalTrigger?.id}
+      finalFocus={externalTrigger?.finalFocus}
       variant="flush"
       initialFocus={false}
       onKeyDownCapture={(event) => {
@@ -201,7 +211,9 @@ export function EmojiPicker({
         if (event.key === "Escape") {
           event.preventDefault();
           event.stopPropagation();
+          const target = externalTrigger?.finalFocus();
           popoverActions.current?.close();
+          if (target) target.focus();
         }
       }}
       className={styles.emojiPopover}
@@ -266,13 +278,13 @@ export function EmojiPicker({
       aria-label="Emoji controls"
       className={styles.emojiPicker}
     >
-      <Popover.Trigger render={button} />
+      {externalTrigger ? null : <Popover.Trigger render={button} />}
       <Popover.Portal>
         <Popover.Positioner
           side={reaction ? "bottom" : "top"}
           anchor={
             reaction
-              ? undefined
+              ? externalTrigger?.ref
               : () => controls.current?.closest("form") ?? trigger.current
           }
         >
@@ -283,6 +295,9 @@ export function EmojiPicker({
   );
   return (
     <Popover.Root
+      onOpenChangeComplete={(isOpen) => {
+        if (!isOpen) externalTrigger?.close();
+      }}
       actionsRef={popoverActions}
       open={open && !disabled}
       onOpenChange={(next) => {

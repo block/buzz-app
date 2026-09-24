@@ -4,6 +4,7 @@ import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { MessageComposer } from "../messages/MessageComposer";
+import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { AgentChoice } from "./AgentChoice";
@@ -101,9 +102,16 @@ export function NewSessionComposer({
     const current = pending
       ? {
           ...pending,
-          ...(!pending.messageId ? { text: draft.text, draft } : {}),
+          ...(!pending.messageId
+            ? { text: composerMarkdown(draft), draft }
+            : {}),
         }
-      : { id: channelId, text: draft.text, draft, ...(agent ? { agent } : {}) };
+      : {
+          id: channelId,
+          text: composerMarkdown(draft),
+          draft,
+          ...(agent ? { agent } : {}),
+        };
 
     const mentions = mentionDraft(current.draft).recipients.map(
       (item) => item.pubkey,
@@ -116,7 +124,7 @@ export function NewSessionComposer({
     save(current);
     try {
       if (parent && !current.messageId && recipients.length) {
-        await session.agentLibrary.refresh();
+        await session.agentChoices.refresh();
         if (!mounted.current) return;
         await session.workSessions.addAgents(
           parent.id,
@@ -180,9 +188,9 @@ export function NewSessionComposer({
             throw new Error("Refresh session participants before sending.");
           await Promise.all([
             session.profiles.ensure(channel.members, "background"),
-            session.agentLibrary.snapshot().status === "ready"
+            session.agentChoices.snapshot().status === "ready"
               ? Promise.resolve()
-              : session.agentLibrary.refresh(),
+              : session.agentChoices.refresh(),
           ]);
           if (!mounted.current) return;
           recipients = [
@@ -191,7 +199,7 @@ export function NewSessionComposer({
                 .list()
                 .channels.find((item) => item.id === current.id),
               session.profiles.snapshot(),
-              session.agentLibrary.snapshot(),
+              session.agentChoices.snapshot(),
               session.viewer,
               recipients,
             ),

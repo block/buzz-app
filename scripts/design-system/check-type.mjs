@@ -80,10 +80,6 @@ const RETIRED_ROLES = new Map([
  */
 const OVERRIDES = new Map([
   [
-    "styles/search-field.css:font-size:",
-    "Complete text-body-sm role shared with a shadow-root widget; raw CSS cannot use Tailwind @apply.",
-  ],
-  [
     "styles/flex-workspace.css:font-size:",
     "FlexLayout's public theme variable forwards the existing text-body role; no new text size is authored.",
   ],

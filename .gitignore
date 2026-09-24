@@ -12,6 +12,7 @@ blob-report/
 coverage/
 .pnpm-store/
 .vite/
+.profiles/
 *.log
 *.tsbuildinfo
 

@@ -66,3 +66,45 @@
 .feedback:empty {
   display: none;
 }
+
+.tabContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding-top: var(--space-4);
+  min-width: 0;
+}
+
+.channelList {
+  overflow: hidden;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-card);
+}
+.channelNote {
+  padding: var(--space-4);
+}
+.channelRow {
+  border-top: 1px solid var(--border-standard);
+}
+[data-profile-channel-link] {
+  display: flex;
+  width: 100%;
+  min-height: 3.5rem;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector targets the shared button label. */
+[data-profile-channel-link] :global(.buzz-button-label) {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector targets the shared button label. */
+[data-profile-channel-link] :global(.buzz-button-label) span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

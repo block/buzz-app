@@ -81,7 +81,15 @@ export type ComposerAccessory = Readonly<{
   order?: number;
   component: ComponentType<ComposerAccessoryProps>;
 }>;
+/** A whole message body, not an inline Markdown segment. No data or delivery ownership. */
+export type MessageRenderer = Readonly<{
+  id: string;
+  title: string;
+  matches(message: ChannelMessage): boolean;
+  component: ComponentType<{ message: ChannelMessage }>;
+}>;
 export type ConversationExtensions = Readonly<{
+  messages?: ContributionReader<MessageRenderer>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;

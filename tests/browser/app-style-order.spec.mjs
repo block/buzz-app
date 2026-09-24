@@ -4,13 +4,13 @@ import { test, expect } from "./source-fixture.mjs";
 // Composer layer-order coverage belongs with the rich-editor integration.
 test("app startup preserves shared shell control styling", async ({ page }) => {
   await page.goto("/");
-  const home = page
+  const projects = page
     .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Home", exact: true });
+    .getByRole("button", { name: "Projects", exact: true });
   const messages = page
     .getByRole("navigation", { name: "Pages" })
     .getByRole("button", { name: "Messages", exact: true });
-  await expect(home).toBeVisible();
+  await expect(projects).toBeVisible();
   for (const dark of [false, true]) {
     await page.evaluate((dark) => {
       document.documentElement.classList.toggle("dark", dark);
@@ -18,8 +18,8 @@ test("app startup preserves shared shell control styling", async ({ page }) => {
     }, dark);
     for (const width of [390, 820, 1440]) {
       await page.setViewportSize({ width, height: 950 });
-      await expect(home).toHaveCSS("border-top-width", "0px");
-      await expect(messages).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(messages).toHaveCSS("border-top-width", "0px");
+      await expect(projects).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       const controls = [
         page.getByRole("button", { name: "Go back", exact: true }),
         page.getByRole("button", { name: "Go forward", exact: true }),

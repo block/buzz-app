@@ -1,10 +1,9 @@
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { ReactNode } from "react";
-import { HouseIcon } from "../../shared/design-system/icons/index";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { Communities } from "../../features/communities/service";
-import { CommunitySwitcher } from "../../features/communities/CommunitySwitcher";
+import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { orderPages, pagePresentation } from "./presentation";
@@ -70,21 +69,8 @@ export function AppShell({
           {...titleBarDragProps}
         >
           {navigationControls}
-          <CommunitySwitcher
-            communities={communities}
-            onSelect={onCommunitySelect}
-          />
         </div>
         <nav aria-label="Pages" className="shell-pages">
-          <NavigationItem
-            type="button"
-            variant="pill"
-            aria-current={selected === "home" ? "page" : undefined}
-            onClick={() => onSelect("home")}
-            selected={selected === "home"}
-            label="Home"
-            icon={<HouseIcon aria-hidden="true" size={15} />}
-          />
           {orderPages(pages).map((page) => {
             const { label, icon: Icon } = pagePresentation(page);
             return (
@@ -120,6 +106,7 @@ export function AppShell({
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
+        <CommunityRail communities={communities} onSelect={onCommunitySelect} />
         <main
           id="main-content"
           tabIndex={-1}

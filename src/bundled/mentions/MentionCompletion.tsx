@@ -1,25 +1,32 @@
+import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { mentionChoices } from "./mention-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { useMentionAgents } from "../../features/agents/mention-context";
-import { useAgentChoices } from "./use-agent-choices";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useAgentChoices } from "../../features/agents/use-choices";
+import {
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { matchesMentionQuery } from "./mention-query";
+import { peopleOrder } from "../../features/profiles/people-order";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
 const demands = new WeakMap<RelaySession, Set<string>>();
 export function MentionCompletion({
   session,
-  scope,
   channelId,
   inviteAgents,
   query,
   publish,
 }: ComposerCompletionProps) {
+  const draftRoster = useContext(DraftMentionRoster);
   const resolveName = useIdentityNames(session.names);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
@@ -31,10 +38,9 @@ export function MentionCompletion({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
-  const agents = useAgentChoices(session, inviteAgents);
+  const agents = useAgentChoices(session, !!inviteAgents);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
-  const { agents: localAgents } = useMentionAgents(scope);
   const available = useMemo(
     () =>
       !inviteAgents &&
@@ -42,20 +48,23 @@ export function MentionCompletion({
       !channel.archived &&
       (channel.channelType === "stream" || channel.channelType === "forum") &&
       session.outbox?.supports(9000)
-        ? localAgents
+        ? agents.identities
+            .filter((agent) => agent.managed)
             .filter((agent) => !channel.members?.includes(agent.pubkey))
             .map(({ pubkey, name }) => ({ pubkey, name }))
         : [],
-    [channel, localAgents, session.outbox, inviteAgents],
+    [channel, agents, session.outbox, inviteAgents],
   );
   const parentAdmission =
     !!channel &&
     (channel.channelType !== "session" || !!channel.parentChannelId);
-  const members = channel?.members ?? [];
+  const members =
+    draftRoster?.map((person) => person.pubkey) ?? channel?.members ?? [];
   const memberKey = members.join(":");
   const [attempt, retry] = useState(0);
   const [error, setError] = useState(false);
   useEffect(() => {
+    if (draftRoster) return;
     session.channels.ensureList();
     const requested = demands.get(session) ?? new Set<string>();
     demands.set(session, requested);
@@ -72,36 +81,39 @@ export function MentionCompletion({
     return () => {
       live = false;
     };
-  }, [session, memberKey, attempt]);
+  }, [session, memberKey, attempt, draftRoster]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
     const candidates = mentionChoices(
-      [...agents.identities, ...available],
+      draftRoster ?? [...(inviteAgents ? agents.identities : []), ...available],
       members,
       profiles,
       resolveName,
     );
     const needle = query.query.toLowerCase();
+    // Source names close completed mentions; display labels still admit multi-word searches.
     const admitted = matchesMentionQuery(
       query.query,
-      candidates.map((item) => item.label),
+      candidates.flatMap(({ recipient, label }) => [recipient.name, label]),
     );
+    const order = peopleOrder(query.query);
     const matching =
       admitted && !channel?.archived
         ? candidates
             .filter(({ recipient, label }) =>
               `${label} ${recipient.pubkey}`.toLowerCase().includes(needle),
             )
-            .sort(
-              (a, b) =>
-                Number(!a.label.toLowerCase().startsWith(needle)) -
-                  Number(!b.label.toLowerCase().startsWith(needle)) ||
-                a.label.localeCompare(b.label) ||
-                a.recipient.pubkey.localeCompare(b.recipient.pubkey),
+            .sort((a, b) =>
+              order(
+                { name: a.label, pubkey: a.recipient.pubkey },
+                { name: b.label, pubkey: b.recipient.pubkey },
+              ),
             )
         : [];
-    const membershipMissing = (!inviteAgents || !!channel) && !channel?.members;
-    const missing = members.some((key) => !profiles.has(key));
+    const membershipMissing =
+      !draftRoster && (!inviteAgents || !!channel) && !channel?.members;
+    const membershipError = !draftRoster && list.error;
+    const missing = !draftRoster && members.some((key) => !profiles.has(key));
     const withdraw = publish({
       items: matching.slice(0, 20).map(({ recipient, label }) => ({
         id: recipient.pubkey,
@@ -130,11 +142,11 @@ export function MentionCompletion({
         ),
         edit: { mention: recipient },
       })),
-      ...(agents.status === "error"
+      ...(agents.status === "error" || agents.error
         ? { status: "Could not load agents. Retry to refresh." }
         : admitted && membershipMissing
           ? { status: "Channel membership unavailable." }
-          : admitted && list.error
+          : admitted && membershipError
             ? { status: "Could not refresh channel membership." }
             : error || missing
               ? {
@@ -145,16 +157,17 @@ export function MentionCompletion({
                 ? { status: "Narrow your search to see more members." }
                 : {}),
       ...(agents.status === "error" ||
+      agents.error ||
       membershipMissing ||
-      list.error ||
+      membershipError ||
       error ||
       missing
         ? {
             retry: () => {
-              if (inviteAgents) void session.agentLibrary.refresh();
+              void session.agentChoices.refresh();
               setError(false);
               retry((value) => value + 1);
-              if (membershipMissing || list.error)
+              if (membershipMissing || membershipError)
                 session.channels.refreshList?.();
             },
           }
@@ -178,9 +191,7 @@ export function MentionCompletion({
       if (session.profiles.snapshot() !== profiles) revoke();
     });
     const namesChanged = session.names.subscribe(revoke);
-    const agentsChanged = inviteAgents
-      ? session.agentLibrary.subscribe(revoke)
-      : () => {};
+    const agentsChanged = session.agentChoices.subscribe(revoke);
     return () => {
       namesChanged();
       agentsChanged();
@@ -189,6 +200,7 @@ export function MentionCompletion({
       revoke();
     };
   }, [
+    draftRoster,
     resolveName,
     session,
     agents,

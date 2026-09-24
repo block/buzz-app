@@ -13,12 +13,14 @@ export function Tooltip({
   children,
   content,
   disableHoverablePopup = false,
+  side = "top",
 }: {
   children: ReactElement<
     Pick<AriaAttributes, "aria-describedby" | "aria-expanded">
   >;
   content: ReactNode;
   disableHoverablePopup?: boolean;
+  side?: "top" | "right";
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -44,7 +46,7 @@ export function Tooltip({
       />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner
-          side="top"
+          side={side}
           sideOffset={4}
           className="buzz-tooltip-positioner"
         >

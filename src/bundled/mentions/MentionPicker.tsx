@@ -1,16 +1,17 @@
 import { Popover } from "../../shared/design-system/ui/Popover";
+import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { mentionChoices } from "./mention-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { useMentionAgents } from "../../features/agents/mention-context";
-import { useAgentChoices } from "./use-agent-choices";
+import { useAgentChoices } from "../../features/agents/use-choices";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { AtIcon } from "../../shared/design-system/icons/index";
 import {
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -21,11 +22,11 @@ import type { RelaySession } from "../../features/relay/session";
 import styles from "./Mentions.module.css";
 
 import type { ComposerToolProps } from "../../features/conversation/contracts";
+import { peopleOrder } from "../../features/profiles/people-order";
 
 /** Select identities from the shared relay roster, never from display-name matching. */
 export function MentionPicker({
   session,
-  scope,
   channelId,
   disabled,
   inviteAgents,
@@ -38,6 +39,7 @@ export function MentionPicker({
   inviteAgents?: boolean | undefined;
   select: ComposerToolProps["insertMention"];
 }) {
+  const draftRoster = useContext(DraftMentionRoster);
   const resolveName = useIdentityNames(session.names);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -55,10 +57,9 @@ export function MentionPicker({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
-  const agents = useAgentChoices(session, inviteAgents && open);
+  const agents = useAgentChoices(session, !!inviteAgents && open);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
-  const { agents: localAgents } = useMentionAgents(scope);
   const available = useMemo(
     () =>
       !inviteAgents &&
@@ -66,18 +67,21 @@ export function MentionPicker({
       !channel.archived &&
       (channel.channelType === "stream" || channel.channelType === "forum") &&
       session.outbox?.supports(9000)
-        ? localAgents
+        ? agents.identities
+            .filter((agent) => agent.managed)
             .filter((agent) => !channel.members?.includes(agent.pubkey))
             .map(({ pubkey, name }) => ({ pubkey, name }))
         : [],
-    [channel, localAgents, session.outbox, inviteAgents],
+    [channel, agents, session.outbox, inviteAgents],
   );
   const parentAdmission =
     !!channel &&
     (channel.channelType !== "session" || !!channel.parentChannelId);
-  const memberKey = channel?.members?.join(":") ?? "";
+  const members =
+    draftRoster?.map((person) => person.pubkey) ?? channel?.members;
+  const memberKey = members?.join(":") ?? "";
   useEffect(() => {
-    if (!open || !memberKey) return;
+    if (draftRoster || !open || !memberKey) return;
     let current = true;
     void session.profiles
       .ensure(memberKey.split(":"), "background")
@@ -90,23 +94,31 @@ export function MentionPicker({
     return () => {
       current = false;
     };
-  }, [session, open, memberKey]);
+  }, [session, open, memberKey, draftRoster]);
+  const order = peopleOrder(search);
   const candidates = mentionChoices(
-    [...agents.identities, ...available],
-    channel?.members ?? [],
+    draftRoster ?? [...(inviteAgents ? agents.identities : []), ...available],
+    members ?? [],
     profiles,
     resolveName,
-  ).filter(({ recipient, label }) =>
-    `${label} ${recipient.pubkey}`
-      .toLowerCase()
-      .includes(search.trim().toLowerCase()),
-  );
+  )
+    .filter(({ recipient, label }) =>
+      `${label} ${recipient.pubkey}`
+        .toLowerCase()
+        .includes(search.trim().toLowerCase()),
+    )
+    .sort((a, b) =>
+      order(
+        { name: a.label, pubkey: a.recipient.pubkey },
+        { name: b.label, pubkey: b.recipient.pubkey },
+      ),
+    );
   return (
     <Popover.Root
       open={open && !disabled}
       onOpenChange={(next) => {
         setOpen(next);
-        if (next) session.channels.ensureList();
+        if (next && !draftRoster) session.channels.ensureList();
       }}
     >
       <fieldset
@@ -182,15 +194,17 @@ export function MentionPicker({
               <SearchField
                 inputRef={searchInput}
                 label={
-                  inviteAgents
-                    ? "Search members and agents"
-                    : "Search members and your agents"
+                  draftRoster
+                    ? "Search recipients"
+                    : inviteAgents
+                      ? "Search members and agents"
+                      : "Search members and your agents"
                 }
                 value={search}
                 onValueChange={setSearch}
                 disabled={disabled}
               />
-              {inviteAgents && (
+              {!draftRoster && inviteAgents && (
                 <p>
                   {parentAdmission
                     ? "Agents you mention join this session and its parent channel when you send, with access to their history."
@@ -200,21 +214,23 @@ export function MentionPicker({
               {agents.status === "loading" && (
                 <p role="status">Loading agents…</p>
               )}
-              {agents.status === "error" && (
+              {(agents.status === "error" || !!agents.error) && (
                 <Button
                   type="button"
-                  onClick={() => void session.agentLibrary.refresh()}
+                  onClick={() => void session.agentChoices.refresh()}
                 >
                   Retry agent list
                 </Button>
               )}
               {error && <p role="status">{error}</p>}
-              {list.error && (
+              {!draftRoster && list.error && (
                 <p role="alert">Could not refresh channel membership.</p>
               )}
-              {(!inviteAgents || !!channel) && !channel?.members && (
-                <p role="status">Channel membership unavailable.</p>
-              )}
+              {!draftRoster &&
+                (!inviteAgents || !!channel) &&
+                !channel?.members && (
+                  <p role="status">Channel membership unavailable.</p>
+                )}
               <div className={styles.mentionChoices}>
                 {candidates.slice(0, 100).map(({ recipient, label }) => (
                   <NavigationItem
@@ -230,7 +246,7 @@ export function MentionPicker({
                     label={
                       <span className="flex flex-col whitespace-normal">
                         <span>{label}</span>
-                        {!channel?.members?.includes(recipient.pubkey) && (
+                        {!members?.includes(recipient.pubkey) && (
                           <small className="text-caption text-subtle">
                             {inviteAgents
                               ? parentAdmission
@@ -254,7 +270,7 @@ export function MentionPicker({
                         size="default"
                         shape={
                           agentPubkeys.has(recipient.pubkey) ||
-                          !channel?.members?.includes(recipient.pubkey)
+                          !members?.includes(recipient.pubkey)
                             ? "squircle"
                             : "circle"
                         }
@@ -265,7 +281,7 @@ export function MentionPicker({
                 {candidates.length > 100 && (
                   <p>Narrow your search to see more members.</p>
                 )}
-                {channel?.members && !candidates.length && (
+                {members && !candidates.length && (
                   <p>No matching channel members.</p>
                 )}
               </div>

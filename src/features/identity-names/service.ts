@@ -17,10 +17,12 @@ export type NameProvider = {
   id: string;
   resolve(source: NameSource, pubkey: string): string | undefined;
   activate(source: NameSource): undefined | (() => void);
+  qualifier?(source: NameSource, pubkey: string): string | undefined;
   subscribe?(listener: () => void): () => void;
 };
 export type IdentityName = Readonly<{
   name: string;
+  qualifier?: string | undefined;
   source: "agent-directory" | "public-profile";
 }>;
 export interface IdentityNameView {
@@ -112,7 +114,12 @@ export function bindNames(
   const lookup = (pubkey: string): IdentityName | undefined => {
     if (closed) return undefined;
     const local = provider?.resolve(source, pubkey);
-    if (local) return { name: local, source: "agent-directory" };
+    if (local)
+      return {
+        name: local,
+        qualifier: provider?.qualifier?.(source, pubkey),
+        source: "agent-directory",
+      };
     const name = source.profiles.snapshot().get(pubkey)?.name;
     return name ? { name, source: "public-profile" } : undefined;
   };

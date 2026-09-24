@@ -78,6 +78,8 @@ export function createAgentActivity(
   const turns = new Map<string, Turn>();
   const typing = new Map<string, Typing>();
   const listeners = new Set<() => void>();
+  const workingListeners = new Set<() => void>();
+  let workingChannels = "[]";
   let snapshot: Snapshot = Object.freeze({
     status,
     records: [],
@@ -108,7 +110,25 @@ export function createAgentActivity(
               : "unknown",
         }),
     );
+    // A primitive snapshot lets workspace subscribers ignore observer records and
+    // refreshed typing timestamps. The existing publish timer also drives expiry.
+    const nextWorking = JSON.stringify(
+      [
+        ...new Set([
+          ...visible
+            .filter((turn) => turn.state === "working")
+            .map((turn) => turn.channelId)
+            .filter((id): id is string => !!id),
+          ...typers
+            .filter((entry) => !entry.threadRootId)
+            .map((entry) => entry.channelId),
+        ]),
+      ].sort(),
+    );
+    const workingChanged = nextWorking !== workingChannels;
+    if (workingChanged) workingChannels = nextWorking;
     if (
+      !workingChanged &&
       snapshot.status === status &&
       snapshot.records === records &&
       snapshot.trimmed === trimmed &&
@@ -124,6 +144,8 @@ export function createAgentActivity(
       trimmed,
     });
     for (const listener of listeners) notify(listener);
+    if (workingChanged)
+      for (const listener of workingListeners) notify(listener);
   }
   function reset() {
     records = [];
@@ -191,6 +213,12 @@ export function createAgentActivity(
   return {
     queries: Object.freeze({
       snapshot: () => snapshot,
+      workingSnapshot: () => workingChannels,
+      subscribeWorking(listener: () => void) {
+        if (closed) return () => {};
+        workingListeners.add(listener);
+        return () => workingListeners.delete(listener);
+      },
       subscribe(listener: () => void) {
         if (closed) return () => {};
         listeners.add(listener);
@@ -351,6 +379,7 @@ export function createAgentActivity(
       clearInterval(timer);
       restart();
       listeners.clear();
+      workingListeners.clear();
     },
   };
 }

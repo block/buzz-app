@@ -36,7 +36,7 @@ test("production composer catalogue preserves source and controls at responsive 
   ).toBeVisible();
   await expect(
     playground.getByRole("button", { name: "Toggle formatting" }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   for (const width of [360, 768, 1440]) {
     await page.setViewportSize({ width, height: 950 });
     const form = playground.getByRole("form");

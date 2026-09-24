@@ -118,6 +118,10 @@ it("production live evidence feeds stable snapshots; selection/prefetch do not r
     observedCount: 1,
     attentionCount: 1,
     coverage: "observed",
+    latestMessage: {
+      id: message(h.viewer, "room", "own", 12).id,
+      createdAt: 12,
+    },
   });
   const snapshot = h.snapshot(),
     changed = vi.fn();

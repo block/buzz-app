@@ -2,6 +2,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useEffect, useRef, useState } from "react";
 import {
+  ArrowSquareOutIcon,
   CaretLeftIcon,
   CaretRightIcon,
   DownloadIcon,
@@ -9,6 +10,7 @@ import {
   PlusIcon,
 } from "../../shared/design-system/icons/index";
 import type { Attachment } from "../relay/contracts";
+import { isProxySource, safeOpenUrl } from "./attachment-source";
 import styles from "./Messages.module.css";
 
 const MIN_ZOOM = 1;
@@ -22,6 +24,7 @@ type ImageReviewStageProps = {
   selectedUrl: string;
   media(url: string): string | undefined;
   select(url: string): void;
+  onOpenLink(url: string): boolean;
 };
 
 function clamp(value: number, limit: number) {
@@ -33,6 +36,7 @@ export function ImageReviewStage({
   selectedUrl,
   media,
   select,
+  onOpenLink,
 }: ImageReviewStageProps) {
   const stage = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null);
@@ -48,6 +52,8 @@ export function ImageReviewStage({
   );
   const selected = attachments[selectedIndex] ?? attachments[0];
   const source = selected ? media(selected.url) : undefined;
+  const proxySource = source ? isProxySource(source) : false;
+  const externalSource = source ? safeOpenUrl(source) && !proxySource : false;
   const pannable = zoom > MIN_ZOOM;
 
   const panLimits = (nextZoom = zoom) => {
@@ -202,15 +208,38 @@ export function ImageReviewStage({
             {Math.round(zoom * 100)}%
           </Button>
         </div>
-        <IconButton
-          nativeButton={false}
-          role="link"
-          render={<a href={source} download />}
-          size="compact"
-          aria-label="Download image"
-          title="Download image"
-          icon={<DownloadIcon size={17} />}
-        />
+        {proxySource && (
+          <IconButton
+            nativeButton={false}
+            role="link"
+            render={<a href={source} download />}
+            size="compact"
+            aria-label="Download image"
+            title="Download image"
+            icon={<DownloadIcon size={17} />}
+          />
+        )}
+        {externalSource && (
+          <IconButton
+            nativeButton={false}
+            role="link"
+            render={
+              <a
+                href={source}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+                  if (onOpenLink(source)) event.preventDefault();
+                }}
+              />
+            }
+            size="compact"
+            aria-label="Open image in browser"
+            title="Open image in browser"
+            icon={<ArrowSquareOutIcon size={17} />}
+          />
+        )}
       </div>
     </div>
   );

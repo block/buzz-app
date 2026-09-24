@@ -11,7 +11,11 @@ import type {
   ManagementAction,
 } from "./types";
 
-export type BundledPlugin = { manifest: PluginManifest; module: PluginModule };
+export type BundledPlugin = {
+  manifest: PluginManifest;
+  module: PluginModule;
+  enabledByDefault?: boolean;
+};
 
 // One configuration observer drives activation, whether or not Settings is mounted.
 export function createPluginManager(
@@ -19,10 +23,10 @@ export function createPluginManager(
   {
     bundled,
     storage = createPluginStorage(() =>
-      bundled.map(({ manifest }) => ({
+      bundled.map(({ manifest, enabledByDefault = true }) => ({
         manifest,
         source: "bundled",
-        enabled: true,
+        enabled: enabledByDefault,
         revision: "bundled",
         previous: null,
         reloadable: false,

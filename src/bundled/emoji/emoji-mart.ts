@@ -1,5 +1,4 @@
 import scrollbarStyles from "../../shared/design-system/styles/scrollbars.css?raw";
-import searchFieldStyles from "../../shared/design-system/styles/search-field.css?raw";
 import { pickerIcons } from "../../shared/design-system/icons/svg";
 // Emoji Mart config adapted from block/buzz's shared picker; see NOTICE.md.
 import data from "@emoji-mart/data";
@@ -180,25 +179,57 @@ export function mountEmojiMart({
       letter-spacing: 0;
       line-height: var(--text-caption--line-height);
     }
-    .search.search-field {
+    .search {
       width: calc(100% - var(--space-2));
       margin: var(--picker-search-top, var(--space-3)) var(--space-1) var(--space-3);
     }
-    .search .icon {
-      top: auto;
-      right: auto;
-      left: auto;
-      transform: none;
+    .search input[type="search"] {
+      width: 100%;
+      min-height: var(--size-control);
+      height: auto;
+      padding: var(--space-2)
+        calc(var(--space-control-inset) + var(--space-4) + var(--space-2));
+      margin: 0;
+      border: 1px solid transparent;
+      border-radius: var(--radius-control);
+      background: var(--surface-inset);
+      box-shadow: none;
+      color: var(--text-standard);
+      font-family: var(--font-sans);
+      font-size: var(--text-body);
+      line-height: var(--text-body--line-height);
+      transition: border-color var(--duration-field-focus) var(--easing-state);
     }
-    .search .loupe {
-      position: static;
-      width: 16px;
-      height: 16px;
-      flex: 0 0 16px;
-      order: 0;
+    .search input[type="search"]:focus {
+      background: var(--surface-inset);
+      box-shadow: none;
+      border-color: var(--border-prominent);
+      outline: none;
+    }
+    :host([data-keyboard-navigation]) .search input[type="search"] {
+      transition: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .search input[type="search"] { transition: none; }
+    }
+    .search input[type="search"]::placeholder,
+    .search .icon {
       color: var(--text-metadata);
       opacity: 1;
-      pointer-events: none;
+    }
+    .search .loupe {
+      visibility: visible;
+      left: var(--space-control-inset);
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    .search .delete {
+      right: var(--space-1);
+      width: var(--size-control-sm);
+      height: var(--size-control-sm);
+      padding: var(--space-2);
+      border-radius: var(--radius-pill);
+      color: var(--text-standard);
     }
     .search .icon svg {
       width: 16px;
@@ -277,7 +308,7 @@ export function mountEmojiMart({
     }
     .buzz-skin-tone-source {
       width: 0 !important;
-      height: 48px !important;
+      height: 0 !important;
       overflow: hidden;
       visibility: hidden;
     }
@@ -315,7 +346,6 @@ export function mountEmojiMart({
       }
     }
   ${scrollbarStyles}
-  ${searchFieldStyles}
   `;
   root?.appendChild(navigationStyle);
   let skinToneObserver: MutationObserver | undefined;
@@ -383,7 +413,6 @@ export function mountEmojiMart({
     const input = root?.querySelector<HTMLInputElement>('input[type="search"]');
     if (!root || !input || disposed) return;
     placeSkinToneInNavigation();
-    input.parentElement?.classList.add("search-field");
     root
       .querySelector(".search .delete")
       ?.setAttribute("data-search-clear", "");

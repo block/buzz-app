@@ -85,15 +85,26 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect.poll(order).toEqual(["Mention a member", "Insert emoji"]);
     // Browser-only contract: native shadow search and React search share their
     // shape, typography, clear target and alignment in both appearance modes.
-    const searchAppearance = (field) =>
-      field.evaluate((element) => {
-        const style = getComputedStyle(element);
-        const input = getComputedStyle(element.querySelector("input"));
+    const searchAppearance = async (field) => {
+      // Main animates field focus; compare settled appearance, not an arbitrary frame.
+      await field.evaluate(async (element) => {
+        await Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .map((animation) => animation.finished),
+        );
+      });
+      return field.evaluate((element) => {
+        const nativeInput = element.querySelector("input");
+        // React fields put the boundary on InputGroup; Mart puts it on the input.
+        const style = getComputedStyle(
+          element.matches(".buzz-input-group") ? element : nativeInput,
+        );
+        const input = getComputedStyle(nativeInput);
         const clear = element.querySelector("button");
         return {
           height: style.height,
           radius: style.borderRadius,
-          padding: style.padding,
           background: style.backgroundColor,
           border: style.border,
           color: input.color,
@@ -106,6 +117,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
           },
         };
       });
+    };
     for (const mode of ["light", "dark"]) {
       await page.evaluate((mode) => {
         document.documentElement.dataset.colorMode = mode;
@@ -127,14 +139,18 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         mode === "light" ? "rgb(232, 232, 232)" : "rgb(64, 64, 64)",
       );
       await mention.getByRole("searchbox").fill("");
-      const empty = await searchAppearance(mention.locator(".search-field"));
+      const empty = await searchAppearance(
+        mention.locator(".buzz-input-group"),
+      );
       await mention.getByRole("searchbox").fill("Honey");
-      const filled = await searchAppearance(mention.locator(".search-field"));
+      const filled = await searchAppearance(
+        mention.locator(".buzz-input-group"),
+      );
       await page
         .getByRole("button", { name: "Insert emoji", exact: true })
         .click();
-      const emojiField = page.locator("em-emoji-picker .search-field");
-      await expect(emojiField).toBeVisible();
+      const emojiField = page.locator("em-emoji-picker .search");
+      await expect(emojiField.getByRole("searchbox")).toBeFocused();
       expect(await searchAppearance(emojiField)).toEqual(empty);
       const emojiSearch = emojiField.getByRole("searchbox");
       await emojiSearch.fill("face");
@@ -565,6 +581,92 @@ test("selected mentions inside code remain visible through draft restore and cha
         await page.getByRole("button", { name: "Toggle thread" }).click();
     }
   } finally {
+    await server.close();
+  }
+});
+
+// Browser-only contract: qualifiers remain visible without hover at touch width.
+test("namesake recipient qualifiers remain visible on touch after live name changes", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?identity-names`,
+    );
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "dark";
+    });
+    const keys = await page.evaluate(() => [
+      window.mentionFixture.first,
+      window.mentionFixture.second,
+    ]);
+    const choose = async (key) => {
+      await page
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .tap();
+      await page
+        .getByRole("dialog", { name: "Mention a member or agent" })
+        .getByRole("button", { name: new RegExp(key) })
+        .tap();
+    };
+    await choose(keys[0]);
+    await choose(keys[1]);
+    const input = page.getByRole("textbox");
+    const chips = input.locator(".inline-chip");
+    const labels = keys.map(
+      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
+    );
+    await expect(chips).toHaveText(labels);
+    await page.evaluate(() => window.mentionFixture.collide(true));
+    await expect(chips).toHaveText(labels);
+    for (const chip of await chips.all()) {
+      await expect(chip).toBeVisible();
+      expect(
+        await chip.evaluate((el) => {
+          const rect = el.getBoundingClientRect();
+          return rect.left >= 0 && rect.right <= innerWidth;
+        }),
+      ).toBe(true);
+    }
+    await page.screenshot({
+      path: test.info().outputPath("recipient-qualifiers-touch.png"),
+    });
+    await input.evaluate((el) => el.setSelectionRange(7, 13));
+    await input.press("Backspace");
+    await expect(chips).toHaveText(["@Honey"]);
+    await choose(keys[1]);
+    await expect(chips).toHaveText(labels);
+    await page.evaluate(() => window.mentionFixture.collide(false));
+    await expect(chips).toHaveText(labels);
+    await expect(input).toHaveJSProperty("value", "@Honey @Honey  ");
+    await page.getByRole("button", { name: "Send message", exact: true }).tap();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.mentionFixture.publications.length),
+      )
+      .toBe(1);
+    const notified = await page.evaluate(() =>
+      window.mentionFixture.publications[0].tags
+        .filter((tag) => tag[0] === "p")
+        .map((tag) => tag[1]),
+    );
+    expect(notified.sort()).toEqual(keys.sort());
+  } finally {
+    await context.close();
     await server.close();
   }
 });

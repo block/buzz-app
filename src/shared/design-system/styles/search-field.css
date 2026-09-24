@@ -50,8 +50,8 @@
 
 html[data-keyboard-navigation] .search-field:has(input:focus-visible),
 :host([data-keyboard-navigation]) .search-field:has(input:focus-visible) {
-  outline: 2px solid var(--text-standard);
-  outline-offset: 2px;
+  /* Match the temporary global focus rule, including the shadow-root host. */
+  outline: none;
 }
 
 .search-field input[type="search"]::placeholder {
@@ -98,8 +98,7 @@ html[data-keyboard-navigation] .search-field [data-search-clear]:focus-visible,
 :host([data-keyboard-navigation])
   .search-field
   [data-search-clear]:focus-visible {
-  outline: 2px solid var(--text-standard);
-  outline-offset: -2px;
+  outline: none;
 }
 
 .search-field:has(input:disabled) {

@@ -123,6 +123,9 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     name: "Search emoji",
     exact: true,
   });
+  await emojiSearch.press("ArrowLeft");
+  await expect(emojiSearch).toBeFocused();
+  await expect(emojiSearch.locator("..")).toHaveCSS("outline-style", "none");
   const emojiSearchFrame = await emojiSearch.locator("..").boundingBox();
   const emojiTabsBox = await picker.getByRole("tablist").boundingBox();
   expect(emojiSearchFrame.x).toBeCloseTo(emojiTabsBox.x, 1);
@@ -219,6 +222,9 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveAttribute("autocorrect", "off");
   await expect(search).toHaveAttribute("autocapitalize", "off");
   const searchFrame = search.locator("..");
+  await search.press("ArrowLeft");
+  await expect(search).toBeFocused();
+  await expect(searchFrame).toHaveCSS("outline-style", "none");
   await expect(searchFrame).toHaveClass(/search-field/);
   await expect(searchFrame).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await expect(searchFrame).toHaveCSS("border-top-color", "rgb(128, 128, 128)");
@@ -312,7 +318,9 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   });
   await expect(clear).toHaveCSS("width", "32px");
   await expect(clear).toHaveCSS("height", "32px");
-  await clear.click();
+  await clear.focus();
+  await expect(clear).toHaveCSS("outline-style", "none");
+  await clear.press("Enter");
   await expect(search).toHaveValue("");
   await expect(search).toBeFocused();
   // Clearing starts a debounced request. Old results have the same count, so

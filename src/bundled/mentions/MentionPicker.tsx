@@ -219,6 +219,13 @@ export function MentionPicker({
                 if (event.key === "Enter") event.preventDefault();
               }}
             />
+            {!draftRoster && inviteAgents && (
+              <p>
+                {parentAdmission
+                  ? "Agents you mention join this session and its parent channel when you send, with access to their history."
+                  : "Agents you mention join this session when you send, with access to its history."}
+              </p>
+            )}
             {agents.status === "loading" && (
               <p role="status">Loading agents…</p>
             )}

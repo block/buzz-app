@@ -69,3 +69,32 @@ test("valid advanced YAML stays valid when Form mode cannot represent it", async
   expect(yaml).toHaveAccessibleDescription(/Original text is kept/);
   expect(screen.getByRole("button", { name: "Save workflow" })).toBeEnabled();
 });
+
+test("timeout correction keeps Step options open and the input focused", async () => {
+  const user = userEvent.setup();
+  render(<Example />);
+  await user.click(screen.getByText("Step options", { exact: true }));
+  const timeout = screen.getByRole("textbox", {
+    name: "Step timeout (optional)",
+  });
+  const options = timeout.closest("details");
+  const save = screen.getByRole("button", { name: "Save workflow" });
+  await user.type(timeout, "0s");
+  expect(timeout).toHaveAttribute("aria-invalid", "true");
+  expect(save).toBeDisabled();
+  await user.clear(timeout);
+  expect(options).toHaveProperty("open", true);
+  expect(timeout).toBeVisible();
+  expect(timeout).toHaveFocus();
+  expect(save).toBeEnabled();
+  for (const character of "30s") {
+    await user.keyboard(character);
+    expect(options).toHaveProperty("open", true);
+    expect(timeout).toBeVisible();
+    expect(timeout).toHaveFocus();
+  }
+  expect(timeout).toHaveValue("30s");
+  expect(save).toBeEnabled();
+  await user.click(screen.getByText("Step options", { exact: true }));
+  expect(options).toHaveProperty("open", false);
+});

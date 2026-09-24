@@ -617,7 +617,15 @@ test("invalid timeout text stays in the draft and blocks saves in both editor mo
   ).toBeVisible();
   await button("Keep editing").click();
   await expect(timeout).toHaveValue("9007199254740992");
-  await timeout.fill("5m");
+  await timeout.fill("");
+  await expect(timeout).toBeVisible();
+  await expect(timeout).toBeFocused();
+  for (const character of "5m") {
+    await page.keyboard.type(character);
+    await expect(timeout).toBeVisible();
+    await expect(timeout).toBeFocused();
+  }
+  await expect(timeout).toHaveValue("5m");
   await expect(button("Save workflow")).toBeEnabled();
   await button("Save workflow").click();
   await expect
@@ -629,6 +637,8 @@ test("invalid timeout text stays in the draft and blocks saves in both editor mo
   ).toBe(300);
   await page.evaluate(() => window.workflowFixture.finish("succeeded"));
   await expect(button("Save workflow")).toBeEnabled();
+  // Successful save mounts a fresh editor; opening its optional section is separate
+  // from keeping the current draft open throughout validation recovery.
   if (!(await timeout.isVisible()))
     await page.getByText("Step options", { exact: true }).click();
   await timeout.fill(" ");

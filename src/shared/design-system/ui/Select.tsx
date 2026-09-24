@@ -37,6 +37,9 @@ export function Select({
   groups: readonly SelectGroup[];
   onValueChange: (value: string) => void;
 }) {
+  const items = groups.flatMap((group) => group.options);
+  const selectedValue =
+    value === "" && !items.some((option) => option.value === "") ? null : value;
   const control = (
     <div
       data-buzz-ui=""
@@ -48,8 +51,8 @@ export function Select({
         name={name}
         required={required}
         readOnly={readOnly}
-        value={value || null}
-        items={groups.flatMap((group) => group.options)}
+        value={selectedValue}
+        items={items}
         onValueChange={(next) => {
           if (next !== null) onValueChange(next);
         }}
@@ -64,7 +67,8 @@ export function Select({
           >
             <BaseSelect.Value
               className="buzz-select-value"
-              placeholder={placeholder}
+              placeholder={selectedValue === null ? placeholder : undefined}
+              data-placeholder={selectedValue === null ? "" : undefined}
             />
             <BaseSelect.Icon>
               <CaretDownIcon
@@ -78,7 +82,10 @@ export function Select({
           <BaseSelect.Trigger
             render={(props) => (
               <Button {...props} variant="ghost">
-                <BaseSelect.Value placeholder={placeholder} />
+                <BaseSelect.Value
+                  placeholder={selectedValue === null ? placeholder : undefined}
+                  data-placeholder={selectedValue === null ? "" : undefined}
+                />
                 <BaseSelect.Icon>
                   <CaretDownIcon
                     size={14}

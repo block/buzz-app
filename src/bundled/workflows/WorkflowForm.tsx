@@ -151,7 +151,12 @@ export function WorkflowForm({
                 />
               </Field>
             )}
-            <details open={stepError(index, "timeout") ? true : undefined}>
+            <details
+              ref={(element) => {
+                // Reveal errors without taking ownership of the native disclosure.
+                if (element && stepError(index, "timeout")) element.open = true;
+              }}
+            >
               <summary>Step options</summary>
               <div className="workflow-options">
                 <p className="text-mono-sm text-secondary">{step.id}</p>

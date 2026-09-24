@@ -212,7 +212,12 @@ export function useAppNavigation(services: AppServices) {
     retry() {
       // Retrying presentation must also repair its failed dependency. Only touch the
       // selected, authorized destination; never reconnect an unrelated community.
-      if (pageKey === channelsKey && !failure && !waiting) {
+      if (
+        (pageKey === channelsKey || pageKey === "buzz.projects/projects") &&
+        !state.ingress &&
+        !failure &&
+        !waiting
+      ) {
         const status = services.relay.snapshot().status;
         if (status === "error" || status === "disconnected")
           services.relay.retry();

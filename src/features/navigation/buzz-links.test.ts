@@ -6,6 +6,7 @@ import {
   parseBuzzLink,
 } from "./buzz-links";
 import { targetLink } from "./targets";
+import { deepLinkStep } from "./deep-links";
 
 const scope = {
   viewer: "a".repeat(64),
@@ -13,6 +14,24 @@ const scope = {
 };
 const example =
   "buzz://message?channel=c89a3185-29c5-40db-8284-054536d98b09&id=9a77911a6e94147b1ce2cdb3c4e87046c67a29f29f3dd25626134621a5f6924b";
+it("resolves the desktop channel/message alias, including UUID v7 and uppercase event IDs", () => {
+  const channelId = "018fdb5d-3a64-7c35-b5f9-4a23e1f9d2d9";
+  const href = `buzz://channel/${channelId}/${"B".repeat(64)}`;
+  expect(buzzLinkKind(href)).toBe("message");
+  expect(buzzLinkTarget(href, scope)).toEqual({
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId,
+    messageId: "b".repeat(64),
+  });
+  expect(
+    deepLinkStep(href, {
+      viewer: scope.viewer,
+      selected: scope.communityOrigin,
+    }),
+  ).toEqual({ open: buzzLinkTarget(href, scope) });
+});
 it("recognizes the reported message link and binds it to the receiving community and viewer", () => {
   expect(buzzLinkKind(example)).toBe("message");
   expect(buzzLinkTarget(example, scope)).toEqual({
@@ -54,6 +73,9 @@ it("supports channels and leaves shared-link community ownership intact", () => 
 it.each([
   "buzz://channel/",
   "buzz://channel/general/extra",
+  "buzz://channel/general/",
+  `buzz://channel/general/${"a".repeat(64)}/extra`,
+  `buzz://channel/general%2F${"a".repeat(64)}`,
   "buzz://channel/general?relay=evil",
   "buzz://channel/%2Fprivate",
   "buzz://channel/%ZZ",

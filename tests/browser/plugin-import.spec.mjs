@@ -54,9 +54,34 @@ async function nativeImports(page, samples = []) {
             revision: name,
           })),
     };
+    // Match Tauri core's callback IDs and Channel serialization, not a fake
+    // Channel class: constructing the production bridge must cross real JS IPC.
+    let nextCallback = 0;
+    const callbacks = new Map();
     window.__TAURI_INTERNALS__ = {
+      transformCallback(callback, once = false) {
+        const id = ++nextCallback;
+        callbacks.set(id, (value) => {
+          if (once) callbacks.delete(id);
+          callback?.(value);
+        });
+        return id;
+      },
+      unregisterCallback(id) {
+        callbacks.delete(id);
+      },
       invoke: async (command, args) => {
         window.importCalls.push({ command, args });
+        if (command === "deep_link_take") return [];
+        if (command === "deep_link_watch") {
+          const wireChannel = args.onEvent.toJSON();
+          if (
+            wireChannel !== `__CHANNEL__:${args.onEvent.id}` ||
+            !callbacks.has(args.onEvent.id)
+          )
+            throw new Error("Invalid deep-link channel");
+          return;
+        }
         if (command === "plugin_catalog") return ready();
         if (
           command === "plugin_import_folder" ||

@@ -34,14 +34,16 @@ pub enum ListAgentsError {
     InvalidConfiguration(String),
     Unauthenticated,
     KeychainUnavailable,
+    KeychainAccessDenied,
     Transport,
     HttpStatus(u16),
     InvalidResponse,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeychainError {
     Unavailable,
+    AccessDenied,
 }
 
 pub trait Keychain: Send + Sync {
@@ -66,10 +68,19 @@ impl Keychain for SystemKeychain {
             .output()
             .map_err(|_| KeychainError::Unavailable)?;
         if !output.status.success() {
-            return Ok(None);
+            if security_item_not_found(&output.stderr) {
+                return Ok(None);
+            }
+            return Err(KeychainError::AccessDenied);
         }
         Ok(Some(Zeroizing::new(output.stdout)))
     }
+}
+
+#[cfg(target_os = "macos")]
+fn security_item_not_found(stderr: &[u8]) -> bool {
+    String::from_utf8_lossy(stderr)
+        .contains("The specified item could not be found in the keychain")
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -215,6 +226,7 @@ enum SessionRequestError {
     InvalidConfiguration(String),
     Unauthenticated,
     KeychainUnavailable,
+    KeychainAccessDenied,
     Transport,
     HttpStatus(u16),
 }
@@ -227,6 +239,7 @@ impl From<SessionRequestError> for ListAgentsError {
             }
             SessionRequestError::Unauthenticated => Self::Unauthenticated,
             SessionRequestError::KeychainUnavailable => Self::KeychainUnavailable,
+            SessionRequestError::KeychainAccessDenied => Self::KeychainAccessDenied,
             SessionRequestError::Transport => Self::Transport,
             SessionRequestError::HttpStatus(status) => Self::HttpStatus(status),
         }
@@ -240,6 +253,9 @@ impl SessionRequestError {
             Self::Unauthenticated => SessionStatus::LoggedOut,
             Self::KeychainUnavailable => SessionStatus::Error {
                 message: "BuilderLab login is unavailable on this platform".into(),
+            },
+            Self::KeychainAccessDenied => SessionStatus::Error {
+                message: "Could not read the BuilderLab CLI credential from Keychain. Unlock your Keychain or check its access permissions.".into(),
             },
             Self::Transport => SessionStatus::Error {
                 message: "Could not connect to BuilderLab".into(),
@@ -264,6 +280,7 @@ async fn authenticated_request(
     let credential = session_credential(keychain, &account, now).map_err(|error| match error {
         CredentialLookupError::LoggedOut => SessionRequestError::Unauthenticated,
         CredentialLookupError::KeychainUnavailable => SessionRequestError::KeychainUnavailable,
+        CredentialLookupError::KeychainAccessDenied => SessionRequestError::KeychainAccessDenied,
     })?;
     let endpoint = format!("{base}{endpoint_path}");
     let response = match method {
@@ -287,6 +304,7 @@ async fn authenticated_request(
 enum CredentialLookupError {
     LoggedOut,
     KeychainUnavailable,
+    KeychainAccessDenied,
 }
 
 fn session_credential(
@@ -300,6 +318,7 @@ fn session_credential(
         }
         Ok(None) => Err(CredentialLookupError::LoggedOut),
         Err(KeychainError::Unavailable) => Err(CredentialLookupError::KeychainUnavailable),
+        Err(KeychainError::AccessDenied) => Err(CredentialLookupError::KeychainAccessDenied),
     }
 }
 
@@ -431,6 +450,7 @@ mod tests {
     #[derive(Default)]
     struct FakeKeychain {
         value: Option<Vec<u8>>,
+        error: Option<KeychainError>,
         calls: Mutex<Vec<(String, String)>>,
     }
 
@@ -444,6 +464,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((service.into(), account.into()));
+            if let Some(error) = self.error.clone() {
+                return Err(error);
+            }
             Ok(self.value.clone().map(Zeroizing::new))
         }
     }
@@ -499,6 +522,17 @@ mod tests {
 
     fn now() -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn recognizes_only_security_item_not_found_as_a_missing_credential() {
+        assert!(security_item_not_found(
+            b"security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain."
+        ));
+        assert!(!security_item_not_found(
+            b"security: User interaction is not allowed."
+        ));
     }
 
     #[test]
@@ -663,6 +697,33 @@ mod tests {
             check_auth_me_session(&keychain, &network, BASE, now()).await,
             SessionStatus::Error { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn distinguishes_missing_keychain_items_from_denied_reads() {
+        assert_eq!(
+            check_auth_me_session(
+                &FakeKeychain::default(),
+                &transport(200, br#"{"subject":"user"}"#),
+                BASE,
+                now(),
+            )
+            .await,
+            SessionStatus::LoggedOut
+        );
+
+        let transport = transport(200, br#"{"subject":"user"}"#);
+        let denied_keychain = FakeKeychain {
+            error: Some(KeychainError::AccessDenied),
+            ..Default::default()
+        };
+        assert_eq!(
+            check_auth_me_session(&denied_keychain, &transport, BASE, now()).await,
+            SessionStatus::Error {
+                message: "Could not read the BuilderLab CLI credential from Keychain. Unlock your Keychain or check its access permissions.".into()
+            }
+        );
+        assert!(transport.get_calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

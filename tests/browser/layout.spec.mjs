@@ -68,6 +68,9 @@ async function link(page, app, target) {
   ).toBeVisible();
 }
 async function shellFits(page, width) {
+  const disclosure = button(page, "Show navigation");
+  const collapsed = await disclosure.isVisible();
+  if (collapsed) await disclosure.click();
   const pages = await box(
     page.getByRole("navigation", { name: "Pages", exact: true }),
   );
@@ -110,6 +113,7 @@ async function shellFits(page, width) {
   if (width > 700) {
     expect(communities.x + communities.width).toBeLessThan(sidebar.x);
   }
+  if (collapsed) await button(page, "Hide navigation").click();
 }
 
 scroll(
@@ -266,6 +270,7 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
     await expect(
       page.getByRole("heading", { name: "Settings", exact: true }),
     ).toBeVisible();
+    if (width <= 650) await button(page, "Show navigation").click();
     await page
       .getByRole("navigation", { name: "Pages", exact: true })
       .getByRole("button", { name: "Messages" })
@@ -308,11 +313,16 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
   await expect(projects).toHaveAttribute("aria-checked", "false");
   await expect(
     page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Projects" }),
+      .getByRole("navigation", {
+        name: "Pages",
+        exact: true,
+        includeHidden: true,
+      })
+      .getByRole("button", { name: "Projects", includeHidden: true }),
   ).toHaveCount(0);
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "true");
+  await button(page, "Show navigation").click();
   await expect(
     page
       .getByRole("navigation", { name: "Pages", exact: true })
@@ -727,9 +737,16 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
-  const nav = page.getByRole("navigation", { name: "Pages", exact: true });
+  // Plugin ordering remains observable while narrow Settings collapses navigation.
+  const nav = page.getByRole("navigation", {
+    name: "Pages",
+    exact: true,
+    includeHidden: true,
+  });
   const titles = ["Messages", "Projects", "Agents", "Sessions", "Workflows"];
-  await expect(nav.getByRole("button")).toHaveText(titles);
+  await expect(nav.getByRole("button", { includeHidden: true })).toHaveText(
+    titles,
+  );
   await nav.getByRole("button", { name: "Projects", exact: true }).click();
   const surface = page.getByRole("region", { name: "Projects", exact: true });
   const title = surface.getByRole("heading", {
@@ -767,14 +784,16 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     exact: true,
   });
   await projects.click();
-  await expect(nav.getByRole("button")).toHaveText([
+  await expect(nav.getByRole("button", { includeHidden: true })).toHaveText([
     "Messages",
     "Agents",
     "Sessions",
     "Workflows",
   ]);
   await projects.click();
-  await expect(nav.getByRole("button")).toHaveText(titles);
+  await expect(nav.getByRole("button", { includeHidden: true })).toHaveText(
+    titles,
+  );
   // Re-enabled Projects registered last; navigation surfaces must still sort it.
   await button(page, "Search Buzz").click();
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
@@ -795,6 +814,7 @@ const sidebarActions = test.extend({
   productionBroker: true,
   readState: true,
   threadUnread: true,
+  threadUnreadMentions: true,
   largeSidebar: true,
   historyCounts: { alpha: 20, beta: 1 },
 });
@@ -820,7 +840,9 @@ sidebarActions(
         await page
           .getByRole("dialog", { name: "Activity in Alpha" })
           .getByRole("button", { name: /Open unread thread from/ })
-          .first()
+          // Unlike the broadcast row, this reply cannot be marked read by the
+          // visible main timeline while Playwright is moving the pointer.
+          .filter({ hasText: "Unread reply 1" })
           .click();
         await expect(
           page.getByRole("complementary", { name: "Thread", exact: true }),

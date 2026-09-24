@@ -116,24 +116,10 @@ export function ChannelsPage({
             </div>
             <h1>Your channels, one conversation.</h1>
             <p>
-              {session.status === "connecting"
-                ? "Connecting to your relay…"
-                : (session.error ??
-                  "Use the left community rail to choose or add a community. Your profile and settings work without a community.")}
+              {session.status === "disconnected"
+                ? "Use the left community rail to choose or add a community. Your profile and settings work without a community."
+                : "Connection details and retry are in the sidebar. Your profile and settings work without a community."}
             </p>
-            {session.status === "error" && (
-              <>
-                <Button type="button" onClick={relay.retry}>
-                  Connect relay
-                </Button>
-                <p className={styles.note}>
-                  For development, set <code>BUZZ_DEV_VIEWER</code> to your Buzz
-                  public key in <code>.env.local</code>, then restart{" "}
-                  <code>just web</code> or <code>just desktop</code>. See
-                  README.md for requirements.
-                </p>
-              </>
-            )}
           </div>
         </PanelFrame>
       ) : (

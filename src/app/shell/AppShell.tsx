@@ -1,5 +1,7 @@
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { SidebarIcon } from "../../shared/design-system/icons";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
@@ -44,6 +46,11 @@ export function AppShell({
   children: ReactNode;
 }) {
   const fillsWorkspace = workspace || selected === "settings";
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const navigationToggle = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (selected !== "settings") setNavigationOpen(false);
+  }, [selected]);
   const pageNavigation = (
     <nav aria-label="Pages" className="shell-pages">
       {orderPages(pages).map((page) => {
@@ -94,6 +101,20 @@ export function AppShell({
           {...titleBarDragProps}
         >
           {navigationControls}
+          {selected === "settings" && (
+            <span className="shell-navigation-toggle">
+              <IconButton
+                ref={navigationToggle}
+                aria-label={
+                  navigationOpen ? "Hide navigation" : "Show navigation"
+                }
+                aria-expanded={navigationOpen}
+                aria-controls="shell-navigation"
+                onClick={() => setNavigationOpen((open) => !open)}
+                icon={<SidebarIcon aria-hidden="true" size={20} />}
+              />
+            </span>
+          )}
         </div>
         <div
           className="shell-actions"
@@ -116,16 +137,35 @@ export function AppShell({
 
       <div className="flex min-h-0 flex-1">
         <CommunityRail communities={communities} onSelect={onCommunitySelect} />
-        <div className="shell-body">
-          {sidebar ? (
-            sidebar(pageNavigation)
-          ) : (
-            <div className="shell-sidebar-default">
-              <Panel as="aside" aria-label="Page sidebar">
-                <div className="p-2">{pageNavigation}</div>
-              </Panel>
-            </div>
-          )}
+        <div
+          className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
+        >
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: Delegated Escape from descendant controls closes the disclosure; the layout wrapper is not itself interactive. */}
+          <div
+            id="shell-navigation"
+            className="shell-navigation"
+            data-expanded={navigationOpen}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Escape" &&
+                navigationOpen &&
+                !event.defaultPrevented
+              ) {
+                setNavigationOpen(false);
+                navigationToggle.current?.focus();
+              }
+            }}
+          >
+            {sidebar ? (
+              sidebar(pageNavigation)
+            ) : (
+              <div className="shell-sidebar-default">
+                <Panel as="aside" aria-label="Page sidebar">
+                  <div className="p-2">{pageNavigation}</div>
+                </Panel>
+              </div>
+            )}
+          </div>
           <main
             id="main-content"
             tabIndex={-1}

@@ -38,6 +38,10 @@ semantic tokens, UI authoring rules and the local component reference.
   unrelated pages. Its own error boundary keeps page navigation and Settings usable.
   Page buttons use shared navigation rows and focus the main region on selection.
   A scrollable page list leaves room for channels at short heights.
+  At widths up to 650px, Settings collapses this navigation behind the header’s
+  Show navigation button to preserve readable content at 200% text size. The
+  disclosure overlays Settings, supports Escape, and keeps sidebar state mounted.
+  Other pages and desktop Settings retain the visible sidebar.
   The header keeps history and account/search actions, with no second navigation row.
   Full-height pages get a 16px outer gutter (8px on narrow screens) and own their
   card surfaces. The shell adds no white backing behind them. Document pages

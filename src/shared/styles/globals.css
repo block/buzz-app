@@ -203,8 +203,14 @@
     @apply flex min-h-0 shrink-0 flex-col mb-4;
     max-height: 40%;
   }
+  .shell-navigation {
+    display: contents;
+  }
+  .shell-navigation-toggle {
+    display: none;
+  }
   .shell-body {
-    @apply flex min-h-0 min-w-0 flex-1 px-2 pb-2 sm:px-4 sm:pb-4;
+    @apply relative flex min-h-0 min-w-0 flex-1 px-2 pb-2 sm:px-4 sm:pb-4;
   }
   .shell-sidebar,
   .shell-sidebar-default {
@@ -235,6 +241,25 @@
     }
     .shell-sidebar-default {
       margin-right: var(--space-1);
+    }
+    .shell-navigation-toggle {
+      display: inline-flex;
+    }
+    .shell-body-settings .shell-navigation {
+      display: none;
+    }
+    .shell-body-settings .shell-navigation[data-expanded="true"] {
+      @apply absolute inset-y-0 left-2 z-20 flex pb-2;
+      max-width: calc(100% - 16px);
+    }
+    .shell-body-settings .shell-navigation .shell-sidebar,
+    .shell-body-settings .shell-navigation .shell-sidebar-default {
+      width: 260px;
+      max-width: 100%;
+      margin-right: 0;
+    }
+    .shell-body-settings .shell-navigation > hr {
+      display: none;
     }
   }
   .muted {

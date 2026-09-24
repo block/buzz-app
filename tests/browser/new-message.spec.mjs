@@ -60,7 +60,8 @@ const test = base.extend({
     let backgroundReady = Promise.resolve(),
       releaseBackground = () => {};
     const socket = brokerSocket(async (event) => {
-      if (hold)
+      // Presence/profile writes must not replace the pending message resolver.
+      if (hold && event.kind === 9)
         await new Promise((resolve) => {
           release = resolve;
         });

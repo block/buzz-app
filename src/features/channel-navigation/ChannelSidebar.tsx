@@ -607,7 +607,7 @@ function ReadySidebar({
                 </Button>
               </ToastNotice>
             ) : preferences.status !== "ready" ? (
-              <p className={styles.preferenceNotice} role="status">
+              <p className={styles.preferenceNotice}>
                 {preferences.status === "loading"
                   ? "Loading saved groups and stars…"
                   : "Saved groups and stars aren’t supported by this host yet."}

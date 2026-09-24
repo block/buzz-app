@@ -1074,13 +1074,14 @@ export function createRelaySession(
   });
   const memberAdditions = createMemberAdditions(
     lifetime.signal,
-    async (channelId, pubkey, superseded): Promise<void> => {
+    async (channelId, pubkey, intent): Promise<void> => {
       await addChannelMember(
         session,
         channelId,
         pubkey,
         lifetime.signal,
-        superseded,
+        intent,
+        writes?.local,
       );
     },
     async (channelId, pubkey, control, retryStart): Promise<void> => {
@@ -1093,6 +1094,7 @@ export function createRelaySession(
         retryStart,
       );
     },
+    writes?.local,
   );
   const session = Object.freeze({
     memberAdditions,

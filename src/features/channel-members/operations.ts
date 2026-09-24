@@ -1,5 +1,6 @@
-import { MembershipChanged } from "./members";
+import { MembershipChanged, type MemberAdditionIntent } from "./members";
 import type { AgentControl } from "../agents/control";
+import type { Delivery, LocalEvents } from "../relay/outbox";
 
 type Addition = Readonly<{
   channelId: string;
@@ -8,7 +9,6 @@ type Addition = Readonly<{
   confirmed: boolean;
   error?: string;
   removed?: boolean;
-  superseded?: readonly string[];
 }>;
 
 /** Session-owned continuation and recovery; closing a view never cancels intent. */
@@ -17,7 +17,7 @@ export function createMemberAdditions(
   add: (
     channelId: string,
     pubkey: string,
-    superseded: readonly string[],
+    intent: MemberAdditionIntent,
   ) => Promise<void>,
   start: (
     channelId: string,
@@ -25,10 +25,32 @@ export function createMemberAdditions(
     control: AgentControl | undefined,
     retryStart: boolean,
   ) => Promise<void>,
+  receipts?: LocalEvents,
 ) {
   let snapshot: readonly Addition[] = [];
   const listeners = new Set<() => void>();
   const pending = new Map<string, Promise<void>>();
+  const intents = new Map<string, MemberAdditionIntent>();
+  const deliveries = new WeakMap<MemberAdditionIntent, Delivery>();
+  const stopReceipts = receipts?.subscribe(() => {
+    const current = new Map(
+      receipts.snapshot().map((item) => [item.event.id, item.delivery]),
+    );
+    for (const intent of intents.values()) {
+      if (!intent.id) continue;
+      const delivery = current.get(intent.id);
+      // Failed outstanding records are removed only by durable explicit dismissal.
+      // Completed echoes can be evicted, so their absence never permits a new send.
+      if (
+        !delivery &&
+        !intent.confirmed &&
+        deliveries.get(intent) === "failed"
+      ) {
+        deliveries.delete(intent);
+        intent.dismissed = true;
+      } else if (delivery) deliveries.set(intent, delivery);
+    }
+  });
   function publish(next: readonly Addition[]) {
     snapshot = next;
     for (const listener of listeners) listener();
@@ -36,6 +58,8 @@ export function createMemberAdditions(
   signal.addEventListener(
     "abort",
     () => {
+      stopReceipts?.();
+      intents.clear();
       publish([]);
       listeners.clear();
     },
@@ -62,6 +86,8 @@ export function createMemberAdditions(
       const matches = (item: Addition) =>
         item.channelId === channelId && item.pubkey === pubkey;
       const previous = snapshot.find(matches);
+      const intent = intents.get(key) ?? {};
+      intents.set(key, intent);
       let confirmed = previous?.confirmed ?? false;
       const update = (item?: Addition) => {
         if (!signal.aborted)
@@ -75,7 +101,7 @@ export function createMemberAdditions(
           signal.throwIfAborted();
           const retryStart = confirmed;
           if (!confirmed) {
-            await add(channelId, pubkey, previous?.superseded ?? []);
+            await add(channelId, pubkey, intent);
             confirmed = true;
           }
           signal.throwIfAborted();
@@ -89,10 +115,6 @@ export function createMemberAdditions(
             pending: false,
             confirmed: error instanceof MembershipChanged ? false : confirmed,
             removed: error instanceof MembershipChanged,
-            superseded:
-              error instanceof MembershipChanged
-                ? [...(previous?.superseded ?? []), ...error.superseded]
-                : (previous?.superseded ?? []),
             error:
               error instanceof Error
                 ? error.message

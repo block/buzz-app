@@ -1,11 +1,11 @@
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
-import type { Outbox } from "../relay/outbox";
+import type { LocalEvents } from "../relay/outbox";
 import type { AgentControl } from "../agents/control";
 import { sameCommunityAgents } from "../agents/choices";
 
 export class MembershipChanged extends Error {
-  constructor(readonly superseded: readonly string[]) {
+  constructor() {
     super(
       "Membership changed. This agent is no longer in the channel and was not started. Select Add to invite it again.",
     );
@@ -28,7 +28,7 @@ export function canAddMembers(session: RelaySession, channel?: ChannelSummary) {
 }
 
 /** Reuse the outbox's durable operation on retry, including an unknown result. */
-function waitForAddition(outbox: Outbox, id: string, signal: AbortSignal) {
+function waitForAddition(outbox: LocalEvents, id: string, signal: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     let stop = () => {};
     const finish = (error?: Error) => {
@@ -61,13 +61,20 @@ function waitForAddition(outbox: Outbox, id: string, signal: AbortSignal) {
   });
 }
 
+export type MemberAdditionIntent = {
+  id?: string;
+  confirmed?: boolean;
+  dismissed?: boolean;
+};
+
 /** Explicit single-person intent. Membership truth and pending writes stay session-owned. */
 export async function addChannelMember(
   session: RelaySession,
   channelId: string,
   pubkey: string,
   signal: AbortSignal,
-  superseded: readonly string[] = [],
+  intent: MemberAdditionIntent = {},
+  receipts: LocalEvents | undefined = session.outbox,
 ) {
   if (!keyPattern.test(pubkey))
     throw new Error("Choose a valid person or agent.");
@@ -91,16 +98,38 @@ export async function addChannelMember(
   // This existing session operation verifies the connected relay's signed roster.
   await session.workSessions.refreshMembership(channelId);
   check();
-  if (channel()?.members?.includes(pubkey)) return;
-  const pending = outbox.snapshot().find(
-    ({ event }) =>
-      // Only successes predating a proven removal are superseded by explicit Add.
-      !superseded.includes(event.id) &&
-      event.kind === 9000 &&
-      event.tags.some(([tag, value]) => tag === "h" && value === channelId) &&
-      event.tags.some(([tag, value]) => tag === "p" && value === pubkey) &&
-      !event.tags.some(([tag, value]) => tag === "role" && value !== "bot"),
-  );
+  const journal = receipts ?? outbox;
+  // Only a roster-confirmed prior addition may be superseded by explicit Add.
+  const fresh =
+    intent.dismissed ||
+    (intent.confirmed && !channel()?.members?.includes(pubkey));
+  const pending = fresh
+    ? undefined
+    : journal
+        .snapshot()
+        .find(({ event }) =>
+          intent.id
+            ? event.id === intent.id
+            : event.kind === 9000 &&
+              event.tags.some(
+                ([tag, value]) => tag === "h" && value === channelId,
+              ) &&
+              event.tags.some(
+                ([tag, value]) => tag === "p" && value === pubkey,
+              ) &&
+              !event.tags.some(
+                ([tag, value]) => tag === "role" && value !== "bot",
+              ),
+        );
+  if (channel()?.members?.includes(pubkey)) {
+    if (!intent.id && pending) intent.id = pending.event.id;
+    intent.confirmed = true;
+    return;
+  }
+  if (!fresh && intent.id && !pending)
+    throw new Error(
+      "The original addition receipt is unavailable. Refresh membership before trying again.",
+    );
   if (
     pending?.delivery === "failed" &&
     Date.now() / 1000 - pending.event.created_at >= 15 * 60
@@ -126,7 +155,10 @@ export async function addChannelMember(
     });
   if (pending?.delivery === "failed" || pending?.delivery === "unknown")
     outbox.retry(id);
-  await waitForAddition(outbox, id, signal);
+  intent.id = id;
+  intent.dismissed = false;
+  intent.confirmed = false;
+  await waitForAddition(journal, id, signal);
   check();
   await session.workSessions.refreshMembership(channelId);
   check();
@@ -134,6 +166,7 @@ export async function addChannelMember(
     throw new Error(
       "Addition is not confirmed in the member list yet. Retry to check again.",
     );
+  intent.confirmed = true;
 }
 
 /** Start only an exact identity managed here, after membership is confirmed. */
@@ -178,19 +211,7 @@ export async function startAddedAgent(
     session.channels.list().channels.find((item) => item.id === channelId) ??
     session.channels.get?.(channelId);
   if (retryStart && !channel?.members?.includes(pubkey))
-    throw new MembershipChanged(
-      (session.outbox?.snapshot() ?? [])
-        .filter(
-          ({ event, delivery }) =>
-            event.kind === 9000 &&
-            (delivery === "accepted" || delivery === "seen") &&
-            event.tags.some(
-              ([tag, value]) => tag === "h" && value === channelId,
-            ) &&
-            event.tags.some(([tag, value]) => tag === "p" && value === pubkey),
-        )
-        .map(({ event }) => event.id),
-    );
+    throw new MembershipChanged();
   if (!agent || !channel?.members?.includes(pubkey))
     throw new Error(
       "Added, but the local agent could not be checked. Retry to start it.",

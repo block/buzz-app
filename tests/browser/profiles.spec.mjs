@@ -139,6 +139,14 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     panel.getByRole("img", { name: "Pinky avatar" }),
   ).toHaveAttribute("data-size", "fill");
   await expect(panel.getByText("Agent profile", { exact: true })).toBeVisible();
+  await panel.getByRole("tab", { name: "Channels" }).click();
+  await expect(panel.getByRole("region", { name: "Channels" })).toContainText(
+    "#One",
+  );
+  await panel.getByRole("tab", { name: "Info" }).click();
+  await expect(
+    panel.getByRole("region", { name: "Linked agent instances" }),
+  ).toHaveCount(0);
   await panel.getByRole("button", { name: "Close channel panel" }).click();
   await expect(
     page.getByRole("button", { name: "View thread: 1 reply", exact: true }),

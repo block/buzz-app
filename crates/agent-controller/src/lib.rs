@@ -1,7 +1,9 @@
 //! Local configuration and process ownership; never tied to a page or relay session.
 //! No legacy desktop dependency, implicit identity creation, or credential projection.
 mod bundle;
+mod community;
 mod config;
+pub use community::CommunityResolution;
 pub mod connection;
 mod create;
 mod credentials;

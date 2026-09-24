@@ -20,6 +20,22 @@ function setup() {
   let foreignRoster = false;
   let libraryFailure = false;
   let afterPublish = () => {};
+  let omitMembership = false;
+  let holdRoster: Promise<void> | undefined;
+  let releaseRoster: (() => void) | undefined;
+  let rosterStarted: (() => void) | undefined;
+  let rosterRequested: Promise<void> | undefined;
+  let holdSigning: Promise<void> | undefined;
+  let releaseSigning: (() => void) | undefined;
+  let signingStarted: (() => void) | undefined;
+  let signingRequested: Promise<void> | undefined;
+  const sign = vi.fn(async (template: Parameters<typeof signed>[1]) => {
+    if (template.kind === 9000 && holdSigning) {
+      signingStarted?.();
+      await holdSigning;
+    }
+    return signed(viewer, template);
+  });
   const secondAgent = keypair().pubkey;
   const meta = (id: string, type: string, extra: string[][] = []) =>
     signed(relay, {
@@ -31,8 +47,10 @@ function setup() {
     const target = _event.tags.find(([name]) => name === "h")?.[1];
     if (denied || (denyChild && target === child))
       throw new PublishRejected("Only channel admins can add agents");
-    if (target === parent) members = [viewer.pubkey, agent.pubkey];
-    if (target === child) childMembers = [viewer.pubkey, agent.pubkey];
+    if (!omitMembership && target === parent)
+      members = [viewer.pubkey, agent.pubkey];
+    if (!omitMembership && target === child)
+      childMembers = [viewer.pubkey, agent.pubkey];
     clock++;
     afterPublish();
   });
@@ -53,10 +71,20 @@ function setup() {
       },
       writer: {
         kinds: [9, 9000, 9007],
-        sign: async (template) => signed(viewer, template),
+        sign,
         publish,
       },
       query: async (filters) => {
+        if (
+          holdRoster &&
+          filters.some(
+            (filter) =>
+              filter.kinds?.includes(39002) && filter["#d"]?.includes(parent),
+          )
+        ) {
+          rosterStarted?.();
+          await holdRoster;
+        }
         if (foreignRoster && filters.some((filter) => filter["#d"]))
           return [
             roster(agent, child, [viewer.pubkey, agent.pubkey], clock + 1),
@@ -104,6 +132,30 @@ function setup() {
       afterPublish = callback;
     },
     publish,
+    sign,
+    omitMembership: () => {
+      omitMembership = true;
+    },
+    holdRoster: () => {
+      rosterRequested = new Promise<void>((resolve) => {
+        rosterStarted = resolve;
+      });
+      holdRoster = new Promise<void>((resolve) => {
+        releaseRoster = resolve;
+      });
+      return rosterRequested;
+    },
+    releaseRoster: () => releaseRoster?.(),
+    holdSigning: () => {
+      signingRequested = new Promise<void>((resolve) => {
+        signingStarted = resolve;
+      });
+      holdSigning = new Promise<void>((resolve) => {
+        releaseSigning = resolve;
+      });
+      return signingRequested;
+    },
+    releaseSigning: () => releaseSigning?.(),
     denyChild: (value: boolean) => {
       denyChild = value;
     },
@@ -154,6 +206,27 @@ it("adds an outside agent once to each channel and confirms both memberships", a
     test.owner.dispose();
   }
 });
+it("reports channel-specific uncertainty when an accepted addition lacks roster confirmation", async () => {
+  const test = setup();
+  try {
+    await test.ready();
+    test.omitMembership();
+    vi.useFakeTimers();
+    const adding = test.owner.session.workSessions.addAgents(test.parent, [
+      test.agent,
+    ]);
+    const result = expect(adding).rejects.toThrow(
+      /Agent addition is unconfirmed.*Check channel membership/,
+    );
+    await vi.waitFor(() => expect(test.publish).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(15000);
+    await result;
+  } finally {
+    vi.useRealTimers();
+    test.owner.dispose();
+  }
+});
+
 it("keeps channel permission failures and retries the same saved invitation", async () => {
   const test = setup();
   try {
@@ -176,6 +249,33 @@ it("keeps channel permission failures and retries the same saved invitation", as
     test.owner.dispose();
   }
 });
+it("explains how to recover an expired failed invitation without republishing it", async () => {
+  const test = setup();
+  try {
+    await test.ready();
+    test.setDenied(true);
+    const now = Date.now;
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      await expect(
+        test.owner.session.workSessions.addAgents(test.parent, [test.agent]),
+      ).rejects.toThrow(/Only channel admins/);
+      expect(test.publish).toHaveBeenCalledOnce();
+      vi.mocked(Date.now).mockReturnValue(1_700_000_901_000);
+      test.setDenied(false);
+      await expect(
+        test.owner.session.workSessions.addAgents(test.parent, [test.agent]),
+      ).rejects.toThrow(/expired.*Outbox.*remove.*add the agent again/i);
+      expect(test.publish).toHaveBeenCalledOnce();
+    } finally {
+      vi.restoreAllMocks();
+      expect(Date.now).toBe(now);
+    }
+  } finally {
+    test.owner.dispose();
+  }
+});
+
 it("rejects nonmember identities outside the agent library before adding anyone", async () => {
   const test = setup();
   try {
@@ -347,3 +447,33 @@ it("does not accept a foreign-signed roster as fresh membership", async () => {
     test.owner.dispose();
   }
 });
+
+it.each(["roster", "signing"])(
+  "stops admission after native evidence disappears at the %s boundary",
+  async (boundary) => {
+    const test = setup();
+    let active = true;
+    try {
+      await test.ready();
+      const started =
+        boundary === "roster" ? test.holdRoster() : test.holdSigning();
+      const admission = test.owner.session.workSessions.addAgents(
+        test.parent,
+        [test.agent],
+        () => active,
+      );
+      await started;
+      active = false; // Legacy choice remains available to the broad session API.
+      if (boundary === "roster") test.releaseRoster();
+      else test.releaseSigning();
+      await expect(admission).rejects.toThrow(/cancelled/);
+      expect(test.publish).not.toHaveBeenCalled();
+      if (boundary === "roster") expect(test.sign).not.toHaveBeenCalled();
+      else expect(test.sign).toHaveBeenCalledOnce();
+    } finally {
+      test.releaseRoster();
+      test.releaseSigning();
+      test.owner.dispose();
+    }
+  },
+);

@@ -1,3 +1,5 @@
+import { bindNames } from "../identity-names/service";
+import { createAgentDirectory } from "../identity-names/testing";
 import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
 import { afterEach, expect, it, vi } from "vitest";
@@ -113,6 +115,14 @@ async function setup(
       },
     },
     {
+      identityNames: {
+        register() {},
+        bind: (source) =>
+          bindNames(source, {
+            snapshot: () => [createAgentDirectory()],
+            subscribe: () => () => {},
+          }),
+      },
       readStateStorage: {
         async update(change) {
           await readBarrier;
@@ -721,4 +731,28 @@ it("notification startup waits for the roster without consuming the shared evide
   await h.owner.session.unread.ensure();
   expect(h.markerQuery).toHaveBeenCalledOnce();
   expect(evidence()).toHaveLength(1);
+});
+
+it("scopes notification author collisions to the message channel", async () => {
+  const h = await setup();
+  const stranger = keypair();
+  h.emit([
+    profile(h.peer, { name: "Pinky" }),
+    profile(stranger, { name: "Pinky" }),
+  ]);
+  h.emit([h.make("first scoped notification")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
+  expect(h.show.mock.calls[0]?.[0].title).toContain("Pinky");
+  expect(h.show.mock.calls[0]?.[0].title).not.toContain(" · ");
+  h.emit([
+    roster(
+      h.relay,
+      "room",
+      [h.viewer.pubkey, h.peer.pubkey, stranger.pubkey],
+      Math.floor(Date.now() / 1000) + 1,
+    ),
+  ]);
+  h.emit([h.make("second scoped notification")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(2));
+  expect(h.show.mock.calls[1]?.[0].title).toContain("Pinky · ");
 });

@@ -507,6 +507,7 @@ export function createRelaySession(
     signal: lifetime.signal,
   });
   const nameSource = {
+    viewer: transport?.viewer,
     profiles: profiles.queries,
     agentLibrary: agentLibrary.queries,
     relayUrl: transport?.scope,

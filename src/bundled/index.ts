@@ -4,6 +4,8 @@ import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import templatesManifest from "./channel-templates/manifest.json";
 import * as templates from "./channel-templates";
+import namingManifest from "./identity-naming/manifest.json";
+import * as naming from "./identity-naming";
 import activityManifest from "./agent-activity/manifest.json";
 import * as activity from "./agent-activity";
 import terminalManifest from "./terminal/manifest.json";
@@ -44,6 +46,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     module: templates,
     enabledByDefault: false,
   },
+  { manifest: { ...namingManifest, apiVersion: 1 }, module: naming },
   { manifest: { ...activityManifest, apiVersion: 1 }, module: activity },
   { manifest: { ...terminalManifest, apiVersion: 1 }, module: terminal },
   { manifest: { ...profilesManifest, apiVersion: 1 }, module: profiles },

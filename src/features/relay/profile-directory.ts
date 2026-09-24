@@ -55,7 +55,8 @@ export function createProfileDirectory(
         old?.name === value.name &&
         old?.picture === value.picture &&
         old?.about === value.about &&
-        old?.isAgent === value.isAgent
+        old?.isAgent === value.isAgent &&
+        old?.ownerPubkey === value.ownerPubkey
       )
         next.set(id, old);
     }

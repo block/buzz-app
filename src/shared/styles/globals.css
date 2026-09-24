@@ -6,6 +6,7 @@
 @import "../design-system/styles/materials.css";
 @import "../design-system/styles/components.css";
 @import "../design-system/styles/forms.css";
+@import "../design-system/styles/content-header.css";
 @import "../design-system/styles/overlays.css";
 @import "../design-system/styles/chips.css";
 @import "./tokens.css";

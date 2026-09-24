@@ -277,7 +277,8 @@ test("Settings edits the local profile inline without publishing to a community"
     name: "Picture URL (optional)",
     exact: true,
   });
-  const save = button(page, "Save profile");
+  const save = button(page, "Save");
+  await expect(save).toHaveCount(0);
   await expect(name).toHaveValue("Browser Fixture");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(button(page, "Edit profile")).toHaveCount(0);
@@ -309,6 +310,7 @@ test("Settings edits the local profile inline without publishing to a community"
   await name.fill("  Updated local profile  ");
   await save.click();
   await expect(name).toHaveValue("Updated local profile");
+  await expect(save).toHaveCount(0);
   await expect(
     page
       .getByRole("region", { name: "Profile", exact: true })

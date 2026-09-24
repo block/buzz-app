@@ -69,7 +69,7 @@ for (const mode of ["light", "dark"]) {
     await copy.hover();
     await expect(copy).toHaveCSS(
       "background-color",
-      mode === "light" ? "rgb(232, 232, 232)" : "rgb(64, 64, 64)",
+      mode === "light" ? "rgb(239, 239, 240)" : "rgb(64, 64, 64)",
     );
     await page.keyboard.press(
       browserName === "webkit" && process.platform === "darwin"

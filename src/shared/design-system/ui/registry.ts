@@ -441,6 +441,31 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: [],
   },
   {
+    slug: "header",
+    name: "Header",
+    purpose:
+      "Content title with optional subtitle, eyebrow, icon and actions; compact InlineHeader for groups.",
+    behavior: "Semantic heading with caller-selected level",
+    variants: ["header", "inline"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Header.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
+    slug: "setting-row",
+    name: "SettingRow",
+    purpose: "Aligned setting label, description and caller-owned control.",
+    behavior: "Native label associated by controlId",
+    variants: ["default"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/SettingRow.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "panel-header",
     name: "PanelHeader",
     purpose:

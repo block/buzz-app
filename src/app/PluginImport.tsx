@@ -39,12 +39,7 @@ export function PluginImport({
     };
   }, [imports]);
 
-  if (!imports)
-    return (
-      <p className="mb-4 text-body-sm text-muted">
-        Open the desktop app to load plugins from a folder or Git repository.
-      </p>
-    );
+  if (!imports) return null;
 
   async function load(operation: () => Promise<ImportPreview | null>) {
     if (pending.current || busy) return;

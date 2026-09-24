@@ -1,3 +1,4 @@
+import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Field } from "../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
@@ -24,9 +25,7 @@ export function AppearanceSettings({
   );
   return (
     <section aria-labelledby="appearance-settings-title">
-      <h2 id="appearance-settings-title" className="mt-0 mb-6 text-label">
-        Appearance
-      </h2>
+      <Header id="appearance-settings-title" title="Appearance" />
       <div>
         <Field label="Color mode">
           <RadioGroup
@@ -55,14 +54,12 @@ export function AppearanceSettings({
             ))}
           </RadioGroup>
         </Field>
-        <fieldset className="mt-6 min-w-0 border-0 p-0">
-          <legend className="mb-2 text-label">Text size</legend>
-          <p className="mt-0 mb-3 text-body-sm text-muted">
-            Resize text without zooming the window. Saved on this device.
-          </p>
+        <fieldset className="m-0 mt-6 min-w-0 border-0 p-0">
+          <legend className="mb-2 p-0 text-label-sm">Text size</legend>
           <div className="flex flex-wrap items-center gap-3">
             <Button
               type="button"
+              size="sm"
               aria-label="Decrease text size"
               disabled={fontScale <= 0.8}
               onClick={() => appearance.setFontScale(fontScale - 0.1)}
@@ -74,15 +71,22 @@ export function AppearanceSettings({
             </output>
             <Button
               type="button"
+              size="sm"
               aria-label="Increase text size"
               disabled={fontScale >= 2}
               onClick={() => appearance.setFontScale(fontScale + 0.1)}
             >
               +
             </Button>
-            <Button type="button" onClick={() => appearance.setFontScale(1)}>
-              Reset text size
-            </Button>
+            {fontScale !== 1 && (
+              <Button
+                size="sm"
+                type="button"
+                onClick={() => appearance.setFontScale(1)}
+              >
+                Reset text size
+              </Button>
+            )}
           </div>
         </fieldset>
         {active && fontError && (

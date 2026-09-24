@@ -55,6 +55,19 @@ export function ProfileButton({
     ) : (
       <UserIcon aria-hidden="true" size={19} />
     );
+  const identity = (
+    <span className="pointer-events-none relative flex size-full items-center justify-center rounded-full">
+      {avatar}
+      {viewer && (
+        <span
+          role="img"
+          aria-label={`Your status: ${label}`}
+          className={styles.dot}
+          data-status={presence.status}
+        />
+      )}
+    </span>
+  );
   return (
     <MenuRoot
       modal={false}
@@ -79,19 +92,7 @@ export function ProfileButton({
             title={profile.name || "Your profile"}
             variant="chrome"
             shape="round"
-            icon={
-              <span className="pointer-events-none relative flex size-full items-center justify-center rounded-full">
-                {avatar}
-                {viewer && (
-                  <span
-                    role="img"
-                    aria-label={`Your status: ${label}`}
-                    className={styles.dot}
-                    data-status={presence.status}
-                  />
-                )}
-              </span>
-            }
+            icon={identity}
           />
         }
       />
@@ -106,7 +107,7 @@ export function ProfileButton({
         </span>
         <div className="flex items-center gap-3 px-3 py-2">
           <span className="relative flex size-9 shrink-0 items-center justify-center">
-            {avatar}
+            {identity}
           </span>
           <div className="min-w-0">
             <p className="m-0 truncate text-label-sm">

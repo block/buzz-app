@@ -16,11 +16,11 @@ async function expectMode(page, mode) {
   await expect(page.locator("html")).toHaveCSS("color-scheme", mode);
   await expect(page.locator("html")).toHaveCSS(
     "background-color",
-    mode === "dark" ? "rgb(0, 0, 0)" : "rgb(240, 240, 240)",
+    mode === "dark" ? "rgb(0, 0, 0)" : "rgb(245, 245, 246)",
   );
   await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
     "content",
-    mode === "dark" ? /^#(?:000|000000)$/ : /^#f0f0f0$/,
+    mode === "dark" ? /^#(?:000|000000)$/ : /^#f5f5f6$/,
   );
   await expect(page.locator(".shell-background")).toHaveCSS(
     "background-image",

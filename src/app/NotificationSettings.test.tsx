@@ -73,6 +73,15 @@ it.each([true, false])(
     } else {
       expect(toggle).not.toHaveAttribute("aria-disabled", "true");
       expect(toggle).toBeChecked();
+      await userEvent
+        .setup()
+        .click(screen.getByText("Desktop alerts", { selector: "label" }));
+      expect(toggle).not.toBeChecked();
+      expect(service.snapshot().preferences.enabled).toBe(false);
+      await userEvent
+        .setup()
+        .click(screen.getByText("Desktop alerts", { selector: "label" }));
+      expect(toggle).toBeChecked();
       expect(
         screen.getByRole("button", { name: "Allow notifications" }),
       ).toBeEnabled();

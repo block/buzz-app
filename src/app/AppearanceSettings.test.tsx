@@ -81,3 +81,25 @@ it("retry saves the System choice even when its current palette is light", async
   expect(localStorage.getItem("buzz-appearance.v1")).toBe("system");
   appearance.dispose();
 });
+
+it("shows reset only away from the default size and hides it after reset", () => {
+  const appearance = createAppearance();
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Reset text size" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Increase text size" }));
+  expect(screen.getByLabelText("Text size")).toHaveTextContent("110%");
+  fireEvent.click(screen.getByRole("button", { name: "Reset text size" }));
+  expect(screen.getByLabelText("Text size")).toHaveTextContent("100%");
+  expect(
+    screen.queryByRole("button", { name: "Reset text size" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Decrease text size" }));
+  expect(screen.getByRole("button", { name: "Reset text size" })).toBeVisible();
+  appearance.dispose();
+});

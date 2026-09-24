@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  within,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -63,5 +70,38 @@ it.each([false, true])(
     } finally {
       await act(async () => release());
     }
+  },
+);
+
+it.each(["online", "away", "offline"] as const)(
+  "shares %s presence between trigger and account menu",
+  async (status) => {
+    const user = userEvent.setup();
+    const snapshot = {
+      profile: { name: "Fixture", picture: "" },
+      viewer: "fixture",
+    };
+    const presence = { status, preference: "auto", error: null };
+    const subscribe = () => () => {};
+    const communities = {
+      subscribe,
+      snapshot: () => snapshot,
+      presence: { subscribe, snapshot: () => presence },
+    } as unknown as Communities;
+    render(
+      <ProfileButton
+        communities={communities}
+        settingsSelected={false}
+        onSettings={() => {}}
+      />,
+    );
+    const label = `Your status: ${{ online: "Active", away: "Away", offline: "Offline" }[status]}`;
+    expect(screen.getAllByRole("img", { name: label })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Your profile" }));
+    expect(
+      within(
+        await screen.findByRole("menu", { name: "Your account" }),
+      ).getByRole("img", { name: label }),
+    ).toBeVisible();
   },
 );

@@ -9,6 +9,10 @@ view. It prefers humans before agents, then the viewer's identities before other
 identities. It uses owner names before public-key suffixes. It compares only the
 identities relevant to that view, not every identity the client has ever seen.
 
+The `buzz.identity-naming` plugin registers this policy through the shared
+identity-names service. This directory owns the spec and portable fixtures;
+the resolver currently lives in `src/features/identity-names/policy.ts`.
+
 This is an extraction of the behavior merged in
 [buzz-app #167](https://github.com/block/buzz-app/pull/167), at
 `82bb3a6`. It is not a new Nostr event kind, ownership protocol, or claim that
@@ -242,7 +246,7 @@ bin/pnpm exec vitest run src/features/identity-names/policy.test.ts
 
 ## Desktop adapter (informative, not an authority protocol)
 
-At the extraction baseline, [directory.ts](../src/features/identity-names/directory.ts)
+At the extraction baseline, [directory.ts](../../features/identity-names/directory.ts)
 constructs facts from public profiles, ready agent-library records, ready native
 configuration in the current community, and view-local display facts. Native
 non-empty names take precedence over library names in that community. The first
@@ -252,7 +256,7 @@ themselves invent an owner key. Explicit display facts replace that key's normal
 fact and can carry multiple aliases. The requested key is added to an explicit
 candidate set.
 
-[profiles.ts](../src/features/relay/profiles.ts) selects the latest kind-0 profile,
+[profiles.ts](../../features/relay/profiles.ts) selects the latest kind-0 profile,
 uses non-blank `display_name` before `name`, and otherwise uses a short hex-key
 fallback. Agent hints come from `is_agent: true`, `isAgent: true`, or a
 structurally recognized `auth` tag. That fold extracts an owner hint from the
@@ -269,13 +273,13 @@ different case-folding rule is a different policy, not byte-identical conformanc
 
 ## Sources and specification precedents
 
-- Algorithm: [policy.ts](../src/features/identity-names/policy.ts) and
-  [policy.test.ts](../src/features/identity-names/policy.test.ts).
-- Context and fact selection: [directory.ts](../src/features/identity-names/directory.ts),
-  [react.ts](../src/features/identity-names/react.ts), and
-  [mention-choices.ts](../src/bundled/mentions/mention-choices.ts).
-- buzz-app feature-contract precedent: [Profiles](profiles.md) and
-  [Unread](unread.md), especially explicit consumer and authority boundaries.
+- Algorithm: [policy.ts](../../features/identity-names/policy.ts) and
+  [policy.test.ts](../../features/identity-names/policy.test.ts).
+- Context and fact selection: [directory.ts](../../features/identity-names/directory.ts),
+  [react.ts](../../features/identity-names/react.ts), and
+  [mention-choices.ts](../mentions/mention-choices.ts).
+- buzz-app feature-contract precedent: [Profiles](../../../docs/profiles.md) and
+  [Unread](../../../docs/unread.md), especially explicit consumer and authority boundaries.
 - block/buzz, inspected at `797012ff01a6d499959b45ed2e56f7927c6a4d6b`:
   [NIP-MP](https://github.com/block/buzz/blob/797012ff01a6d499959b45ed2e56f7927c6a4d6b/docs/nips/NIP-MP.md)
   supplies the abstract/non-goals/normative-rules pattern;

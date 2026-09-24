@@ -220,7 +220,10 @@ it("rechecks generated labels against aliases and keeps human priority", () => {
 
 const conformance = JSON.parse(
   readFileSync(
-    new URL("../../../docs/identity-names.fixtures.json", import.meta.url),
+    new URL(
+      "../../bundled/identity-naming/identity-names.fixtures.json",
+      import.meta.url,
+    ),
     "utf8",
   ),
 ) as {

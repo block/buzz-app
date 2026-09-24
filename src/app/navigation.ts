@@ -86,6 +86,7 @@ export function useAppNavigation(services: AppServices) {
       "shortcuts",
       "messages",
       "notifications",
+      "builderlab",
     ].includes(target.section) &&
     !(developerMode && target.section === "developer")
   )

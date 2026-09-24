@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 
 const KEYCHAIN_SERVICE: &str = "com.squareup.builderbot.cli-auth";
 const PROFILE: &str = "default";
+const CLI_SERVICE_PATH: &str = "/api/goose";
 const ENDPOINT_PATH: &str = "/v3/beekeeper/list-agents";
 const SESSION_HEADER: &str = "X-BB-Session-Credential";
 
@@ -193,7 +194,7 @@ pub async fn check_session(
 }
 
 fn service_url(value: &str) -> Result<String, String> {
-    let url = Url::parse(value)
+    let mut url = Url::parse(value)
         .map_err(|_| "BUILDERLAB_URL must be a credential-free HTTPS URL".to_owned())?;
     if url.scheme() != "https"
         || url.host_str().is_none()
@@ -203,6 +204,9 @@ fn service_url(value: &str) -> Result<String, String> {
         || url.fragment().is_some()
     {
         return Err("BUILDERLAB_URL must be a credential-free HTTPS URL".into());
+    }
+    if url.path().trim_end_matches('/').is_empty() {
+        url.set_path(CLI_SERVICE_PATH);
     }
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
@@ -267,7 +271,7 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    const BASE: &str = "https://test.blockstaging.xyz/api/goose";
+    const BASE: &str = "https://app.builderlab.xyz/";
     const TEST_CREDENTIAL: &str = "a234567890123456789012345678901234567890";
 
     #[derive(Default)]
@@ -328,7 +332,11 @@ mod tests {
     fn validates_and_normalizes_service_urls() {
         assert_eq!(
             service_url("https://example.test///").unwrap(),
-            "https://example.test"
+            "https://example.test/api/goose"
+        );
+        assert_eq!(
+            service_url("https://example.test").unwrap(),
+            "https://example.test/api/goose"
         );
         assert_eq!(
             service_url("https://EXAMPLE.test/api/goose/").unwrap(),
@@ -386,12 +394,15 @@ mod tests {
             *keychain.calls.lock().unwrap(),
             vec![(
                 KEYCHAIN_SERVICE.into(),
-                "default@https://test.blockstaging.xyz/api/goose".into()
+                "default@https://app.builderlab.xyz/api/goose".into()
             )]
         );
         assert_eq!(
             *transport.calls.lock().unwrap(),
-            vec![(format!("{BASE}{ENDPOINT_PATH}"), TEST_CREDENTIAL.into())]
+            vec![(
+                format!("https://app.builderlab.xyz/api/goose{ENDPOINT_PATH}"),
+                TEST_CREDENTIAL.into()
+            )]
         );
     }
 

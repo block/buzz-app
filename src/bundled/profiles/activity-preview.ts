@@ -11,8 +11,21 @@ const object = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 const text = (value: unknown) => (typeof value === "string" ? value : "");
-const clipped = (value: string) =>
-  value.length > 600 ? `…${value.slice(-600)}` : value;
+const clipped = (value: string) => {
+  if (value.length <= 600) return value;
+  let start = value.length - 600;
+  // Keep the size cap without cutting a UTF-16 surrogate pair in half.
+  const previous = value.charCodeAt(start - 1);
+  const current = value.charCodeAt(start);
+  if (
+    previous >= 0xd800 &&
+    previous <= 0xdbff &&
+    current >= 0xdc00 &&
+    current <= 0xdfff
+  )
+    start++;
+  return `…${value.slice(start)}`;
+};
 
 /** A small display projection, not a transcript store. Only explicit assistant
  * ACP message text and tool titles are shown; prompts, thoughts, arguments and

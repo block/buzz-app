@@ -263,3 +263,28 @@ it("preserves keyed interleaving and isolates unkeyed tool boundaries by session
     }
   }
 });
+
+it.each(["message", "tool"])(
+  "keeps emoji intact at the %s clipping boundary",
+  (kind) => {
+    for (const [input, expected] of [
+      [`😀${"x".repeat(598)}`, `😀${"x".repeat(598)}`],
+      [`prefix😀${"x".repeat(598)}`, `…😀${"x".repeat(598)}`],
+      [`prefix😀${"x".repeat(599)}`, `…${"x".repeat(599)}`],
+      [`prefix😀${"x".repeat(600)}`, `…${"x".repeat(600)}`],
+    ] as const) {
+      const update =
+        kind === "message"
+          ? chunk(input)
+          : {
+              sessionUpdate: "tool_call",
+              toolCallId: "tool",
+              title: input,
+            };
+      const result = activityPreview([row(event(update))], "agent", "alpha")[0]
+        ?.text;
+      expect(result).toBe(expected);
+      expect(result?.length).toBeLessThanOrEqual(601);
+    }
+  },
+);

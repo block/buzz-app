@@ -107,13 +107,17 @@ function ResolvedReview({
         retry={view.refresh}
       />
     );
-  const threadRows = [snapshot.root, snapshot.target, ...snapshot.replies]
-    .filter((row): row is NonNullable<typeof row> => !!row)
+  const replies = [snapshot.target, ...snapshot.replies]
+    .filter(
+      (row): row is NonNullable<typeof row> =>
+        !!row && row.id !== snapshot.root?.id,
+    )
     .filter(
       (row, index, rows) =>
         rows.findIndex((item) => item.id === row.id) === index,
     )
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  const threadRows = [snapshot.root, ...replies];
   const attachmentAvailable = threadRows.some((row) =>
     row.attachments.some((item) => item.url === props.attachment.url),
   );
@@ -132,13 +136,7 @@ function ResolvedReview({
       view={view}
       rootId={snapshot.root.id}
       editMessages={threadRows}
-      replies={
-        snapshot.target &&
-        snapshot.target.id !== snapshot.root.id &&
-        !snapshot.replies.some((row) => row.id === snapshot.target?.id)
-          ? [...snapshot.replies, snapshot.target]
-          : snapshot.replies
-      }
+      replies={replies}
       limited={snapshot.limited}
       timecodesSeekable={videoUrls.size === 1}
     />

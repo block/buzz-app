@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { getPublicKey } from "nostr-tools";
 import {
   act,
   cleanup,
@@ -220,8 +221,15 @@ it.each(["image", "video"] as const)(
   async (kind) => {
     // Root fallback, duplicate root/target, and an older exact target must not
     // displace the newer eligible own reply. The real viewer owns the row handoff.
-    for (const scenario of ["root", "reply", "exact", "exact-older"] as const) {
-      const viewer = keypair(),
+    for (const scenario of [
+      "root",
+      "reply",
+      "exact",
+      "exact-older",
+      "same-second",
+    ] as const) {
+      const secret = new Uint8Array(32).fill(1);
+      const viewer = { secret, pubkey: getPublicKey(secret) },
         other = keypair();
       const attachment = {
         url: `https://fixture.test/edit.${kind === "image" ? "png" : "mp4"}`,
@@ -239,18 +247,29 @@ it.each(["image", "video"] as const)(
         ["e", root.id, "", "reply"],
         ...mediaTags,
       ]);
-      const reply = message(viewer, "channel", "Latest own reply", 12, [
-        ["e", root.id, "", "reply"],
-      ]);
+      const reply =
+        scenario === "same-second"
+          ? Array.from({ length: 16 }, (_, nonce) =>
+              message(viewer, "channel", "Latest own reply", 10, [
+                ["e", root.id, "", "reply"],
+                ["nonce", String(nonce)],
+              ]),
+            ).find((event) => event.id.localeCompare(root.id) < 0)
+          : message(viewer, "channel", "Latest own reply", 12, [
+              ["e", root.id, "", "reply"],
+            ]);
+      assert.exists(reply);
       const foreign = message(other, "channel", "Newer other reply", 13, [
         ["e", root.id, "", "reply"],
       ]);
       const events =
         scenario === "root"
           ? [root, foreign]
-          : scenario === "exact"
-            ? [root, exact, foreign]
-            : [root, exact, reply, foreign];
+          : scenario === "same-second"
+            ? [root, reply, foreign]
+            : scenario === "exact"
+              ? [root, exact, foreign]
+              : [root, exact, reply, foreign];
       const exactTarget = scenario.startsWith("exact");
       const publish = vi.fn(async () => {});
       const owner = editOwner(

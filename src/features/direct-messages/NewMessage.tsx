@@ -335,7 +335,7 @@ export function NewMessage({
         session={session}
         scope={scope}
         selected={recipients}
-        disabled={busy || (!!pending && !failed)}
+        disabled={locked}
         onChange={change}
       />
       <div className={styles.blank} data-new-message-body="" />

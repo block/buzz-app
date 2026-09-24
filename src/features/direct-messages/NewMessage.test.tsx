@@ -273,7 +273,7 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
     hasMore: false,
   });
   const view = t.mount();
-  expect(recipient()).toHaveFocus();
+  await waitFor(() => expect(recipient()).toHaveFocus());
   expect(
     view.container.querySelector("[data-new-message-body]"),
   ).toBeEmptyDOMElement();
@@ -526,6 +526,7 @@ it("keeps loaded pages when clearing search or returning to New message, scoped 
   const requests = t.directMessages.people.mock.calls.length;
   view.unmount();
   const reopened = t.mount();
+  await waitFor(() => expect(recipient()).toBeEnabled());
   expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
     loaded,
   );
@@ -563,6 +564,7 @@ it("keeps searching past pages of excluded agents and never announces a false em
     });
   });
   t.mount();
+  await waitFor(() => expect(recipient()).toBeEnabled());
   await t.user.type(recipient(), "C");
   await waitFor(() =>
     expect(t.directMessages.people).toHaveBeenCalledWith(

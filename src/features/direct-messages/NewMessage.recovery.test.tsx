@@ -30,6 +30,7 @@ import { mentionQuery } from "../../bundled/mentions/mention-query";
 import { NewMessage } from "./NewMessage";
 import { OutboxStatus } from "../../bundled/channels/OutboxStatus";
 import { createRelayProfiler } from "../relay/profiling";
+import { writeView } from "../../shared/view-state";
 
 const viewer = keypair(),
   other = keypair(),
@@ -161,6 +162,63 @@ function setup() {
   };
 }
 const send = () => screen.getByRole("button", { name: "Send message" });
+
+it("locks recipient edits until outbox hydration finishes, then accepts them", async () => {
+  const t = setup();
+  writeView(scope, "direct-message:recipients", [
+    { pubkey: other.pubkey, name: "Avery" },
+  ]);
+  const hydration = Promise.withResolvers<readonly OutgoingEvent[]>();
+  t.storage.load = vi.fn(() => hydration.promise);
+  const play = vi.fn(async () => {});
+  vi.stubGlobal(
+    "Audio",
+    class {
+      play = play;
+    },
+  );
+  const owner = t.create();
+  // Populate the actual directory before mounting so loading people cannot hide
+  // a prematurely enabled picker while the outbox is held.
+  await owner.session.directMessages.people(
+    "",
+    1,
+    new AbortController().signal,
+  );
+  t.mount(owner);
+  try {
+    expect(t.storage.load).toHaveBeenCalledOnce();
+    const input = screen.getByRole("combobox");
+    const remove = screen.getByRole("button", { name: "Remove Avery" });
+    expect(input).toBeDisabled();
+    expect(remove).toBeDisabled();
+    await t.user.click(remove);
+    await t.user.type(input, "Zoe{Enter}");
+    expect(remove).toBeInTheDocument();
+    expect(input).toHaveValue("");
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove Zoe" }),
+    ).not.toBeInTheDocument();
+    expect(play).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      hydration.resolve([]);
+      await owner.session.outbox?.ready();
+    });
+  }
+  await waitFor(() => expect(screen.getByRole("combobox")).toBeEnabled());
+  expect(screen.getByRole("combobox")).toHaveFocus();
+  await t.user.click(screen.getByRole("button", { name: "Remove Avery" }));
+  expect(
+    screen.queryByRole("button", { name: "Remove Avery" }),
+  ).not.toBeInTheDocument();
+  expect(play).toHaveBeenCalledOnce();
+  await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  expect(screen.getByRole("button", { name: "Remove Zoe" })).toBeEnabled();
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
+});
 
 it("recovers an uncertain first send after localStorage failure and session restart without a new event", async () => {
   const t = setup();

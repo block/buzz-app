@@ -74,8 +74,8 @@ export function RecipientPicker({
       loadingRows.current = Math.max(1, Math.min(10, candidates.length));
   }, [directory.loading, directory.error, candidates.length]);
   useEffect(() => {
-    input.current?.focus();
-  }, []);
+    if (!disabled) input.current?.focus();
+  }, [disabled]);
   useEffect(() => {
     if (open && highlight.keyboard)
       document

@@ -282,6 +282,12 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
       sections.getByRole("button", { name: "Notifications", exact: true }),
     ).toBeFocused();
     await tab();
+    const builderLab = sections.getByRole("button", {
+      name: "BuilderLab",
+      exact: true,
+    });
+    await expect(builderLab).toBeFocused();
+    await tab();
     await expect(
       page.getByRole("textbox", { name: "Display name", exact: true }),
     ).toBeFocused();

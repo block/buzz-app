@@ -65,7 +65,8 @@ impl Keychain for SystemKeychain {
     ) -> Result<Option<Zeroizing<Vec<u8>>>, KeychainError> {
         use security_framework::os::macos::keychain::SecKeychain;
 
-        let keychain = SecKeychain::default().map_err(|_| KeychainError::Unavailable)?;
+        let keychain =
+            SecKeychain::default().map_err(|error| classify_keychain_access_error(error.code()))?;
         match keychain.find_generic_password(service, account) {
             Ok((password, _)) => Ok(Some(Zeroizing::new(password.to_vec()))),
             Err(error) => classify_keychain_read_error(error.code()),
@@ -74,10 +75,17 @@ impl Keychain for SystemKeychain {
 }
 
 fn classify_keychain_read_error(code: i32) -> Result<Option<Zeroizing<Vec<u8>>>, KeychainError> {
+    if code == -25300 {
+        Ok(None)
+    } else {
+        Err(classify_keychain_access_error(code))
+    }
+}
+
+fn classify_keychain_access_error(code: i32) -> KeychainError {
     match code {
-        -25300 => Ok(None),
-        -128 | -25293 | -25308 => Err(KeychainError::AccessDenied),
-        _ => Err(KeychainError::Unavailable),
+        -128 | -25293 | -25308 | -67869 => KeychainError::AccessDenied,
+        _ => KeychainError::Unavailable,
     }
 }
 
@@ -525,12 +533,16 @@ mod tests {
     #[test]
     fn classifies_keychain_read_osstatus_codes() {
         assert!(matches!(classify_keychain_read_error(-25300), Ok(None)));
-        for code in [-128, -25293, -25308] {
+        for code in [-128, -25293, -25308, -67869] {
             assert_eq!(
                 classify_keychain_read_error(code),
                 Err(KeychainError::AccessDenied)
             );
         }
+        assert_eq!(
+            classify_keychain_access_error(-67869),
+            KeychainError::AccessDenied
+        );
         assert_eq!(
             classify_keychain_read_error(-1),
             Err(KeychainError::Unavailable)

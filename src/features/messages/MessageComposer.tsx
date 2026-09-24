@@ -726,7 +726,10 @@ function Composer({
           media={session.media}
           items={attachments.items}
           disabled={editingDisabled}
-          remove={attachments.store.remove}
+          remove={(id) => {
+            attachments.store.remove(id);
+            setError(undefined);
+          }}
           retry={attachments.store.retry}
         />
         <div className={styles.composerInput}>

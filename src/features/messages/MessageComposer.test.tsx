@@ -28,6 +28,7 @@ import type { AgentLibrarySnapshot } from "../agents/library";
 import { createAgentChoices } from "../agents/choices";
 import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
+import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import type { OutgoingEvent } from "../relay/outbox";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
@@ -665,6 +666,33 @@ it("keeps picker, paste and drop attachments local until Send starts upload and 
   );
   expect(h.publish.mock.calls[0]?.[0].content).toContain("[pasted.txt](<");
   expect(h.publish.mock.calls[0]?.[0].content).toContain("[dropped.txt](<");
+});
+
+it("clears the send upload error banner after removing failed attachments", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("metadata.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
+  );
+  await userEvent.type(h.input(), "caption");
+
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.reject(new UploadError("metadata"));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("alert").map((node) => node.textContent),
+    ).toEqual([UPLOAD_FAILURES.metadata, UPLOAD_FAILURES.metadata]),
+  );
+
+  await userEvent.click(
+    screen.getByRole("button", { name: "Remove metadata.txt" }),
+  );
+
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(within(h.form()).queryByText("metadata.txt")).not.toBeInTheDocument();
 });
 
 it("retains successful attachment uploads after a later file fails and retries only failed bytes", async () => {

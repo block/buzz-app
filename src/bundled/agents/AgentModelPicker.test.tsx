@@ -181,7 +181,7 @@ it("Pi discovers extension providers before start and selects the exact provider
     command: "/local/buzz-pi-acp",
     args: "[]",
     provider: "",
-    model: "",
+    model: "saved-custom",
   };
   function Editor() {
     const [draft, setDraft] = useState(current);
@@ -203,6 +203,13 @@ it("Pi discovers extension providers before start and selects the exact provider
     expect(
       screen.getByRole("button", { name: "Cancel model lookup", hidden: true }),
     ).toBeVisible();
+    expect(
+      await screen.findByRole("status", { name: "Model lookup" }),
+    ).toHaveTextContent("Loading Pi models…");
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
     await act(async () =>
       release({
         host: "",
@@ -220,6 +227,12 @@ it("Pi discovers extension providers before start and selects the exact provider
       await screen.findByRole("option", {
         name: /extension\/namespace\/model.v1/,
       }),
+    );
+    expect(
+      screen.queryByRole("status", { name: "Model lookup" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveAttribute(
+      "aria-busy",
     );
     expect(current.provider).toBe("extension");
     expect(current.model).toBe("namespace/model.v1");

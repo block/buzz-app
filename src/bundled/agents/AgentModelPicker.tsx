@@ -8,6 +8,7 @@ import type {
   ControlSnapshot,
 } from "../../features/agents/control";
 import type { ModelCatalog } from "../../features/agents/models";
+import { CircleNotchIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentEdit, isGoose, type AgentDraft } from "./agent-edit";
 
@@ -268,13 +269,28 @@ export function AgentModelPicker({
               }}
             />
             <Combobox.Popup
-              empty={
-                busy
-                  ? "Loading models…"
-                  : "Type a model ID to use a custom model."
-              }
+              empty={busy ? null : "Type a model ID to use a custom model."}
             >
-              <Combobox.List>
+              {busy && (
+                <div
+                  role="status"
+                  aria-label="Model lookup"
+                  className="flex items-center gap-2 px-3 py-2 text-body-sm text-secondary"
+                >
+                  <CircleNotchIcon
+                    size={16}
+                    className="motion-safe:animate-spin"
+                    aria-hidden="true"
+                  />
+                  {pi ? "Loading Pi models…" : "Loading models…"}
+                </div>
+              )}
+              <Combobox.List
+                style={{
+                  maxHeight: "min(20rem, calc(var(--available-height) - 4rem))",
+                  overflowY: "auto",
+                }}
+              >
                 {(model: ModelCatalog["models"][number]) => (
                   <Combobox.Item
                     key={model.id}

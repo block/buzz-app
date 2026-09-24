@@ -43,6 +43,12 @@ fixture.host.models = {
           : [
               { id: "catalog.schema.real-model", name: "Friendly Model" },
               { id: "endpoint-two", name: "Other Model" },
+              ...(modelMode === "many"
+                ? Array.from({ length: 18 }, (_, index) => ({
+                    id: `endpoint-${index + 3}`,
+                    name: `Catalog Model ${index + 3}`,
+                  }))
+                : []),
             ],
       modelOverridden: false,
       disconnected: request.action === "disconnect",

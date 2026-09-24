@@ -184,15 +184,19 @@ signed distributable releases.
 
 The client worker uses SDK client mode with the same verified admission and endpoint
 rules. It skips local model/runtime downloads and publishes ownership-only notes,
-never another node's models as its own capacity. The Consumer screen connects,
-disconnects and sends a bounded text request through its owned loopback API. A test
-lease prevents port reuse until the request is cancelled/settled, while Stop remains
-available. Session changes cancel pending model lookup or generation and discard
-late results. The model comes from the mesh API's first advertised model; a shared
-community with other providers can route to those providers too.
+never another node's models as its own capacity. Both Provider and Consumer render
+the same Compute settings page. When the selected community is ready, the page
+connects automatically; **Share this machine** remains an independent opt-in and
+switches from client to serving mode. The page can send a bounded text request
+through its owned loopback API while in client mode. A test lease prevents port
+reuse until the request is cancelled/settled, while Stop remains available. Session
+changes cancel pending model lookup or generation and discard late results. The
+model comes from the mesh API's first advertised model; a shared community with
+other providers can route to those providers too.
 
-For first pairing connect Consumer before Provider; retry if initial registration
-changes the verified owner roster. Neither app starts compute on first launch.
-Saved opt-in on later launches behaves as documented above. The local pair is a
-two-device test and can use separate accounts through `account-env.sh`; see the
-tester guide. Accounts and community membership must already be provisioned.
+For first pairing, open Settings → Compute in each app so both register against the
+selected community before enabling Provider sharing. Initial registration can
+change the verified owner roster; the affected app reconnects automatically while
+the Compute page is open. The local pair can use separate accounts through
+`account-env.sh`; see the tester guide. Accounts and community membership must
+already be provisioned.

@@ -10,6 +10,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RegisteredPanel } from "../../features/panels/service";
 import {
+  closeComputeWidget,
   observeNativeSharing,
   openComputeWidget,
 } from "../../features/community-compute/native";
@@ -17,6 +18,7 @@ import type { SharingSnapshot } from "../../features/community-compute/sharing";
 import { PanelLaunchers } from "./PanelLaunchers";
 
 vi.mock("../../features/community-compute/native", () => ({
+  closeComputeWidget: vi.fn(),
   openComputeWidget: vi.fn(),
   observeNativeSharing: vi.fn(),
 }));
@@ -66,47 +68,135 @@ const compute = {
 
 it("opens the native widget instead of a panel and disappears on disable", async () => {
   vi.mocked(openComputeWidget).mockResolvedValue();
+  vi.mocked(closeComputeWidget).mockResolvedValue();
   const launch = vi.fn();
   const view = render(
     <PanelLaunchers panels={[compute]} selected={undefined} launch={launch} />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Open Compute widget" }));
   await vi.waitFor(() => expect(openComputeWidget).toHaveBeenCalledOnce());
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Compute activity widget" }),
+  );
+  await vi.waitFor(() => expect(openComputeWidget).toHaveBeenCalledTimes(2));
   expect(launch).not.toHaveBeenCalled();
   view.rerender(
     <PanelLaunchers panels={[]} selected={undefined} launch={launch} />,
   );
   expect(
-    screen.queryByRole("button", { name: "Open Compute widget" }),
+    screen.queryByRole("button", { name: "Open Compute activity widget" }),
   ).toBeNull();
 });
 
+it("closes the widget when sharing stops and reopens it when sharing resumes", async () => {
+  vi.mocked(openComputeWidget).mockResolvedValue();
+  vi.mocked(closeComputeWidget).mockResolvedValue();
+  render(
+    <PanelLaunchers panels={[compute]} selected={undefined} launch={vi.fn()} />,
+  );
+  await vi.waitFor(() => expect(openComputeWidget).toHaveBeenCalledOnce());
+
+  act(() => {
+    snapshot = {
+      models: [],
+      status: {
+        available: true,
+        state: "running",
+        mode: "client",
+        preferredMode: "serve",
+        modelId: "remote",
+        generation: 2,
+        community: null,
+        viewer: null,
+      },
+    };
+    notify();
+  });
+  await vi.waitFor(() => expect(closeComputeWidget).toHaveBeenCalledOnce());
+
+  act(() => {
+    snapshot = {
+      models: [],
+      status: {
+        available: true,
+        state: "starting",
+        mode: "serve",
+        preferredMode: "serve",
+        modelId: "model",
+        generation: 3,
+        community: null,
+        viewer: null,
+      },
+    };
+    notify();
+  });
+  await vi.waitFor(() => expect(openComputeWidget).toHaveBeenCalledTimes(2));
+});
+
+it("closes an existing widget when the Provider starts unshared", async () => {
+  snapshot = {
+    models: [],
+    status: {
+      available: true,
+      state: "running",
+      mode: "client",
+      preferredMode: "serve",
+      modelId: "remote",
+      generation: 2,
+      community: null,
+      viewer: null,
+    },
+  };
+  vi.mocked(closeComputeWidget).mockResolvedValue();
+  render(
+    <PanelLaunchers panels={[compute]} selected={undefined} launch={vi.fn()} />,
+  );
+  await vi.waitFor(() => expect(closeComputeWidget).toHaveBeenCalledOnce());
+  expect(openComputeWidget).not.toHaveBeenCalled();
+});
+
 it("shows a native launch failure and allows retry", async () => {
+  snapshot = {
+    models: [],
+    status: {
+      available: true,
+      state: "off",
+      mode: null,
+      modelId: null,
+      preferredMode: "serve",
+      generation: 1,
+      community: null,
+      viewer: null,
+    },
+  };
   vi.mocked(openComputeWidget).mockRejectedValueOnce(
     new Error("Window unavailable"),
   );
   render(
     <PanelLaunchers panels={[compute]} selected={undefined} launch={vi.fn()} />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Open Compute widget" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Compute activity widget" }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Window unavailable",
   );
   expect(
-    screen.getByRole("button", { name: "Open Compute widget" }),
+    screen.getByRole("button", { name: "Open Compute activity widget" }),
   ).toBeEnabled();
   vi.mocked(openComputeWidget).mockResolvedValue();
-  fireEvent.click(screen.getByRole("button", { name: "Open Compute widget" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Compute activity widget" }),
+  );
   await vi.waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 
-it("only shows the launcher while this app is actively serving", () => {
+it("shows the launcher throughout the provider app but never in the consumer app", () => {
   snapshot = { models: [] };
   render(
     <PanelLaunchers panels={[compute]} selected={undefined} launch={vi.fn()} />,
   );
   const button = () =>
-    screen.queryByRole("button", { name: "Open Compute widget" });
+    screen.queryByRole("button", { name: "Open Compute activity widget" });
   expect(button()).toBeNull();
   const status = {
     available: true,
@@ -137,7 +227,6 @@ it("only shows the launcher while this app is actively serving", () => {
       };
       notify();
     });
-    if (state === "running") expect(button()).toBeInTheDocument();
-    else expect(button()).toBeNull();
+    expect(button()).toBeInTheDocument();
   }
 });

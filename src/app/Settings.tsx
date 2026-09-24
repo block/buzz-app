@@ -8,6 +8,7 @@ import {
   BellIcon,
   WrenchIcon,
   CpuIcon,
+  WalletIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
@@ -21,6 +22,7 @@ import type { NotificationsService } from "../features/notifications/service";
 import { DeveloperSettings } from "./DeveloperSettings";
 
 import { CommunityComputePage } from "../bundled/community-compute/CommunityComputePage";
+import { CreditsSandbox } from "../bundled/community-compute/CreditsSandbox";
 
 type Section = { id: string; label: string; icon: typeof UserIcon };
 
@@ -65,21 +67,27 @@ export function Settings({
   const availableSections = computeEnabled
     ? [...sections, { id: "compute", label: "Compute", icon: CpuIcon }]
     : sections;
-  const [selected, setSelected] =
-    useState<(typeof sections)[number]["id"]>("profile");
+  const settingsSections = developerMode
+    ? [
+        ...availableSections,
+        { id: "wallet", label: "Wallet (demo)", icon: WalletIcon },
+      ]
+    : availableSections;
+  const [selected, setSelected] = useState<string>("profile");
   const requestedSection =
     navigation?.target.kind === "settings"
       ? (navigation.target.section ?? "profile")
       : undefined;
+  const requestedSectionAvailable =
+    requestedSection === "wallet"
+      ? developerMode
+      : requestedSection === "compute"
+        ? computeEnabled
+        : sections.some((section) => section.id === requestedSection);
   useEffect(() => {
-    if (
-      requestedSection &&
-      [...sections, { id: "compute" }].some(
-        (section) => section.id === requestedSection,
-      )
-    )
-      setSelected(requestedSection as typeof selected);
-  }, [requestedSection]);
+    if (requestedSection && requestedSectionAvailable)
+      setSelected(requestedSection);
+  }, [requestedSection, requestedSectionAvailable]);
   useEffect(() => {
     if (requestedSection === selected)
       navigation?.complete({ status: "opened" });
@@ -95,7 +103,7 @@ export function Settings({
             Settings
           </h1>
           <nav aria-label="Settings sections" className={styles.navigation}>
-            {availableSections.map(({ id, label, icon: Icon }) => (
+            {settingsSections.map(({ id, label, icon: Icon }) => (
               <button
                 type="button"
                 key={id}
@@ -120,6 +128,20 @@ export function Settings({
             ) : (
               <p role="status">Enable Compute in Plugins to configure it.</p>
             ))}
+          {developerMode && (
+            <div hidden={selected !== "wallet"}>
+              <section aria-labelledby="wallet-settings-title">
+                <h2 id="wallet-settings-title" className="mt-0 mb-2 text-label">
+                  Wallet
+                </h2>
+                <p className="mt-0 mb-6 text-body-sm text-muted">
+                  A local-only credits prototype for exploring the earn, spend,
+                  and ledger experience.
+                </p>
+                <CreditsSandbox />
+              </section>
+            </div>
+          )}
           <div hidden={selected !== "notifications"}>
             <NotificationSettings notifications={notifications} />
           </div>

@@ -166,6 +166,8 @@ export const VideoConferenceIcon = defineIcon(
   "phosphor",
   PhosphorVideoConferenceIcon,
 );
+import { WalletIcon as PhosphorWalletIcon } from "@phosphor-icons/react/dist/csr/Wallet";
+export const WalletIcon = defineIcon("phosphor", PhosphorWalletIcon);
 import { WrenchIcon as PhosphorWrenchIcon } from "@phosphor-icons/react/dist/csr/Wrench";
 export const WrenchIcon = defineIcon("phosphor", PhosphorWrenchIcon);
 import { XIcon as PhosphorXIcon } from "@phosphor-icons/react/dist/csr/X";

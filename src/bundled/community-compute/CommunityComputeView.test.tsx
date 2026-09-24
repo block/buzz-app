@@ -39,14 +39,14 @@ function deferred() {
 it("registers an honest unavailable view with no invented live data or enabled actions", () => {
   render(<CommunityComputeView />);
   expect(
-    screen.getByRole("switch", { name: "Share your machine" }),
+    screen.getByRole("switch", { name: "Share this machine" }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(
     screen.getByText("Sharing compute isn’t available in this build yet."),
   ).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Create community agent" }),
-  ).toBeDisabled();
+    screen.queryByRole("button", { name: "Create community agent" }),
+  ).toBeNull();
   expect(
     screen.queryByRole("region", { name: "Community compute map" }),
   ).toBeNull();
@@ -71,6 +71,7 @@ it("does not start on mount; starts only the chosen local model with a valid mem
   expect(api.start).toHaveBeenCalledExactlyOnceWith({
     modelId: "local-model",
     maxVramGb: 32,
+    mode: "serve",
   });
 });
 it("does not resurrect the recommendation when the model is cleared and blocks invalid memory", async () => {
@@ -88,7 +89,7 @@ it("does not resurrect the recommendation when the model is cleared and blocks i
   expect(screen.getByRole("alert")).toHaveTextContent("greater than zero");
   expect(api.start).not.toHaveBeenCalled();
 });
-it("keeps a consuming model out of the local share selection and never stops it", async () => {
+it("switches from community use to sharing without treating the remote model as local", async () => {
   const api = controls({
     status: { state: "running", mode: "client", modelId: "huge-remote-model" },
   });
@@ -96,8 +97,11 @@ it("keeps a consuming model out of the local share selection and never stops it"
   expect(screen.getByRole("switch")).not.toBeChecked();
   expect(screen.getByLabelText("Model to share")).toHaveValue("local-model");
   await userEvent.click(screen.getByRole("switch"));
-  expect(api.start).toHaveBeenCalledWith({ modelId: "local-model" });
-  expect(api.stop).not.toHaveBeenCalled();
+  expect(api.stop).toHaveBeenCalledOnce();
+  expect(api.start).toHaveBeenCalledWith({
+    modelId: "local-model",
+    mode: "serve",
+  });
 });
 it("blocks a catalog model that is too large even with surrounding whitespace", async () => {
   const api = controls({

@@ -28,3 +28,11 @@ pub async fn compute_widget_open(
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[tauri::command]
+pub fn compute_widget_close(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(LABEL) {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}

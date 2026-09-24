@@ -13,6 +13,25 @@ import type { OpenFailure } from "../features/navigation/controller";
 import { developerMode } from "./Settings";
 
 const channelsKey = "buzz.channels/channels";
+const standardSettingsSections = new Set([
+  "profile",
+  "plugins",
+  "appearance",
+  "notifications",
+  "compute",
+]);
+
+export function supportsSettingsSection(
+  section: string | undefined,
+  isDeveloperMode: boolean,
+): boolean {
+  return (
+    !section ||
+    standardSettingsSections.has(section) ||
+    (isDeveloperMode && ["developer", "wallet"].includes(section))
+  );
+}
+
 export function useAppNavigation(services: AppServices) {
   const navigation = services.navigation;
   const state = useSyncExternalStore(navigation.subscribe, navigation.snapshot);
@@ -77,11 +96,7 @@ export function useAppNavigation(services: AppServices) {
   }
   if (
     target.kind === "settings" &&
-    target.section &&
-    !["profile", "plugins", "appearance", "notifications", "compute"].includes(
-      target.section,
-    ) &&
-    !(developerMode && target.section === "developer")
+    !supportsSettingsSection(target.section, developerMode)
   )
     failure = "unavailable";
   const owner = useMemo(

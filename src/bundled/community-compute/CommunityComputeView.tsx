@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Button } from "../../shared/design-system/ui/Button";
-import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { CommunityComputeTerritoryMap } from "./CommunityComputeTerritoryMap";
 import {
@@ -35,7 +35,6 @@ export type ComputeControls = {
   stop(): Promise<void>;
 };
 type Props = {
-  openWidget?: () => Promise<void>;
   communityName?: string;
   snapshot?: CommunityComputeSnapshotInput | null;
   controls?: ComputeControls;
@@ -43,12 +42,13 @@ type Props = {
   sharingError?: string;
   retryStatus?: () => void;
   preview?: boolean;
+  apiBaseUrl?: string;
+  generation?: number;
 };
 
 /** The normal plugin has no controls until a real native provider is wired in.
  * The separate fixture supplies these inputs to exercise the presentation only. */
 export function CommunityComputeView({
-  openWidget,
   communityName,
   snapshot,
   controls,
@@ -56,11 +56,16 @@ export function CommunityComputeView({
   sharingError,
   retryStatus,
   preview = false,
+  apiBaseUrl,
+  generation,
 }: Props) {
   const [model, setModel] = useState<string | null>(null);
   const [memory, setMemory] = useState("");
   const [pending, setPending] = useState<"start" | "stop" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState("Say hello in one short sentence.");
+  const [answer, setAnswer] = useState("");
+  const [testPending, setTestPending] = useState(false);
   const command = useRef(0);
   const inFlight = useRef(false);
   const id = useId();
@@ -68,6 +73,7 @@ export function CommunityComputeView({
   const sharing = status?.mode === "serve" && status.state !== "off";
   const running = sharing && status?.state === "running";
   const consuming = status?.mode === "client" && status.state !== "off";
+  const clientRunning = consuming && status?.state === "running";
   const recommended = controls?.models.find(
     (entry) => entry.recommended && !entry.tooLarge,
   )?.id;
@@ -141,12 +147,19 @@ export function CommunityComputeView({
     setPending(next ? "start" : "stop");
     setError(null);
     try {
-      if (next)
+      if (next) {
+        if (consuming && status) await controls.stop();
         await controls.start({
           modelId: selectedModel.trim(),
+          mode: "serve",
           ...(maxVram === undefined ? {} : { maxVramGb: maxVram }),
         });
-      else await controls.stop();
+      } else {
+        await controls.stop();
+        // Turning sharing off leaves the device connected as a consumer so
+        // both app roles keep the same default community connection.
+        await controls.start({ mode: "client", modelId: "remote" });
+      }
     } catch (reason) {
       if (sequence === command.current)
         setError(reason instanceof Error ? reason.message : String(reason));
@@ -158,31 +171,36 @@ export function CommunityComputeView({
     }
   }
 
+  async function testCompute() {
+    if (generation === undefined || !prompt.trim()) return;
+    setTestPending(true);
+    setError(null);
+    setAnswer("");
+    try {
+      setAnswer(
+        await invoke<string>("community_compute_test", {
+          generation,
+          prompt,
+        }),
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setTestPending(false);
+    }
+  }
+
   return (
     <div className="h-full min-h-0">
-      <FullPageSurface aria-label="Compute">
-        <div className="h-full min-h-0 overflow-auto p-panel-inset text-body">
+      <section aria-label="Compute" className={styles.page}>
+        <div className="text-body">
           <div className={styles.content}>
             <header>
-              <h1 className="m-0 text-title text-primary">Compute</h1>
-              <p className="text-body text-secondary">
-                Share your machine to help your community run its agents.
+              <h1 className="m-0 text-label text-primary">Compute</h1>
+              <p className="mt-1 text-body-sm text-secondary">
+                Use compute from your community, and optionally share this
+                machine.
               </p>
-              {openWidget && (
-                <Button
-                  onClick={() => {
-                    void openWidget().catch((reason) =>
-                      setError(
-                        reason instanceof Error
-                          ? reason.message
-                          : String(reason),
-                      ),
-                    );
-                  }}
-                >
-                  Open activity widget
-                </Button>
-              )}
             </header>
             {preview && (
               <p className={styles.notice} role="note">
@@ -191,11 +209,10 @@ export function CommunityComputeView({
                 downloaded.
               </p>
             )}
-            <section className={styles.sharing} aria-label="Sharing">
+            <section className={styles.sharing} aria-label="Compute settings">
               <Switch
-                label={
-                  running ? "You’re sharing compute" : "Share your machine"
-                }
+                label="Share this machine"
+                className="text-label-sm"
                 checked={!!sharing}
                 disabled={
                   !controls ||
@@ -211,7 +228,7 @@ export function CommunityComputeView({
                   void changeSharing(next);
                 }}
               />
-              <p className="m-0 text-body text-secondary" role="status">
+              <p className="m-0 text-body-sm text-secondary" role="status">
                 {!controls
                   ? "Sharing compute isn’t available in this build yet."
                   : pending === "stop" || status?.state === "stopping"
@@ -224,11 +241,34 @@ export function CommunityComputeView({
                         : busy
                           ? status?.detail || "Preparing shared compute…"
                           : consuming
-                            ? "You’re using community compute. Sharing may require restarting Buzz."
+                            ? "Connected to community compute."
                             : controls.canStart === false
-                              ? "Connect to a community before starting sharing."
-                              : "Choose a model, then turn on sharing."}
+                              ? "Connect to a community to use or share compute."
+                              : "Choose a model to share, then turn on sharing."}
               </p>
+              {clientRunning && apiBaseUrl && (
+                <div className={styles.field}>
+                  <label htmlFor={`${id}-prompt`} className="text-label-sm">
+                    Test community compute
+                  </label>
+                  <textarea
+                    id={`${id}-prompt`}
+                    className={styles.input}
+                    value={prompt}
+                    maxLength={2000}
+                    onChange={(event) => setPrompt(event.target.value)}
+                  />
+                  <Button
+                    onClick={() => void testCompute()}
+                    disabled={testPending || !prompt.trim()}
+                  >
+                    {testPending
+                      ? "Waiting for a response…"
+                      : "Send test request"}
+                  </Button>
+                  {answer && <p role="status">{answer}</p>}
+                </div>
+              )}
               {status?.state === "starting" &&
                 status.mode === "serve" &&
                 pending !== "stop" && (
@@ -241,19 +281,19 @@ export function CommunityComputeView({
                   </Button>
                 )}
               {sharingError && (
-                <p role="alert" className="text-body text-secondary">
+                <p role="alert" className="text-body-sm text-secondary">
                   {sharingError}
                 </p>
               )}
               {error && (
-                <p role="alert" className="text-body text-primary">
+                <p role="alert" className="text-body-sm text-primary">
                   {error}
                 </p>
               )}
               {controls && (
                 <>
                   <div className={styles.field}>
-                    <label htmlFor={`${id}-model`} className="text-label">
+                    <label htmlFor={`${id}-model`} className="text-label-sm">
                       Model to share
                     </label>
                     <input
@@ -289,11 +329,11 @@ export function CommunityComputeView({
                     <DownloadProgress download={status.download} />
                   )}
                   <details>
-                    <summary className="cursor-pointer text-label">
+                    <summary className="cursor-pointer text-label-sm">
                       Advanced
                     </summary>
                     <div className={styles.field}>
-                      <label htmlFor={`${id}-memory`} className="text-label">
+                      <label htmlFor={`${id}-memory`} className="text-label-sm">
                         Maximum shared memory (GB)
                       </label>
                       <input
@@ -332,25 +372,25 @@ export function CommunityComputeView({
               )}
             </section>
             <section aria-label="Community mesh">
-              <h2 className="text-heading">Community mesh</h2>
+              <h2 className="m-0 text-label-sm">Community mesh</h2>
               {statusError ? (
                 <div role="alert">
-                  <p className="text-body text-secondary">{statusError}</p>
+                  <p className="text-body-sm text-secondary">{statusError}</p>
                   {retryStatus && (
                     <Button onClick={retryStatus}>Refresh status</Button>
                   )}
                 </div>
               ) : snapshot === undefined ? (
-                <p className="text-body text-secondary">
+                <p className="text-body-sm text-secondary">
                   Community compute status isn’t connected in this build yet.
                 </p>
               ) : snapshot === null ? (
-                <p role="status" className="text-body text-secondary">
+                <p role="status" className="text-body-sm text-secondary">
                   Checking community compute…
                 </p>
               ) : (
                 <>
-                  <p className="text-body text-secondary">
+                  <p className="text-body-sm text-secondary">
                     {map?.kpis.contributorMemberCount === 0
                       ? "No one is sharing compute yet."
                       : `${map?.kpis.contributorMemberCount} ${map?.kpis.contributorMemberCount === 1 ? "person is" : "people are"} contributing compute.`}
@@ -360,7 +400,7 @@ export function CommunityComputeView({
                       <dt className="text-body-sm text-secondary">
                         Shared memory
                       </dt>
-                      <dd className="m-0 text-heading">
+                      <dd className="m-0 text-body">
                         {map?.kpis.sharedCapacityGb == null
                           ? "Not reported"
                           : `${Math.round(map.kpis.sharedCapacityGb)} GB`}
@@ -370,28 +410,16 @@ export function CommunityComputeView({
                       <dt className="text-body-sm text-secondary">
                         Models available
                       </dt>
-                      <dd className="m-0 text-heading">
-                        {map?.kpis.modelCount}
-                      </dd>
+                      <dd className="m-0 text-body">{map?.kpis.modelCount}</dd>
                     </div>
                   </dl>
                   {showMap && <CommunityComputeTerritoryMap model={map} />}
                 </>
               )}
             </section>
-            <section className={styles.agent} aria-label="Community agents">
-              <h2 className="m-0 text-heading">
-                Put the community mesh to work
-              </h2>
-              <p className="m-0 text-body text-secondary">
-                Community-powered agent creation isn’t available in this build
-                yet.
-              </p>
-              <Button disabled>Create community agent</Button>
-            </section>
           </div>
         </div>
-      </FullPageSurface>
+      </section>
     </div>
   );
 }

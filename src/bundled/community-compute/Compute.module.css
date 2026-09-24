@@ -1,27 +1,36 @@
+.page {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
 .content {
   max-width: 60rem;
   margin-inline: auto;
   display: grid;
-  gap: var(--space-section-gap);
+  gap: var(--space-control-inset);
 }
 
-.sharing,
-.agent,
+.sharing {
+  padding: var(--space-control-inset);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-panel);
+}
+
 .notice {
-  padding: var(--space-panel-inset);
+  padding: var(--space-control-inset);
   background: var(--surface-accent);
   border-radius: var(--radius-panel);
 }
 
 .sharing,
-.agent,
 .field {
   display: grid;
   gap: var(--space-row-gap);
 }
 
 .field {
-  margin-block-start: var(--space-control-inset);
+  margin-block-start: var(--space-row-gap);
 }
 
 .input {

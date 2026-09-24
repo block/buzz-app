@@ -1,5 +1,6 @@
 pub mod agent_runner;
 mod community_compute;
+mod demo_credits;
 mod compute_host;
 mod compute_widget;
 use compute_host::ComputeHost;
@@ -216,12 +217,18 @@ pub fn run() {
             agent_runner::agent_runner_start,
             agent_runner::agent_runner_stop,
             compute_widget::compute_widget_open,
+            compute_widget::compute_widget_close,
             community_compute::community_compute_test,
             community_compute::community_compute_status,
             community_compute::community_compute_models,
             community_compute::community_compute_start,
             community_compute::community_compute_stop,
             community_compute::community_compute_snapshot,
+            demo_credits::community_compute_demo_wallet,
+            demo_credits::community_compute_demo_add_consumer_credits,
+            demo_credits::community_compute_demo_spend,
+            demo_credits::community_compute_demo_reset,
+            demo_credits::community_compute_demo_seed_legacy,
             notification_show,
             terminal_create_owner,
             terminal_spawn,

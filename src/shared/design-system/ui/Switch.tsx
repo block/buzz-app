@@ -4,13 +4,14 @@ import type { ComponentProps } from "react";
 /** A labelled on/off setting. Base UI owns checked state and keyboard behavior. */
 export function Switch({
   label,
+  className,
   ...props
 }: Omit<
   ComponentProps<typeof BaseSwitch.Root>,
   "children" | "className" | "aria-label"
-> & { label: string }) {
+> & { label: string; className?: string }) {
   return (
-    <div data-buzz-ui="" className="buzz-switch text-body">
+    <div data-buzz-ui="" className={`buzz-switch ${className ?? "text-body"}`}>
       <span>{label}</span>
       <BaseSwitch.Root
         {...props}

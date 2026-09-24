@@ -23,3 +23,7 @@ export function observeNativeSharing() {
 export function openComputeWidget() {
   return invoke<void>("compute_widget_open");
 }
+
+export function closeComputeWidget() {
+  return invoke<void>("compute_widget_close");
+}

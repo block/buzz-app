@@ -71,15 +71,33 @@ owner identity and ports, but uses the existing account you selected.
    select/add the same community. Account configuration and selected community are
    separate; do not leave either app on Personal space.
 2. Enable Compute in Settings → Plugins if needed.
-3. In Consumer, open Settings → Compute and choose **Connect to community compute**.
-4. In Provider, open Settings → Compute, choose an available model, then turn on
-   sharing. Wait for model startup and **You're sharing compute**.
+3. Open Settings → Compute in either app. Once the selected community is ready,
+   the app connects to community compute automatically and shows its connection
+   state on the page.
+4. In Provider, choose an available model, then turn on **Share this machine**.
+   Wait for model startup and the sharing status. Consumer uses the same page;
+   its sharing switch stays off unless you opt in.
 5. Initial device registration may change the verified owner roster and stop an
-   existing session. Reconnect Consumer and toggle Provider off/on if the app asks
-   you to refresh admission. This does not require new keys.
-6. Send a test request in Consumer. Verify a reply and activity/token growth on the
+   existing session. The affected app reconnects when its Compute page is open;
+   if Provider sharing is stopped, turn **Share this machine** off and on to
+   refresh admission. This does not require new keys.
+6. Send a test request from the Compute page in either app. Verify a reply and activity/token growth on the
    Provider widget. The CPU icon appears only on the actively sharing Provider;
    Consumer has Compute settings but no sharing widget icon.
+
+## Optional: try the simulated credits flow
+
+In Consumer, open Settings → Wallet (demo) and add demo credits. In Provider,
+open the same page and leave it open while testing a request from Consumer. The
+local demo ledger then moves one credit per 1,000 served tokens from Consumer to
+Provider, using the Provider session counter. The Consumer page also has a manual
+demo-spend control that transfers credits to Provider. Both apps show the shared
+balances and ledger. Reset from either app to clear the simulation.
+
+This is a same-machine development simulation only. It does not gate requests,
+create a real balance, or represent redeemable value; the Provider Wallet page
+must stay open to sync live tokens. The session counter and its credit conversion
+are illustrative, not production accounting.
 
 The built-in test currently allows only 128 output tokens. A reasoning model can
 use that budget before producing visible text, yielding “The provider returned no

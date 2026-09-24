@@ -15,6 +15,10 @@ import type {
 } from "../../features/community-compute/status";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { createRelaySession } from "../../features/relay/session";
+import type {
+  NativeSharingStatus,
+  SharingSource,
+} from "../../features/community-compute/sharing";
 import { CommunityComputePage } from "./CommunityComputePage";
 import "@testing-library/jest-dom/vitest";
 
@@ -177,4 +181,85 @@ it("keeps global Stop available when the selected community is disconnected", as
   ).toBe(false);
   view.unmount();
   session.dispose();
+});
+
+it("reconnects a failed consumer session automatically", async () => {
+  const native = await import("../../features/community-compute/native");
+  const statusSource = source();
+  let runtimeStatus: NativeSharingStatus = {
+    available: true,
+    preferredMode: "client",
+    generation: 1,
+    state: "off",
+    mode: null,
+    modelId: null,
+    community: null,
+    viewer: null,
+  };
+  const listeners = new Set<() => void>();
+  let runtimeSnapshot: ReturnType<SharingSource["snapshot"]> = {
+    status: runtimeStatus,
+    models: [],
+  };
+  const publish = (next: NativeSharingStatus) => {
+    runtimeStatus = next;
+    runtimeSnapshot = { status: next, models: [] };
+    for (const listener of listeners) listener();
+  };
+  const start = vi.fn(async () => {
+    publish({
+      ...runtimeStatus,
+      generation: runtimeStatus.generation + 1,
+      state: "starting",
+      mode: "client",
+    });
+  });
+  const stop = vi.fn(async () => {
+    publish({ ...runtimeStatus, state: "off", mode: null });
+  });
+  const sharing: SharingSource = {
+    snapshot: () => runtimeSnapshot,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    start,
+    stop,
+  };
+  vi.spyOn(native, "observeNativeSharing").mockImplementation(() => ({
+    source: sharing,
+    dispose: () => {},
+  }));
+  const relay: RelayData = {
+    snapshot: (() => {
+      const snapshot: RelaySnapshot = {
+        status: "ready",
+        generation: 1,
+        session: {} as RelaySnapshot["session"],
+        community: "https://mesh.example",
+        viewer: "viewer-key",
+        compute: statusSource.service,
+      };
+      return () => snapshot;
+    })(),
+    subscribe: () => () => {},
+    retry: vi.fn(),
+    disconnect: vi.fn(),
+    clearCache: vi.fn(),
+  };
+  const view = render(<CommunityComputePage relay={relay} />);
+  await waitFor(() => expect(start).toHaveBeenCalledOnce());
+  act(() =>
+    publish({
+      ...runtimeStatus,
+      state: "failed",
+      mode: "client",
+      detail: "Compute connection changed",
+    }),
+  );
+  await waitFor(() => {
+    expect(stop).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledTimes(2);
+  });
+  view.unmount();
 });

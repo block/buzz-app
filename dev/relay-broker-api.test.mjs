@@ -1181,3 +1181,43 @@ test.each(["sign", "publish"])(
     }
   },
 );
+
+test("member addition works without channel creation, while role elevation remains rejected", async () => {
+  const h = await harness(success);
+  let traffic;
+  let owner;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    traffic = await openBrokerSocket(transport);
+    expect(transport.writer.kinds).toContain(9000);
+    expect(transport.writer.kinds).not.toContain(9007);
+    owner = createOutbox(transport.viewer, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    const tags = [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["p", "a".repeat(64)],
+    ];
+    const id = owner.outbox.send({ kind: 9000, content: "", tags });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === id)?.delivery,
+      ).toBe("accepted"),
+    );
+    expect(h.publications).toHaveLength(1);
+    for (const role of ["owner", "admin", "member"]) {
+      const denied = await h.post("sign", {
+        kind: 9000,
+        content: "",
+        created_at: 1700000000,
+        tags: [...tags, ["role", role]],
+      });
+      expect(denied.status).toBe(400);
+    }
+  } finally {
+    owner?.dispose();
+    traffic?.dispose();
+    await h.close();
+  }
+});

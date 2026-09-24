@@ -94,14 +94,16 @@
   justify-content: space-between;
   text-align: left;
 }
-[data-profile-channel-link] .buzz-button-label {
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector targets the shared button label. */
+[data-profile-channel-link] :global(.buzz-button-label) {
   display: flex;
   width: 100%;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
 }
-[data-profile-channel-link] .buzz-button-label span {
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector targets the shared button label. */
+[data-profile-channel-link] :global(.buzz-button-label) span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

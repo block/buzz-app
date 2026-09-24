@@ -233,6 +233,35 @@ it("qualifies ready empty results when only matching unclassified memberships ex
   ).toBeNull();
 });
 
+it("does not classify hidden, archived or DM memberships in a ready empty list", () => {
+  const f = fixture();
+  render(
+    <ProfileChannels
+      session={f.session}
+      pubkey={person}
+      viewer={viewer}
+      communityOrigin="https://relay.example.test"
+      navigation={f.navigation}
+    />,
+  );
+  f.update({
+    status: "ready",
+    channels: [
+      { id: "dm", name: "Direct", channelType: "dm", members: [person] },
+      { id: "hidden", name: "Hidden", hidden: true, members: [person] },
+      { id: "archived", name: "Archived", archived: true, members: [person] },
+    ],
+  });
+  expect(screen.queryByText(/unclassified and omitted/)).toBeNull();
+  expect(
+    screen.getByText(/No visible channels with verified membership/),
+  ).toBeTruthy();
+  expect(
+    screen.queryByText(/No matching channels with a known visible type/),
+  ).toBeNull();
+  expect(f.open).not.toHaveBeenCalled();
+});
+
 it("does not show a metadata caveat for another identity's unclassified roster", () => {
   const f = fixture();
   render(

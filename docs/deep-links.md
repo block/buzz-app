@@ -10,22 +10,20 @@ browser build has no OS ingress and keeps its `#buzz=` address form.
 
 ## Accepted links
 
-The OS ingress accepts the address forms an in-app link uses and nothing else:
+The OS ingress accepts the Buzz link forms and nothing else:
 
-- `buzz://open?target=…`, the versioned locator that **Copy link** produces. It
-  carries its own community; the signed-in viewer is bound on receipt.
-- `buzz://message?channel=<id>&id=<event>[&thread=<root>]` and
-  `buzz://channel/<id>`, legacy forms that carry no community. They bind to the
-  currently selected community and viewer, and fail `unavailable` when no community
-  is selected or no identity is known.
+- `buzz://message?channel=<id>&id=<event>[&thread=<root>]`
+- `buzz://channel/<id>`
 
-Every other link, including `buzz://join`, `buzz://pr`, unknown hosts, case variants
-of the scheme and oversize links, fails as `invalid-target` and shows
-"This destination couldn't open" with **Retry navigation** and **Go Home**. Nothing
-is dropped silently and nothing is auto-joined. A valid address is never
-authorization: bound targets pass the same viewer, membership and channel checks as
-in-app navigation, so a shared link into a community you have not joined still
-fails `denied`.
+Neither carries a community, so both bind to the currently selected community and
+viewer, and fail `unavailable` when no community is selected or no identity is
+known. Every other link, including `buzz://open?target=…`, `buzz://join`,
+`buzz://pr`, unknown hosts, case variants of the scheme and oversize links, fails as
+`invalid-target` and shows "This destination couldn't open" with
+**Retry navigation** and **Go Home**. Nothing is dropped silently and nothing is
+auto-joined. A valid address is never authorization: bound targets pass the same
+viewer, membership and channel checks as in-app navigation, so a link into a channel
+you cannot read still fails `denied`.
 
 Links that arrive before the client is ready are held rather than lost, then opened
 in arrival order once the communities service has loaded. A link delivered at cold
@@ -35,8 +33,7 @@ start therefore opens Home first and its destination after.
 
 Use the scheme the launch printed; `buzz-dev-3fa9c1` stands in for it below. Write a
 link by hand, such as `buzz-dev-3fa9c1://channel/general` or
-`buzz-dev-3fa9c1://message?channel=general&id=<64-hex event id>`, or copy one from a
-message's **Copy link** action and replace its `buzz://` prefix. A warm app should
+`buzz-dev-3fa9c1://message?channel=general&id=<64-hex event id>`. A warm app should
 come to the front and open the conversation. A cold start should launch, show Home,
 then open the destination once the client is ready. A malformed link such as
 `buzz-dev-3fa9c1://join?relay=example` must show the failure notice. A plain
@@ -78,8 +75,10 @@ xdg-open "buzz-dev-3fa9c1://channel/general"
 - Development builds do not register `buzz`, so they cannot be used to check that a
   link produced elsewhere opens Buzz itself. Both `just desktop` and
   `just desktop-bundle` accept `--scheme buzz` to claim the real one, at the cost of
-  clashing with any installed Buzz. Shared links are unaffected either way:
-  **Copy link** always produces `buzz://open?target=…`.
+  clashing with any installed Buzz.
+- **Copy link** still produces `buzz://open?target=…`, this app's in-app locator
+  rather than a Buzz link. Opened outside the app it ends in the failure notice;
+  only `buzz://message` and `buzz://channel` links open from the OS.
 - Every worktree bundle keeps the same application identifier, so they share app
   data and Launch Services lists several bundles under one identifier. Scheme
   lookup is by scheme, so links still route unambiguously.

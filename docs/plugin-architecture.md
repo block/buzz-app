@@ -347,19 +347,20 @@ into versioned route parameters. These are host-matched preview types through
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
 `targetLink`/`parseTargetLink` define a `buzz://open` locator codec that omits the
 sender's viewer; `bindSharedTarget` pins it for an admitted recipient. Messages also
-recognize legacy `buzz://channel/<id>` and
-`buzz://message?channel=<id>&id=<event>&thread=<optional-root>` links. Legacy links
-use the receiving conversation's community and viewer; shared versioned links
-retain their community and use the recipient's viewer. Both pass through existing
-navigation admission and session ownership checks. Message targets open their
+recognize the Buzz link forms `buzz://channel/<id>` and
+`buzz://message?channel=<id>&id=<event>&thread=<optional-root>`. Buzz links use the
+receiving conversation's community and viewer; `buzz://open` locators retain their
+community and use the recipient's viewer. Both pass through existing navigation
+admission and session ownership checks. Message targets open their
 verified thread, reveal the exact message after bounded history loading, and only
 then acknowledge navigation. Supplied root hints do not override verified events.
 Missing or unavailable messages report failure. Ingress adapters must reuse this
 validated target/completion lifecycle; notification clicks
 ([notifications](notifications.md)) and OS-delivered deep links on desktop
-([OS deep links](deep-links.md)) do. Legacy OS links bind to the selected
-community; an OS link that does not parse fails `invalid-target` through the same
-failure notice rather than being dropped.
+([OS deep links](deep-links.md)) do. The OS ingress accepts only the Buzz link
+forms and binds them to the selected community; any other OS link, `buzz://open`
+included, fails `invalid-target` through the same failure notice rather than being
+dropped.
 
 Drafts, reading geometry and sidebar view intent remain domain-owned, outside
 visit history. Saved sidebar preferences live in the relay session, not in the

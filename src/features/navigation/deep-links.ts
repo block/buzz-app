@@ -7,7 +7,7 @@ import { communityDestination } from "../communities/destination";
 import type { ClientSnapshot } from "../communities/service";
 import { parseBuzzLink } from "./buzz-links";
 import type { OpenFailure, OpenResult } from "./controller";
-import { bindSharedTarget, parseOpenTarget, type OpenTarget } from "./targets";
+import { parseOpenTarget, type OpenTarget } from "./targets";
 
 export type DeepLinkStep =
   | Readonly<{ open: OpenTarget }>
@@ -24,9 +24,11 @@ export type DeepLinkHost = Readonly<{
 }>;
 type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
 
-/** Decide what one OS URL means for the signed-in client. A bound target still
- * passes the usual viewer, membership and channel checks; nothing here grants access.
- * Legacy `channel`/`message` forms carry no community and bind to the selected one. */
+/** Decide what one OS URL means for the signed-in client. The OS ingress accepts
+ * the Buzz link forms, `buzz://message?channel=&id=[&thread=]` and
+ * `buzz://channel/<id>`, which carry no community and so bind to the selected one.
+ * A bound target still passes the usual viewer, membership and channel checks;
+ * nothing here grants access. */
 export function deepLinkStep(
   url: string,
   client: Pick<Client, "viewer" | "selected">,
@@ -38,15 +40,10 @@ export function deepLinkStep(
   if (typeof url !== "string" || !url.startsWith("buzz:"))
     return { fail: "invalid-target" };
   const link = parseBuzzLink(url);
-  if (!link) return { fail: "invalid-target" };
+  // `buzz://open?target=…` is this app's own locator for in-app use, not a Buzz
+  // link, so the OS ingress refuses it like any other unsupported address.
+  if (!link || link.format === "shared") return { fail: "invalid-target" };
   try {
-    if (link.format === "shared") {
-      const target = link.target;
-      if (!("scope" in target) || !target.scope)
-        return { open: parseOpenTarget(target) };
-      if (!client.viewer) return { fail: "unavailable" };
-      return { open: bindSharedTarget(target, client.viewer) };
-    }
     if (!client.viewer || !client.selected) return { fail: "unavailable" };
     const { format: _format, ...destination } = link;
     return {

@@ -309,8 +309,11 @@ mod tests {
         for (raw, expected) in [
             (delivered("general"), queued("general")),
             (
-                format!("{OVERLAID}://open?target=%7B%7D"),
-                format!("{CANONICAL_SCHEME}://open?target=%7B%7D"),
+                format!("{OVERLAID}://message?channel=general&id={}", "a".repeat(64)),
+                format!(
+                    "{CANONICAL_SCHEME}://message?channel=general&id={}",
+                    "a".repeat(64)
+                ),
             ),
             (
                 format!("{OVERLAID}://join?relay=example"),

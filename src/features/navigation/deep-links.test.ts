@@ -35,8 +35,9 @@ const root = "b".repeat(64);
 const client = { viewer, selected: origin };
 // The shell rewrites every accepted OS link to the in-app `buzz:` scheme, so that
 // is the only form this module ever receives, whatever scheme the OS routed.
-const legacyMessage = `buzz://message?channel=general&id=${message}&thread=${root}`;
-const shared = targetLink({
+const messageLink = `buzz://message?channel=general&id=${message}&thread=${root}`;
+// What Copy link produces: this app's own in-app locator, which is not a Buzz link.
+const copied = targetLink({
   version: 1,
   kind: "conversation",
   scope: { viewer: "c".repeat(64), communityOrigin: elsewhere },
@@ -45,67 +46,8 @@ const shared = targetLink({
 });
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-it("opens exactly what Copy link produces, with no scheme rewriting of its own", () => {
-  // Shared content must stay readable by the original client whatever scheme the
-  // desktop build registers, and the shell hands over only canonical links, so no
-  // OS scheme is known here and none can leak into a produced link.
-  const copied = targetLink({ version: 1, kind: "home" });
-  expect(copied.startsWith("buzz://open?target=")).toBe(true);
-  expect(deepLinkStep(copied, { selected: null })).toEqual({
-    open: { version: 1, kind: "home" },
-  });
-});
-it("binds a shared link to the signed-in viewer and keeps the link's own community", () => {
-  const bound: OpenTarget = {
-    version: 1,
-    kind: "conversation",
-    scope: { viewer, communityOrigin: elsewhere },
-    channelId: "general",
-    messageId: message,
-  };
-  expect(deepLinkStep(shared, client)).toEqual({ open: bound });
-  // The selected community is irrelevant; the recipient's identity is required.
-  expect(deepLinkStep(shared, { viewer, selected: null })).toEqual({
-    open: bound,
-  });
-  expect(deepLinkStep(shared, { selected: origin })).toEqual({
-    fail: "unavailable",
-  });
-});
-it("opens unscoped shared links without any client identity", () => {
-  const anonymous = { selected: null };
-  expect(
-    deepLinkStep(targetLink({ version: 1, kind: "home" }), anonymous),
-  ).toEqual({ open: { version: 1, kind: "home" } });
-  expect(
-    deepLinkStep(
-      targetLink({ version: 1, kind: "settings", section: "appearance" }),
-      anonymous,
-    ),
-  ).toEqual({ open: { version: 1, kind: "settings", section: "appearance" } });
-  expect(
-    deepLinkStep(
-      targetLink({
-        version: 1,
-        kind: "page",
-        pluginId: "buzz.projects",
-        pageId: "projects",
-        scope: null,
-      }),
-      anonymous,
-    ),
-  ).toEqual({
-    open: {
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.projects",
-      pageId: "projects",
-      scope: null,
-    },
-  });
-});
-it("binds legacy message and channel links to the selected community and viewer", () => {
-  expect(deepLinkStep(legacyMessage, client)).toEqual({
+it("binds message and channel links to the selected community and viewer", () => {
+  expect(deepLinkStep(messageLink, client)).toEqual({
     open: {
       version: 1,
       kind: "conversation",
@@ -138,15 +80,29 @@ it("binds legacy message and channel links to the selected community and viewer"
     },
   });
 });
-it("fails legacy links as unavailable without a selected community or identity, never inventing one", () => {
+it("fails as unavailable without a selected community or identity, never inventing one", () => {
   expect(
     deepLinkStep("buzz://channel/general", { viewer, selected: null }),
   ).toEqual({ fail: "unavailable" });
-  expect(deepLinkStep(legacyMessage, { selected: origin })).toEqual({
+  expect(deepLinkStep(messageLink, { selected: origin })).toEqual({
     fail: "unavailable",
   });
 });
 it.each([
+  // `buzz://open?target=…` is not a Buzz link, however well-formed: neither what
+  // Copy link produces nor an unscoped locator opens from the OS.
+  copied,
+  targetLink({ version: 1, kind: "home" }),
+  targetLink({ version: 1, kind: "settings", section: "appearance" }),
+  targetLink({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.projects",
+    pageId: "projects",
+    scope: null,
+  }),
+  "buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22home%22%7D&extra=1",
+  `buzz://open?target=${"x".repeat(40_000)}`,
   "buzz://join?relay=example&code=abc123",
   "buzz://join?relay=example",
   "buzz://pr?id=1&owner=alice&d=repo",
@@ -167,25 +123,16 @@ it.each([
   "buzz://user@channel/general",
   "buzz://channel:443/general",
   "buzz://channel/general?relay=evil",
-  `${legacyMessage}#fragment`,
-  `${legacyMessage}&viewer=${"b".repeat(64)}`,
+  `${messageLink}#fragment`,
+  `${messageLink}&viewer=${"b".repeat(64)}`,
   "buzz://message?channel=general&id=bad",
-  "buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22home%22%7D&extra=1",
   "https://example.com/?next=buzz://channel/general",
   "javascript:alert(1)",
   "",
   "not a url",
-  `buzz://open?target=${"x".repeat(40_000)}`,
-  `buzz://open?target=${encodeURIComponent(
-    JSON.stringify({
-      version: 1,
-      kind: "settings",
-      section: "a".repeat(9_000),
-    }),
-  )}`,
   `buzz://channel/${"g".repeat(40_000)}`,
 ])(
-  "fails an unparseable OS link as invalid-target instead of dropping it: %s",
+  "fails an unsupported or unparseable OS link as invalid-target instead of dropping it: %s",
   (url) => {
     expect(deepLinkStep(url, client)).toEqual({ fail: "invalid-target" });
   },
@@ -255,7 +202,7 @@ function harness(initial: Client, pending: string[] = []) {
 }
 const ready: Client = { status: "ready", viewer, selected: origin };
 const loading: Client = { status: "loading", selected: null };
-const legacyOpen = `open:${JSON.stringify({
+const channelOpen = `open:${JSON.stringify({
   version: 1,
   kind: "conversation",
   scope: { viewer, communityOrigin: origin },
@@ -268,7 +215,7 @@ it("drains the shell at startup and opens a held link only once the client is re
   expect(t.take).toHaveBeenCalledTimes(1);
   expect(t.log).toEqual([]);
   t.become({ status: "ready", viewer, selected: origin });
-  expect(t.log).toEqual([legacyOpen]);
+  expect(t.log).toEqual([channelOpen]);
   t.stop();
 });
 it("waits for loading to finish even for links that will fail, then reports them in arrival order", async () => {
@@ -279,28 +226,29 @@ it("waits for loading to finish even for links that will fail, then reports them
   expect(t.log).toEqual(["fail:invalid-target"]);
   t.stop();
 });
-it("opens later arrivals in order and surfaces unparseable ones through the host", async () => {
+it("opens later arrivals in order and surfaces unsupported ones through the host", async () => {
   const t = harness(ready);
   await settle();
-  t.arrive("buzz://channel/general", "buzz://join?relay=example", shared);
+  t.arrive("buzz://channel/general", copied, messageLink);
   await settle();
   expect(t.log).toEqual([
-    legacyOpen,
+    channelOpen,
     "fail:invalid-target",
     `open:${JSON.stringify({
       version: 1,
       kind: "conversation",
-      scope: { viewer, communityOrigin: elsewhere },
+      scope: { viewer, communityOrigin: origin },
       channelId: "general",
       messageId: message,
+      threadRootId: root,
     })}`,
   ]);
   t.stop();
 });
-it("fails a legacy link as unavailable when the ready client has no selected community", async () => {
+it("fails a message link as unavailable when the ready client has no selected community", async () => {
   const t = harness({ status: "ready", viewer, selected: null });
   await settle();
-  t.arrive(legacyMessage);
+  t.arrive(messageLink);
   await settle();
   expect(t.log).toEqual(["fail:unavailable"]);
   t.become({ selected: origin });
@@ -313,7 +261,7 @@ it("ignores non-string shell entries and keeps going", async () => {
   await settle();
   t.arrive(42, null, "buzz://channel/general");
   await settle();
-  expect(t.log).toEqual([legacyOpen]);
+  expect(t.log).toEqual([channelOpen]);
   t.stop();
 });
 it("reports a failing shell read without throwing or navigating", async () => {
@@ -326,7 +274,7 @@ it("reports a failing shell read without throwing or navigating", async () => {
     "Could not read pending deep links",
     expect.any(Error),
   );
-  expect(t.log).toEqual([legacyOpen]);
+  expect(t.log).toEqual([channelOpen]);
   t.stop();
 });
 it("still drains once when the shell cannot deliver updates, without aborting startup", async () => {

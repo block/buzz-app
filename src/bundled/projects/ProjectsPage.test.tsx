@@ -232,6 +232,20 @@ function setup(route?: EntityRoute) {
     revoke() {
       live?.receive([roster(false, 5)]);
     },
+    revokeOther() {
+      for (const allowed of [true, false])
+        live?.receive([
+          finalizeEvent(
+            {
+              kind: 39002,
+              created_at: allowed ? 1 : 5,
+              content: "",
+              tags: [["d", "unrelated"], ...(allowed ? [["p", owner]] : [])],
+            },
+            key,
+          ),
+        ]);
+    },
     query,
     promise,
     mount: () =>
@@ -448,5 +462,43 @@ it.each([undefined, "files", "commits"] as const)(
     ).not.toBeInTheDocument();
     if (tab) expect(screen.getByRole("alert")).toBeVisible();
     else expect(screen.getByText("Repository description")).toBeVisible();
+  },
+);
+it.each([true, false])(
+  "only the actual repository's revocation invalidates an in-flight Git read (related: %s)",
+  async (related) => {
+    const t = setup({ type: "repo", owner, dtag: "repo", tab: "files" });
+    let release: (value: GitSnapshot) => void = () => {};
+    t.readGit.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    t.mount();
+    try {
+      await waitFor(() => expect(t.readGit).toHaveBeenCalled());
+      await act(async () => {
+        if (related) t.revoke();
+        else t.revokeOther();
+      });
+      expect(
+        screen.queryByRole("button", { name: "README.md" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      await act(async () => release(git));
+    }
+    if (related) {
+      await expect(t.promise).resolves.toEqual({
+        status: "failed",
+        reason: "denied",
+      });
+      expect(
+        screen.queryByRole("button", { name: "README.md" }),
+      ).not.toBeInTheDocument();
+    } else {
+      await expect(t.promise).resolves.toEqual({ status: "opened" });
+      expect(screen.getByRole("button", { name: "README.md" })).toBeVisible();
+    }
   },
 );

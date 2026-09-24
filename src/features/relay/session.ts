@@ -1212,15 +1212,12 @@ export function createRelaySession(
     projectGit: transport?.projectGit
       ? {
           async read(input: GitRead, signal: AbortSignal) {
-            const epoch = accessEpoch;
             const bound = AbortSignal.any([signal, lifetime.signal]);
             bound.throwIfAborted();
             const host = transport.projectGit;
             if (!host) throw new Error("Repository reads unavailable");
             const result = await host.read(input, bound);
             bound.throwIfAborted();
-            if (epoch !== accessEpoch)
-              throw new DOMException("Stale repository read", "AbortError");
             return result;
           },
         }

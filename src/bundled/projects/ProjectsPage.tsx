@@ -217,6 +217,8 @@ function Destination({
           },
           signal,
         );
+        if (gitChannel && !session.channels.get?.(gitChannel))
+          throw new EntityFailure("denied");
         return { detail, git, ...(gitChannel ? { gitChannel } : {}) };
       } catch (error) {
         signal.throwIfAborted();

@@ -12,20 +12,20 @@ test("Back restores Personal space without inheriting the active community", asy
   app,
 }) => {
   await open(page, app);
-  const switcher = button(page, "Switch community");
-  await switcher.click();
+  const rail = page.getByRole("navigation", { name: "Communities" });
   await button(page, "Personal space").click();
-  await expect(switcher).toHaveAttribute("title", "Personal space");
+  await expect(
+    rail.getByRole("button", { name: "Personal space" }),
+  ).toHaveAttribute("aria-current", "true");
   const personal = await entry(page);
-  await switcher.click();
   await button(page, "Switch to Primary").click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   await button(page, "Go back").click();
-  await expect(switcher).toHaveAttribute("title", "Personal space", {
-    timeout: 1500,
-  });
+  await expect(
+    rail.getByRole("button", { name: "Personal space" }),
+  ).toHaveAttribute("aria-current", "true", { timeout: 1500 });
   expect(await entry(page)).toEqual(personal);
   await expect(
     page.getByRole("heading", { name: "Your channels, one conversation." }),

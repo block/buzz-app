@@ -4,6 +4,13 @@ import type { Delivery } from "./outbox";
 
 export const MAX_ATTACHMENT_DURATION_SECONDS = 86_400;
 
+export type MessageReaction = Readonly<{
+  content: string;
+  emoji?: CustomEmoji;
+  /** Retain every event so toggling off removes duplicate reactions by one author. */
+  events: readonly Readonly<{ id: string; authorId: string }>[];
+}>;
+
 /** Folded, read-only channel state. Rows are domain data, not wire events or presentation. */
 export type ChannelSummary = Readonly<{
   id: string;
@@ -78,7 +85,7 @@ export type ChannelMessage = Readonly<{
   attachments: readonly Attachment[];
   /** Event-local mappings, never the current community palette. */
   emoji?: readonly CustomEmoji[];
-  reactions: readonly Readonly<{ content: string; emoji?: CustomEmoji }>[];
+  reactions: readonly MessageReaction[];
   /** Canonical thread-opening target from signed reply/root tags; absent on root messages. */
   threadRootId?: string | undefined;
   /** Relay-signed thread summary for this row; zero when the row has no replies. */

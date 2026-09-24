@@ -3,10 +3,10 @@ import { emojiQuery } from "./emoji-query";
 import type { PluginModule } from "../../plugins/api";
 import type {
   ComposerToolProps,
-  ReactionToolProps,
   InlineContent,
 } from "../../features/conversation/contracts";
 import { emojiMatches } from "../../features/relay/emoji";
+import { createReactionPicker } from "./ReactionPicker";
 import { EmojiPicker } from "./EmojiPicker";
 import { CustomEmoji } from "./CustomEmoji";
 import { copyEmoji } from "./copy-emoji";
@@ -34,20 +34,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerTool({
     id: "picker",
     title: "Emoji",
-    reactionComponent: ({
-      session,
-      scope,
-      disabled,
-      select,
-    }: ReactionToolProps) => (
-      <EmojiPicker
-        session={session}
-        scope={scope}
-        disabled={disabled}
-        insert={select}
-        reaction
-      />
-    ),
+    reactionComponent: createReactionPicker(),
     component: ({
       session,
       scope,

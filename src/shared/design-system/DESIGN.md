@@ -198,7 +198,7 @@ preloading and product shortcuts remain with the caller.
 When composing NavigationItem lists inside dialogs or padded panels, align the
 leading content column with the heading. With icons, this means the icon slot;
 labels form a second consistent column. Give mixed icons and identity fallbacks
-the same slot (24px in the community chooser and page search), retaining each
+the same slot (24px in the page search palette), retaining each
 icon's intended size within it.
 
 The hover and selected backgrounds may extend beyond that content edge. Offset

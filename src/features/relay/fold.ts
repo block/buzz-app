@@ -1,3 +1,4 @@
+import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
 import { emojiTags } from "./emoji";
@@ -295,28 +296,51 @@ export function foldMessages(
         emoji: emojiTags(
           edits[0]?.tags.some(([name]) => name === "emoji") ? edits[0] : event,
         ),
-        reactions: Object.freeze([
-          ...new Map(
-            aux
-              .filter((item) => item.kind === 7 && !deleted(item))
-              .map((item) => {
-                const emoji = emojiTags(item).find(
-                  (emoji) =>
-                    item.content.toLowerCase() === `:${emoji.shortcode}:`,
-                );
-                const reaction = Object.freeze({
-                  content: item.content,
-                  ...(emoji ? { emoji } : {}),
-                });
-                return [JSON.stringify(reaction), reaction] as const;
-              }),
-          ).values(),
-        ]),
+        reactions: groupReactions(
+          aux.filter((item) => item.kind === 7 && !deleted(item)),
+        ),
         ...parseSummary(summaries.get(event.id)),
       }),
     );
   }
   return rows.sort(
     (a, b) => a.createdAt - b.createdAt || b.id.localeCompare(a.id),
+  );
+}
+
+/** Count people, but retain event IDs for author-only removal and duplicate cleanup. */
+export function groupReactions(events: readonly EventData[]) {
+  const groups = new Map<
+    string,
+    {
+      content: string;
+      emoji?: CustomEmoji;
+      events: { id: string; authorId: string }[];
+    }
+  >();
+  for (const event of events) {
+    const emoji = emojiTags(event).find(
+      (entry) => event.content.toLowerCase() === `:${entry.shortcode}:`,
+    );
+    const content = emoji ? `:${emoji.shortcode}:` : event.content;
+    const key = JSON.stringify([content, emoji?.url]);
+    const group = groups.get(key) ?? {
+      content,
+      ...(emoji ? { emoji } : {}),
+      events: [],
+    };
+    if (!group.events.some((entry) => entry.id === event.id))
+      group.events.push(
+        Object.freeze({ id: event.id, authorId: event.pubkey }),
+      );
+    groups.set(key, group);
+  }
+  return Object.freeze(
+    [...groups.values()].map((group) =>
+      Object.freeze({
+        ...group,
+        events: Object.freeze(group.events),
+      }),
+    ),
   );
 }

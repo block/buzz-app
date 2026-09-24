@@ -242,20 +242,24 @@ export function Settings({
                             </div>
                           </div>
                           <div className="actions items-center">
-                            <Switch
-                              aria-label={`Enable ${plugin.manifest.name}`}
-                              checked={plugin.enabled}
-                              readOnly={busy}
-                              aria-disabled={busy}
-                              onClick={(event) => event.currentTarget.focus()}
-                              onCheckedChange={() => {
-                                if (busy) return;
-                                void plugins.change(
-                                  plugin.enabled ? "disable" : "enable",
-                                  id,
-                                );
-                              }}
-                            />
+                            {/* Channels is the launch destination. Keep recovery for
+                                saved disabled installs without offering an off switch. */}
+                            {(id !== "buzz.channels" || !plugin.enabled) && (
+                              <Switch
+                                aria-label={`Enable ${plugin.manifest.name}`}
+                                checked={plugin.enabled}
+                                readOnly={busy}
+                                aria-disabled={busy}
+                                onClick={(event) => event.currentTarget.focus()}
+                                onCheckedChange={() => {
+                                  if (busy) return;
+                                  void plugins.change(
+                                    plugin.enabled ? "disable" : "enable",
+                                    id,
+                                  );
+                                }}
+                              />
+                            )}
                             {plugin.previous && (
                               <Button
                                 type="button"

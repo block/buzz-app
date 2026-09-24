@@ -84,15 +84,33 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   expect(await page.evaluate(() => window.homeFrames)).toEqual([]);
 });
 
-test("Messages being disabled leaves a Home-free recovery path through Settings", async ({
+test("Settings hides the Channels off switch and can recover a saved disabled plugin", async ({
   page,
   app,
 }) => {
   await page.goto(address(app.origin, settings));
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
-  await page
-    .getByRole("switch", { name: "Enable Channels", exact: true })
-    .click();
+  await expect(
+    page.getByRole("heading", { name: "Channels", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: "Enable Channels", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("switch", { name: "Enable Projects", exact: true }),
+  ).toBeVisible();
+  // Existing disabled preferences remain recoverable; Settings no longer offers
+  // the disable action, but the underlying plugin lifecycle is still supported.
+  await page.evaluate(() => {
+    const key = "buzzodz.plugins.v1";
+    const saved = JSON.parse(localStorage.getItem(key)) ?? {
+      version: 2,
+      enabled: {},
+    };
+    saved.enabled["buzz.channels"] = false;
+    localStorage.setItem(key, JSON.stringify(saved));
+  });
+  await page.reload();
   await expect(
     pages(page).getByRole("button", { name: "Messages", exact: true }),
   ).toHaveCount(0);
@@ -110,6 +128,17 @@ test("Messages being disabled leaves a Home-free recovery path through Settings"
   await page
     .getByRole("switch", { name: "Enable Channels", exact: true })
     .click();
+  await expect(
+    page.getByRole("switch", { name: "Enable Channels", exact: true }),
+  ).toHaveCount(0);
+  await page.reload();
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Channels", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: "Enable Channels", exact: true }),
+  ).toHaveCount(0);
   await pages(page)
     .getByRole("button", { name: "Messages", exact: true })
     .click();

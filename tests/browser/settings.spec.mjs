@@ -19,10 +19,10 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   const frame = page.getByRole("region", { name: "Settings", exact: true });
   const content = page.getByRole("region", { name: "Plugins", exact: true });
   const row = content.getByRole("article").filter({
-    has: page.getByRole("heading", { name: "Channels", exact: true }),
+    has: page.getByRole("heading", { name: "GitHub", exact: true }),
   });
   const toggle = row.getByRole("switch", {
-    name: "Enable Channels",
+    name: "Enable GitHub",
     exact: true,
   });
   await expect(toggle).toHaveAttribute("aria-checked", "true");
@@ -188,7 +188,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(profileContent).toHaveCount(0);
     await expect(pluginContent).toBeVisible();
     await expect(
-      page.getByRole("switch", { name: "Enable Channels" }),
+      page.getByRole("switch", { name: "Enable Projects" }),
     ).toBeVisible();
     const settingsRegion = page.getByRole("region", {
       name: "Settings",

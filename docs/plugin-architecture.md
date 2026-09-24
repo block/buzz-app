@@ -171,6 +171,38 @@ drawer, and re-enabling starts closed. See [Terminal](terminal.md) for native su
 session behavior and validation limits. This is a host-matched preview addition,
 not cross-version capability negotiation.
 
+### Optional Canvas todos
+
+Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
+it under Settings → Plugins. Its channel-header ListChecks button opens the existing
+bottom drawer, with add/check/uncheck and explicit Save/Refresh. It uses shared
+controls and theme tokens; Channels still owns drawer geometry and placement.
+
+The source of truth is ordinary Markdown in one root level-two `Todos` section:
+
+```markdown
+## Todos
+
+- [ ] Review the plan
+- [x] Share the preview
+```
+
+Only top-level unordered checkbox items in that section are shown. Nested lists,
+quotes and fenced examples are not tasks in this view. Checkbox edits change one
+source byte; additions insert below the heading without rewriting other content.
+Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
+the convenience UI, not the saved list: Channel settings → Canvas remains editable.
+
+Reads occur on open and explicit Refresh, not on a timer. Save uses the existing
+session Canvas/outbox contract, including its 24 KiB limit, fresh membership check,
+optimistic head comparison and exact confirmation. This is **not atomic concurrency
+control**; simultaneous saves can overwrite edits. Detected conflicts retain the
+local draft and require reviewing the saved Canvas. Refresh confirms before discarding
+edits. Local recovery drafts are partitioned by community/viewer/channel; if browser
+storage is unavailable they survive only while the editor stays open. Save never
+promotes local recovery storage to shared state. Already accepted outbox operations
+remain session-owned if the drawer closes or plugin is disabled.
+
 ### Top-bar launchers and the companion slot
 
 A panel may supply `launcher: { icon, target }`. The host renders the decorative

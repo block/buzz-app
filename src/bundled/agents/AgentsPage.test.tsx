@@ -303,6 +303,138 @@ it("Add opens a focused creation dialog and retains a dirty draft on Escape", as
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
+it("duplicates editable settings into a new identity without copying write-only secrets", async () => {
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+  const prepare = vi.fn(async () => ({
+    id: "new-agent",
+    pubkey: "cd".repeat(32),
+  }));
+  const commit = vi.fn(async (_requestId: string, edit: { name: string }) => {
+    fixture.data.agents.push({
+      ...structuredClone(fixture.agent),
+      id: "new-agent",
+      name: edit.name,
+      enabled: false,
+      status: "stopped",
+    });
+    return structuredClone(fixture.data);
+  });
+  let fixture!: ReturnType<typeof controlFixture>;
+  setup("connected", (f) => {
+    fixture = f;
+    f.data.createAvailable = true;
+    f.agent.harness.environmentKeys = ["API_KEY"];
+    f.agent.harness.provider = "openai";
+    f.agent.harness.model = "example-model";
+    f.agent.systemPrompt = "Be concise";
+    f.host.prepareCreate = prepare;
+    f.host.commitCreate = commit;
+    f.host.publishProfile = async () => structuredClone(f.data);
+  });
+  const card = (
+    await screen.findAllByRole("article", { name: "Agent Fixture agent" })
+  )[0];
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Duplicate" }));
+  const dialog = screen.getByRole("dialog", {
+    name: "Duplicate Fixture agent",
+  });
+  expect(within(dialog).getByLabelText("Name")).toHaveValue(
+    "Fixture agent copy",
+  );
+  expect(within(dialog).getByLabelText("Agent instructions")).toHaveValue(
+    "Be concise",
+  );
+  expect(
+    within(dialog).getByText(/Re-enter environment values for API_KEY/),
+  ).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
+  await waitFor(() =>
+    expect(prepare).toHaveBeenCalledWith(
+      expect.any(String),
+      "wss://relay.example.test",
+      "de".repeat(32),
+    ),
+  );
+  await waitFor(() => expect(commit).toHaveBeenCalled());
+  expect(commit.mock.calls[0]?.[1]).toMatchObject({
+    name: "Fixture agent copy",
+    systemPrompt: "Be concise",
+    harness: { provider: "openai", model: "example-model" },
+    environment: {},
+  });
+});
+
+it("confirms local deletion, keeps the card on failure, and removes it only after host success", async () => {
+  let fail = true;
+  const remove = vi.fn(async (id: string, revision: number) => {
+    if (revision !== 1) throw "Saved settings changed";
+    if (fail) throw "Could not remove the saved credential";
+    fixture.data.agents = fixture.data.agents.filter(
+      (agent) => agent.id !== id,
+    );
+    return structuredClone(fixture.data);
+  });
+  let fixture!: ReturnType<typeof controlFixture>;
+  setup("ready", (f) => {
+    fixture = f;
+    f.host.delete = remove;
+  });
+  const card = (
+    await screen.findAllByRole("article", { name: "Agent Fixture agent" })
+  )[0];
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+  const dialog = screen.getByRole("dialog", { name: "Delete Fixture agent?" });
+  expect(
+    within(dialog).getByText(/relay identity and past messages remain visible/),
+  ).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(remove).not.toHaveBeenCalled();
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+  fireEvent.click(
+    within(
+      screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
+    ).getByRole("button", { name: "Delete agent" }),
+  );
+  await waitFor(() => expect(remove).toHaveBeenCalledWith("fixture-agent", 1));
+  expect(card).toBeInTheDocument();
+  expect(
+    await within(
+      screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
+    ).findByRole("alert"),
+  ).toHaveTextContent(/Could not remove the saved credential/);
+  fail = false;
+  fireEvent.click(
+    within(
+      screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
+    ).getByRole("button", { name: "Retry status" }),
+  );
+  await waitFor(() =>
+    expect(
+      within(
+        screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
+      ).getByRole("button", { name: "Delete agent" }),
+    ).toBeEnabled(),
+  );
+  fireEvent.click(
+    within(
+      screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
+    ).getByRole("button", { name: "Delete agent" }),
+  );
+  await waitFor(() => expect(remove).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(card).not.toBeInTheDocument());
+});
+
 it("focuses the imported managed identity without starting it", async () => {
   const { f } = setup();
   await screen.findAllByRole("article", { name: "Agent Fixture agent" });

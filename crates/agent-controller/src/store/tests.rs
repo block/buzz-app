@@ -184,6 +184,26 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     }
 }
 #[test]
+fn remove_requires_current_revision_and_persists_absence() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let agent = fixture();
+    store.insert(vec![agent.clone()]).unwrap();
+    store.enabled(&agent.id, false).unwrap();
+    assert!(dir.path().join("agents.previous.json").exists());
+    assert!(store.remove(&agent.id, agent.revision + 1).is_err());
+    assert_eq!(store.agents().unwrap().len(), 1);
+    store.remove(&agent.id, agent.revision).unwrap();
+    assert!(store.agents().unwrap().is_empty());
+    assert!(!dir.path().join("agents.previous.json").exists());
+    drop(store);
+    assert!(Store::open(dir.path().to_owned())
+        .unwrap()
+        .agents()
+        .unwrap()
+        .is_empty());
+}
+#[test]
 fn environment_patch_preserves_deletes_and_rejects_host_overrides_without_writing() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = Store::open(dir.path().to_owned()).unwrap();

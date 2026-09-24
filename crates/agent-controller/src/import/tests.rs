@@ -14,6 +14,10 @@ struct Memory {
     expected_source: Option<LegacySource>,
 }
 impl Credentials for Memory {
+    fn delete(&self, id: &str, _: &str) -> Result<()> {
+        self.keys.lock().unwrap().remove(id);
+        Ok(())
+    }
     fn read_legacy(&self, source: LegacySource, pubkey: &str) -> Result<Secret> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         self.sources.lock().unwrap().push(source);

@@ -9,6 +9,9 @@ const IMPORT_GATE: &str = "Synthetic credential refusal.";
 // Test-only custody. Synthetic fixtures cannot reach PlatformCredentials.
 struct RejectingCredentials;
 impl Credentials for RejectingCredentials {
+    fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+        Err(IMPORT_GATE.into())
+    }
     fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
         Err(IMPORT_GATE.into())
     }
@@ -652,6 +655,9 @@ async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() 
         release: Mutex<std::sync::mpsc::Receiver<()>>,
     }
     impl Credentials for Delayed {
+        fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+            panic!("not a delete")
+        }
         fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
             panic!("not an import")
         }
@@ -772,6 +778,10 @@ fn real_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
     #[derive(Default)]
     struct Memory(Mutex<BTreeMap<String, String>>, Mutex<Vec<LegacySource>>);
     impl Credentials for Memory {
+        fn delete(&self, id: &str, _: &str) -> Result<(), String> {
+            self.0.lock().unwrap().remove(id);
+            Ok(())
+        }
         fn read_legacy(&self, source: LegacySource, pubkey: &str) -> Result<Secret, String> {
             assert!(matches!(source, LegacySource::Development));
             self.1.lock().unwrap().push(source);

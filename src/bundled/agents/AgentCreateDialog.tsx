@@ -7,33 +7,42 @@ import type {
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentSettingsFields } from "./AgentSettingsFields";
-import { agentEdit, type AgentDraft } from "./agent-edit";
+import { agentDraft, agentEdit, type AgentDraft } from "./agent-edit";
 
 export function AgentCreateDialog({
   control,
   state,
   destination,
   owner,
+  source,
   onClose,
 }: {
   control: AgentControl;
   state: AgentControlState;
   destination: string;
   owner: string;
+  source?: AgentView;
   onClose(): void;
 }) {
   const [requestId] = useState(() => crypto.randomUUID());
-  const [draft, setDraft] = useState<AgentDraft>(() => ({
-    revision: 0,
-    name: "",
-    systemPrompt: "",
-    workspace: state.data?.defaultWorkspace ?? "",
-    command: "buzz-agent",
-    args: "[]",
-    model: "",
-    provider: state.data?.agentDefaults?.provider ? "" : "databricks_v2",
-    environment: {},
-  }));
+  const [draft, setDraft] = useState<AgentDraft>(() =>
+    source
+      ? {
+          ...agentDraft(source),
+          name: `${source.name} copy`,
+        }
+      : {
+          revision: 0,
+          name: "",
+          systemPrompt: "",
+          workspace: state.data?.defaultWorkspace ?? "",
+          command: "buzz-agent",
+          args: "[]",
+          model: "",
+          provider: state.data?.agentDefaults?.provider ? "" : "databricks_v2",
+          environment: {},
+        },
+  );
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<AgentView | null>(null);
   const [error, setError] = useState<string>();
@@ -98,7 +107,9 @@ export function AgentCreateDialog({
           className="buzz-dialog agent-dialog text-body"
         >
           <header className="buzz-dialog-header">
-            <Dialog.Title className="text-heading">Create agent</Dialog.Title>
+            <Dialog.Title className="text-heading">
+              {source ? `Duplicate ${source.name}` : "Create agent"}
+            </Dialog.Title>
           </header>
           <Dialog.Description className="buzz-dialog-description">
             Create a new identity in {destination || "a connected community"}.
@@ -123,6 +134,13 @@ export function AgentCreateDialog({
                 setError(undefined);
               }}
             />
+            {source?.harness.environmentKeys.length ? (
+              <p role="status" className="text-body-sm text-secondary">
+                Re-enter environment values for{" "}
+                {source.harness.environmentKeys.join(", ")}. Saved values cannot
+                be copied into a new identity.
+              </p>
+            ) : null}
             {!available && (
               <p role="status">
                 Connect to a community and use a rebuilt desktop app to create

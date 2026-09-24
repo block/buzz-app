@@ -19,6 +19,8 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     snapshot: () => invoke("agent_control_snapshot"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),
+    delete: (id, expectedRevision) =>
+      invoke("agent_control_delete", { id, expectedRevision }),
     action: (id, action, replayFloor) =>
       invoke("agent_control_action", {
         id,

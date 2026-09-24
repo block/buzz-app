@@ -457,6 +457,27 @@ impl Controller {
         self.store.save(id, revision, edit)?;
         self.snapshot()
     }
+    pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err("Agent settings changed. Reload before deleting".into());
+        }
+        // Stop must be confirmed before removing custody or durable settings.
+        self.stop(id)?;
+        self.store.enabled(id, false)?;
+        // A failed settings write leaves the card available for an explicit retry.
+        // Credential deletion is idempotent, so that retry can finish cleanup.
+        self.credentials
+            .delete(&agent.credential_id, &agent.pubkey)?;
+        self.store.remove(id, revision)?;
+        self.errors.remove(id);
+        self.snapshot()
+    }
     pub fn action(&mut self, id: &str, action: Action) -> Result<ControlSnapshot> {
         // Start/restart still require a saved identity; Stop must not depend on it.
         if !matches!(action, Action::Stop) && !self.store.agents()?.iter().any(|a| a.id == id) {

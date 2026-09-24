@@ -596,7 +596,6 @@ it("scopes live naming to channel members rather than out-of-channel namesakes",
   expect(
     screen.getByRole("option", {
       name: `Alex · ${publicKeyLabels([a]).get(a)}`,
-      exact: true,
     }),
   ).toBeInTheDocument();
   expect(screen.getAllByRole("option")).toHaveLength(2);

@@ -21,12 +21,14 @@ import {
 
 export function AgentEditor({
   agent,
+  displayName = agent.name,
   control,
   state,
   avatar,
   onClose,
 }: {
   agent: AgentView;
+  displayName?: string;
   control: AgentControl;
   state: AgentControlState;
   avatar?: string | undefined;
@@ -83,19 +85,19 @@ export function AgentEditor({
             />
           </header>
           <Dialog.Description className="sr-only">
-            Edit {agent.name}. Save updates settings without restarting the
+            Edit {displayName}. Save updates settings without restarting the
             agent.
           </Dialog.Description>
           <div className="flex flex-col items-start gap-3 min-w-0">
             <Avatar
               alt=""
-              fallback={agent.name}
+              fallback={displayName}
               src={avatar ?? null}
               shape="squircle"
               size="large"
             />
             <div className="min-w-0 space-y-1">
-              <p className="text-label break-words">{agent.name}</p>
+              <p className="text-label break-words">{displayName}</p>
               <p className="text-body-sm text-subtle break-all">
                 {agent.relayUrl}
               </p>

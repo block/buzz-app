@@ -52,6 +52,8 @@ it("shows only exact verified visible memberships, handles partial lists and ope
       viewer={viewer}
       communityOrigin="https://relay.example.test"
       navigation={f.navigation}
+      control={undefined}
+      scope={undefined}
     />,
   );
   expect(screen.getByRole("status").textContent).toContain("Loading channels");
@@ -88,8 +90,8 @@ it("shows only exact verified visible memberships, handles partial lists and ope
       { id: "archived", name: "Archived", archived: true, members: [person] },
     ],
   });
-  expect(screen.getByRole("button", { name: "#Visible" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "#Forum" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /#Visible/ })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /#Forum/ })).toBeTruthy();
   expect(
     screen.getByText(/Some memberships for this identity are unclassified/),
   ).toBeTruthy();
@@ -97,7 +99,7 @@ it("shows only exact verified visible memberships, handles partial lists and ope
     screen.queryByText(/Unrelated|Unknown type|Hidden|Archived|Direct|Child/),
   ).toBeNull();
   expect(screen.getByText(/More channels may exist/)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "#Visible" }));
+  fireEvent.click(screen.getByRole("button", { name: /#Visible/ }));
   expect(f.open).toHaveBeenCalledWith({
     version: 1,
     kind: "conversation",
@@ -119,6 +121,8 @@ it("does not invent a route, and retries failed discovery without claiming a com
       viewer={viewer}
       communityOrigin={undefined}
       navigation={f.navigation}
+      control={undefined}
+      scope={undefined}
     />,
   );
   f.update({
@@ -145,6 +149,8 @@ it("renders a verified row without a destination when navigation is unavailable"
       viewer={viewer}
       communityOrigin="https://relay.example.test"
       navigation={undefined}
+      control={undefined}
+      scope={undefined}
     />,
   );
   f.update({
@@ -167,6 +173,8 @@ it("keeps classified roster rows but omits unclassified conversations after meta
       viewer={viewer}
       communityOrigin="https://relay.example.test"
       navigation={f.navigation}
+      control={undefined}
+      scope={undefined}
     />,
   );
   f.update({
@@ -191,7 +199,7 @@ it("keeps classified roster rows but omits unclassified conversations after meta
     ],
   });
   expect(screen.getByRole("alert")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "#Known" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /#Known/ })).toBeTruthy();
   expect(
     screen.getByText(/Some memberships for this identity are unclassified/),
   ).toBeTruthy();
@@ -207,6 +215,8 @@ it("qualifies ready empty results when only matching unclassified memberships ex
       viewer={viewer}
       communityOrigin="https://relay.example.test"
       navigation={f.navigation}
+      control={undefined}
+      scope={undefined}
     />,
   );
   f.update({
@@ -242,6 +252,8 @@ it("does not classify hidden, archived or DM memberships in a ready empty list",
       viewer={viewer}
       communityOrigin="https://relay.example.test"
       navigation={f.navigation}
+      control={undefined}
+      scope={undefined}
     />,
   );
   f.update({
@@ -271,6 +283,8 @@ it("does not show a metadata caveat for another identity's unclassified roster",
       viewer={viewer}
       communityOrigin="https://relay.example.test"
       navigation={f.navigation}
+      control={undefined}
+      scope={undefined}
     />,
   );
   f.update({

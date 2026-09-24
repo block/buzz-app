@@ -32,9 +32,14 @@ test("generated author package exposes injected agentControl without host owners
     await writeFile(
       join(dir, "consumer.ts"),
       `
-import type { Context, AgentControl } from "@buzz/author";
-export const inject = ["agentControl"];
+import type { Context, AgentControl, NamingPolicy } from "@buzz/author";
+export const inject = ["agentControl", "identityNames"];
 export function apply(ctx: Context) {
+  const policy: NamingPolicy = {
+    id: "alternative",
+    resolve: (identities) => new Map(identities.map(({ pubkey, name }) => [pubkey, { name }])),
+  };
+  ctx.identityNames.register(policy);
   const control: AgentControl = ctx.agentControl;
   void control.refresh();
   void control.action("sample", "stop");

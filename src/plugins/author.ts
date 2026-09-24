@@ -10,6 +10,11 @@ export type {
   TemplateProviders,
 } from "../features/channel-templates/provider";
 export type { Context } from "@deepseek-ai/cordis";
+export type {
+  IdentityNames,
+  NamingPolicy,
+} from "../features/identity-names/service";
+export type { NamingIdentity } from "../features/identity-names/policy";
 export type { Page, Pages } from "../features/pages/service";
 export type {
   Panel,

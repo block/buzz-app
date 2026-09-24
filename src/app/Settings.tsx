@@ -7,15 +7,9 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import {
-  SquaresFourIcon,
-  UserIcon,
-  PaletteIcon,
-  BellIcon,
-  ChatCircleIcon,
-  KeyboardIcon,
-  PlugIcon,
-  WrenchIcon,
-} from "../shared/design-system/icons/index";
+  developerMode,
+  settingsSections as sections,
+} from "./settingsSections";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
@@ -33,32 +27,6 @@ import { MessageSettings } from "./MessageSettings";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 import { BuilderLabSettings } from "./BuilderLabSettings";
-
-type Section = { id: string; label: string; icon: typeof UserIcon };
-
-const baseSections: Section[] = [
-  { id: "profile", label: "Profile", icon: UserIcon },
-  { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
-  { id: "appearance", label: "Appearance", icon: PaletteIcon },
-  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
-  { id: "messages", label: "Messages", icon: ChatCircleIcon },
-  { id: "notifications", label: "Notifications", icon: BellIcon },
-  { id: "builderlab", label: "BuilderLab", icon: PlugIcon },
-];
-
-// DEV alone is not enough: packaged desktop builds load a production bundle
-// from tauri://localhost, so the hostname check excludes them too.
-export const developerMode =
-  import.meta.env.DEV &&
-  /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
-
-const sections: Section[] = developerMode
-  ? [...baseSections, { id: "developer", label: "Developer", icon: WrenchIcon }]
-  : baseSections;
-
-export function isSettingsSectionId(value: string): boolean {
-  return sections.some((section) => section.id === value);
-}
 
 export function Settings({
   cards,

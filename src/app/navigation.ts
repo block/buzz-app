@@ -10,7 +10,7 @@ import { communityDestination } from "../features/communities/destination";
 import type { OpenTarget } from "../features/navigation/targets";
 import type { PageNavigation } from "../features/navigation/service";
 import type { OpenFailure } from "../features/navigation/controller";
-import { isSettingsSectionId } from "./Settings";
+import { isSettingsSectionId } from "./settingsSections";
 
 const channelsKey = "buzz.channels/channels";
 export function useAppNavigation(services: AppServices) {

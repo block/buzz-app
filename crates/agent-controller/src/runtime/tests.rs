@@ -715,3 +715,192 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
     assert!(!context.environment.contains_key("GOOSE_PROVIDER"));
     assert!(Controller::draft_goose_model_context(edit(Some("openai"))).is_err());
 }
+
+#[test]
+#[cfg(unix)]
+fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let adapter = tools.path().join("buzz-pi-acp");
+    fs::write(&adapter, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&adapter, fs::Permissions::from_mode(0o700)).unwrap();
+    let extension = tools.path().join("extension with spaces.ts");
+    fs::write(&extension, "export default function() {};").unwrap();
+    let mut a = agent(dir.path());
+    a.harness.command = adapter.display().to_string();
+    a.harness.provider = "custom".into();
+    a.harness.model = "namespace/exact.id".into();
+    a.harness.args = vec![
+        "--".into(),
+        "--extension".into(),
+        extension.display().to_string(),
+    ];
+    for tool in ["pi", "node"] {
+        fs::copy(&adapter, tools.path().join(tool)).unwrap();
+    }
+    a.environment.insert(
+        "PI_CODING_AGENT_DIR".into(),
+        dir.path().display().to_string(),
+    );
+    let root = dir.path().join("config");
+    Store::open(root.clone())
+        .unwrap()
+        .insert(vec![a.clone()])
+        .unwrap();
+    let store = Store::open(root).unwrap();
+    let saved = store.agents().unwrap().remove(0);
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let command = runtime.command(&saved, &key).unwrap();
+    let env: BTreeMap<_, _> = command
+        .get_envs()
+        .map(|(k, v)| (k.to_str().unwrap(), v.unwrap().to_str().unwrap()))
+        .collect();
+    assert_eq!(env["BUZZ_ACP_MODEL"], "custom/namespace/exact.id");
+    assert_eq!(
+        env["BUZZ_ACP_AGENT_ARGS"],
+        format!(
+            "--,--extension,{},--provider,custom,--model,namespace/exact.id",
+            extension.display()
+        )
+    );
+    assert!(!env.contains_key("GOOSE_MODEL"));
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(runtime),
+        dir.path().join("ownership"),
+    );
+    let edit = AgentEdit {
+        name: a.name.clone(),
+        system_prompt: a.system_prompt.clone(),
+        workspace: a.workspace.clone(),
+        harness: a.harness.clone(),
+        environment: BTreeMap::new(),
+    };
+    let context = controller.pi_model_context(&a.id, 1, edit.clone()).unwrap();
+    assert_eq!(context.args, a.harness.args[1..]);
+    assert_eq!(
+        context.environment["PI_CODING_AGENT_DIR"],
+        dir.path().display().to_string()
+    );
+    assert!(controller.pi_model_context(&a.id, 2, edit.clone()).is_err());
+    let mut patch = edit.clone();
+    patch.environment.insert(
+        "PI_CODING_AGENT_DIR".into(),
+        Some("/override/config".into()),
+    );
+    let context = controller
+        .pi_model_context(&a.id, 1, patch.clone())
+        .unwrap();
+    assert_eq!(
+        context.environment["PI_CODING_AGENT_DIR"],
+        "/override/config"
+    );
+    patch.environment.insert("PI_CODING_AGENT_DIR".into(), None);
+    assert!(!controller
+        .pi_model_context(&a.id, 1, patch)
+        .unwrap()
+        .environment
+        .contains_key("PI_CODING_AGENT_DIR"));
+    // Draft resolution did not mutate the saved override.
+    assert_eq!(
+        controller.store.agents().unwrap()[0].environment["PI_CODING_AGENT_DIR"],
+        a.environment["PI_CODING_AGENT_DIR"]
+    );
+    for (provider, model) in [
+        ("custom".to_owned(), "a,b".to_owned()),
+        ("custom".to_owned(), "-model".to_owned()),
+        ("custom,other".to_owned(), "model".to_owned()),
+        ("-provider".to_owned(), "model".to_owned()),
+        ("bad/provider".to_owned(), "model".to_owned()),
+        ("p".repeat(129), "model".to_owned()),
+        ("custom".to_owned(), "m".repeat(513)),
+    ] {
+        let mut invalid = saved.clone();
+        invalid.harness.provider = provider;
+        invalid.harness.model = model;
+        assert!(controller
+            .bundle
+            .as_ref()
+            .unwrap()
+            .command(&invalid, &key)
+            .is_err());
+    }
+    let mut configured = saved.clone();
+    configured.harness.model.clear();
+    assert!(controller
+        .bundle
+        .as_ref()
+        .unwrap()
+        .command(&configured, &key)
+        .unwrap_err()
+        .contains("Choose a Pi model"));
+    configured.harness.provider.clear();
+    configured.harness.args = vec![
+        "--".into(),
+        "--thinking".into(),
+        "high".into(),
+        "--skill".into(),
+        "/local/skill".into(),
+        "--tools".into(),
+        "read".into(),
+    ];
+    let launch = controller
+        .bundle
+        .as_ref()
+        .unwrap()
+        .command(&configured, &key)
+        .unwrap();
+    assert_eq!(
+        launch
+            .get_envs()
+            .find(|(k, _)| *k == "BUZZ_ACP_AGENT_ARGS")
+            .unwrap()
+            .1
+            .unwrap(),
+        "--,--thinking,high,--skill,/local/skill,--tools,read"
+    );
+    let mut advanced = edit;
+    advanced.harness.args = configured.harness.args.clone();
+    let context = Controller::draft_pi_model_context(advanced.clone()).unwrap();
+    assert_eq!(
+        context.catalog_args().unwrap(),
+        configured.harness.args[1..]
+    );
+    advanced.harness.args = vec![
+        "--".into(),
+        "--provider".into(),
+        "old".into(),
+        "--model".into(),
+        "invalid".into(),
+    ];
+    assert!(Controller::draft_pi_model_context(advanced.clone())
+        .unwrap()
+        .catalog_args()
+        .unwrap()
+        .is_empty());
+    for unsupported in [
+        vec!["--custom-extension-flag"],
+        vec!["--extension=/local/extension.ts"],
+        vec!["--api-key", "synthetic-key"],
+        vec!["a prompt"],
+    ] {
+        advanced.harness.args = std::iter::once("--")
+            .chain(unsupported)
+            .map(str::to_owned)
+            .collect();
+        assert!(Controller::draft_pi_model_context(advanced.clone())
+            .unwrap()
+            .catalog_args()
+            .is_err());
+        configured.harness.args = advanced.harness.args.clone();
+        assert!(controller
+            .bundle
+            .as_ref()
+            .unwrap()
+            .command(&configured, &key)
+            .is_ok());
+    }
+}

@@ -6,8 +6,32 @@ directory. Agents retains agent-specific configuration/operations; this slice
 adds no ownership/running badge, editor, agent-library read or execution API.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
+The Info tab's “Latest activity” card shows up to three recently updated assistant
+messages or tool titles/statuses from the existing session-owned records, restricted
+to this exact public key and originating channel (including threads). Retained text
+chunks are joined by session/turn/message identity; without a message identity,
+tool updates separate text segments within that turn. Tool updates reuse the tool
+identity.
+Each item shows at most 600 trailing characters of retained text, with a marker
+when the preview clips that text, and renders at most three lines. Earlier chunks
+may have left the session journal; the preview cannot identify missing history.
+Plain text only: no HTML, images or active links.
+Prompts, thinking, arguments, raw results and unsupported records are omitted;
+“View activity” retains the raw destination. This is a bounded preview, not a full
+transcript or history backfill. The timestamp includes visible content updates as
+well as turn signals. It uses a short date and time rather than
+a relative age that could become stale between snapshot updates. No context means
+no preview, never an all-channel fallback. Connecting, disconnected, unavailable
+and empty states are explicit. Counts and detailed explanations stay in the
+activity panel; the preview does not infer idle state or successful completion.
+
 This action is offered for any public identity: it does not infer that the identity
-is an owned/running agent. Missing telemetry is explained by the activity panel.
+is an owned/running agent. Public agent hints never grant telemetry access. The
+existing observer admission and session access-reset/generation fences remain the
+authority; the child adds no library read, capture lease, socket, timer or store.
+Disabling Agent Activity removes the preview/action and clears capture. Profile
+opening subscribes only to the existing snapshot; it never starts telemetry.
+Raw records, channel switching and live-feed retry remain in the activity panel.
 
 Guarded invitations that fail or have an unknown outcome remain saved in the
 outbox. Its generic Retry action is withheld for these records. Retrying the
@@ -50,7 +74,7 @@ Remove from outbox does not revoke an invitation already dispatched to the relay
 
 ## UI and iteration
 
-Avatar, name, about, exact copyable npub, and an optional contextual activity action. Shared design-system Avatar and
+Avatar, name, about, exact copyable npub, and an optional compact activity preview/action. Shared design-system Avatar and
 Button use the host-loaded styles directly. The profile content marks its
 `data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet
 owns layout, not component overrides. No new theme owner, second global reset or

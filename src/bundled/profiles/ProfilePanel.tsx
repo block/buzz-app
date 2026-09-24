@@ -18,7 +18,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { activityTarget } from "../../features/agents/activity-target";
+import { ProfileActivity } from "./ProfileActivity";
 import type { PanelProps } from "../../features/panels/service";
 import { profileKey, profileTarget } from "../../features/profiles/target";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -122,7 +122,6 @@ function ProfileDetails({
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
   const identityName = useChannelIdentityNames(session, context?.channelId);
   const name = identityName(pubkey, profile?.name ?? "Unknown profile");
-  const activity = activityTarget(pubkey, context?.channelId);
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
     : null;
@@ -170,19 +169,11 @@ function ProfileDetails({
                 {profile?.about && (
                   <p className={styles.about}>{profile.about}</p>
                 )}
-                {context?.canOpen(activity) && (
-                  <div>
-                    <Button
-                      size="compact"
-                      onClick={() => context.open(activity)}
-                    >
-                      View activity
-                    </Button>
-                    <p className="text-body-sm text-secondary">
-                      Owner-only agent telemetry in this channel, if published.
-                    </p>
-                  </div>
-                )}
+                <ProfileActivity
+                  session={session}
+                  pubkey={pubkey}
+                  context={context}
+                />
                 {control && (
                   <ProfileInstances
                     control={control}

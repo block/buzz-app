@@ -8,7 +8,9 @@ identity in the active community; profile metadata and library hints grant no au
 
 **Local agent** is a read-only summary from the app-owned native `AgentControl`
 snapshot. It appears only for a record with the exact profile key whose relay
-origin and viewer match the active community scope (`sameCommunityAgents`). It
+origin matches the active community scope (`sameCommunityAgents`). Native
+custody is app-wide: the viewer is not an owner check, so any account in this
+app on the same relay sees the same local record. It
 shows process status (still "relay readiness unverified", not a listening badge),
 harness/provider/model/workspace, collapsible instructions, saved-vs-running
 revision drift, the host's sanitized error and diagnostics. Environment keys and

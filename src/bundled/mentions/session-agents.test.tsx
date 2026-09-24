@@ -572,6 +572,11 @@ it("keeps an outside namesake discoverable and qualifies the actual choice set",
   const session = {
     ...test.session,
     agentLibrary: library.queries,
+    agentChoices: createAgentChoices({
+      scope: "scope",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
     profiles: { ...test.session.profiles, snapshot: () => profiles },
   };
   const provider = createAgentDirectory();

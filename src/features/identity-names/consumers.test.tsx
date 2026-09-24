@@ -84,6 +84,13 @@ function fixture() {
       retain: () => () => {},
       refresh: async () => {},
     },
+    agentChoices: {
+      snapshot: () => library,
+      subscribe,
+      retain: () => () => {},
+      ensure() {},
+      refresh: async () => {},
+    },
     agentActivity: { snapshot: () => activity, subscribe },
     thread: () => ({
       snapshot: () => thread,

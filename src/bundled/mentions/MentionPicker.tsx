@@ -62,7 +62,12 @@ export function MentionPicker({
   const channel = list.channels.find((item) => item.id === channelId);
   const available = useMemo(
     () =>
-      availableMentionAgents(channel, agents.identities, inviteAgents, session.outbox?.supports(9000)),
+      availableMentionAgents(
+        channel,
+        agents.identities,
+        inviteAgents,
+        session.outbox?.supports(9000),
+      ),
     [channel, agents, session.outbox, inviteAgents],
   );
   const parentAdmission =

@@ -57,8 +57,17 @@ const rawSession = {
     ensureList: () => {},
     refreshList: () => {},
   },
-  agentLibrary: { snapshot: () => library, subscribe: empty, retain: empty, refresh: async () => {} },
-  agentChoices: { snapshot: () => library, subscribe: empty, retain: empty, refresh: async () => {},
+  agentLibrary: {
+    snapshot: () => library,
+    subscribe: empty,
+    retain: empty,
+    refresh: async () => {},
+  },
+  agentChoices: {
+    snapshot: () => library,
+    subscribe: empty,
+    retain: empty,
+    refresh: async () => {},
   },
   emoji: {
     snapshot: () => emojiSnapshot,

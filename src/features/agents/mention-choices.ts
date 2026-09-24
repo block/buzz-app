@@ -10,6 +10,8 @@ export function availableMentionAgents(
     !channel.archived &&
     (channel.channelType === "stream" || channel.channelType === "forum") &&
     canInvite
-    ? agents.filter((agent) => agent.managed && !channel.members?.includes(agent.pubkey))
+    ? agents.filter(
+        (agent) => agent.managed && !channel.members?.includes(agent.pubkey),
+      )
     : [];
 }

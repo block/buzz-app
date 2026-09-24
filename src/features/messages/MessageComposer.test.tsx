@@ -1803,7 +1803,8 @@ it("keeps inline recipient identity and source stable through directory collisio
   expect(labels()).toEqual(["@Honey · rcaj", "@Honey · 04hu"]);
   h.input().setSelectionRange(7, 13);
   act(() => h.commands().insertText(""));
-  expect(labels()).toEqual(["@Honey"]);
+  // Removing a selected chip does not remove the other channel member from naming scope.
+  expect(labels()).toEqual(["@Honey · rcaj"]);
   h.submit();
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
   h.unmount();

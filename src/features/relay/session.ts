@@ -29,6 +29,11 @@ import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createDirectMessages } from "./direct-messages";
 import { createWorkSessions } from "./work-sessions";
+import { inventoryReader } from "../agents/inventory";
+import {
+  isOwnerInventoryFilter,
+  readRelayLibrary,
+} from "../agents/relay-library";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
 import {
@@ -329,9 +334,15 @@ export function createRelaySession(
       cancelUploads();
       lifecycle.cancel();
       typing.clear();
-      // Filters cannot tell us ownership of broad/ID/reference reads. Infrequent
-      // authoritative access loss cancels them all, not merely explicit #h reads.
-      requests.invalidate();
+      // Saved owner inventory does not depend on channel access. Preserve only
+      // that narrow read; broad, mixed, ID and channel reads must still retire.
+      requests.invalidate(
+        (filters) =>
+          !filters.length ||
+          filters.some(
+            (filter) => !isOwnerInventoryFilter(filter, transport?.viewer),
+          ),
+      );
       const visible = visibility();
       const revoked = recent
         .entries()
@@ -544,7 +555,14 @@ export function createRelaySession(
     () => !closed && !revoking && !cacheClearing && memoryConnected,
     notify,
   );
-  const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
+  const agentLibrary = createAgentLibrary(
+    transport
+      ? inventoryReader(transport.readAgentLibrary, (signal) =>
+          readRelayLibrary(requests.reader, transport.viewer, signal),
+        )
+      : undefined,
+    notify,
+  );
   const agentChoices = createAgentChoices({
     scope: `${transport?.scope ?? transport?.relayAuthor}:${transport?.viewer}`,
     library: agentLibrary.queries,

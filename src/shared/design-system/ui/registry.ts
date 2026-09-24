@@ -112,6 +112,31 @@ export type ComponentDefinition = {
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
   {
+    slug: "calendar",
+    name: "Calendar",
+    purpose: "Choose a date using a month grid.",
+    behavior:
+      "React DayPicker owns calendar arithmetic and keyboard navigation; Buzz owns styling and Phosphor navigation icons.",
+    variants: ["single date", "selected", "today", "disabled dates"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Calendar.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
+    slug: "field-button",
+    name: "FieldButton",
+    purpose: "Open a picker with the same shape and inset as a text field.",
+    behavior: "Base UI Button composes with menu and popover triggers.",
+    variants: ["default", "disabled", "expanded"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/FieldButton.tsx",
+    baseUi: [BASE_UI_PARTS.button],
+    composes: [],
+  },
+  {
     slug: "toast",
     name: "Toast",
     purpose:
@@ -309,7 +334,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "outline",
       "inverted",
       "link",
-      "size: sm | md | lg",
+      "size: xs | sm | md | lg",
       "loading",
     ],
     status: "proposed",

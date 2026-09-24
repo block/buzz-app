@@ -17,12 +17,14 @@ it.each([false, true])(
       profile: { name: "Fixture", picture: "" },
       viewer: null,
     };
+    const connection = { status: "unavailable", session: undefined, scope: "" };
     const presence = { status: "online", preference: "auto", error: null };
     const subscribe = () => () => {};
     const communities = {
       subscribe,
       snapshot: () => snapshot,
       presence: { subscribe, snapshot: () => presence },
+      relay: { subscribe, snapshot: () => connection },
     } as unknown as Communities;
     function Shell() {
       const [settings, setSettings] = useState(false);
@@ -41,7 +43,7 @@ it.each([false, true])(
     }
     render(<Shell />);
     await user.click(screen.getByRole("button", { name: "Your profile" }));
-    const menu = await screen.findByRole("menu", { name: "Your account" });
+    const menu = await screen.findByRole("menu", { name: "Fixture" });
     let release!: () => void;
     const finished = new Promise<void>((resolve) => {
       release = resolve;
@@ -65,3 +67,62 @@ it.each([false, true])(
     }
   },
 );
+
+it("uses the loaded community name in the profile button and menu", async () => {
+  const { createRelaySession } = await import("../../features/relay/session");
+  const owner = createRelaySession(null);
+  const user = userEvent.setup();
+  const viewer = "a".repeat(64);
+  let profiles = new Map<string, { name: string }>();
+  const listeners = new Set<() => void>();
+  const connection = {
+    session: {
+      ...owner.session,
+      profiles: {
+        snapshot: () => profiles,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        ensure: vi.fn(async () => {}),
+      },
+    },
+  };
+  const snapshot = { profile: { name: "Local name", picture: "" }, viewer };
+  const presence = { status: "online", preference: "auto", error: null };
+  const subscribe = () => () => {};
+  const communities = {
+    subscribe,
+    snapshot: () => snapshot,
+    presence: { subscribe, snapshot: () => presence },
+    relay: { subscribe, snapshot: () => connection },
+  } as unknown as Communities;
+  const view = render(
+    <ProfileButton
+      communities={communities}
+      settingsSelected={false}
+      onSettings={() => {}}
+    />,
+  );
+  try {
+    expect(
+      screen.getByRole("button", { name: "Your profile" }),
+    ).toBeInTheDocument();
+    act(() => {
+      profiles = new Map([[viewer, { name: "Community name" }]]);
+      for (const listener of listeners) listener();
+    });
+    await user.click(screen.getByRole("button", { name: "Your profile" }));
+    expect(
+      await screen.findByRole("menu", { name: "Community name" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Availability: Online" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Your profile")).not.toBeInTheDocument();
+    expect(screen.queryByText("Your account")).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});

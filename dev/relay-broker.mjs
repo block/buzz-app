@@ -1,3 +1,4 @@
+import { validStatusTemplate } from "./user-status.mjs";
 import { prepareMedia } from "./media-preparation.mjs";
 import {
   prepareChannelKit,
@@ -680,6 +681,7 @@ export function relayBrokerPlugin({
               relayUrl: relay,
               directMessages: true,
               writeKinds: [
+                30315,
                 7,
                 9,
                 40003,
@@ -1324,7 +1326,13 @@ export function relayBrokerPlugin({
           const signing = route === "/api/relay/sign";
           const publishing = route === "/api/relay/publish";
           if (signing || publishing) {
-            if ([9000, 9007].includes(filters?.kind)) {
+            if (filters?.kind === 30315) {
+              if (!validStatusTemplate(filters))
+                return json(res, 400, {
+                  error: "Status rejected",
+                  sent: false,
+                });
+            } else if ([9000, 9007].includes(filters?.kind)) {
               const enrollment = validAgentEnrollment(filters);
               const authority = await getAuthority(relay);
               if (

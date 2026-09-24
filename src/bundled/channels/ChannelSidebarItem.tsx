@@ -1,3 +1,4 @@
+import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import { memo } from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
@@ -75,6 +76,16 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
           </span>
         ) : (
           <Icon size={17} />
+        )
+      }
+      nameAccessory={
+        channel.channelType === "dm" &&
+        channel.participants?.length === 1 && (
+          <UserStatusDisplay
+            session={session}
+            userId={channel.participants[0] ?? ""}
+            compact
+          />
         )
       }
       badge={

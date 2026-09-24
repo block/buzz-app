@@ -90,13 +90,13 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     );
   await page.goto(app.origin);
   const avatar = button(page, "Your profile");
-  const account = page.getByRole("menu", { name: "Your account" });
+  const account = page.getByRole("menu", { name: "Fixture Reader" });
   const settings = account.getByRole("menuitem", {
     name: "Settings",
     exact: true,
   });
-  const automatic = account.getByRole("menuitemradio", {
-    name: "Automatic",
+  const statusEntry = account.getByRole("menuitem", {
+    name: "Set a status",
     exact: true,
   });
   await expect(avatar).toHaveAttribute("aria-expanded", "false");
@@ -109,7 +109,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(account).toBeInViewport();
     await expect(avatar).toHaveAttribute("aria-expanded", "true");
     await page.keyboard.press("ArrowDown");
-    await expect(automatic).toBeFocused();
+    await expect(statusEntry).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(account).toBeHidden();
     await expect(avatar).toBeFocused();
@@ -121,20 +121,13 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(account).toBeHidden();
     await avatar.focus();
     await page.keyboard.press("Enter");
-    await expect(automatic).toBeFocused();
-    // Menu navigation moves focus, not the user's status preference.
+    await expect(statusEntry).toBeFocused();
     await page.keyboard.press("ArrowDown");
-    const away = account.getByRole("menuitemradio", {
-      name: "Away",
-      exact: true,
-    });
-    await expect(away).toBeFocused();
-    await expect(automatic).toBeChecked();
-    await expect(away).not.toBeChecked();
+    await expect(settings).toBeFocused();
     await page.keyboard.press("End");
     await expect(settings).toBeFocused();
     await page.keyboard.press("Home");
-    await expect(automatic).toBeFocused();
+    await expect(statusEntry).toBeFocused();
     await tab(true);
     await expect(account).toBeHidden();
     await expect(avatar).toBeFocused();
@@ -143,7 +136,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   }
   await avatar.focus();
   await page.keyboard.press("Enter");
-  await expect(automatic).toBeFocused();
+  await expect(statusEntry).toBeFocused();
   await page.keyboard.press("End");
   await expect(settings).toBeFocused();
   await page.keyboard.press("Enter");
@@ -270,7 +263,7 @@ test("Settings edits the local profile inline without publishing to a community"
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("menu", { name: "Your account" })).toBeHidden();
+  await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   const name = page.getByRole("textbox", { name: "Display name", exact: true });
   const picture = page.getByRole("textbox", {
@@ -296,7 +289,7 @@ test("Settings edits the local profile inline without publishing to a community"
     .click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("menu", { name: "Your account" })).toBeHidden();
+  await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Browser Fixture");
   await name.fill("   ");
@@ -315,9 +308,9 @@ test("Settings edits the local profile inline without publishing to a community"
       .getByRole("status"),
   ).toHaveText("Profile updated.");
   await button(page, "Your profile").hover();
-  await expect(page.getByRole("tooltip")).toHaveText("Updated local profile");
+  await expect(page.getByRole("tooltip")).toHaveText("Fixture Reader");
   await expect(button(page, "Your profile")).toHaveAccessibleDescription(
-    "Updated local profile",
+    "Fixture Reader",
   );
   await name.fill("Discard after saving");
   await button(page, "Cancel").click();
@@ -325,7 +318,7 @@ test("Settings edits the local profile inline without publishing to a community"
   await page.reload();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("menu", { name: "Your account" })).toBeHidden();
+  await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Updated local profile");
   expect(writes).toEqual([]);

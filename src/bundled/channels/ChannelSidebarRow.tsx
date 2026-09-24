@@ -15,6 +15,7 @@ import styles from "./ChannelSidebarRow.module.css";
 export function ChannelSidebarRow({
   channel,
   icon,
+  nameAccessory,
   badge,
   childContent,
   wrapSelect,
@@ -32,6 +33,7 @@ export function ChannelSidebarRow({
 }: {
   channel: ChannelSummary;
   icon: ReactNode;
+  nameAccessory?: ReactNode;
   badge?: ReactNode;
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
@@ -67,7 +69,12 @@ export function ChannelSidebarRow({
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
       selected={selected === channel.id && !draftSelected}
-      label={<span className={styles.label}>{channel.name}</span>}
+      label={
+        <span className={styles.nameContent}>
+          <span className={styles.label}>{channel.name}</span>
+          {nameAccessory}
+        </span>
+      }
       icon={
         hasChildren ? (
           <span className={styles.iconSpace} aria-hidden="true" />

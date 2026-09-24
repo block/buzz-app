@@ -97,6 +97,13 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+.author {
+  --user-status-emoji-size: 14px;
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: var(--space-1);
+}
 .text {
   margin: var(--space-1) 0 0;
   font-size: var(--text-body-sm);

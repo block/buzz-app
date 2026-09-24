@@ -1,3 +1,4 @@
+import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
@@ -146,6 +147,7 @@ function ProfileDetails({
           />
         </div>
         <h2 className="text-heading">{name}</h2>
+        <UserStatusDisplay session={session} userId={pubkey} />
       </div>
       <Tabs
         value={tab}

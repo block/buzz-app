@@ -236,6 +236,10 @@
   .buzz-input-group:has(.buzz-input-trailing) {
     padding-inline-end: calc(var(--space-1) - 1px);
   }
+  /* Leading actions already reserve their own hit area, like trailing actions. */
+  .buzz-input-group:has(.buzz-input-leading > .buzz-button) {
+    padding-inline-start: calc(var(--space-1) - 1px);
+  }
   .buzz-input-group > .buzz-input {
     flex: 1;
     min-width: 0;
@@ -284,5 +288,76 @@
     .buzz-input-group {
       transition: none;
     }
+  }
+}
+
+@layer components {
+  .buzz-calendar {
+    @apply text-body-sm;
+    padding: var(--space-3);
+    color: var(--text-standard);
+    width: max-content;
+  }
+  .buzz-calendar .rdp-months {
+    position: relative;
+  }
+  .buzz-calendar .rdp-month_caption {
+    @apply text-label-sm;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: var(--size-control-sm);
+    margin-bottom: var(--space-2);
+  }
+  .buzz-calendar .rdp-nav {
+    position: absolute;
+    inset: 0 0 auto;
+    display: flex;
+    justify-content: space-between;
+    pointer-events: none;
+  }
+  .buzz-calendar .rdp-month_grid {
+    border-collapse: collapse;
+  }
+  .buzz-calendar .rdp-weekday {
+    @apply text-caption;
+    color: var(--text-subtle);
+    text-align: center;
+    height: var(--size-control-sm);
+  }
+  .buzz-calendar .rdp-day {
+    padding: var(--space-half);
+    text-align: center;
+  }
+  .buzz-calendar :is(.rdp-day_button, .rdp-button_previous, .rdp-button_next) {
+    @apply text-body-sm;
+    display: grid;
+    place-items: center;
+    width: var(--size-control-sm);
+    height: var(--size-control-sm);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .buzz-calendar .rdp-outside {
+    color: var(--text-subtle);
+  }
+  .buzz-calendar .rdp-today .rdp-day_button {
+    background: var(--affordance-subtle);
+  }
+  .buzz-calendar button:hover:not(:disabled) {
+    background: var(--affordance-subtle-hover);
+  }
+  .buzz-calendar .rdp-selected .rdp-day_button {
+    background: var(--affordance-prominent);
+    color: var(--text-inverse);
+  }
+  .buzz-calendar button:disabled {
+    color: var(--text-unavailable);
+    cursor: not-allowed;
   }
 }

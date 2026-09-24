@@ -22,7 +22,8 @@ frontend hot reload alone is not enough.
 
 Settings independently enables/disables Channels and GitHub. Disabling GitHub
 removes its link handler and open panel; shared channel data remains available.
-Disabling Channels removes its page while the app-owned data survives.
+Channels is required by the current host; optional page removal does not dispose
+the app-owned sidebar or session data.
 
 The broker uses the existing authorized Buzz identity in the OS secret store (macOS
 Keychain, Linux secret service) and
@@ -45,7 +46,11 @@ This is not a new native login.
 - `features/messages` owns reusable `ChannelTimeline`, `MessageRow`, `ThreadPanel`,
   `MessageComposer`, delivery presentation, styles and reading geometry. They accept
   ordinary props over the shared session; none owns a connection or outbox.
-- `bundled/channels` owns page registration, channel selection/navigation, sidebar,
+- `features/channel-navigation` owns the persistent sidebar and its scoped UI handoff
+  for session draft rows and preparing DMs. App composes it beside independent pages;
+  sidebar actions use the normal navigation controller. It reuses session capabilities
+  and existing sidebar components without another relay/cache or plugin registry.
+- `bundled/channels` owns page registration, conversation selection/navigation,
   diagnostics, layout and panel placement. `shared/view-state.ts` partitions persisted
   drafts and view intent by community/viewer scope.
 - `bundled/github` registers and implements the panel. Channels uses the panel
@@ -60,8 +65,9 @@ Keep page-specific navigation and arrangement in the plugin; compose shared mess
 components rather than copying them. Session reconciliation, authorization, retained
 reads and durable outbox recovery remain host-owned even if Channels is disabled.
 
-The workspace React key includes community/viewer scope **and** connection
-generation. This resets session-owned component state on switching or reconnecting;
+The sidebar and Channels workspace React keys include community/viewer scope **and**
+connection generation. This resets their session-owned state on switching or
+reconnecting, not unrelated page drafts;
 drafts, channel selection and reading geometry retain their stable scope keys.
 
 Saved sidebar groups, ordering, assignments and stars live in the session's
@@ -74,13 +80,14 @@ preferences, not channel access grants: sidebar sections still intersect the
 authorized roster. There is no new disk cache or automatic cross-device sync.
 
 Collapsed section keys and sidebar scroll remain separate, scoped view intent.
-They are saved on page exit and restored before paint when the roster and groups
+They survive page switches in the same mounted sidebar, are saved when that
+sidebar exits its session, and restore before paint when the roster and groups
 are available; navigation history does not own them. Search lives in the top-bar
 palette; legacy sidebar filters are ignored. The saved-groups
 browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
 
-Channel row actions share one page-owned `ContextMenuRoot` / `MenuPopup`, labelled
+Channel row actions share one sidebar-owned `ContextMenuRoot` / `MenuPopup`, labelled
 `Actions for <channel>`. **New session** comes first; additional sidebar actions
 should extend that popup, with a separator only when another action group follows.
 `ChannelSidebarItem` owns the context trigger inside its memo boundary, using stable
@@ -95,6 +102,16 @@ or restoring eligibility does not reopen the menu. For future group commands,
 derive the saved group id separately from `group:<id>` rather than conflating it
 with rendered placement. Right-clicking the separate session disclosure remains
 outside the parent menu trigger, as do child-session rows.
+
+Sidebar create-channel dialogs and partial-setup recovery stay available on other
+pages. Completion is fenced to the originating relay session and navigates to a
+normal conversation destination. New-session intent uses the Channels version-1
+page route `{ kind: "new-session", parentId }`; Channels checks parent access/type
+and Sessions availability. Only parent intent, never draft text, enters history.
+Preparing-DM suppression captures the pre-open roster and exact member set, hiding
+only newly prepared DMs until confirmation; leaving New message or replacing the
+session clears that handoff. Timeline readers and reading leases stay in visible
+conversation content and unmount when leaving Messages.
 
 ## Sidebar sort persistence
 
@@ -322,11 +339,11 @@ Channels supports plain-text Markdown authoring with a shared durable outbox and
 Channel and thread messages render CommonMark plus GFM headings, emphasis, lists, quotes,
 tables, task lists, strikethrough and code, while preserving chat-style single line breaks.
 Only credential-free HTTPS links are active; raw HTML is ignored and inline remote images
-are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji
-remain event-local and are not substituted inside links or code. Authenticated live traffic
-reconciles through the same session. Channel creation and composer preview/toolbars are not
-implemented. Reply counts open a bounded thread view; attachments are links. Routine freshness
-labels are not shown; Channel Settings → Diagnostics
+are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji remain
+event-local and are not substituted inside links or code.
+Authenticated live traffic reconciles through the same session. Channel creation and composer
+preview/toolbars are not implemented. Reply counts open a bounded thread view; attachments are
+links. Routine freshness labels are not shown; Channel Settings → Diagnostics
 exposes refresh, outbox inspection and timings. Packaged builds do not
 include the development relay broker. GitHub fetches public data only; signed-in
 GitHub actions remain on GitHub. A saved-groups/stars failure keeps its specific

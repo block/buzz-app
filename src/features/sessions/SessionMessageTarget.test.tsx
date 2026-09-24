@@ -10,7 +10,7 @@ import type { PageNavigation } from "../navigation/service";
 import { SessionMessageTarget } from "./SessionMessageTarget";
 
 beforeEach(() => {
-  // jsdom has no scrolling/layout; real geometry/focus is tested in Playwright.
+  // Browser-only APIs are fixture boundaries; actual layout is tested in Playwright.
   HTMLElement.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal(
     "ResizeObserver",
@@ -22,8 +22,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
   vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 function setup() {
   const views: ReturnType<typeof makeView>[] = [];
@@ -195,7 +195,12 @@ it("keeps a verified exact target readable if unrelated thread context fails", a
       },
     }),
   );
-  expect(screen.getByText("Selected reply")).toBeVisible();
+  const selected = screen.getByText("Selected reply");
+  expect(selected).toBeVisible();
+  // Let reveal run before teardown; rendering text alone can outrun its frame.
+  await waitFor(() =>
+    expect(selected.closest("[data-message-id]")).toHaveFocus(),
+  );
   await waitFor(() =>
     expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({
       block: "start",

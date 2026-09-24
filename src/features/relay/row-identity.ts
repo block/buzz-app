@@ -36,6 +36,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.membership?.target === right.membership?.target &&
     left.edited === right.edited &&
     left.attachmentContentRemoved === right.attachmentContentRemoved &&
+    left.attachmentSourceId === right.attachmentSourceId &&
     sameArray(left.mentions, right.mentions) &&
     sameArray(
       left.attachments,

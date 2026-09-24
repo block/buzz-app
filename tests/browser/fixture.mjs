@@ -554,6 +554,10 @@ export const test = base.extend({
       response.end(JSON.stringify(body));
     };
     const answer = (community, filter) => {
+      if (filter.kinds?.includes(30617) || filter.kinds?.includes(30621)) {
+        expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
+        return [];
+      }
       if (filter.kinds?.includes(20001))
         return filter.authors.map((author) =>
           sign(20001, [["p", author]], "online"),

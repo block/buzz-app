@@ -1307,18 +1307,32 @@ export function createChannelStore(
       if (disposed || generation !== epoch) return;
       if (!authorized(state.channelId)) continue;
       const ids = new Set(state.events.map((event) => event.id));
-      const incoming = events.filter(
-        (event) =>
-          !ids.has(event.id) &&
-          [9, 40002, 40008, 40099, 40003, 5, 9005, 7, 39005].includes(
-            event.kind,
-          ) &&
-          event.tags.some(
-            (tag) =>
-              (tag[0] === "h" && tag[1] === state.channelId) ||
-              (tag[0] === "e" && ids.has(tag[1] ?? "")),
-          ),
-      );
+      const incomingIds = new Set(ids);
+      const incoming: RelayEvent[] = [];
+      let changed = true;
+      while (changed && incomingIds.size < ids.size + events.length) {
+        changed = false;
+        for (const event of events) {
+          if (
+            incomingIds.has(event.id) ||
+            ![9, 40002, 40008, 40099, 40003, 5, 9005, 7, 39005].includes(
+              event.kind,
+            )
+          )
+            continue;
+          if (
+            !event.tags.some(
+              (tag) =>
+                (tag[0] === "h" && tag[1] === state.channelId) ||
+                (tag[0] === "e" && incomingIds.has(tag[1] ?? "")),
+            )
+          )
+            continue;
+          incoming.push(event);
+          incomingIds.add(event.id);
+          changed = true;
+        }
+      }
       if (!incoming.length) continue;
       const localIds = new Set(
         (local?.snapshot() ?? []).map((item) => item.event.id),

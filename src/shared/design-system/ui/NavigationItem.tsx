@@ -15,7 +15,7 @@ export function NavigationItem({
   trailing?: ReactNode;
   selected?: boolean;
   inset?: boolean;
-  variant?: "row" | "pill";
+  variant?: "row" | "pill" | "option";
 } & Omit<ComponentProps<typeof BaseButton>, "className" | "children">) {
   return (
     <BaseButton

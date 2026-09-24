@@ -117,6 +117,10 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(
     actions.getByRole("menuitem", { name: "New session" }),
   ).toBeVisible();
+  // Leave the hover trigger while the context menu still owns focus. Otherwise
+  // its delayed hover close can overlap the later keyboard-open assertion.
+  await page.mouse.move(0, 0);
+  await expect(popover).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(actions).toHaveCount(0);
   await expect(alpha).toBeFocused();
@@ -125,11 +129,8 @@ test("thread buttons show observed unread independently, clear only after readin
   await page.keyboard.press("Escape");
   await expect(actions).toHaveCount(0);
   await expect(alpha).toBeFocused();
-  // Context-menu dismissal can leave Activity hover-open under the pointer.
-  // Leave hover and finish its exit before Enter tests keyboard opening rather
-  // than toggling it closed and observing the still-visible exit animation.
-  await page.mouse.move(0, 0);
   await expect(popover).toHaveCount(0);
+  await expect(alpha).toHaveAttribute("aria-expanded", "false");
   await alpha.press("Enter");
   await expect(alpha).toHaveAttribute("aria-expanded", "true");
   await expect(popover).toBeVisible();
@@ -250,4 +251,77 @@ test("thread buttons show observed unread independently, clear only after readin
           filter.kinds?.includes(39002) && filter["#d"]?.includes("alpha"),
       ),
   ).toEqual([]);
+});
+
+// Browser focus plus actual controller/React wiring: a same-target open must not
+// leave the timeline's trigger installed merely because the history entry is reused.
+test("same-thread sidebar activity replaces timeline focus return", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  await expect(
+    alpha.getByRole("img", { name: /unread threads?/ }),
+  ).toBeVisible();
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let requested = false;
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.depth_limit)
+    ) {
+      requested = true;
+      await held;
+    }
+    await route.continue().catch(() => {});
+  });
+  try {
+    const trigger = page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ });
+    await expect(trigger).toHaveCSS("pointer-events", "auto");
+    await trigger.click();
+    await expect.poll(() => requested).toBe(true);
+    const before = await page.evaluate(() => {
+      const { entry, attempt } = window.fixtureNavigation.snapshot();
+      return { entry: entry.id, attempt: attempt.id };
+    });
+    await alpha.hover();
+    const activity = page.getByRole("dialog", { name: "Activity in Alpha" });
+    await activity
+      .getByRole("button", { name: /Open unread thread from.*Broadcast reply/ })
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate((before) => {
+          const { entry, attempt } = window.fixtureNavigation.snapshot();
+          return {
+            sameEntry: entry.id === before.entry,
+            freshAttempt: attempt.id !== before.attempt,
+          };
+        }, before),
+      )
+      .toEqual({ sameEntry: true, freshAttempt: true });
+    release();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      )
+      .toBe("opened");
+    await page
+      .getByRole("button", { name: "Close thread", exact: true })
+      .click();
+    await expect(alpha).toBeFocused();
+  } finally {
+    release();
+  }
 });

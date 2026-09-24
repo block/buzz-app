@@ -2,14 +2,14 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelList } from "../../features/relay/contracts";
 
-// Presentation latch only, never roster/access data. Warm page remounts reveal
+// Presentation latch only, never roster/access data. Warm sidebar remounts reveal
 // immediately, but new relay/viewer sessions start independently.
 const startupSessions = new WeakMap<
   SidebarStartupSession,
   { revealed: boolean; unreadDone: boolean }
 >();
 export const SIDEBAR_REVEAL_BUDGET_MS = 1500;
-// Only page-owned presentation depends on these signals. No new relay work.
+// Only sidebar-owned presentation depends on these signals. No new relay work.
 export type SidebarStartupSession = {
   live: Pick<RelaySession["live"], "subscribe" | "snapshot">;
   unread: Pick<RelaySession["unread"], "ensure">;
@@ -20,8 +20,8 @@ export function useSidebarStartup(
   list: ChannelList,
   preferences: ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>,
 ) {
-  // ChannelWorkspace is keyed by scope and connection generation; the hook is
-  // remounted for a replacement session, while page-only remounts reuse latches.
+  // ChannelSidebar is keyed by scope and connection generation; the hook is
+  // remounted for a replacement session, while same-session remounts reuse latches.
   const [retained] = useState(() => {
     const state = startupSessions.get(session) ?? {
       revealed: false,
@@ -46,7 +46,7 @@ export function useSidebarStartup(
       .ensure()
       .catch(() => {})
       .then(() => {
-        // Only the UI subscription ends on page exit; the session still owns
+        // Only the UI subscription ends on sidebar exit; the session still owns
         // this shared read. Preserve settlement if it finishes while away.
         retained.unreadDone = true;
         if (mounted) setUnreadDone(true);

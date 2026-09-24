@@ -1,0 +1,5 @@
+/* Opt-in native scrollbar treatment, also injected into Emoji Mart. */
+.buzz-thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-prominent) transparent;
+}

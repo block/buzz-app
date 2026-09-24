@@ -100,7 +100,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
     .getByRole("button", { name: "Projects", exact: true })
     .first()
     .click();
-  await expect(sidebar).toHaveCount(0);
+  await expect(sidebar).toBeVisible();
   await page
     .getByRole("button", { name: "Messages", exact: true })
     .first()

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
 import { fetchKlipyGifs, type KlipyGif } from "../../features/relay/gifs";
+import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Emoji.module.css";
 
 const LOADING_TILES = [
@@ -32,7 +33,6 @@ export function GifPicker({
   const [error, setError] = useState<string>();
   const [attempt, retry] = useState(0);
   const input = useRef<HTMLInputElement>(null);
-
   useLayoutEffect(() => {
     input.current?.focus();
   }, []);
@@ -62,6 +62,7 @@ export function GifPicker({
     <div className={styles.gifPicker}>
       <div className={styles.gifSearch}>
         <SearchField
+          variant="capsule"
           inputRef={input}
           label="Search GIFs"
           placeholder="Search GIFs"
@@ -78,7 +79,7 @@ export function GifPicker({
           }}
         />
       </div>
-      <div className={styles.gifResults}>
+      <div className={`${styles.gifResults} buzz-thin-scrollbar`}>
         {!gifs && !error ? (
           <div
             className={styles.gifLoading}

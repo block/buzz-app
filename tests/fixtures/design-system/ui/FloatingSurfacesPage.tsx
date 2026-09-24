@@ -39,6 +39,14 @@ export function FloatingSurfacesPage() {
           </dl>
         </div>
       </Section>
+      <p className="text-body-sm text-subtle">
+        Small action menus opt into 10px outer corners, 8px rows, and a 4px
+        inset. Other floating surfaces retain the 24px panel radius. See the{" "}
+        <Link to="/design/components/$slug" params={{ slug: "popover" }}>
+          Popover examples
+        </Link>{" "}
+        for the content-based sizing rule and both treatments.
+      </p>
       <Section
         title="Same surface, different behavior"
         description="These are the real shared components, not copied card styles. Hover over the preview trigger, or open the dropdown with a click or keyboard. Use the catalog theme control to compare light and dark."

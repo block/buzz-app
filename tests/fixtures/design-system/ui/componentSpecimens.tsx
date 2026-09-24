@@ -1,4 +1,9 @@
 import {
+  MenuSpecimen,
+  PopoverSpecimen,
+  ChoiceRowSpecimen,
+} from "./MenuSpecimens";
+import {
   InputExamples,
   TextareaExamples,
   SearchExamples,
@@ -7,8 +12,6 @@ import {
 } from "./FormSpecimens";
 import { ToastSpecimens } from "./ToastSpecimens";
 import { ButtonSpecimen, IconButtonSpecimen } from "./ButtonSpecimens";
-import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
-import { Popover } from "../../../../src/shared/design-system/ui/Popover";
 import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
 import { DialogSpecimens } from "./DialogSpecimens";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
@@ -25,8 +28,6 @@ import { PanelSwapPlaygrounds } from "./PanelSwapPlaygrounds";
 import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorkspace";
 import { BentoSpecimen } from "./BentoSpecimen";
 import {
-  BellIcon,
-  CheckIcon,
   DotsThreeIcon,
   HashIcon,
   ChatCircleIcon,
@@ -36,23 +37,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
-import {
-  ContextMenuRoot,
-  ContextMenuTrigger,
-  MenuCheckboxItem,
-  MenuIcon,
-  MenuItem,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuRoot,
-  MenuSeparator,
-  MenuSubmenu,
-  MenuSubmenuPopup,
-  MenuSubmenuTrigger,
-  MenuTrailing,
-  MenuTrigger,
-} from "../../../../src/shared/design-system/ui/Menu";
+
 import { Avatar } from "../../../../src/shared/design-system/ui/Avatar";
 import { InlineChip } from "../../../../src/shared/design-system/ui/InlineChip";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
@@ -747,75 +732,6 @@ function SwitchSpecimen() {
   );
 }
 
-function ActionMenuSpecimen() {
-  const [sort, setSort] = useState("recent");
-  const [notifications, setNotifications] = useState(true);
-  return (
-    <MenuRoot>
-      <MenuTrigger
-        render={
-          <IconButton
-            aria-label="More actions"
-            icon={<DotsThreeIcon size={16} aria-hidden="true" />}
-          />
-        }
-      />
-      <MenuPopup>
-        <MenuItem>
-          <MenuIcon>
-            <CheckIcon size={16} />
-          </MenuIcon>
-          Mark all as read
-        </MenuItem>
-        <MenuCheckboxItem
-          checked={notifications}
-          onCheckedChange={setNotifications}
-        >
-          <MenuIcon>
-            <BellIcon size={16} />
-          </MenuIcon>
-          Notifications
-        </MenuCheckboxItem>
-        <MenuSeparator />
-        <MenuSubmenu>
-          <MenuSubmenuTrigger>Sort</MenuSubmenuTrigger>
-          <MenuSubmenuPopup>
-            <MenuRadioGroup value={sort} onValueChange={setSort}>
-              <MenuRadioItem value="recent">Recent</MenuRadioItem>
-              <MenuRadioItem value="alpha">A–Z</MenuRadioItem>
-            </MenuRadioGroup>
-            <MenuSeparator />
-            <MenuItem disabled>
-              Disabled action
-              <MenuTrailing>⌘D</MenuTrailing>
-            </MenuItem>
-          </MenuSubmenuPopup>
-        </MenuSubmenu>
-      </MenuPopup>
-    </MenuRoot>
-  );
-}
-
-function MenuSpecimen() {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="component-specimen-stack">
-      <ActionMenuSpecimen />
-      <ContextMenuRoot>
-        <ContextMenuTrigger render={<Button>Context actions</Button>} />
-        <MenuPopup>
-          <MenuItem>Copy link</MenuItem>
-          <MenuItem disabled>Unavailable action</MenuItem>
-        </MenuPopup>
-      </ContextMenuRoot>
-      <Button onClick={() => setOpen(true)}>Open menu dialog</Button>
-      <Dialog open={open} onOpenChange={setOpen} title="Menu composition">
-        <ActionMenuSpecimen />
-      </Dialog>
-    </div>
-  );
-}
-
 function AlertDialogSpecimen() {
   const [open, setOpen] = useState(false);
   return (
@@ -915,23 +831,6 @@ function RadioGroupSpecimen() {
 }
 
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
-  popover: () => (
-    <SpecimenFrame>
-      <Popover.Root>
-        <Popover.Trigger render={<Button>Open popover</Button>} />
-        <Popover.Portal>
-          <Popover.Positioner>
-            <Popover.Popup aria-label="Example popover">
-              <Popover.Title className="text-label">
-                Quick actions
-              </Popover.Title>
-              <Popover.Close render={<Button variant="ghost">Done</Button>} />
-            </Popover.Popup>
-          </Popover.Positioner>
-        </Popover.Portal>
-      </Popover.Root>
-    </SpecimenFrame>
-  ),
   "alert-dialog": AlertDialogSpecimen,
   dialog: DialogSpecimens,
   toast: ToastSpecimens,
@@ -978,6 +877,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   panel: PanelSpecimen,
   tabs: TabsSpecimen,
   menu: MenuSpecimen,
+  popover: PopoverSpecimen,
+  "choice-row": ChoiceRowSpecimen,
   select: SelectExamples,
   combobox: ComboboxExamples,
   switch: SwitchSpecimen,

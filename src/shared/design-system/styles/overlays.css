@@ -1,23 +1,4 @@
 @layer components {
-  .buzz-popover-positioner {
-    z-index: var(--layer-popover);
-  }
-  .buzz-popover {
-    @apply popover-surface;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    max-width: var(--available-width);
-    max-height: var(--available-height);
-    overflow: auto;
-    border-radius: var(--radius-panel);
-    padding: var(--space-3);
-    transform-origin: var(--transform-origin);
-  }
-  .buzz-popover[data-variant="flush"] {
-    gap: 0;
-    padding: 0;
-  }
   .buzz-dialog-backdrop {
     position: fixed;
     inset: 0;
@@ -143,14 +124,43 @@
     z-index: var(--layer-tooltip);
   }
   .buzz-tooltip {
-    @apply text-label-sm;
+    @apply text-caption;
     max-width: min(24rem, calc(100vw - 2rem));
     border-radius: var(--radius-pill);
-    padding: var(--space-2) var(--space-4);
+    padding: var(--space-1) var(--space-2);
     background: var(--affordance-prominent);
     color: var(--text-inverse);
     box-shadow: var(--shadow-sm);
     overflow-wrap: anywhere;
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+    transform-origin: var(--transform-origin);
+    transition:
+      opacity var(--duration-state) var(--easing-state),
+      transform var(--duration-state) var(--easing-settle),
+      filter var(--duration-state) var(--easing-state);
+  }
+  .buzz-tooltip:is([data-starting-style], [data-ending-style]) {
+    opacity: 0;
+    transform: translateY(2px) scale(0.97);
+    filter: blur(2px);
+  }
+  .buzz-tooltip[data-ending-style] {
+    transition-duration: var(--duration-fast);
+  }
+  .buzz-tooltip[data-instant],
+  html[data-keyboard-navigation] .buzz-tooltip {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-tooltip {
+      transition-property: opacity;
+    }
+    .buzz-tooltip:is([data-starting-style], [data-ending-style]) {
+      transform: none;
+      filter: none;
+    }
   }
   .buzz-tab-panels {
     display: grid;

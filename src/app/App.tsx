@@ -60,8 +60,11 @@ export function App({ services }: { services: AppServices }) {
           <NavigationControls navigation={services.navigation} />
         }
         onCommunitySelect={(id) => {
+          const recovering =
+            services.navigation.snapshot().ingress &&
+            services.navigation.snapshot().retryable;
           services.communities.select(id);
-          select("buzz.channels/channels");
+          if (!recovering) select("buzz.channels/channels");
         }}
         communities={services.communities}
         searchServices={services}
@@ -82,17 +85,22 @@ export function App({ services }: { services: AppServices }) {
         <AgentWakeNotice control={services.agentControl} />
         {startup === "recovery" && !settings ? (
           <RecoveryScreen plugins={plugins} />
-        ) : route.failure || route.state.status === "failed" ? (
+        ) : (!route.state.ingress && route.failure) ||
+          route.state.status === "failed" ? (
           <div role="alert" className="notice">
             <h1>This destination couldn’t open</h1>
             <p>
-              {route.failure === "denied"
+              {(route.state.reason ?? route.failure) === "denied"
                 ? "This target needs its original account and an already joined community."
-                : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
+                : route.state.ingress && !route.state.retryable
+                  ? "This link is invalid or unsupported."
+                  : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
             </p>
-            <Button type="button" onClick={route.retry}>
-              Retry navigation
-            </Button>
+            {(!route.state.ingress || route.state.retryable) && (
+              <Button type="button" onClick={route.retry}>
+                Retry navigation
+              </Button>
+            )}
             <Button type="button" onClick={() => select("settings")}>
               Open Settings
             </Button>

@@ -312,9 +312,9 @@ test("independent packed author consumer and native-installed contribution survi
     await draft.fill("Channels draft");
     await draft.focus();
     await draft.evaluate((el) => el.setSelectionRange(2, 5));
-    // A fixture event triggers only a parent render, without focus or outside-click dismissal.
+    // Request a render without a click outside the picker (which dismisses it).
     await page.evaluate(() =>
-      window.dispatchEvent(new Event("proof-rerender")),
+      window.dispatchEvent(new Event("conversation-fixture-rerender")),
     );
     await expect(
       page.getByRole("button", { name: "Rerender consumer 1" }),
@@ -331,7 +331,7 @@ test("independent packed author consumer and native-installed contribution survi
     await search.fill("party");
     const picker = await page.locator("em-emoji-picker").elementHandle();
     await page.evaluate(() =>
-      window.dispatchEvent(new Event("proof-rerender")),
+      window.dispatchEvent(new Event("conversation-fixture-rerender")),
     );
     await expect(
       page.getByRole("button", { name: "Rerender consumer 2" }),

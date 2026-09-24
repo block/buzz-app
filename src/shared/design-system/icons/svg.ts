@@ -14,6 +14,8 @@ import x from "@phosphor-icons/core/assets/regular/x.svg?raw";
 import magnifying_glass from "@phosphor-icons/core/assets/regular/magnifying-glass.svg?raw";
 
 export const pickerIcons = {
+  x,
+  "magnifying-glass": magnifying_glass,
   clock: clock,
   smiley: smiley,
   "paw-print": paw_print,
@@ -24,6 +26,4 @@ export const pickerIcons = {
   shapes: shapes,
   flag: flag,
   asterisk: asterisk,
-  x: x,
-  "magnifying-glass": magnifying_glass,
 };

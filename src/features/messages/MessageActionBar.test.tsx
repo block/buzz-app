@@ -39,7 +39,10 @@ it("opens with keyboard, invokes a sibling action, and returns focus on Escape",
     await screen.findByRole("menuitem", { name: "Edit message" }),
   );
   expect(action).toHaveBeenCalledOnce();
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await user.click(trigger);
+  const menu = await screen.findByRole("menu");
+  await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
   await user.keyboard("{Escape}");
   await waitFor(() => expect(document.activeElement).toBe(trigger));
 });

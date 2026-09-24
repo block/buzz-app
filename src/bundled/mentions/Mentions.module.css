@@ -1,33 +1,42 @@
 @reference "../../shared/styles/globals.css";
 
-.mentionPopover {
-  width: min(380px, 75vw);
-  max-width: min(var(--anchor-width), var(--available-width));
-  max-height: min(360px, var(--available-height));
-  overflow: hidden;
+.mentionContent {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  padding: var(--space-3);
+  gap: var(--space-2);
 }
-.mentionPopover > :not(.mentionChoices) {
+.mentionContent > :not(.mentionChoices) {
   flex-shrink: 0;
 }
-.mentionPopover p {
-  margin: 0;
-  color: var(--text-subtle);
+.mentionContent label {
+  display: grid;
+  gap: var(--space-1h);
+}
+.mentionContent p {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .mentionChoices {
-  display: grid;
-  gap: var(--space-1);
+  grid-auto-rows: max-content;
+  align-content: start;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  display: grid;
+  gap: var(--space-1);
 }
 .mentionChoices code {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   overflow-wrap: anywhere;
+}
+.mentionContent p {
+  color: var(--text-subtle);
 }
 .pickerControls {
   border: 0;

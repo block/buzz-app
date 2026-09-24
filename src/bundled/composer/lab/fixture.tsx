@@ -46,6 +46,11 @@ const rawSession = {
     reply: () => "preview-reply",
   },
   typing: { snapshot: () => emptyList, subscribe: empty },
+  names: {
+    snapshot: () => 0,
+    subscribe: empty,
+    resolve: (_pubkey: string, fallback: string) => fallback,
+  },
   profiles: {
     snapshot: () => profiles,
     subscribe: empty,

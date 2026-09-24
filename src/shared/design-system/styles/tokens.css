@@ -512,6 +512,7 @@
   --affordance-subtle-hover: var(--neutral-3);
   --affordance-subtle-pressed: var(--neutral-4);
   --affordance-panel-hover: var(--neutral-3);
+  --affordance-floating-hover: var(--neutral-3);
   --affordance-selected: var(--neutral-3);
   --affordance-disabled: var(--neutral-3);
   --affordance-danger: var(--red-3);
@@ -557,6 +558,7 @@
   --affordance-subtle-hover: var(--neutral-6);
   --affordance-subtle-pressed: var(--neutral-7);
   --affordance-panel-hover: var(--neutral-4);
+  --affordance-floating-hover: var(--neutral-7);
   --affordance-selected: var(--neutral-5);
   --affordance-disabled: var(--neutral-3);
   --affordance-danger: var(--red-3);
@@ -755,6 +757,7 @@
   --color-affordance-subtle-hover: var(--affordance-subtle-hover);
   --color-affordance-subtle-pressed: var(--affordance-subtle-pressed);
   --color-affordance-panel-hover: var(--affordance-panel-hover);
+  --color-affordance-floating-hover: var(--affordance-floating-hover);
   --color-affordance-selected: var(--affordance-selected);
   --color-affordance-disabled: var(--affordance-disabled);
   --color-affordance-danger: var(--affordance-danger);

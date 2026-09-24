@@ -1,0 +1,291 @@
+use tauri::Window;
+use wry::{WebView, WebViewBuilder};
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use block2::Block;
+    use objc2::{define_class, msg_send, rc::Retained, runtime::ProtocolObject, MainThreadOnly};
+    use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol};
+    use objc2_web_kit::{
+        WKFrameInfo, WKMediaCaptureType, WKPermissionDecision, WKSecurityOrigin, WKUIDelegate,
+        WKWebView,
+    };
+    use wry::{WebView, WebViewExtMacOS};
+
+    define_class!(
+        #[unsafe(super(NSObject))]
+        #[name = "BuzzBrowserPermissionDelegate"]
+        #[thread_kind = MainThreadOnly]
+        #[ivars = ()]
+        pub struct PermissionDelegate;
+
+        unsafe impl NSObjectProtocol for PermissionDelegate {}
+
+        unsafe impl WKUIDelegate for PermissionDelegate {
+            #[unsafe(method(webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:))]
+            fn media_permission(
+                &self,
+                _webview: &WKWebView,
+                _origin: &WKSecurityOrigin,
+                _frame: &WKFrameInfo,
+                _capture_type: WKMediaCaptureType,
+                decision_handler: &Block<dyn Fn(WKPermissionDecision)>,
+            ) {
+                decision_handler.call((WKPermissionDecision::Deny,));
+            }
+
+            #[unsafe(method(webView:requestDeviceOrientationAndMotionPermissionForOrigin:initiatedByFrame:decisionHandler:))]
+            fn motion_permission(
+                &self,
+                _webview: &WKWebView,
+                _origin: &WKSecurityOrigin,
+                _frame: &WKFrameInfo,
+                decision_handler: &Block<dyn Fn(WKPermissionDecision)>,
+            ) {
+                decision_handler.call((WKPermissionDecision::Deny,));
+            }
+        }
+    );
+
+    pub fn deny_permissions(guest: &WebView) -> Result<Retained<PermissionDelegate>, String> {
+        let marker = MainThreadMarker::new()
+            .ok_or("Browser permissions must be installed on the UI thread")?;
+        let allocated = PermissionDelegate::alloc(marker).set_ivars(());
+        let delegate: Retained<PermissionDelegate> = unsafe { msg_send![super(allocated), init] };
+        // An absent createWebView/runOpenPanel implementation cancels popups/uploads.
+        // Replacing Wry's delegate also removes its unconditional media grant.
+        unsafe {
+            guest
+                .webview()
+                .setUIDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        }
+        Ok(delegate)
+    }
+
+    pub fn loading(guest: &WebView) -> bool {
+        unsafe { guest.webview().isLoading() }
+    }
+
+    pub fn current_url(guest: &WebView) -> Result<Option<String>, String> {
+        // WKWebView has no URL before its first navigation; Wry 0.55.1 unwraps it.
+        Ok(unsafe {
+            guest
+                .webview()
+                .URL()
+                .and_then(|url| url.absoluteString())
+                .map(|url| url.to_string())
+        })
+    }
+
+    pub fn back(guest: &WebView) -> Result<(), String> {
+        unsafe {
+            guest.webview().goBack();
+        }
+        Ok(())
+    }
+
+    pub fn forward(guest: &WebView) -> Result<(), String> {
+        unsafe {
+            guest.webview().goForward();
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn resize_guest(
+    guest: &WebView,
+    host: &tauri::Webview,
+    bounds: super::BrowserBounds,
+) -> Result<(), String> {
+    use objc2_web_kit::WKWebView;
+    use wry::WebViewExtMacOS;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    host.with_webview(move |webview| {
+        // CSS coordinates start at the top left; AppKit views may be unflipped.
+        let host = unsafe { &*webview.inner().cast::<WKWebView>() };
+        let viewport = host.bounds();
+        let result = bounds
+            .clip(viewport.size.width, viewport.size.height)
+            .map(|bounds| {
+                let mut rectangle = viewport;
+                rectangle.origin.x += bounds.x;
+                rectangle.origin.y += if host.isFlipped() {
+                    bounds.y
+                } else {
+                    viewport.size.height - bounds.y - bounds.height
+                };
+                rectangle.size.width = bounds.width;
+                rectangle.size.height = bounds.height;
+                host.convertRect_toView(rectangle, None)
+            });
+        let _ = sender.send(result);
+    })
+    .map_err(|error| error.to_string())?;
+    let rectangle = receiver
+        .try_recv()
+        .map_err(|_| "Browser layout must run on the UI thread")??;
+    unsafe {
+        let native_guest = guest.webview();
+        let parent = native_guest
+            .superview()
+            .ok_or("Browser content has no parent view")?;
+        native_guest.setFrame(parent.convertRect_fromView(rectangle, None));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn resize_guest(
+    guest: &WebView,
+    host: &tauri::Webview,
+    bounds: super::BrowserBounds,
+) -> Result<(), String> {
+    let scale = host
+        .window()
+        .scale_factor()
+        .map_err(|error| error.to_string())?;
+    let size = host
+        .size()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(scale);
+    let position = host
+        .position()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(scale);
+    let bounds = bounds.clip(size.width, size.height)?;
+    guest
+        .set_bounds(wry::Rect {
+            position: tauri::LogicalPosition::new(position.x + bounds.x, position.y + bounds.y)
+                .into(),
+            size: tauri::LogicalSize::new(bounds.width, bounds.height).into(),
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn resize_guest(
+    _guest: &WebView,
+    _host: &tauri::Webview,
+    _bounds: super::BrowserBounds,
+) -> Result<(), String> {
+    Err("Embedded Buzz Browser is not supported on Linux".into())
+}
+
+#[cfg(target_os = "macos")]
+pub(super) use macos::{back, current_url, deny_permissions, forward, loading};
+#[cfg(target_os = "macos")]
+pub(super) type Permissions = objc2::rc::Retained<macos::PermissionDelegate>;
+
+#[cfg(not(target_os = "macos"))]
+pub(super) struct Permissions;
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn current_url(guest: &WebView) -> Result<Option<String>, String> {
+    guest.url().map(Some).map_err(|error| error.to_string())
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(super) fn build_guest(builder: WebViewBuilder<'_>, window: &Window) -> Result<WebView, String> {
+    builder
+        .build_as_child(window)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn build_guest(
+    _builder: WebViewBuilder<'_>,
+    _window: &Window,
+) -> Result<WebView, String> {
+    Err("Embedded Buzz Browser is not supported on Linux".into())
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn deny_permissions(guest: &WebView) -> Result<Permissions, String> {
+    use webkit2gtk::{FileChooserRequestExt, PermissionRequestExt, WebViewExt};
+    use wry::WebViewExtUnix;
+    let webview = guest.webview();
+    webview.connect_enter_fullscreen(|_| true);
+    webview.connect_permission_request(|_, request| {
+        request.deny();
+        true
+    });
+    webview.connect_run_file_chooser(|_, request| {
+        request.cancel();
+        true
+    });
+    Ok(Permissions)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn back(guest: &WebView) -> Result<(), String> {
+    use webkit2gtk::WebViewExt;
+    use wry::WebViewExtUnix;
+    guest.webview().go_back();
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn forward(guest: &WebView) -> Result<(), String> {
+    use webkit2gtk::WebViewExt;
+    use wry::WebViewExtUnix;
+    guest.webview().go_forward();
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn deny_permissions(guest: &WebView) -> Result<Permissions, String> {
+    use webview2_com::{
+        Microsoft::Web::WebView2::Win32::{ICoreWebView2_13, COREWEBVIEW2_PERMISSION_STATE_DENY},
+        PermissionRequestedEventHandler,
+    };
+    use windows_core::Interface;
+    use wry::WebViewExtWindows;
+    let mut event_token = 0;
+    unsafe {
+        let profile = guest
+            .webview()
+            .cast::<ICoreWebView2_13>()
+            .and_then(|webview| webview.Profile())
+            .map_err(|_| {
+                "Buzz Browser requires a WebView2 runtime with private browsing support"
+            })?;
+        let mut is_private = windows_core::BOOL::default();
+        profile
+            .IsInPrivateModeEnabled(&mut is_private)
+            .map_err(|error| error.to_string())?;
+        if !is_private.as_bool() {
+            return Err("Buzz Browser could not create a private website session".into());
+        }
+        guest
+            .webview()
+            .add_PermissionRequested(
+                &PermissionRequestedEventHandler::create(Box::new(|_, arguments| {
+                    if let Some(arguments) = arguments {
+                        arguments.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
+                    }
+                    Ok(())
+                })),
+                &mut event_token,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(Permissions)
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn back(guest: &WebView) -> Result<(), String> {
+    use wry::WebViewExtWindows;
+    unsafe { guest.webview().GoBack().map_err(|error| error.to_string()) }
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn forward(guest: &WebView) -> Result<(), String> {
+    use wry::WebViewExtWindows;
+    unsafe {
+        guest
+            .webview()
+            .GoForward()
+            .map_err(|error| error.to_string())
+    }
+}

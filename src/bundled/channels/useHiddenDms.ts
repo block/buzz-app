@@ -88,6 +88,10 @@ export function useHiddenDms(
     },
     [update],
   );
+  useEffect(
+    () => session.directMessages.subscribeOpened((id) => show([id])),
+    [session, show],
+  );
   const hide = useCallback(
     (id: string) => {
       const latest = session.unread.snapshot({

@@ -456,20 +456,6 @@ html[data-keyboard-navigation]
 .threadActivityDot {
   cursor: help;
 }
-.activityPopover {
-  width: min(360px, calc(100vw - 24px));
-  max-height: min(420px, calc(100vh - 24px));
-  overflow: hidden;
-  transform-origin: var(--transform-origin);
-  transition:
-    opacity 120ms ease-out,
-    transform 120ms ease-out;
-}
-.activityPopover[data-starting-style],
-.activityPopover[data-ending-style] {
-  opacity: 0;
-  transform: scale(0.98);
-}
 .activityStale {
   margin: 0;
   padding: var(--space-1h) var(--space-3);

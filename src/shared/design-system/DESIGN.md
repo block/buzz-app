@@ -107,6 +107,7 @@ Buzz is a place where people build together and bring their agents into the room
 - **No page-wide gradient behind documentation or dense reading.** The gradient is the product's backdrop for chrome and panels. Behind a column of prose it fights the text and makes contrast position-dependent — such surfaces sit on `bg-panel`.
 - **Shadows stay at the threshold of perception.** If a shadow is obvious, it is too strong. The two elevation values are the whole vocabulary.
 - **Floating controls share one outer material.** Menus, selects, popovers, and preview cards use the opaque `floating-surface`: floating fill, primary boundary, panel radius, and graduated lift. Each component still owns its content padding and interaction behavior; sharing the container does not imply that a preview behaves like a menu.
+- **Floating rows need their own hover contrast.** Menu, select, and popover activity rows use `affordance-floating-hover` (neutral 3 in light mode, neutral 7 in dark). Supporting text becomes standard text on highlight so it stays readable. Selection marks remain independent of hover. Small action menus and compact account popovers use 10px `radius-row` outer corners with a 4px list inset and 8px inner rows (80% of the outer radius). Their hover uses `affordance-subtle-hover` with immediate feedback. Default/wide menus, content popovers, pickers, dialogs, and alert dialogs retain 24px `radius-panel` outer corners. Choose compact explicitly for short action lists, never automatically from viewport width.
 - **Elevation is carried by shadow in light mode and by lightness in dark mode.** On a near-black background there is nothing darker for a shadow to cast, so a floating surface becomes a step lighter instead. Never reach for a stronger shadow to make something float in dark mode.
 - **On a translucent surface, elevation reads as less translucency, not as a lighter colour.** A glass container with a fully opaque child looks layered; the same container with a merely brighter child looks unchanged.
 - **Light comes from one direction, and every glass surface agrees on it.** A glass rim is bright along the lit edge and dimmer on the opposite one; that is what makes it read as a material rather than an outline. Two surfaces lit from different directions in the same view look like a mistake.
@@ -164,9 +165,9 @@ only when a rectangular control shape is explicitly needed. Disabled ghost icons
 remain unfilled; their muted foreground communicates unavailability without
 adding a container to an otherwise empty toolbar.
 
-Composer picker surfaces use the 24px `--radius-panel` role. Frequently used
-composer pickers open, close and filter immediately, without entrance motion or
-staggered results. Search fields follow the shared form treatment below.
+Composer picker surfaces use the 24px `--radius-panel` role and the shared
+popup motion below. Filtering does not stagger results. Search fields follow
+the shared form treatment below.
 
 Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
@@ -228,14 +229,42 @@ designer-requested blur from 4px to zero is a narrow exception to the general
 no-blur-animation rule. Base UI owns transition presence and dismissal; keyboard
 navigation and reduced motion remove the transition, movement, and blur.
 
+### Menus, popovers, and choice rows
+
+Use Menu for actions and lightweight choices, Popover for supporting content or
+short forms, and Select/Combobox for form values. Both anchored surfaces reuse
+`floating-surface`, viewport collision handling, and the shared popover layer.
+Features own their data, callbacks and save/cancel behavior; Base UI owns focus,
+keyboard navigation, positioning and dismissal.
+
+Menu group labels belong inside MenuGroup. Selection checks sit at the trailing
+edge; the pointer/keyboard highlight is independent of that persistent selection.
+Keep the parent row highlighted while its submenu is open. Use `tone="danger"`
+for destructive actions and MenuNote for explanatory or status copy outside the
+keyboard item list. Long lists scroll inside the popup.
+
+ChoiceRow arranges a label, wrapping description, optional artwork and trailing
+metadata. It adds no second click target or tab stop. Keep its slots non-interactive
+and let the containing item own state and padding. Use the small shared avatar
+for identity choices, retaining human/agent shapes.
+
+PopoverPopup uses 16px content padding, or `padding="list"` when its rows own their
+spacing. Use `size="compact"` with list padding for short account/action surfaces: 14rem width and 10px corners. `MenuPopup size="compact"` uses the same corner, inset, row and hover treatment for short action lists. Content and wide popovers retain 24px corners. Name it with PopoverTitle or aria-label; PopoverDescription connects
+supporting copy. Hover opening is optional and remains configured by its feature.
+Use `padding="none"` for an embedded picker that owns its internal spacing, such as emoji/GIF content.
+Menus and popovers use a quicker version of the form dropdown motion: 75ms entry
+and 60ms exit (half the state/fast duration tokens), a 2px offset and blur-to-sharp
+opacity fade. Movement uses
+easing-settle; opacity and filter use easing-state. The offset follows the actual
+placement side toward the trigger, including collision flips and nested menus.
+This extends the designer-requested blur exception to these anchored surfaces.
+Keyboard navigation and reduced motion remove transitions, movement, and blur. The Just Design Menu, Popover and ChoiceRow pages
+show these contracts and their compositions.
+
 ## Compositions
 
-Popover wraps Base UI's popover parts with the shared 24px panel corner,
-popover surface, standard border and small shadow. The default content inset is
-12px; use the flush variant when content such as a media picker owns its layout.
-Use Positioner's anchor to attach a picker to its whole composer. Base UI owns
-portals, collision handling, outside dismissal and focus restoration. Frequent
-pickers switch immediately without entrance motion.
+Composer pickers reuse PopoverPopup and anchor above the whole composer with a
+4px gap, preserving the shared popup behavior and material.
 
 Dialog composes a Base UI modal with a shared title, optional description, body,
 close button and actions. Pending operations set preventClose so Escape and the
@@ -266,6 +295,12 @@ form one stack; avoid inserting form-section gaps between individual rows.
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
 Escape behavior from Base UI. Overlay layers keep menus and hints above dialogs.
+Hints use text-caption (12px / 16px), with space-1 vertical and space-2 horizontal
+padding. Pointer entry uses the shared state duration (150ms), fading from a
+0.97 scale, 2px downward offset and 2px blur; exit reverses it with the fast
+duration (120ms). This designer-requested blur is a tooltip-specific exception.
+Base UI instant states and keyboard navigation skip transitions; reduced motion
+keeps only the fade.
 
 ToastProvider mounts once in the host. ToastNotice belongs to the source that
 owns its state and recovery: unmounting the source removes its notification,
@@ -545,3 +580,15 @@ it is the rule a generated theme is measured against.
 Phosphor is the only general icon family. Import named icons from `icons/index.ts`, which re-exports individual upstream modules. Add exports as needed; no approval list. SVG-only widgets use individual assets through `icons/svg.ts`. Do not import the upstream packages elsewhere or reintroduce other icon libraries. All six native weights remain designer choices: no size-to-weight or selection-to-fill rules. For chat and conversation metaphors, prefer the rounded `ChatCircle` family (including `ChatsCircle`) over square or teardrop variants; choose the matching dots, text, or slash variant when the meaning requires it. Keep accessible names on controls and decorative artwork hidden from assistive technology.
 
 OneDrive is a designer-approved custom brand mark: its complete outline is recreated on Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in the shared icon gateway. It does not permit another general icon library.
+
+### Picker search and choices
+
+Mention and media pickers opt into `SearchField variant="capsule"`. Its shared
+`search-field.css` recipe also styles Emoji Mart inside its shadow root: body-sm
+typography, pill radius, standard panel fill, Phosphor icons, and a 32px clear
+action. Other SearchField callers retain the default field treatment. Scrolling
+picker results use the opt-in `buzz-thin-scrollbar` native scrollbar recipe.
+
+Mention choices use `NavigationItem variant="option"` with 8px padding and
+immediate hover/focus feedback. The picker owns arrow-key navigation and exact
+identity selection; rows retain ordinary button semantics.

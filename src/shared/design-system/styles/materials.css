@@ -52,8 +52,8 @@
 
 /* An opaque surface above a panel: menus, selects, popovers, and previews.
    The outer material is intentionally one utility so those components cannot
-   drift in fill, boundary, radius, or elevation while retaining independent
-   content layout and behavior. */
+   drift in fill, boundary, or elevation while retaining independent content
+   layout and behavior. Compact action surfaces override the default radius. */
 @utility floating-surface {
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-panel);

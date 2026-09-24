@@ -64,13 +64,28 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       await expect(
         picker.getByRole("button", { name: new RegExp(key) }),
       ).toBeVisible();
+      await expect(search).toBeFocused();
       await expectComposerAnchor(picker);
-      await search.press("ArrowDown");
+      await expect(picker).toHaveCSS("width", "380px");
+      expect((await picker.boundingBox()).height).toBeLessThanOrEqual(360);
+      await search.fill("");
       const choice = picker.getByRole("button", {
         name: new RegExp(key),
       });
+      const index = await choice.evaluate((node) =>
+        [
+          ...node.parentElement.querySelectorAll("[data-mention-choice]"),
+        ].indexOf(node),
+      );
+      await search.press("ArrowDown");
+      for (let step = 0; step < index; step++)
+        await page.keyboard.press("ArrowDown");
       await expect(choice).toBeFocused();
-      await expect(choice).toHaveCSS("outline-style", "solid");
+      await expect(choice).toHaveCSS("padding", "8px");
+      await expect(choice.locator(".buzz-avatar")).toHaveCSS("width", "40px");
+      await choice.press("ArrowUp");
+      await page.keyboard.press("ArrowDown");
+      await expect(choice).toBeFocused();
       await choice.press("Enter");
       await expect(picker).toHaveCount(0);
       await expect(page.getByRole("textbox")).toBeFocused();
@@ -95,9 +110,9 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       });
       return field.evaluate((element) => {
         const nativeInput = element.querySelector("input");
-        // React fields put the boundary on InputGroup; Mart puts it on the input.
+        // Both the React and vendor search use the shared field boundary.
         const style = getComputedStyle(
-          element.matches(".buzz-input-group") ? element : nativeInput,
+          element.matches(".search-field") ? element : nativeInput,
         );
         const input = getComputedStyle(nativeInput);
         const clear = element.querySelector("button");
@@ -135,16 +150,12 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       await row.hover();
       await expect(row).toHaveCSS(
         "background-color",
-        mode === "light" ? "rgb(232, 232, 232)" : "rgb(64, 64, 64)",
+        mode === "light" ? "rgb(232, 232, 232)" : "rgb(89, 89, 89)",
       );
       await mention.getByRole("searchbox").fill("");
-      const empty = await searchAppearance(
-        mention.locator(".buzz-input-group"),
-      );
+      const empty = await searchAppearance(mention.locator(".search-field"));
       await mention.getByRole("searchbox").fill("Honey");
-      const filled = await searchAppearance(
-        mention.locator(".buzz-input-group"),
-      );
+      const filled = await searchAppearance(mention.locator(".search-field"));
       await page
         .getByRole("button", { name: "Insert emoji", exact: true })
         .click();

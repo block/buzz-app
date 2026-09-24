@@ -74,16 +74,29 @@ impl RuntimeBundle {
                 command.env(name, value);
             }
         }
-        let path = std::env::join_paths([
-            self.directory.as_path(),
-            Path::new("/usr/bin"),
-            Path::new("/bin"),
-            Path::new("/usr/sbin"),
-            Path::new("/sbin"),
-        ])
+        let pi = (worker.file_name().and_then(|n| n.to_str()) == Some("buzz-pi-acp"))
+            .then(|| {
+                crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
+            })
+            .transpose()?;
+        let (args, environment, tools_path) = if let Some(pi) = &pi {
+            (
+                pi.adapter_args(&agent.harness)?,
+                &pi.environment,
+                pi.path.clone(),
+            )
+        } else {
+            (
+                agent.harness.args.clone(),
+                &agent.environment,
+                "/usr/bin:/bin:/usr/sbin:/sbin".into(),
+            )
+        };
+        let path = std::env::join_paths(
+            std::iter::once(self.directory.clone()).chain(std::env::split_paths(&tools_path)),
+        )
         .map_err(|_| "Invalid runtime tools path")?;
-        command.envs(&agent.environment);
-        command.env("PATH", path);
+        command.envs(environment).env("PATH", path);
         let key_hex = key.hex();
         command
             .env("BUZZ_PRIVATE_KEY", &*key_hex)
@@ -91,7 +104,7 @@ impl RuntimeBundle {
             .env("BUZZ_RELAY_URL", &agent.relay_url)
             .env("BUZZ_AUTH_TAG", agent.auth_tag.as_deref().unwrap_or(""))
             .env("BUZZ_ACP_AGENT_COMMAND", worker)
-            .env("BUZZ_ACP_AGENT_ARGS", agent.harness.args.join(","))
+            .env("BUZZ_ACP_AGENT_ARGS", args.join(","))
             .env("BUZZ_ACP_SYSTEM_PROMPT", &agent.system_prompt)
             .env("BUZZ_ACP_DISPLAY_NAME", &agent.name)
             .env("BUZZ_ACP_LAZY_POOL", "true")
@@ -111,6 +124,7 @@ impl RuntimeBundle {
         let mapping = match worker_name {
             "buzz-agent" => Some(("BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER")),
             "goose" => Some(("GOOSE_MODEL", "GOOSE_PROVIDER")),
+            "buzz-pi-acp" => None,
             _ if !agent.harness.provider.is_empty() => return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into()),
             _ => None,
         };
@@ -136,6 +150,11 @@ impl RuntimeBundle {
             }
         }
         if let Some(value) = model {
+            let value = if pi.is_some() && !agent.harness.provider.is_empty() {
+                format!("{}/{value}", agent.harness.provider)
+            } else {
+                value.to_owned()
+            };
             command.env("BUZZ_ACP_MODEL", value);
         }
         if respond_to == "allowlist" {
@@ -211,6 +230,24 @@ fn effective_databricks(agent: &Agent) -> Result<Option<crate::connection::Datab
     settings.validate()?;
     Ok(Some(settings))
 }
+pub fn installed(name: &str) -> Option<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(PathBuf::from(home).join(".local/bin"));
+    }
+    dirs.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    dirs.extend([
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ]);
+    dirs.into_iter()
+        .filter(|p| p.is_absolute())
+        .map(|p| p.join(name))
+        .find(|p| executable(p).is_ok())
+}
+
 pub(crate) fn executable(path: &Path) -> Result<()> {
     let metadata = path
         .metadata()
@@ -321,20 +358,7 @@ impl Controller {
     /// Native-only catalog configuration. Never serialize environment values or
     /// lend runtime credentials to model discovery. Resolve an unsaved edit on a
     /// clone using the same validation and precedence as Save/runtime.
-    pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
-        let agent = self.edited_model_agent(id, revision, edit)?;
-        model_context(&agent.harness, &agent.environment)
-    }
-    pub fn goose_model_context(
-        &self,
-        id: &str,
-        revision: u64,
-        edit: AgentEdit,
-    ) -> Result<GooseModelContext> {
-        let agent = self.edited_model_agent(id, revision, edit)?;
-        goose_model_context(&agent.harness, &agent.environment)
-    }
-    fn edited_model_agent(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<Agent> {
+    fn edited_agent(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<Agent> {
         let mut agent = self
             .store
             .agents()?
@@ -349,20 +373,41 @@ impl Controller {
         agent.apply(edit)?;
         Ok(agent)
     }
+    pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
+        let agent = self.edited_agent(id, revision, edit)?;
+        model_context(&agent.harness, &agent.environment)
+    }
+    pub fn goose_model_context(
+        &self,
+        id: &str,
+        revision: u64,
+        edit: AgentEdit,
+    ) -> Result<GooseModelContext> {
+        let agent = self.edited_agent(id, revision, edit)?;
+        goose_model_context(&agent.harness, &agent.environment)
+    }
+    pub fn pi_model_context(
+        &self,
+        id: &str,
+        revision: u64,
+        edit: AgentEdit,
+    ) -> Result<crate::pi::PiContext> {
+        let agent = self.edited_agent(id, revision, edit)?;
+        crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
+    }
+    pub fn draft_pi_model_context(edit: AgentEdit) -> Result<crate::pi::PiContext> {
+        crate::pi::PiContext::new(
+            &edit.harness,
+            &edit.workspace,
+            &draft_environment(edit.environment),
+        )
+    }
     pub fn draft_goose_model_context(edit: AgentEdit) -> Result<GooseModelContext> {
-        let environment = edit
-            .environment
-            .into_iter()
-            .filter_map(|(key, value)| value.map(|value| (key, value)))
-            .collect();
+        let environment = draft_environment(edit.environment);
         goose_model_context(&edit.harness, &environment)
     }
     pub fn draft_model_context(edit: AgentEdit) -> Result<ModelContext> {
-        let environment = edit
-            .environment
-            .into_iter()
-            .filter_map(|(key, value)| value.map(|value| (key, value)))
-            .collect();
+        let environment = draft_environment(edit.environment);
         model_context(&edit.harness, &environment)
     }
     pub fn requires_legacy_handover(&self, id: &str) -> Result<bool> {
@@ -604,6 +649,13 @@ impl Drop for Controller {
 }
 #[cfg(test)]
 mod tests;
+
+fn draft_environment(patch: BTreeMap<String, Option<String>>) -> BTreeMap<String, String> {
+    patch
+        .into_iter()
+        .filter_map(|(key, value)| value.map(|v| (key, v)))
+        .collect()
+}
 
 fn model_context(
     harness: &crate::HarnessEdit,

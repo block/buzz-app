@@ -98,6 +98,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   });
   await mention.click();
   await expect(key).toHaveText(npubs.mic);
+  await expect(panel.getByText("📅 In a meeting")).toBeVisible();
   await expect(panel.locator("[data-avatar-shape]")).toHaveAttribute(
     "data-avatar-shape",
     "circle",
@@ -106,10 +107,18 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(mention).toBeFocused();
   await mention.press("Space");
   await expect(key).toHaveText(npubs.mic);
+  expect(
+    await page.evaluate(() => window.profilesFixture.report.memoryReads),
+  ).toEqual([]);
+  await panel.getByRole("tab", { name: "Memories" }).click();
+  await expect(panel.getByText("Core memory", { exact: true })).toBeVisible();
   await page.evaluate(() =>
     window.profilesFixture.change("disable", "buzz.profiles"),
   );
   await expect(panel).toHaveCount(0);
+  const retiredMemoryReads = await page.evaluate(
+    () => window.profilesFixture.report.memoryReads,
+  );
   await expect(mention).toHaveCount(0);
   await expect(
     page
@@ -143,7 +152,37 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(panel.getByRole("region", { name: "Channels" })).toContainText(
     "#One",
   );
+  expect(
+    await page.evaluate(() => window.profilesFixture.report.memoryReads),
+  ).toEqual(retiredMemoryReads);
+  await panel.getByRole("tab", { name: "Memories" }).click();
+  const memories = panel.getByRole("region", { name: "Agent memories" });
+  await expect(
+    memories.getByText("Core memory", { exact: true }),
+  ).toBeVisible();
+  await memories.getByText("Core memory", { exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(memories.locator("pre")).toBeVisible();
+  await expect(memories.locator("pre")).toContainText(
+    "<script>not executable</script>",
+  );
+  await expect(memories.locator("script")).toHaveCount(0);
+  const priorViewport = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 800 });
+  await expect
+    .poll(() =>
+      memories.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    )
+    .toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("memories-narrow.png"),
+  });
+  await page.setViewportSize(priorViewport);
   await panel.getByRole("tab", { name: "Info" }).click();
+  await expect(memories).toHaveCount(0);
+
   await expect(
     panel.getByRole("region", { name: "Linked agent instances" }),
   ).toHaveCount(0);
@@ -185,8 +224,11 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
       });
     }
   }
+  await panel.getByRole("tab", { name: "Memories" }).click();
+  await expect(panel.getByText("Core memory", { exact: true })).toBeVisible();
   await page.evaluate(() => window.profilesFixture.replace());
   await expect(panel).toHaveCount(0);
+  await expect(page.getByText("Core memory", { exact: true })).toHaveCount(0);
   const reads = await page.evaluate(() => ({
     reads: window.profilesFixture.report.profileReads,
     key: window.profilesFixture.keys.pinky,

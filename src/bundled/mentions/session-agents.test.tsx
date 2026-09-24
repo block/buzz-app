@@ -321,6 +321,64 @@ it("does not keyboard-select disabled members", async () => {
   expect(select).not.toHaveBeenCalled();
   test.library.dispose();
 });
+it.each([true, false])(
+  "session picker discloses history access before selection: parent=%s",
+  async (parent) => {
+    const test = setup(parent);
+    const list: ReturnType<RelaySession["channels"]["list"]> = {
+      status: "ready",
+      channels: [
+        {
+          id: "parent",
+          name: "Session",
+          channelType: "session",
+          members: ["a".repeat(64)],
+          ...(parent ? { parentChannelId: "parent-channel" } : {}),
+        },
+      ],
+    };
+    const session = {
+      ...test.session,
+      channels: { ...test.session.channels, list: () => list },
+    };
+    const user = userEvent.setup();
+    const select = vi.fn(() => true);
+    const view = render(
+      <MentionPicker
+        scope="test"
+        session={session}
+        channelId="parent"
+        disabled={false}
+        inviteAgents
+        select={select}
+      />,
+    );
+    try {
+      await user.click(
+        screen.getByRole("button", { name: "Mention a member" }),
+      );
+      const agent = await screen.findByRole("button", {
+        name: `Outside agent ${test.key}`,
+      });
+      expect(
+        screen.getByText(
+          parent
+            ? "Agents you mention join this session and its parent channel when you send, with access to their history."
+            : "Agents you mention join this session when you send, with access to its history.",
+        ),
+      ).toBeVisible();
+      expect(select).not.toHaveBeenCalled();
+      await user.click(agent);
+      expect(select).toHaveBeenCalledWith({
+        pubkey: test.key,
+        name: "Outside agent",
+      });
+    } finally {
+      view.unmount();
+      test.library.dispose();
+    }
+  },
+);
 
 it.each([true, false, null])(
   "typed @ completion offers outside agents with correct admission: parent=%s",

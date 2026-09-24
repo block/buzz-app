@@ -66,8 +66,9 @@ export function apply(ctx: Context) {
     const [renders, rerender] = React.useState(0);
     React.useEffect(() => {
       const render = () => rerender((value) => value + 1);
-      globalThis.addEventListener("proof-rerender", render);
-      return () => globalThis.removeEventListener("proof-rerender", render);
+      globalThis.addEventListener("conversation-fixture-rerender", render);
+      return () =>
+        globalThis.removeEventListener("conversation-fixture-rerender", render);
     }, []);
     const session = connection.session;
     const subscribe = React.useCallback(

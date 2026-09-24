@@ -1,62 +1,86 @@
 import { Popover as BasePopover } from "@base-ui/react/popover";
+import type { ComponentProps } from "react";
 
-export type PopoverActions = BasePopover.Root.Actions;
+export const PopoverRoot = BasePopover.Root;
+export const PopoverTrigger = BasePopover.Trigger;
+export const PopoverClose = BasePopover.Close;
 
-function Positioner({
-  className,
+// The feature retains its content and state; this frame owns material, motion,
+// viewport constraints and stacking. Base UI owns focus, dismissal and placement.
+type PopoverPopupProps = Omit<
+  ComponentProps<typeof BasePopover.Popup>,
+  "className"
+> &
+  Pick<
+    ComponentProps<typeof BasePopover.Positioner>,
+    | "side"
+    | "align"
+    | "sideOffset"
+    | "alignOffset"
+    | "collisionPadding"
+    | "collisionAvoidance"
+    | "anchor"
+    | "sticky"
+  > & {
+    /** Compact account/action surfaces use tighter corners as well as width. */
+    size?: "compact" | "default" | "wide";
+    /** Embedded pickers own their internal spacing. */
+    padding?: "content" | "list" | "none";
+  };
+
+export function PopoverPopup({
+  side = "bottom",
   align = "start",
-  sideOffset = 4,
+  sideOffset = 8,
+  alignOffset,
   collisionPadding = 8,
+  collisionAvoidance,
+  anchor,
+  sticky,
+  size = "default",
+  padding = "content",
   ...props
-}: BasePopover.Positioner.Props) {
+}: PopoverPopupProps) {
   return (
-    <BasePopover.Positioner
-      {...props}
-      align={align}
-      sideOffset={sideOffset}
-      collisionPadding={collisionPadding}
-      className={(state) =>
-        [
-          "buzz-popover-positioner",
-          typeof className === "function" ? className(state) : className,
-        ]
-          .filter(Boolean)
-          .join(" ")
-      }
-    />
+    <BasePopover.Portal>
+      <BasePopover.Positioner
+        className="buzz-popover-positioner"
+        side={side}
+        align={align}
+        sideOffset={sideOffset}
+        alignOffset={alignOffset}
+        collisionPadding={collisionPadding}
+        collisionAvoidance={collisionAvoidance}
+        anchor={anchor}
+        sticky={sticky}
+      >
+        <BasePopover.Popup
+          {...props}
+          data-buzz-ui=""
+          data-size={size}
+          data-padding={padding}
+          className="buzz-popover-popup text-body"
+        />
+      </BasePopover.Positioner>
+    </BasePopover.Portal>
   );
 }
 
-function Popup({
-  className,
-  variant = "default",
-  ...props
-}: BasePopover.Popup.Props & { variant?: "default" | "flush" }) {
+export function PopoverTitle(
+  props: Omit<ComponentProps<typeof BasePopover.Title>, "className">,
+) {
   return (
-    <BasePopover.Popup
-      {...props}
-      data-buzz-ui=""
-      data-variant={variant}
-      className={(state) =>
-        [
-          "buzz-popover",
-          typeof className === "function" ? className(state) : className,
-        ]
-          .filter(Boolean)
-          .join(" ")
-      }
-    />
+    <BasePopover.Title {...props} className="buzz-popover-title text-label" />
   );
 }
 
-/** Shared surface; Base UI owns portals, anchoring, dismissal and focus. */
-export const Popover = {
-  Root: BasePopover.Root,
-  Trigger: BasePopover.Trigger,
-  Portal: BasePopover.Portal,
-  Positioner,
-  Popup,
-  Close: BasePopover.Close,
-  Title: BasePopover.Title,
-  Description: BasePopover.Description,
-};
+export function PopoverDescription(
+  props: Omit<ComponentProps<typeof BasePopover.Description>, "className">,
+) {
+  return (
+    <BasePopover.Description
+      {...props}
+      className="buzz-popover-description text-body-sm"
+    />
+  );
+}

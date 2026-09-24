@@ -484,6 +484,10 @@ export const test = base.extend({
       response.end(JSON.stringify(body));
     };
     const answer = (community, filter) => {
+      if (filter.kinds?.includes(30617) || filter.kinds?.includes(30621)) {
+        expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
+        return [];
+      }
       if (filter.kinds?.includes(20001))
         return filter.authors.map((author) =>
           sign(20001, [["p", author]], "online"),
@@ -544,6 +548,15 @@ export const test = base.extend({
           kinds: [30030],
           "#d": ["buzz:custom-emoji"],
           limit: 500,
+        });
+        return [];
+      }
+      if (filter.kinds?.includes(30315)) {
+        expect(filter).toEqual({
+          kinds: [30315],
+          authors: [expect.any(String)],
+          "#d": ["general"],
+          limit: 1,
         });
         return [];
       }
@@ -814,6 +827,9 @@ export const test = base.extend({
           answer,
           report,
           pending,
+          // The production broker advertises read-state writes for every session,
+          // not only tests opting into complete snapshot reads.
+          acceptPublication: acceptReadPublication,
           ...(actionProfile
             ? {
                 latencyMs: 40,
@@ -851,7 +867,6 @@ export const test = base.extend({
                     max_bytes: 8388608,
                   },
                 }),
-                acceptPublication: acceptReadPublication,
               }
             : {}),
         })

@@ -55,21 +55,24 @@ test("shared tokens reach app controls without history or chip overrides", async
     chip.dataset.state = "resolved";
     chip.textContent = "Reference";
     probes.append(chip);
-    for (const name of ["emojiPopover", "mentionPopover", "popup"]) {
-      const selector = selectors.find((s) =>
-        new RegExp(`\\._${name}_`).test(s),
-      );
-      if (!selector) throw new Error(`Missing popup style: ${name}`);
+    for (const name of ["buzz-popover-popup", "popup"]) {
       const surface = document.createElement("div");
       surface.id = `probe-${name}`;
-      surface.className = selector.match(new RegExp(`\\.(_${name}_[\\w]+)`))[1];
-      if (["emojiPopover", "mentionPopover"].includes(name)) {
-        surface.classList.add("buzz-popover");
+      if (name === "buzz-popover-popup") {
+        surface.className = name;
         const positioner = document.createElement("div");
+        positioner.id = "probe-positioner";
         positioner.className = "buzz-popover-positioner";
         positioner.append(surface);
         probes.append(positioner);
       } else {
+        const selector = selectors.find((s) =>
+          new RegExp(`\\._${name}_`).test(s),
+        );
+        if (!selector) throw new Error(`Missing popup style: ${name}`);
+        surface.className = selector.match(
+          new RegExp(`\\.(_${name}_[\\w]+)`),
+        )[1];
         probes.append(surface);
       }
     }
@@ -112,18 +115,19 @@ test("shared tokens reach app controls without history or chip overrides", async
         "background-color",
         "rgb(12, 34, 56)",
       );
-      for (const name of ["emojiPopover", "mentionPopover", "popup"]) {
+      for (const name of ["buzz-popover-popup", "popup"]) {
         const surface = page.locator(`#probe-${name}`);
         await expect(surface).toHaveCSS("background-color", "rgb(23, 45, 67)");
         await expect(surface).toHaveCSS("border-top-color", "rgb(45, 67, 89)");
         await expect(surface).toHaveCSS(
           "border-radius",
-          ["emojiPopover", "mentionPopover"].includes(name) ? "19px" : "13px",
+          name === "buzz-popover-popup" ? "19px" : "13px",
         );
-        const positioned = ["emojiPopover", "mentionPopover"].includes(name)
-          ? surface.locator("..")
-          : surface;
-        await expect(positioned).toHaveCSS("z-index", "1234");
+        await expect(
+          name === "buzz-popover-popup"
+            ? page.locator("#probe-positioner")
+            : surface,
+        ).toHaveCSS("z-index", "1234");
       }
     } finally {
       await override.evaluate((node) => node.remove());

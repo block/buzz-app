@@ -74,7 +74,8 @@ export function MessageLink({
   const destination =
     parsed?.format === "legacy"
       ? parsed
-      : parsed?.target.kind === "conversation" &&
+      : parsed?.format === "shared" &&
+          parsed.target.kind === "conversation" &&
           scope?.slice(0, -65) === parsed.target.scope.communityOrigin
         ? parsed.target
         : undefined;

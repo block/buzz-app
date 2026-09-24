@@ -188,6 +188,9 @@ test("paperclip follows mentions and recipients, before the remaining tools", as
       .getByRole("region", { name: "Explicit mentions" })
       .getByRole("button");
     await expect(recipient).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: "Mention a member or agent" }),
+    ).toHaveCount(0);
     await mention.focus();
     for (const next of [recipient, attach, emoji]) {
       await page.keyboard.press("Tab");

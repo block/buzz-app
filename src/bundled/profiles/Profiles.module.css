@@ -36,6 +36,13 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.status {
+  overflow-wrap: anywhere;
+}
+.identifier {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
 .publicKey {
   display: flex;
   flex-direction: column;
@@ -134,4 +141,16 @@
   overflow: hidden;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.memoryEntry {
+  overflow-wrap: anywhere;
+}
+.memoryEntry summary {
+  cursor: pointer;
+}
+.memoryBody {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
 }

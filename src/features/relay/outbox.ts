@@ -92,6 +92,7 @@ export function createOutbox(
     controller?: AbortController;
   };
   const attempts = new Map<string, Attempt>();
+  const dismissing = new Set<string>();
   const lifetime = new AbortController();
   const sendListeners = new Set<SendObserver>();
   const deliveryWork = new Map<
@@ -152,7 +153,7 @@ export function createOutbox(
     for (const listener of localListeners) notifyListener(listener);
     for (const listener of listeners) notifyListener(listener);
   };
-  const persist = (id: string) => {
+  const persist = (id: string, dismiss = false) => {
     const queued = profiling.start("outbox.queue", id);
     const work = durable
       .catch(() => {})
@@ -165,12 +166,26 @@ export function createOutbox(
         queued();
         // Hydration may have added restored intent while this commit waited.
         // Commit current state so no intermediate transaction erases that intent.
-        const records = visible;
-        const bytes = pendingBytes;
+        const records = dismiss
+          ? visible.filter((item) => item.event.id !== id)
+          : visible;
+        const bytes = dismiss
+          ? byteSize(snapshot.filter((item) => item.event.id !== id))
+          : pendingBytes;
         return profiling.measureAsync("outbox.persist", id, async () => {
           if (bytes > 2 * 1024 * 1024)
             throw new Error("Outbox storage is full");
           await storage.save(records);
+          if (dismiss) {
+            // Commit removal inside the serialized write, before a later save
+            // can capture state. Failed storage never exposes a temporary absence.
+            deliveryWork.delete(id);
+            completed.delete(id);
+            snapshot = Object.freeze(
+              snapshot.filter((item) => item.event.id !== id),
+            );
+            notify();
+          }
         });
       });
     durable = work;
@@ -510,7 +525,8 @@ export function createOutbox(
         !closed &&
         item &&
         !isWorkflowOperation(item.event) &&
-        !attempts.has(id)
+        !attempts.has(id) &&
+        !dismissing.has(id)
       ) {
         if (item.delivery === "failed" || item.delivery === "unknown")
           captureSend(item.event);
@@ -519,28 +535,12 @@ export function createOutbox(
       }
     },
     async dismiss(id: string) {
-      if (closed || attempts.has(id)) return;
-      deliveryWork.delete(id);
-      const retained = completed.peek(id);
-      const pending = find(id);
-      if (retained) completed.delete(id);
-      snapshot = Object.freeze(snapshot.filter((item) => item.event.id !== id));
-      notify();
+      if (closed || attempts.has(id) || dismissing.has(id)) return;
+      dismissing.add(id);
       try {
-        await persist(id);
-      } catch (error) {
-        if (
-          !closed &&
-          !find(id) &&
-          !completed.peek(id) &&
-          (pending || retained)
-        ) {
-          if (pending) snapshot = Object.freeze([...snapshot, pending]);
-          if (retained) completed.set(id, retained);
-          notify();
-          void persist(id).catch(() => {});
-        }
-        throw error;
+        await persist(id, true);
+      } finally {
+        dismissing.delete(id);
       }
     },
   });

@@ -756,3 +756,88 @@ it("keeps creation receipts when an access purge races journal hydration", async
     owner.dispose();
   }
 });
+
+it.each(["commit", "reject", "echo"] as const)(
+  "serializes delayed dismissal with concurrent intent: %s",
+  async (outcome) => {
+    const event = signed(viewer, {
+      kind: 40003,
+      content: "Retained edit",
+      tags: [["e", "a".repeat(64)]],
+    });
+    const pending: OutgoingEvent = { event, signed: event, delivery: "failed" };
+    let records: readonly OutgoingEvent[] = [pending];
+    const gate = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    let hold = true;
+    const sign = vi.fn(async (template: EventTemplate) =>
+      signed(viewer, template),
+    );
+    const publish = vi.fn(async () => {});
+    const owner = createOutbox(
+      viewer.pubkey,
+      { sign, publish },
+      {
+        load: () => records,
+        async save(next) {
+          if (hold && !next.some((item) => item.event.id === event.id)) {
+            started.resolve();
+            await gate.promise;
+          }
+          records = next;
+        },
+      },
+    );
+    try {
+      await owner.ready;
+      const dismissal = owner.outbox.dismiss(event.id);
+      const result = dismissal.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await started.promise;
+      expect(owner.outbox.snapshot()).toEqual([pending]);
+      expect(owner.local.snapshot()).toEqual([pending]);
+      owner.outbox.retry(event.id);
+      expect(owner.outbox.snapshot()).toEqual([pending]);
+      const nextId = owner.outbox.send({
+        kind: 9,
+        content: "Concurrent intent",
+        tags: [["h", "c"]],
+      });
+      if (outcome === "echo") owner.observe([event]);
+      hold = false;
+      if (outcome === "commit") gate.resolve();
+      else gate.reject(new Error("Disk unavailable"));
+      expect(await result).toEqual(
+        outcome === "commit" ? undefined : new Error("Disk unavailable"),
+      );
+      await vi.waitFor(() =>
+        expect(
+          owner.outbox.snapshot().find((item) => item.event.id === nextId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+      await vi.waitFor(() =>
+        expect(records.find((item) => item.event.id === nextId)?.delivery).toBe(
+          "accepted",
+        ),
+      );
+      expect(publish).toHaveBeenCalledTimes(1);
+      expect(sign).toHaveBeenCalledTimes(1);
+      const remaining = records.find((item) => item.event.id === event.id);
+      if (outcome === "commit") expect(remaining).toBeUndefined();
+      else
+        expect(remaining).toMatchObject({
+          event,
+          delivery: outcome === "echo" ? "seen" : "failed",
+        });
+      expect(
+        owner.outbox.snapshot().some((item) => item.event.id === event.id),
+      ).toBe(outcome === "reject");
+    } finally {
+      gate.resolve();
+      owner.dispose();
+    }
+  },
+);

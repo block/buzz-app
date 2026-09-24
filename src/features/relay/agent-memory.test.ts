@@ -20,18 +20,22 @@ function harness(
   readAgentMemories?: MemoryReader,
   who = viewer.pubkey,
   scope = "https://one.example",
+  options: Parameters<typeof createRelaySession>[1] = {},
 ) {
   const wire = scriptedTransport(who, relay.pubkey);
   let live!: LiveCallbacks;
-  const owner = createRelaySession({
-    ...wire.transport,
-    scope,
-    ...(readAgentMemories ? { readAgentMemories } : {}),
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, retry() {}, dispose() {} };
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      scope,
+      ...(readAgentMemories ? { readAgentMemories } : {}),
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
     },
-  });
+    options,
+  );
   owners.push(owner);
   live.state({ status: "connected", routes: [] });
   return { ...owner, live };
@@ -146,4 +150,65 @@ it("disconnect subscribers cannot reenter with stale connected authority", async
   stop();
   expect(view.snapshot()).toEqual({ status: "error" });
   expect(read).toHaveBeenCalledTimes(1);
+});
+
+it("cache clear blocks subscriber reentry and new views until all purges settle", async () => {
+  const releases: (() => void)[] = [];
+  let finishRead!: (value: MemoryListing) => void;
+  const read = vi
+    .fn<MemoryReader>()
+    .mockResolvedValueOnce(listing)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRead = resolve;
+        }),
+    )
+    .mockResolvedValue(listing);
+  const h = harness(read, viewer.pubkey, "https://one.example", {
+    persistence: {
+      async read() {
+        return [];
+      },
+      async write() {},
+      async remove() {},
+      async retain() {},
+      close() {},
+      clear: () => new Promise<void>((resolve) => releases.push(resolve)),
+    },
+  });
+  const view = h.session.agentMemories.open(agent.pubkey);
+  await view.refresh();
+  const pending = view.refresh();
+  const stop = view.subscribe(() => {
+    if (view.snapshot().status === "idle") void view.refresh();
+  });
+  const first = h.clearCache();
+  const second = h.clearCache();
+  try {
+    expect(releases).toHaveLength(2);
+    expect(read.mock.calls[1]?.[1].aborted).toBe(true);
+    expect(read).toHaveBeenCalledTimes(2);
+    finishRead(listing);
+    await pending;
+    expect(view.snapshot().listing).toBeUndefined();
+    releases[0]?.();
+    await first;
+    const other = h.session.agentMemories.open(agent.pubkey);
+    await other.refresh();
+    await view.refresh();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(other.snapshot().listing).toBeUndefined();
+    releases[1]?.();
+    await second;
+    stop();
+    await view.refresh();
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(view.snapshot()).toEqual({ status: "ready", listing });
+  } finally {
+    stop();
+    finishRead(listing);
+    for (const release of releases) release();
+    await Promise.all([first, second, pending]);
+  }
 });

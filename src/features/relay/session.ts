@@ -186,6 +186,7 @@ export function createRelaySession(
   let revision = 0;
   let accessEpoch = 0;
   let cacheClearEpoch = 0;
+  let cacheClearing = 0;
   // Access changes update every owned snapshot before invoking subscribers.
   // A subscriber of one projection may synchronously read any other projection.
   let revoking = 0;
@@ -505,7 +506,7 @@ export function createRelaySession(
   const memories = createAgentMemories(
     transport?.readAgentMemories,
     transport?.viewer ?? "",
-    () => !closed && !revoking && memoryConnected,
+    () => !closed && !revoking && !cacheClearing && memoryConnected,
     notify,
   );
   const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
@@ -1717,29 +1718,35 @@ export function createRelaySession(
   return {
     session,
     async clearCache() {
-      accessEpoch++;
-      cancelUploads();
-      cacheClearEpoch++;
-      activity.clear();
-      memories.clear();
-      presence.clear();
-      typing.clear();
-      sidebarPreferences.clear();
-      channelKit.clear();
-      // New windows must not yield to or receive errors from retired owners.
-      catchups.clear();
-      catchupQueue.clear();
-      for (const clear of views.values()) clear(true);
-      recent.clear();
-      unread.clear();
-      requests.invalidate();
-      profiles.clear();
-      emoji.clear();
-      agentLibrary.clear();
-      archives.clear();
-      workflows.clear();
-      await channels.clearCache();
-      updateInterests();
+      // Keep memory admission closed through asynchronous and overlapping purges.
+      cacheClearing++;
+      try {
+        accessEpoch++;
+        cancelUploads();
+        cacheClearEpoch++;
+        activity.clear();
+        memories.clear();
+        presence.clear();
+        typing.clear();
+        sidebarPreferences.clear();
+        channelKit.clear();
+        // New windows must not yield to or receive errors from retired owners.
+        catchups.clear();
+        catchupQueue.clear();
+        for (const clear of views.values()) clear(true);
+        recent.clear();
+        unread.clear();
+        requests.invalidate();
+        profiles.clear();
+        emoji.clear();
+        agentLibrary.clear();
+        archives.clear();
+        workflows.clear();
+        await channels.clearCache();
+        updateInterests();
+      } finally {
+        cacheClearing--;
+      }
     },
     dispose() {
       closed = true;

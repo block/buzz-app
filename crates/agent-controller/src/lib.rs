@@ -6,7 +6,23 @@ mod config;
 pub mod connection;
 mod create;
 mod credentials;
+#[cfg(unix)]
+mod diagnostics;
+#[cfg(not(unix))]
+mod diagnostics {
+    pub(crate) struct Diagnostics;
+    impl Diagnostics {
+        pub(crate) fn capture(_: &mut std::process::Command) -> crate::Result<Self> {
+            Err("Agent process containment is not supported on this platform yet".into())
+        }
+        pub(crate) fn snapshot(&self) -> Vec<String> {
+            Vec::new()
+        }
+    }
+}
 mod import;
+#[cfg(target_os = "macos")]
+mod orphans;
 mod ownership;
 mod process;
 mod runtime;

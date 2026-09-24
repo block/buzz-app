@@ -17,11 +17,15 @@ impl RuntimeBundle {
         if !Path::new(&agent.workspace).is_dir() {
             return Err("Agent workspace does not exist".into());
         }
+        let codex = crate::codex::is_codex(&agent.harness.command)
+            .then(|| {
+                crate::codex::Context::new(&agent.harness, &agent.environment, &agent.workspace)
+            })
+            .transpose()?;
         let worker = if agent.harness.command == "buzz-agent" {
             self.executable("buzz-agent")?
-        } else if crate::codex::is_codex(&agent.harness.command) {
-            crate::codex::Context::new(&agent.harness, &agent.environment, &agent.workspace)?
-                .adapter
+        } else if let Some(context) = &codex {
+            context.adapter.clone()
         } else {
             let path = PathBuf::from(&agent.harness.command);
             if !path.is_absolute() {
@@ -87,9 +91,8 @@ impl RuntimeBundle {
         .map_err(|_| "Invalid runtime tools path")?;
         command.envs(&agent.environment);
         command.env("PATH", path);
-        if crate::codex::is_codex(&agent.harness.command) {
-            crate::codex::Context::new(&agent.harness, &agent.environment, &agent.workspace)?
-                .apply_environment(&mut command)?;
+        if let Some(context) = &codex {
+            context.apply_environment(&mut command)?;
             let codex_path = command
                 .get_envs()
                 .find(|(key, _)| *key == "PATH")
@@ -274,6 +277,7 @@ pub enum Action {
 }
 struct Running {
     process: Process,
+    diagnostics: crate::diagnostics::Diagnostics,
     revision: u64,
     databricks_host: Option<String>,
     temporary: Option<tempfile::TempDir>,
@@ -328,16 +332,26 @@ impl Controller {
         snapshot.runtime_message = self.bundle.as_ref().err().cloned();
         for agent in &mut snapshot.agents {
             if let Some(run) = self.running.get_mut(&agent.id) {
+                let diagnostics = run.diagnostics.snapshot();
+                agent.diagnostics.extend(diagnostics.clone());
                 match run.process.alive() {
                     Ok(true) => {
                         agent.status = ProcessStatus::Running;
                         agent.running_revision = Some(run.revision);
                     }
                     Ok(false) => {
+                        let diagnostics = run.diagnostics.snapshot();
+                        let exit = run
+                            .process
+                            .exit_description()?
+                            .unwrap_or_else(|| "status unavailable".into());
                         self.running.remove(&agent.id);
                         self.errors.insert(
                             agent.id.clone(),
-                            "Agent listener exited; restart to retry".into(),
+                            format!(
+                                "Agent listener exited ({exit}); restart to retry. {}",
+                                diagnostics.join(" ")
+                            ),
                         );
                     }
                     Err(error) => {
@@ -527,6 +541,8 @@ impl Controller {
         }
         let bundle = self.bundle.as_ref().map_err(Clone::clone)?;
         let ownership = crate::ownership::Ownership::acquire(&self.ownership_root, &agent.id)?;
+        #[cfg(target_os = "macos")]
+        crate::orphans::sweep(&bundle.executable("buzz-acp")?)?;
         let stored;
         let key = match supplied {
             Some(key) => key,
@@ -565,11 +581,14 @@ impl Controller {
                 .env("DATABRICKS_MODEL_FILTER", &settings.filter)
                 .env_remove("DATABRICKS_TOKEN");
         }
+        let diagnostics = crate::diagnostics::Diagnostics::capture(&mut command)?;
         let process = Process::spawn(&mut command)?;
+        drop(command);
         self.running.insert(
             id.into(),
             Running {
                 process,
+                diagnostics,
                 revision: agent.revision,
                 databricks_host: settings.map(|s| s.host),
                 temporary: Some(temporary),

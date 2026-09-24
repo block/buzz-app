@@ -119,6 +119,7 @@ fn bundle(directory: &Path) -> RuntimeBundle {
         fs::write(&path, r#"#!/bin/sh
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
+printf 'connected to relay at secret-url\n' >&2
 trap 'exit 0' TERM INT
 while :; do /bin/sleep 0.1; done
 "#).unwrap();
@@ -207,6 +208,22 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
         (text.lines().count() == 10).then(|| text.to_owned())
     });
     assert_eq!(first, "true\n900\ntest prompt\ntest-model\n\nwss://relay.example\nowner-only\n\n\nexplicit-value\n");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let snapshot = controller.snapshot().unwrap();
+        if snapshot.agents[0]
+            .diagnostics
+            .iter()
+            .any(|s| s == "Listener connected to relay.")
+        {
+            assert!(!serde_json::to_string(&snapshot)
+                .unwrap()
+                .contains("secret-url"));
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
     controller.action(&a.id, Action::Start).unwrap();
     assert_eq!(controller.running.len(), 1);
     let edit = AgentEdit {
@@ -622,10 +639,15 @@ fn manifest_integrity_and_exact_identity_exclusion_across_profiles() {
 #[ignore = "requires immutable staged runtime resources; run explicitly after build-agent-runtime"]
 fn actual_bundled_acp_lazy_listener_start_restart_stop_and_quit_cleanup() {
     let dir = tempfile::tempdir().unwrap();
-    let tools = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../src-tauri/resources/agent-runtime")
-        .canonicalize()
-        .unwrap();
+    // Exercise the deployed copy the desktop actually launches, not the source
+    // resources: macOS can reject a copied inode while the source still runs.
+    let executable = std::env::current_exe().unwrap();
+    let tools = executable
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("agent-runtime");
     let mut a = agent(dir.path());
     a.harness.provider = "databricks_v2".into();
     a.harness.databricks = Some(crate::connection::DatabricksSettings {
@@ -773,6 +795,7 @@ fn codex_launch_and_discovery_share_paths_home_and_explicit_overrides() {
             env.get(std::ffi::OsStr::new("BUZZ_ACP_AGENT_COMMAND")),
             Some(&context.adapter.clone().into_os_string())
         );
+        assert_eq!(env.get(std::ffi::OsStr::new("CODEX_PATH")), None);
         assert_eq!(command.get_current_dir(), probe.get_current_dir());
         let path = env.get(std::ffi::OsStr::new("PATH")).unwrap();
         assert_eq!(
@@ -792,4 +815,70 @@ fn codex_launch_and_discovery_share_paths_home_and_explicit_overrides() {
     }
     a.harness.command = "../tools/codex-acp".into();
     assert!(crate::codex::Context::new(&a.harness, &a.environment, &a.workspace).is_err());
+}
+
+#[test]
+#[cfg(unix)]
+fn codex_saved_context_merges_write_only_patches_and_checks_revision() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = agent(dir.path());
+    for name in ["codex-acp", "codex"] {
+        let path = dir.path().join(name);
+        fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    a.harness.command = dir.path().join("codex-acp").to_str().unwrap().into();
+    a.harness.provider.clear();
+    a.environment
+        .insert("CODEX_HOME".into(), "saved-home".into());
+    a.environment
+        .insert("OPENAI_API_KEY".into(), "synthetic-secret".into());
+    let mut store = Store::open(dir.path().join("store")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("unused".into()),
+        dir.path().join("ownership"),
+    );
+    let mut edit = AgentEdit {
+        name: a.name.clone(),
+        system_prompt: a.system_prompt.clone(),
+        workspace: a.workspace.clone(),
+        harness: a.harness.clone(),
+        environment: BTreeMap::from([("CODEX_HOME".into(), Some("draft-home".into()))]),
+    };
+    assert!(controller
+        .model_context(&a.id, a.revision + 1, edit.clone())
+        .is_err());
+    let context = controller
+        .model_context(&a.id, a.revision, edit.clone())
+        .unwrap()
+        .codex
+        .unwrap();
+    let command = context.command(&context.adapter).unwrap();
+    let env: BTreeMap<_, _> = command.get_envs().collect();
+    assert_eq!(
+        env[std::ffi::OsStr::new("CODEX_HOME")],
+        Some(std::ffi::OsStr::new("draft-home"))
+    );
+    assert_eq!(
+        env[std::ffi::OsStr::new("OPENAI_API_KEY")],
+        Some(std::ffi::OsStr::new("synthetic-secret"))
+    );
+    edit.environment.insert("OPENAI_API_KEY".into(), None);
+    let context = controller
+        .model_context(&a.id, a.revision, edit)
+        .unwrap()
+        .codex
+        .unwrap();
+    assert!(!context
+        .command(&context.adapter)
+        .unwrap()
+        .get_envs()
+        .any(|(key, _)| key == "OPENAI_API_KEY"));
+    let saved = controller.store.agents().unwrap().remove(0);
+    assert_eq!(saved.environment["CODEX_HOME"], "saved-home");
+    assert_eq!(saved.environment["OPENAI_API_KEY"], "synthetic-secret");
 }

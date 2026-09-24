@@ -774,3 +774,45 @@ it("shows Retry after persistent or genuine read failure without hiding the erro
   expect(f.host.snapshot).toHaveBeenCalledTimes(22);
   expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
 });
+
+it("disables only requested starts and queues the second agent without parallel native launches", async () => {
+  const { f } = setup("ready", (fixture) => {
+    fixture.agent.status = "stopped";
+    fixture.agent.enabled = false;
+  });
+  const cards = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  const [firstCard, secondCard] = cards;
+  if (!firstCard || !secondCard) throw new Error("Expected two managed agents");
+  const first = within(firstCard);
+  const second = within(secondCard);
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const calls = vi.spyOn(f.host, "action").mockImplementation(async (id) => {
+    if (id === "fixture-agent") await pending;
+    const agent = f.data.agents.find((item) => item.id === id);
+    if (!agent) throw new Error("Unexpected agent Start");
+    agent.enabled = true;
+    agent.status = "running";
+    return structuredClone(f.data);
+  });
+  fireEvent.click(first.getByRole("button", { name: "Start" }));
+  expect(first.getByRole("button", { name: "Start" })).toBeDisabled();
+  expect(second.getByRole("button", { name: "Start" })).toBeEnabled();
+  expect(calls).toHaveBeenCalledTimes(1);
+  expect(calls).toHaveBeenNthCalledWith(1, "fixture-agent", "start");
+  fireEvent.click(second.getByRole("button", { name: "Start" }));
+  expect(second.getByRole("button", { name: "Start" })).toBeDisabled();
+  expect(
+    second.getByText("Queued to start after the current agent."),
+  ).toBeVisible();
+  expect(calls).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    finish();
+  });
+  await waitFor(() => expect(calls).toHaveBeenCalledTimes(2));
+  expect(calls).toHaveBeenNthCalledWith(2, "other-destination", "start");
+});

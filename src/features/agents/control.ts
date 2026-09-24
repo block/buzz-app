@@ -115,6 +115,8 @@ export interface AgentControlState {
   busy: boolean;
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
+  /** Explicit requests waiting behind another launch; never automatic starts. */
+  queuedLaunches?: readonly string[];
   pendingCredentialWrite?: boolean;
   mentionError?: string | null;
   stopping?: boolean;
@@ -158,6 +160,7 @@ export function canStopAgent(state: AgentControlState, id: string): boolean {
     (state.status === "error" ||
       (state.status === "ready" &&
         (state.pendingLaunch === id ||
+          !!state.queuedLaunches?.includes(id) ||
           agent.enabled ||
           agent.status !== "stopped")))
   );
@@ -294,7 +297,11 @@ export function createAgentControl(
     }
   }
 
-  const action: AgentControlHost["action"] = (id, command, replayFloor) => {
+  const executeAction: AgentControlHost["action"] = (
+    id,
+    command,
+    replayFloor,
+  ) => {
     if (command === "stop") stopped++;
     return run(
       (native) =>
@@ -307,6 +314,60 @@ export function createAgentControl(
       command === "stop" && canStopAgent(state, id),
       command === "stop" ? undefined : id,
     );
+  };
+  let launchTail: Promise<ControlSnapshot> | null = null;
+  const launches = new Map<string, Promise<ControlSnapshot>>();
+  const action: AgentControlHost["action"] = (id, command, replayFloor) => {
+    if (command === "stop") {
+      // Stop fences all queued launches as well as the in-flight credential wait.
+      const queued = state.queuedLaunches ?? [];
+      const result = executeAction(id, command, replayFloor);
+      for (const key of queued) launches.delete(key);
+      update({ queuedLaunches: [] });
+      return result;
+    }
+    const existing = launches.get(id);
+    if (existing) {
+      if (command === "start" && state.queuedLaunches?.includes(id))
+        return existing;
+      return Promise.reject(
+        new Error("Another agent operation is in progress."),
+      );
+    }
+    const prior = launchTail;
+    const stopGeneration = stopped;
+    const queued =
+      command === "start" &&
+      !!prior &&
+      state.status === "ready" &&
+      !state.stopping &&
+      (!!state.pendingLaunch || !!state.queuedLaunches?.length);
+    if (!queued && (state.busy || state.status !== "ready"))
+      return executeAction(id, command, replayFloor);
+    if (queued)
+      update({ queuedLaunches: [...(state.queuedLaunches ?? []), id] });
+    const result = queued
+      ? prior
+          .catch(() => {})
+          .then(() => {
+            if (disposed || stopped !== stopGeneration)
+              throw new Error("Queued agent start was cancelled.");
+            update({
+              queuedLaunches: (state.queuedLaunches ?? []).filter(
+                (key) => key !== id,
+              ),
+            });
+            // run still enforces fresh evidence after an uncertain predecessor.
+            return executeAction(id, command, replayFloor);
+          })
+      : executeAction(id, command, replayFloor);
+    const tracked = result.finally(() => {
+      if (launches.get(id) === tracked) launches.delete(id);
+      if (launchTail === tracked) launchTail = null;
+    });
+    launches.set(id, tracked);
+    launchTail = tracked;
+    return tracked;
   };
   return {
     models,

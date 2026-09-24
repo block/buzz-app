@@ -861,3 +861,39 @@ for (const boundary of ["dispose", "newer write"] as const) {
     control.dispose();
   });
 }
+
+for (const end of ["failure", "stop", "dispose"] as const) {
+  it(`does not dispatch queued starts after ${end}`, async () => {
+    const fixture = controlFixture();
+    fixture.data.agents.push({
+      ...structuredClone(fixture.agent),
+      id: "second",
+    });
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    const gate = deferred<void>();
+    const calls = vi
+      .spyOn(fixture.host, "action")
+      .mockImplementation(async (_id, action) => {
+        if (action === "start") {
+          await gate.promise;
+          if (end === "failure") throw "Uncertain native outcome";
+        }
+        return structuredClone(fixture.data);
+      });
+    const first = control.action(fixture.agent.id, "start").catch(() => {});
+    const queued = control.action("second", "start");
+    expect(control.action("second", "start")).toBe(queued);
+    const second = queued.catch((error: Error) => error);
+    expect(calls).toHaveBeenCalledTimes(1);
+    if (end === "stop") await control.action(fixture.agent.id, "stop");
+    if (end === "dispose") control.dispose();
+    gate.resolve();
+    await first;
+    expect(await second).toBeInstanceOf(Error);
+    expect(calls.mock.calls.filter(([, action]) => action === "start")).toEqual(
+      [[fixture.agent.id, "start"]],
+    );
+    control.dispose();
+  });
+}

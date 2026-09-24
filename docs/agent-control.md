@@ -375,10 +375,22 @@ system directories. This keeps the managed adapter consistent with original Buzz
 installations can use an absolute codex-acp path; codex and any interpreter must
 be available through those directories. No installer or shell startup is run.
 
+The supported discovery baseline is `@agentclientprotocol/codex-acp` **1.3.0**
+with ACP v1. Other adapter identities/versions fail discovery with manual repair
+guidance. The effective CLI must report a valid version; the isolated compatibility
+check used Codex CLI 0.151.0. This does not certify every CLI release.
+Like original Buzz, the shared context leaves `CODEX_PATH` unset by default.
+Version/login probes use `codex-acp cli` to invoke the adapter's bundled engine.
+An absolute saved `CODEX_PATH` override chooses both. Interpreter checks recognize
+the npm `#!/usr/bin/env node` shim and absolute shebang interpreters; unsupported
+shim syntax requires a supported executable. No login shell is launched.
+
 Login recovery is explicit terminal guidance: run `codex login` in the matching
 configuration/environment, then refresh. Buzz does not log out, rewrite Codex
-configuration, or read account credentials into the frontend. A nonzero login
-probe is reported as an unsuccessful check, not definitive logged-out evidence.
+configuration, or read account credentials into the frontend. Only the CLI's explicit `Not logged in` result is definitive logout evidence.
+Known configuration errors, unknown failures, malformed CLI versions, timeouts and
+oversized output remain errors with retry guidance. Version and login probes each
+have a 15-second deadline and 16 KiB output limit; raw output is never returned.
 Default creation also requires the login/session check to succeed.
 
 The current transport uses Unix process containment; Windows Codex discovery is

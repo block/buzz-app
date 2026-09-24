@@ -10,6 +10,7 @@ name = "buzz_foundation_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+tempfile = "3"
 url = "2"
 tauri-build = { version = "2", features = [] }
 

@@ -1,4 +1,5 @@
 mod build_config;
+mod build_resources;
 fn main() {
     println!("cargo:rerun-if-env-changed=BUZZ_BUILD_AGENT_ENV");
     println!("cargo:rerun-if-changed=build_config.rs");
@@ -27,5 +28,10 @@ fn main() {
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
         println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
     }
-    tauri_build::try_build(attributes).expect("Could not build Tauri resources")
+    tauri_build::try_build(attributes).expect("Could not build Tauri resources");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        let profile = output.ancestors().nth(3).expect("Cargo profile directory");
+        build_resources::refresh_runtime_inodes(&profile.join("agent-runtime"))
+            .expect("Could not publish fresh agent runtime resources");
+    }
 }

@@ -24,9 +24,9 @@ const channel = (index: number): ChannelSummary => ({
   channelType: index % 2 ? "stream" : "dm",
 });
 const author = keypair();
-function event(id: string): RelayEvent {
+function event(id: string, createdAt = 123): RelayEvent {
   return signed(author, {
-    created_at: 123,
+    created_at: createdAt,
     kind: 30620,
     tags: [
       ["h", id],
@@ -41,7 +41,7 @@ function mount(
 ) {
   let channels = initial;
   const reads: {
-    id: string;
+    ids: readonly string[];
     signal: AbortSignal | undefined;
     resolve(events: readonly RelayEvent[]): void;
     reject(error: Error): void;
@@ -56,7 +56,7 @@ function mount(
       read(filters, options) {
         return new Promise((resolve, reject) => {
           reads.push({
-            id: filters[0]?.["#h"]?.[0] ?? "",
+            ids: filters.flatMap((filter) => filter["#h"] ?? []),
             signal: options?.signal,
             resolve,
             reject,
@@ -108,62 +108,57 @@ function mount(
   };
 }
 
-it("keeps one stable status for a large mixed roster and never rereads on metadata reorder", async () => {
-  const channels = Array.from({ length: 24 }, (_, i) => channel(i + 1));
+it("reads 500 mixed member channels in four serial batches and never rereads on metadata reorder", async () => {
+  const channels = Array.from({ length: 500 }, (_, i) => channel(i + 1));
   const fixture = mount(channels);
   try {
     await waitFor(() => expect(fixture.reads).toHaveLength(1));
+    expect(fixture.reads[0]?.ids).toHaveLength(128);
     expect(screen.getAllByRole("status")).toHaveLength(1);
-    expect(screen.getByRole("status")).toHaveTextContent("Reading workflows…");
     fixture.change(
       [...channels].reverse().map((c) => ({ ...c, name: `Renamed ${c.name}` })),
     );
-    for (let i = 0; i < channels.length; i++) {
+    for (let i = 0; i < 4; i++) {
+      expect(fixture.reads).toHaveLength(i + 1);
       await fixture.finish(i);
-      expect(screen.getAllByRole("status")).toHaveLength(1);
     }
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Workflow discovery complete.",
+      "Workflow scan finished.",
     );
-    expect(fixture.reads.map((r) => r.id)).toEqual(channels.map((c) => c.id));
+    expect(fixture.reads.map((r) => r.ids.length)).toEqual([
+      128, 128, 128, 116,
+    ]);
+    expect(fixture.reads.flatMap((r) => r.ids)).toEqual(
+      channels.map((c) => c.id),
+    );
     fixture.change(channels);
-    expect(fixture.reads).toHaveLength(24);
+    expect(fixture.reads).toHaveLength(4);
   } finally {
     fixture.close();
   }
 });
 
-it("adds only new IDs, cancels removed reads, ignores late completion, and refreshes deliberately", async () => {
-  const a = channel(1),
-    b = channel(2),
-    c = channel(3),
-    d = channel(4);
+it("adds only new IDs, cancels removed batches, ignores late completion, and refreshes deliberately", async () => {
+  const [a, b, c, d] = [channel(1), channel(2), channel(3), channel(4)];
   const fixture = mount([a, b]);
   try {
-    await fixture.finish(0, [event(a.id)]);
-    await waitFor(() => expect(fixture.reads).toHaveLength(2));
+    await waitFor(() => expect(fixture.reads).toHaveLength(1));
     fixture.change([c, a, b]);
     fixture.change([a, c, d]);
-    await waitFor(() => expect(fixture.reads).toHaveLength(3));
-    expect(fixture.reads[1]?.signal?.aborted).toBe(true);
-    await fixture.finish(1, [event(b.id)]);
-    await fixture.finish(2);
-    await fixture.finish(3);
+    await waitFor(() => expect(fixture.reads).toHaveLength(2));
+    expect(fixture.reads[0]?.signal?.aborted).toBe(true);
+    await fixture.finish(0, [event(b.id)]);
+    await fixture.finish(1, [event(a.id)]);
     expect(
       screen.getAllByRole("button", { name: "Open Message helper" }),
     ).toHaveLength(1);
-    expect(fixture.reads.map((r) => r.id)).toEqual([a.id, b.id, c.id, d.id]);
-    fixture.refresh();
-    for (let i = 4; i < 7; i++) await fixture.finish(i);
-    expect(fixture.reads.map((r) => r.id)).toEqual([
-      a.id,
-      b.id,
-      c.id,
-      d.id,
-      a.id,
-      c.id,
-      d.id,
+    expect(fixture.reads.map((r) => r.ids)).toEqual([
+      [a.id, b.id],
+      [a.id, c.id, d.id],
     ]);
+    fixture.refresh();
+    await fixture.finish(2);
+    expect(fixture.reads[2]?.ids).toEqual([a.id, c.id, d.id]);
     expect(
       screen.queryByRole("button", { name: "Open Message helper" }),
     ).toBeNull();
@@ -173,29 +168,20 @@ it("adds only new IDs, cancels removed reads, ignores late completion, and refre
 });
 
 it("purges globally without automatic reads and recovers remaining channels on membership removal", async () => {
-  const a = channel(1),
-    b = channel(2),
-    c = channel(3);
+  const [a, b, c] = [channel(1), channel(2), channel(3)];
   const fixture = mount([a, b, c]);
   try {
-    await fixture.finish(0, [event(a.id)]);
-    await fixture.finish(1, [event(b.id)]);
-    await waitFor(() => expect(fixture.reads).toHaveLength(3));
+    await fixture.finish(0, [event(a.id), event(b.id)]);
+    fixture.refresh();
+    await waitFor(() => expect(fixture.reads).toHaveLength(2));
     fixture.change([a, c], true);
     expect(
       screen.queryByRole("button", { name: "Open Message helper" }),
     ).toBeNull();
-    expect(fixture.reads[2]?.signal?.aborted).toBe(true);
-    await fixture.finish(2, [event(c.id)]);
-    await fixture.finish(3, [event(a.id)]);
-    await fixture.finish(4);
-    expect(fixture.reads.map((r) => r.id)).toEqual([
-      a.id,
-      b.id,
-      c.id,
-      a.id,
-      c.id,
-    ]);
+    expect(fixture.reads[1]?.signal?.aborted).toBe(true);
+    await fixture.finish(1, [event(b.id)]);
+    await fixture.finish(2, [event(a.id)]);
+    expect(fixture.reads[2]?.ids).toEqual([a.id, c.id]);
     act(() => fixture.owner.clear());
     expect(
       screen.queryByRole("button", { name: "Open Message helper" }),
@@ -204,56 +190,54 @@ it("purges globally without automatic reads and recovers remaining channels on m
       "cleared or unavailable",
     );
     fixture.change([c, a]);
-    expect(fixture.reads).toHaveLength(5);
+    expect(fixture.reads).toHaveLength(3);
     fixture.refresh();
-    await fixture.finish(5);
-    await fixture.finish(6);
+    await fixture.finish(3);
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Workflow discovery complete.",
+      "Workflow scan finished.",
     );
   } finally {
     fixture.close();
   }
 });
 
-it("preserves partial results, exposes failures, and retries without dropping loaded cards", async () => {
-  const a = channel(1),
-    b = channel(2);
-  const fixture = mount([a, b]);
+it("preserves per-channel partial results and retry never drops loaded cards", async () => {
+  const channels = Array.from({ length: 129 }, (_, i) => channel(i + 1));
+  const fixture = mount(channels);
   try {
     await fixture.finish(
       0,
-      Array.from({ length: 100 }, () => event(a.id)),
+      Array.from({ length: 100 }, (_, i) => event(channel(1).id, i)),
     );
     expect(
       screen.getByText("#Channel 1 returned a partial workflow list."),
     ).toBeVisible();
+    expect(
+      screen.queryByText("#Channel 2 returned a partial workflow list."),
+    ).toBeNull();
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
     await act(async () => fixture.reads[1]?.reject(new Error("offline")));
-    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(fixture.reads).toHaveLength(3));
     expect(
       screen.getByRole("button", { name: "Open Message helper" }),
     ).toBeVisible();
     await fixture.finish(2);
-    expect(fixture.reads.map((read) => read.id)).toEqual([a.id, b.id, b.id]);
+    expect(fixture.reads[2]?.ids).toEqual([channel(129).id]);
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   } finally {
     fixture.close();
   }
 });
 
-it("stops queued reads on interruption, retains settled cards and resumes only on refresh", async () => {
-  const a = channel(1),
-    b = channel(2),
-    c = channel(3);
-  const fixture = mount([a, b, c]);
+it("stops queued batches on interruption, retains cards and resumes on refresh", async () => {
+  const channels = Array.from({ length: 257 }, (_, i) => channel(i + 1));
+  const fixture = mount(channels);
   try {
-    await fixture.finish(0, [event(a.id)]);
+    await fixture.finish(0, [event(channel(1).id)]);
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
     act(() => fixture.owner.interrupt());
-    await fixture.finish(1, [event(b.id)]);
+    await fixture.finish(1, [event(channel(129).id)]);
     expect(fixture.reads[1]?.signal?.aborted).toBe(true);
     expect(fixture.reads).toHaveLength(2);
     expect(
@@ -262,33 +246,27 @@ it("stops queued reads on interruption, retains settled cards and resumes only o
     expect(screen.queryByText("Reading workflows…")).toBeNull();
     fixture.refresh();
     for (let i = 2; i < 5; i++) await fixture.finish(i);
-    expect(fixture.reads.map((r) => r.id)).toEqual([
-      a.id,
-      b.id,
-      a.id,
-      b.id,
-      c.id,
-    ]);
+    expect(fixture.reads.slice(2).flatMap((r) => r.ids)).toEqual(
+      channels.map((c) => c.id),
+    );
   } finally {
     fixture.close();
   }
 });
 
-it("keeps session purge coverage after removing the last completed observer without rereading", async () => {
-  const a = channel(1),
-    b = channel(2);
+it("keeps session purge coverage after removing a completed batch member without rereading", async () => {
+  const [a, b] = [channel(1), channel(2)];
   const fixture = mount([a, b]);
   try {
     await fixture.finish(0, [event(a.id)]);
-    await fixture.finish(1);
     fixture.change([a]);
     act(() => fixture.owner.clear());
     expect(
       screen.queryByRole("button", { name: "Open Message helper" }),
     ).toBeNull();
-    expect(fixture.reads).toHaveLength(2);
+    expect(fixture.reads).toHaveLength(1);
     fixture.refresh();
-    await fixture.finish(2, [event(a.id)]);
+    await fixture.finish(1, [event(a.id)]);
     expect(
       screen.getByRole("button", { name: "Open Message helper" }),
     ).toBeVisible();
@@ -297,17 +275,47 @@ it("keeps session purge coverage after removing the last completed observer with
   }
 });
 
-it("retains the same channel's loaded cards when its refresh fails", async () => {
-  const a = channel(1);
-  const fixture = mount([a]);
+it("retains cards and explicit retry after removing a completed batch member then interrupting", async () => {
+  const [a, b, c] = [channel(1), channel(2), channel(3)];
+  const fixture = mount([a, b, c]);
   try {
-    await fixture.finish(0, [event(a.id)]);
+    await fixture.finish(0, [event(a.id), event(b.id), event(c.id)]);
+    fixture.change([a, c]);
+    expect(fixture.reads).toHaveLength(1);
+    act(() => fixture.owner.interrupt());
+    expect(
+      screen.getAllByRole("button", { name: "Open Message helper" }),
+    ).toHaveLength(2);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Workflow discovery paused.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await fixture.finish(1, [event(a.id)]);
+    expect(fixture.reads[1]?.ids).toEqual([a.id]);
+    expect(
+      screen.getAllByRole("button", { name: "Open Message helper" }),
+    ).toHaveLength(2);
+    act(() => fixture.owner.clear());
+    expect(
+      screen.queryByRole("button", { name: "Open Message helper" }),
+    ).toBeNull();
+    expect(fixture.reads).toHaveLength(2);
+  } finally {
+    fixture.close();
+  }
+});
+
+it("retains a batch's loaded cards when its refresh fails", async () => {
+  const [a, b] = [channel(1), channel(2)];
+  const fixture = mount([a, b]);
+  try {
+    await fixture.finish(0, [event(a.id), event(b.id)]);
     fixture.refresh();
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
     await act(async () => fixture.reads[1]?.reject(new Error("offline")));
     expect(
-      screen.getByRole("button", { name: "Open Message helper" }),
-    ).toBeVisible();
+      screen.getAllByRole("button", { name: "Open Message helper" }),
+    ).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
     fixture.refresh();
     await fixture.finish(2);
@@ -320,8 +328,7 @@ it("retains the same channel's loaded cards when its refresh fails", async () =>
 });
 
 it("does not reread recovered channels when a membership is added after explicit recovery", async () => {
-  const a = channel(1),
-    b = channel(2);
+  const [a, b] = [channel(1), channel(2)];
   const fixture = mount([a]);
   try {
     await fixture.finish(0);
@@ -330,17 +337,15 @@ it("does not reread recovered channels when a membership is added after explicit
     await fixture.finish(1);
     fixture.change([a, b]);
     await fixture.finish(2);
-    expect(fixture.reads.map((read) => read.id)).toEqual([a.id, a.id, b.id]);
+    expect(fixture.reads.map((r) => r.ids)).toEqual([[a.id], [a.id], [b.id]]);
   } finally {
     fixture.close();
   }
 });
 
 for (const interrupt of [false, true]) {
-  it(`pauses a large roster honestly on ${interrupt ? "interruption" : "read failure"} and retries only unfinished IDs`, async () => {
-    const channels = Array.from({ length: 24 }, (_, index) =>
-      channel(index + 1),
-    );
+  it(`pauses honestly on ${interrupt ? "interruption" : "read failure"} and retries only unfinished batches`, async () => {
+    const channels = Array.from({ length: 300 }, (_, i) => channel(i + 1));
     const fixture = mount(channels);
     try {
       await fixture.finish(0, [event(channel(1).id)]);
@@ -349,7 +354,6 @@ for (const interrupt of [false, true]) {
         if (interrupt) fixture.owner.interrupt();
         else fixture.reads[1]?.reject(new Error("offline"));
       });
-      // Drain the cancelled read; it must not advance the remaining queue.
       if (interrupt) await fixture.finish(1);
       expect(screen.getByRole("status")).toHaveTextContent(
         "Workflow discovery paused.",
@@ -358,27 +362,24 @@ for (const interrupt of [false, true]) {
       expect(document.querySelectorAll(".workflow-card-grid > *")).toHaveLength(
         2,
       );
-      expect(fixture.reads).toHaveLength(2);
-      const remaining = [
-        ...channels.filter((_, index) => index !== 2),
-        channel(25),
-      ];
+      const remaining = [...channels.filter((_, i) => i !== 130), channel(301)];
       fixture.change([...remaining].reverse());
       expect(fixture.reads).toHaveLength(2);
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-      for (let index = 2; index < (interrupt ? 26 : 25); index++)
+      const expected = remaining.filter(
+        (c) =>
+          interrupt || !channels.slice(0, 128).some((old) => old.id === c.id),
+      );
+      for (let i = 0; i < Math.ceil(expected.length / 128); i++)
         await fixture.finish(
-          index,
-          interrupt && index === 2 ? [event(channel(1).id)] : [],
+          2 + i,
+          interrupt && i === 0 ? [event(channel(1).id)] : [],
         );
-      expect(fixture.reads.map((read) => read.id)).toEqual([
-        channel(1).id,
-        channel(2).id,
-        ...(interrupt ? [channel(1).id] : []),
-        ...remaining.slice(1).map((item) => item.id),
-      ]);
+      expect(fixture.reads.slice(2).flatMap((r) => r.ids)).toEqual(
+        expected.map((c) => c.id),
+      );
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Workflow discovery complete.",
+        "Workflow scan finished.",
       );
       expect(
         screen.getByRole("button", { name: "Open Message helper" }),
@@ -392,7 +393,7 @@ for (const interrupt of [false, true]) {
 it("reports synchronous view admission failure once and retries its unread roster", async () => {
   const blockers: { dispose(): void }[] = [];
   const fixture = mount([channel(1), channel(2)], (owner) => {
-    for (let index = 0; index < 16; index++)
+    for (let i = 0; i < 16; i++)
       blockers.push(owner.capability.definitions(channel(1).id));
   });
   try {
@@ -404,13 +405,11 @@ it("reports synchronous view admission failure once and retries its unread roste
     for (const view of blockers) view.dispose();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await fixture.finish(0);
-    await fixture.finish(1);
-    expect(fixture.reads.map((read) => read.id)).toEqual([
-      channel(1).id,
-      channel(2).id,
+    expect(fixture.reads.map((r) => r.ids)).toEqual([
+      [channel(1).id, channel(2).id],
     ]);
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Workflow discovery complete.",
+      "Workflow scan finished.",
     );
   } finally {
     for (const view of blockers) view.dispose();

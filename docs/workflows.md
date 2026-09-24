@@ -52,9 +52,17 @@ Saving a configured enabled flag does not prove runtime activation or cancellati
 Legacy deletion can retain a visible definition; accepted delivery is not proof
 of runtime cleanup. These backend limitations are displayed, not repaired here.
 
-The landing discovers workflows once per channel ID, including authorized DMs,
-with one read at a time. Metadata renames/reordering do not restart discovery;
-new memberships add only their missing reads. One stable status replaces
+The landing discovers workflows in serial batches of up to 128 participating
+channel IDs, including authorized DMs. Each channel keeps its own single-`#h`
+kind-30620 filter and 100-event limit, matching the old app's relay-compatible
+batching. Only this exact filter shape gets the reader/broker exception to the
+generic four-filter limit; request/response byte budgets remain unchanged.
+500 memberships need four requests. Signed event IDs are deduplicated before
+counting/folding, and saturated channels are marked partial; a finished scan is
+not proof of an exhaustive runtime inventory.
+
+Metadata renames/reordering do not restart discovery; new memberships add only
+their missing reads. One stable status replaces
 per-channel loading placeholders, and loaded cards remain visible during refresh.
 Refresh deliberately rereads the current roster; save outcomes request readback
 only for their affected channels. Read failures/interruption stop the queued scan

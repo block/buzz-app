@@ -1,3 +1,4 @@
+import { WORKFLOW_CHANNEL_BATCH, WORKFLOW_DEFINITION_LIMIT } from "./queries";
 import type { EventData } from "../relay/events";
 import type { RelayReader } from "../relay/reader";
 import type { Outbox, LocalEvents } from "../relay/outbox";
@@ -8,6 +9,7 @@ import type {
   WorkflowReference,
   WorkflowView,
   WorkflowDefinition,
+  WorkflowDefinitions,
 } from "./types";
 import {
   definition,
@@ -130,13 +132,21 @@ export function createWorkflows({
       );
   }
   function view<T>(
-    channelId: string,
+    channelId: string | readonly string[],
     available: boolean,
     empty: T,
     load: (signal: AbortSignal) => Promise<T>,
     accept?: (data: T) => void,
   ): WorkflowView<T> {
-    if (!UUID.test(channelId)) throw new Error("Invalid workflow channel");
+    const channelIds =
+      typeof channelId === "string" ? [channelId] : [...new Set(channelId)];
+    if (
+      !channelIds.length ||
+      channelIds.length > WORKFLOW_CHANNEL_BATCH ||
+      channelIds.some((id) => !UUID.test(id))
+    )
+      throw new Error("Invalid workflow channels");
+    const accessible = () => channelIds.every(canAccess);
     if (views.size >= 16)
       throw new Error("Too many workflow views; close another detail first");
     let disposed = false;
@@ -145,8 +155,7 @@ export function createWorkflows({
     const subscribers = new Set<() => void>();
     type Snapshot = ReturnType<WorkflowView<T>["snapshot"]>;
     let snapshot: Snapshot = Object.freeze({
-      status:
-        available && !closed && canAccess(channelId) ? "idle" : "unavailable",
+      status: available && !closed && accessible() ? "idle" : "unavailable",
       data: empty,
     });
     const emit = () => {
@@ -158,7 +167,7 @@ export function createWorkflows({
       pending = undefined;
       snapshot = Object.freeze({
         status:
-          available && !closed && !disposed && canAccess(channelId)
+          available && !closed && !disposed && accessible()
             ? "idle"
             : "unavailable",
         data: empty,
@@ -170,8 +179,9 @@ export function createWorkflows({
         controller?.abort();
         controller = undefined;
         pending = undefined;
-        if (snapshot.status === "idle" || snapshot.status === "unavailable")
-          return;
+        // Even an idle invalidation observer must distinguish interruption
+        // (retain copied data) from clear/access loss (purge it).
+        if (snapshot.status === "unavailable") return;
         snapshot = Object.freeze({
           status: "error",
           data: snapshot.data,
@@ -199,7 +209,7 @@ export function createWorkflows({
       },
       refresh() {
         if (closed || disposed || !available) return Promise.resolve();
-        if (!canAccess(channelId)) {
+        if (!accessible()) {
           clear();
           emit();
           return Promise.resolve();
@@ -215,7 +225,7 @@ export function createWorkflows({
         pending = Promise.resolve()
           .then(() => {
             signal.throwIfAborted();
-            if (!canAccess(channelId))
+            if (!accessible())
               throw new Error("Workflow channel access unavailable");
             return load(signal);
           })
@@ -225,7 +235,7 @@ export function createWorkflows({
               disposed ||
               controller !== owned ||
               signal.aborted ||
-              !canAccess(channelId)
+              !accessible()
             )
               return;
             snapshot = Object.freeze({ status: "ready", data });
@@ -303,7 +313,9 @@ export function createWorkflows({
   const capability = Object.freeze<WorkflowCapability>({
     availability,
     definitions(channelId) {
-      return view(
+      const channelIds =
+        typeof channelId === "string" ? [channelId] : [...new Set(channelId)];
+      return view<WorkflowDefinitions>(
         channelId,
         !!reader,
         Object.freeze({
@@ -313,15 +325,24 @@ export function createWorkflows({
         async (signal) => {
           if (!reader) throw new Error("Workflow definitions unavailable");
           const events = await reader.read(
-            [{ kinds: [30620], "#h": [channelId], limit: 100 }],
+            channelIds.map((id) => ({
+              kinds: [30620],
+              "#h": [id],
+              limit: WORKFLOW_DEFINITION_LIMIT,
+            })),
             { signal, fresh: true },
           );
           const coordinates = new Map<string, WorkflowDefinition>();
+          const counts = new Map<string, number>();
+          const seen = new Set<string>();
           for (const event of events) {
+            if (seen.has(event.id)) continue;
+            seen.add(event.id);
             const row = definition(event);
-            if (row.channelId !== channelId)
+            if (!channelIds.includes(row.channelId))
               throw new Error("Mismatched workflow channel");
-            const key = `${row.owner}:${row.id}`;
+            counts.set(row.channelId, (counts.get(row.channelId) ?? 0) + 1);
+            const key = `${row.channelId}:${row.owner}:${row.id}`;
             const old = coordinates.get(key);
             if (
               !old ||
@@ -330,9 +351,15 @@ export function createWorkflows({
             )
               coordinates.set(key, row);
           }
+          const partialChannelIds = Object.freeze(
+            channelIds.filter(
+              (id) => (counts.get(id) ?? 0) >= WORKFLOW_DEFINITION_LIMIT,
+            ),
+          );
           return Object.freeze({
             items: Object.freeze([...coordinates.values()]),
-            partial: events.length >= 100,
+            partial: partialChannelIds.length > 0,
+            partialChannelIds,
           });
         },
         ({ items }) => {

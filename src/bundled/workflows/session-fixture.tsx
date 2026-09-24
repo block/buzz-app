@@ -42,7 +42,7 @@ const viewer = keypair();
 const authority = keypair();
 const secondChannel = "88888888-8888-4888-8888-888888888888";
 const extraChannels = Array.from(
-  { length: 15 },
+  { length: 127 },
   (_, index) =>
     `99999999-9999-4999-8999-${String(index + 1).padStart(12, "0")}`,
 );
@@ -113,7 +113,13 @@ function session(scope: string) {
           if (
             fixtureParams.has("hold") &&
             !definitionHoldReleased &&
-            filters.some((filter) => filter["#h"]?.includes(secondChannel))
+            filters.some((filter) =>
+              filter["#h"]?.includes(
+                manyChannels
+                  ? (extraChannels[126] ?? secondChannel)
+                  : secondChannel,
+              ),
+            )
           )
             await new Promise<void>((resolve, reject) => {
               const abort = () => {

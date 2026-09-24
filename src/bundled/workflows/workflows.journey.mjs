@@ -425,7 +425,7 @@ test("real session page under StrictMode fences community changes, warns for dir
   expect(errors).toEqual([]);
 });
 
-test("landing bounds workflow reads across more than sixteen channels", async ({
+test("landing batches 129 channels into two workflow reads", async ({
   page,
 }) => {
   const errors = [];
@@ -438,7 +438,7 @@ test("landing bounds workflow reads across more than sixteen channels", async ({
     .poll(() =>
       page.evaluate(() => window.workflowSessionFixture.definitionQueries()),
     )
-    .toBeGreaterThanOrEqual(17);
+    .toBe(2);
   expect(errors).toEqual([]);
 });
 
@@ -495,18 +495,18 @@ test("landing scan survives channel presentation churn without restarting", asyn
     );
   }
   await expect(page.getByRole("status")).toHaveText(
-    "Workflow discovery complete.",
+    "Workflow scan finished. Lists may be limited by the relay.",
   );
   expect(
     await page.evaluate(() =>
       window.workflowSessionFixture.definitionChannelCount(),
     ),
-  ).toBe(17);
+  ).toBe(129);
   expect(
     await page.evaluate(() =>
       window.workflowSessionFixture.definitionQueries(),
     ),
-  ).toBe(17);
+  ).toBe(2);
   expect(await create.boundingBox()).toEqual(createBounds);
   expect(await open.boundingBox()).toEqual(openBounds);
 });
@@ -545,19 +545,19 @@ test("a failed landing scan shows one recovery action instead of an error-card g
   ).toBe(2);
   await retry.click();
   await expect(page.getByRole("status")).toHaveText(
-    "Workflow discovery complete.",
+    "Workflow scan finished. Lists may be limited by the relay.",
   );
   await expect(retry).toHaveCount(0);
   expect(
     await page.evaluate(() =>
       window.workflowSessionFixture.definitionQueries(),
     ),
-  ).toBe(18);
+  ).toBe(3);
   expect(
     await page.evaluate(() =>
       window.workflowSessionFixture.definitionChannelCount(),
     ),
-  ).toBe(17);
+  ).toBe(129);
   await expect(open).toBeInViewport();
 });
 

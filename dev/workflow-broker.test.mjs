@@ -5,6 +5,7 @@ import { expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey, verifyEvent } from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
+import { createRelayReader } from "../src/features/relay/reader.ts";
 import { WORKFLOW_READ_BYTES } from "../src/features/workflows/http.ts";
 
 vi.mock("nostr-tools", async (importOriginal) => {
@@ -89,6 +90,56 @@ async function harness(
   };
 }
 const signal = () => new AbortController().signal;
+it("real reader and broker forward 128 workflow filters with viewer auth and reject wider batches before dispatch", async () => {
+  const batch = Array.from({ length: 128 }, (_, i) => ({
+    kinds: [30620],
+    "#h": [`00000000-0000-4000-8000-${String(i).padStart(12, "0")}`],
+    limit: 100,
+  }));
+  const key = new Uint8Array(32);
+  key[31] = 9;
+  const event = finalizeEvent(
+    {
+      kind: 30620,
+      created_at: 123,
+      content: "name: Fixture",
+      tags: [
+        ["h", batch[0]["#h"][0]],
+        ["d", id],
+      ],
+    },
+    key,
+  );
+  const h = await harness(() => Response.json([event]));
+  let reader;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    reader = createRelayReader(transport);
+    expect(await reader.reader.read(batch)).toEqual([event]);
+    expect(h.calls).toHaveLength(1);
+    const { url, init, auth } = h.calls[0];
+    expect(url).toBe("https://a.workflow.test/query");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual(batch);
+    expect(Buffer.byteLength(init.body)).toBeLessThan(64 * 1024);
+    expect(auth.tags).toContainEqual(["u", url]);
+    expect(auth.tags).toContainEqual(["method", "POST"]);
+    for (const invalid of [
+      [...batch, batch[0]],
+      batch.map((filter) => ({ ...filter, kinds: [9] })),
+      batch.map((filter) => ({ ...filter, limit: 500 })),
+      batch.map((filter) => ({ ...filter, authors: [h.viewer] })),
+    ]) {
+      await expect(reader.reader.read(invalid)).rejects.toThrow();
+      expect((await h.post("query", invalid)).status).toBe(400);
+    }
+    expect(h.calls).toHaveLength(1);
+    expect(h.publications).toHaveLength(0);
+  } finally {
+    reader?.dispose();
+    await h.close();
+  }
+});
 it("real broker scoped history signs exact GET path/cursor and captured principal without startup reads or workflow writes", async () => {
   const h = await harness();
   try {

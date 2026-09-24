@@ -1,3 +1,4 @@
+import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type {
@@ -94,7 +95,7 @@ function useLandingDefinitions(
     const queued = new Set<string>();
     const listeners = new Set<() => void>();
     type Read = {
-      id: string;
+      ids: readonly string[];
       view: WorkflowView<WorkflowDefinitions>;
       stop(): void;
     };
@@ -135,31 +136,43 @@ function useLandingDefinitions(
       data: snapshots[id]?.data ?? EMPTY_DEFINITIONS,
       error: "Workflow read unavailable. Retry; this is not proof of deletion.",
     });
+    const record = (owned: Read, snapshot: DefinitionsSnapshot) => {
+      for (const id of owned.ids) {
+        snapshots = {
+          ...snapshots,
+          [id]: {
+            ...snapshot,
+            data:
+              snapshot.status === "loading" || snapshot.status === "error"
+                ? (snapshots[id]?.data ?? EMPTY_DEFINITIONS)
+                : {
+                    items: snapshot.data.items.filter(
+                      (row) => row.channelId === id,
+                    ),
+                    partial:
+                      snapshot.data.partialChannelIds?.includes(id) ??
+                      snapshot.data.partial,
+                  },
+          },
+        };
+      }
+    };
     const pause = (owned: Read, snapshot: DefinitionsSnapshot) => {
-      // The view contract does not distinguish interruption from read failure.
-      // Stop this scan on either; keep usable results and expose explicit retry.
       paused = true;
-      // Unread IDs remain pending, not fabricated per-channel failures.
-      queued.add(owned.id);
+      for (const id of owned.ids) queued.add(id);
       if (active) {
-        queued.add(active.id);
+        for (const id of active.ids) queued.add(id);
         if (active !== owned) release(active);
       }
       active = undefined;
       if (retained !== owned) release(retained);
       retained = owned;
-      snapshots = {
-        ...snapshots,
-        [owned.id]: {
-          ...snapshot,
-          data: snapshots[owned.id]?.data ?? snapshot.data,
-        },
-      };
+      record(owned, snapshot);
       emit();
     };
-    const observe = (id: string): Read => {
-      const view = capability.definitions(id);
-      const owned = { id, view, stop: () => {} };
+    const observe = (ids: readonly string[]): Read => {
+      const view = capability.definitions(ids);
+      const owned = { ids, view, stop: () => {} };
       owned.stop = view.subscribe(() => {
         if (active !== owned && retained !== owned) return;
         const snapshot = view.snapshot();
@@ -168,13 +181,7 @@ function useLandingDefinitions(
         } else if (snapshot.status === "error") {
           pause(owned, snapshot);
         } else {
-          snapshots = {
-            ...snapshots,
-            [id]:
-              snapshot.status === "loading"
-                ? { ...snapshot, data: snapshots[id]?.data ?? snapshot.data }
-                : snapshot,
-          };
+          record(owned, snapshot);
           emit();
         }
       });
@@ -182,17 +189,20 @@ function useLandingDefinitions(
     };
     const readNext = () => {
       if (active || paused) return;
-      const id = channelIds.find((id) => queued.has(id));
-      if (!id) return;
-      queued.delete(id);
+      const ids = channelIds
+        .filter((id) => queued.has(id))
+        .slice(0, WORKFLOW_CHANNEL_BATCH);
+      const first = ids[0];
+      if (!first) return;
+      for (const id of ids) queued.delete(id);
       let owned: Read;
       try {
-        owned = observe(id);
+        owned = observe(ids);
         active = owned;
         void owned.view
           .refresh()
           .catch(() => {
-            if (active === owned) pause(owned, failure(id));
+            if (active === owned) pause(owned, failure(first));
           })
           .finally(() => {
             if (active !== owned) return;
@@ -201,7 +211,7 @@ function useLandingDefinitions(
               pause(owned, snapshot);
               return;
             }
-            snapshots = { ...snapshots, [id]: snapshot };
+            record(owned, snapshot);
             release(retained);
             retained = owned;
             active = undefined;
@@ -211,8 +221,10 @@ function useLandingDefinitions(
       } catch {
         release(active);
         active = undefined;
-        snapshots = { ...snapshots, [id]: failure(id) };
-        queued.add(id);
+        for (const id of ids) {
+          snapshots = { ...snapshots, [id]: failure(id) };
+          queued.add(id);
+        }
         paused = true;
         emit();
       }
@@ -232,18 +244,19 @@ function useLandingDefinitions(
         invalidated = false;
         channelIds = ids;
         const wanted = new Set(ids);
-        if (active && !wanted.has(active.id)) {
+        if (active?.ids.some((id) => !wanted.has(id))) {
           const previous = active;
           active = undefined;
+          for (const id of previous.ids) if (wanted.has(id)) queued.add(id);
           release(previous);
         }
-        if (retained && !wanted.has(retained.id)) {
+        if (retained?.ids.some((id) => !wanted.has(id))) {
           release(retained);
           retained = undefined;
           // Keep copied snapshots subscribed to session invalidation without
           // rereading a completed channel just to replace the observer.
           const replacement = ids[0];
-          if (replacement && !active) retained = observe(replacement);
+          if (replacement && !active) retained = observe([replacement]);
         }
         for (const id of queued) if (!wanted.has(id)) queued.delete(id);
         snapshots = Object.fromEntries(
@@ -270,7 +283,8 @@ function useLandingDefinitions(
         if (!afterPending) paused = false;
         for (const id of ids) if (channelIds.includes(id)) queued.add(id);
         // A pending read already satisfies refresh; never cancel and repeat it.
-        if (active && !afterPending) queued.delete(active.id);
+        if (active && !afterPending)
+          for (const id of active.ids) queued.delete(id);
         readNext();
         emit();
       },
@@ -595,7 +609,7 @@ export function WorkflowLanding({
                     snapshots[channel.id]?.status === "unavailable",
                 )
               ? "Workflow data cleared or unavailable. Refresh to check access."
-              : "Workflow discovery complete."}
+              : "Workflow scan finished. Lists may be limited by the relay."}
       </p>
       {paused && (
         <Button

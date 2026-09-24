@@ -115,6 +115,40 @@ it("authoritative revocation clears all saved and structured data before callbac
   await runRead;
   expect(history.snapshot().status).toBe("unavailable");
 });
+it("revoking one channel purges a loaded batch before observers and fences its late refresh", async () => {
+  const h = setup();
+  const other = "33333333-3333-4333-8333-333333333333";
+  h.emit([
+    roster(relay, channelId, [viewer.pubkey], 1),
+    roster(relay, other, [viewer.pubkey], 1),
+  ]);
+  const view = h.session.workflows.definitions([channelId, other]);
+  const first = view.refresh();
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  h.next().respond([definition]);
+  await first;
+  expect(view.snapshot().data.items).toHaveLength(1);
+  const second = view.refresh();
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const late = h.next();
+  const checked = vi.fn(() => {
+    expect(view.snapshot()).toMatchObject({
+      status: "unavailable",
+      data: { items: [] },
+    });
+  });
+  view.subscribe(checked);
+  h.session.channels.subscribeList(checked);
+  h.emit([roster(relay, other, [], 2)]);
+  expect(checked).toHaveBeenCalled();
+  expect(late.signal?.aborted).toBe(true);
+  late.respond([definition]);
+  await second;
+  expect(view.snapshot().data.items).toEqual([]);
+  await view.refresh();
+  expect(h.pending).toHaveLength(0);
+});
+
 it("regrant cannot resurrect stale history; clear-cache and dispose cancel interest", async () => {
   const h = setup();
   h.emit([roster(relay, channelId, [viewer.pubkey], 1)]);

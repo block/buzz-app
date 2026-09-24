@@ -1,3 +1,4 @@
+import { isWorkflowDefinitionBatch } from "../src/features/workflows/queries.ts";
 import { prepareMedia } from "./media-preparation.mjs";
 import {
   prepareChannelKit,
@@ -360,7 +361,7 @@ export function validFilters(filters) {
   return (
     Array.isArray(filters) &&
     filters.length >= 1 &&
-    filters.length <= MAX_FILTERS &&
+    (filters.length <= MAX_FILTERS || isWorkflowDefinitionBatch(filters)) &&
     filters.every(
       (filter) =>
         filter &&

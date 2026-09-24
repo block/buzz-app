@@ -1,3 +1,10 @@
+mod browser;
+#[cfg(test)]
+mod browser_permissions_tests;
+use browser::{
+    browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
+    browser_status,
+};
 mod agent_models;
 mod agents;
 mod dock;
@@ -403,8 +410,28 @@ pub fn run() {
         .manage(Terminals::default())
         .manage(Notifications::default())
         .manage(PluginManager(Manager::from_env()))
-        .invoke_handler(commands())
-        .build(tauri::generate_context!())
+        .invoke_handler({
+            let application_commands = commands::<tauri::Wry>();
+            let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                browser_attach,
+                browser_set_bounds,
+                browser_detach,
+                browser_navigate,
+                browser_action,
+                browser_status
+            ];
+            // Browser embeds a real native view; existing commands also support MockRuntime.
+            move |request: tauri::ipc::Invoke<tauri::Wry>| {
+                if request.message.command().starts_with("browser_") {
+                    browser_commands(request)
+                } else {
+                    application_commands(request)
+                }
+            }
+        })
+        .on_page_load(browser::page_load)
+        .on_window_event(browser::window_event)
+        .build(app_context())
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
@@ -415,6 +442,7 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                browser::shutdown();
                 if let Err(error) = app.state::<Terminals>().shutdown() {
                     eprintln!("Terminal shutdown failed: {error}");
                 }
@@ -424,6 +452,10 @@ pub fn run() {
                 }
             }
         });
+}
+
+fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
+    tauri::generate_context!()
 }
 
 #[cfg(test)]

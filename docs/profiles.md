@@ -90,9 +90,9 @@ checks its badges without retries. Access-loss/disconnect cancellation is unchan
 Broad scan and native build/package acceptance remain deferred to an agreed
 integration batch. No sending/signing behavior changed.
 
-## Visible channels and linked instances
+## Info, channels and linked instances
 
-The profile's read-only channel section uses the current viewer's `session.channels`
+The profile's Channels tab uses the current viewer's `session.channels`
 list and exact `ChannelSummary.members` from relay-authored rosters. It excludes
 archived, hidden, DM and session conversations. Only positively identified stream
 and forum rows render; when a matching roster lacks a recognized type, that
@@ -110,5 +110,7 @@ native control or a valid community scope. Agent identity hints gate loading and
 visibility, never ownership; exact native matches alone supply instance rows. The
 section stays hidden for a non-agent without a match. It never derives ownership
 from the old Buzz library, self-declared profile markers, or names. The Agents
-page route opens management, not a per-instance page. No membership or agent
-mutation is performed by the profile. Neither list is a cross-community/global directory.
+page route opens management, not a per-instance page.
+
+The Info tab keeps the public key and linked instances; the Channels tab is read-only.
+Neither list is a cross-community/global directory.

@@ -2,6 +2,8 @@ import type { Navigation } from "../../features/navigation/controller";
 import { useChannelList } from "../../features/relay/react";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ArrowUpRightIcon } from "../../shared/design-system/icons/index";
+import styles from "./Profiles.module.css";
 
 /** Only the viewer's listed channels with an exact roster match are evidence. */
 export function ProfileChannels({
@@ -37,68 +39,73 @@ export function ProfileChannels({
         channel.members?.includes(pubkey),
     );
   return (
-    <section aria-label="Visible channels" className="flex flex-col gap-2">
-      <h3 className="m-0 text-heading">Visible channels</h3>
-      <p className="m-0 text-body-sm text-secondary">
-        Channels you can see where this exact identity is a member.
-      </p>
-      {(list.status === "idle" || list.status === "loading") && (
-        <p role="status">Loading channels…</p>
-      )}
-      {list.status === "unavailable" && (
-        <p>Channel membership is unavailable.</p>
-      )}
-      {list.status === "error" && (
-        <div>
-          <p role="alert">Could not finish loading visible channels.</p>
-          <Button
-            size="compact"
-            onClick={() => session.channels.refreshList?.()}
+    <section aria-label="Channels" className="flex flex-col gap-2">
+      <div className={styles.channelList}>
+        {(list.status === "idle" || list.status === "loading") && (
+          <p className={styles.channelNote} role="status">
+            Loading channels…
+          </p>
+        )}
+        {list.status === "unavailable" && (
+          <p className={styles.channelNote}>
+            Channel membership is unavailable.
+          </p>
+        )}
+        {list.status === "error" && (
+          <div className={styles.channelNote}>
+            <p role="alert">Could not finish loading channels.</p>
+            <Button
+              size="compact"
+              onClick={() => session.channels.refreshList?.()}
+            >
+              Retry channels
+            </Button>
+          </div>
+        )}
+        {unclassifiedMembership && (
+          <p
+            className={`${styles.channelNote} m-0 text-body-sm text-secondary`}
           >
-            Retry channels
-          </Button>
-        </div>
-      )}
-      {unclassifiedMembership && (
-        <p className="m-0 text-body-sm text-secondary">
-          Some memberships for this identity are unclassified and omitted.
-        </p>
-      )}
-      {list.status === "ready" && !channels.length && (
-        <p>
-          {unclassifiedMembership
-            ? `No matching channels with a known visible type; other memberships could not be classified.${list.coverage === "partial" ? " More channels may exist outside the loaded list." : ""}`
-            : list.coverage === "partial"
-              ? "No matching channels in the loaded list; more channels may exist."
-              : "No visible channels with verified membership for this identity."}
-        </p>
-      )}
-      {!!channels.length && (
-        <ul className="m-0 flex list-none flex-col gap-1 p-0">
-          {channels.map((channel) => (
-            <li key={channel.id}>
-              {communityOrigin && navigation && viewer ? (
-                <Button
-                  size="compact"
-                  variant="ghost"
-                  onClick={() =>
-                    void navigation.open({
-                      version: 1,
-                      kind: "conversation",
-                      channelId: channel.id,
-                      scope: { viewer, communityOrigin },
-                    })
-                  }
-                >
-                  #{channel.name}
-                </Button>
-              ) : (
-                <span>{channel.name}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+            Some memberships for this identity are unclassified and omitted.
+          </p>
+        )}
+        {list.status === "ready" && !channels.length && (
+          <p className={styles.channelNote}>
+            {unclassifiedMembership
+              ? `No matching channels with a known visible type; other memberships could not be classified.${list.coverage === "partial" ? " More channels may exist outside the loaded list." : ""}`
+              : list.coverage === "partial"
+                ? "No matching channels in the loaded list; more channels may exist."
+                : "No visible channels with verified membership for this identity."}
+          </p>
+        )}
+        {!!channels.length && (
+          <ul className="m-0 list-none p-0">
+            {channels.map((channel) => (
+              <li key={channel.id} className={styles.channelRow}>
+                {communityOrigin && navigation && viewer ? (
+                  <Button
+                    variant="ghost"
+                    data-profile-channel-link=""
+                    onClick={() =>
+                      void navigation.open({
+                        version: 1,
+                        kind: "conversation",
+                        channelId: channel.id,
+                        scope: { viewer, communityOrigin },
+                      })
+                    }
+                  >
+                    <span>#{channel.name}</span>
+                    <ArrowUpRightIcon size={16} aria-hidden="true" />
+                  </Button>
+                ) : (
+                  <span>{channel.name}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       {list.coverage === "partial" && !!channels.length && (
         <p className="text-body-sm text-secondary">
           More channels may exist outside the loaded list.

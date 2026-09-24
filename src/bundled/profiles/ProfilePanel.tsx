@@ -16,6 +16,7 @@ import { CopyIcon } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { activityTarget } from "../../features/agents/activity-target";
 import type { PanelProps } from "../../features/panels/service";
 import { profileKey, profileTarget } from "../../features/profiles/target";
@@ -86,6 +87,7 @@ function ProfileDetails({
   );
   const [attempt, retry] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
+  const [tab, setTab] = useState<"info" | "channels">("info");
   const region = useRef<HTMLElement>(null);
   useEffect(() => {
     region.current?.focus();
@@ -145,80 +147,111 @@ function ProfileDetails({
         </div>
         <h2 className="text-heading">{name}</h2>
       </div>
-      <PresenceIndicator presence={session.presence} pubkey={pubkey} profile />
-      {profile?.about && <p className={styles.about}>{profile.about}</p>}
-      {context?.canOpen(activity) && (
-        <div>
-          <Button size="compact" onClick={() => context.open(activity)}>
-            View activity
-          </Button>
-          <p className="text-body-sm text-secondary">
-            Owner-only agent telemetry in this channel, if published.
-          </p>
-        </div>
-      )}
-      <ProfileChannels
-        session={session}
-        pubkey={pubkey}
-        navigation={navigation}
-        communityOrigin={communityOrigin}
-        viewer={viewer}
+      <Tabs
+        value={tab}
+        onValueChange={setTab}
+        items={[
+          { value: "info", label: "Info" },
+          { value: "channels", label: "Channels" },
+        ]}
+        label="Profile sections"
+        variant="panel"
+        renderPanel={(selected) => (
+          <div className={styles.tabContent}>
+            {selected === "info" ? (
+              <>
+                <PresenceIndicator
+                  presence={session.presence}
+                  pubkey={pubkey}
+                  profile
+                />
+                {profile?.about && (
+                  <p className={styles.about}>{profile.about}</p>
+                )}
+                {context?.canOpen(activity) && (
+                  <div>
+                    <Button
+                      size="compact"
+                      onClick={() => context.open(activity)}
+                    >
+                      View activity
+                    </Button>
+                    <p className="text-body-sm text-secondary">
+                      Owner-only agent telemetry in this channel, if published.
+                    </p>
+                  </div>
+                )}
+                {control && (
+                  <ProfileInstances
+                    control={control}
+                    pubkey={pubkey}
+                    navigation={navigation}
+                    scope={scope}
+                    communityOrigin={communityOrigin}
+                    viewer={viewer}
+                    knownAgent={agentPubkeys.has(pubkey)}
+                  />
+                )}
+                <div className={styles.publicKey}>
+                  <div className={styles.keyHeading}>
+                    <h3 className="text-body">Public key</h3>
+                    <Button
+                      size="compact"
+                      variant="ghost"
+                      aria-label="Copy npub"
+                      onClick={() => {
+                        setCopyStatus("");
+                        void Promise.resolve()
+                          .then(() => navigator.clipboard.writeText(npub))
+                          .then(
+                            () => setCopyStatus("Public key copied."),
+                            () =>
+                              setCopyStatus(
+                                "Could not copy. Select the public key above to copy it.",
+                              ),
+                          );
+                      }}
+                    >
+                      <CopyIcon size={16} aria-hidden="true" />
+                      Copy
+                    </Button>
+                  </div>
+                  <code className="font-mono text-mono">{npub}</code>
+                  <span role="status" className={styles.feedback}>
+                    {copyStatus}
+                  </span>
+                </div>
+                {!profile &&
+                  (status === "loading" ? (
+                    <p role="status">Loading profile…</p>
+                  ) : (
+                    <>
+                      <p role={status === "error" ? "alert" : undefined}>
+                        {status === "error"
+                          ? "Could not load this profile."
+                          : "No profile metadata is available in this community."}
+                      </p>
+                      <Button
+                        size="compact"
+                        onClick={() => retry((value) => value + 1)}
+                      >
+                        Retry profile
+                      </Button>
+                    </>
+                  ))}
+              </>
+            ) : (
+              <ProfileChannels
+                session={session}
+                pubkey={pubkey}
+                navigation={navigation}
+                communityOrigin={communityOrigin}
+                viewer={viewer}
+              />
+            )}
+          </div>
+        )}
       />
-      {control && (
-        <ProfileInstances
-          control={control}
-          pubkey={pubkey}
-          navigation={navigation}
-          scope={scope}
-          communityOrigin={communityOrigin}
-          viewer={viewer}
-          knownAgent={agentPubkeys.has(pubkey)}
-        />
-      )}
-      <div className={styles.publicKey}>
-        <div className={styles.keyHeading}>
-          <h3 className="text-body">Public key</h3>
-          <Button
-            size="compact"
-            variant="ghost"
-            aria-label="Copy npub"
-            onClick={() => {
-              setCopyStatus("");
-              void Promise.resolve()
-                .then(() => navigator.clipboard.writeText(npub))
-                .then(
-                  () => setCopyStatus("Public key copied."),
-                  () =>
-                    setCopyStatus(
-                      "Could not copy. Select the public key above to copy it.",
-                    ),
-                );
-            }}
-          >
-            <CopyIcon size={16} aria-hidden="true" />
-            Copy
-          </Button>
-        </div>
-        <code className="font-mono text-mono">{npub}</code>
-        <span role="status" className={styles.feedback}>
-          {copyStatus}
-        </span>
-      </div>
-      {!profile &&
-        (status === "loading" ? (
-          <p role="status">Loading profile…</p>
-        ) : (
-          <>
-            <p role={status === "error" ? "alert" : undefined}>
-              {status === "error"
-                ? "Could not load this profile."
-                : "No profile metadata is available in this community."}
-            </p>
-            <Button size="compact" onClick={() => retry((value) => value + 1)}>
-              Retry profile
-            </Button>
-          </>
-        ))}
     </section>
   );
 }

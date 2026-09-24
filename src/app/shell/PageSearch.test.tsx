@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import type { RegisteredPage } from "../../features/pages/service";
 import {
@@ -18,12 +18,6 @@ import {
   SHORTCUT_BINDINGS_KEY,
 } from "../../features/shortcuts/preferences";
 import { ShortcutsService } from "../../features/shortcuts/service";
-
-const launch = vi.hoisted(() => ({ homeEnabled: false }));
-vi.mock("../launch", () => launch);
-beforeEach(() => {
-  launch.homeEnabled = false;
-});
 
 afterEach(() => {
   cleanup();
@@ -256,14 +250,4 @@ it("renders a restored prototype-named search key and remains resettable", async
     localStorage.clear();
     await root.fiber.dispose();
   }
-});
-
-it("restores Home in page search only when the launch switch is enabled", async () => {
-  launch.homeEnabled = true;
-  const select = vi.fn();
-  const user = userEvent.setup();
-  render(<PageSearch pages={[]} onSelect={select} />);
-  await user.click(screen.getByRole("button", { name: "Search Buzz" }));
-  await user.click(await screen.findByRole("option", { name: /^Home$/ }));
-  expect(select).toHaveBeenCalledExactlyOnceWith("home");
 });

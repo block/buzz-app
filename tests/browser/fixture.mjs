@@ -47,7 +47,6 @@ export const test = base.extend({
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
-  homeEnabled: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
     {

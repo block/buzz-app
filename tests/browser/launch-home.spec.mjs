@@ -12,8 +12,7 @@ const messages = (page) =>
   page.getByRole("textbox", { name: "Message #Alpha", exact: true });
 
 // Browser-only contract: startup/hash/history share production composition and
-// no Home content may flash on a visible frame. Both build-time switch states
-// use the same real app, not a fixture replacement of its navigation.
+// legacy Home links resolve without flashing the retired page or adding a visit.
 test("launch opens Messages without exposing Home across responsive navigation, search and history", async ({
   page,
   app,

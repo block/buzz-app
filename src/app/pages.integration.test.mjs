@@ -27,10 +27,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
   try {
     const { createServices } = await vite.ssrLoadModule("/src/app/services.ts");
     services = createServices();
-    assert.deepEqual(
-      services.pages.snapshot().map((page) => page.pluginId),
-      ["buzz.channels"],
-    );
+    assert.deepEqual(services.pages.snapshot(), []);
     await settle();
     assert.equal(services.pages.snapshot().length, 5);
     assert.deepEqual(services.channelTemplates.snapshot(), []);

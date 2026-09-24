@@ -68,11 +68,14 @@ function setup(options: { badRoster?: boolean; untrusted?: boolean } = {}) {
 }
 it("opens using signed exact membership, then confirms the regular outbox message", async () => {
   const t = setup();
+  const opened = vi.fn();
+  t.dm.subscribeOpened(opened);
   try {
     await expect(
       t.dm.open([t.other.pubkey], new AbortController().signal),
     ).resolves.toBe(id);
     expect(t.owner.session.channels.get?.(id)?.channelType).toBe("dm");
+    expect(opened).toHaveBeenCalledExactlyOnceWith(id);
     let release = () => {};
     t.publish.mockImplementationOnce(
       () =>
@@ -100,11 +103,14 @@ it.each([{ badRoster: true }, { untrusted: true }])(
   "refuses a receipt without trusted exact participants: %j",
   async (options) => {
     const t = setup(options);
+    const opened = vi.fn();
+    t.dm.subscribeOpened(opened);
     try {
       await expect(
         t.dm.open([t.other.pubkey], new AbortController().signal),
       ).rejects.toThrow("participants");
       expect(t.publish).not.toHaveBeenCalled();
+      expect(opened).not.toHaveBeenCalled();
     } finally {
       t.owner.dispose();
     }

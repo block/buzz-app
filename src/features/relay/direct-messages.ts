@@ -15,8 +15,14 @@ export function createDirectMessages(
   directoryReader: RelayReader,
 ) {
   const available = !!transport?.openDirectMessage && !!outbox?.supports(9);
+  const opened = new Set<(id: string) => void>();
   return Object.freeze({
     available,
+    /** Observe relay-confirmed opens; opening also unhides the DM on the relay. */
+    subscribeOpened(listener: (id: string) => void) {
+      opened.add(listener);
+      return () => void opened.delete(listener);
+    },
     async people(query: string, page: number, signal: AbortSignal) {
       const active = AbortSignal.any([lifetime, signal]);
       if (query.length > 100 || !Number.isSafeInteger(page) || page < 1)
@@ -92,6 +98,7 @@ export function createDirectMessages(
         throw new Error(
           "The conversation’s participants could not be confirmed. Try again.",
         );
+      for (const listener of [...opened]) listener(id);
       return id;
     },
     delivery(id: string) {

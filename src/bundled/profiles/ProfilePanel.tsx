@@ -98,8 +98,17 @@ function ProfileDetails({
   const [copyStatus, setCopyStatus] = useState("");
   const [tab, setTab] = useState<"info" | "channels" | "memories">("info");
   const region = useRef<HTMLElement>(null);
+  const messageAttempt = useRef<AbortController>(undefined);
+  const [openingMessage, setOpeningMessage] = useState(false);
+  const [messageError, setMessageError] = useState("");
+  const [userStatus, setUserStatus] = useState<{
+    text: string;
+    emoji: string;
+  }>();
   useEffect(() => {
     region.current?.focus();
+    // Target, viewer and community changes remount this view (see key above).
+    return () => messageAttempt.current?.abort();
   }, []);
   // Each target/session owns this completion; shared data work remains session-owned.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery.
@@ -118,6 +127,29 @@ function ProfileDetails({
       active = false;
     };
   }, [session, pubkey, attempt]);
+  // One snapshot of the self-published NIP-38 status; not live-updated.
+  useEffect(() => {
+    const controller = new AbortController();
+    void session
+      .read(
+        [{ kinds: [30315], authors: [pubkey], "#d": ["general"], limit: 1 }],
+        { signal: controller.signal },
+      )
+      .then(
+        (events) => {
+          if (controller.signal.aborted) return;
+          const latest = events
+            .filter((event) => event.pubkey === pubkey && event.kind === 30315)
+            .sort((a, b) => b.created_at - a.created_at)[0];
+          const emoji =
+            latest?.tags.find(([name]) => name === "emoji")?.[1] ?? "";
+          const text = latest?.content.trim() ?? "";
+          setUserStatus(text || emoji ? { text, emoji } : undefined);
+        },
+        () => {},
+      );
+    return () => controller.abort();
+  }, [session, pubkey]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
@@ -133,6 +165,56 @@ function ProfileDetails({
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
     : null;
+  // As in New message, a known agent needs this community's ready native control.
+  const messageable = () =>
+    !agentPubkeys.has(pubkey) ||
+    session.agentChoices
+      .snapshot()
+      .identities.some((agent) => agent.managed && agent.pubkey === pubkey);
+  const canMessage =
+    session.directMessages.available &&
+    !!navigation &&
+    !!viewer &&
+    !!communityOrigin &&
+    viewer !== pubkey &&
+    messageable();
+  async function openMessage() {
+    if (
+      messageAttempt.current ||
+      !navigation ||
+      !viewer ||
+      !communityOrigin ||
+      !messageable()
+    )
+      return;
+    const controller = new AbortController();
+    messageAttempt.current = controller;
+    setOpeningMessage(true);
+    setMessageError("");
+    try {
+      const channelId = await session.directMessages.open(
+        [pubkey],
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      void navigation.open({
+        version: 1,
+        kind: "conversation",
+        channelId,
+        scope: { viewer, communityOrigin },
+      });
+    } catch (reason) {
+      if (!controller.signal.aborted)
+        setMessageError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not open the conversation. Try again.",
+        );
+    } finally {
+      messageAttempt.current = undefined;
+      if (!controller.signal.aborted) setOpeningMessage(false);
+    }
+  }
   return (
     <section
       ref={region}
@@ -174,6 +256,31 @@ function ProfileDetails({
                   pubkey={pubkey}
                   profile
                 />
+                {userStatus && (
+                  <p className={styles.status}>
+                    {userStatus.emoji && <span>{userStatus.emoji}</span>}
+                    {userStatus.emoji && userStatus.text && " "}
+                    {userStatus.text && <span>{userStatus.text}</span>}
+                  </p>
+                )}
+                {profile?.nip05 && (
+                  <p className={styles.identifier}>
+                    <span>NIP-05 (unverified)</span>{" "}
+                    <span>{profile.nip05}</span>
+                  </p>
+                )}
+                {canMessage && (
+                  <div>
+                    <Button
+                      size="compact"
+                      loading={openingMessage}
+                      onClick={() => void openMessage()}
+                    >
+                      Message
+                    </Button>
+                    {messageError && <p role="alert">{messageError}</p>}
+                  </div>
+                )}
                 {profile?.about && (
                   <p className={styles.about}>{profile.about}</p>
                 )}

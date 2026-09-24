@@ -30,6 +30,7 @@ export function foldProfiles(
         name?: unknown;
         picture?: unknown;
         about?: unknown;
+        nip05?: unknown;
         is_agent?: unknown;
         isAgent?: unknown;
       };
@@ -49,6 +50,9 @@ export function foldProfiles(
           ...(picture ? { picture } : {}),
           ...(typeof body.about === "string" && body.about.trim()
             ? { about: body.about.trim() }
+            : {}),
+          ...(typeof body.nip05 === "string" && body.nip05.trim()
+            ? { nip05: body.nip05.trim() }
             : {}),
           ...(body.is_agent === true || body.isAgent === true
             ? { isAgent: true as const }

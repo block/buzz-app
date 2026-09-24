@@ -547,6 +547,15 @@ export const test = base.extend({
         });
         return [];
       }
+      if (filter.kinds?.includes(30315)) {
+        expect(filter).toEqual({
+          kinds: [30315],
+          authors: [expect.any(String)],
+          "#d": ["general"],
+          limit: 1,
+        });
+        return [];
+      }
       if (filter.kinds?.includes(0))
         return [
           sign(0, [], JSON.stringify({ name: "Fixture Reader" }), userKey),

@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 test.use({
@@ -544,9 +544,18 @@ readStateTest(
     await expect(
       profile.getByRole("button", { name: "View activity", exact: true }),
     ).toHaveCount(0);
-    // Complete ordinary read dwell and its publication instead of relying on
-    // this journey finishing before the read-state debounce fires.
-    await page.getByRole("region", { name: "Channel message history" }).focus();
+    // Finish the reopened profile's focus handoff and timeline layout before
+    // starting read dwell; visible profile content alone proves neither.
+    await expect(
+      profile.getByRole("region", { name: "Profile details" }),
+    ).toBeFocused();
+    await settle(page);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    await history.focus();
+    await expect(history).toBeFocused();
+    // Complete ordinary read dwell and publication before fixture teardown.
     await expect
       .poll(() => app.report.readPublications.length)
       .toBeGreaterThan(0);

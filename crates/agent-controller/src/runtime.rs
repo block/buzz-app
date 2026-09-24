@@ -330,7 +330,7 @@ impl Controller {
         }
     }
     pub fn snapshot(&mut self) -> Result<ControlSnapshot> {
-        let saved = self.store.agents()?;
+        let (saved, parked) = self.store.inventory()?;
         let command = |name| {
             let path = self.bundle.as_ref().ok()?.executable(name).ok()?;
             Some(path.to_string_lossy().into_owned())
@@ -338,6 +338,7 @@ impl Controller {
         let (acp_command, mcp_command) = (command("buzz-acp"), command("buzz-dev-mcp"));
         let mut snapshot = ControlSnapshot {
             agents: saved.iter().map(Agent::view).collect(),
+            parked,
             runtime_available: self.bundle.is_ok(),
             runtime_message: self.bundle.as_ref().err().cloned(),
         };

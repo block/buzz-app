@@ -6,7 +6,13 @@ import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 
-export function AgentLibrary({ session }: { session: RelaySession }) {
+export function AgentLibrary({
+  session,
+  managedKeys = [],
+}: {
+  session: RelaySession;
+  managedKeys?: readonly string[];
+}) {
   const resolveName = useIdentityNames(session.names);
   const library = session.agentLibrary;
   const archives = session.archives;
@@ -30,7 +36,7 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
   }, [library, archives]);
   const { identities, profiles } = identityTiles(
     snapshot,
-    (key) => archives.state(key) === "archived",
+    (key) => managedKeys.includes(key) || archives.state(key) === "archived",
   );
   const candidates = identities.map((identity) => identity.pubkey);
   const identityLabel = (identity: { pubkey: string; name: string }) =>

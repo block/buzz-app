@@ -19,6 +19,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
 import { addTodo, assignTodo, readTodos, toggleTodo } from "./model";
 import styles from "./Todos.module.css";
@@ -210,10 +211,16 @@ export function TodosPanel({
       current = false;
     };
   }, [people, peopleKey, active, namesRetry]);
+  const keyLabels = publicKeyLabels(peopleKey.split(":"));
+  const userLabel = (pubkey: string, fallback = "") => {
+    const key = keyLabels.get(pubkey) ?? pubkey;
+    const name = resolveName(pubkey, fallback);
+    return name ? `${name} · ${key}` : key;
+  };
   const choices = (members ?? [])
     .map((pubkey) => ({
       value: pubkey,
-      label: `${resolveName(pubkey, pubkey.slice(0, 12))} · ${pubkey.slice(0, 12)}`,
+      label: userLabel(pubkey),
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
@@ -394,7 +401,10 @@ export function TodosPanel({
                                           item.assignee?.pubkey === choice.value
                                             ? {
                                                 ...choice,
-                                                label: `${resolveName(choice.value, item.assignee.name)} · ${choice.value.slice(0, 12)}`,
+                                                label: userLabel(
+                                                  choice.value,
+                                                  item.assignee.name,
+                                                ),
                                               }
                                             : choice,
                                         ),
@@ -403,7 +413,7 @@ export function TodosPanel({
                                           ? [
                                               {
                                                 value: item.assignee.pubkey,
-                                                label: `${resolveName(item.assignee.pubkey, item.assignee.name)} · ${item.assignee.pubkey.slice(0, 12)} ${members ? "not in channel" : "membership unavailable"}`,
+                                                label: `${userLabel(item.assignee.pubkey, item.assignee.name)} (${members ? "not in channel" : "membership unavailable"})`,
                                                 disabled: true,
                                               },
                                             ]
@@ -433,7 +443,7 @@ export function TodosPanel({
                                               pubkey,
                                               name: resolveName(
                                                 pubkey,
-                                                pubkey.slice(0, 12),
+                                                keyLabels.get(pubkey) ?? pubkey,
                                               ),
                                             }
                                           : undefined,

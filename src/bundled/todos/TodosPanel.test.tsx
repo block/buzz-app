@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { keypair, signed } from "../../features/relay/testing";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView } from "../../shared/view-state";
 import { createRelaySession } from "../../features/relay/session";
 import { bindNames } from "../../features/identity-names/service";
@@ -279,6 +280,7 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
     [a, { name: "Alex" }],
     [b, { name: "Alex" }],
   ]);
+  const labels = publicKeyLabels([a, b]);
   const rosterListeners = new Set<() => void>(),
     profileListeners = new Set<() => void>();
   const directory = {
@@ -317,12 +319,14 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
   await screen.findByRole("checkbox", { name: "First" });
   await user.click(select());
   expect(
-    screen.getByRole("option", { name: /Alex · aaaaaaaaaaaa/ }),
+    screen.getByRole("option", { name: `Alex · ${labels.get(a)}` }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("option", { name: /Alex · bbbbbbbbbbbb/ }),
+    screen.getByRole("option", { name: `Alex · ${labels.get(b)}` }),
   ).toBeInTheDocument();
-  await user.click(screen.getByRole("option", { name: /Alex · aaaaaaaaaaaa/ }));
+  await user.click(
+    screen.getByRole("option", { name: `Alex · ${labels.get(a)}` }),
+  );
   const expected = assignTodo(
     original,
     readTodos(original).items[0]?.offset ?? -1,
@@ -337,7 +341,7 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
   view.unmount();
   const restored = render(<TodosPanel {...f.props} people={users} />);
   await screen.findByRole("checkbox", { name: "First" });
-  expect(select()).toHaveTextContent("Alex · aaaaaaaaaaaa");
+  expect(select()).toHaveTextContent(`Alex · ${labels.get(a)}`);
   act(() => {
     profiles = new Map([
       [a, { name: "Renamed" }],
@@ -424,7 +428,9 @@ it("shows saved identity when profiles fail, disables missing-roster assignments
   // Captured option is stale; the click must read the current authoritative roster.
   act(() => select().focus());
   await user.keyboard("{ArrowDown}");
-  const stale = await screen.findByRole("option", { name: /bbbbbbbbbbbb/ });
+  const stale = await screen.findByRole("option", {
+    name: publicKeyLabels([a, "b".repeat(64)]).get("b".repeat(64)),
+  });
   roster = {
     ...roster,
     channels: [{ id: context.channelId, name: "Team", members: [] }],

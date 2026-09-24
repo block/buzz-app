@@ -65,6 +65,11 @@ export function readTodos(content: string) {
         name &&
         linkStart !== undefined &&
         linkEnd === end &&
+        link?.type === "link" &&
+        !link.title &&
+        content
+          .slice(linkStart, linkEnd)
+          .endsWith(`](${profileTarget(pubkey)})`) &&
         content.slice(linkStart - assignment.length, linkStart) === assignment
           ? { pubkey, name, start: linkStart - assignment.length }
           : undefined;

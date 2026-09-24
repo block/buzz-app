@@ -109,6 +109,8 @@ it.each(["A] (B) \\ *C* &amp; <script>", "A\nB\rC", "", "👑 Queen [test]"])(
 );
 it.each([
   `Task [Alex](${profileTarget(alex.pubkey)})`,
+  `Task · Assignee: [Alex](${profileTarget(alex.pubkey)} "title")`,
+  `Task · Assignee: [Alex](<${profileTarget(alex.pubkey)}>)`,
   `Task · Assignee: [Alex](https://example.com)`,
   `Task · Assignee: [Alex](nostr:npub1invalid)`,
   `Task · Assignee: [Alex](${profileTarget(alex.pubkey)}) after`,

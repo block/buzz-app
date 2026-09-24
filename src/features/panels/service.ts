@@ -103,6 +103,12 @@ export class PanelsService extends Service implements Panels {
       typeof panel.channelLauncher !== "function"
     )
       throw new Error("A channel launcher needs a component");
+    if (
+      panel.channelPlacement !== undefined &&
+      panel.channelPlacement !== "bottom" &&
+      panel.channelPlacement !== "side"
+    )
+      throw new Error("A channel placement must be bottom or side");
     this.panels.register(this.ctx, {
       ...panel,
       ...(panel.launcher && { launcher: Object.freeze({ ...panel.launcher }) }),

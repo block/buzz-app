@@ -500,6 +500,27 @@ readingTest(
     try {
       await history.hover();
       await page.mouse.wheel(0, -650);
+      // Linux WebKit can pause mid-gesture longer than settle's stable-frame
+      // window. Capture the reading baseline only after the native scroll ends;
+      // otherwise the wheel's remaining motion looks like navigation drift.
+      await expect
+        .poll(
+          () =>
+            page.evaluate(() => {
+              const events = window.navigationScrollTrace;
+              const wheel = events.findLastIndex(
+                (event) => event.kind === "wheel",
+              );
+              return (
+                wheel >= 0 &&
+                events
+                  .slice(wheel + 1)
+                  .some((event) => event.kind === "scrollend")
+              );
+            }),
+          { message: "wheel gesture completes before reading baseline" },
+        )
+        .toBe(true);
       await settle(page);
       const reading = await anchor(page);
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });

@@ -199,7 +199,13 @@ it("adds no agent section or reads for a profile without an agent hint", async (
   );
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
-  expect(query).toHaveBeenCalledTimes(1);
+  // Only the profile read is identity-owned: the panel also reads its own
+  // self-published status (kind 30315) for every target.
+  expect(
+    query.mock.calls.filter(([filters]) =>
+      filters.some((filter) => filter.kinds?.includes(0)),
+    ),
+  ).toHaveLength(1);
 });
 
 function timedProfile(

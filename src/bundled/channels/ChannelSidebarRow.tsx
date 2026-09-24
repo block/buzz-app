@@ -61,7 +61,7 @@ export function ChannelSidebarRow({
         hasChildren ? (
           <span className={styles.iconSpace} aria-hidden="true" />
         ) : (
-          icon
+          <span className={styles.iconSpace}>{icon}</span>
         )
       }
       trailing={badge && <span className={styles.badges}>{badge}</span>}

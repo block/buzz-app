@@ -71,7 +71,7 @@
 }
 .row .disclosure {
   position: absolute;
-  left: calc(var(--space-2) - ((var(--space-6) - 15px) / 2) - 3px);
+  left: calc(var(--space-2) - ((var(--space-6) - 15px) / 2) - 1.5px);
   z-index: 2;
 }
 .hashIcon {

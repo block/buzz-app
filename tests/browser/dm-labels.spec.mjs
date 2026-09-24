@@ -16,7 +16,7 @@ test("DM identity cues remain exactly 22px at normal and narrow sidebar widths",
   const oneToOne = sidebar
     .getByRole("button", { name: "Alice Fixture", exact: true })
     .locator("[data-dm-identity]");
-  const group = sidebar.locator("[data-dm-participant-count]");
+  const group = sidebar.locator("[data-dm-participant-count]").first();
   const assertIdentitySize = async (identity) => {
     await expect(identity).toBeVisible();
     expect(

@@ -18,8 +18,10 @@ import {
 } from "../../features/direct-messages/usePeople";
 import {
   CaretDownIcon,
+  CrownIcon,
   DotsThreeIcon,
   MagnifyingGlassIcon,
+  ShieldIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
@@ -303,7 +305,15 @@ function Members({
                   fallback={label}
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="m-0 truncate text-body">{label}</p>
+                  <p className="m-0 flex min-w-0 items-center gap-1.5 text-body">
+                    <span className="truncate">{label}</span>
+                    {member.role === "owner" && (
+                      <CrownIcon className="shrink-0 text-warning" />
+                    )}
+                    {member.role === "admin" && (
+                      <ShieldIcon className="shrink-0 text-accent" />
+                    )}
+                  </p>
                   <p className="m-0 text-body-sm text-muted">
                     {member.role[0]?.toUpperCase() + member.role.slice(1)}
                     {member.pubkey === viewer ? " · You" : ""}

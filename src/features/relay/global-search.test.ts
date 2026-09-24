@@ -149,9 +149,9 @@ it("preserves one server ranking above 128 joined channels and opens a public ex
     expect(() => owner.session.messages.react(reply.id, "👍")).toThrow(
       "Join the conversation",
     );
-    expect(() => owner.session.messages.edit(reply.id, "not joined")).toThrow(
-      "Join the conversation",
-    );
+    expect(() =>
+      owner.session.messages.edit(reply.id, "not joined", reply.id),
+    ).toThrow("Join the conversation");
     const thread = owner.session.thread("open", reply.id, { exact: true });
     const opening = thread.refresh();
     // Exact target, overlays, ancestry, traversal: all use the existing owner.

@@ -1,6 +1,6 @@
 import { Popover } from "@base-ui/react/popover";
 import { useEffect, useId, useRef, useState } from "react";
-import { useMentionAgents } from "../agents/mention-context";
+import { useAgentChoices } from "../agents/use-choices";
 import type { RelaySession } from "../relay/session";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -13,13 +13,11 @@ import styles from "./NewMessage.module.css";
 
 export function RecipientPicker({
   session,
-  scope,
   selected,
   disabled,
   onChange,
 }: {
   session: RelaySession;
-  scope: string;
   selected: Recipient[];
   disabled: boolean;
   onChange(people: Recipient[]): void;
@@ -36,8 +34,12 @@ export function RecipientPicker({
   selection.current = selected;
   const id = useId();
   const directory = usePeople(session, query);
-  const { agents } = useMentionAgents(scope);
-  const controlled = new Set(agents.map((agent) => agent.pubkey));
+  const agents = useAgentChoices(session, false);
+  const controlled = new Set(
+    agents.identities
+      .filter((agent) => agent.managed)
+      .map((agent) => agent.pubkey),
+  );
   const removal = useChipRemoval();
   const atLimit = selected.length >= 8;
   const candidates = directory.people.filter(

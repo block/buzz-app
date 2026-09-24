@@ -5,10 +5,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import {
-  sameCommunityAgents,
-  useMentionAgents,
-} from "../agents/mention-context";
 import type { OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -125,7 +121,6 @@ export function NewMessage({
     savedLegacy(scope, session.viewer),
   );
   const initialLegacy = useRef(legacy);
-  const { control } = useMentionAgents(scope);
   const [ready, setReady] = useState(false);
   const [restoredDraft, setRestoredDraft] = useState<MentionDraft>();
   const [draftRevision, setDraftRevision] = useState(0);
@@ -208,12 +203,11 @@ export function NewMessage({
     };
   }, [outbox, session.viewer, session.directMessages, scope]);
   function validateAgents() {
-    const state = control?.snapshot();
     const controlled = new Set(
-      sameCommunityAgents(
-        state?.status === "ready" ? (state.data?.agents ?? []) : [],
-        scope,
-      ).map((agent) => agent.pubkey),
+      session.agentChoices
+        .snapshot()
+        .identities.filter((agent) => agent.managed)
+        .map((agent) => agent.pubkey),
     );
     if (
       recipients.some(
@@ -285,6 +279,7 @@ export function NewMessage({
           id,
           draft.text,
           draft.recipients.map((person) => person.pubkey),
+          [],
           {
             key: recoveryKey,
             value: JSON.stringify({
@@ -333,7 +328,6 @@ export function NewMessage({
     <section className={styles.page} aria-label="New message">
       <RecipientPicker
         session={session}
-        scope={scope}
         selected={recipients}
         disabled={locked}
         onChange={change}

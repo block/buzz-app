@@ -2,7 +2,13 @@ import { DraftMentionRoster } from "../../features/messages/draft-mention-roster
 import { mentionChoices } from "./mention-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useAgentChoices } from "../../features/agents/use-choices";
-import { useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";

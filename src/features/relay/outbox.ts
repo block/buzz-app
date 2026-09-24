@@ -188,16 +188,20 @@ export function createOutbox(
         queued();
         // Hydration may have added restored intent while this commit waited.
         // Commit current state so no intermediate transaction erases that intent.
-        const records = action === "dismiss"
-          ? visible.filter((item) => item.event.id !== id)
-          : action === "acknowledge"
-          ? visible.map((item) =>
-              item.event.id === id ? { ...item, recovery: undefined } : item,
-            )
-          : visible;
-        const bytes = action === "dismiss"
-          ? byteSize(snapshot.filter((item) => item.event.id !== id))
-          : pendingBytes;
+        const records =
+          action === "dismiss"
+            ? visible.filter((item) => item.event.id !== id)
+            : action === "acknowledge"
+              ? visible.map((item) =>
+                  item.event.id === id
+                    ? { ...item, recovery: undefined }
+                    : item,
+                )
+              : visible;
+        const bytes =
+          action === "dismiss"
+            ? byteSize(snapshot.filter((item) => item.event.id !== id))
+            : pendingBytes;
         return profiling.measureAsync("outbox.persist", id, async () => {
           if (bytes > 2 * 1024 * 1024)
             throw new Error("Outbox storage is full");
@@ -614,7 +618,9 @@ export function createOutbox(
       if (pending) return pending;
       if (closed || attempts.has(id)) return Promise.resolve();
       if (find(id)?.recovery && find(id)?.delivery !== "failed")
-        return Promise.reject(new Error("Confirm this message in New message before removing it"));
+        return Promise.reject(
+          new Error("Confirm this message in New message before removing it"),
+        );
       const work = persist(id, "dismiss").finally(() => dismissing.delete(id));
       dismissing.set(id, work);
       return work;

@@ -168,8 +168,11 @@ it("locks recipient edits until outbox hydration finishes, then accepts them", a
   writeView(scope, "direct-message:recipients", [
     { pubkey: other.pubkey, name: "Avery" },
   ]);
-  const hydration = Promise.withResolvers<readonly OutgoingEvent[]>();
-  t.storage.load = vi.fn(() => hydration.promise);
+  let release: (records: readonly OutgoingEvent[]) => void = () => {};
+  const hydration = new Promise<readonly OutgoingEvent[]>((resolve) => {
+    release = resolve;
+  });
+  t.storage.load = vi.fn(() => hydration);
   const play = vi.fn(async () => {});
   vi.stubGlobal(
     "Audio",
@@ -203,7 +206,7 @@ it("locks recipient edits until outbox hydration finishes, then accepts them", a
     expect(play).not.toHaveBeenCalled();
   } finally {
     await act(async () => {
-      hydration.resolve([]);
+      release([]);
       await owner.session.outbox?.ready();
     });
   }

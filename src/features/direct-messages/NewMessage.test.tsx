@@ -14,7 +14,7 @@ import type { OutgoingEvent } from "../relay/outbox";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import type { RelaySession } from "../relay/session";
 import { NewMessage } from "./NewMessage";
-import { AgentMentionContext } from "../agents/mention-context";
+import { createAgentChoices } from "../agents/choices";
 import type {
   AgentControl,
   AgentControlState,
@@ -69,7 +69,7 @@ function setup() {
   };
   const messages = {
     send: vi.fn<RelaySession["messages"]["send"]>(
-      (channelId, content, _mentions, recovery) => {
+      (channelId, content, _mentions, _attachments, recovery) => {
         const id = "d".repeat(64);
         operations = [
           {
@@ -154,11 +154,17 @@ function setup() {
     },
     refresh: vi.fn(async () => {}),
   } as unknown as AgentControl;
+  Object.assign(session, {
+    agentChoices: createAgentChoices({
+      scope,
+      library: session.agentLibrary,
+      native: control,
+      signal: new AbortController().signal,
+    }),
+  });
   const mount = () =>
     render(
-      <AgentMentionContext.Provider value={control}>
-        <NewMessage session={session} scope={scope} onStarted={onStarted} />
-      </AgentMentionContext.Provider>,
+      <NewMessage session={session} scope={scope} onStarted={onStarted} />,
     );
   return {
     session,

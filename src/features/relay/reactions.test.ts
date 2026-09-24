@@ -107,6 +107,8 @@ it("removal validates every loaded author and conversation before queuing one de
   const send = vi.fn(() => "operation");
   const messages = createMessages(
     {
+      ready: async () => {},
+      acknowledge: async () => {},
       supports: () => true,
       send,
       retry() {},

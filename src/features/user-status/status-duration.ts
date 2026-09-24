@@ -4,6 +4,7 @@ export const statusDurations = [
   ["today", "Today"],
   ["week", "This week"],
   ["custom", "Custom"],
+  ["never", "Don’t clear"],
 ] as const;
 
 export function statusDeadline(duration: string, now: number) {
@@ -20,11 +21,12 @@ export function statusDuration(
   expiresAt: number | undefined,
   updatedAt: number,
 ) {
-  if (expiresAt === undefined) return "custom";
+  if (expiresAt === undefined) return "never";
   return (
     statusDurations.find(
       ([value]) =>
         value !== "custom" &&
+        value !== "never" &&
         Math.abs(statusDeadline(value, updatedAt) - expiresAt) <= 120,
     )?.[0] ?? "custom"
   );

@@ -212,3 +212,113 @@ it("disposal fences late reads, late publications, and expiration notifications"
   await rejected;
   expect(queries.snapshot().size).toBe(0);
 });
+
+it("reloads an author unmounted before its initial read completed", async () => {
+  let finish!: (events: RelayEvent[]) => void;
+  const event = signed(bob, {
+    kind: 30315,
+    created_at: now,
+    content: "Remote",
+    tags: [["d", "general"]],
+  });
+  const read = vi
+    .fn<RelayReader["read"]>()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue([event]);
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  const unwatch = owner.queries.watch([bob.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  unwatch();
+  finish([event]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(owner.queries.snapshot().size).toBe(0);
+  owner.queries.watch([bob.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Remote");
+});
+
+it("recovers a mounted status after a transient read failure without hot-looping", async () => {
+  const read = vi
+    .fn<RelayReader["read"]>()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue([status("Recovered")]);
+  const { queries } = setup({ read });
+  await vi.advanceTimersByTimeAsync(0);
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(read).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(queries.snapshot().get(alice.pubkey)?.text).toBe("Recovered");
+});
+
+it.each(["dispose", "clear", "reconnect", "unwatch", "exhaust"])(
+  "bounds failed-read retries through %s",
+  async (transition) => {
+    const read = vi
+      .fn<RelayReader["read"]>()
+      .mockRejectedValue(new Error("offline"));
+    const owner = createUserStatuses({ read });
+    owners.push(owner);
+    const unwatch = owner.queries.watch([bob.pubkey]);
+    await vi.advanceTimersByTimeAsync(0);
+    if (transition === "unwatch") unwatch();
+    else if (transition !== "exhaust")
+      owner[transition as "dispose" | "clear" | "reconnect"]();
+    await vi.runAllTimersAsync();
+    expect(read).toHaveBeenCalledTimes(
+      transition === "exhaust"
+        ? 4
+        : transition === "clear" || transition === "reconnect"
+          ? 5
+          : 1,
+    );
+  },
+);
+
+it("rejects oversized peer content and emoji before retaining a replacement", () => {
+  const { owner, queries } = setup();
+  owner.accept([status("Good")]);
+  owner.accept([
+    status("x".repeat(101), "", now + 1),
+    status("Bad", "x".repeat(101), now + 2),
+    status("Two\nlines", "", now + 3),
+  ]);
+  expect(queries.snapshot().get(alice.pubkey)?.text).toBe("Good");
+});
+
+it("does not sign another future update over an already future-dated coordinate", async () => {
+  const { queries, sign, publish } = setup({
+    read: async () => [status("Future", "", now + 301)],
+  });
+  await expect(queries.save({ text: "New", emoji: "" })).rejects.toThrow(
+    "future",
+  );
+  expect(sign).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalled();
+});
+
+it("fences an aborted save preflight before accepting its old-session result", async () => {
+  let finish!: (events: RelayEvent[]) => void;
+  const read = vi.fn<RelayReader["read"]>((_, options) =>
+    options?.fresh
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : Promise.resolve([]),
+  );
+  const { owner, queries, sign } = setup({ read });
+  const saving = queries.save({ text: "New", emoji: "" });
+  const rejected = expect(saving).rejects.toThrow();
+  owner.clear();
+  finish([status("Before purge")]);
+  await rejected;
+  expect(queries.snapshot().size).toBe(0);
+  expect(sign).not.toHaveBeenCalled();
+});

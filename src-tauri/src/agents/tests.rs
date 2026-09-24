@@ -112,12 +112,37 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["runtimeAvailable"], false);
     assert_eq!(before["importAvailable"], cfg!(target_os = "macos"));
     assert_eq!(
-        before["harnessOptions"],
-        json!([{
+        before["harnessOptions"][0],
+        json!({
             "command":"buzz-agent", "label":"Buzz Agent",
+            "available":true, "defaultArgs":[],
             "providers":[{"value":"databricks_v2", "label":"Databricks v2"}]
-        }])
+        })
     );
+    assert_eq!(before["harnessOptions"][2]["label"], "Pi");
+    assert_eq!(before["harnessOptions"][2]["defaultArgs"], json!([]));
+    assert_eq!(before["harnessOptions"][1]["label"], "Goose");
+    assert_eq!(before["harnessOptions"][1]["defaultArgs"], json!(["acp"]));
+    assert_eq!(
+        before["harnessOptions"][1]["available"],
+        installed_goose().is_some()
+    );
+    assert_eq!(
+        before["harnessOptions"][1]["command"],
+        installed_goose().map_or_else(|| json!("goose"), |path| json!(path.to_string_lossy()))
+    );
+    assert!(
+        before["harnessOptions"][1]["providers"]
+            .as_array()
+            .unwrap()
+            .len()
+            > 5
+    );
+    assert!(before["harnessOptions"][1]["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|provider| provider["value"] == "databricks"));
     assert_eq!(before["agents"][0]["name"], "Sample");
     assert_eq!(before["agents"][0]["enabled"], true);
     assert_eq!(before["agents"][0]["status"], "stopped");

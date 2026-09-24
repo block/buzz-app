@@ -9,10 +9,12 @@ export function StatusDisplay({
   status,
   session,
   compact = false,
+  focusable = true,
 }: {
   status: UserStatus | undefined;
   session: RelaySession;
   compact?: boolean;
+  focusable?: boolean;
 }) {
   if (!status || (!status.emoji && !status.text)) return null;
   const label = [status.emoji, status.text].filter(Boolean).join(" ");
@@ -37,8 +39,7 @@ export function StatusDisplay({
         data-compact
         role="img"
         aria-label={label}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: Focus exposes the status tooltip without inventing a button action.
-        tabIndex={0}
+        tabIndex={focusable ? 0 : undefined}
       >
         <StatusEmoji
           decorative
@@ -54,11 +55,20 @@ export function UserStatusDisplay({
   session,
   userId,
   compact = false,
+  focusable = true,
 }: {
   session: RelaySession;
   userId: string;
   compact?: boolean;
+  focusable?: boolean;
 }) {
   const status = useUserStatus(session.statuses, userId);
-  return <StatusDisplay session={session} status={status} compact={compact} />;
+  return (
+    <StatusDisplay
+      session={session}
+      status={status}
+      compact={compact}
+      focusable={focusable}
+    />
+  );
 }

@@ -170,6 +170,35 @@
     display: flex;
     flex-shrink: 0;
   }
+  /* Proposed compact row treatment: full labels remain in the popup and hint. */
+  .buzz-select[data-variant="compact"] {
+    display: grid;
+    min-width: 0;
+  }
+  .buzz-select[data-variant="compact"] .buzz-button {
+    min-width: 0;
+    max-width: 100%;
+    color: var(--text-subtle);
+  }
+  .buzz-select[data-variant="compact"] .buzz-button:disabled {
+    color: var(--text-unavailable);
+  }
+  .buzz-select[data-variant="compact"] .buzz-button-label {
+    min-width: 0;
+    width: 100%;
+  }
+  .buzz-select[data-variant="compact"] .buzz-select-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .buzz-select[data-variant="compact"] .buzz-select-value + span {
+    display: flex;
+    flex-shrink: 0;
+  }
+  .buzz-select-popup[data-variant="compact"] {
+    overflow-wrap: anywhere;
+  }
   .buzz-dropdown-chevron {
     transform: rotate(0deg);
     transition: transform var(--duration-state) var(--easing-settle);

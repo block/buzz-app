@@ -1,5 +1,8 @@
 /** The status write surface is only the NIP-38 general coordinate. */
-export function validStatusTemplate(event) {
+export function validStatusTemplate(
+  event,
+  now = Math.floor(Date.now() / 1000),
+) {
   if (
     event?.kind !== 30315 ||
     typeof event.content !== "string" ||
@@ -7,6 +10,7 @@ export function validStatusTemplate(event) {
     /[\r\n]/.test(event.content) ||
     !Number.isSafeInteger(event.created_at) ||
     event.created_at < 0 ||
+    event.created_at > now + 300 ||
     !Array.isArray(event.tags) ||
     event.tags.length > 3 ||
     event.tags.some(

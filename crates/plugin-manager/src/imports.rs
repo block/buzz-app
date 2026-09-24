@@ -142,7 +142,13 @@ pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
             if name == "manifest.json" {
                 has_manifest = true;
             }
-            if kind.is_dir() && name != ".git" && name != "node_modules" && name != "target" {
+            // Hidden folders hold VCS and tool state, including other checkouts such as
+            // .claude/worktrees; choose one of those folders directly to import from it.
+            if kind.is_dir()
+                && !name.as_encoded_bytes().starts_with(b".")
+                && name != "node_modules"
+                && name != "target"
+            {
                 pending.push((relative.join(name), depth + 1));
             }
         }
@@ -579,6 +585,29 @@ mod tests {
             .unwrap();
         assert!(installed.enabled);
         assert!(installed.previous.is_some());
+    }
+    #[test]
+    fn folder_skips_hidden_descendants_but_accepts_a_hidden_selection() {
+        let root = tempfile::tempdir().unwrap();
+        plugin(root.path(), "", "example.root");
+        plugin(root.path(), "dist", "example.root");
+        plugin(root.path(), ".cache/built", "example.root");
+        let worktree = plugin(root.path(), ".claude/worktrees/feature", "example.root");
+        plugin(&worktree, "dist", "example.root");
+        let paths = |directory: &Path| {
+            prepare_folder(directory)
+                .unwrap()
+                .preview
+                .candidates
+                .into_iter()
+                .map(|candidate| candidate.path)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths(root.path()), [".", "dist"]);
+        assert_eq!(
+            paths(&root.path().join(".claude")),
+            ["worktrees/feature", "worktrees/feature/dist"]
+        );
     }
     #[cfg(unix)]
     #[test]

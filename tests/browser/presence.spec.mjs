@@ -410,7 +410,7 @@ test("avatar choices publish through the existing socket and persist across relo
     name: "Your profile",
     exact: true,
   });
-  const account = page.getByRole("menu", { name: "Fixture Reader" });
+  const account = page.getByRole("menu", { name: "Browser Fixture" });
   const published = (status) =>
     app.report.presencePublications.filter(
       ({ event }) => event.content === status,

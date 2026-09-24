@@ -5,14 +5,7 @@ import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { StatusEmoji } from "../../features/user-status/StatusEmoji";
 import { Button } from "../../shared/design-system/ui/Button";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
-import {
-  useId,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  useEffect,
-  useCallback,
-} from "react";
+import { useId, useRef, useState, useSyncExternalStore } from "react";
 import {
   SmileyIcon,
   CheckIcon,
@@ -57,32 +50,13 @@ export function ProfileButton({
   ];
   const connection = useRelayConnection(communities.relay);
   const session = connection.session;
-  const readProfile = useCallback(
-    () => (viewer ? session?.profiles.snapshot().get(viewer) : undefined),
-    [session, viewer],
-  );
-  const subscribeProfile = useCallback(
-    (listener: () => void) =>
-      session?.profiles.subscribe(listener) ?? (() => {}),
-    [session],
-  );
-  const communityProfile = useSyncExternalStore(
-    subscribeProfile,
-    readProfile,
-    readProfile,
-  );
-  useEffect(() => {
-    if (viewer && session)
-      void session.profiles.ensure([viewer], "background").catch(() => {});
-  }, [session, viewer]);
   const name =
-    communityProfile?.name?.trim() ||
     localProfile.name.trim() ||
     (viewer ? formatPublicKey(viewer) : undefined) ||
     "Your profile";
-  const picture = communityProfile?.picture
-    ? session.media(communityProfile.picture, "small")
-    : localProfile.picture;
+  const picture = localProfile.picture.startsWith("https://")
+    ? localProfile.picture
+    : undefined;
   const status = useUserStatus(session?.statuses, viewer ?? "");
   const statusEditor = useStatusEditor(session, viewer ?? undefined);
   const profileTrigger = useRef<HTMLButtonElement>(null);
@@ -106,10 +80,9 @@ export function ProfileButton({
           if (open) {
             openingSettings.current = false;
             openingStatus.current = false;
-            if (viewer && session)
-              void session.profiles
-                .ensure([viewer], "background")
-                .catch(() => {});
+          } else {
+            statusEditor.cancelOpening();
+            openingStatus.current = false;
           }
         }}
         onOpenChangeComplete={(open) => {
@@ -222,13 +195,18 @@ export function ProfileButton({
             <>
               <div className={styles.statusCard}>
                 <MenuItem
-                  aria-label="Set a status"
+                  aria-label={
+                    status
+                      ? `Set a status: ${[status.emoji, status.text].filter(Boolean).join(" ")}`
+                      : "Set a status"
+                  }
                   closeOnClick={false}
                   disabled={statusEditor.loading || !session.statuses.writable}
                   onClick={async () => {
-                    openingStatus.current = true;
-                    if (await statusEditor.open()) setMenuOpen(false);
-                    else openingStatus.current = false;
+                    if (await statusEditor.open()) {
+                      openingStatus.current = true;
+                      setMenuOpen(false);
+                    }
                   }}
                 >
                   {status ? (
@@ -250,6 +228,11 @@ export function ProfileButton({
                   )}
                 </MenuItem>
               </div>
+              {!session.statuses.writable && (
+                <p className="mx-3 my-2 max-w-56 text-body-sm text-muted">
+                  Status updates are unavailable in this community.
+                </p>
+              )}
               {statusEditor.error && (
                 <p
                   role="alert"

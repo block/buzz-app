@@ -64,6 +64,9 @@ test("Skip to content focuses main without adding a visit or dropping Back", asy
 }) => {
   await open(page, app);
   await button(page, "Projects").first().click();
+  await expect(
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeFocused();
   const before = await entry(page);
   const url = page.url();
   const skip = page.getByRole("link", { name: "Skip to content", exact: true });

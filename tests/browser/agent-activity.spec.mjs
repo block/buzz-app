@@ -1,9 +1,11 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 test.use({
   productionBroker: true,
+  // Navigation can publish read positions through the real broker.
+  readState: true,
   developmentReact: true,
   historyCounts: { alpha: 1, beta: 1 },
 });
@@ -338,6 +340,23 @@ test("profile activity opens the exact agent and originating channel before its 
   app,
 }, testInfo) => {
   await open(page, app);
+  // The production broker advertises read-state writes even without the
+  // readState fixture option. Exercise that publication before profile activity.
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await page.getByText("Diagnostics", { exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Mark read through loaded messages",
+      exact: true,
+    })
+    .click();
+  await expect.poll(() => app.report.readPublications.length).toBe(1);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const agentKey = generateSecretKey();
   const agent = getPublicKey(agentKey);
@@ -397,7 +416,9 @@ test("profile activity opens the exact agent and originating channel before its 
   await expect(row).toBeVisible();
   await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
   await expect(
-    panel.getByRole("button", { name: /acp_read|acp_write|session_resolved/ }),
+    panel.getByRole("button", {
+      name: /acp_read|acp_write|session_resolved/,
+    }),
   ).toHaveCount(0);
   await row.click();
   await expect(panel.locator("pre code")).toHaveText(expected.plaintext);
@@ -533,6 +554,21 @@ test("profile activity opens the exact agent and originating channel before its 
   await expect(
     profile.getByRole("button", { name: "View activity", exact: true }),
   ).toHaveCount(0);
+  // Finish the reopened profile's focus handoff and timeline layout before
+  // starting read dwell; visible profile content alone proves neither.
+  await expect(
+    profile.getByRole("region", { name: "Profile details" }),
+  ).toBeFocused();
+  await settle(page);
+  const history = page.getByRole("region", {
+    name: "Channel message history",
+  });
+  await history.focus();
+  await expect(history).toBeFocused();
+  // Complete ordinary read dwell and publication before fixture teardown.
+  await expect
+    .poll(() => app.report.readPublications.length)
+    .toBeGreaterThan(1);
 });
 
 test.describe("thread activity", () => {
@@ -637,6 +673,10 @@ test.describe("thread activity", () => {
       path: testInfo.outputPath("thread-activity-above-composer.png"),
     });
     await page.mouse.move(0, 0);
+    // A closing tooltip retains its desktop position until its exit completes.
+    await expect(
+      page.getByRole("tooltip", { includeHidden: true }),
+    ).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     sendTyping(root.id);
     await expect(entry).toBeVisible();

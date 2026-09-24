@@ -33,8 +33,40 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.deepEqual(services.channelTemplates.snapshot(), []);
     assert.deepEqual(
       services.settingsCards.snapshot().map((card) => card.pluginId),
-      ["buzz.channels"],
+      ["buzz.channels", "block.hosted-communities"],
     );
+    assert.equal(
+      services.panels.snapshot().some((p) => p.pluginId === "buzz.todos"),
+      false,
+    );
+    const canvas = services.relay.snapshot().session.canvas;
+    await services.plugins.change("enable", "buzz.todos");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.panels.snapshot().find((p) => p.pluginId === "buzz.todos")
+          ?.channelLauncher,
+      ),
+    );
+    const firstTodos = services.panels
+      .snapshot()
+      .find((p) => p.pluginId === "buzz.todos");
+    await services.plugins.change("disable", "buzz.todos");
+    assert.equal(
+      services.panels.snapshot().some((p) => p.pluginId === "buzz.todos"),
+      false,
+    );
+    assert.equal(services.relay.snapshot().session.canvas, canvas);
+    await services.plugins.change("enable", "buzz.todos");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.panels.snapshot().find((p) => p.pluginId === "buzz.todos"),
+      ),
+    );
+    assert.notEqual(
+      services.panels.snapshot().find((p) => p.pluginId === "buzz.todos"),
+      firstTodos,
+    );
+    await services.plugins.change("disable", "buzz.todos");
     await services.plugins.change("enable", "buzz.channel-templates");
     await vi.waitFor(() =>
       assert.equal(services.channelTemplates.snapshot().length, 1),
@@ -49,7 +81,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.deepEqual(services.channelTemplates.snapshot(), []);
     assert.deepEqual(
       services.settingsCards.snapshot().map((card) => card.pluginId),
-      ["buzz.channels"],
+      ["buzz.channels", "block.hosted-communities"],
     );
     await services.plugins.change("enable", "buzz.channel-templates");
     await vi.waitFor(() =>
@@ -281,9 +313,28 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.equal(projects.id, "projects");
     assert.equal(projects.title, "Projects");
     assert.equal(projects.layout, "workspace");
+    assert.equal(projects.handlesNavigation, true);
+    assert.equal(projects.route.version, 1);
+    assert.equal(
+      projects.route.validate({
+        type: "repo",
+        owner: "a".repeat(64),
+        dtag: "repo",
+      }),
+      true,
+    );
+    assert.equal(
+      projects.route.validate({
+        type: "repo",
+        owner: "a".repeat(64),
+        dtag: "repo",
+        arbitrary: true,
+      }),
+      false,
+    );
     assert.match(
       renderToStaticMarkup(createElement(projects.component)),
-      /^<div class="[^"]*"><section aria-label="Projects" data-buzz-surface="" class="panel"><div[^>]*><h1[^>]*>Projects<\/h1><\/div><\/section><\/div>$/,
+      /Select a community to browse projects/,
     );
     await services.plugins.change("disable", "buzz.projects");
     assert.deepEqual(

@@ -499,6 +499,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         owner: "Morgan",
       },
       {
+        token: "bg-affordance-floating-hover",
+        variable: "--affordance-floating-hover",
+        pointsAt: "neutral-3 light / neutral-7 dark",
+        use: "Highlighted rows on floating surfaces. Pair with standard text, including supporting copy, to preserve readability in dark mode.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-selected",
         variable: "--affordance-selected",
         pointsAt: "neutral-3 light / neutral-5 dark",
@@ -1116,7 +1123,7 @@ export const RADII = [
     token: "radius-pill",
     variable: "--radius-pill",
     value: "round",
-    use: "Pills, avatars, and fully circular controls.",
+    use: "Pills, menu rows, avatars, and fully circular controls.",
   },
 ];
 

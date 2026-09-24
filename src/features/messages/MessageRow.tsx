@@ -287,6 +287,7 @@ export const MessageRow = memo(function MessageRow({
                   session={session}
                   userId={row.authorId}
                   compact
+                  focusable={false}
                 />
               )}
             </span>

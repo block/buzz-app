@@ -1,23 +1,19 @@
 import { test, expect } from "@playwright/test";
-import { createServer } from "vite";
+import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 test("statuses edit, synchronize, clear, reject stale traffic and retain failed drafts", async ({
   page,
 }) => {
-  const cacheDir = await mkdtemp(join(tmpdir(), "buzz-status-vite-"));
   const server = await createServer({
-    cacheDir,
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
     plugins: [react()],
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
+    server: { host: "127.0.0.1", port: 0, open: false },
+    preview: { open: false },
   });
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
@@ -47,7 +43,7 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
         .click();
       await page
         .getByRole("menu", { name: "Alice" })
-        .getByRole("menuitem", { name: "Set a status", exact: true })
+        .getByRole("menuitem", { name: /^Set a status/ })
         .click();
       await expect(
         page.getByRole("dialog", { name: "Set a status" }),
@@ -73,13 +69,21 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(editor.getByLabel("Status message")).toHaveValue(
       "Design meeting",
     );
-    await editor
-      .getByRole("button", { name: "Save status", exact: true })
-      .click();
-    await expect(editor).toBeVisible();
-    await expect(
-      editor.getByRole("button", { name: "Save status" }),
-    ).toBeDisabled();
+    await page.evaluate(() => window.statusPublication.hold());
+    try {
+      await editor
+        .getByRole("button", { name: "Save status", exact: true })
+        .click();
+      await expect
+        .poll(() => page.evaluate(() => window.statusPublication.pending()))
+        .toBe(true);
+      await expect(editor).toBeVisible();
+      await expect(
+        editor.getByRole("button", { name: "Save status" }),
+      ).toBeDisabled();
+    } finally {
+      await page.evaluate(() => window.statusPublication.release());
+    }
     await expect(editor).toBeHidden();
     await expect(
       page.getByRole("button", { name: "Your profile", exact: true }),
@@ -100,7 +104,7 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     );
     await expect(
       editor.getByRole("button", { name: /^Duration:/ }),
-    ).not.toHaveText("1 day");
+    ).toHaveAttribute("aria-label", "Duration: Today");
     await editor.getByLabel("Status message").fill("Draft retained");
     await editor
       .getByRole("button", { name: "Save status", exact: true })
@@ -159,16 +163,22 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(
       dmName.locator('[aria-label="🏠 Working remotely"]'),
     ).toBeVisible();
+    await expect(dmName.locator("[tabindex]")).toHaveCount(0);
     await dmName.locator('[aria-label="🏠 Working remotely"]').hover();
-    await expect(page.getByRole("tooltip")).toContainText("Working remotely");
+    await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
+      "Working remotely",
+    );
     const bobByline = chat
       .locator('[data-message-id="Bob"] strong')
       .locator("..");
     await expect(
       bobByline.locator('[aria-label="🏠 Working remotely"]'),
     ).toBeVisible();
+    await expect(bobByline.locator("[tabindex]")).toHaveCount(0);
     await bobByline.locator("[data-compact]").hover();
-    await expect(page.getByRole("tooltip")).toContainText("Working remotely");
+    await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
+      "Working remotely",
+    );
     await page.getByRole("button", { name: "Replay older Bob" }).click();
     await expect(
       page
@@ -188,7 +198,9 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
       .click();
     await expect(dmName.locator('[aria-label="Buzzy"]')).toHaveText("💬");
     await dmName.locator('[aria-label="Buzzy"]').hover();
-    await expect(page.getByRole("tooltip")).toContainText("Buzzy");
+    await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
+      "Buzzy",
+    );
     await expect(bobByline.locator('[aria-label="Buzzy"]')).toHaveText("💬");
     await expect(navigation.getByText("Buzzy", { exact: true })).toHaveCount(0);
     await expect(
@@ -204,6 +216,5 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     expect(errors).toEqual([]);
   } finally {
     await server.close();
-    await rm(cacheDir, { recursive: true, force: true });
   }
 });

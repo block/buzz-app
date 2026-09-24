@@ -107,6 +107,7 @@ Buzz is a place where people build together and bring their agents into the room
 - **No page-wide gradient behind documentation or dense reading.** The gradient is the product's backdrop for chrome and panels. Behind a column of prose it fights the text and makes contrast position-dependent — such surfaces sit on `bg-panel`.
 - **Shadows stay at the threshold of perception.** If a shadow is obvious, it is too strong. The two elevation values are the whole vocabulary.
 - **Floating controls share one outer material.** Menus, selects, popovers, and preview cards use the opaque `floating-surface`: floating fill, primary boundary, panel radius, and graduated lift. Each component still owns its content padding and interaction behavior; sharing the container does not imply that a preview behaves like a menu.
+- **Floating rows need their own hover contrast.** Menu, select, and popover activity rows use `affordance-floating-hover` (neutral 3 in light mode, neutral 7 in dark). Supporting text becomes standard text on highlight so it stays readable. Selection marks remain independent of hover. Small action menus and compact account popovers use 10px `radius-row` outer corners with a 4px list inset and 8px inner rows (80% of the outer radius). Their hover uses `affordance-subtle-hover` with immediate feedback. Default/wide menus, content popovers, pickers, dialogs, and alert dialogs retain 24px `radius-panel` outer corners. Choose compact explicitly for short action lists, never automatically from viewport width.
 - **Elevation is carried by shadow in light mode and by lightness in dark mode.** On a near-black background there is nothing darker for a shadow to cast, so a floating surface becomes a step lighter instead. Never reach for a stronger shadow to make something float in dark mode.
 - **On a translucent surface, elevation reads as less translucency, not as a lighter colour.** A glass container with a fully opaque child looks layered; the same container with a merely brighter child looks unchanged.
 - **Light comes from one direction, and every glass surface agrees on it.** A glass rim is bright along the lit edge and dimmer on the opposite one; that is what makes it read as a material rather than an outline. Two surfaces lit from different directions in the same view look like a mistake.
@@ -116,6 +117,11 @@ Buzz is a place where people build together and bring their agents into the room
 - **A translucent surface has no contrast guarantee, and this one is measured.** `check-contrast` pairs each text role with the *opaque* surface roles, so glass is invisible to it — the surface a person actually reads against is the fill composited over whatever gradient happens to be behind it, which varies by position on screen. Sampled from a rendered dark-mode screenshot, primary glass over Night garden runs from `#162e28` in its quiet regions to `#1e4a3c` where the green glow reaches through. On the darker end everything clears; on the brighter end **`text-secondary` measures Lc 58 and `text-tertiary` Lc 43**, against targets of 60 and 45. Marginal, and only in a region the glow reaches — but real, and no guard can see it. Three ways out, none obviously right: make the gradients' bright stops dimmer where panels sit, raise the glass fill a ramp step under a bright backdrop, or keep meta text off glass. **Deliberately unresolved** — it needs the real product content on screen, not a token edit.
 - **A redundant fill on glass is not free — it compounds.** Two identical translucent layers are not one layer: `glass-2` over `glass-2` composites to **0.77 alpha**, a value no token holds. Four panels each set the same fill as the container they exactly covered, so panels meant to be the most translucent surface in the system read as nearly solid. Before giving a region a glass fill, check whether its parent already is glass; if the region covers it, it needs no fill of its own.
 - **A component that can sit on either the gradient or a panel says so, with a variant.** `Tabs` takes `chrome` (a glass pill for the app backdrop) or `panel` (an underline for a plain surface); `IconButton` has the same axis as its `chrome` variant. The failure that earned it: the chrome container is `glass-2`, which over a white panel composites to pure white, and its selected pill is `neutral-1` — also pure white. Container and selection became one colour with only a shadow between them, and no guard could see it because the component had no way to state which background it expected. **The fix was never to retint `--bg-chrome-selected`** — that moves the collision rather than removing it. **One component with a variant, not two components:** behaviour, keyboard model, accessibility, props, and the Base UI parts underneath are identical, so a sibling component would duplicate all of it to change how selection is drawn, and the two would drift exactly as the four hand-assembled chrome surfaces did. When adding a component that could appear in both places, give it the axis and put both on its specimen page — the chrome-only specimen is why this defect survived until it appeared on a real screen.
+
+Underlined panel tabs keep their labels at intrinsic width and scroll their own
+Base UI tablist when the content column is narrow. Keyboard navigation reveals
+the focused tab; the shared panel grid must use a shrinkable column so tab labels
+do not widen the content below them.
 
 ## Temporary focus appearance
 
@@ -170,7 +176,10 @@ independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
-`variant="field"` fits labelled forms. Pass `disabled` explicitly when the choice
+`variant="field"` fits labelled forms. The proposed `variant="compact"` fits
+trailing row choices: a small ghost trigger with a visually hidden accessible
+label, bounded single-line value, and full choice text in the popup and value hint.
+The caller owns its column width. Pass `disabled` explicitly when the choice
 is unavailable. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
@@ -221,6 +230,38 @@ designer-requested blur from 4px to zero is a narrow exception to the general
 no-blur-animation rule. Base UI owns transition presence and dismissal; keyboard
 navigation and reduced motion remove the transition, movement, and blur.
 
+### Menus, popovers, and choice rows
+
+Use Menu for actions and lightweight choices, Popover for supporting content or
+short forms, and Select/Combobox for form values. Both anchored surfaces reuse
+`floating-surface`, viewport collision handling, and the shared popover layer.
+Features own their data, callbacks and save/cancel behavior; Base UI owns focus,
+keyboard navigation, positioning and dismissal.
+
+Menu group labels belong inside MenuGroup. Selection checks sit at the trailing
+edge; the pointer/keyboard highlight is independent of that persistent selection.
+Keep the parent row highlighted while its submenu is open. Use `tone="danger"`
+for destructive actions and MenuNote for explanatory or status copy outside the
+keyboard item list. Long lists scroll inside the popup.
+
+ChoiceRow arranges a label, wrapping description, optional artwork and trailing
+metadata. It adds no second click target or tab stop. Keep its slots non-interactive
+and let the containing item own state and padding. Use the small shared avatar
+for identity choices, retaining human/agent shapes.
+
+PopoverPopup uses 16px content padding, or `padding="list"` when its rows own their
+spacing. Use `size="compact"` with list padding for short account/action surfaces: 14rem width and 10px corners. `MenuPopup size="compact"` uses the same corner, inset, row and hover treatment for short action lists. Content and wide popovers retain 24px corners. Name it with PopoverTitle or aria-label; PopoverDescription connects
+supporting copy. Hover opening is optional and remains configured by its feature.
+Use `padding="none"` for an embedded picker that owns its internal spacing, such as emoji/GIF content.
+Menus and popovers use a quicker version of the form dropdown motion: 75ms entry
+and 60ms exit (half the state/fast duration tokens), a 2px offset and blur-to-sharp
+opacity fade. Movement uses
+easing-settle; opacity and filter use easing-state. The offset follows the actual
+placement side toward the trigger, including collision flips and nested menus.
+This extends the designer-requested blur exception to these anchored surfaces.
+Keyboard navigation and reduced motion remove transitions, movement, and blur. The Just Design Menu, Popover and ChoiceRow pages
+show these contracts and their compositions.
+
 ## Compositions
 
 Dialog composes a Base UI modal with a shared title, optional description, body,
@@ -252,6 +293,12 @@ form one stack; avoid inserting form-section gaps between individual rows.
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
 Escape behavior from Base UI. Overlay layers keep menus and hints above dialogs.
+Hints use text-caption (12px / 16px), with space-1 vertical and space-2 horizontal
+padding. Pointer entry uses the shared state duration (150ms), fading from a
+0.97 scale, 2px downward offset and 2px blur; exit reverses it with the fast
+duration (120ms). This designer-requested blur is a tooltip-specific exception.
+Base UI instant states and keyboard navigation skip transitions; reduced motion
+keeps only the fade.
 
 ToastProvider mounts once in the host. ToastNotice belongs to the source that
 owns its state and recovery: unmounting the source removes its notification,
@@ -269,6 +316,14 @@ Tabs with content use renderPanel, which lets Base UI connect each tab and panel
 Route navigation uses NavigationItem with aria-current instead. NavigationItem
 forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+
+## Menu row corners
+
+Every shared menu item uses `--radius-pill` on all four corners. First, middle and
+last rows keep the same fully rounded highlight, so moving between them does not
+change its shape. Direct items, grouped choices and submenu triggers share this
+recipe. Do not add positional or feature-local radius overrides, derive a special
+menu inset radius, or change the global row radius to correct a menu.
 
 ## Align row content, not state backgrounds
 
@@ -517,3 +572,15 @@ it is the rule a generated theme is measured against.
 Phosphor is the only general icon family. Import named icons from `icons/index.ts`, which re-exports individual upstream modules. Add exports as needed; no approval list. SVG-only widgets use individual assets through `icons/svg.ts`. Do not import the upstream packages elsewhere or reintroduce other icon libraries. All six native weights remain designer choices: no size-to-weight or selection-to-fill rules. For chat and conversation metaphors, prefer the rounded `ChatCircle` family (including `ChatsCircle`) over square or teardrop variants; choose the matching dots, text, or slash variant when the meaning requires it. Keep accessible names on controls and decorative artwork hidden from assistive technology.
 
 OneDrive is a designer-approved custom brand mark: its complete outline is recreated on Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in the shared icon gateway. It does not permit another general icon library.
+
+### Picker search and choices
+
+Mention and media pickers opt into `SearchField variant="capsule"`. Its shared
+`search-field.css` recipe also styles Emoji Mart inside its shadow root: body-sm
+typography, pill radius, standard panel fill, Phosphor icons, and a 32px clear
+action. Other SearchField callers retain the default field treatment. Scrolling
+picker results use the opt-in `buzz-thin-scrollbar` native scrollbar recipe.
+
+Mention choices use `NavigationItem variant="option"` with 8px padding and
+immediate hover/focus feedback. The picker owns arrow-key navigation and exact
+identity selection; rows retain ordinary button semantics.

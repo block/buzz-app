@@ -1,3 +1,4 @@
+import { controlFixture } from "../../src/features/agents/control-testing";
 // Real ChannelsPage, thread reader, shared directory, panel registry and plugin lifecycle.
 // Only the transport is synthetic. No dev broker, saved identity or live relay.
 import { StrictMode, useLayoutEffect, useState } from "react";
@@ -12,11 +13,10 @@ import {
 } from "../../src/features/panels/service";
 import { PagesService } from "../../src/features/pages/service";
 import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
-import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
+import { ChannelWorkspaceFixture } from "./channel-workspace";
 import { createRelaySession } from "../../src/features/relay/session";
 import { createAgentControl } from "../../src/features/agents/control";
-import { createNavigationController } from "../../src/features/navigation/controller";
-import { createMemoryHistory } from "../../src/features/navigation/history";
+import { provideNavigation } from "../../src/features/navigation/service";
 import type {
   RelayData,
   RelaySnapshot,
@@ -39,6 +39,7 @@ const viewer = keypair(),
   mic = keypair(),
   pinky = keypair(),
   missing = keypair();
+const actionsProbe = new URLSearchParams(location.search).has("agent-actions");
 const root = message(viewer, "one", "Hello @Mic", 10, [["p", mic.pubkey]]);
 const unknown = message(missing, "one", "Unknown author", 11);
 const reply = message(viewer, "one", "Thread @Pinky", 12, [
@@ -53,6 +54,7 @@ const report = {
   profileReads: [] as string[][],
   media: [] as [string, "small" | undefined][],
   publications: 0,
+  memoryReads: [] as string[],
 };
 let failMissing = true;
 const data = [
@@ -69,6 +71,26 @@ function session() {
   return createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: authority.pubkey,
+    subscribe(callbacks) {
+      callbacks.state({ status: "connected", routes: [] });
+      return { update() {}, retry() {}, dispose() {} };
+    },
+    async readAgentMemories(agent) {
+      report.memoryReads.push(agent);
+      return {
+        partial: false,
+        entries: [
+          {
+            slug: "core",
+            body:
+              "<script>not executable</script>\n" +
+              "long-memory-text".repeat(60),
+            eventId: "a".repeat(64),
+            createdAt: 1,
+          },
+        ],
+      };
+    },
     media: (url, size) => {
       report.media.push([url, size]);
       return url === picture
@@ -105,6 +127,19 @@ function session() {
               ],
             }),
           ];
+        if (filter.kinds?.includes(30315))
+          return filter.authors?.includes(mic.pubkey)
+            ? [
+                signed(mic, {
+                  kind: 30315,
+                  content: "In a meeting",
+                  tags: [
+                    ["d", "general"],
+                    ["emoji", "📅"],
+                  ],
+                }),
+              ]
+            : [];
         if (filter.kinds?.includes(0)) {
           report.profileReads.push([...(filter.authors ?? [])]);
           if (
@@ -168,10 +203,23 @@ const relay: RelayData = {
 };
 const context = new Context();
 context.provide("relay", relay);
-const navigationHost = createNavigationController(createMemoryHistory());
-context.provide("navigation", navigationHost.navigation);
-context.effect(() => () => navigationHost.dispose());
-const agentControl = createAgentControl(null);
+const navigationHost = provideNavigation(context, undefined);
+const native = controlFixture();
+native.agent.pubkey = mic.pubkey;
+native.agent.status = "stopped";
+native.agent.enabled = false;
+let releaseLaunch: (() => void) | undefined;
+const commands: string[] = [];
+const action = native.host.action;
+native.host.action = async (id, command) => {
+  commands.push(command);
+  if (command === "start" || command === "restart")
+    await new Promise<void>((resolve) => {
+      releaseLaunch = resolve;
+    });
+  return action(id, command);
+};
+const agentControl = createAgentControl(actionsProbe ? native.host : null);
 context.provide("agentControl", agentControl);
 context.effect(() => () => agentControl.dispose());
 const contexts: PanelContext[] = [];
@@ -212,6 +260,12 @@ const providers = new TemplateProvidersService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    commands: () => [...commands],
+    launchPending: () => !!releaseLaunch,
+    finishLaunch: () => {
+      releaseLaunch?.();
+      releaseLaunch = undefined;
+    },
     contexts,
     targets: {
       viewer: profileTarget(viewer.pubkey),
@@ -266,7 +320,8 @@ function Fixture() {
         Toggle appearance
       </button>
       <div style={{ height: "calc(100vh - 50px)", padding: 16 }}>
-        <ChannelsPage
+        <ChannelWorkspaceFixture
+          host={navigationHost}
           relay={relay}
           panels={panels}
           pages={pages}

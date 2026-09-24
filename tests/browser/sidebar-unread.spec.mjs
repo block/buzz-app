@@ -66,15 +66,10 @@ test("DM hide control removes a row and a new message restores it", async ({
       return { x: marker.x - row.x, y: marker.y - row.y };
     });
   const before = await badgePosition();
-  const container = dm.locator("..").locator("..");
+  const container = dm.locator("xpath=ancestor::*[@data-channel-sidebar-row]");
   await container.screenshot({ path: info.outputPath("dm-row-default.png") });
   await dm.hover();
-  const hide = dm
-    .locator("..")
-    .locator("..")
-    .getByRole("button", {
-      name: /Remove .* from DMs/,
-    });
+  const hide = container.getByRole("button", { name: /Remove .* from DMs/ });
   await expect(hide).toBeVisible();
   await expect
     .poll(() =>
@@ -298,8 +293,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   if (info.project.name === "chromium") {
     await page.keyboard.press("Tab");
     const remove = row(page, "dm-030")
-      .locator("..")
-      .locator("..")
+      .locator("xpath=ancestor::*[@data-channel-sidebar-row]")
       .getByRole("button", { name: /Remove .* from DMs/ });
     await expect(remove).toBeFocused();
     await page.keyboard.press("Tab");

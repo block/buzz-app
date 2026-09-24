@@ -485,7 +485,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "SearchField",
     purpose: "A compact filter field with a search cue and clear action.",
     behavior: "Base UI Field and Input",
-    variants: ["default"],
+    variants: ["default", "capsule"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",
@@ -512,7 +512,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "A selectable destination row or pill with optional icon and metadata.",
     behavior: "Base UI Button",
-    variants: ["row", "pill", "inset", "selected"],
+    variants: ["row", "pill", "option", "inset", "selected"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",
@@ -555,6 +555,34 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["field", "icon-button"],
   },
   {
+    slug: "popover",
+    name: "Popover",
+    purpose:
+      "An anchored surface for supporting details, short forms, and interactive content.",
+    behavior:
+      "Base UI owns positioning, focus restoration and dismissal; feature code owns content and state",
+    variants: ["content", "list", "none", "compact", "wide"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Popover.tsx",
+    baseUi: [BASE_UI_PARTS.popover],
+    composes: [],
+  },
+  {
+    slug: "choice-row",
+    name: "ChoiceRow",
+    purpose:
+      "A label, optional description, leading artwork and trailing detail inside a choice.",
+    behavior:
+      "Presentational content; the containing control owns selection, interaction and semantics",
+    variants: ["label", "description", "icon", "avatar", "trailing detail"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/ChoiceRow.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "menu",
     name: "Menu",
     purpose: "Present contextual actions and choices from a compact trigger.",
@@ -562,6 +590,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Base UI owns positioning, dismissal, keyboard navigation, selection, and nested submenus",
     variants: [
       "actions",
+      "compact",
       "links",
       "checkbox choices",
       "radio choices",
@@ -577,9 +606,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "select",
     name: "Select",
-    purpose: "A labelled choice with inline and full-width form layouts.",
+    purpose:
+      "A labelled choice with inline, compact row and full-width form layouts.",
     behavior: "Base UI owns focus, keyboard selection, grouping, and dismissal",
-    variants: ["inline", "field", "disabled"],
+    variants: ["inline", "compact", "field", "disabled"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Design system",

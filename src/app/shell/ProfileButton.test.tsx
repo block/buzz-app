@@ -68,7 +68,7 @@ it.each([false, true])(
   },
 );
 
-it("uses the loaded community name in the profile button and menu", async () => {
+it("keeps the local default identity even when the community profile changes", async () => {
   const { createRelaySession } = await import("../../features/relay/session");
   const owner = createRelaySession(null);
   const user = userEvent.setup();
@@ -114,15 +114,93 @@ it("uses the loaded community name in the profile button and menu", async () => 
     });
     await user.click(screen.getByRole("button", { name: "Your profile" }));
     expect(
-      await screen.findByRole("menu", { name: "Community name" }),
+      await screen.findByRole("menu", { name: "Local name" }),
     ).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Availability: Online" }),
     ).toBeVisible();
     expect(screen.queryByText("Your profile")).not.toBeInTheDocument();
     expect(screen.queryByText("Your account")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Set a status" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByText("Status updates are unavailable in this community."),
+    ).toBeVisible();
   } finally {
     view.unmount();
     owner.dispose();
   }
 });
+
+it.each(["escape", "outside", "reopen"])(
+  "cancels a held status opening on %s dismissal",
+  async (dismiss) => {
+    const { createRelaySession } = await import("../../features/relay/session");
+    const owner = createRelaySession(null);
+    const user = userEvent.setup();
+    let release!: () => void;
+    const current = vi.fn(
+      () =>
+        new Promise<undefined>((resolve) => {
+          release = () => resolve(undefined);
+        }),
+    );
+    const viewer = "a".repeat(64);
+    const connection = {
+      scope: "https://status.test",
+      session: {
+        ...owner.session,
+        statuses: { ...owner.session.statuses, writable: true, current },
+      },
+    };
+    const snapshot = {
+      profile: { name: "Local", picture: "http://unsafe.test/avatar" },
+      viewer,
+    };
+    const presence = { status: "online", preference: "auto", error: null };
+    const subscribe = () => () => {};
+    const communities = {
+      subscribe,
+      snapshot: () => snapshot,
+      presence: { subscribe, snapshot: () => presence },
+      relay: { subscribe, snapshot: () => connection },
+    } as unknown as Communities;
+    const view = render(
+      <>
+        <ProfileButton
+          communities={communities}
+          settingsSelected={false}
+          onSettings={() => {}}
+        />
+        <button type="button">Outside</button>
+      </>,
+    );
+    try {
+      expect(view.container.querySelector('img[src^="http:"]')).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Your profile" }));
+      await user.click(screen.getByRole("menuitem", { name: "Set a status" }));
+      expect(current).toHaveBeenCalledOnce();
+      if (dismiss === "outside")
+        await user.click(screen.getByRole("button", { name: "Outside" }));
+      else await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("menu", { name: "Local" }),
+        ).not.toBeInTheDocument(),
+      );
+      if (dismiss === "reopen")
+        await user.click(screen.getByRole("button", { name: "Your profile" }));
+      await act(async () => release());
+      expect(
+        screen.queryByRole("dialog", { name: "Set a status" }),
+      ).not.toBeInTheDocument();
+      if (dismiss === "reopen")
+        expect(screen.getByRole("menu", { name: "Local" })).toBeVisible();
+    } finally {
+      await act(async () => release?.());
+      view.unmount();
+      owner.dispose();
+    }
+  },
+);

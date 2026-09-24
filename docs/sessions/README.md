@@ -20,7 +20,11 @@ Sessions are focused work conversations built on ordinary private channels.
   through normal channel invitations. Sending waits for both real rosters. Failed
   invitations preserve the draft and retry the saved operation.
 - New sessions can be created without a parent or beneath a Messages channel.
-  A channel's hover menu starts a child; its hover chevron collapses the children.
+  Right-click a channel and choose **New session** to start a child, or focus the
+  channel and press Shift+F10 / the Menu key. The hover chevron collapses children.
+  The action is unavailable for DMs, archived channels, sessions, or when Sessions
+  is disabled. Dismissing the menu restores row focus; starting a session focuses
+  the draft composer.
   Changing a saved session's parent remains future app metadata work.
 - Both entry points share the ordinary composer, centered at the bottom, and
   channel-style titles. The avatar-and-name picker sits before @ and opens upward.

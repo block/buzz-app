@@ -1,4 +1,4 @@
-// Plugin-owned cards inside existing host Settings. No routes or persistence.
+// Plugin-owned cards inside existing host Settings. No persistence.
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
 import {
@@ -9,6 +9,8 @@ export type SettingsCard = {
   id: string;
   title: string;
   component: ComponentType<{ active(): boolean }>;
+  /** Show this card as its own Settings destination under a labelled group instead of Messages. */
+  group?: string;
 };
 export type SettingsCards = {
   snapshot(): readonly Contribution<SettingsCard>[];
@@ -32,7 +34,9 @@ export class SettingsCardsService extends Service implements SettingsCards {
     if (
       !/^[a-z0-9][a-z0-9._-]*$/.test(card.id) ||
       !card.title?.trim() ||
-      typeof card.component !== "function"
+      typeof card.component !== "function" ||
+      (card.group !== undefined &&
+        (typeof card.group !== "string" || !card.group.trim()))
     )
       throw new Error("Settings cards need an id, title and component");
     this.entries.register(this.ctx, card);

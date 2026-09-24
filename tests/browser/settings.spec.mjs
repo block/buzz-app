@@ -30,27 +30,49 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "2");
   const bounds = await frame.boundingBox();
   const scroller = frame.locator(":scope > div");
+  const wheel = async (deltaY) => {
+    // A changed scrollTop is only the start of WebKit's animated wheel input.
+    // Arm the completion observer before input, then measure the settled row.
+    const completion = await scroller.evaluateHandle((element) => {
+      const state = { done: false };
+      element.addEventListener(
+        "scrollend",
+        () => {
+          state.done = true;
+        },
+        { once: true },
+      );
+      return state;
+    });
+    try {
+      await page.mouse.wheel(0, deltaY);
+      await expect
+        .poll(() => completion.evaluate((state) => state.done))
+        .toBe(true);
+    } finally {
+      await completion.dispose();
+    }
+  };
   await page.mouse.move(
     bounds.x + bounds.width / 2,
     bounds.y + bounds.height / 2,
   );
   // Real wheel input must reveal a complete row inside the clipped solid frame.
   // Merely finding a control in the DOM, or scrolling it into a thin strip, fails.
-  for (let gesture = 0; gesture < 12; gesture++) {
+  const visibleTop = Math.max(bounds.y, 0);
+  const visibleBottom = Math.min(bounds.y + bounds.height, 400);
+  for (let gesture = 0; gesture < 30; gesture++) {
     const target = await row.boundingBox();
     if (
-      target.y >= bounds.y &&
-      target.y + target.height <= bounds.y + bounds.height
+      target.y >= visibleTop + 8 &&
+      target.y + target.height <= visibleBottom - 8
     )
       break;
-    const before = await scroller.evaluate((element) => element.scrollTop);
-    await page.mouse.wheel(
-      0,
-      bounds.height * (target.y < bounds.y ? -0.4 : 0.4),
-    );
-    await expect
-      .poll(() => scroller.evaluate((element) => element.scrollTop))
-      .not.toBe(before);
+    const distance =
+      target.y < visibleTop + 8
+        ? target.y - visibleTop - 8
+        : target.y + target.height - visibleBottom + 8;
+    await wheel(Math.sign(distance) * Math.max(Math.abs(distance), 24));
   }
   await expect(row).toBeInViewport({ ratio: 1 });
   await expect(toggle).toBeInViewport({ ratio: 1 });
@@ -75,6 +97,32 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(button(page, "Profile")).toBeInViewport({ ratio: 1 });
   await button(page, "Profile").click();
   await expect(button(page, "Profile")).toHaveAttribute("aria-current", "page");
+
+  // Narrow Settings has the full content width, but the same navigation remains
+  // reachable by disclosure and keyboard. Desktop keeps it permanently visible.
+  const pages = page.getByRole("navigation", { name: "Pages" });
+  await expect(pages).toBeHidden();
+  const showNavigation = button(page, "Show navigation");
+  await expect(showNavigation).toHaveAttribute("aria-expanded", "false");
+  await showNavigation.click();
+  await expect(pages).toBeVisible();
+  const messages = pages.getByRole("button", { name: "Messages", exact: true });
+  await messages.focus();
+  await page.keyboard.press("Escape");
+  await expect(pages).toBeHidden();
+  await expect(showNavigation).toBeFocused();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(pages).toBeVisible();
+  await expect(showNavigation).toBeHidden();
+  await page.setViewportSize({ width: 480, height: 400 });
+  await expect(pages).toBeHidden();
+  await showNavigation.click();
+  await messages.click();
+  await expect(page.getByRole("main")).toBeFocused();
+  await expect(
+    page.getByRole("region", { name: "Channels", exact: true }),
+  ).toBeVisible();
+  await expect(pages).toBeVisible();
 });
 
 test("avatar Settings access dismisses cleanly and exposes Profile and Plugins", async ({
@@ -90,7 +138,9 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     );
   await page.goto(app.origin);
   const avatar = button(page, "Your profile");
-  const account = page.getByRole("menu", { name: "Fixture Reader" });
+  const account = page.getByRole("menu", {
+    name: /Browser Fixture|Updated local profile/,
+  });
   const settings = account.getByRole("menuitem", {
     name: "Settings",
     exact: true,
@@ -116,6 +166,16 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(
       page.getByRole("menuitemradio", { name: "Automatic", exact: true }),
     ).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(
+      page.getByRole("menuitemradio", { name: "Online", exact: true }),
+    ).toBeFocused();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Automatic", exact: true }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Online", exact: true }),
+    ).not.toBeChecked();
     await page.keyboard.press("Escape");
     await expect(availability).toBeFocused();
     await page.keyboard.press("Escape");
@@ -125,7 +185,11 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await avatar.click();
     await expect(account).toBeHidden();
     await avatar.click();
-    await page.getByRole("main").click({ position: { x: 5, y: 5 } });
+    // The account popup may cover main’s top-left on narrow layouts.
+    // Click the lower content area, genuinely outside the popup.
+    const main = page.getByRole("main");
+    const bounds = await main.boundingBox();
+    await main.click({ position: { x: 5, y: bounds.height - 5 } });
     await expect(account).toBeHidden();
     await avatar.focus();
     await page.keyboard.press("Enter");
@@ -256,6 +320,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     ).toBeFocused();
     await tab();
     await expect(
+      sections.getByRole("button", { name: "Hosted communities", exact: true }),
+    ).toBeFocused();
+    await tab();
+    await expect(
       page.getByRole("textbox", { name: "Display name", exact: true }),
     ).toBeFocused();
   }
@@ -273,7 +341,9 @@ test("Settings edits the local profile inline without publishing to a community"
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();
+  await expect(
+    page.getByRole("menu", { name: /Browser Fixture|Updated local profile/ }),
+  ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   const name = page.getByRole("textbox", { name: "Display name", exact: true });
   const picture = page.getByRole("textbox", {
@@ -299,7 +369,9 @@ test("Settings edits the local profile inline without publishing to a community"
     .click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();
+  await expect(
+    page.getByRole("menu", { name: /Browser Fixture|Updated local profile/ }),
+  ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Browser Fixture");
   await name.fill("   ");
@@ -318,9 +390,9 @@ test("Settings edits the local profile inline without publishing to a community"
       .getByRole("status"),
   ).toHaveText("Profile updated.");
   await button(page, "Your profile").hover();
-  await expect(page.getByRole("tooltip")).toHaveText("Fixture Reader");
+  await expect(page.getByRole("tooltip")).toHaveText("Updated local profile");
   await expect(button(page, "Your profile")).toHaveAccessibleDescription(
-    "Fixture Reader",
+    "Updated local profile",
   );
   await name.fill("Discard after saving");
   await button(page, "Cancel").click();
@@ -328,7 +400,9 @@ test("Settings edits the local profile inline without publishing to a community"
   await page.reload();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();
+  await expect(
+    page.getByRole("menu", { name: /Browser Fixture|Updated local profile/ }),
+  ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Updated local profile");
   expect(writes).toEqual([]);

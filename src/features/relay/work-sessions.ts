@@ -202,13 +202,16 @@ export function createWorkSessions(
     await wait;
   }
   async function refreshMembership(id: string) {
-    writer();
+    if (signal.aborted || (!outbox?.supports(9007) && !outbox?.supports(9000)))
+      throw new Error("Channel membership is unavailable.");
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const events = await reader.read(
       [{ kinds: [39002], authors: [relayAuthor], "#d": [id], limit: 1 }],
       { signal, fresh: true, priority: "foreground" },
     );
-    const channel = channels.list().channels.find((item) => item.id === id);
+    const channel =
+      channels.list().channels.find((item) => item.id === id) ??
+      channels.get?.(id);
     if (
       !events.some(
         (event) =>
@@ -273,6 +276,7 @@ export function createWorkSessions(
           .find(
             (item) =>
               item.event.kind === 9000 &&
+              !item.acknowledged &&
               !["accepted", "seen"].includes(item.delivery) &&
               item.event.tags.some(
                 ([name, value]) => name === "h" && value === targetId,

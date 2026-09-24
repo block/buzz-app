@@ -40,3 +40,13 @@ it("rejects unrelated coordinates, duplicate tags, invalid times, channels and o
   ])
     expect(validStatusTemplate({ ...template, ...patch })).toBe(false);
 });
+
+it("bounds future signing timestamps while allowing same-second replacements", () => {
+  const now = 1700000000;
+  expect(validStatusTemplate({ ...template, created_at: now + 300 }, now)).toBe(
+    true,
+  );
+  expect(validStatusTemplate({ ...template, created_at: now + 301 }, now)).toBe(
+    false,
+  );
+});

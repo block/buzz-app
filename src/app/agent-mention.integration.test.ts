@@ -15,6 +15,9 @@ vi.mock("../features/relay/outbox-storage", () => ({
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
+  Channel: class {
+    constructor(public onmessage: (response: unknown) => void) {}
+  },
 }));
 let services: AppServices;
 let fixture: ReturnType<typeof controlFixture>;
@@ -37,6 +40,9 @@ beforeEach(() => {
   vi.mocked(invoke)
     .mockReset()
     .mockImplementation(async (cmd, args) => {
+      // Desktop startup drains OS deep links; none arrive in this fixture.
+      if (cmd === "deep_link_take") return [];
+      if (cmd === "deep_link_watch") return undefined;
       if (cmd === "plugin_catalog")
         return {
           status: "ready",

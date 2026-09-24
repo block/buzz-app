@@ -34,6 +34,7 @@ it("intersects groups/stars with active authorized streams, keeping forums and D
       "group-dm": "channels",
       other: "missing",
     },
+    muted: [],
     starred: [
       "star",
       "archived",

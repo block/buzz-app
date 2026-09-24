@@ -38,6 +38,8 @@ export type Profile = Readonly<{
   name: string;
   picture?: string;
   about?: string;
+  /** Self-declared NIP-05 identifier; not proof of DNS verification. */
+  nip05?: string;
   /** Self-declared display hint, not proof of ownership, membership or authority. */
   isAgent?: true;
   /** Owner named by the profile auth tag; display metadata, never authorization. */
@@ -92,6 +94,8 @@ export type ChannelMessage = Readonly<{
   attachmentContentRemoved?: true;
   /** Pubkeys named by signed `p` tags. Identity never comes from prose. */
   mentions: readonly string[];
+  /** Authorized edit supplying current imeta; absent when sourced from the original. */
+  attachmentSourceId?: string;
   attachments: readonly Attachment[];
   /** Event-local mappings, never the current community palette. */
   emoji?: readonly CustomEmoji[];

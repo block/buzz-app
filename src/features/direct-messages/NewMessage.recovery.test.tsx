@@ -41,6 +41,7 @@ const viewer = keypair(),
   another = keypair(),
   relay = keypair();
 const channel = "11111111-1111-4111-8111-111111111111";
+
 const scope = `https://relay.example:${viewer.pubkey}`;
 const owners: ReturnType<typeof createRelaySession>[] = [];
 beforeEach(() => {
@@ -541,7 +542,7 @@ it.each(["picker", "completion"])(
           screen.getByRole("button", { name: "Mention a member" }),
         );
         return within(
-          screen.getByRole("region", { name: "Mention a member or agent" }),
+          screen.getByRole("dialog", { name: "Mention a member or agent" }),
         );
       }
       // jsdom has no caret hit testing; append after the existing mention.

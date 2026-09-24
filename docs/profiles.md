@@ -2,8 +2,28 @@
 
 The bundled `buzz.profiles` plugin supplies a profile panel for any
 public identity, human or agent. It uses the current session's shared profile
-directory. Agents retains agent-specific configuration/operations; this slice
-adds no ownership/running badge, editor, agent-library read or execution API.
+directory. Agents retains agent-specific configuration and its page-local editor. Profiles
+can dispatch existing local Start/Stop/Restart commands for an exact managed
+identity in the active community; profile metadata and library hints grant no authority.
+
+**Local agent** is a read-only summary from the app-owned native `AgentControl`
+snapshot. It appears only for a record with the exact profile key whose relay
+origin matches the active community scope (`sameCommunityAgents`). Native
+custody is app-wide: the viewer is not an owner check, so any account in this
+app on the same relay sees the same local record. It
+shows process status (still "relay readiness unverified", not a listening badge),
+saved harness/provider/model/workspace (labelled as saved settings, since
+environment overrides may change what is launched), collapsible instructions,
+saved-vs-running revision drift and diagnostics. Environment keys and
+arguments are not shown. Opening the Info tab requests a status read; concurrent
+requests coalesce. This summary adds no polling and observes the profile actions'
+existing refresh. A failed read keeps the last evidence.
+The host error, runtime-unavailable reason, unconfirmed-status notice and Retry
+are shown once, by the profile actions. Browser/unavailable hosts, loading/error
+without evidence, unknown keys and records saved for another community render
+nothing, leaving the public identity. Community switches re-filter immediately.
+Start/Stop/Restart are the separate profile actions above; Edit, harness logs and
+memory stay on Agents or need separate contracts.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
 The Info tab's “Latest activity” card shows up to three recently updated assistant
@@ -44,6 +64,36 @@ add the agent again from the managed-agent profile. Older unguarded invitation
 records can be promoted to guarded intent when reused through that profile flow.
 Remove from outbox does not revoke an invitation already dispatched to the relay.
 
+## Agent identity
+
+For an identity with an agent hint (below), the Info tab adds a **Managed by**
+row, matching Buzz desktop. It shows only a verified owner and is otherwise
+absent:
+
+- The owner comes from the NIP-OA `auth` tag on the identity's own winning
+  signature-verified kind 0 (newest `created_at`, lower id on ties). A
+  session-owned `session.observe` view supplies that event: it merges live
+  events, refreshes on reconnect and resets on purge. While that view is live,
+  the profile directory's retained signed head also seeds that choice, so
+  reopening the pane after cache eviction never accepts an older response than
+  the profile the session already shows. The directory notifies subscribers
+  when that head changes even if display fields do not, so a head restored
+  from disk also updates the pane. Verification is bound to that exact event
+  id, so an auth-only change or a lagging older read never keeps or restores a
+  previous owner. It requires exactly one tag, owner ≠ agent, conditions
+  evaluated against the event, and a valid BIP-340 signature over
+  `nostr:agent-auth:<agent>:<conditions>`.
+- The row shows the owner's name (`formatPublicKey` without a profile name),
+  with "(you)" when the viewer is the owner. It opens the owner's profile in
+  the same slot when the host can open it.
+- A missing or invalid tag, a failed read, or no available view shows no row.
+  Without a view nothing can signal an auth-only change, so the retained head is
+  not trusted; reopening the profile retries. The existing `isAgent` shape
+  check, avatar shape and local library never supply an owner.
+
+Agent type and capabilities are not shown: buzz-app has no reader or contract
+for their source (old Buzz kind 10100). This row has no controls.
+
 ## Boundaries
 
 - Shared message UI recognizes author-avatar targets and identity-bound mentions.
@@ -66,16 +116,27 @@ Remove from outbox does not revoke an invitation already dispatched to the relay
   prose, drafts, delivery or recipient intent. Re-enable does not reopen it.
 - Profile enrichment in channels and threads remains a background batch. The
   panel fetches only its selected missing key, with explicit failure/missing retry.
-  Community/session replacement disposes the old view. About metadata stays in
-  the existing bounded directory and follows about-only replacements/removal.
+  Community/session replacement disposes the old view. About and self-declared
+  NIP-05 metadata stay in the existing bounded directory and follow
+  replacements/removal.
 - A profile replaces the existing thread/object slot, not a second parallel dock.
   Close/Escape returns focus to the original control, falling back to the stable
   originating thread control if opening the profile unmounted the thread.
 
 ## UI and iteration
 
-Avatar, name, about, exact copyable npub, and an optional compact activity preview/action. Shared design-system Avatar and
-Button use the host-loaded styles directly. The profile content marks its
+Avatar, name, about, self-declared NIP-05 (not DNS-verified), exact copyable
+npub, and an optional compact activity preview/action. **Message** is offered for a
+foreign profile when the session can start direct messages; as in New message,
+a known agent qualifies only while this community's ready native control manages
+it, rechecked on click. It opens (or reopens) the one-to-one DM through the session's direct-message operation and
+navigates to the relay-confirmed channel in the scope captured at click time. A
+confirmed open also clears that DM's local sidebar hide. The person's
+self-published NIP-38 `general` status (kind 30315, emoji tag plus text) is read
+once when the profile opens; it is not live-updated, ignores NIP-40 expiry, and
+renders custom `:shortcode:` emoji as plain text. Setting your own status is not
+supported. Shared design-system
+Avatar and Button use the host-loaded styles directly. The profile content marks its
 `data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet
 owns layout, not component overrides. No new theme owner, second global reset or
 shell migration. Designers own later refinement.
@@ -159,3 +220,44 @@ Before publisher entry, navigation or loss of eligibility stops the write. Once
 publication begins, leaving the tab cannot undo the request; the session outbox
 retains its outcome and an unconfirmed result requires checking membership
 before attempting again. Neither list is a cross-community/global directory.
+
+## Owned local agent actions
+
+`ProfileAgentActions` observes the app-owned `AgentControl` injected into Profiles.
+It mounts only in Info, alongside the linked-instance child; changing tabs releases
+the actions view without cancelling an admitted app-owned command. Returning to
+Info observes current host evidence without restoring focus from the retired view.
+In this composition, actions own controller errors and Retry status; linked instances
+suppress their duplicate error surface only when actions can present recovery
+(unknown inventory or one exact match). Known unmatched/ambiguous identities keep
+a single linked-instance status warning and Retry agents. Standalone
+linked-instance views retain their own recovery. Initial-read Retry remains available
+when native ownership is unknown.
+It matches the exact public key and canonical active-community scope to one native
+ID; namesakes, other-community identities, ambiguous matches and browser-only
+profiles get no runtime actions. It adds no controller, relay scan or agent editor.
+Profiles and Agents share `useAgentControl` for observation. While mounted it
+refreshes host evidence every five seconds when visible/ready; errors stop polling and expose explicit Retry status. Unmount
+releases observation, never native execution.
+
+Start/Restart require ready host evidence, an available runtime and no pending
+operation or process transition. Stop uses the controller's existing recovery
+policy, including stale evidence and pending launch/credential waits; it is the
+intentional exception to disabling pending actions. A pending Stop cannot repeat.
+Host failures remain visible with snapshot uncertainty for the matched agent.
+Known unmatched profiles suppress unrelated controller errors; an initial read
+failure still offers Retry while ownership is unknown. Start stays focusable but
+inactive while pending, and moves focus to Stop if success removes the focused
+Start button. It does not steal focus moved elsewhere during the wait. Stop and
+Restart retain focus when disabled or pending without allowing activation.
+`agentLaunchBlock` centralizes the launch gates used by Profiles and Agents.
+Retired relay
+presentations cannot dispatch commands. The separate runtime child owns badges
+and runtime detail; actions do not infer relay readiness.
+
+Edit ingress is deferred: Agents currently registers no specific editor route;
+its editor selection is page-local state. No invented route or second editor is
+added. Mounted React regression tests exercise exact dispatch, pending/failure/
+recovery and profile/community lifecycle through the real controller projection
+with a synthetic native host. Live process/credential handover and rendered native
+acceptance remain attended checks, not established by these tests.

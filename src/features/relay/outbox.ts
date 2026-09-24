@@ -26,6 +26,8 @@ export type OutgoingEvent = Readonly<{
   event: EventData;
   signed?: RelayEvent;
   recovery?: OutboxRecovery | undefined;
+  /** Caller verified the operation’s domain outcome, not merely delivery. */
+  acknowledged?: true;
   /** A caller-scoped admission requires renewed live eligibility for retry. */
   guarded?: boolean;
   delivery: Delivery;
@@ -45,6 +47,8 @@ export interface Outbox {
     recovery?: OutboxRecovery,
     active?: () => boolean,
   ): string;
+  /** Attach caller-owned recovery to an existing receipt before resuming it. */
+  recover(id: string, recovery: OutboxRecovery): Promise<void>;
   acknowledge(id: string): Promise<void>;
   retry(id: string, active?: () => boolean): void;
   dismiss(id: string): Promise<void>;
@@ -203,7 +207,11 @@ export function createOutbox(
             : action === "acknowledge"
               ? visible.map((item) =>
                   item.event.id === id
-                    ? { ...item, recovery: undefined }
+                    ? {
+                        ...item,
+                        recovery: undefined,
+                        acknowledged: true as const,
+                      }
                     : item,
                 )
               : visible;
@@ -228,10 +236,17 @@ export function createOutbox(
           // Release recovery only after its removal is durable, before the next
           // queued save can run. Preserve delivery evidence received during I/O.
           if (action === "acknowledge") {
-            const current = find(id);
+            const current = visible.find((item) => item.event.id === id);
             if (current) {
-              const cleared = { ...current, recovery: undefined };
-              if (current.delivery === "seen" && !attempts.has(id)) {
+              const cleared = {
+                ...current,
+                recovery: undefined,
+                acknowledged: true as const,
+              };
+              if (
+                (current.delivery === "seen" || current.event.kind === 9000) &&
+                !attempts.has(id)
+              ) {
                 completed.set(id, cleared);
                 snapshot = Object.freeze(
                   snapshot.filter((item) => item.event.id !== id),
@@ -284,6 +299,7 @@ export function createOutbox(
       }),
       ...(signed ? { signed } : {}),
       ...(item.recovery ? { recovery: recoveryValue(item.recovery) } : {}),
+      ...(item.acknowledged === true ? { acknowledged: true as const } : {}),
       ...(item.guarded ? { guarded: true } : {}),
       delivery:
         item.delivery === "seen" && signed
@@ -296,13 +312,17 @@ export function createOutbox(
   }
   function restore(restored: readonly OutgoingEvent[]) {
     const pending = restored.filter(
-      (item) => item.delivery !== "seen" || item.recovery,
+      (item) =>
+        (!(item.event.kind === 9000 && item.acknowledged) &&
+          item.delivery !== "seen") ||
+        !!item.recovery,
     );
     if (pending.length > MAX_PENDING)
       throw new Error("Saved pending outbox exceeds its budget");
     for (const item of restored)
       if (
-        item.delivery === "seen" &&
+        ((item.event.kind === 9000 && item.acknowledged) ||
+          item.delivery === "seen") &&
         !item.recovery &&
         (!confirmedInvalidated ||
           (item.event.kind === 9007 && confirmedKeep?.(item.event)))
@@ -509,7 +529,13 @@ export function createOutbox(
       clearTimeout(attempt.timer);
       if (attempts.get(id) === attempt) attempts.delete(id);
       const observed = find(id);
-      if (!closed && observed?.delivery === "seen" && !observed.recovery) {
+      if (
+        !closed &&
+        observed &&
+        ((observed.event.kind === 9000 && observed.acknowledged) ||
+          observed.delivery === "seen") &&
+        !observed.recovery
+      ) {
         completed.set(id, observed);
         snapshot = Object.freeze(
           snapshot.filter((item) => item.event.id !== id),
@@ -544,11 +570,53 @@ export function createOutbox(
       if (closed) throw abortError();
       if (storageError) throw new Error(storageError);
     },
+    async recover(id: string, recovery: OutboxRecovery) {
+      await outbox.ready();
+      const saved = recoveryValue(recovery);
+      if (!saved) throw new Error("Invalid outbox recovery state");
+      const item = visible.find((entry) => entry.event.id === id);
+      if (!item || dismissing.has(id))
+        throw new Error(
+          "The original operation is unavailable. Refresh before retrying.",
+        );
+      if (item.acknowledged) return;
+      if (
+        (item.recovery &&
+          (item.recovery.key !== saved.key ||
+            item.recovery.value !== saved.value)) ||
+        snapshot.some(
+          (entry) => entry.event.id !== id && entry.recovery?.key === saved.key,
+        )
+      )
+        throw new Error("Recover the earlier message before sending another");
+      if (!find(id) && snapshot.length >= MAX_PENDING)
+        throw new Error(
+          "Too many outstanding operations; resolve a pending operation",
+        );
+      // Protect immediately against dismissal/echo eviction. On save failure keep
+      // that protection; a later recovery attempt must persist it again before use.
+      const retained = Object.freeze({ ...item, recovery: saved });
+      completed.delete(id);
+      snapshot = Object.freeze([
+        ...snapshot.filter((entry) => entry.event.id !== id),
+        retained,
+      ]);
+      notify();
+      await persist(id);
+    },
     async acknowledge(id: string) {
       await outbox.ready();
-      const item = find(id);
+      const item = visible.find((item) => item.event.id === id);
       if (!item?.recovery) return;
-      if (item.delivery !== "accepted" && item.delivery !== "seen")
+      // Member callers verify a fresh signed roster even when the receipt was lost.
+      if (
+        !(
+          item.event.kind === 9000 &&
+          item.recovery.key.startsWith("member-add:")
+        ) &&
+        item.delivery !== "accepted" &&
+        item.delivery !== "seen"
+      )
         throw new Error("Confirm delivery before completing this message");
       await persist(id, "acknowledge");
     },
@@ -630,6 +698,7 @@ export function createOutbox(
       if (
         !closed &&
         item &&
+        !(item.event.kind === 9000 && item.acknowledged) &&
         !isWorkflowOperation(item.event) &&
         !attempts.has(id) &&
         !dismissing.has(id)
@@ -653,9 +722,14 @@ export function createOutbox(
       const pending = dismissing.get(id);
       if (pending) return pending;
       if (closed || attempts.has(id)) return Promise.resolve();
-      if (find(id)?.recovery && find(id)?.delivery !== "failed")
+      const item = visible.find((item) => item.event.id === id);
+      if (item?.recovery && item.delivery !== "failed")
         return Promise.reject(
-          new Error("Confirm this message in New message before removing it"),
+          new Error(
+            item.event.kind === 9000
+              ? "Confirm this addition in Members before removing it"
+              : "Confirm this message in New message before removing it",
+          ),
         );
       const work = persist(id, "dismiss")
         .then(() => {
@@ -716,7 +790,12 @@ export function createOutbox(
         } else
           completed.set(
             event.id,
-            Object.freeze({ event, signed: event, delivery: "seen" }),
+            Object.freeze({
+              ...find(event.id),
+              event,
+              signed: event,
+              delivery: "seen",
+            }),
           );
       }
       snapshot = Object.freeze(

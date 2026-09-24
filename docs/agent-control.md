@@ -113,6 +113,15 @@ retire late starts; Save during a credential wait requires an explicit retry.
 Synthetic native tests inject rejecting or in-memory credentials and runtime
 resources. Production has no disposable storage override or preview launch mode.
 
+On Unix, an execed supervisor in the same app binary owns each agent's shared
+identity lock, isolated listener session, and temporary runtime directory. App
+Stop/Quit and kernel EOF on forced app death both trigger the existing whole-session
+teardown; ownership is released only after listener and workers have exited.
+Unconfirmed teardown keeps the lock and private directory, and normal Quit remains
+fail-closed. This does not clean up listeners orphaned before this fix, does not
+contain a worker that deliberately escapes its session, and does not add process
+containment on non-Unix platforms.
+
 ## Ownership and handoff
 
 - `features/agents/control.ts`: camelCase DTOs and app-owned observable projection.
@@ -152,14 +161,24 @@ resources. Production has no disposable storage override or preview launch mode.
   harness choice, not a new installation/catalog system. The host must validate
   launch configuration and unsupported imported semantics before execution.
 - Harness and Provider choices come from native `harnessOptions` through the
-  injected Core snapshot: Buzz Agent (`buzz-agent`) and Databricks v2
-  (`databricks_v2`). These are editing suggestions, not installation or execution
-  evidence. There is no copied settings subsystem. Custom
-  command/provider values remain editable, including absolute paths; model entry
-  remains editable alongside on-demand Databricks browsing. Selecting a choice changes only its field, not arguments,
-  model/provider defaults or write-only environment overrides. Advanced arguments
-  remain a literal JSON array. Old native hosts without this metadata fall back
-  to custom entry.
+  injected Core snapshot. Buzz Agent offers Databricks v2. Goose appears with an
+  absolute executable path when the local CLI is installed, and offers common
+  Goose providers plus a custom ID. A missing CLI leaves Goose disabled until
+  installation and desktop restart. Switching into or out of Goose supplies ACP
+  arguments and clears the previous provider/model; selecting a Goose provider clears the
+  previous model. For Goose with Databricks v2, an explicit Browse asks Goose ACP
+  for its live supported-model list and searches it in the existing picker. The
+  exact returned ID is saved; an unlisted ID remains possible but is flagged
+  after discovery. Saved write-only `GOOSE_PROVIDER` overrides keep Browse
+  reachable; native checks the effective provider before asking Goose. Goose
+  has no separate Refresh action because its catalog lookup can start OAuth.
+  Other Goose providers retain manual model entry. Existing Goose credentials
+  are reused; providers without local setup need `goose configure` before Start. Executable detection
+  is not a sign-in or ACP readiness check. Custom command/provider values remain
+  editable, including absolute paths. Buzz Agent retains on-demand Databricks
+  model browsing. A Goose catalog entry does not establish caller EXECUTE permission
+  or successful inference. Advanced arguments remain a literal JSON array. Old native hosts
+  without this metadata fall back to custom entry.
 - Environment values never arrive in snapshots. Inputs are masked write-only
   patches: missing key preserves; string replaces (including empty); null removes.
   Undo omits a patch again. Successful save clears entered values from UI state.
@@ -337,3 +356,75 @@ import can leave create-only app custody for retry but no enabled/configured age
 No remote/team/mesh runtime or conditional attestation is added. Synthetic checks
 do not establish actual Keychain ACLs, production TLS/inference, live replies,
 forced native quit, signed packaging or other-platform behavior.
+
+## Pi harness
+
+Install Pi, Node.js, and the `buzz-pi-acp` adapter, then reopen the desktop app.
+Pi appears alongside Buzz Agent and Goose. Availability means the executables
+were found, not that authentication or inference has been verified. This
+integration uses the adapter's Pi argument forwarding after `--` (verified with
+buzz-pi-acp 0.0.33) and Pi's `get_available_models` RPC (verified with Pi 0.86.1).
+
+Choose **Pi → LLM Provider → Browse models**, or leave Provider unset and Browse
+to see all locally available providers. The returned provider/model pair is saved
+as separate fields; model IDs retain namespace slashes and punctuation. Browse
+also adds extension-provided providers to the provider choices. Pi provider
+changes filter the loaded catalog without launching another lookup. Workspace,
+arguments or environment changes retire it and clear discovered provider suggestions. Custom provider
+and model entry remain available, including when lookup fails or returns no models.
+When a provider is set, enter its exact model ID without adding the provider prefix.
+The Advanced model field preserves text literally, including IDs that themselves
+start with the provider name. After Browse, an unlisted ID carries a warning;
+manual IDs remain allowed and an available catalog is not inference validation.
+Clear both fields to keep Pi's own defaults. Choosing a provider requires a model
+before Start; Pi otherwise silently ignores a provider-only flag. Save does not restart a running agent;
+use Restart explicitly to apply changes.
+
+Discovery launches the same locally resolved Pi used by the ACP adapter, in the
+agent's workspace, with the same explicit environment and extension arguments.
+It uses `--mode rpc --no-session --no-themes` and sends only
+`get_available_models`, never a prompt or Buzz identity. Selection is omitted
+from catalog startup so a stale model cannot prevent finding its replacement.
+Cancel, changed workspace/configuration, and closing the editor retire the native
+lookup; Unix cleanup kills the lookup process group. Errors require explicit retry.
+Pi may return a cached extension catalog; Refresh reloads Pi’s available snapshot
+and does not guarantee a fresh remote catalog. The catalog reflects Pi's available models and local credentials, not a guarantee
+of inference permission. Authentication and extension caches remain Pi-owned;
+configure sign-in in Pi. Extensions are executable local code and can perform
+their own initialization/authentication during discovery.
+
+Runtime forwards Provider and Model as `--provider` / `--model` to the adapter
+and uses `provider/exact-id` for ACP model selection. There are no invented Pi
+provider/model environment variables. The controller owns `PI_ACP_PI_COMMAND`;
+it resolves Pi and Node beside the adapter first, then the usual local install
+locations. Ambient provider credentials are not inherited. Use Pi's credential
+store or explicit write-only per-agent environment patches.
+
+Optional extension configuration uses Pi's existing facilities, with no provider
+package bundled into the OSS app:
+
+- Install/configure packages in Pi normally; both discovery and runtime load them.
+- Set `PI_CODING_AGENT_DIR` in Advanced environment to use a specific local Pi
+  configuration directory. It is saved locally, never projected in a snapshot.
+- To load a particular extension, set Advanced arguments to
+  `["--", "--extension", "/absolute/path/to/extension.ts"]`. Paths containing spaces
+  are supported. `--no-extensions` disables automatic extension discovery while
+  keeping explicitly supplied extensions. Advanced runtime arguments are preserved
+  and forwarded to the adapter, including
+  thinking, skills and tools. Browse supports standard Pi configuration options
+  and strips provider/model flags for catalog startup. Unsupported extension flags
+  or positional input block Browse with an explanation, while manual entry and
+  runtime arguments remain available. Browse also rejects inline `--flag=value`
+  syntax and `--api-key`, whose meaning depends on the selected startup provider;
+  use Pi's local credential store or explicit provider environment instead.
+  The adapter still owns its reserved
+  session, prompt and mode flags. Explicit Provider/Model fields are appended last.
+
+Internal distributions can provision a pinned extension package and Pi config,
+or supply an installed extension path through these same settings. Keep private
+package URLs, hosts, filters, authentication and model policy in the private
+packaging/configuration owner. Discovery and runtime must point at that same
+configuration. The current internal release repository builds the old desktop;
+its generic build environment injection is not a Pi resource-bundling contract
+for this app. Signed bundling, automatic employee provisioning and release
+pipeline migration require separate release work; no release is published here.

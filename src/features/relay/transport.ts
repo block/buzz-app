@@ -1,7 +1,13 @@
+import {
+  memoryResponseText,
+  type MemoryReader,
+  type MemoryListing,
+} from "../agents/memory";
 import { brokerUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
 import type { KitRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
+import { projectGitHost, type ProjectGit } from "../projects/git";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
 import type { ReadStateHost, ReadStateSigning } from "./read-state-host";
@@ -11,7 +17,12 @@ import {
   readSnapshotText,
 } from "./read-state-snapshot";
 import type { AgentLibraryReader } from "../agents/library";
-import type { SidebarDecoder, SidebarPreferences } from "./sidebar-preferences";
+import {
+  projectSidebarPreferences,
+  type SidebarMuteMutator,
+  type SidebarDecoder,
+  type SidebarPreferences,
+} from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
 import {
@@ -51,6 +62,8 @@ export interface RelayWriter {
   ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
+  readonly projectGit?: ProjectGit;
+  readonly readAgentMemories?: MemoryReader;
   readonly uploadAttachment?: AttachmentUpload;
   /** Host-owned idempotent DM opening. The session verifies membership before use. */
   readonly openDirectMessage?: (
@@ -81,6 +94,7 @@ export interface ReadTransport {
     string,
     "online" | "away" | "offline" | "unknown"
   > | null>;
+  readonly writeSidebarMute?: SidebarMuteMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -232,14 +246,17 @@ export async function connectBrokerTransport(
     archiveAuthority?: unknown;
     writeKinds?: number[];
     workflowReads?: boolean;
+    projectGit?: boolean;
     attachmentUploads?: boolean;
     directMessages?: boolean;
     relayUrl?: string;
     live?: boolean;
     presence?: boolean;
     sidebarPreferences?: boolean;
+    sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     agentLibrary?: boolean;
+    agentMemories?: boolean;
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
@@ -361,6 +378,47 @@ export async function connectBrokerTransport(
               signal,
             }),
           ),
+        }
+      : {}),
+    ...(session.projectGit === true
+      ? {
+          projectGit: projectGitHost((body, signal) =>
+            fetch(`${endpoint}/project-git`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+              signal,
+            }),
+          ),
+        }
+      : {}),
+    ...(session.agentMemories === true && community
+      ? {
+          readAgentMemories: async (
+            agent: string,
+            signal: AbortSignal,
+          ): Promise<MemoryListing> => {
+            const response = await fetch(`${endpoint}/agent-memories`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ agent }),
+              signal,
+            });
+            if (!response.ok) {
+              await response.body?.cancel();
+              const error = new Error("Memory read failed");
+              if (response.status === 401 || response.status === 403)
+                error.name = "MemoryDenied";
+              throw error;
+            }
+            const listing = JSON.parse(
+              await memoryResponseText(response),
+            ) as MemoryListing;
+            signal.throwIfAborted();
+            return listing;
+          },
         }
       : {}),
     ...(session.agentLibrary
@@ -509,6 +567,26 @@ export async function connectBrokerTransport(
               session.readStateCommunity as string,
               signal,
             );
+          },
+        }
+      : {}),
+    ...(session.sidebarMuteWrites
+      ? {
+          async writeSidebarMute(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-mute`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: publicationHeaders(),
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok)
+              throw new Error((await readApiFailure(result)).error);
+            return projectSidebarPreferences(
+              undefined,
+              undefined,
+              await result.json(),
+            ).muted;
           },
         }
       : {}),

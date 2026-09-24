@@ -2,14 +2,15 @@ import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
-import { useEffect, useRef, useState, useId } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type {
   AgentControl,
   ControlSnapshot,
 } from "../../features/agents/control";
 import type { ModelCatalog } from "../../features/agents/models";
+import { CircleNotchIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { agentEdit, type AgentDraft } from "./agent-edit";
+import { agentEdit, isGoose, type AgentDraft } from "./agent-edit";
 
 export function AgentModelPicker({
   id,
@@ -17,10 +18,12 @@ export function AgentModelPicker({
   savedRevision,
   control,
   defaults,
+  onPiProviders,
   onChange,
   disabled = false,
 }: {
   disabled?: boolean;
+  onPiProviders?(providers: string[]): void;
   id?: string | undefined;
   savedRevision?: number | undefined;
   draft: AgentDraft;
@@ -29,6 +32,9 @@ export function AgentModelPicker({
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const statusId = useId();
+  const goose = isGoose(draft.command);
+  const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
+  const external = goose || pi;
   const host = draft.databricks?.host ?? defaults?.host ?? "";
   const filter = draft.databricks?.filter ?? defaults?.filter ?? "";
   const [catalog, setCatalog] = useState<{
@@ -51,11 +57,12 @@ export function AgentModelPicker({
     savedRevision,
     draft.revision,
     draft.command,
-    draft.provider,
+    pi ? null : draft.provider,
     draft.args,
+    draft.workspace,
     draft.environment,
-    host,
-    filter,
+    pi ? null : host,
+    pi ? null : filter,
   ]);
   const currentKey = useRef(key);
   currentKey.current = key;
@@ -68,14 +75,23 @@ export function AgentModelPicker({
     setQuery(null);
     setOpen(false);
     attempted.current = null;
+    onPiProviders?.([]);
     return () => {
       pending.current?.abort();
       pending.current = null;
+      onPiProviders?.([]);
     };
-  }, [key]);
+  }, [key, onPiProviders]);
+  // Provider is only a filter for Pi's catalog, but pending search text belongs
+  // to the provider the person was editing.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: provider changes retire its pending search text without invalidating Pi’s catalog.
+  useEffect(() => {
+    setQuery(null);
+    highlighted.current = null;
+  }, [draft.provider]);
   const run = async (action: "connect" | "refresh" | "disconnect") => {
     if (!control.models || pending.current) return;
-    if (!host.trim()) {
+    if (!external && !host.trim()) {
       setStatus(
         "Set your Databricks workspace under Advanced → Model to browse models.",
       );
@@ -88,7 +104,9 @@ export function AgentModelPicker({
     setCatalog(null);
     setStatus(
       action === "connect"
-        ? "Loading models… sign in through your browser if asked."
+        ? external
+          ? `Loading ${pi ? "Pi" : "Goose"} models…`
+          : "Loading models… sign in through your browser if asked."
         : action === "refresh"
           ? "Loading models…"
           : "Removing this app’s credentials for this workspace…",
@@ -99,20 +117,26 @@ export function AgentModelPicker({
           id,
           expectedRevision: id ? draft.revision : undefined,
           edit: action === "disconnect" ? undefined : agentEdit(draft, true),
-          host,
-          filter,
+          host: external ? "" : host,
+          filter: external ? "" : filter,
           action,
         },
         abort.signal,
       );
       if (abort.signal.aborted || currentKey.current !== key) return;
       setCatalog({ key, data });
+      if (pi)
+        onPiProviders?.([
+          ...new Set(data.models.map((m) => m.id.split("/")[0] ?? "")),
+        ]);
       setStatus(
         data.disconnected
           ? "Disconnected from this workspace in Foundation."
           : data.models.length
             ? ""
-            : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
+            : external
+              ? `No ${pi ? "Pi" : "Goose"} models found. Check local configuration or enter a custom ID.`
+              : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
       );
     } catch (error) {
       if (!abort.signal.aborted && currentKey.current === key)
@@ -125,9 +149,32 @@ export function AgentModelPicker({
     }
   };
   const fresh = catalog?.key === key ? catalog.data : null;
-  const entries = fresh?.models ?? [];
+  const entries = (fresh?.models ?? []).filter(
+    (m) => !pi || !draft.provider || m.id.startsWith(`${draft.provider}/`),
+  );
+  const selectedId =
+    pi && draft.provider && draft.model
+      ? `${draft.provider}/${draft.model}`
+      : draft.model;
+  const chooseModel = (value: string) => {
+    if (pi && value.includes("/") && entries.some((m) => m.id === value)) {
+      const split = value.indexOf("/");
+      onChange({
+        provider: value.slice(0, split),
+        model: value.slice(split + 1),
+      });
+    } else {
+      const prefix = `${draft.provider}/`;
+      onChange({
+        model:
+          pi && draft.provider && value.startsWith(prefix)
+            ? value.slice(prefix.length)
+            : value,
+      });
+    }
+  };
   const selected =
-    entries.find((model) => model.id === draft.model) ??
+    entries.find((model) => model.id === selectedId) ??
     (draft.model ? { id: draft.model, name: draft.model } : null);
   const items = [...entries];
   if (selected && !entries.some((model) => model.id === selected.id))
@@ -143,7 +190,7 @@ export function AgentModelPicker({
     const match = entries.find(
       (item) => item.id === query || item.name === query,
     );
-    onChange({ model: match?.id ?? query });
+    chooseModel(match?.id ?? query);
     setQuery(null);
   };
   return (
@@ -193,7 +240,7 @@ export function AgentModelPicker({
             itemToStringLabel={(model) => model.name}
             isItemEqualToValue={(a, b) => a.id === b.id}
             onValueChange={(model) => {
-              if (model) onChange({ model: model.id });
+              if (model) chooseModel(model.id);
               setQuery(null);
             }}
           >
@@ -222,13 +269,28 @@ export function AgentModelPicker({
               }}
             />
             <Combobox.Popup
-              empty={
-                busy
-                  ? "Loading models…"
-                  : "Type a model ID to use a custom model."
-              }
+              empty={busy ? null : "Type a model ID to use a custom model."}
             >
-              <Combobox.List>
+              {busy && (
+                <div
+                  role="status"
+                  aria-label="Model lookup"
+                  className="flex items-center gap-2 px-3 py-2 text-body-sm text-secondary"
+                >
+                  <CircleNotchIcon
+                    size={16}
+                    className="motion-safe:animate-spin"
+                    aria-hidden="true"
+                  />
+                  {pi ? "Loading Pi models…" : "Loading models…"}
+                </div>
+              )}
+              <Combobox.List
+                style={{
+                  maxHeight: "min(20rem, calc(var(--available-height) - 4rem))",
+                  overflowY: "auto",
+                }}
+              >
                 {(model: ModelCatalog["models"][number]) => (
                   <Combobox.Item
                     key={model.id}
@@ -261,7 +323,7 @@ export function AgentModelPicker({
               setStatus("Cancelled. Retry when ready.");
             }}
           >
-            Cancel sign-in
+            {external ? "Cancel model lookup" : "Cancel sign-in"}
           </Button>
         ) : (
           status &&
@@ -271,10 +333,48 @@ export function AgentModelPicker({
             </Button>
           )
         )}
+        {pi && draft.provider && !draft.model && (
+          <p className="text-body-sm text-warning">
+            Choose a model for this provider before starting, or clear Provider
+            to use Pi defaults.
+          </p>
+        )}
+        {pi && fresh && entries.length === 0 && draft.provider && (
+          <p className="text-body-sm text-secondary">
+            No Pi models available for this provider. Check Pi sign-in or
+            extension configuration, or enter a custom ID.
+          </p>
+        )}
+        {pi &&
+          fresh &&
+          draft.model &&
+          !entries.some((model) => model.id === selectedId) && (
+            <p className="text-body-sm text-warning">
+              This model ID is not in Pi’s available catalog. Select a listed
+              model or confirm the exact custom ID before starting; Pi may
+              accept an invalid ID until the first message.
+            </p>
+          )}
         {fresh?.modelOverridden && (
           <p className="text-body-sm text-warning">
-            A saved BUZZ_AGENT_MODEL override takes precedence. Change it in
-            Advanced → Environment to use this selection.
+            {goose ? "A GOOSE_MODEL" : "A saved BUZZ_AGENT_MODEL"} environment
+            override takes precedence. Change it in Advanced → Environment to
+            use this selection.
+          </p>
+        )}
+        {goose &&
+          fresh &&
+          draft.model &&
+          !entries.some((model) => model.id === draft.model) && (
+            <p className="text-body-sm text-warning">
+              This model ID is not in Goose’s current Databricks v2 list. Select
+              a listed model or confirm the custom ID before starting.
+            </p>
+          )}
+        {goose && (
+          <p className="text-body-sm text-secondary">
+            Models come from your Goose Databricks connection. If sign-in is
+            needed, run goose configure before browsing.
           </p>
         )}
       </div>
@@ -299,7 +399,22 @@ export function AgentModelPicker({
                       }
                     />
                   </Field>
-                  {supported && (
+                  {pi && (
+                    <p className="text-body-sm text-secondary">
+                      This field uses the exact model ID, including any
+                      namespace slashes, without adding the provider. Its text
+                      is saved literally.
+                    </p>
+                  )}
+                  {supported && pi && (
+                    <Button
+                      disabled={disabled || busy}
+                      onClick={() => void run("refresh")}
+                    >
+                      Refresh models
+                    </Button>
+                  )}
+                  {supported && !external && (
                     <>
                       <Field label="Databricks workspace (HTTPS origin)">
                         <Input

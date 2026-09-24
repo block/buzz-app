@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::{agent_id, HarnessEdit};
+use crate::process::Process;
 use crate::Secret;
 use serde_json::json;
 use std::fs;
@@ -58,7 +59,7 @@ fn bundle(directory: &Path) -> RuntimeBundle {
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
 trap 'exit 0' TERM INT
-while :; do /bin/sleep 0.1; done
+while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 0.1; done
 "#).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
@@ -191,6 +192,174 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     assert!(!restored.agents[0].enabled);
     assert!(controller.running.is_empty());
 }
+#[test]
+#[cfg(unix)]
+fn failed_temp_cleanup_reports_error_and_allows_explicit_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let key = Secret::parse(KEY, PUB).unwrap();
+    for action in [Action::Stop, Action::Restart] {
+        assert!(matches!(
+            controller.action(&a.id, Action::Start).unwrap().agents[0].status,
+            ProcessStatus::Running
+        ));
+        let temp = controller.running[&a.id]
+            .temporary
+            .as_ref()
+            .unwrap()
+            .clone();
+        let moved = temp.with_extension("moved");
+        fs::rename(&temp, &moved).unwrap();
+        fs::write(&temp, b"block directory removal").unwrap();
+        let stopped = if matches!(action, Action::Restart) {
+            controller
+                .action_with_key(&a.id, action, 1, &key, None)
+                .unwrap()
+        } else {
+            controller.action(&a.id, action).unwrap()
+        };
+        let error = "Agent stopped, but its private runtime directory could not be removed";
+        assert!(matches!(stopped.agents[0].status, ProcessStatus::Failed));
+        assert_eq!(stopped.agents[0].error.as_deref(), Some(error));
+        assert_eq!(
+            controller.snapshot().unwrap().agents[0].error.as_deref(),
+            Some(error)
+        );
+        assert!(controller.running.is_empty());
+        fs::remove_file(temp).unwrap();
+        let retry = controller.action(&a.id, Action::Start).unwrap();
+        assert!(matches!(retry.agents[0].status, ProcessStatus::Running));
+        controller.action(&a.id, Action::Stop).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn listener_self_exit_with_failed_cleanup_retires_entry_and_reports_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then_some(())
+    });
+    let temp = controller.running[&a.id]
+        .temporary
+        .as_ref()
+        .unwrap()
+        .clone();
+    let moved = temp.with_extension("moved");
+    fs::rename(&temp, &moved).unwrap();
+    fs::write(&temp, b"block directory removal").unwrap();
+    controller.record_error(&a.id, "credential read failed".into());
+    fs::write(dir.path().join("config/exit-listener"), b"").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let snapshot = controller.snapshot().unwrap();
+        if controller.running.is_empty() {
+            assert_eq!(
+                snapshot.agents[0].error.as_deref(),
+                Some("Agent stopped, but its private runtime directory could not be removed")
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "listener did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    fs::remove_file(temp).unwrap();
+    fs::remove_dir_all(moved).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn listener_exit_replaces_stale_credential_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then_some(())
+    });
+    controller.record_error(&a.id, "credential read failed".into());
+    fs::write(dir.path().join("config/exit-listener"), b"").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let snapshot = controller.snapshot().unwrap();
+        if controller.running.is_empty() {
+            assert_eq!(
+                snapshot.agents[0].error.as_deref(),
+                Some("Agent listener exited; restart to retry")
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "listener did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn stop_reports_cleanup_before_durable_disable_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let mut store = Store::open(config.clone()).unwrap();
+    let a = agent(dir.path());
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    let temp = controller.running[&a.id]
+        .temporary
+        .as_ref()
+        .unwrap()
+        .clone();
+    let moved = temp.with_extension("moved");
+    fs::rename(&temp, &moved).unwrap();
+    fs::write(&temp, b"block directory removal").unwrap();
+    fs::write(config.join("agents.json"), b"{malformed").unwrap();
+    assert!(
+        matches!(controller.action(&a.id, Action::Stop), Err(ref error) if error == "Agent stopped, but its private runtime directory could not be removed")
+    );
+    assert!(controller.running.is_empty());
+    assert_eq!(
+        controller.errors[&a.id],
+        "Agent stopped, but its private runtime directory could not be removed"
+    );
+    fs::remove_file(temp).unwrap();
+    fs::remove_dir_all(moved).unwrap();
+}
+
 #[test]
 #[cfg(unix)]
 fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
@@ -480,7 +649,7 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
     assert!(env[5].starts_with(tools.path().to_str().unwrap()));
     let run = &controller.running[&a.id];
     assert_eq!(run.databricks_host.as_deref(), Some("https://example.com"));
-    let temp = run.temporary.as_ref().unwrap().path().to_owned();
+    let temp = run.temporary.as_ref().unwrap().to_owned();
     assert!(temp.starts_with(config.join("runs")));
     assert_eq!(env[4], temp.to_str().unwrap());
     let cache = config.join("buzz-agent/oauth/databricks");
@@ -619,7 +788,6 @@ fn actual_bundled_acp_lazy_listener_start_restart_stop_and_quit_cleanup() {
         .temporary
         .as_ref()
         .unwrap()
-        .path()
         .to_owned();
     assert!(temp.exists());
     controller.action(&a.id, Action::Stop).unwrap();
@@ -630,7 +798,6 @@ fn actual_bundled_acp_lazy_listener_start_restart_stop_and_quit_cleanup() {
         .temporary
         .as_ref()
         .unwrap()
-        .path()
         .to_owned();
     controller.shutdown().unwrap();
     assert!(!temp.exists());
@@ -672,4 +839,235 @@ fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
     });
     assert_eq!(output.lines().nth(18), Some(""));
     controller.action(&a.id, Action::Stop).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let goose = dir.path().join("goose");
+    fs::write(&goose, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&goose, fs::Permissions::from_mode(0o700)).unwrap();
+    let edit = |override_provider: Option<&str>| AgentEdit {
+        name: "Goose".into(),
+        system_prompt: String::new(),
+        workspace: dir.path().display().to_string(),
+        harness: HarnessEdit {
+            command: goose.display().to_string(),
+            args: vec!["acp".into()],
+            model: "short-name".into(),
+            provider: "databricks_v2".into(),
+            databricks: None,
+        },
+        environment: BTreeMap::from([
+            (
+                "DATABRICKS_HOST".into(),
+                Some("https://workspace.example".into()),
+            ),
+            ("GOOSE_MODEL".into(), Some("effective-model".into())),
+            (
+                "GOOSE_PROVIDER".into(),
+                override_provider.map(str::to_owned),
+            ),
+        ]),
+    };
+    let context = Controller::draft_goose_model_context(edit(None)).unwrap();
+    assert_eq!(context.command, goose);
+    assert!(context.model_overridden);
+    assert_eq!(
+        context.environment["DATABRICKS_HOST"],
+        "https://workspace.example"
+    );
+    assert!(!context.environment.contains_key("GOOSE_PROVIDER"));
+    assert!(Controller::draft_goose_model_context(edit(Some("openai"))).is_err());
+}
+
+#[test]
+#[cfg(unix)]
+fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let adapter = tools.path().join("buzz-pi-acp");
+    fs::write(&adapter, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&adapter, fs::Permissions::from_mode(0o700)).unwrap();
+    let extension = tools.path().join("extension with spaces.ts");
+    fs::write(&extension, "export default function() {};").unwrap();
+    let mut a = agent(dir.path());
+    a.harness.command = adapter.display().to_string();
+    a.harness.provider = "custom".into();
+    a.harness.model = "namespace/exact.id".into();
+    a.harness.args = vec![
+        "--".into(),
+        "--extension".into(),
+        extension.display().to_string(),
+    ];
+    for tool in ["pi", "node"] {
+        fs::copy(&adapter, tools.path().join(tool)).unwrap();
+    }
+    a.environment.insert(
+        "PI_CODING_AGENT_DIR".into(),
+        dir.path().display().to_string(),
+    );
+    let root = dir.path().join("config");
+    Store::open(root.clone())
+        .unwrap()
+        .insert(vec![a.clone()])
+        .unwrap();
+    let store = Store::open(root).unwrap();
+    let saved = store.agents().unwrap().remove(0);
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let command = runtime.command(&saved, &key).unwrap();
+    let env: BTreeMap<_, _> = command
+        .get_envs()
+        .map(|(k, v)| (k.to_str().unwrap(), v.unwrap().to_str().unwrap()))
+        .collect();
+    assert_eq!(env["BUZZ_ACP_MODEL"], "custom/namespace/exact.id");
+    assert_eq!(
+        env["BUZZ_ACP_AGENT_ARGS"],
+        format!(
+            "--,--extension,{},--provider,custom,--model,namespace/exact.id",
+            extension.display()
+        )
+    );
+    assert!(!env.contains_key("GOOSE_MODEL"));
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(runtime),
+        dir.path().join("ownership"),
+    );
+    let edit = AgentEdit {
+        name: a.name.clone(),
+        system_prompt: a.system_prompt.clone(),
+        workspace: a.workspace.clone(),
+        harness: a.harness.clone(),
+        environment: BTreeMap::new(),
+    };
+    let context = controller.pi_model_context(&a.id, 1, edit.clone()).unwrap();
+    assert_eq!(context.args, a.harness.args[1..]);
+    assert_eq!(
+        context.environment["PI_CODING_AGENT_DIR"],
+        dir.path().display().to_string()
+    );
+    assert!(controller.pi_model_context(&a.id, 2, edit.clone()).is_err());
+    let mut patch = edit.clone();
+    patch.environment.insert(
+        "PI_CODING_AGENT_DIR".into(),
+        Some("/override/config".into()),
+    );
+    let context = controller
+        .pi_model_context(&a.id, 1, patch.clone())
+        .unwrap();
+    assert_eq!(
+        context.environment["PI_CODING_AGENT_DIR"],
+        "/override/config"
+    );
+    patch.environment.insert("PI_CODING_AGENT_DIR".into(), None);
+    assert!(!controller
+        .pi_model_context(&a.id, 1, patch)
+        .unwrap()
+        .environment
+        .contains_key("PI_CODING_AGENT_DIR"));
+    // Draft resolution did not mutate the saved override.
+    assert_eq!(
+        controller.store.agents().unwrap()[0].environment["PI_CODING_AGENT_DIR"],
+        a.environment["PI_CODING_AGENT_DIR"]
+    );
+    for (provider, model) in [
+        ("custom".to_owned(), "a,b".to_owned()),
+        ("custom".to_owned(), "-model".to_owned()),
+        ("custom,other".to_owned(), "model".to_owned()),
+        ("-provider".to_owned(), "model".to_owned()),
+        ("bad/provider".to_owned(), "model".to_owned()),
+        ("p".repeat(129), "model".to_owned()),
+        ("custom".to_owned(), "m".repeat(513)),
+    ] {
+        let mut invalid = saved.clone();
+        invalid.harness.provider = provider;
+        invalid.harness.model = model;
+        assert!(controller
+            .bundle
+            .as_ref()
+            .unwrap()
+            .command(&invalid, &key)
+            .is_err());
+    }
+    let mut configured = saved.clone();
+    configured.harness.model.clear();
+    assert!(controller
+        .bundle
+        .as_ref()
+        .unwrap()
+        .command(&configured, &key)
+        .unwrap_err()
+        .contains("Choose a Pi model"));
+    configured.harness.provider.clear();
+    configured.harness.args = vec![
+        "--".into(),
+        "--thinking".into(),
+        "high".into(),
+        "--skill".into(),
+        "/local/skill".into(),
+        "--tools".into(),
+        "read".into(),
+    ];
+    let launch = controller
+        .bundle
+        .as_ref()
+        .unwrap()
+        .command(&configured, &key)
+        .unwrap();
+    assert_eq!(
+        launch
+            .get_envs()
+            .find(|(k, _)| *k == "BUZZ_ACP_AGENT_ARGS")
+            .unwrap()
+            .1
+            .unwrap(),
+        "--,--thinking,high,--skill,/local/skill,--tools,read"
+    );
+    let mut advanced = edit;
+    advanced.harness.args = configured.harness.args.clone();
+    let context = Controller::draft_pi_model_context(advanced.clone()).unwrap();
+    assert_eq!(
+        context.catalog_args().unwrap(),
+        configured.harness.args[1..]
+    );
+    advanced.harness.args = vec![
+        "--".into(),
+        "--provider".into(),
+        "old".into(),
+        "--model".into(),
+        "invalid".into(),
+    ];
+    assert!(Controller::draft_pi_model_context(advanced.clone())
+        .unwrap()
+        .catalog_args()
+        .unwrap()
+        .is_empty());
+    for unsupported in [
+        vec!["--custom-extension-flag"],
+        vec!["--extension=/local/extension.ts"],
+        vec!["--api-key", "synthetic-key"],
+        vec!["a prompt"],
+    ] {
+        advanced.harness.args = std::iter::once("--")
+            .chain(unsupported)
+            .map(str::to_owned)
+            .collect();
+        assert!(Controller::draft_pi_model_context(advanced.clone())
+            .unwrap()
+            .catalog_args()
+            .is_err());
+        configured.harness.args = advanced.harness.args.clone();
+        assert!(controller
+            .bundle
+            .as_ref()
+            .unwrap()
+            .command(&configured, &key)
+            .is_ok());
+    }
 }

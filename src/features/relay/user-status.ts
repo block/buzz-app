@@ -1,5 +1,5 @@
 import type { EventTemplate } from "nostr-tools";
-import { eventDto, newer, type RelayEvent } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 
@@ -22,6 +22,13 @@ function parse(event: RelayEvent): UserStatus | undefined {
     event.tags.some(([key]) => key === "h")
   )
     return;
+  const emoji = event.tags.find(([key]) => key === "emoji")?.[1] ?? "";
+  if (
+    event.content.length > STATUS_TEXT_LIMIT ||
+    emoji.length > 100 ||
+    /[\r\n]/.test(event.content + emoji)
+  )
+    return;
   const expiration = event.tags.find(([key]) => key === "expiration")?.[1];
   const expiresAt = expiration === undefined ? undefined : Number(expiration);
   if (
@@ -32,7 +39,7 @@ function parse(event: RelayEvent): UserStatus | undefined {
   return Object.freeze({
     userId: event.pubkey,
     text: event.content.trim(),
-    emoji: event.tags.find(([key]) => key === "emoji")?.[1]?.trim() ?? "",
+    emoji: emoji.trim(),
     updatedAt: event.created_at,
     ...(expiresAt === undefined ? {} : { expiresAt }),
   });
@@ -46,7 +53,10 @@ export function createUserStatuses(
   writer?: RelayWriter,
   notify = (listener: () => void) => listener(),
 ) {
-  const records = new Map<string, { event: RelayEvent; status: UserStatus }>();
+  const records = new Map<
+    string,
+    { event: Pick<RelayEvent, "id" | "created_at">; status: UserStatus }
+  >();
   const watched = new Map<string, number>();
   const loaded = new Set<string>();
   const listeners = new Set<() => void>();
@@ -54,6 +64,8 @@ export function createUserStatuses(
   let controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: Promise<void> | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryAttempt = 0;
   let scheduled = false;
   let closed = false;
   let saving = false;
@@ -99,8 +111,17 @@ export function createUserStatuses(
       const status = parse(event);
       if (!status) continue;
       const old = records.get(event.pubkey);
-      if (newer(old?.event, event) === old?.event) continue;
-      records.set(event.pubkey, { event, status });
+      if (
+        old &&
+        (old.event.created_at > event.created_at ||
+          (old.event.created_at === event.created_at &&
+            old.event.id <= event.id))
+      )
+        continue;
+      records.set(event.pubkey, {
+        event: { id: event.id, created_at: event.created_at },
+        status,
+      });
     }
     publish();
   }
@@ -125,12 +146,23 @@ export function createUserStatuses(
         );
         if (closed || signal.aborted) return;
         accept(events.filter((event) => authors.includes(event.pubkey)));
-        for (const id of authors) loaded.add(id);
+        for (const id of authors) if (watched.has(id)) loaded.add(id);
       }
       error = undefined;
+      retryAttempt = 0;
     })()
       .catch((reason: unknown) => {
-        if (!signal.aborted) error = String(reason);
+        if (signal.aborted) return;
+        error = String(reason);
+        // Optional decoration gets three background retries, not an endless poll.
+        const delay = [5000, 15000, 60000][retryAttempt];
+        if (watched.size && delay !== undefined) {
+          retryAttempt++;
+          retryTimer = setTimeout(() => {
+            retryTimer = undefined;
+            schedule();
+          }, delay);
+        }
       })
       .finally(() => {
         if (signal.aborted) return;
@@ -139,7 +171,7 @@ export function createUserStatuses(
     return pending;
   }
   function schedule() {
-    if (scheduled || closed) return;
+    if (scheduled || closed || retryTimer !== undefined) return;
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
@@ -169,6 +201,11 @@ export function createUserStatuses(
             records.delete(id);
           }
         }
+      }
+      if (!watched.size) {
+        clearTimeout(retryTimer);
+        retryTimer = undefined;
+        retryAttempt = 0;
       }
       publish();
     };
@@ -214,14 +251,20 @@ export function createUserStatuses(
         ],
         { signal, fresh: true },
       );
-      accept(current.filter((event) => event.pubkey === viewer));
       signal.throwIfAborted();
+      accept(current.filter((event) => event.pubkey === viewer));
+      const now = Math.floor(Date.now() / 1000);
+      const createdAt = Math.max(
+        now,
+        (records.get(viewer)?.event.created_at ?? 0) + 1,
+      );
+      if (createdAt > now + 300)
+        throw new Error(
+          "Your current status is dated too far in the future. Check your devices’ clocks and try again later.",
+        );
       const template: EventTemplate = {
         kind: USER_STATUS_KIND,
-        created_at: Math.max(
-          Math.floor(Date.now() / 1000),
-          (records.get(viewer)?.event.created_at ?? 0) + 1,
-        ),
+        created_at: createdAt,
         content: text,
         tags: [
           ["d", "general"],
@@ -248,7 +291,14 @@ export function createUserStatuses(
       saving = false;
     }
   }
+  function resetRetries() {
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
+    retryAttempt = 0;
+    error = undefined;
+  }
   function clear() {
+    resetRetries();
     controller.abort();
     controller = new AbortController();
     pending = undefined;
@@ -290,6 +340,7 @@ export function createUserStatuses(
       !!writer &&
       (!writer.kinds || writer.kinds.includes(USER_STATUS_KIND)),
     refresh() {
+      resetRetries();
       loaded.clear();
       schedule();
     },
@@ -299,6 +350,7 @@ export function createUserStatuses(
     accept,
     clear,
     reconnect() {
+      resetRetries();
       controller.abort();
       controller = new AbortController();
       pending = undefined;

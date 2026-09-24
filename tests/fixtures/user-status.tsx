@@ -17,6 +17,20 @@ const viewer = keypair(),
 const events = new Map<string, RelayEvent>();
 const listeners: LiveCallbacks[] = [];
 let reject = false;
+let releasePublication: (() => void) | undefined;
+let holdPublication = false;
+Object.assign(window, {
+  statusPublication: {
+    hold() {
+      holdPublication = true;
+    },
+    pending: () => !!releasePublication,
+    release() {
+      releasePublication?.();
+      releasePublication = undefined;
+    },
+  },
+});
 let remoteTime = Math.floor(Date.now() / 1000);
 const profiles = [
   profile(viewer, { name: "Alice" }),
@@ -57,7 +71,12 @@ const owners = [0, 1].map(() =>
           return signed(viewer, template);
         },
         async publish(event) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          if (holdPublication) {
+            holdPublication = false;
+            await new Promise<void>((resolve) => {
+              releasePublication = resolve;
+            });
+          }
           if (reject) {
             reject = false;
             throw new Error("Fixture save rejected. Try again.");
@@ -139,7 +158,6 @@ createRoot(root).render(
           }}
           session={first}
           working={false}
-          sessionsEnabled={false}
           selected={undefined}
           collapsed
           onToggle={() => {}}

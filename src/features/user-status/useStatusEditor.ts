@@ -24,7 +24,7 @@ export function useStatusEditor(
   }, [session, viewer]);
   async function open() {
     if (!session || !viewer || loading) return;
-    const request = generation.current;
+    const request = ++generation.current;
     setLoading(true);
     setError("");
     try {
@@ -45,6 +45,11 @@ export function useStatusEditor(
     loading,
     error,
     open,
+    cancelOpening() {
+      generation.current++;
+      setLoading(false);
+      setError("");
+    },
     close: () => setEditor(undefined),
   };
 }

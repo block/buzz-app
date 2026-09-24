@@ -1,0 +1,88 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createBrowserPlatform, validateBrowsableUrl } from "./platform";
+
+const sdk = vi.hoisted(() => ({ invoke: vi.fn(async () => undefined) }));
+const native = vi.hoisted(() => ({ value: false }));
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: () => native.value,
+  invoke: sdk.invoke,
+}));
+
+afterEach(() => {
+  native.value = false;
+  sdk.invoke.mockReset().mockResolvedValue(undefined);
+  vi.unstubAllGlobals();
+});
+
+describe("validateBrowsableUrl", () => {
+  it("accepts normalized HTTP(S) URLs", () => {
+    expect(validateBrowsableUrl("https://example.com")).toEqual({
+      ok: true,
+      url: "https://example.com/",
+    });
+  });
+
+  it("rejects unsafe, credentialed, malformed, and oversized URLs", () => {
+    expect(validateBrowsableUrl("javascript:alert(1)").ok).toBe(false);
+    expect(validateBrowsableUrl("https://user:pass@example.com").ok).toBe(
+      false,
+    );
+    expect(validateBrowsableUrl("not a url").ok).toBe(false);
+    expect(
+      validateBrowsableUrl(`https://example.com/#${"文".repeat(300)}`).ok,
+    ).toBe(false);
+  });
+});
+
+describe("createBrowserPlatform", () => {
+  it("is available only in the macOS desktop host", () => {
+    native.value = true;
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    expect(createBrowserPlatform().available).toBe(true);
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    expect(createBrowserPlatform().available).toBe(false);
+    native.value = false;
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    expect(createBrowserPlatform().available).toBe(false);
+  });
+
+  it("passes session IDs, bounds, actions, and normalized URLs", async () => {
+    native.value = true;
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    sdk.invoke.mockResolvedValueOnce("session-1" as never);
+    const platform = createBrowserPlatform();
+    const bounds = { x: 1, y: 2, width: 300, height: 400 };
+    await expect(platform.attach("https://example.com", bounds)).resolves.toBe(
+      "session-1",
+    );
+    await platform.setBounds("session-1", bounds, true);
+    await platform.navigate("session-1", "https://other.example.com");
+    await platform.action("session-1", "reload");
+    await platform.status("session-1");
+    await platform.detach("session-1");
+    expect(sdk.invoke.mock.calls).toEqual([
+      ["browser_attach", { url: "https://example.com/", bounds }],
+      ["browser_set_bounds", { sessionId: "session-1", bounds, visible: true }],
+      [
+        "browser_navigate",
+        { sessionId: "session-1", url: "https://other.example.com/" },
+      ],
+      ["browser_action", { sessionId: "session-1", action: "reload" }],
+      ["browser_status", { sessionId: "session-1" }],
+      ["browser_detach", { sessionId: "session-1" }],
+    ]);
+  });
+
+  it("rejects an invalid URL before native invocation", async () => {
+    const platform = createBrowserPlatform();
+    await expect(
+      platform.attach("file:///etc/passwd", {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+      }),
+    ).rejects.toThrow("Only http and https URLs are supported");
+    expect(sdk.invoke).not.toHaveBeenCalled();
+  });
+});

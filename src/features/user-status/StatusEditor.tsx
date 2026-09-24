@@ -78,13 +78,17 @@ export function StatusEditor({
       : statusDurations.find(([value]) => value === duration)?.[1];
   async function submit(clear = false) {
     if (working.current) return;
-    const expiresAt = clear
-      ? undefined
-      : current && !durationChanged
-        ? current?.expiresAt
-        : duration === "custom"
-          ? Math.floor(date.getTime() / 1000)
-          : statusDeadline(duration, Math.floor(Date.now() / 1000));
+    const expiresAt =
+      clear || duration === "never"
+        ? undefined
+        : current &&
+            !durationChanged &&
+            (current.expiresAt === undefined ||
+              current.expiresAt > Date.now() / 1000)
+          ? current?.expiresAt
+          : duration === "custom"
+            ? Math.floor(date.getTime() / 1000)
+            : statusDeadline(duration, Math.floor(Date.now() / 1000));
     if (
       !clear &&
       expiresAt !== undefined &&

@@ -55,6 +55,19 @@ browser. It uses port 1442 and does not start the desktop app or live relay brok
 If that port is occupied, choose another with `just design --port 1444`.
 Press Ctrl+C to stop the server.
 
+### OS deep links
+
+Desktop builds register `buzz://` with the OS, the scheme in-app links already use, so
+opening a `buzz://message?channel=…&id=…`, `buzz://channel/<id>`, or
+`buzz://channel/<id>/<event>`, or a repository/project/PR/issue link outside the
+app focuses it and opens that destination, on a cold start too. Entity Git browsing
+uses the authenticated development broker; packaged Git transport remains unavailable. Development,
+bundled, and released builds all use `buzz://` and compete for its OS handler.
+macOS only routes a scheme to a bundled app, so test there with
+`just desktop-bundle`; Windows and Linux
+dev builds register themselves at launch. See [OS deep links](docs/deep-links.md) for
+per-platform steps and limits.
+
 ## Relay channels
 
 Live development currently requires **an existing Buzz account in the OS credential

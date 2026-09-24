@@ -186,3 +186,58 @@ it.each(["🏠", ":party:"])(
     );
   },
 );
+
+it("shows non-expiring status honestly and preserves it until a duration is selected", async () => {
+  const user = userEvent.setup();
+  const { save } = setup({
+    userId: "a".repeat(64),
+    text: "Remote",
+    emoji: "🏠",
+    updatedAt: Date.now() / 1000,
+  });
+  expect(
+    screen.getByRole("button", { name: "Duration: Don’t clear" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Status expiration date" }),
+  ).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText("Status message"), " today");
+  await user.click(screen.getByRole("button", { name: "Save status" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith({ text: "Remote today", emoji: "🏠" }),
+  );
+  await user.click(screen.getByRole("button", { name: /^Duration:/ }));
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "1 hour" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save status" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(save).toHaveBeenLastCalledWith(
+    expect.objectContaining({ expiresAt: expect.any(Number) }),
+  );
+});
+
+it("renews the displayed preset when its original deadline passed while editing", async () => {
+  const user = userEvent.setup();
+  let now = 1700000000000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const { save } = setup({
+    userId: "a".repeat(64),
+    text: "Working",
+    emoji: "🏠",
+    updatedAt: now / 1000,
+    expiresAt: now / 1000 + 3600,
+  });
+  expect(
+    screen.getByRole("button", { name: "Duration: 1 hour" }),
+  ).toBeVisible();
+  now += 3601000;
+  await user.click(screen.getByRole("button", { name: "Save status" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith({
+      text: "Working",
+      emoji: "🏠",
+      expiresAt: now / 1000 + 3600,
+    }),
+  );
+});

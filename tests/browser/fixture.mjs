@@ -484,6 +484,10 @@ export const test = base.extend({
       response.end(JSON.stringify(body));
     };
     const answer = (community, filter) => {
+      if (filter.kinds?.includes(30617) || filter.kinds?.includes(30621)) {
+        expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
+        return [];
+      }
       if (filter.kinds?.includes(20001))
         return filter.authors.map((author) =>
           sign(20001, [["p", author]], "online"),
@@ -555,6 +559,15 @@ export const test = base.extend({
           kinds: [30030],
           "#d": ["buzz:custom-emoji"],
           limit: 500,
+        });
+        return [];
+      }
+      if (filter.kinds?.includes(30315)) {
+        expect(filter).toEqual({
+          kinds: [30315],
+          authors: [expect.any(String)],
+          "#d": ["general"],
+          limit: 1,
         });
         return [];
       }
@@ -800,6 +813,25 @@ export const test = base.extend({
         return;
       }
       expect(event.kind).toBe(30078);
+      const sidebarCoordinate = event.tags.find(([name]) => name === "d")?.[1];
+      if (sidebarCoordinate === "channel-mutes") {
+        expect(event.tags).toContainEqual(["t", sidebarCoordinate]);
+        const blob = JSON.parse(
+          nip44.v2.decrypt(
+            event.content,
+            nip44.v2.utils.getConversationKey(userKey, viewer),
+          ),
+        );
+        readEvents.get(community).set(sidebarCoordinate, event);
+        report.sidebarPublications ??= [];
+        report.sidebarPublications.push({
+          community,
+          coordinate: sidebarCoordinate,
+          event,
+          blob,
+        });
+        return;
+      }
       expect(event.tags).toContainEqual(["t", "read-state"]);
       const blob = JSON.parse(
         nip44.v2.decrypt(
@@ -825,6 +857,9 @@ export const test = base.extend({
           answer,
           report,
           pending,
+          // The production broker advertises read-state writes for every session,
+          // not only tests opting into complete snapshot reads.
+          acceptPublication: acceptReadPublication,
           ...(actionProfile
             ? {
                 latencyMs: 40,
@@ -862,7 +897,6 @@ export const test = base.extend({
                     max_bytes: 8388608,
                   },
                 }),
-                acceptPublication: acceptReadPublication,
               }
             : {}),
         })
@@ -1132,6 +1166,7 @@ export const test = base.extend({
         { viewer, profilePicture, iconCongestion },
       );
       await use({
+        sign: (template) => finalizeEvent(template, userKey),
         origin,
         report,
         iconCongestion: iconCongestion
@@ -1325,10 +1360,25 @@ export const test = base.extend({
         observerFailures.splice(match, 1);
         return true;
       };
+      // Consume each deliberately injected mute failure by exact request URL.
+      const muteFailures = [...(report.sidebarMuteFailures ?? [])];
+      const injectedMuteFailure = (message, index) => {
+        if (
+          !/^Failed to load resource: the server responded with a status of 502/.test(
+            message,
+          )
+        )
+          return false;
+        const match = muteFailures.indexOf(consoleLocations.get(index));
+        if (match < 0) return false;
+        muteFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
+            !injectedMuteFailure(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

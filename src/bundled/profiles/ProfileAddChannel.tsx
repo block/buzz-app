@@ -21,7 +21,11 @@ export function ProfileAddChannel({
   control: AgentControl;
   list: ChannelList;
 }) {
-  useSyncExternalStore(control.subscribe, control.snapshot, control.snapshot);
+  const nativeState = useSyncExternalStore(
+    control.subscribe,
+    control.snapshot,
+    control.snapshot,
+  );
   useSyncExternalStore(
     session.agentChoices.subscribe,
     session.agentChoices.snapshot,
@@ -68,23 +72,29 @@ export function ProfileAddChannel({
         ))
     );
   };
-  if (!eligible()) return null;
-  const candidates = list.channels.filter((channel) => eligible(channel.id));
+  const available = eligible();
+  if (!available && !open) return null;
+  const candidates = available
+    ? list.channels.filter((channel) => eligible(channel.id))
+    : [];
   const selectedChannel = candidates.find((channel) => channel.id === selected);
   return (
     <>
-      <Button
-        variant="ghost"
-        data-profile-channel-link=""
-        onClick={() => {
-          setError("");
-          setSelected("");
-          setOpen(true);
-        }}
-      >
-        <span>Add to channel</span>
-        <CaretRightIcon size={16} aria-hidden="true" />
-      </Button>
+      {(available || open) && (
+        <Button
+          variant="ghost"
+          disabled={!available}
+          data-profile-channel-link=""
+          onClick={() => {
+            setError("");
+            setSelected("");
+            setOpen(true);
+          }}
+        >
+          <span>Add to channel</span>
+          <CaretRightIcon size={16} aria-hidden="true" />
+        </Button>
+      )}
       <Dialog
         open={open}
         onOpenChange={setOpen}
@@ -101,9 +111,9 @@ export function ProfileAddChannel({
               Cancel
             </Button>
             <Button
-              disabled={pending || !selectedChannel}
+              disabled={pending || !selectedChannel || !available}
               onClick={() => {
-                if (!selectedChannel || pending) return;
+                if (!selectedChannel || pending || !available) return;
                 const id = selectedChannel.id;
                 // Membership becoming true after submission is success, not revocation.
                 const active = () => eligible(id, false);
@@ -150,7 +160,7 @@ export function ProfileAddChannel({
           id="profile-add-channel"
           className="buzz-input"
           value={selected}
-          disabled={pending}
+          disabled={pending || !available}
           onChange={(event) => {
             setSelected(event.target.value);
             setError("");
@@ -168,7 +178,29 @@ export function ProfileAddChannel({
             Channel discovery is incomplete; only loaded channels are offered.
           </p>
         )}
-        {!candidates.length && <p>No eligible channels in the loaded list.</p>}
+        {nativeState.status === "error" && (
+          <div>
+            <p role="alert">
+              Could not refresh local agents. Retry to get current host status.
+            </p>
+            <Button
+              size="compact"
+              disabled={pending}
+              onClick={() => void control.refresh()}
+            >
+              Retry agents
+            </Button>
+          </div>
+        )}
+        {!available && nativeState.status !== "error" && !pending && (
+          <p role="alert">
+            This agent or channel is no longer eligible. Check its status before
+            adding again.
+          </p>
+        )}
+        {!candidates.length && available && (
+          <p>No eligible channels in the loaded list.</p>
+        )}
         {error && <p role="alert">{error}</p>}
       </Dialog>
     </>

@@ -46,9 +46,14 @@ function fixture(managed = true) {
       }),
   );
   const identities = { identities: [{ pubkey, managed }] };
-  const native = {
+  let native = {
     status: "ready",
     data: { agents: [{ pubkey, relayUrl: "https://relay.example.test" }] },
+  };
+  const nativeListeners = new Set<() => void>();
+  const updateNative = (status: "ready" | "error") => {
+    native = { ...native, status };
+    for (const listener of nativeListeners) listener();
   };
   const session = {
     scope,
@@ -61,7 +66,10 @@ function fixture(managed = true) {
   } as unknown as RelaySession;
   const control = {
     snapshot: () => (currentNative ? native : unavailable),
-    subscribe: () => () => {},
+    subscribe: (listener: () => void) => {
+      nativeListeners.add(listener);
+      return () => nativeListeners.delete(listener);
+    },
     refresh: vi.fn(() =>
       holdRefresh
         ? new Promise<void>((resolve) => {
@@ -77,10 +85,14 @@ function fixture(managed = true) {
     holdRefresh: () => {
       holdRefresh = true;
     },
-    releaseRefresh: () => finishRefresh?.(),
+    releaseRefresh: () => {
+      holdRefresh = false;
+      finishRefresh?.();
+    },
     loseNative: () => {
       currentNative = false;
     },
+    updateNative,
     switchScope: () => {
       (session as { scope: string }).scope =
         `https://other.example.test:${viewer}`;
@@ -211,4 +223,39 @@ it("invalidates an in-flight gate after the session scope changes", async () => 
   f.switchScope();
   expect(active()).toBe(false);
   await act(async () => f.resolve());
+});
+
+it("keeps the operation visible after a notifying native refresh failure and retries safely", async () => {
+  const f = fixture();
+  f.holdRefresh();
+  show(f);
+  submit();
+  await waitFor(() => expect(f.control.refresh).toHaveBeenCalledOnce());
+  await act(async () => f.updateNative("error"));
+  const dialog = screen.getByRole("dialog", { name: "Add agent to channel" });
+  expect(dialog).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Adding…" }).hasAttribute("disabled"),
+  ).toBe(true);
+  await act(async () => f.releaseRefresh());
+  expect(f.addAgents).not.toHaveBeenCalled();
+  expect(screen.getByText(/Channel addition cancelled/)).toBeTruthy();
+  expect(
+    screen
+      .getByRole("button", { name: "Add to channel" })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Retry agents" }));
+  expect(f.control.refresh).toHaveBeenCalledTimes(2);
+  await act(async () => f.updateNative("ready"));
+  expect(dialog).toBeTruthy();
+  expect(
+    screen
+      .getByRole("button", { name: "Add to channel" })
+      .hasAttribute("disabled"),
+  ).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Add to channel" }));
+  await waitFor(() => expect(f.addAgents).toHaveBeenCalledOnce());
+  await act(async () => f.resolve());
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });

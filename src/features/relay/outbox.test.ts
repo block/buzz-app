@@ -804,6 +804,20 @@ it.each(["commit", "reject", "echo"] as const)(
         (error: unknown) => error,
       );
       await started;
+      const duplicate = owner.outbox.dismiss(event.id);
+      expect(duplicate).toBe(dismissal);
+      let duplicateSettled = false;
+      const duplicateResult = duplicate.then(
+        () => {
+          duplicateSettled = true;
+        },
+        (error: unknown) => {
+          duplicateSettled = true;
+          return error;
+        },
+      );
+      await Promise.resolve();
+      expect(duplicateSettled).toBe(false);
       expect(owner.outbox.snapshot()).toEqual([pending]);
       expect(owner.local.snapshot()).toEqual([pending]);
       owner.outbox.retry(event.id);
@@ -820,6 +834,7 @@ it.each(["commit", "reject", "echo"] as const)(
       expect(await result).toEqual(
         outcome === "commit" ? undefined : new Error("Disk unavailable"),
       );
+      expect(await duplicateResult).toEqual(await result);
       await vi.waitFor(() =>
         expect(
           owner.outbox.snapshot().find((item) => item.event.id === nextId)

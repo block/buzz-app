@@ -92,7 +92,7 @@ export function createOutbox(
     controller?: AbortController;
   };
   const attempts = new Map<string, Attempt>();
-  const dismissing = new Set<string>();
+  const dismissing = new Map<string, Promise<void>>();
   const lifetime = new AbortController();
   const sendListeners = new Set<SendObserver>();
   const deliveryWork = new Map<
@@ -534,14 +534,13 @@ export function createOutbox(
         schedule(id, undefined, item.delivery);
       }
     },
-    async dismiss(id: string) {
-      if (closed || attempts.has(id) || dismissing.has(id)) return;
-      dismissing.add(id);
-      try {
-        await persist(id, true);
-      } finally {
-        dismissing.delete(id);
-      }
+    dismiss(id: string) {
+      const pending = dismissing.get(id);
+      if (pending) return pending;
+      if (closed || attempts.has(id)) return Promise.resolve();
+      const work = persist(id, true).finally(() => dismissing.delete(id));
+      dismissing.set(id, work);
+      return work;
     },
   });
   return {

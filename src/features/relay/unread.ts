@@ -81,7 +81,7 @@ export interface UnreadCapability {
   readonly syncedManualUnread: false;
 }
 const contentKind = (event: RelayEvent) =>
-  event.kind === 9 || event.kind === 40002;
+  event.kind === 9 || event.kind === 40002 || event.kind === 40008;
 const channelOf = (event: RelayEvent) => {
   const tags = event.tags.filter(([name]) => name === "h");
   return tags.length === 1 ? tags[0]?.[1] : undefined;
@@ -635,7 +635,7 @@ export function createUnread({
           const result = await reader.read(
             [
               {
-                kinds: [9, 40002],
+                kinds: [9, 40002, 40008],
                 "#h": ids.slice(offset, offset + 128),
                 include_aux: true,
                 limit: 500,
@@ -669,7 +669,7 @@ export function createUnread({
     const owners = channelOwnership((id) => incoming.get(id) ?? events.get(id));
     for (const event of batch) {
       if (
-        ![9, 40002, 40003, 5, 9005].includes(event.kind) ||
+        ![9, 40002, 40008, 40003, 5, 9005].includes(event.kind) ||
         events.has(event.id)
       )
         continue;

@@ -41,7 +41,7 @@ it("same-origin input wakes an idle peer without rebroadcast or per-input notifi
     postMessage: ReturnType<typeof vi.fn>;
     close: ReturnType<typeof vi.fn>;
   }[] = [];
-  vi.stubGlobal("window", {});
+  vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal(
     "document",
     Object.assign(new EventTarget(), { visibilityState: "visible" }),

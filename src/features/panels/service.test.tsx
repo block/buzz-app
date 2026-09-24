@@ -4,6 +4,8 @@ import { PluginRuntime } from "../../plugins/runtime";
 import { PagesService } from "../pages/service";
 import { PanelsService } from "../panels/service";
 import { ConversationService } from "../conversation/service";
+import { SettingsCardsService } from "../settings/service";
+import { TemplateProvidersService } from "../channel-templates/provider";
 import { provideRelay } from "../relay/service";
 import { provideNavigation } from "../navigation/service";
 import * as channelsPlugin from "../../bundled/channels";
@@ -28,6 +30,8 @@ it("independently unloads panels without removing the page or shared data", asyn
   const pages = new PagesService(root),
     panels = new PanelsService(root);
   new ConversationService(root);
+  new SettingsCardsService(root);
+  new TemplateProvidersService(root);
   provideNavigation(root);
   const relay = provideRelay(root);
   const desired = (ids: string[]) => ids.map(plugin);

@@ -106,7 +106,7 @@ export type LiveSubscription = {
   observe?(generation: number | null): void;
   /** One ephemeral status: true = accepted, null = locally unsent, false = unconfirmed/refused. */
   publishPresence?(
-    status: "online" | "away",
+    status: "online" | "away" | "offline",
     signal: AbortSignal,
   ): Promise<boolean | null>;
   retry(): void;
@@ -140,7 +140,7 @@ type Route = {
   deadline?: ReturnType<typeof setTimeout>;
 };
 const CHANNEL_KINDS = [
-  9, 40002, 40099, 40003, 5, 9005, 7, 39000, 39002, 39005, 20002,
+  9, 40002, 40008, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002, 39005, 20002,
 ];
 /** One authenticated socket, independently established channel routes and two explicit globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
@@ -587,7 +587,7 @@ export function subscribeRelayTraffic(
   return {
     async publishPresence(status, signal) {
       if (
-        (status !== "online" && status !== "away") ||
+        (status !== "online" && status !== "away" && status !== "offline") ||
         signal.aborted ||
         closed ||
         !authenticated

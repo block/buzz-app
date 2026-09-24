@@ -4,6 +4,13 @@ import type { Delivery } from "./outbox";
 
 export const MAX_ATTACHMENT_DURATION_SECONDS = 86_400;
 
+export type MessageReaction = Readonly<{
+  content: string;
+  emoji?: CustomEmoji;
+  /** Retain every event so toggling off removes duplicate reactions by one author. */
+  events: readonly Readonly<{ id: string; authorId: string }>[];
+}>;
+
 /** Folded, read-only channel state. Rows are domain data, not wire events or presentation. */
 export type ChannelSummary = Readonly<{
   id: string;
@@ -64,8 +71,18 @@ export type ChannelMessage = Readonly<{
   /** Unix seconds from the signed event. Ordering is (createdAt asc, id desc); no clock inference. */
   createdAt: number;
   content: string;
+  /** Unprojected current body when attachment presentation removed Markdown. */
+  sourceContent?: string;
   /** Original kind 40002, regardless of edits; self-declared display evidence, not authority. */
   agentEnvelope?: true;
+  /** Original kind 40008. Untrusted display metadata; content stays a raw patch. */
+  diff?: Readonly<{
+    filePath?: string | undefined;
+    repoUrl?: string | undefined;
+    commitSha?: string | undefined;
+    description?: string | undefined;
+    truncated: boolean;
+  }>;
   membership?: MembershipChange;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
@@ -76,7 +93,7 @@ export type ChannelMessage = Readonly<{
   attachments: readonly Attachment[];
   /** Event-local mappings, never the current community palette. */
   emoji?: readonly CustomEmoji[];
-  reactions: readonly Readonly<{ content: string; emoji?: CustomEmoji }>[];
+  reactions: readonly MessageReaction[];
   /** Canonical thread-opening target from signed reply/root tags; absent on root messages. */
   threadRootId?: string | undefined;
   /** Relay-signed thread summary for this row; zero when the row has no replies. */

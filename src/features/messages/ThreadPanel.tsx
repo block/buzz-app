@@ -20,6 +20,7 @@ import { useRowProfiles } from "../relay/react";
 import { MessageRow } from "./MessageRow";
 import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
+import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
@@ -36,6 +37,7 @@ export type ThreadPanelProps = {
   channelId: string;
   sessionConversation?: boolean | undefined;
   messageId: string;
+  replyRequest?: number | undefined;
   navigation?: PageNavigation | undefined;
   close(): void;
   onOpenLink(url: string): boolean;
@@ -52,6 +54,9 @@ export function ThreadPanel(props: ThreadPanelProps) {
   return (
     <aside
       className={styles.thread}
+      data-attachment-drop-zone=""
+      onDragOver={rejectUnhandledFileDrop}
+      onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -106,6 +111,7 @@ function OwnedThreadPanel({
   onOpenMediaReview,
   canOpenLink,
   sessionConversation,
+  replyRequest,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -156,6 +162,7 @@ function OwnedThreadPanel({
       view={view}
       navigation={navigation}
       messageId={messageId}
+      replyRequest={replyRequest}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}
@@ -179,6 +186,7 @@ function ThreadMessages({
   onOpenMediaReview,
   canOpenLink,
   sessionConversation,
+  replyRequest,
 }: {
   sessionConversation?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -188,6 +196,7 @@ function ThreadMessages({
   channelName: string;
   messageId: string;
   view: ThreadView;
+  replyRequest?: number | undefined;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
@@ -262,6 +271,11 @@ function ThreadMessages({
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
+  const [replyFocus, setReplyFocus] = useState(0);
+  const focusReply = useCallback(() => setReplyFocus((value) => value + 1), []);
+  useEffect(() => {
+    if (replyRequest) focusReply();
+  }, [replyRequest, focusReply]);
   const [mediaPlayback, setMediaPlayback] = useState<MediaPlayback>();
   const [mediaCommentTime, setMediaCommentTime] = useState<number>();
   const [mediaSeek, setMediaSeek] = useState<{
@@ -386,6 +400,7 @@ function ThreadMessages({
               extensions={extensions}
               session={session}
               scope={scope}
+              onReply={focusReply}
               row={snapshot.root}
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
@@ -435,6 +450,7 @@ function ThreadMessages({
                 extensions={extensions}
                 session={session}
                 scope={scope}
+                onReply={snapshot.root ? focusReply : undefined}
                 row={row}
                 profile={profiles.get(row.authorId)}
                 participantProfiles={profiles}
@@ -481,6 +497,8 @@ function ThreadMessages({
           channelId={channelId}
           channelName={channelName}
           threadRootId={snapshot.root.id}
+          editMessages={rows}
+          focusRequest={replyFocus}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           {...(videoAttachment && mediaCommentTime !== undefined

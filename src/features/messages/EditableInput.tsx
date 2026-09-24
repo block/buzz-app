@@ -405,7 +405,15 @@ export function EditableInput({
           event.preventDefault();
           const root = element.current;
           if (!root || root.disabled || root.readOnly) return;
+          // File paste is captured by the composer without replacing selected text.
+          if (
+            Array.from(event.clipboardData.items).some(
+              (item) => item.kind === "file",
+            )
+          )
+            return;
           let text = event.clipboardData.getData("text/plain");
+          if (!text) return;
           let link = false;
           messageLinkParts(text, undefined, (start, end) => {
             if (start === 0 && end === text.length) link = true;

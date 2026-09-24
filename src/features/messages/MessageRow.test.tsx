@@ -1,5 +1,13 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render as renderDom,
+  screen,
+} from "@testing-library/react";
+import { messageCopyText } from "./message-copy";
+import { profileTarget } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
 import { keypair, message, signed } from "../relay/testing";
@@ -586,3 +594,72 @@ it("renders missing audio sources as unavailable file cards", () => {
   expect(html).toContain('role="status"');
   expect(html).not.toContain('aria-label="Play audio"');
 });
+
+it.each([9, 40002])(
+  "preserves copied kind %s identities through resend, fold, and profile opening without adding recipients",
+  (kind) => {
+    const author = keypair(),
+      relay = keypair();
+    const people = [keypair(), keypair()];
+    const profiles = new Map(
+      people.map(({ pubkey }) => [pubkey, { name: "Morgan" }]),
+    );
+    const copies = people.map(({ pubkey }) => {
+      const [original] = foldMessages("channel", relay.pubkey, [
+        signed(author, {
+          kind,
+          content:
+            kind === 40002
+              ? JSON.stringify({ content: "Hello @Morgan" })
+              : "Hello @Morgan",
+          tags: [
+            ["h", "channel"],
+            ["p", pubkey],
+          ],
+        }),
+      ]);
+      if (!original) throw new Error("missing original");
+      return messageCopyText(original, profiles, []);
+    });
+    const content = copies.join(" and ");
+    const [resent] = foldMessages("channel", relay.pubkey, [
+      signed(author, {
+        kind,
+        content: kind === 40002 ? JSON.stringify({ content }) : content,
+        tags: [["h", "channel"]],
+      }),
+    ]);
+    if (!resent) throw new Error("missing resent message");
+    expect(resent.mentions).toEqual([]);
+    expect(messageCopyText(resent, profiles, [])).toBe(content);
+    const open = vi.fn((_target: string) => true);
+    try {
+      renderDom(
+        <MessageRow
+          row={resent}
+          profile={undefined}
+          participantProfiles={profiles}
+          media={() => undefined}
+          onOpenLink={open}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      const references = screen.getAllByRole("button", {
+        name: "View Morgan profile",
+      });
+      expect(references).toHaveLength(2);
+      references.forEach((reference) => {
+        fireEvent.click(reference);
+        expect(document.activeElement).toBe(reference);
+      });
+      expect(open.mock.calls).toEqual(
+        people.map(({ pubkey }) => [profileTarget(pubkey)]),
+      );
+      expect(resent.mentions).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  },
+);

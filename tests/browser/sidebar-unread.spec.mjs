@@ -408,9 +408,6 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await open(page, app);
     await expect(cue(page, "below")).toBeVisible();
     await page
-      .getByRole("button", { name: "Switch community", exact: true })
-      .click();
-    await page
       .getByRole("button", { name: "Switch to Secondary", exact: true })
       .click();
     await expect(

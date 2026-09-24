@@ -185,7 +185,7 @@ it("checks a hidden DM directly on return for messages missed while closed", asy
   });
   expect(restored.result.current.hiddenIds.has("dm")).toBe(false);
   expect(h.read).toHaveBeenCalledWith(
-    [{ kinds: [9, 40002], "#h": ["dm"], limit: 100 }],
+    [{ kinds: [9, 40002, 40008], "#h": ["dm"], limit: 100 }],
     expect.objectContaining({ priority: "background" }),
   );
 });

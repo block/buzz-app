@@ -59,6 +59,7 @@ const customEmoji = {
 } satisfies NonNullable<ChannelMessage["emoji"]>[number];
 const reaction = {
   content: ":wave:",
+  events: [{ id: root.id, authorId: viewer.pubkey }],
   emoji: customEmoji,
 } satisfies ChannelMessage["reactions"][number];
 const rowValue = (): ChannelMessage => ({
@@ -272,6 +273,31 @@ it("drops shared row identity when any compared field changes", () => {
         ],
       }),
     ],
+    [
+      "reactions.events.id",
+      (row) => ({
+        ...row,
+        reactions: [
+          {
+            ...reaction,
+            events: [{ id: replacementId, authorId: viewer.pubkey }],
+          },
+        ],
+      }),
+    ],
+    [
+      "reactions.events.authorId",
+      (row) => ({
+        ...row,
+        reactions: [
+          { ...reaction, events: [{ id: root.id, authorId: alice.pubkey }] },
+        ],
+      }),
+    ],
+    [
+      "reactions.events.count",
+      (row) => ({ ...row, reactions: [{ ...reaction, events: [] }] }),
+    ],
     ["threadRootId", (row) => ({ ...row, threadRootId: replacementId })],
     ["replyCount", (row) => ({ ...row, replyCount: 2 })],
     ["participants", (row) => ({ ...row, participants: [replacementId] })],
@@ -341,7 +367,7 @@ it("keeps exact forward page cursors separate from concurrent live rows and auxi
   expect(page.filters).toEqual([
     { ids: [root.id], "#h": ["a"], limit: 1 },
     {
-      kinds: [40002, 9],
+      kinds: [40002, 40008, 9],
       "#h": ["a"],
       "#e": [root.id],
       depth_limit: 100,
@@ -763,7 +789,9 @@ it("keeps deleted edits and reactions removed, including a delete-of-aux arrivin
   h.traffic.receive([
     signed(alice, { kind: 5, content: "", tags: [["e", reaction.id]] }),
   ]);
-  expect(h.view.snapshot().replies[0]?.reactions).toEqual([{ content: "+" }]);
+  expect(h.view.snapshot().replies[0]?.reactions).toEqual([
+    { content: "+", events: [{ id: reaction.id, authorId: viewer.pubkey }] },
+  ]);
   h.traffic.receive([
     signed(viewer, { kind: 5, content: "", tags: [["e", reaction.id]] }),
   ]);

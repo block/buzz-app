@@ -1,6 +1,5 @@
 import {
   BrowserIcon,
-  HouseIcon,
   ChatsCircleIcon,
   GearIcon,
 } from "../../shared/design-system/icons/index";
@@ -9,7 +8,6 @@ import type { RegisteredPage } from "../../features/pages/service";
 // Shell-owned presentation keeps plugin content independent of navigation chrome.
 // Add page identities here; unknown plugins inherit a consistent layout default.
 export const shellPresentation = {
-  home: { label: "Home", icon: HouseIcon, tone: "sky" },
   settings: { label: "Settings", icon: GearIcon, tone: "lavender" },
   channels: { label: "Messages", icon: ChatsCircleIcon, tone: "lime" },
 } as const;

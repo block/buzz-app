@@ -355,3 +355,32 @@ it("accepted future clock skew cannot extend typing beyond eight seconds from re
   expect(f.snapshot().typing).toEqual([]);
   f.activity.dispose();
 });
+
+it("notifies the working-channel subscriber only on set changes, including timer expiry", async () => {
+  const f = fixture();
+  const listener = vi.fn();
+  const unsubscribe = f.activity.queries.subscribeWorking(listener);
+  expect(f.activity.queries.workingSnapshot()).toBe("[]");
+  f.send(f.item("mystery")); // Recognize the agent without working evidence.
+  f.activity.channelEvents([typingEvent()]);
+  expect(f.activity.queries.workingSnapshot()).toBe('["a"]');
+  expect(listener).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1000);
+  f.activity.channelEvents([typingEvent()]); // Timestamp and expiry refresh only.
+  f.send(f.item("mystery", "two")); // Observer record identity changes only.
+  expect(listener).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(7000);
+  expect(f.activity.queries.workingSnapshot()).toBe('["a"]');
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.activity.queries.workingSnapshot()).toBe("[]");
+  expect(listener).toHaveBeenCalledTimes(2);
+  f.send(f.item("turn_started"));
+  expect(f.activity.queries.workingSnapshot()).toBe('["a"]');
+  f.send(f.item("acp_read", "two"));
+  expect(listener).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(31000);
+  expect(f.activity.queries.workingSnapshot()).toBe("[]");
+  expect(listener).toHaveBeenCalledTimes(4);
+  unsubscribe();
+  f.release();
+});

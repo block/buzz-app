@@ -243,12 +243,16 @@ export function createBuilderlab({
     signOut: revoke,
     async bind() {
       const session = credential;
+      const started = generation;
       const challenge = await request(
         "/v1/buzz/nostr-identities/challenge",
         { origin: BUILDERLAB_ORIGIN },
         session,
       );
       if (challenge.error) return challenge;
+      // A sign-out or new sign-in while the challenge was pending must not let the
+      // old credential claim this device's key.
+      if (started !== generation) throw new Error("Builderlab session changed");
       const event = bindingEvent(key(), challenge);
       return request(
         "/v1/buzz/nostr-identities/verify",

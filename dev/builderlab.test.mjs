@@ -72,14 +72,24 @@ function account(responses = {}) {
     return Response.json({ ok: true });
   };
   const key = generateSecretKey();
+  let signs = 0;
   const builderlab = createBuilderlab({
-    key: () => key,
+    key: () => {
+      signs += 1;
+      return key;
+    },
     fetch,
     open: async (url) => {
       opened = new URL(url);
     },
   });
-  return { builderlab, requests, key, opened: () => opened };
+  return {
+    builderlab,
+    requests,
+    key,
+    opened: () => opened,
+    signs: () => signs,
+  };
 }
 async function signIn(h) {
   const pending = h.builderlab.login(new AbortController().signal);
@@ -243,6 +253,38 @@ it.each(["error", "success"])(
     release.resolve();
     expect(await stale).toBeInstanceOf(Error);
     expect(await h.builderlab.auth()).toMatchObject({ email: "B" });
+  },
+);
+
+it.each(["sign-out", "new-login"])(
+  "a %s during a held binding challenge never signs or verifies",
+  async (mode) => {
+    const started = deferred();
+    const release = deferred();
+    const h = account({
+      "/v1/buzz/nostr-identities/challenge": async () => {
+        started.resolve();
+        await release.promise;
+        return Response.json({
+          ...challenge,
+          expires_at: "2099-01-01T00:00:00Z",
+        });
+      },
+    });
+    await signIn(h);
+    const pending = h.builderlab.bind().catch((error) => error);
+    await started.promise;
+    if (mode === "sign-out") h.builderlab.signOut();
+    else h.builderlab.login(new AbortController().signal).catch(() => {});
+    release.resolve();
+    expect(await pending).toBeInstanceOf(Error);
+    expect(h.signs()).toBe(0);
+    expect(
+      h.requests.some(
+        ({ path }) => path === "/v1/buzz/nostr-identities/verify",
+      ),
+    ).toBe(false);
+    h.builderlab.signOut();
   },
 );
 

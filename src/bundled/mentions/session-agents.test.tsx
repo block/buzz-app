@@ -287,7 +287,8 @@ it("selects filtered results from search, ignores IME Enter, and keeps rejected 
   expect(search).toHaveFocus();
   expect(select).not.toHaveBeenCalled();
   await user.clear(search);
-  await user.type(search, test.member);
+  // Public keys are not completion matches; search by the member's name.
+  await user.type(search, "Member");
   fireEvent.keyDown(search, { key: "Enter", isComposing: true });
   expect(fireEvent.keyDown(search, { key: "Enter", shiftKey: true })).toBe(
     false,
@@ -711,7 +712,7 @@ it("opening and reopening an ordinary picker does not load the legacy library", 
   }
 });
 
-it("selects the exact recipient behind a context-aware owner label", async () => {
+it("prioritizes the viewer-owned namesake in both menus and selects the exact owner-labeled recipient", async () => {
   const test = setup();
   const viewer = "1".repeat(64),
     owner = "2".repeat(64),
@@ -728,6 +729,7 @@ it("selects the exact recipient behind a context-aware owner label", async () =>
   };
   const session = {
     ...test.session,
+    viewer,
     profiles: {
       snapshot: () => profiles,
       subscribe: () => () => {},
@@ -741,6 +743,23 @@ it("selects the exact recipient behind a context-aware owner label", async () =>
     { viewer, profiles: session.profiles, agentLibrary: library.queries },
     { snapshot: () => [provider], subscribe: () => () => {} },
   );
+  const publish = vi.fn();
+  const completion = render(
+    <MentionCompletion
+      scope="scope"
+      session={{ ...session, names }}
+      channelId="parent"
+      observation={{ revision: 1, text: "@hon", start: 4, end: 4 }}
+      query={{ start: 0, end: 4, query: "hon" }}
+      publish={publish}
+    />,
+  );
+  expect(
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.id,
+    ),
+  ).toEqual([mine, test.key]);
+  completion.unmount();
   const select = vi.fn(() => true);
   const view = render(
     <MentionPicker
@@ -753,6 +772,13 @@ it("selects the exact recipient behind a context-aware owner label", async () =>
   );
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.type(screen.getByRole("searchbox"), "hon");
+  expect(
+    screen
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"))
+      .filter((label) => label?.endsWith(mine) || label?.endsWith(test.key)),
+  ).toEqual([`Honey ${mine}`, `Wes’s Honey ${test.key}`]);
   await user.click(
     await screen.findByRole("button", { name: `Wes’s Honey ${test.key}` }),
   );
@@ -1230,5 +1256,142 @@ it("offers usable partial agent choices without waiting for another source", asy
     }),
   ).toBeEnabled();
   view.unmount();
+  test.library.dispose();
+});
+
+it("uses base matches and visible lexical ties for Fizz in both chooser surfaces", async () => {
+  const test = setup();
+  const rows = [
+    { key: "3".repeat(64), name: "Fast Fizz", label: "Fast Fizz" },
+    { key: "0".repeat(64), name: "Fizz", label: "baxen’s Fizz · oncp" },
+    { key: "4".repeat(64), name: "Fizz", label: "baxen’s Fizz · s03j" },
+    { key: "5".repeat(64), name: "Fizz", label: "Kenny Lopez’s Fizz" },
+    { key: "b".repeat(64), name: "Fizz", label: "baxen’s Fizz · 4prr" },
+    { key: "c".repeat(64), name: "Fizz", label: "baxen’s Fizz · 06pl" },
+  ];
+  const profiles = new Map(
+    rows.map((row) => [row.key, { name: row.name, isAgent: true as const }]),
+  );
+  const list = {
+    status: "ready" as const,
+    channels: [
+      { id: "parent", name: "Parent", members: rows.map((row) => row.key) },
+    ],
+  };
+  const names = test.session.names;
+  if (!names) throw new Error("Missing fixture name service");
+  const session = {
+    ...test.session,
+    profiles: { ...test.session.profiles, snapshot: () => profiles },
+    channels: { ...test.session.channels, list: () => list },
+    names: {
+      ...names,
+      resolve: (key: string) => rows.find((row) => row.key === key)?.label,
+    },
+  } satisfies RelaySession;
+  const expected = [rows[5], rows[4], rows[1], rows[2], rows[3], rows[0]].map(
+    (row) => row?.label,
+  );
+  const publish = vi.fn();
+  const view = render(
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@fizz", start: 5, end: 5 }}
+      query={{ start: 0, end: 5, query: "fizz" }}
+      publish={publish}
+    />,
+  );
+  expect(
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.label,
+    ),
+  ).toEqual(expected);
+  view.unmount();
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.type(screen.getByRole("searchbox"), "fizz");
+  expect(
+    screen
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"))
+      .filter((label) => rows.some((row) => label?.endsWith(row.key)))
+      .map((label) => label?.slice(0, -65)),
+  ).toEqual(expected);
+  test.library.dispose();
+});
+
+it("does not complete public keys in either menu", async () => {
+  const test = setup();
+  const key =
+    "150b20bdf6130418df9239dd1bd082c71612c8d653b47c277200365b9be215dc";
+  const honey = "f".repeat(64);
+  const unnamed = "e".repeat(64);
+  const profiles = new Map([
+    [key, { name: "Bad Janet" }],
+    [honey, { name: "Honey" }],
+  ]);
+  const list = {
+    status: "ready" as const,
+    channels: [
+      { id: "parent", name: "Parent", members: [key, honey, unnamed] },
+    ],
+  };
+  const session = {
+    ...test.session,
+    profiles: { ...test.session.profiles, snapshot: () => profiles },
+    channels: { ...test.session.channels, list: () => list },
+  } satisfies RelaySession;
+  const publish = vi.fn();
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@h", start: 2, end: 2 },
+    query: { start: 0, end: 2, query: "h" },
+    publish,
+  };
+  const view = render(<MentionCompletion {...props} />);
+  const ids = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.id,
+    );
+  expect(ids()).toEqual([honey]);
+  view.rerender(
+    <MentionCompletion {...props} query={{ start: 0, end: 65, query: key }} />,
+  );
+  expect(ids()).toEqual([]);
+  view.rerender(
+    <MentionCompletion {...props} query={{ start: 0, end: 4, query: "eee" }} />,
+  );
+  expect(ids()).toEqual([]);
+  view.unmount();
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.type(screen.getByRole("searchbox"), "h");
+  expect(screen.queryByRole("button", { name: `Bad Janet ${key}` })).toBeNull();
+  expect(screen.getByRole("button", { name: `Honey ${honey}` })).toBeVisible();
+  await user.clear(screen.getByRole("searchbox"));
+  await user.type(screen.getByRole("searchbox"), key);
+  expect(screen.queryByRole("button", { name: `Bad Janet ${key}` })).toBeNull();
   test.library.dispose();
 });

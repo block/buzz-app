@@ -137,14 +137,22 @@ selection itself neither grants access nor starts an agent. Invalid recipient
 keys, known-archived identities, and archived/read-only destinations are excluded.
 Unknown archive state does not block selection. Optional archive reads are lazy.
 
-Search trims and lowercases the query and checks base names, known aliases,
-contextual labels, hex keys and npubs. Members precede outside agents. Within each
-group, matches rank by whole-name exact, name prefix, whole-word exact, word
-prefix, key prefix, then key substring. Arbitrary name substrings do not match.
-Equally matched, same-base-name agents use explicit-choice recency, managed status,
-then already-known online/away status. Remaining ties use base name and full key.
+Search trims and lowercases the query. Members precede outside agents. Within each
+group, matches against the visible resolved label come first: whole-name exact,
+name prefix, whole-word exact, then word prefix. Base names and known aliases are
+fallback matches in that same order. Only resolved names and real profile/agent
+names are searchable. Public keys (including unnamed identity fallbacks) are not
+completion matches. Arbitrary name substrings do not match. A hidden base-name match never
+promotes a weaker visible-label match. When visible-label match quality ties,
+base-name/alias match quality breaks the tie before recipient preferences.
+Equally matched agents prefer profile-reported ownership by the viewer. Same-base-name
+agent ties then use explicit-choice recency, managed status, and already-known
+online/away status. Remaining ties use the case-insensitive full displayed label
+(including disambiguating suffixes), then the full key. Ownership comes
+from profile owner metadata, not a name or presence in the saved library.
 Recency stays in memory per session/destination and is bounded to 100 destinations
-and 100 recipients each. It never overrides membership or match quality.
+and 100 recipients each. Neither ownership nor recency overrides membership or
+match quality.
 
 An open query installs at most 50 keys. Their order and membership stay fixed until
 the query changes or the chooser reopens. Labels, insertion names and availability

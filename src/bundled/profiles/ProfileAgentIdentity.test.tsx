@@ -199,7 +199,12 @@ it("adds no agent section or reads for a profile without an agent hint", async (
   );
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
-  expect(agentReads(query)).toBe(1);
+  // ProfilePanel also reads the person's NIP-38 status. Neither request is
+  // agent-specific; keep the exact filter boundary rather than a stale total.
+  expect(query.mock.calls.flatMap(([filters]) => filters)).toEqual([
+    { kinds: [0], authors: [person.pubkey] },
+    { kinds: [30315], authors: [person.pubkey], "#d": ["general"], limit: 1 },
+  ]);
 });
 
 function timedProfile(

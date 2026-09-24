@@ -55,6 +55,7 @@ const report = {
   profileReads: [] as string[][],
   media: [] as [string, "small" | undefined][],
   publications: 0,
+  memoryReads: [] as string[],
 };
 let failMissing = true;
 const data = [
@@ -71,6 +72,26 @@ function session() {
   return createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: authority.pubkey,
+    subscribe(callbacks) {
+      callbacks.state({ status: "connected", routes: [] });
+      return { update() {}, retry() {}, dispose() {} };
+    },
+    async readAgentMemories(agent) {
+      report.memoryReads.push(agent);
+      return {
+        partial: false,
+        entries: [
+          {
+            slug: "core",
+            body:
+              "<script>not executable</script>\n" +
+              "long-memory-text".repeat(60),
+            eventId: "a".repeat(64),
+            createdAt: 1,
+          },
+        ],
+      };
+    },
     media: (url, size) => {
       report.media.push([url, size]);
       return url === picture

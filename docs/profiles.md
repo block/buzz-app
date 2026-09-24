@@ -1,6 +1,6 @@
 # Profiles: viewing public identities
 
-The bundled `buzz.profiles` plugin supplies a minimal, read-only panel for any
+The bundled `buzz.profiles` plugin supplies a profile panel for any
 public identity, human or agent. It uses the current session's shared profile
 directory. Agents retains agent-specific configuration/operations; this slice
 adds no ownership/running badge, editor, agent-library read or execution API.
@@ -95,7 +95,8 @@ heads: `live-session.test.ts` forces overlapping unread reads for 1, 2 and 130
 channels; `sidebar-unread.spec.mjs` holds unread evidence through real EOSE and
 checks its badges without retries. Access-loss/disconnect cancellation is unchanged.
 Broad scan and native build/package acceptance remain deferred to an agreed
-integration batch. No sending/signing behavior changed.
+integration batch. The earlier read-only profile slice changed no sending/signing
+behavior; the managed-agent admission described below does.
 
 ## Info, channels and linked instances
 

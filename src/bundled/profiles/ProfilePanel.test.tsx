@@ -268,3 +268,72 @@ it.each(["action", "initial read"])(
     }
   },
 );
+
+it.each(["ambiguous", "unmatched"])(
+  "Info retains recovery for a known %s identity",
+  async (kind) => {
+    const fixture = controlFixture();
+    const person = keypair();
+    const owner = createRelaySession({
+      viewer: key,
+      relayAuthor: keypair().pubkey,
+      media: () => undefined,
+      query: async () => [
+        profile(person, { name: "Known agent", is_agent: true }),
+      ],
+    });
+    if (kind === "ambiguous") {
+      fixture.agent.pubkey = person.pubkey;
+      fixture.data.agents.push({ ...fixture.agent, id: "duplicate" });
+    }
+    await owner.session.profiles.ensure([person.pubkey]);
+    const control = createAgentControl(fixture.host);
+    const snapshot = {
+      status: "ready" as const,
+      generation: 1,
+      scope: `https://relay.example.test:${key}`,
+      viewer: key,
+      session: owner.session,
+    };
+    const relay: RelayData = {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      retry() {},
+      disconnect() {},
+      clearCache: async () => {},
+    };
+    try {
+      render(
+        <ProfilePanel
+          relay={relay}
+          control={control}
+          target={profileTarget(person.pubkey) ?? ""}
+          close={() => {}}
+        />,
+      );
+      await waitFor(() => expect(control.snapshot().status).toBe("ready"));
+      vi.spyOn(fixture.host, "snapshot").mockRejectedValueOnce("read failed");
+      await act(() => control.refresh());
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Managed agent status is unconfirmed.",
+      );
+      expect(
+        screen.queryByRole("region", { name: "Local agent actions" }),
+      ).not.toBeInTheDocument();
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Retry agents" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+      );
+      expect(
+        screen.getByRole("region", { name: "Linked agent instances" }),
+      ).toBeInTheDocument();
+    } finally {
+      cleanup();
+      control.dispose();
+      owner.dispose();
+    }
+  },
+);

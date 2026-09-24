@@ -168,7 +168,9 @@ It mounts only in Info, alongside the linked-instance child; changing tabs relea
 the actions view without cancelling an admitted app-owned command. Returning to
 Info observes current host evidence without restoring focus from the retired view.
 In this composition, actions own controller errors and Retry status; linked instances
-suppress their duplicate error surface until fresh evidence returns. Standalone
+suppress their duplicate error surface only when actions can present recovery
+(unknown inventory or one exact match). Known unmatched/ambiguous identities keep
+a single linked-instance status warning and Retry agents. Standalone
 linked-instance views retain their own recovery. Initial-read Retry remains available
 when native ownership is unknown.
 It matches the exact public key and canonical active-community scope to one native

@@ -15,13 +15,11 @@ pins its embedded Codex libraries to **rust-v0.137.0**. Upgrading the standalone
 CLI does not upgrade them. This is a candidate compatibility baseline, not a
 completed supported-version certification.
 
-Run the committed, no-login/no-inference spike:
+The historical no-login/no-inference spike scripts and raw JSON were removed
+from the source tree after review. Maintained regression coverage lives in
+`src-tauri/src/agent_models/codex.rs` and the agent-controller tests.
 
-```sh
-/usr/bin/python3 docs/add-codex-harness/spike.py /absolute/path/to/codex-acp
-```
-
-The spike uses disposable HOME/CODEX_HOME/cwd, an explicit PATH, bounded output
+The spike used disposable HOME/CODEX_HOME/cwd, an explicit PATH, bounded output
 and deadlines, and process-group cleanup. It never reads the ordinary account.
 Observed results:
 
@@ -119,7 +117,7 @@ unchanged; no new lifecycle owner or retry system was introduced.
 Checks: TypeScript and formatting; 114 tests in seven focused control/model/form
 Vitest files; 17 native model and agent command tests; the existing staged-runtime integration proving synthetic
 OAuth → catalog → actual pinned worker inference → 401 refresh → restart; and
-`spike.py` above. The synthetic worker reply is the verified end-to-end result,
+the historical spike described above. The synthetic worker reply is the verified end-to-end result,
 not a real Databricks account or relay reply.
 
 Remaining: attended Databricks reply, Codex login reuse/browser/API-key acceptance,
@@ -151,8 +149,8 @@ regressions. GUI/browser-engine and real-account acceptance remain deferred.
 
 ## Direct setting-response probe
 
-`response-spike.py` captures exact request/response envelopes in
-[response-spike-evidence.json](response-spike-evidence.json). It ran against
+A local response spike captured exact request/response envelopes (raw artifacts
+are excluded from the repository). It ran against
 codex-acp 0.16.0 with disposable HOME/CODEX_HOME/cwd and a custom provider at
 closed loopback; no login or prompt was sent. The catalog is not account-access
 evidence.

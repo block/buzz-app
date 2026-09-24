@@ -167,3 +167,44 @@ it("bounds Codex cached contexts, labels cached evidence, and clears them on dis
     service.cached?.({ ...codexRequest, expectedRevision: 16 }),
   ).toBeUndefined();
 });
+
+it("expires Codex account evidence and never retains draft environment secrets as keys", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+  const keys = vi.spyOn(Map.prototype, "set");
+  const service = createAgentModels({
+    begin: async () => 1,
+    run: async () => ({ ...data, integration: { kind: "codex" } }),
+    cancel: async () => {},
+  });
+  const codexRequest: ModelRequest = {
+    ...request,
+    integration: { kind: "codex" },
+  };
+  try {
+    await service.request(codexRequest, new AbortController().signal);
+    clock.mockReturnValue(60_999);
+    expect(service.cached?.(codexRequest)).toBeDefined();
+    clock.mockReturnValue(61_000);
+    expect(service.cached?.(codexRequest)).toBeUndefined();
+    if (!request.edit) throw new Error("Missing fixture edit");
+    const patched = {
+      ...codexRequest,
+      edit: {
+        ...request.edit,
+        environment: { OPENAI_API_KEY: "synthetic-cache-secret" },
+      },
+    };
+    await service.request(patched, new AbortController().signal);
+    expect(service.cached?.(patched)).toBeUndefined();
+    expect(
+      keys.mock.calls.some(
+        ([key]) =>
+          typeof key === "string" && key.includes("synthetic-cache-secret"),
+      ),
+    ).toBe(false);
+  } finally {
+    service.dispose();
+    keys.mockRestore();
+    clock.mockRestore();
+  }
+});

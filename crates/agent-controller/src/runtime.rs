@@ -658,9 +658,6 @@ fn model_context(
             model_overridden: false,
         });
     }
-    if !harness.args.is_empty() {
-        return Err("Buzz Agent model discovery requires empty ACP arguments".into());
-    }
     if Path::new(&harness.command)
         .file_name()
         .and_then(|s| s.to_str())

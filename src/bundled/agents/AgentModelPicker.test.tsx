@@ -141,7 +141,14 @@ it("context change cancels a pending catalog and rejects its late result", async
   };
   const view = render(<AgentModelPicker {...props} draft={draft} />);
   try {
+    const input = screen.getByRole("combobox", { name: "Model" });
     await user.click(screen.getByRole("button", { name: "Browse models" }));
+    // Complete Base UI's deferred trigger toggle before changing context.
+    await act(async () => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+    });
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     view.rerender(
       <AgentModelPicker
@@ -159,7 +166,10 @@ it("context change cancels a pending catalog and rejects its late result", async
       });
       await pending;
     });
-    await user.click(await screen.findByRole("combobox", { name: "Model" }));
+    await waitFor(() =>
+      expect(input).toHaveAttribute("aria-expanded", "false"),
+    );
+    await user.click(input);
     await user.keyboard("{ArrowDown}");
     expect(screen.queryByText("Stale result")).not.toBeInTheDocument();
     expect(
@@ -681,5 +691,60 @@ it("uses the complete Codex cache for model and mode changes without another pro
   } finally {
     view.unmount();
     control.dispose();
+  }
+});
+
+it("rediscovering an expired Codex cache on reopen reports the changed login state", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+  const f = controlFixture();
+  const run = vi
+    .fn()
+    .mockResolvedValueOnce({
+      integration: { kind: "codex" },
+      discovery: {
+        source: "codexAcp",
+        authentication: "authenticated",
+        catalog: "adapter",
+      },
+      defaults: { model: "old-account-model", effort: "medium" },
+      models: [],
+      modelOverridden: false,
+      disconnected: false,
+    })
+    .mockRejectedValueOnce({
+      code: "authentication",
+      message: "Codex is not logged in.",
+    });
+  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(f.host);
+  const props = {
+    control,
+    defaults: undefined,
+    draft: {
+      ...agentDraft(f.agent),
+      command: "codex-acp",
+      configuration: { mode: "default" as const },
+    },
+    capabilities: { modelDiscovery: "codex" as const },
+    onChange: vi.fn(),
+  };
+  let view = render(<AgentModelPicker {...props} />);
+  try {
+    await screen.findByText(/Default model: old-account-model/);
+    view.unmount();
+    clock.mockReturnValue(61_000);
+    view = render(<AgentModelPicker {...props} />);
+    await screen.findByText("Codex is not logged in.");
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(
+      screen.queryByText(/Default model: old-account-model/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Refresh models" }),
+    ).toBeEnabled();
+  } finally {
+    view.unmount();
+    control.dispose();
+    clock.mockRestore();
   }
 });

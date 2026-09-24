@@ -748,11 +748,9 @@ fn codex_launch_and_discovery_share_paths_home_and_explicit_overrides() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
     let runtime = bundle(tools.path());
-    for name in ["codex", "codex-acp"] {
-        let path = dir.path().join(name);
-        fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    let path = dir.path().join("codex-acp");
+    fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
     let mut a = agent(dir.path());
     a.harness.command = dir.path().join("codex-acp").to_string_lossy().into_owned();
     a.harness.provider.clear();
@@ -764,6 +762,7 @@ fn codex_launch_and_discovery_share_paths_home_and_explicit_overrides() {
             .into_owned(),
     );
     let context = crate::codex::Context::new(&a.harness, &a.environment, &a.workspace).unwrap();
+    assert_eq!(context.cli, context.adapter); // no standalone CLI required
     let probe = context.command(&context.adapter).unwrap();
     for advanced in [false, true] {
         a.harness.model = if advanced { "advertised" } else { "" }.into();

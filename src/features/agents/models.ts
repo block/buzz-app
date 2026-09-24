@@ -89,7 +89,11 @@ export function createAgentModels(
   host: ModelHost | undefined,
 ): AgentModels & { dispose(): void } {
   // Owned by the app's control service; never persisted with environment secrets.
-  const cache = new Map<string, ModelCatalog>();
+  const cache = new Map<string, { data: ModelCatalog; expires: number }>();
+  // Draft environment patches can contain credentials. Do not retain them, or
+  // reuse catalog evidence across unpersisted credential/configuration changes.
+  const cacheable = (request: ModelRequest) =>
+    !Object.keys(request.edit?.environment ?? {}).length;
   const cacheKey = (request: ModelRequest) =>
     JSON.stringify([
       request.id,
@@ -99,14 +103,19 @@ export function createAgentModels(
       request.edit?.harness.command,
       request.edit?.harness.args,
       request.edit?.harness.provider,
-
-      request.edit?.environment,
     ]);
   const active = new Set<AbortController>();
   let disposed = false;
   return {
     cached(request) {
-      const data = cache.get(cacheKey(request));
+      if (!cacheable(request)) return undefined;
+      const key = cacheKey(request);
+      const entry = cache.get(key);
+      if (entry && Date.now() >= entry.expires) {
+        cache.delete(key);
+        return undefined;
+      }
+      const data = entry?.data;
       return data
         ? {
             ...data,
@@ -153,12 +162,12 @@ export function createAgentModels(
         ]);
         if (local.signal.aborted || disposed)
           throw new Error("Connection cancelled.");
-        if (request.integration.kind === "codex") {
+        if (request.integration.kind === "codex" && cacheable(request)) {
           const key = cacheKey(request);
           cache.delete(key);
           if (cache.size >= 16)
             cache.delete(cache.keys().next().value as string);
-          cache.set(key, result);
+          cache.set(key, { data: result, expires: Date.now() + 60_000 });
         }
         return result;
       } catch (error) {

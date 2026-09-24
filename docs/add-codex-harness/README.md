@@ -119,7 +119,7 @@ Browser sign-in and API-key entry are recovery/setup paths when authentication
 is missing, not a mandatory new login ceremony.
 
 All edits belong in **buzz-app on the current feature branch**. The original
-`/Users/pazar/Development/buzz` checkout is reference-only. Do not edit its source,
+`block/buzz` checkout is reference-only. Do not edit its source,
 installed agent library, credentials, or configuration. Do not create new branches,
 worktrees, commits, or PRs merely because this document proposes PR boundaries.
 
@@ -234,7 +234,7 @@ live acceptance and additional setup recovery in steps 3–7 remain. Save still 
 
 All links below point to buzz-app. Proposed new filenames are labeled as such.
 The migration reference is
-`/Users/pazar/Development/buzz/docs/codex-harness-migration-handoff.md`; consult its
+`docs/codex-harness-migration-handoff.md` in the original `block/buzz` checkout; consult its
 source map for the old implementation, but do not copy its full settings system.
 
 | Owner | Current code | Required change |

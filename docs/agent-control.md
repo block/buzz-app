@@ -361,13 +361,21 @@ native validation.
 Choose Codex, an existing workspace, and Harness defaults or Advanced. Defaults
 leaves model and effort to Codex configuration. Selecting Codex loads all models and their effort choices in one bounded session
 and caches them in memory for the execution context. Reopening or switching models
-uses that complete cache immediately. Refresh explicitly reloads it. In Advanced,
+uses that cache for up to one minute; expired entries trigger rediscovery on
+reopening. Drafts with environment patches bypass cache storage so raw secret
+values never become cache keys. Refresh explicitly reloads it. In Advanced,
 select a base model and choose one of its cached, advertised effort choices. Choose effort explicitly. Creation repeats headless validation before
-identity generation. A rejected model retains the catalog so another model can
-be selected; missing effort metadata cannot authorize creation.
+identity generation, waiting for any active catalog request to retire before
+claiming the same bounded native lane. A rejected model retains the catalog so
+another model can be selected; missing effort metadata cannot authorize creation.
+A model-selection timeout stops that discovery session and preserves completed
+choices; unvisited choices remain unknown. The catalog budget also preserves
+partial results instead of discarding them.
 
 Discovery and launch share the resolved adapter, workspace, arguments, isolated
-environment and CODEX_HOME. Ambient CODEX_HOME is preserved, with saved per-agent
+environment and CODEX_HOME. Discovery and login probes strip `SSH_AUTH_SOCK`:
+they do not perform Git operations. Running coding agents retain the existing SSH
+agent access for authenticated Git operations. Ambient CODEX_HOME is preserved, with saved per-agent
 overrides taking precedence. Automatic lookup covers the explicit adapter's directory first, then the original
 Buzz managed `node-tools/bin` and pinned Node runtime under the OS application-data
 `Buzz` directory, followed by ~/.local/bin, /opt/homebrew/bin, /usr/local/bin and
@@ -391,6 +399,9 @@ configuration, or read account credentials into the frontend. Only the CLI's exp
 Known configuration errors, unknown failures, malformed CLI versions, timeouts and
 oversized output remain errors with retry guidance. Version and login probes each
 have a 15-second deadline and 16 KiB output limit; raw output is never returned.
+ACP stderr is drained concurrently with a 16 KiB retained tail and a 4 MiB total
+limit. Only known installation/configuration/login categories become fixed user
+messages; raw child output is never returned or logged.
 Default creation also requires the login/session check to succeed.
 
 The current transport uses Unix process containment; Windows Codex discovery is

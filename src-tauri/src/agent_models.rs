@@ -116,7 +116,7 @@ impl ModelHost {
             let context = Controller::draft_model_context(edit.clone())?
                 .codex
                 .ok_or("Missing Codex context")?;
-            let ticket = self.begin()?;
+            let ticket = self.begin_creation().await?;
             let catalog = self
                 .run(ticket, codex::execute(context, edit.harness.model.clone()))
                 .await?;
@@ -140,7 +140,7 @@ impl ModelHost {
         let (workspace, filter) = resolve(&settings, &context)?;
         let cache = self.cache(&workspace)?;
         let factory = self.factory.clone();
-        let ticket = self.begin()?;
+        let ticket = self.begin_creation().await?;
         let catalog = self
             .run(
                 ticket,
@@ -216,8 +216,41 @@ impl ModelHost {
             factory: Arc::new(RuntimeFactory),
         }
     }
+    // Creation waits for the existing discovery owner to retire. Keep one lane,
+    // so credential work and child cleanup cannot overlap a second session.
+    async fn begin_creation(&self) -> Result<u64, ModelError> {
+        tokio::time::timeout(Duration::from_secs(185), async {
+            loop {
+                {
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|_| ModelError::new("cancelled", CANCELLED))?;
+                    if state.closed {
+                        return Err(ModelError::new("cancelled", CANCELLED));
+                    }
+                    if state.pending.as_ref().map_or(true, |p| {
+                        p.abort.is_none() && p.created.elapsed() > Duration::from_secs(15)
+                    }) {
+                        return Self::reserve(&mut state).map_err(ModelError::from);
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(40)).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            ModelError::new(
+                "timeout",
+                "Model discovery is still busy. Cancel it or wait, then retry Create.",
+            )
+        })?
+    }
     fn begin(&self) -> Result<u64, String> {
         let mut state = self.state.lock().map_err(|_| CANCELLED)?;
+        Self::reserve(&mut state)
+    }
+    fn reserve(state: &mut State) -> Result<u64, String> {
         if state.closed {
             return Err(CANCELLED.into());
         }

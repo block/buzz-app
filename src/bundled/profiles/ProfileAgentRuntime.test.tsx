@@ -156,6 +156,9 @@ it("summarizes only the exact key in the active community, and drops it when the
   expect(summary).toHaveTextContent("fixture-model");
   expect(summary).toHaveTextContent("/fixture/workspace");
   expect(summary).toHaveTextContent(
+    "Saved settings; environment overrides may apply.",
+  );
+  expect(summary).toHaveTextContent(
     "Saved revision 3 is not running yet (running revision 2).",
   );
   // The host error is owned by the actions section, not repeated here.

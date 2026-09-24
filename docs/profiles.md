@@ -12,10 +12,12 @@ origin matches the active community scope (`sameCommunityAgents`). Native
 custody is app-wide: the viewer is not an owner check, so any account in this
 app on the same relay sees the same local record. It
 shows process status (still "relay readiness unverified", not a listening badge),
-harness/provider/model/workspace, collapsible instructions, saved-vs-running
-revision drift and diagnostics. Environment keys and
+saved harness/provider/model/workspace (labelled as saved settings, since
+environment overrides may change what is launched), collapsible instructions,
+saved-vs-running revision drift and diagnostics. Environment keys and
 arguments are not shown. Opening the Info tab requests a status read; concurrent
-requests coalesce; there is no polling. A failed read keeps the last evidence.
+requests coalesce. This summary adds no polling and observes the profile actions'
+existing refresh. A failed read keeps the last evidence.
 The host error, runtime-unavailable reason, unconfirmed-status notice and Retry
 are shown once, by the profile actions. Browser/unavailable hosts, loading/error
 without evidence, unknown keys and records saved for another community render

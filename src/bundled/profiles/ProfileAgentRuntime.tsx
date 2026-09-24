@@ -50,14 +50,19 @@ export function ProfileAgentRuntime({
         </p>
       )}
       {!!facts.length && (
-        <dl>
-          {facts.map(([label, value]) => (
-            <div key={label}>
-              <dt className="text-body-sm text-subtle">{label}</dt>
-              <dd className="font-mono text-mono">{value}</dd>
-            </div>
-          ))}
-        </dl>
+        <>
+          <p className="text-body-sm text-subtle">
+            Saved settings; environment overrides may apply.
+          </p>
+          <dl>
+            {facts.map(([label, value]) => (
+              <div key={label}>
+                <dt className="text-body-sm text-subtle">{label}</dt>
+                <dd className="font-mono text-mono">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
       )}
       {agent.systemPrompt && (
         <details>

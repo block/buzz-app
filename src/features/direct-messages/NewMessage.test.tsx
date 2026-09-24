@@ -18,14 +18,11 @@ import { publicKeyLabels } from "../../shared/identity/public-key";
 import type { RelaySession } from "../relay/session";
 import { NewMessage } from "./NewMessage";
 import { createAgentChoices } from "../agents/choices";
-import { composerDOMFixture } from "../messages/composer-testing";
 import type {
   AgentControl,
   AgentControlState,
   AgentView,
 } from "../agents/control";
-
-composerDOMFixture();
 
 const scope = `https://relay.example:${"f".repeat(64)}`;
 

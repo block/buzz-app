@@ -1995,7 +1995,7 @@ it("inserts mention links without new notification recipients during edits", () 
 it.each([
   { authorId: second.pubkey },
   { agentEnvelope: true as const },
-  { diff: { filePath: "a.ts" } },
+  { diff: { filePath: "a.ts", truncated: false } },
   {
     membership: {
       type: "member_joined" as const,
@@ -2107,7 +2107,7 @@ it.each([undefined, "thread-root"])(
   (threadRootId) => {
     const h = mount({}, undefined, first.pubkey);
     const row = editableMessage({
-      diff: { filePath: "a.ts" },
+      diff: { filePath: "a.ts", truncated: false },
       content: "raw patch",
       ...(threadRootId ? { threadRootId } : {}),
     });

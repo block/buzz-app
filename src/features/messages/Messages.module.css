@@ -593,6 +593,13 @@ button.mediaPreview {
   margin-right: var(--space-1h);
   font-variant-numeric: tabular-nums;
 }
+@media (hover: hover) and (pointer: fine) {
+  .mediaPreview[data-playing]:not(:hover):not(:focus-within) .mediaPlay,
+  .mediaPreview[data-playing]:not(:hover):not(:focus-within) .mediaExpand,
+  .mediaPreview[data-playing]:not(:hover):not(:focus-within) .mediaTime {
+    opacity: 0;
+  }
+}
 .mediaComposerAnchor {
   display: flex;
   align-items: center;
@@ -697,6 +704,7 @@ button.mediaPreview {
 }
 .mediaReviewStage {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   place-items: center;
   min-width: 0;
   min-height: 0;

@@ -121,6 +121,8 @@ import { MinusIcon as PhosphorMinusIcon } from "@phosphor-icons/react/dist/csr/M
 export const MinusIcon = defineIcon("phosphor", PhosphorMinusIcon);
 import { MoonIcon as PhosphorMoonIcon } from "@phosphor-icons/react/dist/csr/Moon";
 export const MoonIcon = defineIcon("phosphor", PhosphorMoonIcon);
+import { MonitorIcon as PhosphorMonitorIcon } from "@phosphor-icons/react/dist/csr/Monitor";
+export const MonitorIcon = defineIcon("phosphor", PhosphorMonitorIcon);
 import { NotionLogoIcon as PhosphorNotionLogoIcon } from "@phosphor-icons/react/dist/csr/NotionLogo";
 export const NotionLogoIcon = defineIcon("phosphor", PhosphorNotionLogoIcon);
 import { PaletteIcon as PhosphorPaletteIcon } from "@phosphor-icons/react/dist/csr/Palette";

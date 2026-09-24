@@ -59,7 +59,7 @@ it("shows the CLI login guidance for a missing credential", async () => {
 it("does not claim login when native configuration fails", async () => {
   vi.mocked(invoke).mockResolvedValue({
     status: "error",
-    message: "BUILDERLAB_URL must be a credential-free HTTPS URL",
+    message: "BUILDERLAB_URL must be a credential-free HTTPS origin",
   });
   render(<BuilderLabSettings />);
   await waitFor(() =>

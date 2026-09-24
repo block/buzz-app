@@ -400,6 +400,35 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
 
 // Real account controls -> shared activity -> retained session -> production
 // broker -> authenticated socket; real localStorage survives app reconstruction.
+test("profile trigger retains shared hover, press, and open feedback", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const trigger = page.getByRole("button", {
+    name: "Your profile",
+    exact: true,
+  });
+  for (const [mode, hover, pressed] of [
+    ["light", "rgb(232, 232, 232)", "rgb(218, 218, 218)"],
+    ["dark", "rgb(64, 64, 64)", "rgb(89, 89, 89)"],
+  ]) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.colorMode = value;
+    }, mode);
+    await trigger.hover();
+    await expect(trigger).toHaveCSS("background-color", hover);
+    await page.mouse.down();
+    await expect(trigger).toHaveCSS("background-color", pressed);
+    await page.mouse.up();
+    await page.mouse.move(1, 1);
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await expect(trigger).toHaveCSS("background-color", pressed);
+    await page.keyboard.press("Escape");
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  }
+});
+
 test("avatar choices publish through the existing socket and persist across reload", async ({
   page,
   app,

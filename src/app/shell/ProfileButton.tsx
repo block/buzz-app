@@ -77,7 +77,6 @@ export function ProfileButton({
             aria-label="Your profile"
             title={profile.name || "Your profile"}
             variant={viewer ? "ghost" : "chrome"}
-            data-profile-status-avatar={viewer ? "" : undefined}
             shape="round"
             icon={
               <span

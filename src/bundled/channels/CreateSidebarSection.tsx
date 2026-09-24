@@ -10,16 +10,25 @@ export function CreateSidebarSection({
   maxLength = 256,
   create,
   close,
+  writable,
+  refreshing,
+  retry,
 }: {
   channelName: string;
   maxLength?: number;
-  create: (section: { id: string; name: string }) => void;
+  /** True only after the session accepts the optimistic move. */
+  create: (section: { id: string; name: string }) => boolean;
   close: () => void;
+  writable: boolean;
+  refreshing: boolean;
+  retry: () => Promise<void>;
 }) {
   const formId = useId();
   const input = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const submitted = useRef(false);
+  const sectionId = useRef<string | undefined>(undefined);
+  const [blocked, setBlocked] = useState(false);
   return (
     <Dialog
       open
@@ -54,8 +63,10 @@ export function CreateSidebarSection({
         onSubmit={(event) => {
           event.preventDefault();
           if (submitted.current || !name.trim()) return;
-          submitted.current = true;
-          create({ id: crypto.randomUUID(), name: name.trim() });
+          sectionId.current ??= crypto.randomUUID();
+          const accepted = create({ id: sectionId.current, name: name.trim() });
+          submitted.current = accepted;
+          setBlocked(!accepted);
         }}
       >
         <Input
@@ -68,6 +79,17 @@ export function CreateSidebarSection({
           onChange={(event) => setName(event.target.value)}
         />
       </form>
+      {blocked && !writable && (
+        <div role="alert">
+          <p>
+            Saved preferences are unavailable. Retry preferences to keep
+            creating this section.
+          </p>
+          <Button disabled={refreshing} onClick={() => void retry()}>
+            Retry preferences
+          </Button>
+        </div>
+      )}
     </Dialog>
   );
 }

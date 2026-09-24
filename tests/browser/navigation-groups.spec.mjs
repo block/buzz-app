@@ -239,7 +239,10 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   await expect(starred).toHaveCount(0);
   await page.unroute("**/sidebar-star");
   // Failures live in the session, not in a menu or mounted Messages page.
-  await page.getByRole("button", { name: "Projects", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Projects", exact: true })
+    .first()
+    .click();
   await page
     .getByRole("button", { name: "Messages", exact: true })
     .first()
@@ -470,6 +473,101 @@ test("Create new supports cancel, moves before publication, and retries the same
   await page.reload();
   await expect(followup).toBeVisible();
   await expect(beta).toHaveCount(0);
+});
+
+// A modal can outlive the preference snapshot that admitted its launching menu.
+// Real focus/modal behavior and retained user input need a browser regression.
+test("Create new retains its draft when preferences fail before submission and recovers in place", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const beta = rowIn(page, "group:work");
+  await beta.click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await page.getByText("Diagnostics", { exact: true }).click();
+  const held = gate(),
+    started = gate();
+  const failLegacy = async (route) => {
+    started.resolve();
+    await held.promise;
+    app.report.sidebarPreferenceFailures ??= [];
+    app.report.sidebarPreferenceFailures.push(route.request().url());
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Preferences unavailable" }),
+    });
+  };
+  await page.route("**/sidebar-preferences", failLegacy);
+  try {
+    await page
+      .getByRole("button", { name: "Refresh groups and stars", exact: true })
+      .click();
+    await started.promise;
+    await openMove(page, beta);
+    await page.getByRole("menuitem", { name: "Create new…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Create new section" });
+    const field = dialog.getByRole("textbox", { name: "Section name" });
+    await field.fill("Retained launch");
+    const failed = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname.endsWith("/sidebar-preferences") &&
+        r.status() === 502,
+    );
+    held.resolve();
+    await failed;
+    await expect(
+      page.getByRole("dialog", {
+        name: "Saved groups and stars couldn’t refresh",
+      }),
+    ).toBeVisible();
+    await dialog.getByRole("button", { name: "Create and move" }).click();
+    await expect(dialog).toBeVisible();
+    await expect(field).toHaveValue("Retained launch");
+    await expect(dialog.getByRole("alert")).toContainText("Retry preferences");
+    expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+    // Another failed recovery must keep both the draft and recovery action.
+    const retryFailed = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname.endsWith("/sidebar-preferences") &&
+        response.status() === 502,
+    );
+    await dialog
+      .getByRole("button", { name: "Retry preferences", exact: true })
+      .click();
+    await retryFailed;
+    await expect(
+      dialog.getByRole("button", { name: "Retry preferences", exact: true }),
+    ).toBeEnabled();
+    await expect(field).toHaveValue("Retained launch");
+    await page.unroute("**/sidebar-preferences", failLegacy);
+    await dialog
+      .getByRole("button", { name: "Retry preferences", exact: true })
+      .click();
+    await expect(dialog.getByRole("alert")).toHaveCount(0);
+    await expect(field).toHaveValue("Retained launch");
+    await dialog.getByRole("button", { name: "Create and move" }).click();
+    await expect(dialog).toHaveCount(0);
+    const destination = sidebar(page)
+      .locator("details")
+      .filter({
+        has: page.locator("summary", { hasText: /^Retained launch$/ }),
+      })
+      .locator('[data-channel-id="beta"]');
+    await expect(destination).toBeFocused();
+    await saved(page, app, 1);
+    await page.reload();
+    await expect(destination).toBeVisible();
+    await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
+      1,
+    );
+  } finally {
+    held.resolve();
+    await page.unroute("**/sidebar-preferences", failLegacy);
+  }
 });
 
 test.use({

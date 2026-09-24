@@ -747,6 +747,9 @@ function ReadySidebar({
         <CreateSidebarSection
           channelName={creatingFor.name}
           maxLength={preferences.data?.groupSource === "personal" ? 120 : 256}
+          writable={preferences.writable}
+          refreshing={preferences.status === "loading"}
+          retry={preferences.reload}
           create={(section) => {
             // The modal can outlive the snapshot that admitted its menu. Check
             // the live gate before handing its draft to the optimistic store.

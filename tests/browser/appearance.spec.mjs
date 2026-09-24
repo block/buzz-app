@@ -7,6 +7,8 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function settings(page) {
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  // Finish the menu-to-page focus handoff before testing keyboard controls.
+  await expect(page.getByRole("main")).toBeFocused();
   await button(page, "Appearance").click();
 }
 async function expectMode(page, mode) {

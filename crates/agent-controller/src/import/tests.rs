@@ -98,7 +98,7 @@ fn preview_is_keyless_commit_resolves_preserves_and_never_enables_or_mutates_sou
     let saved = &store.agents().unwrap()[0];
     assert_eq!(saved.pubkey, PUB);
     assert!(!saved.enabled);
-    assert_eq!(saved.extra.get("configured"), Some(&Value::Bool(true)));
+    assert!(saved.configured());
     assert_eq!(saved.relay_url, "wss://relay.example");
     assert_eq!(saved.system_prompt, "definition-prompt");
     assert_eq!(saved.harness.model, "definition-model");

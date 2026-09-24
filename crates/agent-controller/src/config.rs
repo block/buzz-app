@@ -34,6 +34,7 @@ pub struct AgentView {
     pub error: Option<String>,
     pub diagnostics: Vec<String>,
     pub profile_pending: bool,
+    pub configured: bool,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,6 +97,9 @@ pub(crate) struct Agent {
     pub extra: BTreeMap<String, Value>,
 }
 impl Agent {
+    pub(crate) fn configured(&self) -> bool {
+        self.extra.get("configured") != Some(&Value::Bool(false))
+    }
     pub fn view(&self) -> AgentView {
         AgentView {
             id: self.id.clone(),
@@ -118,6 +122,7 @@ impl Agent {
             status: ProcessStatus::Stopped,
             error: None,
             diagnostics: Vec::new(),
+            configured: self.configured(),
             profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true)),
         }
     }

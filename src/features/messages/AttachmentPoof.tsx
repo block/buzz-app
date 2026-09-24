@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import styles from "./AttachmentPoof.module.css";
 
 const frames = [1, 2, 3, 4, 5];
-const asset = (name: string) => `${import.meta.env.BASE_URL}pow/${name}`;
+const asset = (name: string) =>
+  `${import.meta.env.BASE_URL}recipient-removal/${name}`;
 type Burst = { id: number; x: number; y: number; size: number };
 
 // Owned by the attachment list, so removing its last item cannot erase the puff.

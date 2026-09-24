@@ -1,13 +1,24 @@
+import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Field } from "../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { Button } from "../shared/design-system/ui/Button";
 import { useSyncExternalStore } from "react";
-import { MoonIcon, SunIcon } from "../shared/design-system/icons/index";
+import {
+  MonitorIcon,
+  MoonIcon,
+  SunIcon,
+} from "../shared/design-system/icons/index";
 import type { Appearance } from "../shared/theme/service";
 
 /** Shared radios provide one Tab stop and standard arrow-key selection. */
-export function AppearanceSettings({ appearance }: { appearance: Appearance }) {
-  const { mode, error, fontScale, fontError } = useSyncExternalStore(
+export function AppearanceSettings({
+  appearance,
+  active = true,
+}: {
+  appearance: Appearance;
+  active?: boolean;
+}) {
+  const { preference, error, fontScale, fontError } = useSyncExternalStore(
     appearance.subscribe,
     appearance.snapshot,
   );
@@ -17,19 +28,17 @@ export function AppearanceSettings({ appearance }: { appearance: Appearance }) {
         Appearance
       </h2>
       <div>
-        <Field
-          label="Color mode"
-          description="Choose how Buzz looks on this device. Your choice is saved automatically."
-        >
+        <Field label="Color mode">
           <RadioGroup
             name="color-mode"
-            value={mode}
+            value={preference}
             onValueChange={(value) => appearance.setMode(value)}
           >
             {(
               [
                 ["light", "Light", SunIcon],
                 ["dark", "Dark", MoonIcon],
+                ["system", "System", MonitorIcon],
               ] as const
             ).map(([value, label, Icon]) => (
               <Radio
@@ -76,24 +85,27 @@ export function AppearanceSettings({ appearance }: { appearance: Appearance }) {
             </Button>
           </div>
         </fieldset>
-        {fontError && (
-          <div role="alert" className="notice mb-0">
-            <p>{fontError}</p>
+        {active && fontError && (
+          <ToastNotice title="Text size wasn’t saved" description={fontError}>
             <Button
               type="button"
+              size="sm"
               onClick={() => appearance.setFontScale(fontScale)}
             >
               Retry saving text size
             </Button>
-          </div>
+          </ToastNotice>
         )}
-        {error && (
-          <div role="alert" className="notice mb-0">
-            <p>{error}</p>
-            <Button type="button" onClick={() => appearance.setMode(mode)}>
+        {active && error && (
+          <ToastNotice title="Appearance wasn’t saved" description={error}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => appearance.setMode(preference)}
+            >
               Retry saving appearance
             </Button>
-          </div>
+          </ToastNotice>
         )}
       </div>
     </section>

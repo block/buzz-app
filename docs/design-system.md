@@ -12,9 +12,10 @@ this is shared styling, not a second component registry or a parallel `core/` tr
 
 ## First release contract
 
-Settings → Appearance offers **Light** and **Dark**, defaulting to Light. The choice
+Settings → Appearance offers **Light**, **Dark**, and **System**, defaulting to Light. System
+follows the computer's color scheme as it changes. The choice
 is device-local (`buzz-appearance.v1` in browser-origin localStorage), not a community
-profile or relay event. There is no System mode, theme marketplace or appearance sync
+profile or relay event. There is no theme marketplace or appearance sync
 between devices. Another same-origin window observes saved changes without rebuilding
 pages or relay services. Failed storage reads open safely in Light; failed saves apply
 for this session and expose a retry in Appearance. Invalid stored values use Light.
@@ -117,9 +118,35 @@ font size by the scale again. Use unitless or scaled line-height so enlarged tex
 does not overlap. Independent plugins that hard-code sizes and third-party shadow
 widgets need their own adapter; this is not a forced CSS rewrite of arbitrary code.
 
+Settings → Shortcuts lists every host and active plugin shortcut from the live
+dispatcher, grouped by owner, with each owner's deliberate numeric order,
+per-row Change/Reset and Reset all. Buzz's host rows use a functional sequence
+(navigation, text sizing, search/settings, then development-only actions); plugins
+choose the order of their own actions. Equal orders use stable registry identity
+and then title as tie-breakers. It
+is built from existing components (`Input`, `Button`, `NavigationSection`,
+the Plugins-list row pattern) and `formatBinding`, which renders chords as glyphs
+in Control, Option, Shift, Command order on Apple platforms (⇧⌘K) and as words
+elsewhere (Ctrl+Shift+K), with a plain-words accessible label. A row whose chord
+another listed shortcut also answers to carries a plain "Also used by …" line in
+subtle text, no colour. Two pieces are
+provisional and await a design pass: the key-combo `<kbd>` chip
+(`src/features/shortcuts/KeyCombo.tsx`) and the inline key-capture control
+(`src/features/shortcuts/KeyCaptureControl.tsx`). Both are deliberately
+black-and-white: capture composes the shared Input with feature-owned sizing
+and keyboard handling; notices retain explicit alert text in neutral roles.
+The keycaps use standard text, surface, border and radius tokens. Both live outside
+`src/shared/design-system/ui/`, and are marked with a `DESIGN PASS PENDING` file
+comment and `data-design-pass="pending"` on their root so they are greppable.
+Capture keeps the shared keyboard-focus treatment. Escape cancels; Tab/Shift+Tab
+leave capture without saving, with an accessible instruction explaining the exit.
+Rows wrap their actions before the title collapses.
+
 `tests/browser/shortcuts.spec.mjs` covers real key dispatch to Settings and actual
 message/composer text, draft/node preservation, reset/limits/reload, modal/editor/
-Shadow DOM guards, and the independent example's disable/re-enable path. These
+Shadow DOM guards, the independent example's disable/re-enable path, and rebinding
+that example's shortcut from Settings → Shortcuts (host conflict refused, new chord
+fires, old chord does not, persists across reload, reset restores). These
 Chromium/WebKit checks use a fixture broker, not native menu accelerators. An
 attended desktop shortcut try remains necessary for native acceptance.
 

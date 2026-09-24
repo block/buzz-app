@@ -11,7 +11,11 @@ import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import type { RelaySession } from "../relay/session";
 import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
-import { LinkLabelContext, LinkContentContext } from "./LinkLabelContext";
+import {
+  LinkChannelPrivateContext,
+  LinkLabelContext,
+  LinkContentContext,
+} from "./LinkLabelContext";
 import { BuzzLinkPreview } from "./BuzzLinkPreview";
 import { messageViewKey } from "../messages/view-key";
 import styles from "./LinkPreview.module.css";
@@ -44,6 +48,7 @@ export function MessageLink({
   session,
   scope,
   interactive = true,
+  channelPrivate = false,
 }: {
   url: string;
   children?: ReactNode;
@@ -53,6 +58,7 @@ export function MessageLink({
   session?: RelaySession | undefined;
   scope?: string | undefined;
   interactive?: boolean;
+  channelPrivate?: boolean;
 }) {
   const renderers = useSyncExternalStore(
     registry?.subscribe ?? subscribe,
@@ -177,8 +183,10 @@ export function MessageLink({
     </>
   );
   return (
-    <LinkLabelContext value={label}>
-      <LinkContentContext value={children}>{result}</LinkContentContext>
-    </LinkLabelContext>
+    <LinkChannelPrivateContext value={channelPrivate}>
+      <LinkLabelContext value={label}>
+        <LinkContentContext value={children}>{result}</LinkContentContext>
+      </LinkLabelContext>
+    </LinkChannelPrivateContext>
   );
 }

@@ -2,7 +2,8 @@ import { useIdentityNames } from "../identity-names/react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
-import { HashIcon, LockIcon } from "../../shared/design-system/icons/index";
+import { LockIcon } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../channels/channel-icon";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import styles from "./LinkPreview.module.css";
@@ -112,7 +113,9 @@ function PreviewContent({
           .join(", ") || "Notes to self"
       : (channel?.name ?? "Channel unavailable");
   const ChannelIcon =
-    channel?.hidden || channel?.channelType === "dm" ? LockIcon : HashIcon;
+    channel?.hidden || channel?.channelType === "dm"
+      ? LockIcon
+      : channelIcon(channel);
   return (
     <>
       <span className={styles.byline}>

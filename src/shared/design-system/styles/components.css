@@ -4,11 +4,11 @@
     display: inline-grid;
     place-items: center;
     min-width: 0;
-    /* Text controls grow with enlarged or wrapped labels; icons stay square. */
+    /* The reference's 32/40/52px heights remain minimums for text scaling. */
     min-height: var(--size-control);
-    border: 1px solid transparent;
+    border: 0;
     border-radius: var(--radius-pill);
-    padding: var(--space-1h) var(--space-control-inset);
+    padding: var(--space-2) var(--space-6);
     background: transparent;
     color: var(--text-standard);
     font-family: inherit;
@@ -22,72 +22,106 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    flex-wrap: wrap;
+    min-width: 0;
     gap: var(--space-row-gap);
     overflow-wrap: anywhere;
+  }
+  .buzz-button-label > svg,
+  .buzz-button-spinner {
+    width: var(--space-6);
+    height: var(--space-6);
+    flex-shrink: 0;
+  }
+  .buzz-button-spinner {
+    position: absolute;
+    animation: buzz-button-spin 1s linear infinite;
   }
   .buzz-button[data-size="sm"] {
     @apply text-label-sm;
     min-height: var(--size-control-sm);
-    padding-block: var(--space-1);
+    padding: var(--space-1h) var(--space-4);
+  }
+  .buzz-button[data-size="sm"] .buzz-button-label > svg,
+  .buzz-button[data-size="sm"] .buzz-button-spinner {
+    width: var(--space-4);
+    height: var(--space-4);
   }
   .buzz-button[data-size="lg"] {
     min-height: var(--size-control-lg);
+    padding-block: calc(var(--space-3) + var(--space-half));
   }
   .buzz-button[data-variant="prominent"] {
     background: var(--affordance-prominent);
     color: var(--text-inverse);
   }
-  .buzz-button[data-variant="prominent"]:hover:not([data-disabled]) {
-    background: var(--affordance-prominent-hover);
-  }
-  .buzz-button[data-variant="prominent"]:active:not([data-disabled]) {
-    background: var(--affordance-prominent-pressed);
-  }
   .buzz-button[data-variant="subtle"] {
     background: var(--affordance-subtle);
   }
+  .buzz-button[data-variant="inverted"] {
+    background: var(--surface-panel);
+  }
   .buzz-button[data-variant="outline"] {
-    border-color: var(--border-prominent);
-  }
-  .buzz-button:is(
-    [data-variant="subtle"],
-    [data-variant="outline"],
-    [data-variant="ghost"]
-  ):not([data-icon-variant]):hover:not([data-disabled]) {
-    background: var(--affordance-subtle-hover);
-  }
-  .buzz-button:is(
-    [data-variant="subtle"],
-    [data-variant="outline"],
-    [data-variant="ghost"]
-  ):not([data-icon-variant]):active:not([data-disabled]) {
-    background: var(--affordance-subtle-pressed);
+    box-shadow: inset 0 0 0 1px var(--border-prominent);
   }
   .buzz-button[data-variant="destructive"] {
     background: var(--affordance-danger);
     color: var(--text-danger);
   }
-  .buzz-button[data-variant="destructive"]:hover:not([data-disabled]) {
-    background: var(--affordance-danger-hover);
+  .buzz-button[data-variant="link"] {
+    text-underline-offset: var(--space-1);
   }
-  .buzz-button[data-variant="destructive"]:active:not([data-disabled]) {
+
+  /* Only pointer devices get hover; keyboard focus remains the host's signal. */
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-variant="prominent"]:hover:not([data-disabled]) {
+      background: var(--affordance-prominent-hover);
+    }
+    .buzz-button:is(
+        [data-variant="subtle"],
+        [data-variant="outline"],
+        [data-variant="ghost"],
+        [data-variant="inverted"]
+      ):hover:not([data-disabled], [data-icon-variant="chrome"]) {
+      background: var(--affordance-subtle-hover);
+    }
+    .buzz-button[data-variant="destructive"]:hover:not([data-disabled]) {
+      background: var(--affordance-danger-hover);
+    }
+    .buzz-button[data-variant="link"]:hover:not([data-disabled]) {
+      text-decoration: underline;
+    }
+  }
+  .buzz-button[data-variant="prominent"]:is(
+    :active,
+    [aria-expanded="true"]
+  ):not([data-disabled]) {
+    background: var(--affordance-prominent-pressed);
+  }
+  .buzz-button:is(
+    [data-variant="subtle"],
+    [data-variant="outline"],
+    [data-variant="ghost"],
+    [data-variant="inverted"]
+  ):is(:active, [aria-expanded="true"]):not([data-disabled]) {
+    background: var(--affordance-subtle-pressed);
+  }
+  .buzz-button[data-variant="destructive"]:is(
+    :active,
+    [aria-expanded="true"]
+  ):not([data-disabled]) {
     background: var(--affordance-danger-pressed);
   }
-  .buzz-button[data-disabled]:not([data-loading]) {
-    color: var(--text-unavailable);
-    background: var(--affordance-disabled);
-    cursor: not-allowed;
+  .buzz-button[data-variant="link"]:is(:active, [aria-expanded="true"]):not(
+    [data-disabled]
+  ) {
+    text-decoration: underline;
   }
+
   .buzz-button[data-loading] {
     cursor: progress;
   }
   .buzz-button[data-loading] .buzz-button-label {
     opacity: 0;
-  }
-  .buzz-button-spinner {
-    position: absolute;
-    animation: buzz-button-spin 1s linear infinite;
   }
   @keyframes buzz-button-spin {
     to {
@@ -100,6 +134,7 @@
     }
   }
 
+  /* IconButton shares Button emphasis and sizing; only geometry differs. */
   .buzz-button[data-icon-variant] {
     min-height: 0;
     width: var(--size-control);
@@ -108,104 +143,77 @@
     flex: 0 0 auto;
     padding: 0;
   }
-
-  /* Fill artwork needs a sized parent; inherit the control's avatar shape.
-     Keep pointer-origin keyboard traversal rooted at the button in WebKit. */
+  .buzz-button[data-icon-variant][data-size="sm"] {
+    width: var(--size-control-sm);
+    height: var(--size-control-sm);
+  }
+  /* Dense composer formatting options retain the original 28px layout. */
+  .buzz-button[data-icon-variant][data-icon-size="xs"] {
+    width: calc(var(--size-control-sm) - var(--space-1));
+    height: calc(var(--size-control-sm) - var(--space-1));
+  }
+  .buzz-button[data-icon-variant][data-size="lg"] {
+    width: var(--size-control-lg);
+    height: var(--size-control-lg);
+  }
+  /* Preserve fill avatars and pointer-origin Tab traversal in WebKit. */
   .buzz-button[data-icon-variant] .buzz-button-label {
     width: 100%;
     height: 100%;
     border-radius: inherit;
     pointer-events: none;
   }
-
-  .buzz-button[data-icon-size="compact"] {
-    width: var(--size-row);
-    height: var(--size-row);
-    min-height: var(--size-row);
-    border-radius: var(--radius-row);
-  }
-
-  /* Toolbars need a less dense hit area than navigator-row actions while
-     keeping the same 16px icon artwork. */
-  .buzz-button[data-icon-size="toolbar"] {
-    width: 2rem;
-    height: 2rem;
-    border-radius: var(--radius-row);
-  }
-
-  .buzz-button[data-icon-size="large"] {
-    width: var(--size-control-lg);
-    height: var(--size-control-lg);
-    border-radius: var(--radius-pill);
-  }
-
   .buzz-button[data-icon-shape="round"] {
     border-radius: var(--radius-pill);
   }
 
-  /* Every icon variant states its own hover. The one that did not —
-     `solid` — fell through to the neutral ghost hover and lost its accent. */
-  .buzz-button[data-icon-variant="quiet"] {
-    background: var(--affordance-subtle);
+  .buzz-button[data-icon-variant="ghost"][data-selected],
+  .buzz-button[data-icon-variant="ghost"][data-selected]:hover:not(
+    [data-disabled]
+  ) {
+    background: var(--affordance-selected);
   }
 
-  .buzz-button[data-icon-variant="quiet"]:hover:not([data-disabled]),
-  .buzz-button[data-icon-variant="ghost"]:hover:not([data-disabled]) {
-    background: var(--affordance-subtle-hover);
-  }
-
-  .buzz-button[data-icon-variant="solid"] {
-    background: var(--affordance-prominent-hover);
-    color: var(--text-inverse);
-  }
-
-  .buzz-button[data-icon-variant="solid"]:hover:not([data-disabled]) {
-    background: var(--affordance-prominent);
-  }
-
-  /* A gentle acknowledgement/submit action on a quiet surface. This cannot be
-     the primary fill: its job is available without pulling focus from writing. */
+  /* Buzz's existing composer and workspace treatments remain explicit. */
   .buzz-button[data-icon-variant="tint"] {
     background: var(--affordance-accent);
     color: var(--text-accent);
   }
-
-  .buzz-button[data-icon-variant="tint"]:hover:not([data-disabled]) {
-    background: var(--affordance-accent-hover);
-  }
-
-  /* Chrome sits on the backdrop and is clickable, so it takes the interactive
-     material whole — fill, blur, rim, and hover in one line. It used to spell
-     out three of those four and get the hover from a separate rule. */
   .buzz-button[data-icon-variant="chrome"] {
     @apply glass-primary-interactive;
   }
-
-  .buzz-button:is(
-    [data-icon-variant="quiet"],
-    [data-icon-variant="ghost"]
-  ):active:not([data-disabled]) {
-    background: var(--affordance-subtle-pressed);
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-variant="tint"]:hover:not([data-disabled]) {
+      background: var(--affordance-accent-hover);
+    }
   }
-  .buzz-button[data-icon-variant="solid"]:active:not([data-disabled]) {
-    background: var(--affordance-prominent-pressed);
-  }
-  .buzz-button[data-icon-variant="tint"]:active:not([data-disabled]) {
+  .buzz-button[data-icon-variant="tint"]:is(
+    :active,
+    [aria-expanded="true"]
+  ):not([data-disabled]) {
     background: var(--affordance-accent-hover);
   }
 
-  /* Disabled owns the foreground across icon variants, independently of source
-     order. Accent fills also yield to neutral so unavailability cannot look
-     like an available send/stop action. Shape never changes state semantics. */
-  .buzz-button[data-icon-variant][data-disabled] {
+  /* Disabled keeps variant geometry; loading keeps its available colors. */
+  .buzz-button[data-disabled]:not([data-loading]) {
     color: var(--text-unavailable);
+    background: var(--affordance-disabled);
+    cursor: not-allowed;
+    box-shadow: none;
   }
-
   .buzz-button:is(
+    [data-variant="ghost"],
+    [data-variant="outline"],
+    [data-variant="link"]
+  )[data-disabled]:not(
+    [data-loading],
     [data-icon-variant="tint"],
-    [data-icon-variant="solid"]
-  )[data-disabled] {
-    background: var(--affordance-selected);
+    [data-icon-variant="chrome"]
+  ) {
+    background: transparent;
+  }
+  .buzz-button[data-variant="outline"][data-disabled]:not([data-loading]) {
+    box-shadow: inset 0 0 0 1px var(--border-standard);
   }
 
   /* A preview is supplemental context; destination cards can also open it.
@@ -605,46 +613,6 @@
     margin-top: var(--space-1);
   }
 
-  .search-field {
-    display: flex;
-    width: 100%;
-    min-height: var(--size-control);
-    align-items: center;
-    gap: var(--space-row-gap);
-    border-radius: var(--radius-control);
-    border: 1px solid var(--border-prominent);
-    padding: 0 var(--space-control-inset);
-    background: var(--surface-panel);
-    color: var(--text-metadata);
-  }
-
-  .search-field[data-variant="navigator"] {
-    border-radius: var(--radius-panel);
-  }
-
-  .search-field input {
-    min-width: 0;
-    flex: 1;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: var(--text-standard);
-    font: inherit;
-  }
-
-  html[data-keyboard-navigation] .search-field input:focus-visible {
-    outline: 2px solid var(--text-standard);
-    outline-offset: 2px;
-  }
-
-  .search-field input::placeholder {
-    color: var(--text-metadata);
-  }
-
-  .search-field input::-webkit-search-cancel-button {
-    display: none;
-  }
-
   .navigation-section {
     display: flex;
     flex-direction: column;
@@ -859,6 +827,41 @@
     padding: var(--space-2);
     color: var(--text-standard);
     z-index: var(--layer-popover);
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+    transform-origin: var(--transform-origin);
+    /* Product-directed exception: a 4px unblur accompanies the short entry. */
+    transition:
+      opacity var(--duration-state) var(--easing-state),
+      transform var(--duration-state) var(--easing-settle),
+      filter var(--duration-state) var(--easing-state);
+  }
+  .buzz-select-popup:where([data-starting-style], [data-ending-style]) {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--space-1)));
+    filter: blur(var(--space-1));
+  }
+  .buzz-select-popup:where([data-side="top"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateY(var(--space-1));
+  }
+  .buzz-select-popup:where([data-ending-style]) {
+    transition-duration: var(--duration-fast);
+  }
+  html[data-keyboard-navigation] .buzz-select-popup {
+    transition: none;
+    transform: none;
+    filter: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-select-popup {
+      transition: none;
+      transform: none;
+      filter: none;
+    }
   }
   .buzz-select-group-label {
     padding: var(--space-2) var(--space-3) var(--space-1);

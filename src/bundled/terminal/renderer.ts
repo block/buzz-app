@@ -3,6 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/600.css";
+import { forwardTerminalKey } from "../../features/shortcuts/terminal-key-event";
 import { terminalAppearance } from "./appearance";
 import { createSplash } from "./splash";
 import styles from "./Terminal.module.css";
@@ -55,18 +56,14 @@ export function createScreen(
     input(data, source);
   });
   terminal.onResize(({ cols, rows }) => resize(cols, rows));
-  // Leave the app chord to its single dispatcher even in xterm's hidden textarea.
-  terminal.attachCustomKeyEventHandler(
-    (event) =>
-      !(
-        event.key.toLowerCase() === "j" &&
-        !event.altKey &&
-        !event.shiftKey &&
-        (/Mac|iPhone|iPad/.test(navigator.platform)
-          ? event.metaKey && !event.ctrlKey
-          : event.ctrlKey && !event.metaKey)
-      ),
-  );
+  // Let the single dispatcher resolve live bindings before xterm writes PTY
+  // bytes. A handled event is prevented, so bubbling cannot dispatch it twice.
+  terminal.attachCustomKeyEventHandler((event) => {
+    const host = element.ownerDocument.defaultView;
+    return !disposed && element.isConnected && host
+      ? forwardTerminalKey(host, event)
+      : true;
+  });
   let opened = false;
   let disposed = false;
   let receivedOutput = false;

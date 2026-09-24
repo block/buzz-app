@@ -1,5 +1,13 @@
+import {
+  InputExamples,
+  TextareaExamples,
+  SearchExamples,
+  SelectExamples,
+  ComboboxExamples,
+} from "./FormSpecimens";
+import { ToastSpecimens } from "./ToastSpecimens";
+import { ButtonSpecimen, IconButtonSpecimen } from "./ButtonSpecimens";
 import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
-import { Combobox } from "../../../../src/shared/design-system/ui/Combobox";
 import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
 import { DialogSpecimens } from "./DialogSpecimens";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
@@ -22,13 +30,11 @@ import {
   HashIcon,
   ChatCircleIcon,
   PlusIcon,
-  GearIcon,
 } from "../../../../src/shared/design-system/icons/index";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
-import { Select } from "../../../../src/shared/design-system/ui/Select";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -53,7 +59,6 @@ import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../../../src/shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../../../../src/shared/design-system/ui/NavigationSection";
 import { PanelHeader } from "../../../../src/shared/design-system/ui/PanelHeader";
-import { SearchField } from "../../../../src/shared/design-system/ui/SearchField";
 import { Tabs } from "../../../../src/shared/design-system/ui/Tabs";
 
 import { ComponentAnatomy } from "./ComponentAnatomy";
@@ -130,177 +135,6 @@ function Specimen({
   );
 }
 
-function ButtonSpecimen() {
-  return (
-    <>
-      <SpecimenGroup label="Emphasis">
-        <div className="flex flex-wrap items-center gap-3">
-          {(
-            ["prominent", "subtle", "ghost", "destructive", "outline"] as const
-          ).map((variant) => (
-            <Button key={variant} variant={variant}>
-              {variant}
-            </Button>
-          ))}
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label="Sizes">
-        <div className="flex flex-wrap items-center gap-3">
-          {(["sm", "md", "lg"] as const).map((size) => (
-            <Button key={size} size={size} variant="prominent">
-              Save · {size}
-            </Button>
-          ))}
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label="States">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button loading variant="prominent">
-            Save changes
-          </Button>
-          <Button disabled>Unavailable</Button>
-          <Button>Allow notifications for this workspace</Button>
-        </div>
-      </SpecimenGroup>
-    </>
-  );
-}
-
-function IconButtonSpecimen() {
-  const icons = {
-    add: <PlusIcon size={16} aria-hidden="true" />,
-    more: <DotsThreeIcon size={16} aria-hidden="true" />,
-    settings: <GearIcon size={16} aria-hidden="true" />,
-  };
-  return (
-    <div className="component-specimen-stack">
-      {/* `chrome` sits on the app backdrop, because it is a translucent glass
-          fill — on a flat panel it has nothing to be translucent over and reads
-          as a plain grey. */}
-      <SpecimenGroup label="Variants">
-        <div className="component-specimen-row">
-          <Specimen prop='variant="quiet"'>
-            <IconButton
-              aria-label="Quiet add"
-              icon={icons.add}
-              variant="quiet"
-            />
-          </Specimen>
-          <Specimen prop='variant="ghost"'>
-            <IconButton
-              aria-label="Ghost more"
-              icon={icons.more}
-              variant="ghost"
-            />
-          </Specimen>
-          <Specimen prop='variant="solid"'>
-            <IconButton
-              aria-label="Solid add"
-              icon={icons.add}
-              variant="solid"
-            />
-          </Specimen>
-          <Specimen prop='variant="tint" shape="round"'>
-            <IconButton
-              aria-label="Round tinted send"
-              icon={icons.add}
-              shape="round"
-              variant="tint"
-            />
-          </Specimen>
-        </div>
-      </SpecimenGroup>
-      <section className="component-specimen-group">
-        <h2 className="text-body-sm text-tertiary">
-          Chrome, over the workspace backdrop
-        </h2>
-        <SpecimenFrame backdrop>
-          <div className="component-specimen-row">
-            <Specimen prop='variant="chrome"'>
-              <IconButton
-                aria-label="Chrome settings"
-                icon={icons.settings}
-                variant="chrome"
-              />
-            </Specimen>
-          </div>
-        </SpecimenFrame>
-      </section>
-      {/* Shown on `quiet`, not the default `ghost`: the three sizes differ only
-          in hit area (30 / 36 / 40px), and with no fill they render as three
-          identical 16px glyphs — the page would claim to show a size ramp while
-          showing nothing. A fill makes the box the sample. */}
-      <SpecimenGroup label="Sizes">
-        <div className="component-specimen-row">
-          <Specimen prop='size="compact"'>
-            <IconButton
-              aria-label="Compact settings"
-              icon={icons.settings}
-              variant="quiet"
-              size="compact"
-            />
-          </Specimen>
-          <Specimen prop='size="toolbar"'>
-            <IconButton
-              aria-label="Toolbar settings"
-              icon={icons.settings}
-              variant="quiet"
-              size="toolbar"
-            />
-          </Specimen>
-          <Specimen prop='size="default"'>
-            <IconButton
-              aria-label="Default settings"
-              icon={icons.settings}
-              variant="quiet"
-            />
-          </Specimen>
-          <Specimen prop='size="large"'>
-            <IconButton
-              aria-label="Large settings"
-              icon={icons.settings}
-              variant="quiet"
-              size="large"
-            />
-          </Specimen>
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label="States">
-        <div className="component-specimen-row">
-          <Specimen>
-            <IconButton
-              aria-label="Enabled add"
-              icon={icons.add}
-              variant="quiet"
-            />
-          </Specimen>
-          <Specimen prop="disabled">
-            <IconButton
-              aria-label="Disabled add"
-              icon={icons.add}
-              variant="quiet"
-              disabled
-            />
-          </Specimen>
-          {(["tint", "solid"] as const).map((variant) => (
-            <Specimen
-              key={variant}
-              prop={`variant="${variant}" shape="round" disabled`}
-            >
-              <IconButton
-                aria-label={`Disabled round ${variant}`}
-                icon={icons.add}
-                shape="round"
-                variant={variant}
-                disabled
-              />
-            </Specimen>
-          ))}
-        </div>
-      </SpecimenGroup>
-    </div>
-  );
-}
 function AvatarSpecimen() {
   return (
     <div className="component-specimen-stack">
@@ -616,35 +450,6 @@ function PanelHeaderSpecimen() {
   );
 }
 
-function SearchFieldSpecimen() {
-  const [emptyQuery, setEmptyQuery] = useState("");
-  const [filledQuery, setFilledQuery] = useState("design");
-  return (
-    <div className="component-specimen-stack">
-      <SpecimenGroup label='value="" — the clear action is absent'>
-        <div className="component-field-demo">
-          <SearchField
-            value={emptyQuery}
-            onValueChange={setEmptyQuery}
-            label="Find a channel"
-            placeholder="Search"
-          />
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label='value="design" — the clear action appears'>
-        <div className="component-field-demo">
-          <SearchField
-            value={filledQuery}
-            onValueChange={setFilledQuery}
-            label="Find a channel"
-            placeholder="Search"
-          />
-        </div>
-      </SpecimenGroup>
-    </div>
-  );
-}
-
 function NavigationSectionSpecimen() {
   return (
     <div className="component-specimen-stack">
@@ -927,12 +732,6 @@ function SwitchSpecimen() {
   );
 }
 
-const CHOICE_OPTIONS = [
-  { value: "channel", label: "Channel" },
-  { value: "session", label: "Session" },
-  { value: "dm", label: "Direct message" },
-];
-
 function ActionMenuSpecimen() {
   const [sort, setSort] = useState("recent");
   const [notifications, setNotifications] = useState(true);
@@ -998,72 +797,6 @@ function MenuSpecimen() {
       <Dialog open={open} onOpenChange={setOpen} title="Menu composition">
         <ActionMenuSpecimen />
       </Dialog>
-    </div>
-  );
-}
-
-function SelectSpecimen() {
-  const [value, setValue] = useState("channel");
-  const groups = [{ label: "Destination", options: CHOICE_OPTIONS }];
-  return (
-    <div className="component-specimen-stack">
-      <Select
-        label="Preview context"
-        value={value}
-        onValueChange={setValue}
-        groups={groups}
-      />
-      <Select
-        variant="field"
-        label="Destination"
-        value={value}
-        onValueChange={setValue}
-        groups={groups}
-      />
-      <Select
-        variant="field"
-        label="Destination (disabled)"
-        disabled
-        value={value}
-        onValueChange={setValue}
-        groups={groups}
-      />
-    </div>
-  );
-}
-
-function ComboboxSpecimen() {
-  return (
-    <div className="component-specimen-stack">
-      {(["default", "loading", "disabled"] as const).map((state) => (
-        <Combobox.Root
-          key={state}
-          items={state === "loading" ? [] : CHOICE_OPTIONS}
-          disabled={state === "disabled"}
-        >
-          <Combobox.Control
-            label={`Destination (${state})`}
-            triggerLabel={`Browse destinations (${state})`}
-            placeholder="Choose or search…"
-            loading={state === "loading"}
-          />
-          <Combobox.Popup
-            empty={
-              state === "loading"
-                ? "Loading destinations…"
-                : "No matching destinations."
-            }
-          >
-            <Combobox.List>
-              {(item: (typeof CHOICE_OPTIONS)[number]) => (
-                <Combobox.Item key={item.value} value={item}>
-                  {item.label}
-                </Combobox.Item>
-              )}
-            </Combobox.List>
-          </Combobox.Popup>
-        </Combobox.Root>
-      ))}
     </div>
   );
 }
@@ -1169,6 +902,7 @@ function RadioGroupSpecimen() {
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "alert-dialog": AlertDialogSpecimen,
   dialog: DialogSpecimens,
+  toast: ToastSpecimens,
   tooltip: () => (
     <SpecimenFrame>
       <Tooltip content="Create a note">
@@ -1190,23 +924,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       </Field>
     </SpecimenFrame>
   ),
-  input: () => (
-    <SpecimenFrame>
-      <Field label="Workspace name">
-        <Input placeholder="Project notes" />
-      </Field>
-      <Field label="Unavailable">
-        <Input disabled value="Example" />
-      </Field>
-    </SpecimenFrame>
-  ),
-  textarea: () => (
-    <SpecimenFrame>
-      <Field label="Description" description="A short summary.">
-        <Textarea id="description-control" rows={3} />
-      </Field>
-    </SpecimenFrame>
-  ),
+  input: InputExamples,
+  textarea: TextareaExamples,
   "radio-group": RadioGroupSpecimen,
   checkbox: () => (
     <SpecimenFrame>
@@ -1227,8 +946,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   panel: PanelSpecimen,
   tabs: TabsSpecimen,
   menu: MenuSpecimen,
-  select: SelectSpecimen,
-  combobox: ComboboxSpecimen,
+  select: SelectExamples,
+  combobox: ComboboxExamples,
   switch: SwitchSpecimen,
   accordion: () => (
     <>
@@ -1285,7 +1004,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     </>
   ),
   "panel-header": PanelHeaderSpecimen,
-  "search-field": SearchFieldSpecimen,
+  "search-field": SearchExamples,
   "navigation-section": NavigationSectionSpecimen,
   "navigation-item": NavigationItemSpecimen,
 };

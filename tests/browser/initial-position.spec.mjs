@@ -50,7 +50,7 @@ sized(
     await select(page, "Alpha");
     await bottom(page, app, "warm Alpha");
     await page
-      .getByRole("button", { name: "Home", exact: true })
+      .getByRole("button", { name: "Projects", exact: true })
       .first()
       .click();
     await page.reload();
@@ -110,7 +110,7 @@ readingTest(
     expect(app.pending).toHaveLength(0);
     const reading = await anchor(page);
     await page
-      .getByRole("button", { name: "Home", exact: true })
+      .getByRole("button", { name: "Projects", exact: true })
       .first()
       .click();
     await page.reload();

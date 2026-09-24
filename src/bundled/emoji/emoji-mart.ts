@@ -201,47 +201,49 @@ export function mountEmojiMart({
       line-height: var(--text-caption--line-height);
     }
     .search input[type="search"] {
-      width: calc(100% - 4px);
-      height: 28px;
-      padding: 0 var(--space-8);
-      margin-inline: var(--space-half);
-      border: 0;
-      border-radius: var(--picker-search-radius);
-      background: var(--picker-search-background);
-      box-shadow: 0 0 0 1px var(--picker-search-background);
-      color: var(--picker-search-foreground);
-      font-family: var(--font-legacy-sans);
-      font-size: var(--text-body-sm);
-      line-height: var(--text-body-sm--line-height);
-      transition:
-        opacity 100ms ease,
-        background 100ms ease,
-        box-shadow 100ms ease;
+      width: 100%;
+      min-height: var(--size-control);
+      height: auto;
+      padding: var(--space-2)
+        calc(var(--space-control-inset) + var(--space-4) + var(--space-2));
+      margin: 0;
+      border: 1px solid transparent;
+      border-radius: var(--radius-control);
+      background: var(--surface-inset);
+      box-shadow: none;
+      color: var(--text-standard);
+      font-family: var(--font-sans);
+      font-size: var(--text-body);
+      line-height: var(--text-body--line-height);
+      transition: border-color var(--duration-field-focus) var(--easing-state);
     }
     .search input[type="search"]:focus {
-      background: var(--picker-search-background);
-      box-shadow: 0 0 0 1px var(--picker-search-background);
+      background: var(--surface-inset);
+      box-shadow: none;
+      border-color: var(--border-prominent);
       outline: none;
     }
-    :host([data-keyboard-navigation]) .search input[type="search"]:focus-visible {
-      background: var(--picker-search-background);
-      box-shadow: 0 0 0 2px var(--picker-search-ring);
-      outline: none;
+    :host([data-keyboard-navigation]) .search input[type="search"] {
+      transition: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .search input[type="search"] { transition: none; }
     }
     .search input[type="search"]::placeholder,
     .search .icon {
-      color: var(--picker-search-muted);
+      color: var(--text-metadata);
       opacity: 1;
     }
     .search .loupe {
       visibility: hidden;
     }
     .search .delete {
-      right: 10px;
-      width: 16px;
-      height: 16px;
-      padding: 0;
-      color: var(--picker-search-muted);
+      right: var(--space-1);
+      width: var(--size-control-sm);
+      height: var(--size-control-sm);
+      padding: var(--space-2);
+      border-radius: var(--radius-pill);
+      color: var(--text-standard);
     }
     .search .delete svg {
       width: 16px;
@@ -252,11 +254,11 @@ export function mountEmojiMart({
       height: 0;
     }
     .spacer + .flex.flex-middle {
-      padding-bottom: var(--space-1);
+      padding-block: var(--space-2);
     }
     .spacer + .flex.flex-middle > .flex.flex-auto.flex-center.flex-middle {
       width: 0 !important;
-      height: 48px !important;
+      height: 0 !important;
       overflow: hidden;
       visibility: hidden;
     }
@@ -319,7 +321,7 @@ export function mountEmojiMart({
     }
     .buzz-skin-tone-source {
       width: 0 !important;
-      height: 48px !important;
+      height: 0 !important;
       overflow: hidden;
       visibility: hidden;
     }

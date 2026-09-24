@@ -3,11 +3,16 @@ import { TerminalWindowIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { PluginModule } from "../../plugins/api";
 import type { ChannelLauncherProps } from "../../features/panels/service";
+import {
+  formatBinding,
+  isApplePlatform,
+} from "../../features/shortcuts/format";
 import { nativeBridge } from "./bridge";
 import { createSessions } from "./sessions";
 import { TerminalPanel } from "./TerminalPanel";
 
 export const inject = ["panels", "shortcuts", "relay"];
+const TOGGLE_BINDING = { key: "j", mod: true } as const;
 export const apply: PluginModule["apply"] = (ctx) => {
   // No unusable launcher or reserved shortcut in a browser-only host.
   if (!nativeBridge.available) return;
@@ -24,7 +29,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.shortcuts.register({
     id: "toggle",
     title: "Toggle channel terminal",
-    binding: { key: "j", mod: true },
+    binding: TOGGLE_BINDING,
+    // Plugin Settings order: the terminal action is the category's primary action.
+    order: 10,
     allowInEditable: true,
     when: () => !!binding?.available(),
     run: () => binding?.toggle(),
@@ -49,7 +56,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         variant={pressed ? "tint" : "ghost"}
         icon={<TerminalWindowIcon size={16} aria-hidden="true" />}
         aria-label="Toggle channel terminal"
-        title="Terminal (Cmd/Ctrl+J)"
+        title={`Terminal (${formatBinding(TOGGLE_BINDING, isApplePlatform(navigator.platform)).text})`}
         aria-pressed={pressed}
         onClick={(event) => {
           event.currentTarget.focus();

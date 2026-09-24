@@ -92,44 +92,42 @@ export function AgentEnvironmentEditor({
           </div>
         );
       })}
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="min-w-0 flex-1">
-          <Field label="Variable name">
+      <Field label="Variable name" error={error}>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1">
             <Input
               value={newKey}
               autoComplete="off"
               spellCheck={false}
-              onChange={(event) => setNewKey(event.target.value)}
+              onChange={(event) => {
+                setNewKey(event.target.value);
+                setError(null);
+              }}
             />
-          </Field>
+          </div>
+          <Button
+            disabled={disabled}
+            onClick={() => {
+              const key = newKey.trim();
+              if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+                setError(
+                  "Use letters, numbers and underscores; start with a letter or underscore.",
+                );
+                return;
+              }
+              if (names.includes(key)) {
+                setError("That variable is already listed.");
+                return;
+              }
+              onChange({ ...patch, [key]: "" });
+              setNewKey("");
+              setError(null);
+            }}
+          >
+            Add variable
+          </Button>
         </div>
-        <Button
-          disabled={disabled}
-          onClick={() => {
-            const key = newKey.trim();
-            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-              setError(
-                "Use letters, numbers and underscores; start with a letter or underscore.",
-              );
-              return;
-            }
-            if (names.includes(key)) {
-              setError("That variable is already listed.");
-              return;
-            }
-            onChange({ ...patch, [key]: "" });
-            setNewKey("");
-            setError(null);
-          }}
-        >
-          Add variable
-        </Button>
-      </div>
-      {error && (
-        <p role="alert" className="text-danger">
-          {error}
-        </p>
-      )}
+      </Field>
     </fieldset>
   );
 }

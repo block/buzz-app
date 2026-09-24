@@ -7,9 +7,25 @@ import { ByteLru, byteSize } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 
 export type Delivery = "sending" | "accepted" | "unknown" | "failed" | "seen";
+/** Durable, caller-owned recovery state committed with the operation. */
+export type OutboxRecovery = Readonly<{ key: string; value: string }>;
+function recoveryValue(value: OutboxRecovery | undefined) {
+  if (value === undefined) return undefined;
+  if (
+    !value ||
+    typeof value.key !== "string" ||
+    !value.key.length ||
+    value.key.length > 200 ||
+    typeof value.value !== "string" ||
+    byteSize(value) > 64 * 1024
+  )
+    throw new Error("Invalid outbox recovery state");
+  return Object.freeze({ key: value.key, value: value.value });
+}
 export type OutgoingEvent = Readonly<{
   event: EventData;
   signed?: RelayEvent;
+  recovery?: OutboxRecovery | undefined;
   delivery: Delivery;
   error?: string | undefined;
 }>;
@@ -21,7 +37,12 @@ export interface Outbox {
    * receipt/verified echo, never history hydration. It cannot affect delivery. */
   observeSend(listener: SendObserver): () => void;
   supports(kind: number): boolean;
-  send(input: Pick<EventTemplate, "kind" | "content" | "tags">): string;
+  ready(): Promise<void>;
+  send(
+    input: Pick<EventTemplate, "kind" | "content" | "tags">,
+    recovery?: OutboxRecovery,
+  ): string;
+  acknowledge(id: string): Promise<void>;
   retry(id: string): void;
   dismiss(id: string): Promise<void>;
 }
@@ -92,6 +113,7 @@ export function createOutbox(
     controller?: AbortController;
   };
   const attempts = new Map<string, Attempt>();
+  const dismissing = new Map<string, Promise<void>>();
   const lifetime = new AbortController();
   const sendListeners = new Set<SendObserver>();
   const deliveryWork = new Map<
@@ -130,7 +152,9 @@ export function createOutbox(
     [...attempts.values()].filter((attempt) => attempt.controller).length;
   let closed = false;
   let confirmedInvalidated = false;
+  let confirmedKeep: ((event: EventData) => boolean) | undefined;
   let storageError: string | undefined;
+  let hydrated = false;
   let durable = Promise.resolve();
   const notify = () => {
     pendingBytes = snapshot.reduce(
@@ -151,7 +175,7 @@ export function createOutbox(
     for (const listener of localListeners) notifyListener(listener);
     for (const listener of listeners) notifyListener(listener);
   };
-  const persist = (id: string) => {
+  const persist = (id: string, action?: "acknowledge" | "dismiss") => {
     const queued = profiling.start("outbox.queue", id);
     const work = durable
       .catch(() => {})
@@ -164,12 +188,49 @@ export function createOutbox(
         queued();
         // Hydration may have added restored intent while this commit waited.
         // Commit current state so no intermediate transaction erases that intent.
-        const records = visible;
-        const bytes = pendingBytes;
+        const records =
+          action === "dismiss"
+            ? visible.filter((item) => item.event.id !== id)
+            : action === "acknowledge"
+              ? visible.map((item) =>
+                  item.event.id === id
+                    ? { ...item, recovery: undefined }
+                    : item,
+                )
+              : visible;
+        const bytes =
+          action === "dismiss"
+            ? byteSize(snapshot.filter((item) => item.event.id !== id))
+            : pendingBytes;
         return profiling.measureAsync("outbox.persist", id, async () => {
           if (bytes > 2 * 1024 * 1024)
             throw new Error("Outbox storage is full");
           await storage.save(records);
+          if (action === "dismiss") {
+            // Commit removal inside the serialized write, before a later save
+            // can capture state. Failed storage never exposes a temporary absence.
+            deliveryWork.delete(id);
+            completed.delete(id);
+            snapshot = Object.freeze(
+              snapshot.filter((item) => item.event.id !== id),
+            );
+            notify();
+          }
+          // Release recovery only after its removal is durable, before the next
+          // queued save can run. Preserve delivery evidence received during I/O.
+          if (action === "acknowledge") {
+            const current = find(id);
+            if (current) {
+              const cleared = { ...current, recovery: undefined };
+              if (current.delivery === "seen" && !attempts.has(id)) {
+                completed.set(id, cleared);
+                snapshot = Object.freeze(
+                  snapshot.filter((item) => item.event.id !== id),
+                );
+                notify();
+              } else replace(cleared);
+            }
+          }
         });
       });
     durable = work;
@@ -213,6 +274,7 @@ export function createOutbox(
         ) as unknown as string[][],
       }),
       ...(signed ? { signed } : {}),
+      ...(item.recovery ? { recovery: recoveryValue(item.recovery) } : {}),
       delivery:
         item.delivery === "seen" && signed
           ? "seen"
@@ -223,11 +285,18 @@ export function createOutbox(
     });
   }
   function restore(restored: readonly OutgoingEvent[]) {
-    const pending = restored.filter((item) => item.delivery !== "seen");
+    const pending = restored.filter(
+      (item) => item.delivery !== "seen" || item.recovery,
+    );
     if (pending.length > MAX_PENDING)
       throw new Error("Saved pending outbox exceeds its budget");
     for (const item of restored)
-      if (item.delivery === "seen" && !confirmedInvalidated)
+      if (
+        item.delivery === "seen" &&
+        !item.recovery &&
+        (!confirmedInvalidated ||
+          (item.event.kind === 9007 && confirmedKeep?.(item.event)))
+      )
         completed.set(item.event.id, item);
     snapshot = Object.freeze([...pending, ...snapshot]);
     notify();
@@ -255,7 +324,10 @@ export function createOutbox(
     ready = Promise.reject(error);
   }
   ready = ready.then(
-    () => loadedTiming(),
+    () => {
+      hydrated = true;
+      loadedTiming();
+    },
     (error) => {
       loadedTiming("error");
       storageError = `Could not load the outbox: ${String(error)}`;
@@ -417,7 +489,7 @@ export function createOutbox(
       clearTimeout(attempt.timer);
       if (attempts.get(id) === attempt) attempts.delete(id);
       const observed = find(id);
-      if (!closed && observed?.delivery === "seen") {
+      if (!closed && observed?.delivery === "seen" && !observed.recovery) {
         completed.set(id, observed);
         snapshot = Object.freeze(
           snapshot.filter((item) => item.event.id !== id),
@@ -447,9 +519,32 @@ export function createOutbox(
     },
     supports: (kind: number) =>
       !closed && (!writer.kinds || writer.kinds.includes(kind)),
-    send(input: Pick<EventTemplate, "kind" | "content" | "tags">) {
+    async ready() {
+      await ready;
       if (closed) throw abortError();
       if (storageError) throw new Error(storageError);
+    },
+    async acknowledge(id: string) {
+      await outbox.ready();
+      const item = find(id);
+      if (!item?.recovery) return;
+      if (item.delivery !== "accepted" && item.delivery !== "seen")
+        throw new Error("Confirm delivery before completing this message");
+      await persist(id, "acknowledge");
+    },
+    send(
+      input: Pick<EventTemplate, "kind" | "content" | "tags">,
+      recovery?: OutboxRecovery,
+    ) {
+      if (closed) throw abortError();
+      if (storageError) throw new Error(storageError);
+      const savedRecovery = recoveryValue(recovery);
+      if (
+        savedRecovery &&
+        (!hydrated ||
+          snapshot.some((item) => item.recovery?.key === savedRecovery.key))
+      )
+        throw new Error("Recover the earlier message before sending another");
       if (
         !Number.isInteger(input.kind) ||
         input.kind < 0 ||
@@ -486,7 +581,11 @@ export function createOutbox(
       profiling.measure("send.local", event.id, () => {
         snapshot = Object.freeze([
           ...snapshot,
-          Object.freeze({ event, delivery: "sending" as const }),
+          Object.freeze({
+            event,
+            delivery: "sending" as const,
+            ...(savedRecovery ? { recovery: savedRecovery } : {}),
+          }),
         ]);
         notify();
       });
@@ -505,7 +604,8 @@ export function createOutbox(
         !closed &&
         item &&
         !isWorkflowOperation(item.event) &&
-        !attempts.has(id)
+        !attempts.has(id) &&
+        !dismissing.has(id)
       ) {
         if (item.delivery === "failed" || item.delivery === "unknown")
           captureSend(item.event);
@@ -513,26 +613,17 @@ export function createOutbox(
         schedule(id, undefined, item.delivery);
       }
     },
-    async dismiss(id: string) {
-      if (closed || attempts.has(id)) return;
-      deliveryWork.delete(id);
-      const retained = completed.peek(id);
-      const previous =
-        find(id) ??
-        (retained && awaitsReceipt(retained.event) ? retained : undefined);
-      if (previous && awaitsReceipt(previous.event)) completed.delete(id);
-      snapshot = Object.freeze(snapshot.filter((item) => item.event.id !== id));
-      notify();
-      try {
-        await persist(id);
-      } catch (error) {
-        if (!closed && previous && !find(id)) {
-          snapshot = Object.freeze([...snapshot, previous]);
-          notify();
-          void persist(id).catch(() => {});
-        }
-        throw error;
-      }
+    dismiss(id: string) {
+      const pending = dismissing.get(id);
+      if (pending) return pending;
+      if (closed || attempts.has(id)) return Promise.resolve();
+      if (find(id)?.recovery && find(id)?.delivery !== "failed")
+        return Promise.reject(
+          new Error("Confirm this message in New message before removing it"),
+        );
+      const work = persist(id, "dismiss").finally(() => dismissing.delete(id));
+      dismissing.set(id, work);
+      return work;
     },
   });
   return {
@@ -546,6 +637,7 @@ export function createOutbox(
      * during async hydration fences that old confirmed cache, not its writes. */
     purgeConfirmed(keep: (event: EventData) => boolean) {
       confirmedInvalidated = true;
+      confirmedKeep = keep;
       const removed = completed
         .entries()
         .filter(([, item]) => !keep(item.event))
@@ -566,7 +658,10 @@ export function createOutbox(
       if (!first) return;
       for (const event of confirmed) {
         delivered(event);
-        if (awaitsReceipt(event) && attempts.has(event.id)) {
+        if (
+          (awaitsReceipt(event) && attempts.has(event.id)) ||
+          find(event.id)?.recovery
+        ) {
           snapshot = Object.freeze(
             snapshot.map((item) =>
               item.event.id === event.id
@@ -588,7 +683,8 @@ export function createOutbox(
         snapshot.filter(
           (item) =>
             !byId.has(item.event.id) ||
-            (awaitsReceipt(item.event) && attempts.has(item.event.id)),
+            (awaitsReceipt(item.event) && attempts.has(item.event.id)) ||
+            !!item.recovery,
         ),
       );
       for (const event of confirmed) {

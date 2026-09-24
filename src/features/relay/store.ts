@@ -174,6 +174,7 @@ export function createChannelStore(
         old.name === channel.name &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
+        old.private === channel.private &&
         old.channelType === channel.channelType &&
         old.parentChannelId === channel.parentChannelId &&
         old.updatedAt === channel.updatedAt &&
@@ -218,7 +219,7 @@ export function createChannelStore(
       const ids = new Set(combined.keys());
       for (const item of local?.snapshot() ?? [])
         if (
-          [9, 40002].includes(item.event.kind) &&
+          [9, 40002, 40008].includes(item.event.kind) &&
           item.event.tags.some(
             (tag) => tag[0] === "h" && tag[1] === state.channelId,
           )
@@ -232,7 +233,10 @@ export function createChannelStore(
         ),
       );
       for (const item of operations) {
-        if (item.delivery === "failed" && ![9, 40002].includes(item.event.kind))
+        if (
+          item.delivery === "failed" &&
+          ![9, 40002, 40008].includes(item.event.kind)
+        )
           continue;
         combined.set(item.event.id, item.event);
       }
@@ -1238,7 +1242,7 @@ export function createChannelStore(
           (item) =>
             next.has(item.event.id) &&
             item.delivery !== "seen" &&
-            [9, 40002].includes(item.event.kind),
+            [9, 40002, 40008].includes(item.event.kind),
         )
       )
         touch(channelId);
@@ -1257,7 +1261,8 @@ export function createChannelStore(
       setWindow(state, {});
       const newMessages = changed.filter(
         (item) =>
-          [9, 40002].includes(item.event.kind) && item.delivery === "sending",
+          [9, 40002, 40008].includes(item.event.kind) &&
+          item.delivery === "sending",
       );
       if (newMessages.length)
         void fetchProfiles(state.snapshot.rows.slice(-12));
@@ -1305,7 +1310,9 @@ export function createChannelStore(
       const incoming = events.filter(
         (event) =>
           !ids.has(event.id) &&
-          [9, 40002, 40099, 40003, 5, 9005, 7, 39005].includes(event.kind) &&
+          [9, 40002, 40008, 40099, 40003, 5, 9005, 7, 39005].includes(
+            event.kind,
+          ) &&
           event.tags.some(
             (tag) =>
               (tag[0] === "h" && tag[1] === state.channelId) ||

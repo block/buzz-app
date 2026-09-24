@@ -6,7 +6,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function openPlugins(page, origin) {
   await page.goto(origin);
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
@@ -191,7 +191,7 @@ test("Settings text buttons contain enlarged labels without resizing icon button
       // Shared IconButton must not inherit the enlarged text button's minimum.
       await expect(
         page.getByRole("button", { name: "Search Buzz", exact: true }),
-      ).toHaveAttribute("data-icon-size", "default");
+      ).toHaveAttribute("data-icon-size", "md");
       await expect
         .poll(() =>
           page.locator("button[data-icon-size]").evaluateAll((buttons) =>
@@ -200,6 +200,9 @@ test("Settings text buttons contain enlarged labels without resizing icon button
               .map((button) => {
                 const box = button.getBoundingClientRect();
                 const sizes = {
+                  sm: 32,
+                  md: 40,
+                  lg: 52,
                   compact: 32,
                   toolbar: 32,
                   default: 40,
@@ -322,7 +325,7 @@ test("leaving Settings discards a late preview without installing", async ({
   await expect(page.getByText(/Reading plugin folders/)).toBeVisible();
   await page
     .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Home", exact: true })
+    .getByRole("button", { name: "Projects", exact: true })
     .click();
   await page.evaluate(() => window.resolveImport());
   await expect
@@ -391,7 +394,7 @@ test("checked-in local examples activate and work independently", async ({
   await page.getByLabel("Scratch note").fill("Hello plugin");
   await expect(page.getByRole("status")).toHaveText("12 characters");
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await page.getByRole("switch", { name: "Enable Counter playground" }).click();
   await expect(

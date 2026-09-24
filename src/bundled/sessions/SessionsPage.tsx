@@ -16,6 +16,7 @@ import {
   useRelayConnection,
 } from "../../features/relay/react";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
+import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { readView, writeView } from "../../shared/view-state";
 import { SessionsWorkspace } from "./SessionsWorkspace";
@@ -98,25 +99,28 @@ function LiveSessions({
   };
   return (
     <SessionsWorkspace
-      sessions={sessions.map((item) => ({
-        id: item.id,
-        title: item.name,
-        content: (
-          <UnreadBadge
-            session={session}
-            channelId={item.id}
-            label={item.name}
-          />
-        ),
-        ...(item.parentChannelId
-          ? {
-              parentName:
-                list.channels.find(
-                  (parent) => parent.id === item.parentChannelId,
-                )?.name ?? "Channel session",
-            }
-          : {}),
-      }))}
+      sessions={sessions.map((item) => {
+        const parent = list.channels.find(
+          (candidate) => candidate.id === item.parentChannelId,
+        );
+        return {
+          id: item.id,
+          title: item.name,
+          content: (
+            <UnreadBadge
+              session={session}
+              channelId={item.id}
+              label={item.name}
+            />
+          ),
+          ...(item.parentChannelId
+            ? {
+                parentName: parent?.name ?? "Channel session",
+                ...(parent?.private ? { parentPrivate: true as const } : {}),
+              }
+            : {}),
+        };
+      })}
       selected={selected}
       onSelect={select}
       onNew={() => {
@@ -201,7 +205,13 @@ function SessionWork({
     [navigator, targetForLink],
   );
   return (
-    <div className={styles.work}>
+    // biome-ignore lint/a11y/noStaticElementInteractions: pane file-drop fallback; the composer provides a keyboard-accessible picker.
+    <div
+      className={styles.work}
+      data-attachment-drop-zone=""
+      onDragOver={rejectUnhandledFileDrop}
+      onDrop={rejectUnhandledFileDrop}
+    >
       <SessionHeading channel={channel} parentName={parentName} />
       <SessionColumn>
         <div className={styles.timeline}>

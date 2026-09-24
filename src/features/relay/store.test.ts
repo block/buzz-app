@@ -69,6 +69,32 @@ describe("channel store", () => {
     failing.queries.ensureList();
     expect(failing.queries.list().status).toBe("loading");
   });
+  it("replaces a channel summary when only its private visibility changes", async () => {
+    const { store, queries, next } = setup();
+    queries.ensureList();
+    next().respond([
+      roster(relay, "work", [viewer.pubkey]),
+      metadata(relay, "work", "Work"),
+    ]);
+    await flush();
+    const publicSummary = queries.list().channels[0];
+    expect(publicSummary?.private).toBeUndefined();
+
+    queries.refreshList?.();
+    next().respond([
+      roster(relay, "work", [viewer.pubkey]),
+      signed(relay, {
+        kind: 39000,
+        content: JSON.stringify({ name: "Work" }),
+        created_at: 1_700_000_001,
+        tags: [["d", "work"], ["name", "Work"], ["private"]],
+      }),
+    ]);
+    await flush();
+    expect(queries.list().channels[0]).not.toBe(publicSummary);
+    expect(queries.list().channels[0]?.private).toBe(true);
+    store.dispose();
+  });
   it("pages a window by the relay cursor, prepends older rows, and fetches missing profiles once", async () => {
     const { store, queries, next, pending } = setup();
     const listener = vi.fn();

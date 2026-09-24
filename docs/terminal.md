@@ -7,13 +7,22 @@ hide the drawer without stopping work; reopening reattaches the same emulator an
 shell. **End session** explicitly terminates it; **Restart** starts a fresh shell.
 An exited shell remains visible until ended/restarted and never respawns automatically.
 
+Settings → Shortcuts can rebind the toggle. Before xterm translates a key into
+shell input, a private synchronous DOM handoff gives the original keydown to the
+host's existing dispatcher. Live overrides, eligibility and plugin lifetime stay
+host-owned; Terminal neither reads preferences nor reserves the old default.
+Handled keys are prevented once, not also sent to the shell. Ordinary message
+editors retain their local-first bubbling behavior. The launcher tooltip still
+shows the registered default rather than the effective binding.
+
 ## Run locally
 
 From the agreed feature worktree, use `bin/just desktop`. Native commands require
 a rebuilt/restarted desktop process; Vite HMR alone cannot install the PTY bridge.
 Use the normal public `BUZZ_DEV_VIEWER` development setup from README for live
-channels. Do not copy private keys into `.env.local`. Coordinate startup if another
-Buzz development server already owns the port.
+channels. Do not copy private keys into `.env.local`. The launcher derives this
+worktree's port from its path; pass `--port` only if another server already owns
+it.
 
 Local PTYs are implemented for macOS/Linux. Windows native startup reports that it
 is unsupported in this slice. Browser-only Buzz hides the terminal launcher and
@@ -97,8 +106,11 @@ Focused coverage lives in `src/bundled/terminal/sessions.test.ts`, the channel/p
 composition tests, `src-tauri/src/terminal/tests.rs`, and the two
 `tests/browser/terminal*.spec.mjs` journeys. The separate renderer journey exercises
 real xterm input/Ctrl+C, resize, alternate-screen restoration, detach/reopen and
-app-chord release without starting a shell. The channel journey exercises actual
-browser launcher/shortcut absence, including plugin disable/re-enable. Desktop
+focused-terminal rebinding/reset/storage restore through the actual bundled
+registration and dispatcher, without starting a shell. The fixture replaces the
+native bridge and surrounding channel/relay services, not xterm or dispatch. The
+channel journey exercises actual browser launcher/shortcut absence, including
+plugin disable/re-enable. Desktop
 registration is covered by `src/bundled/terminal/index.test.ts`; the actual desktop
 header/dispatcher journey remains an attended acceptance check. Native tests exercise real PTYs,
 public-context/environment fencing, limits, final output and teardown.

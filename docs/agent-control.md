@@ -201,8 +201,8 @@ resources. Production has no disposable storage override or preview launch mode.
   from the controller lock. Only the user-intent Connect IPC action (Browse/Retry) can open a browser; it tries headless discovery first. Refresh is always headless.
   Cancel, context change, page unmount and root disposal retire the ticket. Native
   admission remains occupied until the old task's future has actually dropped.
-- The immutable `buzz-agent` dependency is pinned to
-  `84b0fd04b7831657df2873c3a835412f47cebb03`; no local-checkout dependency. It owns
+- The immutable `buzz-agent` dependency is pinned in
+  [`src-tauri/Cargo.toml`](../src-tauri/Cargo.toml); no local-checkout dependency. It owns
   OAuth PKCE, refresh, catalog parsing/filtering and per-page bounds. It retains current Buzz endpoint/redirect semantics. Native rejects over 10,000
   projected models or oversized IDs.
 - OAuth credentials remain under this app's
@@ -242,8 +242,8 @@ bin/pnpm build
 bin/cargo build -p buzz-foundation
 ```
 
-`runtime/agent-runtime.json` pins the five tools to published revision
-`84b0fd04b7831657df2873c3a835412f47cebb03`. The build script uses pinned Cargo,
+[`runtime/agent-runtime.json`](../runtime/agent-runtime.json) pins the five tools
+to the same immutable source revision as the native library. The build script uses pinned Cargo,
 `cargo install --git --rev --locked`, scrubs injected Buzz/provider environment,
 and stages binaries plus revision/target/SHA256 manifest in
 `src-tauri/resources/agent-runtime`. Native build copies them to
@@ -253,6 +253,26 @@ launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
 download. The manifest detects corrupt/mixed resources, not a same-user attacker
 who can replace the app and manifest. Inputs are immutable, not a promise of
 bit-identical machine-independent binaries. This build is not a signed installer.
+
+### Updating the agent runtime
+
+Update the library pin in `src-tauri/Cargo.toml` and the bundle pin in
+`runtime/agent-runtime.json` together, then refresh `Cargo.lock` without unrelated
+dependency upgrades. The runtime integration test checks that both pins name the
+same repository and immutable revision; the native synthetic manifest reads the
+runtime spec rather than carrying another copy of the pin.
+
+Re-run the resource preparation and native build commands above, then validate:
+
+```sh
+bin/cargo test --locked -p buzz-foundation -p buzz-agent-controller -- --include-ignored
+bin/node --test tests/integration/agent-runtime.test.mjs
+```
+
+These checks use isolated fixtures, including the staged binaries; they do not
+launch the app or access live credentials. Exercise upstream behavior changes
+with relevant bundled-tool smoke checks. Do not commit generated resources or
+restart running agents implicitly; live handover remains a separate step below.
 
 ## Handover and rollback
 

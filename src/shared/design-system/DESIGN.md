@@ -108,16 +108,52 @@ Buzz is a place where people build together and bring their agents into the room
 - **A redundant fill on glass is not free — it compounds.** Two identical translucent layers are not one layer: `glass-2` over `glass-2` composites to **0.77 alpha**, a value no token holds. Four panels each set the same fill as the container they exactly covered, so panels meant to be the most translucent surface in the system read as nearly solid. Before giving a region a glass fill, check whether its parent already is glass; if the region covers it, it needs no fill of its own.
 - **A component that can sit on either the gradient or a panel says so, with a variant.** `Tabs` takes `chrome` (a glass pill for the app backdrop) or `panel` (an underline for a plain surface); `IconButton` has the same axis as its `chrome` variant. The failure that earned it: the chrome container is `glass-2`, which over a white panel composites to pure white, and its selected pill is `neutral-1` — also pure white. Container and selection became one colour with only a shadow between them, and no guard could see it because the component had no way to state which background it expected. **The fix was never to retint `--bg-chrome-selected`** — that moves the collision rather than removing it. **One component with a variant, not two components:** behaviour, keyboard model, accessibility, props, and the Base UI parts underneath are identical, so a sibling component would duplicate all of it to change how selection is drawn, and the two would drift exactly as the four hand-assembled chrome surfaces did. When adding a component that could appear in both places, give it the axis and put both on its specimen page — the chrome-only specimen is why this defect survived until it appeared on a real screen.
 
+## Temporary focus appearance
+
+Focus outlines are currently hidden globally at the designer's request while
+forms are being polished. The centralized override in styles/globals.css takes
+precedence over the keyboard-ring recipes documented below. Keep focusability,
+Tab order, input modality, selection, and focus restoration intact. Do not add
+local replacement rings or disable keyboard interaction. Shared text fields now use
+a border flush with the field perimeter: surface-inset fill and a 1px
+border-prominent stroke fading over 150ms ease for pointer interaction. The
+field-scoped --border variable selects transparent, active, or error color for
+the reserved 1px border, so state changes do not shift the layout. Keyboard
+focus and reduced motion change immediately. Composite fields own one stroke
+around the input and actions; error strokes retain priority. Placeholders use
+text-metadata, one step quieter than supporting text, in both themes. This supersedes the older keyboard-only
+and no-container-ring recipes for these fields. Existing component
+recipes remain so this temporary visual decision can be reversed in one place.
+
 ## Controls
 
-Button uses prominent, subtle, ghost, destructive and outline emphasis. Its
+Button and IconButton share prominent, subtle, ghost, inverted, destructive,
+outline and link emphasis. Inverted is for an inverse surface; link keeps its
+background clear and underlines on interaction. Its
 32 / 40 / 52px sizes are sm / md / lg at the default scale; labels may wrap and
 increase height at larger text settings. Text buttons use pill corners. Fields
-use the shared control corner. Legacy Button names map to these variants during
-migration; do not add new primary/quiet or compact/default call sites.
+use the shared control corner. Small buttons use 16px side padding and 16px
+icons; medium and large use 24px side padding and 24px icons. Labels use the
+complete text-label-sm / text-label roles, with an 8px icon gap.
+
+IconButton defaults to round and uses the same sm/md/lg sizes. Existing names
+remain compatibility aliases: primary/solid → prominent, quiet → subtle,
+compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
+Buzz's tint and chrome icon variants remain for composer and backdrop actions.
+
+Disabled controls retain their filled, outline, or unfilled treatment and cannot
+activate. Loading retains the label's geometry, accessible name, focus and variant
+colors while blocking activation; never swap in a differently sized loading label.
+Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
+Keep keyboard-only focus and reduced-motion behavior owned by the system.
+
+IconButton also offers `xs` (28px with 16px icons) for dense composer formatting
+options, preserving the original toolbar layout. Mode toggles remain `sm`.
 
 IconButton defaults to round across all sizes and variants. Use `shape="control"`
-only when a rectangular control shape is explicitly needed.
+only when a rectangular control shape is explicitly needed. Disabled ghost icons
+remain unfilled; their muted foreground communicates unavailability without
+adding a container to an otherwise empty toolbar.
 
 Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
@@ -133,6 +169,49 @@ menu presentation. Use its loading state while discovering options, and keep
 retry/cancel actions with the feature. Do not style a native select as an Input
 or attach a separate round button to mimic a combobox.
 
+### Form composition
+
+Select and Combobox chevrons rotate 180 degrees to reflect the trigger's
+aria-expanded state. Use duration-state (150ms) with easing-settle for a
+reversible transform transition. Keyboard navigation and reduced motion switch
+the orientation immediately. Loading indicators keep their separate behavior.
+
+Fields share a 40px minimum size at the default scale, the control radius,
+text-body (now 14px / 20px across Buzz), and the 16px control inset. Derive vertical padding from the control
+size, text line height, and boundary; do not force a fixed height that clips
+larger text or wrapped Select values. Textarea uses the control inset on all four
+sides (16px at the default scale), with manual vertical resizing and a code variant.
+In Chromium and WebKit, the native resize grip uses text-metadata and sits 4px
+(space-1) inside the corner. Keep it visible at rest. Preserve the native resize hit target and
+leave the browser grip unchanged where custom resizer styling is unsupported.
+
+Use Field once per input/textarea, with an 8px internal gap. Select's field
+variant, SearchField, and Combobox.Control already own their label and supporting
+text; do not add a second Field around them. Use description/error for connected
+help and validation. An error replaces the secondary description until it clears;
+keep the accessible description synchronized with the visible message. Validation
+strokes belong to the outer field, never its auxiliary buttons. Keep feature-owned asynchronous status connected through
+aria-describedby. Forms own 16px between adjacent fields and the 32px section
+gap between named groups.
+
+InputGroup shares the inline frame for SearchField and Combobox. Icons use an
+8px gap, and trailing actions retain a stable slot. SearchField uses the same
+12px control radius as other fields, with no separate navigator shape. Focus belongs to the input or action,
+while the frame owns the active perimeter stroke. Read-only values can be
+read and copied; disabled actions cannot change a value. Search clear restores
+input focus. Features still own filtering, custom values, and async recovery.
+
+The Forms page in Just Design documents states, usage, and a form-in-dialog
+example. Review it with both themes, narrow widths, and enlarged text before
+introducing another form treatment.
+
+Select and Combobox popups use a 150ms entrance and 120ms exit from the shared
+state/fast duration tokens. Fade opacity with easing-state and move 4px from the
+trigger with easing-settle, reversing the direction above the trigger. The
+designer-requested blur from 4px to zero is a narrow exception to the general
+no-blur-animation rule. Base UI owns transition presence and dismissal; keyboard
+navigation and reduced motion remove the transition, movement, and blur.
+
 ## Compositions
 
 Dialog composes a Base UI modal with a shared title, optional description, body,
@@ -140,6 +219,9 @@ close button and actions. Pending operations set preventClose so Escape and the
 close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
+Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
+the body scrolls while the shared title and close action remain available. This
+changes only size, not modal ownership or dismissal behavior.
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
 the close button so its hit area does not enlarge the text gap. The body owns
@@ -162,6 +244,18 @@ Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
 Escape behavior from Base UI. Overlay layers keep menus and hints above dialogs.
 
+ToastProvider mounts once in the host. ToastNotice belongs to the source that
+owns its state and recovery: unmounting the source removes its notification,
+without reporting user dismissal. Gate notices from hidden Settings sections
+explicitly; portals do not inherit a hidden ancestor. Keep form errors and
+blocked-page recovery inline.
+
+Use a finite timeout for transient feedback. Recovery defaults to no expiry and
+no dismissal unless the source supplies onDismiss; preserve all recovery actions.
+The bounded, scrollable stack keeps older actions available without covering the
+shell header or composer. F6 enters notifications, Tab reaches actions. Modals
+remain above the stack. Content updates do not restart expiry; timeout changes do.
+
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead. NavigationItem
 forwards normal button events, refs and data attributes so unread observation,
@@ -172,7 +266,7 @@ preloading and product shortcuts remain with the caller.
 When composing NavigationItem lists inside dialogs or padded panels, align the
 leading content column with the heading. With icons, this means the icon slot;
 labels form a second consistent column. Give mixed icons and identity fallbacks
-the same slot (24px in the community chooser and page search), retaining each
+the same slot (24px in the page search palette), retaining each
 icon's intended size within it.
 
 The hover and selected backgrounds may extend beyond that content edge. Offset

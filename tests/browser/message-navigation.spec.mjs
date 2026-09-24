@@ -46,7 +46,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   // This navigation fixture deliberately registers a catch-all panel first.
   // Disable it before exercising the actual Profiles provider.
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await page
     .getByRole("switch", { name: "Enable Notes fixture", exact: true })

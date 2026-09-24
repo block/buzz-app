@@ -210,7 +210,7 @@ test("unavailable messages fail honestly and legacy links still open when Links 
     row.getByRole("link", { name: "Alpha", exact: true }).first(),
   ).toBeVisible();
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await page
     .getByRole("switch", { name: "Enable Links", exact: true })

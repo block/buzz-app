@@ -49,7 +49,7 @@ export function useChannelLabels(
   const labelled = useRef(
     new WeakMap<ChannelSummary, { name: string; channel: ChannelSummary }>(),
   );
-  return useMemo(
+  const labelledChannels = useMemo(
     () =>
       channels.map((channel) => {
         if (channel.channelType !== "dm" || !channel.participants)
@@ -69,4 +69,5 @@ export function useChannelLabels(
       }),
     [channels, profiles, resolveName],
   );
+  return { channels: labelledChannels, profiles };
 }

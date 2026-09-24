@@ -14,6 +14,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { keypair, signed } from "../../features/relay/testing";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView } from "../../shared/view-state";
+import type { ChannelList } from "../../features/relay/contracts";
 import { createRelaySession } from "../../features/relay/session";
 import { bindNames } from "../../features/identity-names/service";
 import { assignTodo, readTodos } from "./model";
@@ -272,7 +273,7 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
     user = userEvent.setup();
   const a = "a".repeat(64),
     b = "b".repeat(64);
-  let roster = {
+  let roster: ChannelList = {
     status: "ready" as const,
     channels: [{ id: context.channelId, name: "Team", members: [a, b] }],
   };
@@ -312,9 +313,9 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
     },
   };
   const select = () =>
-    within(
-      screen.getByRole("group", { name: "Assignee for First", exact: true }),
-    ).getByRole("combobox");
+    within(screen.getByRole("group", { name: "Assignee for First" })).getByRole(
+      "combobox",
+    );
   const view = render(<TodosPanel {...f.props} people={users} />);
   await screen.findByRole("checkbox", { name: "First" });
   await user.click(select());
@@ -368,9 +369,7 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
   expect(save()).toBeDisabled();
   act(() => select().focus());
   await user.keyboard("{ArrowDown}");
-  await user.click(
-    await screen.findByRole("option", { name: "Unassigned", exact: true }),
-  );
+  await user.click(await screen.findByRole("option", { name: "Unassigned" }));
   await user.click(save());
   expect(f.canvas.save).toHaveBeenLastCalledWith(
     context.channelId,
@@ -386,13 +385,13 @@ it("shows saved identity when profiles fail, disables missing-roster assignments
   const f = fixture(),
     user = userEvent.setup();
   const a = "a".repeat(64);
-  let roster = {
+  let roster: ChannelList = {
     status: "ready" as const,
     channels: [
       {
         id: context.channelId,
         name: "Team",
-        members: [a, "b".repeat(64)] as string[] | undefined,
+        members: [a, "b".repeat(64)],
       },
     ],
   };
@@ -417,9 +416,9 @@ it("shows saved identity when profiles fail, disables missing-roster assignments
   f.canvas.read.mockResolvedValue({ ...head, content: saved });
   const view = render(<TodosPanel {...f.props} people={users} />);
   const select = () =>
-    within(
-      screen.getByRole("group", { name: "Assignee for First", exact: true }),
-    ).getByRole("combobox");
+    within(screen.getByRole("group", { name: "Assignee for First" })).getByRole(
+      "combobox",
+    );
   await screen.findByRole("checkbox", { name: "First" });
   expect(select()).toHaveTextContent("Saved name");
   await screen.findByText(/Names unavailable/);
@@ -429,7 +428,9 @@ it("shows saved identity when profiles fail, disables missing-roster assignments
   act(() => select().focus());
   await user.keyboard("{ArrowDown}");
   const stale = await screen.findByRole("option", {
-    name: publicKeyLabels([a, "b".repeat(64)]).get("b".repeat(64)),
+    name:
+      publicKeyLabels([a, "b".repeat(64)]).get("b".repeat(64)) ??
+      "missing fixture label",
   });
   roster = {
     ...roster,
@@ -439,7 +440,7 @@ it("shows saved identity when profiles fail, disables missing-roster assignments
   expect(save()).toBeDisabled();
   roster = {
     ...roster,
-    channels: [{ id: context.channelId, name: "Team", members: undefined }],
+    channels: [{ id: context.channelId, name: "Team" }],
   };
   view.rerender(<TodosPanel {...f.props} people={users} />);
   expect(select()).toBeDisabled();

@@ -690,7 +690,7 @@ function ThreadMessages({
           scope={scope}
           channelId={channelId}
           channelName={channelName}
-          label={`Reply in thread to ${resolveName(snapshot.root.authorId, profiles.get(snapshot.root.authorId)?.name ?? formatPublicKey(snapshot.root.authorId) ?? "Unknown author")}`}
+          placeholder={`Reply in thread to ${resolveName(snapshot.root.authorId, profiles.get(snapshot.root.authorId)?.name ?? formatPublicKey(snapshot.root.authorId) ?? "Unknown author")}`}
           threadRootId={snapshot.root.id}
           replyParentId={replyParent}
           disabled={!!replyParent && !selectedParent}

@@ -205,7 +205,7 @@ test("thread buttons show observed unread independently, clear only after readin
         .find((row) => row.content === "Broadcast reply").id,
     });
   const replyComposer = panel.getByRole("textbox", {
-    name: /^Reply in thread to /,
+    name: "Reply to thread",
     exact: true,
   });
   await replyComposer.focus();

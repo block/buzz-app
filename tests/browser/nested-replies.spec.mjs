@@ -28,7 +28,7 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     exact: true,
   });
   const editor = panel.getByRole("textbox", {
-    name: /^Reply in thread to /,
+    name: "Reply to thread",
     exact: true,
   });
   const parent = panel
@@ -488,9 +488,7 @@ test("crowded capped branches own distinct collapse controls", async ({
         )
         .toBe(true);
       const row = panel.locator(`[data-message-id="${id}"]`);
-      await panel
-        .getByRole("textbox", { name: /^Reply in thread to / })
-        .focus();
+      await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
       await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
       await row.scrollIntoViewIfNeeded();
       const restingHeight = (await row.boundingBox()).height;
@@ -549,7 +547,7 @@ test("crowded capped branches own distinct collapse controls", async ({
       await expect(panel.locator(`[data-message-id="${child}"]`)).toBeVisible();
       await expandAll();
     }
-    await panel.getByRole("textbox", { name: /^Reply in thread to / }).focus();
+    await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
     await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
     for (const id of ids) {
       await expect(

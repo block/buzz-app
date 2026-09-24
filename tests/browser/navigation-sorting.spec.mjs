@@ -213,6 +213,74 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   expect(app.report.unexpected).toEqual([]);
 });
 
+// The production portal/action wiring and broker retry boundary are browser
+// contracts; state-machine ordering remains covered by the session test.
+test("offers a dismissible retry when Recent activity cannot refresh", async ({
+  page,
+  app,
+}) => {
+  let attempts = 0;
+  await page.route("**/channel-activity", async (route) => {
+    attempts++;
+    if (attempts === 1) {
+      app.report.sidebarActivityFailures ??= [];
+      app.report.sidebarActivityFailures.push(route.request().url());
+      await route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "activity read failed" }),
+      });
+      return;
+    }
+    await route.fulfill({ response: await route.fetch() });
+  });
+  let releaseSort;
+  const holdSort = new Promise((resolve) => {
+    releaseSort = resolve;
+  });
+  await page.route("**/sidebar-sort", async (route) => {
+    const response = await route.fetch();
+    await holdSort;
+    await route.fulfill({ response });
+  });
+  await open(page, app);
+  const channels = page.locator('[data-sidebar-section="channels"]');
+  await channels
+    .getByRole("button", { name: "More actions for Channels" })
+    .click();
+  await page
+    .getByRole("menu", { name: "More actions for Channels", exact: true })
+    .getByRole("menuitem", { name: "Sort", exact: true })
+    .focus();
+  await page.keyboard.press("ArrowRight");
+  try {
+    await page
+      .getByRole("menu", { name: "Sort", exact: true })
+      .getByRole("menuitemradio", { name: "Recent" })
+      .click();
+
+    const notifications = page.getByRole("region", {
+      name: "App notifications",
+    });
+    await expect(
+      notifications.getByText("Couldn’t refresh recent activity"),
+    ).toBeVisible();
+    await expect(
+      notifications.getByText("Sections sorted by Recent may be out of date."),
+    ).toBeVisible();
+    await expect(
+      notifications.getByRole("button", { name: "Dismiss notification" }),
+    ).toBeVisible();
+    await notifications.getByRole("button", { name: "Retry" }).click();
+    await expect.poll(() => attempts).toBe(2);
+    await expect(
+      notifications.getByText("Couldn’t refresh recent activity"),
+    ).toHaveCount(0);
+  } finally {
+    releaseSort();
+  }
+});
+
 // Cold-start paint is a composition contract: real saved sort, activity response,
 // and independent conversation opening. Timer/order permutations live in RTL.
 test.describe("cold sidebar presentation", () => {

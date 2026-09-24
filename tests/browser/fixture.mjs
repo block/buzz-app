@@ -1435,26 +1435,29 @@ export const test = base.extend({
         observerFailures.splice(match, 1);
         return true;
       };
-      // Preference retry journeys inject specific failed host requests. Match
+      // Sidebar recovery journeys inject specific failed host requests. Match
       // each exact URL once, not every 502 or every console error in the test.
-      const sortFailures = [...(report.sidebarSortFailures ?? [])];
-      const injectedSortFailure = (message, index) => {
+      const sidebarFailures = [
+        ...(report.sidebarSortFailures ?? []),
+        ...(report.sidebarActivityFailures ?? []),
+      ];
+      const injectedSidebarFailure = (message, index) => {
         if (
           !/^Failed to load resource: the server responded with a status of 502/.test(
             message,
           )
         )
           return false;
-        const match = sortFailures.indexOf(consoleLocations.get(index));
+        const match = sidebarFailures.indexOf(consoleLocations.get(index));
         if (match < 0) return false;
-        sortFailures.splice(match, 1);
+        sidebarFailures.splice(match, 1);
         return true;
       };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
-            !injectedSortFailure(message, index) &&
+            !injectedSidebarFailure(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

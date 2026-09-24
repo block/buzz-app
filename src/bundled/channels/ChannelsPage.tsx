@@ -230,6 +230,10 @@ function ChannelWorkspace({
     if (!composingMessage) setPreparingDm(undefined);
   }, [composingMessage]);
   const list = useChannelList(queries.channels);
+  const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
+  useEffect(() => {
+    if (list.activityStatus !== "error") setActivityErrorDismissed(false);
+  }, [list.activityStatus]);
   const workingIds = useSyncExternalStore(
     queries.agentActivity.subscribeWorking,
     queries.agentActivity.workingSnapshot,
@@ -1366,6 +1370,22 @@ function ChannelWorkspace({
               Saved groups and stars aren’t supported by this host yet.
             </p>
           ) : null}
+          {list.activityStatus === "error" && !activityErrorDismissed && (
+            <ToastNotice
+              title="Couldn’t refresh recent activity"
+              description="Sections sorted by Recent may be out of date."
+              tone="warning"
+              onDismiss={() => setActivityErrorDismissed(true)}
+            >
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => queries.channels.refreshList?.()}
+              >
+                Retry
+              </Button>
+            </ToastNotice>
+          )}
         </div>
       </Panel>
       <CreateChannelDialog

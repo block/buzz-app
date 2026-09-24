@@ -74,6 +74,7 @@ function setup() {
     preferences,
     pending,
     activity,
+    wire,
     viewer,
     relay,
     peer,
@@ -116,6 +117,34 @@ it("reads no roster activity for A–Z, deduplicates Recent demand, and projects
     expect(
       h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
     ).toBeUndefined();
+  } finally {
+    h.owner.dispose();
+  }
+});
+it("retries failed Recent activity after an explicit roster refresh", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    await h.preferences.setSort("channels", "recent", []);
+    take(h.pending).reject(new Error("offline"));
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("error");
+
+    h.channels.refreshList?.();
+    h.wire
+      .next()
+      .respond([
+        roster(h.relay, "alpha", [h.viewer.pubkey]),
+        roster(h.relay, "beta", [h.viewer.pubkey]),
+        metadata(h.relay, "alpha", "Alpha"),
+        metadata(h.relay, "beta", "Beta"),
+      ]);
+    await flush();
+    expect(h.activity).toHaveBeenCalledTimes(2);
+    expect(h.channels.list().activityStatus).toBe("loading");
+    take(h.pending).resolve([]);
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("ready");
   } finally {
     h.owner.dispose();
   }

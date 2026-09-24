@@ -80,6 +80,7 @@ export function useMessageEdit(session: RelaySession, restore: () => void) {
     retryable,
     error: error ?? delivery?.error,
     close,
+    clearError: () => setError(undefined),
     start(row: ChannelMessage) {
       setTarget(row);
       setError(undefined);

@@ -1001,7 +1001,7 @@ function Composer({
             </Button>
           </>
         )}
-        {error && session.emoji?.snapshot().status === "error" && (
+        {(error || editing.error) && emojiCatalog.status === "error" && (
           <Button
             type="button"
             disabled={editingDisabled}
@@ -1010,8 +1010,10 @@ function Composer({
                 if (
                   input.current?.isConnected &&
                   session.emoji.snapshot().status === "ready"
-                )
+                ) {
                   setError(undefined);
+                  editing.clearError();
+                }
               });
             }}
           >

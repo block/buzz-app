@@ -187,6 +187,41 @@ function fixture(
   };
 }
 
+it("uses whole-thread totals from window summaries and live additions/deletions without loading replies", async () => {
+  const root = message(other, "c", "root", 10);
+  const summary = (total: number, at: number, author = relay) =>
+    signed(author, {
+      kind: 39005,
+      created_at: at,
+      tags: [
+        ["h", "c"],
+        ["e", root.id],
+        ["d", root.id],
+      ],
+      content: JSON.stringify({
+        reply_count: 1,
+        descendant_count: total,
+        participants: [other.pubkey],
+      }),
+    });
+  const initial = summary(3, 20);
+  const h = fixture([root, initial]);
+  await h.open();
+  const row = () => h.session.channels.window("c").rows[0];
+  expect(row()?.replyCount).toBe(3);
+  const before = row();
+  h.emit([summary(4, 21)]);
+  expect(row()?.replyCount).toBe(4);
+  expect(row()).not.toBe(before);
+  h.emit([summary(2, 22)]);
+  expect(row()?.replyCount).toBe(2);
+  h.emit([initial, summary(99, 23, other)]);
+  expect(row()?.replyCount).toBe(2);
+  h.emit([summary(0, 24)]);
+  expect(row()?.replyCount).toBe(0);
+  expect(h.session.channels.window("c").rows).toHaveLength(1);
+});
+
 it("attributes a slow first send to signing and publish acknowledgement, independently of read-back", async () => {
   const h = fixture();
   await h.open();

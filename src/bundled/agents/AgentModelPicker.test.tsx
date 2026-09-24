@@ -210,7 +210,7 @@ it("shows Goose authentication errors while keeping manual model entry available
   f.host.models = {
     begin: async () => 1,
     run: async () => {
-      throw "Goose needs authentication for this provider. Run `goose configure`, then retry";
+      throw "Goose needs authentication for this provider. Enter its API key in Buzz if it uses one, then retry";
     },
     cancel: async () => {},
   };

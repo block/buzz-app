@@ -412,8 +412,8 @@ export function AgentModelPicker({
           )}
         {goose && (
           <p className="text-body-sm text-secondary">
-            Browse to check this Goose provider’s models. If sign-in is needed,
-            run goose configure and retry.
+            Browse to check this Goose provider’s models using the credentials
+            entered above or already configured in Goose.
           </p>
         )}
       </div>

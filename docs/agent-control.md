@@ -223,9 +223,13 @@ containment on non-Unix platforms.
   after discovery. The picker shows at most ten matches while filtering the full
   list. Saved write-only `GOOSE_PROVIDER` overrides remain native; native uses
   the effective provider before asking Goose. Goose has no separate Refresh
-  action because its catalog lookup can start OAuth. Listing errors prompt the
-  user to check provider setup with `goose configure`; manual model entry remains
-  available. Existing Goose credentials are reused. Executable detection
+  action because its catalog lookup can start OAuth. Known API-key providers
+  show a masked key field beside Provider. Its write-only environment patch is
+  used for both model lookup and agent launch; a blank field uses Goose's
+  existing credentials. These per-agent keys are stored in the app's local
+  `agents.json` settings file and its backup with restricted filesystem
+  permissions, not in Goose's keyring. Listing errors prompt the user to enter credentials or retry;
+  manual model entry remains available. Executable detection
   is not a sign-in or ACP readiness check. Custom command/provider values remain
   editable, including absolute paths. Buzz Agent retains on-demand Databricks
   model browsing. A Goose catalog entry does not establish caller EXECUTE permission

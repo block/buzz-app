@@ -85,12 +85,9 @@ pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, Str
 fn parse_response(value: &Value, provider_id: &str) -> Result<Vec<String>, String> {
     if let Some(error) = value.get("error") {
         if error.get("code").and_then(Value::as_i64) == Some(-32000) {
-            return Err(
-                "Goose needs authentication for this provider. Run `goose configure`, then retry"
-                    .into(),
-            );
+            return Err("Goose needs authentication for this provider. Enter its API key in Buzz if it uses one, then retry".into());
         }
-        return Err("Goose could not list models for this provider. Check its setup with `goose configure` or try again when its API is available".into());
+        return Err("Goose could not list models for this provider. Check its credentials or try again when its API is available".into());
     }
     if value
         .get("result")
@@ -143,7 +140,7 @@ mod tests {
         assert!(
             parse_response(&json!({"error":{"message":"secret"}}), "anthropic")
                 .unwrap_err()
-                .contains("goose configure")
+                .contains("Check its credentials")
         );
         let auth_error = parse_response(
             &json!({"error":{"code":-32000,"data":"secret"}}),
@@ -167,14 +164,16 @@ mod tests {
         let command = dir.path().join("goose");
         std::fs::write(
             &command,
-            "#!/bin/sh\nread request\ncase \"$request\" in\n  *\\\"providerId\\\":\\\"openai\\\"*) printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"providerId\":\"openai\",\"models\":[\"gpt-6-sol\"]}}' ;;\nesac\n",
+            "#!/bin/sh\nread request\n[ \"$OPENAI_API_KEY\" = 'test-key' ] || exit 1\ncase \"$request\" in\n  *\\\"providerId\\\":\\\"openai\\\"*) printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"providerId\":\"openai\",\"models\":[\"gpt-6-sol\"]}}' ;;\nesac\n",
         )
         .unwrap();
         std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
         let result = fetch(GooseModelContext {
             command,
             provider_id: "openai".into(),
-            environment: Default::default(),
+            environment: [("OPENAI_API_KEY".into(), "test-key".into())]
+                .into_iter()
+                .collect(),
             model_overridden: false,
         })
         .await

@@ -3,7 +3,14 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { useState } from "react";
 import type { ControlSnapshot } from "../../features/agents/control";
-import { isGoose, type AgentDraft } from "./agent-edit";
+import { gooseApiKey, isGoose, type AgentDraft } from "./agent-edit";
+
+function discardPendingGooseKey(draft: AgentDraft) {
+  const key = isGoose(draft.command) && gooseApiKey(draft.provider)?.env;
+  const environment = { ...draft.environment };
+  if (key && typeof environment[key] === "string") delete environment[key];
+  return environment;
+}
 
 /** Choices come from the injected native snapshot, never a plugin runtime catalog. */
 export function AgentHarnessEditor({
@@ -51,6 +58,9 @@ export function AgentHarnessEditor({
             option?.label === "Goose" || option?.label === "Pi";
           onChange({
             command,
+            ...(isGoose(draft.command) && !isGoose(command)
+              ? { environment: discardPendingGooseKey(draft) }
+              : {}),
             ...(pickedOption && (enteringExternal || external)
               ? {
                   args: JSON.stringify(option?.defaultArgs ?? []),
@@ -107,6 +117,9 @@ export function AgentHarnessEditor({
           onChange({
             provider,
             ...(external ? { model: "" } : {}),
+            ...(isGoose(draft.command) && provider !== draft.provider
+              ? { environment: discardPendingGooseKey(draft) }
+              : {}),
           })
         }
       />

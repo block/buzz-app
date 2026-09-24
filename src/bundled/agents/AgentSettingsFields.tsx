@@ -7,7 +7,7 @@ import type {
   AgentControl,
   AgentControlState,
 } from "../../features/agents/control";
-import { isGoose, type AgentDraft } from "./agent-edit";
+import { gooseApiKey, isGoose, type AgentDraft } from "./agent-edit";
 import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
 import { AgentModelPicker } from "./AgentModelPicker";
@@ -52,6 +52,8 @@ export function AgentSettingsFields({
   const databricks = ["databricks_v2", "databricks-v2", "databricks"].includes(
     buzzProvider ?? "",
   );
+  const apiKey = goose ? gooseApiKey(draft.provider) : undefined;
+  const savedKey = !!apiKey && environmentKeys.includes(apiKey.env);
   return (
     <div className="min-w-0">
       <div className="min-w-0 space-y-section-gap">
@@ -86,6 +88,39 @@ export function AgentSettingsFields({
             piProviders={piProviders}
             onChange={onChange}
           />
+          {apiKey && (
+            <div className="space-y-2">
+              <Field label={`${apiKey.label} API key`}>
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  disabled={disabled}
+                  value={draft.environment[apiKey.env] ?? ""}
+                  placeholder={
+                    draft.environment[apiKey.env] === null
+                      ? "Will remove on save"
+                      : savedKey
+                        ? "Saved key unchanged"
+                        : "Paste API key or use existing Goose credentials"
+                  }
+                  onChange={(event) => {
+                    const environment = { ...draft.environment };
+                    if (event.target.value)
+                      environment[apiKey.env] = event.target.value;
+                    else delete environment[apiKey.env];
+                    onChange({ environment });
+                  }}
+                />
+              </Field>
+              <p className="text-body-sm text-secondary">
+                {apiKey.env} is used for this agent and model lookup. Leave
+                blank to keep a saved key, if present, or use Goose credentials.
+                Saved keys are stored in this device’s local agent settings
+                files.
+              </p>
+            </div>
+          )}
           <AgentModelPicker
             onPiProviders={setPiProviders}
             disabled={disabled}

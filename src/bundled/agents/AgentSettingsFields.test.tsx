@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { AgentSettingsFields } from "./AgentSettingsFields";
-import { agentDraft, type AgentDraft } from "./agent-edit";
+import { agentDraft, agentEdit, type AgentDraft } from "./agent-edit";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 
@@ -128,6 +130,112 @@ it("only hints the compiled model when the current provider and overrides can us
       );
     }
     expect(onChange).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+function setup(savedKey = false) {
+  const fixture = controlFixture();
+  fixture.data.harnessOptions = [
+    {
+      command: "/usr/local/bin/goose",
+      label: "Goose",
+      defaultArgs: ["acp"],
+      providers: [
+        { value: "openai", label: "OpenAI" },
+        { value: "anthropic", label: "Anthropic" },
+        { value: "ollama", label: "Ollama" },
+      ],
+    },
+  ];
+  const run = vi.fn(async () => ({
+    host: "",
+    models: [{ id: "gpt-4o", name: "gpt-4o" }],
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  fixture.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(fixture.host);
+  let draft!: AgentDraft;
+  function Editor() {
+    const [value, setValue] = useState(() => ({
+      ...agentDraft(fixture.agent),
+      command: "/usr/local/bin/goose",
+      args: '["acp"]',
+      provider: "openai",
+      model: "",
+    }));
+    draft = value;
+    return (
+      <AgentSettingsFields
+        draft={value}
+        control={control}
+        state={{
+          status: "ready",
+          data: fixture.data,
+          busy: false,
+          error: null,
+        }}
+        disabled={false}
+        environmentKeys={savedKey ? ["OPENAI_API_KEY"] : []}
+        onChange={(patch) => setValue((current) => ({ ...current, ...patch }))}
+      />
+    );
+  }
+  const view = render(<Editor />);
+  return { draft: () => draft, run, view, control };
+}
+
+it("uses a masked OpenAI key for Goose model lookup and discards unsaved keys on provider change", async () => {
+  const { draft, run, view, control } = setup();
+  const user = userEvent.setup();
+  try {
+    const key = screen.getByLabelText("OpenAI API key");
+    expect(key).toHaveAttribute("type", "password");
+    await user.type(key, "test-openai-key");
+    expect(agentEdit(draft(), true).environment).toEqual({
+      OPENAI_API_KEY: "test-openai-key",
+    });
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        edit: expect.objectContaining({
+          environment: { OPENAI_API_KEY: "test-openai-key" },
+        }),
+      }),
+    );
+    await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
+    await user.click(await screen.findByRole("option", { name: "Anthropic" }));
+    expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute(
+      "type",
+      "password",
+    );
+    expect(draft().environment).toEqual({});
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("preserves a saved key when blank and replaces it only when entered", async () => {
+  const { draft, view, control } = setup(true);
+  const user = userEvent.setup();
+  try {
+    expect(screen.getByLabelText("OpenAI API key")).toHaveAttribute(
+      "placeholder",
+      "Saved key unchanged",
+    );
+    expect(agentEdit(draft()).environment).toEqual({});
+    await user.type(screen.getByLabelText("OpenAI API key"), "replacement-key");
+    expect(agentEdit(draft()).environment).toEqual({
+      OPENAI_API_KEY: "replacement-key",
+    });
+    await user.clear(screen.getByLabelText("OpenAI API key"));
+    expect(agentEdit(draft()).environment).toEqual({});
   } finally {
     view.unmount();
     control.dispose();

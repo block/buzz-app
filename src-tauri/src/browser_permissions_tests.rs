@@ -91,6 +91,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "terminal_resize",
         "terminal_close",
         "terminal_close_owner",
+        "builderlab_session_status",
         "browser_attach",
         "browser_set_bounds",
         "browser_detach",

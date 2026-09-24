@@ -60,6 +60,7 @@ fn main() {
             "terminal_resize",
             "terminal_close",
             "terminal_close_owner",
+            "builderlab_session_status",
             "browser_attach",
             "browser_set_bounds",
             "browser_detach",

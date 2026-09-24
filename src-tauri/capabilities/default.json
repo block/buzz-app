@@ -34,6 +34,7 @@
     "allow-terminal-resize",
     "allow-terminal-close",
     "allow-terminal-close-owner",
+    "allow-builderlab-session-status",
     "allow-browser-attach",
     "allow-browser-set-bounds",
     "allow-browser-detach",

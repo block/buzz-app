@@ -18,6 +18,7 @@ export function ManagedAgentActions({
   destination = "",
   owner = "",
   showCommunity = true,
+  onUseHere,
 }: {
   agent: AgentView;
   state: AgentControlState;
@@ -26,6 +27,7 @@ export function ManagedAgentActions({
   destination?: string;
   owner?: string;
   showCommunity?: boolean;
+  onUseHere?: ((pubkey: string, action: "use" | "clone") => void) | undefined;
 }) {
   const [settingUp, setSettingUp] = useState(false);
   const details = useRef<HTMLDivElement>(null);
@@ -61,7 +63,14 @@ export function ManagedAgentActions({
         </p>
       )}
       {agent.configured === false &&
-        (state.data?.localInventoryActions && control.configureHere ? (
+        (onUseHere ? (
+          <Button
+            disabled={state.busy || state.status !== "ready"}
+            onClick={() => onUseHere(agent.pubkey, "use")}
+          >
+            Use here
+          </Button>
+        ) : state.data?.localInventoryActions && control.configureHere ? (
           <LocalInventoryAction
             control={control}
             agent={agent}

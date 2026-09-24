@@ -242,6 +242,7 @@ it("retains acknowledgement through a late echo and restores only literal true",
   const event = signed(viewer, operation.event);
   await h.outbox.acknowledge(id);
   h.observe([event]);
+  await vi.waitFor(() => expect(store.load()[0]?.delivery).toBe("seen"));
   expect(h.local.snapshot()[0]?.acknowledged).toBe(true);
   h.dispose();
   const restored = setup(store);

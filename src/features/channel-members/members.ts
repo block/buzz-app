@@ -166,7 +166,15 @@ export async function addChannelMember(
       recovery,
     );
   if (pending?.delivery === "failed" || pending?.delivery === "unknown")
-    outbox.retry(id);
+    outbox.retry(
+      id,
+      pending.guarded
+        ? () => {
+            check();
+            return true;
+          }
+        : undefined,
+    );
   intent.id = id;
   intent.dismissed = false;
   intent.confirmed = false;

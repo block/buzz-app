@@ -94,6 +94,9 @@ function setup(type = "stream") {
     },
     dispose: () => owner.dispose(),
     records: () => records,
+    guard: () => {
+      records = records.map((item) => ({ ...item, guarded: true }));
+    },
     legacy: () => {
       records = records.map(
         ({ recovery: _recovery, acknowledged: _acknowledged, ...item }) => item,
@@ -565,4 +568,22 @@ it("never replaces a legacy invitation after recovery adoption fails to save", a
   t.confirmPerson();
   await t.managedAdd();
   expect(t.publish).toHaveBeenCalledOnce();
+});
+
+it("renews Members permission when recovering a guarded invitation after restart", async () => {
+  const t = setup();
+  await t.ready();
+  t.setFail("Receipt lost", true);
+  await expect(t.managedAdd()).rejects.toThrow();
+  await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("unknown"));
+  const first = t.records()[0]?.event.id;
+  t.guard();
+  t.restart();
+  await t.ready();
+  t.setFail("");
+  await t.managedAdd();
+  expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
+    first,
+    first,
+  ]);
 });

@@ -382,18 +382,17 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       "visibility",
       "hidden",
     );
-    await expect(search).toHaveCSS("height", "28px");
-    await expect(search).toHaveCSS("margin-left", "2px");
-    await expect(search).toHaveCSS("margin-right", "2px");
-    await expect(search).toHaveCSS("border-top-width", "0px");
-    await expect(search).toHaveCSS("border-radius", "10px");
+    await expect(search).toHaveCSS("height", "40px");
+    await expect(search).toHaveCSS("margin-left", "0px");
+    await expect(search).toHaveCSS("margin-right", "0px");
+    await expect(search).toHaveCSS("border-top-width", "1px");
+    await expect(search).toHaveCSS("border-radius", "12px");
     await expect(search).toHaveCSS("background-color", "rgb(240, 240, 240)");
     await expect(search).toHaveCSS("color", "rgb(0, 0, 0)");
     await expect(search).toHaveCSS("outline-style", "none");
-    await expect(search).toHaveCSS(
-      "box-shadow",
-      "rgb(240, 240, 240) 0px 0px 0px 1px",
-    );
+    await expect(search).toHaveCSS("box-shadow", "none");
+    await expect(search).toHaveCSS("font-size", "14px");
+    await expect(search).toHaveCSS("border-top-color", "rgb(128, 128, 128)");
     const surface = page.locator("em-emoji-picker #root");
     const region = page.getByRole("region", { name: "Emoji picker" });
     await expect(surface).toHaveAttribute("data-theme", "light");
@@ -414,11 +413,20 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         .querySelector("#root")
         .getBoundingClientRect();
       return {
+        top: searchBounds.top - rootBounds.top,
         left: searchBounds.left - rootBounds.left,
         right: rootBounds.right - searchBounds.right,
       };
     });
     expect(searchGutters.left).toBeCloseTo(searchGutters.right, 1);
+    expect(searchGutters.top).toBe(8);
+    expect(searchGutters.left).toBe(8);
+    const searchBox = await search.boundingBox();
+    const searchIconBox = await searchIcon.boundingBox();
+    expect(searchIconBox.y + searchIconBox.height / 2).toBeCloseTo(
+      searchBox.y + searchBox.height / 2,
+      1,
+    );
     expect(initialSurface.height).toBeCloseTo(
       Math.min(348, page.viewportSize().height * 0.4),
       1,
@@ -447,18 +455,20 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBe(true);
     await search.fill("party");
     const emojiClear = page.locator("em-emoji-picker .search .delete");
-    await expect(emojiClear).toHaveCSS("right", "10px");
+    await expect(emojiClear).toHaveCSS("right", "4px");
+    await expect(emojiClear).toHaveCSS("width", "32px");
+    await expect(emojiClear).toHaveCSS("height", "32px");
     await expect(emojiClear.locator("svg")).toHaveAttribute(
       "viewBox",
       "0 0 256 256",
     );
     await expect(emojiClear.locator("svg")).toHaveCSS("width", "16px");
     await expect(emojiClear.locator("svg")).toHaveCSS("height", "16px");
-    await expect(emojiClear).toHaveCSS("color", "rgb(82, 82, 82)");
+    await expect(emojiClear).toHaveCSS("color", "rgb(0, 0, 0)");
     await expectPhosphor(emojiClear.locator("svg"), "x-circle");
     await expect(emojiClear.locator("svg path")).toHaveCSS(
       "fill",
-      "rgb(82, 82, 82)",
+      "rgb(0, 0, 0)",
     );
     // Mart recreates the clear control when search empties, and on picker remount.
     await search.fill("");
@@ -496,12 +506,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         "background-color",
         mode === "dark" ? "rgb(16, 16, 16)" : "rgb(240, 240, 240)",
       );
-      await expect(search).toHaveCSS(
-        "box-shadow",
-        mode === "dark"
-          ? "rgb(16, 16, 16) 0px 0px 0px 1px"
-          : "rgb(240, 240, 240) 0px 0px 0px 1px",
-      );
+      await expect(search).toHaveCSS("box-shadow", "none");
       await expect(search).toHaveCSS("font-family", /Inter Variable/);
 
       await expect(search).toHaveValue("party");

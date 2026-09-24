@@ -194,9 +194,6 @@
     background: var(--affordance-accent-hover);
   }
 
-  .buzz-button[aria-invalid="true"] {
-    box-shadow: inset 0 0 0 1px var(--border-danger);
-  }
   /* Disabled keeps variant geometry; loading keeps its available colors. */
   .buzz-button[data-disabled]:not([data-loading]) {
     color: var(--text-unavailable);
@@ -616,46 +613,6 @@
     margin-top: var(--space-1);
   }
 
-  .search-field {
-    display: flex;
-    width: 100%;
-    min-height: var(--size-control);
-    align-items: center;
-    gap: var(--space-row-gap);
-    border-radius: var(--radius-control);
-    border: 1px solid var(--border-prominent);
-    padding: 0 var(--space-control-inset);
-    background: var(--surface-panel);
-    color: var(--text-metadata);
-  }
-
-  .search-field[data-variant="navigator"] {
-    border-radius: var(--radius-panel);
-  }
-
-  .search-field input {
-    min-width: 0;
-    flex: 1;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: var(--text-standard);
-    font: inherit;
-  }
-
-  html[data-keyboard-navigation] .search-field input:focus-visible {
-    outline: 2px solid var(--text-standard);
-    outline-offset: 2px;
-  }
-
-  .search-field input::placeholder {
-    color: var(--text-metadata);
-  }
-
-  .search-field input::-webkit-search-cancel-button {
-    display: none;
-  }
-
   .navigation-section {
     display: flex;
     flex-direction: column;
@@ -870,6 +827,41 @@
     padding: var(--space-2);
     color: var(--text-standard);
     z-index: var(--layer-popover);
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+    transform-origin: var(--transform-origin);
+    /* Product-directed exception: a 4px unblur accompanies the short entry. */
+    transition:
+      opacity var(--duration-state) var(--easing-state),
+      transform var(--duration-state) var(--easing-settle),
+      filter var(--duration-state) var(--easing-state);
+  }
+  .buzz-select-popup:where([data-starting-style], [data-ending-style]) {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--space-1)));
+    filter: blur(var(--space-1));
+  }
+  .buzz-select-popup:where([data-side="top"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateY(var(--space-1));
+  }
+  .buzz-select-popup:where([data-ending-style]) {
+    transition-duration: var(--duration-fast);
+  }
+  html[data-keyboard-navigation] .buzz-select-popup {
+    transition: none;
+    transform: none;
+    filter: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-select-popup {
+      transition: none;
+      transform: none;
+      filter: none;
+    }
   }
   .buzz-select-group-label {
     padding: var(--space-2) var(--space-3) var(--space-1);

@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { COMPONENTS } from "../../../../src/shared/design-system/ui/registry";
 import { BaseUiBackingLine } from "./BaseUiBackingLine";
 import { COMPONENT_SPECIMENS } from "./componentSpecimens";
@@ -17,6 +18,20 @@ export function ComponentDetailPage({ slug }: { slug: string }) {
           <BaseUiBackingLine slug={component.slug} />
         </p>
       </header>
+      {[
+        "input",
+        "textarea",
+        "search-field",
+        "select",
+        "combobox",
+        "field",
+      ].includes(component.slug) && (
+        <p className="mb-6 text-body-sm">
+          <Link to="/design/forms">
+            Forms: composition, states, and implementation guidance →
+          </Link>
+        </p>
+      )}
       {Specimen ? <Specimen /> : null}
     </>
   );

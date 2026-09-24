@@ -108,6 +108,23 @@ Buzz is a place where people build together and bring their agents into the room
 - **A redundant fill on glass is not free — it compounds.** Two identical translucent layers are not one layer: `glass-2` over `glass-2` composites to **0.77 alpha**, a value no token holds. Four panels each set the same fill as the container they exactly covered, so panels meant to be the most translucent surface in the system read as nearly solid. Before giving a region a glass fill, check whether its parent already is glass; if the region covers it, it needs no fill of its own.
 - **A component that can sit on either the gradient or a panel says so, with a variant.** `Tabs` takes `chrome` (a glass pill for the app backdrop) or `panel` (an underline for a plain surface); `IconButton` has the same axis as its `chrome` variant. The failure that earned it: the chrome container is `glass-2`, which over a white panel composites to pure white, and its selected pill is `neutral-1` — also pure white. Container and selection became one colour with only a shadow between them, and no guard could see it because the component had no way to state which background it expected. **The fix was never to retint `--bg-chrome-selected`** — that moves the collision rather than removing it. **One component with a variant, not two components:** behaviour, keyboard model, accessibility, props, and the Base UI parts underneath are identical, so a sibling component would duplicate all of it to change how selection is drawn, and the two would drift exactly as the four hand-assembled chrome surfaces did. When adding a component that could appear in both places, give it the axis and put both on its specimen page — the chrome-only specimen is why this defect survived until it appeared on a real screen.
 
+## Temporary focus appearance
+
+Focus outlines are currently hidden globally at the designer's request while
+forms are being polished. The centralized override in styles/globals.css takes
+precedence over the keyboard-ring recipes documented below. Keep focusability,
+Tab order, input modality, selection, and focus restoration intact. Do not add
+local replacement rings or disable keyboard interaction. Shared text fields now use
+a border flush with the field perimeter: surface-inset fill and a 1px
+border-prominent stroke fading over 150ms ease for pointer interaction. The
+field-scoped --border variable selects transparent, active, or error color for
+the reserved 1px border, so state changes do not shift the layout. Keyboard
+focus and reduced motion change immediately. Composite fields own one stroke
+around the input and actions; error strokes retain priority. Placeholders use
+text-metadata, one step quieter than supporting text, in both themes. This supersedes the older keyboard-only
+and no-container-ring recipes for these fields. Existing component
+recipes remain so this temporary visual decision can be reversed in one place.
+
 ## Controls
 
 Button and IconButton share prominent, subtle, ghost, inverted, destructive,
@@ -151,6 +168,49 @@ owns the label, input and integrated browse caret; Popup and Item own the shared
 menu presentation. Use its loading state while discovering options, and keep
 retry/cancel actions with the feature. Do not style a native select as an Input
 or attach a separate round button to mimic a combobox.
+
+### Form composition
+
+Select and Combobox chevrons rotate 180 degrees to reflect the trigger's
+aria-expanded state. Use duration-state (150ms) with easing-settle for a
+reversible transform transition. Keyboard navigation and reduced motion switch
+the orientation immediately. Loading indicators keep their separate behavior.
+
+Fields share a 40px minimum size at the default scale, the control radius,
+text-body (now 14px / 20px across Buzz), and the 16px control inset. Derive vertical padding from the control
+size, text line height, and boundary; do not force a fixed height that clips
+larger text or wrapped Select values. Textarea uses the control inset on all four
+sides (16px at the default scale), with manual vertical resizing and a code variant.
+In Chromium and WebKit, the native resize grip uses text-metadata and sits 4px
+(space-1) inside the corner. Keep it visible at rest. Preserve the native resize hit target and
+leave the browser grip unchanged where custom resizer styling is unsupported.
+
+Use Field once per input/textarea, with an 8px internal gap. Select's field
+variant, SearchField, and Combobox.Control already own their label and supporting
+text; do not add a second Field around them. Use description/error for connected
+help and validation. An error replaces the secondary description until it clears;
+keep the accessible description synchronized with the visible message. Validation
+strokes belong to the outer field, never its auxiliary buttons. Keep feature-owned asynchronous status connected through
+aria-describedby. Forms own 16px between adjacent fields and the 32px section
+gap between named groups.
+
+InputGroup shares the inline frame for SearchField and Combobox. Icons use an
+8px gap, and trailing actions retain a stable slot. SearchField uses the same
+12px control radius as other fields, with no separate navigator shape. Focus belongs to the input or action,
+while the frame owns the active perimeter stroke. Read-only values can be
+read and copied; disabled actions cannot change a value. Search clear restores
+input focus. Features still own filtering, custom values, and async recovery.
+
+The Forms page in Just Design documents states, usage, and a form-in-dialog
+example. Review it with both themes, narrow widths, and enlarged text before
+introducing another form treatment.
+
+Select and Combobox popups use a 150ms entrance and 120ms exit from the shared
+state/fast duration tokens. Fade opacity with easing-state and move 4px from the
+trigger with easing-settle, reversing the direction above the trigger. The
+designer-requested blur from 4px to zero is a narrow exception to the general
+no-blur-animation rule. Base UI owns transition presence and dismissal; keyboard
+navigation and reduced motion remove the transition, movement, and blur.
 
 ## Compositions
 

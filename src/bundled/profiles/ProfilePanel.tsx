@@ -1,4 +1,5 @@
 import { ProfileAgentActions } from "./ProfileAgentActions";
+import { ProfileMemories } from "./ProfileMemories";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
@@ -98,7 +99,7 @@ function ProfileDetails({
   );
   const [attempt, retry] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
-  const [tab, setTab] = useState<"info" | "channels">("info");
+  const [tab, setTab] = useState<"info" | "channels" | "memories">("info");
   const region = useRef<HTMLElement>(null);
   useEffect(() => {
     region.current?.focus();
@@ -150,7 +151,9 @@ function ProfileDetails({
         <div className={picture ? styles.portrait : undefined}>
           <Avatar
             src={picture}
-            alt={`${name} avatar`}
+            alt={
+              tab === "info" && presence !== "unknown" ? "" : `${name} avatar`
+            }
             fallback={name}
             size={picture ? "fill" : "large"}
             shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
@@ -165,6 +168,7 @@ function ProfileDetails({
         items={[
           { value: "info", label: "Info" },
           { value: "channels", label: "Channels" },
+          { value: "memories", label: "Memories" },
         ]}
         label="Profile sections"
         variant="panel"
@@ -246,6 +250,8 @@ function ProfileDetails({
                     </>
                   ))}
               </>
+            ) : selected === "memories" ? (
+              <ProfileMemories session={session} pubkey={pubkey} />
             ) : (
               <ProfileChannels
                 session={session}

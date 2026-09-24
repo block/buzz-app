@@ -177,7 +177,10 @@ independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
-`variant="field"` fits labelled forms. Pass `disabled` explicitly when the choice
+`variant="field"` fits labelled forms. The proposed `variant="compact"` fits
+trailing row choices: a small ghost trigger with a visually hidden accessible
+label, bounded single-line value, and full choice text in the popup and value hint.
+The caller owns its column width. Pass `disabled` explicitly when the choice
 is unavailable. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
@@ -495,7 +498,7 @@ it is the rule a generated theme is measured against.
 - **Contrast comes from the paired token, not from judgement.** Where a background is not neutral, its text is named for it.
 - **Keyboard, pointer, and shortcut paths must not diverge.** When adding an input handler, enumerate the ways a person can reach it and check the ones that are not the mouse.
 - **Focus rings are for keyboard navigation, not pointer navigation.** Gate every authored focus treatment with `html[data-keyboard-navigation]` and `:focus-visible`; the app-root input-modality owner supplies that attribute. Mouse, pen, and touch focus stays quiet, including programmatic focus during a drag. Keyboard focus remains clearly visible on the control itself.
-- **Colour is never the only carrier of meaning.** Pair it with text, shape, or position.
+- **Colour is never the only carrier of meaning by default.** Pair it with text, shape, or position. The solid avatar status badges in [Identity shapes](#identity-shapes) are an intentional product exception; preserve their solid fills and expose known status through the owning accessible label or description.
 
 ## Responsiveness
 

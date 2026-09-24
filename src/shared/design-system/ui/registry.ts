@@ -552,9 +552,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "select",
     name: "Select",
-    purpose: "A labelled choice with inline and full-width form layouts.",
+    purpose:
+      "A labelled choice with inline, compact row and full-width form layouts.",
     behavior: "Base UI owns focus, keyboard selection, grouping, and dismissal",
-    variants: ["inline", "field", "disabled"],
+    variants: ["inline", "compact", "field", "disabled"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Design system",

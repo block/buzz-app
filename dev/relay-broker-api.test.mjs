@@ -2,11 +2,17 @@ import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
 import { createServer } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { ReadableStream } from "node:stream/web";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
-import { finalizeEvent, getPublicKey, verifyEvent } from "nostr-tools";
+import {
+  finalizeEvent,
+  getPublicKey,
+  verifyEvent,
+  nip44,
+  generateSecretKey,
+} from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
@@ -1380,6 +1386,83 @@ test.each([
     });
     expect(response.status).toBe(502);
     expect(await response.json()).not.toHaveProperty("channelId");
+  } finally {
+    await h.close();
+  }
+});
+
+test("memory reads use captured relay and owner, not submitted identity/filter authority, through HTTP host and transport", async () => {
+  const owner = new Uint8Array(32);
+  owner[31] = 7;
+  const viewer = getPublicKey(owner),
+    agent = generateSecretKey(),
+    author = getPublicKey(agent);
+  const key = nip44.v2.utils.getConversationKey(agent, viewer);
+  const memory = finalizeEvent(
+    {
+      kind: 30174,
+      created_at: 1,
+      tags: [
+        ["p", viewer],
+        [
+          "d",
+          createHmac("sha256", key)
+            .update("agent-memory/v1/d-tag\0mem/test")
+            .digest("hex"),
+        ],
+      ],
+      content: nip44.v2.encrypt(
+        JSON.stringify({ slug: "mem/test", value: "private" }),
+        key,
+      ),
+    },
+    agent,
+  );
+  let forbidden = false;
+  const h = await harness((call) => {
+    expect(call.url).toBe(`${fixtureRelayUrl}/query`);
+    expect(call.body).toEqual([
+      { kinds: [30174], authors: [author], "#p": [viewer], limit: 256 },
+    ]);
+    expect(call.auth.pubkey).toBe(viewer);
+    return forbidden
+      ? new Response("denied", { status: 403 })
+      : Response.json([memory]);
+  });
+  try {
+    const transport = await connectBrokerTransport(
+      h.base,
+      undefined,
+      fixtureRelayUrl,
+    );
+    expect(transport.readAgentMemories).toBeDefined();
+    const listing = await transport.readAgentMemories(
+      author,
+      new AbortController().signal,
+    );
+    expect(listing).toEqual({
+      entries: [
+        { slug: "mem/test", body: "private", eventId: memory.id, createdAt: 1 },
+      ],
+      partial: false,
+    });
+    const scoped = `${encodeURIComponent(fixtureRelayUrl)}/agent-memories`;
+    for (const body of [
+      { agent: viewer },
+      { agent: author, owner: viewer },
+      { agent: author, kinds: [9] },
+    ]) {
+      expect((await h.post(scoped, body)).status).toBe(400);
+    }
+    expect((await h.post("agent-memories", { agent: author })).status).toBe(
+      400,
+    );
+    expect(h.calls).toHaveLength(1);
+    forbidden = true;
+    await expect(
+      transport.readAgentMemories(author, new AbortController().signal),
+    ).rejects.toMatchObject({ name: "MemoryDenied" });
+    expect(h.calls).toHaveLength(2);
   } finally {
     await h.close();
   }

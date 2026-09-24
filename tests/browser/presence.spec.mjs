@@ -68,9 +68,13 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
     await expect(
       profile.getByRole("img", { name: "Presence: Active" }),
     ).toBeVisible();
+    await expect(profile.locator(".buzz-avatar-status")).toHaveAttribute(
+      "data-status",
+      "online",
+    );
     await expect(
       profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     // Startup may skip busy setup. Keep real time: advancing only browser time
     // would expire its SSE heartbeat without advancing the broker's keepalive.
     await expect
@@ -254,9 +258,13 @@ test.describe("human message bylines show known presence", () => {
         snapshot.filter.authors.includes(root.pubkey),
       ),
     ).toBe(true);
+    await expect(profile.locator(".buzz-avatar-status")).toHaveAttribute(
+      "data-status",
+      "online",
+    );
     await expect(
       profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     expect(
       app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
     ).toBe(false);

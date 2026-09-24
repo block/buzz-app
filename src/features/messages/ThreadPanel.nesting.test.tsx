@@ -118,6 +118,12 @@ function setup(messageId = "root") {
     />,
   );
   return {
+    setRoot(root: ChannelMessage | undefined) {
+      act(() => {
+        snapshot = { ...snapshot, root };
+        for (const fn of listeners) fn();
+      });
+    },
     update(replies: ChannelMessage[]) {
       act(() => {
         snapshot = { ...snapshot, replies };
@@ -277,4 +283,23 @@ it("keeps same-author continuation layout through pending, failed, and accepted 
       "continuation",
     );
   }
+});
+
+it("keeps replies available while a collapsed root is missing and restores its collapse preference", () => {
+  const h = setup();
+  const toggle = screen.getAllByRole("button", {
+    name: "Hide thread replies",
+  })[0];
+  if (!toggle) throw new Error("Missing thread collapse control");
+  fireEvent.click(toggle);
+  expect(screen.queryByText("parent")).not.toBeInTheDocument();
+  h.setRoot(undefined);
+  expect(screen.getByText("Original message unavailable.")).toBeVisible();
+  expect(screen.getByText("parent")).toBeVisible();
+  h.setRoot(row("root"));
+  expect(screen.queryByText("parent")).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: "View thread replies: 3" }),
+  );
+  expect(screen.getByText("parent")).toBeVisible();
 });

@@ -275,13 +275,17 @@ html[data-keyboard-navigation]
   gap: var(--space-1);
   margin-left: var(--space-panel-gap);
 }
+/* Settings replaces the primary surface without collapsing its retained layout. */
+.panelStack > :not(.companion) {
+  grid-area: 1 / 1;
+}
 .retainedPanel {
   display: grid;
   min-height: 0;
   min-width: 0;
 }
-.retainedPanel[hidden] {
-  display: none;
+.retainedPanel[inert] {
+  visibility: hidden;
 }
 .companion {
   display: grid;

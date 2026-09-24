@@ -683,6 +683,7 @@ readingTest(
     await link(page, app, "https://github.com/block/buzz/pull/6");
     await button(page, "Bestie").click();
     for (const [width, height] of [
+      [1440, 950],
       [800, 600],
       [480, 400],
       [390, 844],
@@ -696,6 +697,23 @@ readingTest(
       near(bottom.y - top.y - top.height, 4);
       await expect(button(page, "Close channel panel")).toBeInViewport();
       await expect(button(page, "Close Bestie panel")).toBeInViewport();
+      await page
+        .getByRole("button", { name: "Channel settings", exact: true })
+        .evaluate((element) => element.click());
+      const settings = page.getByRole("complementary", {
+        name: "Channel settings",
+        exact: true,
+      });
+      await expect(settings).toBeVisible();
+      const covered = await box(settings);
+      const retainedCompanion = await box(
+        page.getByRole("complementary", { name: "Bestie", exact: true }),
+      );
+      near(covered.height, top.height);
+      near(retainedCompanion.height, bottom.height);
+      near(retainedCompanion.y, bottom.y);
+      await button(page, "Close channel settings").click();
+      await expect(button(page, "Close channel panel")).toBeInViewport();
     }
   },
 );

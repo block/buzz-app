@@ -583,9 +583,9 @@ function ThreadMessages({
         }}
         tabIndex={0}
       >
-        {snapshot.root ? (
-          <ReplyBranch
-            message={
+        <ReplyBranch
+          message={
+            snapshot.root ? (
               <>
                 <MessageRow
                   extensions={extensions}
@@ -626,42 +626,39 @@ function ThreadMessages({
                   </span>
                 )}
               </>
-            }
-            layout="thread"
-            depth={-1}
-            hideLabel="Hide thread replies"
-            collapsible={snapshot.replies.length > 0}
-            label={`View thread replies: ${snapshot.replies.length}`}
-            summary={
-              <ReplySummary
-                count={snapshot.replies.length}
-                participants={[
-                  ...new Set(snapshot.replies.map((reply) => reply.authorId)),
-                ]}
-                profiles={profiles}
-                agentPubkeys={agentPubkeys}
-                resolveName={resolveName}
-                media={session.media}
-              />
-            }
-            open={!rootCollapsed}
-            onOpenChange={(open) => {
-              follow.current = false;
-              targetAnchor.current = undefined;
-              setRootCollapsed(!open);
-              if (!open) setExpanded(new Set());
-            }}
-          >
-            {!rootCollapsed && <ol>{renderReplies(undefined)}</ol>}
-          </ReplyBranch>
-        ) : (
-          <>
-            {snapshot.status !== "loading" && (
+            ) : snapshot.status !== "loading" ? (
               <p className={styles.empty}>Original message unavailable.</p>
-            )}
+            ) : null
+          }
+          layout="thread"
+          depth={-1}
+          hideLabel="Hide thread replies"
+          collapsible={!!snapshot.root && snapshot.replies.length > 0}
+          label={`View thread replies: ${snapshot.replies.length}`}
+          summary={
+            <ReplySummary
+              count={snapshot.replies.length}
+              participants={[
+                ...new Set(snapshot.replies.map((reply) => reply.authorId)),
+              ]}
+              profiles={profiles}
+              agentPubkeys={agentPubkeys}
+              resolveName={resolveName}
+              media={session.media}
+            />
+          }
+          open={!snapshot.root || !rootCollapsed}
+          onOpenChange={(open) => {
+            follow.current = false;
+            targetAnchor.current = undefined;
+            setRootCollapsed(!open);
+            if (!open) setExpanded(new Set());
+          }}
+        >
+          {(!snapshot.root || !rootCollapsed) && (
             <ol>{renderReplies(undefined)}</ol>
-          </>
-        )}
+          )}
+        </ReplyBranch>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>

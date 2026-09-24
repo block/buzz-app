@@ -104,6 +104,20 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
   await expect(threadElement).toBeHidden();
+  await expect(threadElement.locator("..")).toHaveAttribute("inert", "");
+  // Hidden retained content cannot be focused even though its layout is kept.
+  await threadElement
+    .locator('[aria-label="Thread messages"]')
+    .evaluate((element) => element.focus());
+  await expect(
+    page.getByRole("button", { name: "Close channel settings" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  expect(
+    await threadElement.evaluate((element) =>
+      element.contains(document.activeElement),
+    ),
+  ).toBe(false);
   await page.getByRole("button", { name: "Close channel settings" }).click();
   await expect(threadElement).toBeVisible();
   expect(
@@ -228,51 +242,70 @@ test("an accessible exact reply stays visible without its root or a thread compo
   ).toBeVisible();
 });
 
-test("exact reply reveals before slow surrounding traversal and keeps its position afterwards", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  let release;
-  const held = new Promise((resolve) => {
-    release = resolve;
+for (const moveFocus of [false, true])
+  test(`exact reply reveals before slow surrounding traversal and ${moveFocus ? "preserves moved focus" : "retains target focus"} afterwards`, async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    let intercepted;
+    const seen = new Promise((resolve) => {
+      intercepted = resolve;
+    });
+    let first = true;
+    await page.route("**/api/relay/**/query", async (route) => {
+      if (
+        !first ||
+        !route
+          .request()
+          .postDataJSON()
+          .some((filter) => filter.depth_limit)
+      )
+        return route.continue();
+      first = false;
+      intercepted();
+      await held;
+      await route.continue().catch(() => {});
+    });
+    const row = thread(page).locator(
+      `[data-message-id="${app.exact.target.id}"]`,
+    );
+    const close = page.getByRole("button", {
+      name: "Close thread",
+      exact: true,
+    });
+    let originalRow;
+    try {
+      await page.evaluate((value) => {
+        window.exactResult = window.fixtureNavigation.open(value);
+      }, target(app));
+      await seen;
+      await expect.poll(() => status(page)).toBe("opened");
+      await expect(row).toBeFocused();
+      await expect(row).toBeInViewport();
+      originalRow = await row.elementHandle();
+      if (moveFocus) await close.focus();
+    } finally {
+      release();
+    }
+    try {
+      await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
+      await expect(row).toBeInViewport();
+      expect(
+        await row.evaluate(
+          (element, original) => element === original,
+          originalRow,
+        ),
+      ).toBe(true);
+      await expect(moveFocus ? close : row).toBeFocused();
+    } finally {
+      await originalRow?.dispose();
+    }
   });
-  let intercepted;
-  const seen = new Promise((resolve) => {
-    intercepted = resolve;
-  });
-  let first = true;
-  await page.route("**/api/relay/**/query", async (route) => {
-    if (
-      !first ||
-      !route
-        .request()
-        .postDataJSON()
-        .some((filter) => filter.depth_limit)
-    )
-      return route.continue();
-    first = false;
-    intercepted();
-    await held;
-    await route.continue().catch(() => {});
-  });
-  await page.evaluate((value) => {
-    window.exactResult = window.fixtureNavigation.open(value);
-  }, target(app));
-  await seen;
-  await expect.poll(() => status(page)).toBe("opened");
-  const row = thread(page).locator(
-    `[data-message-id="${app.exact.target.id}"]`,
-  );
-  await expect(row).toBeFocused();
-  await expect(row).toBeInViewport();
-  const close = page.getByRole("button", { name: "Close thread", exact: true });
-  await close.focus();
-  release();
-  await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
-  await expect(row).toBeInViewport();
-  await expect(close).toBeFocused();
-});
 
 test("unknown target fails without channel-head success and retries in the same visit", async ({
   page,
@@ -572,9 +605,93 @@ readTest(
     await page.evaluate(() =>
       window.fixtureRelay.snapshot().session.unread.ensure(),
     );
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    let intercepted;
+    const seen = new Promise((resolve) => {
+      intercepted = resolve;
+    });
+    await page.route("**/api/relay/**/query", async (route) => {
+      if (
+        !route
+          .request()
+          .postDataJSON()
+          .some((filter) => filter.depth_limit)
+      )
+        return route.continue();
+      intercepted();
+      await held;
+      await route.continue().catch(() => {});
+    });
     const before = app.report.readPublications.length;
+    try {
+      expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
+      await seen;
+      expect(app.report.readPublications.length).toBe(before);
+      await expect(
+        thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
+      ).toBeFocused();
+    } finally {
+      release();
+    }
+    await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
+    await expect(
+      thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
+    ).toBeFocused();
+    await expect
+      .poll(() => app.report.readPublications.length)
+      .toBeGreaterThan(before);
+  },
+);
+
+// Browser-only: inert focus behavior and a retained-but-hidden panel's real layout.
+readTest(
+  "settings blocks reading and focus in a retained thread",
+  async ({ page, app }) => {
+    await page.clock.install();
+    await open(page, app);
+    await page.evaluate(() =>
+      window.fixtureRelay.snapshot().session.unread.ensure(),
+    );
     expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
+    await page
+      .getByRole("button", { name: "Close thread", exact: true })
+      .focus();
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+    const before = app.report.readPublications.length;
+    const row = page.locator(
+      `[aria-label="Thread messages"] [data-message-id="${app.exact.target.id}"]`,
+    );
+    await row.focus();
+    await expect(row).toBeFocused();
+    // Programmatic opening deliberately does not focus the settings trigger first.
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .evaluate((element) => element.click());
+    await expect(
+      page.getByRole("complementary", {
+        name: "Channel settings",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await row.evaluate((element) => element.focus());
+    await expect(row).not.toBeFocused();
+    await page.keyboard.press("Tab");
+    expect(
+      await page
+        .locator('[aria-label="Thread"]')
+        .evaluate((element) => element.contains(document.activeElement)),
+    ).toBe(false);
+    await page.clock.runFor(10000);
     expect(app.report.readPublications.length).toBe(before);
+    await page
+      .getByRole("button", { name: "Close channel settings", exact: true })
+      .click();
+    await row.focus();
+    await expect(row).toBeFocused();
+    await page.clock.resume();
     await expect
       .poll(() => app.report.readPublications.length)
       .toBeGreaterThan(before);

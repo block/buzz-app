@@ -86,9 +86,12 @@ for (const scope of ["channel", "thread"]) {
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
         .getByRole("button", { name: /^View thread:/ })
         .click();
+      // One nested descendant is collapsed; the root plus 27 direct replies mount.
       await expect(
-        page.getByText("28 replies loaded", { exact: true }),
-      ).toBeVisible();
+        page
+          .getByRole("region", { name: "Thread messages", exact: true })
+          .locator("[data-message-id]"),
+      ).toHaveCount(28);
     } else {
       await end(page);
     }

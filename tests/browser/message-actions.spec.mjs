@@ -66,6 +66,44 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   });
   const root = panel.locator(`[data-message-id="${event.id}"]`);
   await expect(root).toBeVisible();
+  await root.hover();
+  await root
+    .getByRole("button", { name: "React with 👍", exact: true })
+    .click();
+  await expect(
+    root.getByRole("button", {
+      name: "👍: 1 person, including you",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    row.getByRole("button", {
+      name: "👍: 1 person, including you",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await root
+    .getByRole("button", { name: "👍: 1 person, including you", exact: true })
+    .click();
+  await expect(root.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
+  await expect(row.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
+  await expect
+    .poll(
+      () =>
+        app.report.publications.filter(({ event }) => event.kind === 5).length,
+    )
+    .toBe(1);
+  const added = app.report.publications.find(
+    ({ event }) => event.kind === 7,
+  ).event;
+  const removed = app.report.publications.find(
+    ({ event }) => event.kind === 5,
+  ).event;
+  expect(added.tags).toContainEqual(["e", event.id]);
+  expect(removed.tags).toContainEqual(["e", added.id]);
+  expect(removed.pubkey).toBe(added.pubkey);
+  await root.hover();
+  await root.getByRole("button", { name: "Reply", exact: true }).click();
   const replyBox = panel.getByRole("textbox", {
     name: "Reply to thread",
     exact: true,
@@ -135,6 +173,33 @@ test("DM actions open the correct reply thread", async ({ page, app }) => {
   const channel = await timeline.getAttribute("data-channel-timeline");
   const event = app.append("primary", channel, "DM menu check");
   const row = timeline.locator(`[data-message-id="${event.id}"]`);
+  await row.hover();
+  await row.getByRole("button", { name: "React with 👍", exact: true }).click();
+  await expect(
+    row.getByRole("button", {
+      name: "👍: 1 person, including you",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await row
+    .getByRole("button", { name: "👍: 1 person, including you", exact: true })
+    .click();
+  await expect(row.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
+  await expect
+    .poll(
+      () =>
+        app.report.publications.filter(({ event }) => event.kind === 5).length,
+    )
+    .toBe(1);
+  const added = app.report.publications.find(
+    ({ event }) => event.kind === 7,
+  ).event;
+  const removed = app.report.publications.find(
+    ({ event }) => event.kind === 5,
+  ).event;
+  expect(added.tags).toContainEqual(["e", event.id]);
+  expect(removed.tags).toContainEqual(["e", added.id]);
+  expect(removed.pubkey).toBe(added.pubkey);
   await row.hover();
   await row.getByRole("button", { name: "More message actions" }).click();
   await expect(

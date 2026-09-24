@@ -1216,3 +1216,52 @@ test.each(["sign", "publish"])(
     }
   },
 );
+
+test("message/reaction deletions pass real signing and publication without admitting workflow or arbitrary deletion shapes", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const template = {
+      kind: 5,
+      content: "",
+      created_at: h.event.created_at,
+      tags: [
+        ["h", "c"],
+        ["e", "a".repeat(64)],
+        ["k", "7"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.kind).toBe(5);
+    expect((await h.post("publish", event)).status).toBe(200);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [
+          ["h", "c"],
+          ["e", "invalid"],
+          ["k", "7"],
+        ],
+        [
+          ["h", "c"],
+          ["e", "a".repeat(64)],
+          ["k", "30030"],
+        ],
+        [...template.tags, ["a", `30620:${h.event.pubkey}:workflow`]],
+        [...template.tags, ["h", "other"]],
+        [
+          ["h", "c"],
+          ["k", "7"],
+        ],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});

@@ -58,6 +58,13 @@ export class MessageProjection {
         }
       }
     }
+    // A deletion of an edit/reaction changes its owning message, not a row
+    // whose ID is the overlay. Include removed inputs for failure rollback.
+    for (const id of [...affected]) {
+      const overlay = next.get(id) ?? this.inputs.get(id);
+      if (overlay && !messageKind(overlay.kind))
+        for (const target of targets(overlay)) affected.add(target);
+    }
     this.inputs = next;
     for (const [id, item] of deliveries) {
       const previous = this.deliveries.get(id);
@@ -87,9 +94,12 @@ export class MessageProjection {
                     this.relayAuthor,
                     [
                       event,
-                      ...[...(this.overlays.get(id) ?? [])].flatMap(
-                        (ref) => next.get(ref) ?? [],
-                      ),
+                      ...[...(this.overlays.get(id) ?? [])].flatMap((ref) => [
+                        ...[next.get(ref)].flatMap((event) => event ?? []),
+                        ...[...(this.overlays.get(ref) ?? [])].flatMap(
+                          (deletion) => next.get(deletion) ?? [],
+                        ),
+                      ]),
                     ],
                     { includeReplies: this.includeReplies() },
                   )[0]

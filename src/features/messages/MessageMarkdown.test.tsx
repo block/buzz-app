@@ -232,7 +232,7 @@ describe("mounted Markdown preparation", () => {
           row={{
             ...initial.row,
             delivery: "seen",
-            reactions: [{ content: "👍" }],
+            reactions: [{ content: "👍", events: [] }],
           }}
         />
       </StrictMode>,

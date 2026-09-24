@@ -261,6 +261,16 @@ Route navigation uses NavigationItem with aria-current instead. NavigationItem
 forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
 
+## Menu inset corners
+
+Shared menu edge items follow the popup's inset curve: panel radius minus popup
+padding and border (24px − 4px − 1px = 19px at the default scale). A single item
+uses that radius on all four corners; multi-item menus use it only on the top
+corners of the first item and bottom corners of the last. Interior corners keep
+the row radius. The shared recipe handles direct items and edge radio groups,
+ignoring Base UI focus/portal sentinels. Do not add feature-local radius overrides
+or change the global row radius to correct a menu.
+
 ## Align row content, not state backgrounds
 
 When composing NavigationItem lists inside dialogs or padded panels, align the

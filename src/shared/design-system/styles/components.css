@@ -756,6 +756,35 @@
     outline: none;
     user-select: none;
   }
+  /* Edge rows follow the surface inset; ignore Base UI portal/focus sentinels. */
+  .buzz-menu-popup
+  > .buzz-menu-item:nth-child(
+    1 of :not([data-base-ui-focus-guard], [aria-owns])
+  ),
+  .buzz-menu-popup
+    > [role="group"]:nth-child(
+      1 of :not([data-base-ui-focus-guard], [aria-owns])
+    )
+    > .buzz-menu-item:first-child {
+    border-top-left-radius: calc(var(--radius-panel) - var(--space-1) - 1px);
+    border-top-right-radius: calc(var(--radius-panel) - var(--space-1) - 1px);
+  }
+  .buzz-menu-popup
+    > .buzz-menu-item:nth-last-child(
+      1 of :not([data-base-ui-focus-guard], [aria-owns])
+    ),
+  .buzz-menu-popup
+    > [role="group"]:nth-last-child(
+      1 of :not([data-base-ui-focus-guard], [aria-owns])
+    )
+    > .buzz-menu-item:last-child {
+    border-bottom-left-radius: calc(var(--radius-panel) - var(--space-1) - 1px);
+    border-bottom-right-radius: calc(
+      var(--radius-panel) -
+      var(--space-1) -
+      1px
+    );
+  }
   html[data-keyboard-navigation] .buzz-menu-item:focus-visible {
     outline: 2px solid var(--border-focus);
     /* Keep the ring inside the scrollable popup's clipping edge. */

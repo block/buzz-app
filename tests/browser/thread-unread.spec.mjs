@@ -110,8 +110,21 @@ test("thread buttons show observed unread independently, clear only after readin
   const queries = () =>
     app.report.queries.filter(({ filter }) => filter.depth_limit);
   expect(queries()).toHaveLength(0); // Merely displaying buttons never fetches threads.
+  // The sibling context trigger must not steal the activity button's props or
+  // focus. Exercise the real portals while unread activity is still present.
+  await alpha.click({ button: "right" });
+  const actions = page.getByRole("menu", { name: "Actions for Alpha" });
+  await expect(
+    actions.getByRole("menuitem", { name: "New session" }),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
-  await alpha.focus();
+  await expect(actions).toHaveCount(0);
+  await expect(alpha).toBeFocused();
+  await alpha.press("Shift+F10");
+  await expect(actions).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(actions).toHaveCount(0);
+  await expect(alpha).toBeFocused();
   await alpha.press("Enter");
   await expect(popover).toBeVisible();
   const item = popover

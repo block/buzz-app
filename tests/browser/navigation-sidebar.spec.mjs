@@ -213,22 +213,9 @@ sessionSidebar(
     const parentSurface = parent.locator(
       "xpath=ancestor::*[@data-channel-sidebar-row]",
     );
-    const more = page.getByRole("button", { name: /More options for/ }).first();
-    await expect(more).toHaveAttribute("data-icon-shape", "round");
-    const [parentSurfaceBox, moreBox] = await Promise.all([
-      parentSurface.boundingBox(),
-      more.boundingBox(),
-    ]);
-    expect(parentSurfaceBox.x + parentSurfaceBox.width).toBeCloseTo(
-      moreBox.x + moreBox.width,
-      0,
-    );
-    expect(
-      await more.evaluate(
-        (action, row) => row.contains(action),
-        await parentSurface.elementHandle(),
-      ),
-    ).toBe(true);
+    await expect(
+      page.getByRole("button", { name: /More options for/ }),
+    ).toHaveCount(0);
     expect(
       await parent.evaluate((row) => getComputedStyle(row).backgroundColor),
     ).toBe("rgba(0, 0, 0, 0)");
@@ -238,7 +225,7 @@ sessionSidebar(
       ),
     ).not.toBe("rgba(0, 0, 0, 0)");
 
-    await more.click();
+    await parent.click({ button: "right" });
     await page.getByRole("menuitem", { name: "New session" }).click();
     const draft = page.getByRole("button", { name: /New session draft in/ });
     await expect(draft).toBeVisible();
@@ -355,15 +342,18 @@ sessionSidebar(
   },
 );
 
-test("session actions follow the Sessions plugin availability", async ({
+test("disabling the only row action leaves no empty menu", async ({
   page,
   app,
 }) => {
   await open(page, app);
-  await button(page, "Alpha").hover();
+  await button(page, "Alpha").click({ button: "right" });
+  const menu = page.getByRole("menu", { name: "Actions for Alpha" });
   await expect(
-    page.getByRole("button", { name: "More options for Alpha" }),
+    menu.getByRole("menuitem", { name: "New session" }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
 
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
@@ -377,10 +367,11 @@ test("session actions follow the Sessions plugin availability", async ({
   await expect(toggle).toHaveAttribute("aria-checked", "false");
 
   await button(page, "Messages").first().click();
-  await button(page, "Alpha").hover();
-  await expect(
-    page.getByRole("button", { name: "More options for Alpha" }),
-  ).toHaveCount(0);
+  await button(page, "Alpha").click({ button: "right" });
+  await expect(menu).toHaveCount(0);
+  await button(page, "Alpha").focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu).toHaveCount(0);
 });
 
 test("channel navigation preserves sidebar DOM, group state and scroll", async ({

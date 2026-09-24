@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "identifier": "dev.local.buzz.foundation",
   "build": {
-    "beforeDevCommand": "pnpm dev:desktop",
+    "beforeDevCommand": "pnpm dev:desktop --port 1430",
     "devUrl": "http://localhost:1430",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "node scripts/build-agent-runtime.mjs && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -14,6 +14,7 @@
     "windows": [
       {
         "title": "Buzz Foundation",
+        "dragDropEnabled": false,
         "width": 1200,
         "height": 800,
         "titleBarStyle": "Overlay",
@@ -27,11 +28,12 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' blob:; connect-src ipc: http://ipc.localhost https://api.github.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      "csp": "default-src 'self'; script-src 'self' blob: 'wasm-unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:"
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "resources": { "resources/agent-runtime/": "agent-runtime/" },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -39,5 +41,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["buzz"] }
+    }
   }
 }

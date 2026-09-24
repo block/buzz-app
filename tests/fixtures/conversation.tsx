@@ -12,6 +12,8 @@ import { provideNavigation } from "../../src/features/navigation/service";
 import { PagesService } from "../../src/features/pages/service";
 import { PanelsService } from "../../src/features/panels/service";
 import { ConversationService } from "../../src/features/conversation/service";
+import { SettingsCardsService } from "../../src/features/settings/service";
+import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
 import { bundledPlugins } from "../../src/bundled";
 import { createRelaySession } from "../../src/features/relay/session";
 import { PublishRejected } from "../../src/features/relay/outbox";
@@ -188,6 +190,7 @@ function withProbe(result: Awaited<ReturnType<PluginStorage["getCatalog"]>>) {
       enabled: probeEnabled,
       revision: "bundled",
       previous: null,
+      reloadable: false,
       error: null,
     });
   return result;
@@ -199,6 +202,7 @@ const storage: PluginStorage = {
   recoverSettings: () => api("recover", {}),
   readModule: async (id, revision) =>
     (await api("module", { id, revision })).code,
+  reloadPlugin: async (id) => withProbe(await api("reload", { id })),
 };
 const ctx = new Context();
 type MentionCommand =
@@ -261,6 +265,8 @@ const plugins = createPluginManager(ctx, {
 provideNavigation(ctx);
 const pages = new PagesService(ctx);
 new PanelsService(ctx);
+new SettingsCardsService(ctx);
+new TemplateProvidersService(ctx);
 const conversation = new ConversationService(ctx);
 // Deliberately fire a removed contribution's command before React can unmount it.
 conversation.tools.subscribe(() => {

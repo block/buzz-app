@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, settle } from "./timeline.mjs";
+import { end, open, settle } from "./timeline.mjs";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 
 test.use({
@@ -255,6 +255,12 @@ for (const kind of ["mention", "thread reply"]) {
     page,
     app,
   }) => {
+    // Only this geometry scenario needs an overflowing Beta history.
+    if (kind === "mention") {
+      for (let i = 0; i < 20; i++) {
+        app.append("primary", "beta", `Earlier message ${i}`, false, false);
+      }
+    }
     // Model a real prior contribution in relay history, not a client-side
     // participation/readiness override. The incoming reply itself has no p tag.
     const root =
@@ -343,6 +349,24 @@ for (const kind of ["mention", "thread reply"]) {
         ),
       )
       .toBe(false);
+    if (!root) {
+      // Fractional reflow must not leave the last row clipped at maximum scroll.
+      await row.evaluate((element) => {
+        element.style.paddingBottom = "0.125px";
+      });
+      for (const width of [1440, 640]) {
+        await page.setViewportSize({ width, height: 950 });
+        await expect
+          .poll(() =>
+            surface.evaluate(
+              (element) => element.scrollHeight > element.clientHeight,
+            ),
+          )
+          .toBe(true);
+        await end(page);
+        await expect(row).toBeInViewport({ ratio: 1 });
+      }
+    }
   });
 }
 
@@ -379,9 +403,9 @@ test("an installed producer shares policy and OS click navigation, including aft
   await expect(
     page.getByRole("heading", { name: "Appearance", exact: true }),
   ).toBeVisible();
-  expect(
-    await page.evaluate(() => window.fixtureNavigation.snapshot().status),
-  ).toBe("opened");
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
 });
 
 test("asynchronous browser display failure reaches Settings once without redelivery", async ({
@@ -392,9 +416,9 @@ test("asynchronous browser display failure reaches Settings once without redeliv
   liveMessage(app, "Browser display error");
   await expect.poll(() => systemCount(page)).toBe(1);
   await page.evaluate(() => window.notificationEvents[0].onerror?.());
-  await expect(page.getByRole("alert")).toHaveText(
-    "The browser could not display a notification.",
-  );
+  await expect(
+    page.getByRole("dialog", { name: "Notification failed", exact: true }),
+  ).toContainText("The browser could not display a notification.");
   expect(
     await page.evaluate(() => {
       const item = window.notificationEvents[0];

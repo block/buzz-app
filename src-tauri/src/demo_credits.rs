@@ -44,7 +44,7 @@ pub struct DemoWallet {
     pub ledger: DemoLedger,
 }
 
-fn data_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn data_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String> {
     if !cfg!(debug_assertions) {
         return Err("The simulated credits wallet is only available in development builds".into());
     }
@@ -234,8 +234,8 @@ fn spend(ledger: &mut DemoLedger, amount: u64) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn community_compute_demo_wallet(
-    app: tauri::AppHandle,
+pub fn community_compute_demo_wallet<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     host: tauri::State<'_, ComputeHost>,
 ) -> Result<DemoWallet, String> {
     let status = host.status()?;
@@ -260,8 +260,8 @@ pub fn community_compute_demo_wallet(
 }
 
 #[tauri::command]
-pub fn community_compute_demo_add_consumer_credits(
-    app: tauri::AppHandle,
+pub fn community_compute_demo_add_consumer_credits<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     amount: u64,
 ) -> Result<DemoLedger, String> {
     if amount == 0 || amount > 1_000_000 {
@@ -276,8 +276,8 @@ pub fn community_compute_demo_add_consumer_credits(
 }
 
 #[tauri::command]
-pub fn community_compute_demo_spend(
-    app: tauri::AppHandle,
+pub fn community_compute_demo_spend<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     amount: u64,
 ) -> Result<DemoLedger, String> {
     let path = data_path(&app)?;
@@ -288,8 +288,8 @@ pub fn community_compute_demo_spend(
 }
 
 #[tauri::command]
-pub fn community_compute_demo_reset(
-    app: tauri::AppHandle,
+pub fn community_compute_demo_reset<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     host: tauri::State<'_, ComputeHost>,
 ) -> Result<DemoLedger, String> {
     let status = host.status()?;
@@ -311,8 +311,8 @@ pub fn community_compute_demo_reset(
 }
 
 #[tauri::command]
-pub fn community_compute_demo_seed_legacy(
-    app: tauri::AppHandle,
+pub fn community_compute_demo_seed_legacy<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     amount: u64,
 ) -> Result<DemoLedger, String> {
     let path = data_path(&app)?;

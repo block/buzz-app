@@ -1,3 +1,4 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import type { EventData } from "../relay/events";
@@ -30,6 +31,8 @@ export function ReactionTool({
   scope: string;
   messageId: string;
   disabled: boolean;
+  select?: (emoji: string) => boolean;
+  showDelivery?: boolean;
 }) {
   const tools = useSyncExternalStore(
     registry.subscribe,
@@ -59,6 +62,8 @@ function OwnedReactionTool({
   scope,
   messageId,
   disabled,
+  select,
+  showDelivery = true,
 }: {
   registry: ContributionReader<ComposerTool>;
   tool: Contribution<ComposerTool>;
@@ -66,6 +71,8 @@ function OwnedReactionTool({
   scope: string;
   messageId: string;
   disabled: boolean;
+  select?: (emoji: string) => boolean;
+  showDelivery?: boolean;
 }) {
   const [error, setError] = useState<string>();
   const alive = useRef(false);
@@ -94,6 +101,7 @@ function OwnedReactionTool({
           )
             return false;
           try {
+            if (select) return select(emoji);
             session.messages.react(messageId, emoji);
             setError(undefined);
             return true;
@@ -108,8 +116,8 @@ function OwnedReactionTool({
         }}
       />
       {error && <span role="alert">{error}</span>}
-      {session.outbox && (
-        <ReactionDelivery outbox={session.outbox} messageId={messageId} />
+      {showDelivery && session.outbox && (
+        <ReactionDelivery session={session} messageId={messageId} />
       )}
     </>
   ) : null;
@@ -121,32 +129,42 @@ export function reactionTarget(event: Pick<EventData, "kind" | "tags">) {
     : undefined;
 }
 
-function ReactionDelivery({
-  outbox,
+export function ReactionDelivery({
+  session,
   messageId,
 }: {
-  outbox: Outbox;
+  session: RelaySession;
   messageId: string;
 }) {
+  const outbox = session.outbox;
   const operations = useSyncExternalStore(
-    outbox.subscribe,
-    outbox.snapshot,
-    outbox.snapshot,
+    outbox?.subscribe ?? noSubscribe,
+    outbox?.snapshot ?? emptyOperations,
+    outbox?.snapshot ?? emptyOperations,
   );
   const operation = operations.find(
     (item) =>
       ["failed", "unknown"].includes(item.delivery) &&
-      reactionTarget(item.event) === messageId,
+      session.messages.reactionTarget(item.event) === messageId,
   );
   if (!operation) return null;
   return (
     <span role="status">
       {operation.delivery === "failed"
-        ? "Couldn’t add reaction."
+        ? "Couldn’t update reaction."
         : "Reaction delivery not confirmed."}{" "}
-      <button type="button" onClick={() => outbox.retry(operation.event.id)}>
+      <Button
+        size="sm"
+        variant="ghost"
+        type="button"
+        onClick={() => outbox?.retry(operation.event.id)}
+      >
         Retry reaction
-      </button>
+      </Button>
     </span>
   );
 }
+
+const noSubscribe = () => () => {};
+const empty: ReturnType<Outbox["snapshot"]> = Object.freeze([]);
+const emptyOperations = () => empty;

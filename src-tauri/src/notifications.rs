@@ -62,7 +62,12 @@ pub(crate) struct Response {
     error: Option<String>,
 }
 
-fn respond(app: tauri::AppHandle, channel: Channel<Response>, id: String, outcome: Outcome) {
+fn respond<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    channel: Channel<Response>,
+    id: String,
+    outcome: Outcome,
+) {
     let mut response = Response {
         id,
         kind: match outcome {
@@ -99,7 +104,7 @@ fn respond(app: tauri::AppHandle, channel: Channel<Response>, id: String, outcom
     }
 }
 
-fn focus(window: &tauri::WebviewWindow) -> Result<(), String> {
+pub(crate) fn focus<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         use gtk::prelude::GtkWindowExt;
@@ -125,9 +130,9 @@ fn validate(id: &str, title: &str, body: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub(crate) async fn notification_show(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
+pub(crate) async fn notification_show<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    window: tauri::WebviewWindow<R>,
     state: tauri::State<'_, Notifications>,
     id: String,
     title: String,
@@ -149,7 +154,12 @@ pub(crate) async fn notification_show(
 }
 
 #[cfg(target_os = "macos")]
-fn show(app: tauri::AppHandle, title: String, body: String, pending: Arc<Pending>) {
+fn show<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    title: String,
+    body: String,
+    pending: Arc<Pending>,
+) {
     tauri::async_runtime::spawn_blocking(move || {
         // Preserve Tauri's development/installed identity convention. Initialize
         // once because this backend deliberately rejects subsequent set calls.
@@ -186,14 +196,24 @@ fn show(app: tauri::AppHandle, title: String, body: String, pending: Arc<Pending
 mod linux;
 
 #[cfg(target_os = "linux")]
-fn show(_app: tauri::AppHandle, title: String, body: String, pending: Arc<Pending>) {
+fn show<R: tauri::Runtime>(
+    _app: tauri::AppHandle<R>,
+    title: String,
+    body: String,
+    pending: Arc<Pending>,
+) {
     tauri::async_runtime::spawn(async move {
         linux::show(zbus::Connection::session().await, &title, &body, pending).await;
     });
 }
 
 #[cfg(target_os = "windows")]
-fn show(app: tauri::AppHandle, title: String, body: String, pending: Arc<Pending>) {
+fn show<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    title: String,
+    body: String,
+    pending: Arc<Pending>,
+) {
     use tauri_winrt_notification::{Toast, ToastDismissalReason};
     tauri::async_runtime::spawn_blocking(move || {
         let activated = pending.clone();
@@ -238,7 +258,12 @@ fn show(app: tauri::AppHandle, title: String, body: String, pending: Arc<Pending
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn show(_app: tauri::AppHandle, _title: String, _body: String, pending: Arc<Pending>) {
+fn show<R: tauri::Runtime>(
+    _app: tauri::AppHandle<R>,
+    _title: String,
+    _body: String,
+    pending: Arc<Pending>,
+) {
     pending.finish(Outcome::Failed(
         "Desktop notifications unavailable on this platform".into(),
     ));

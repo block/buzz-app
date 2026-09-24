@@ -23,6 +23,9 @@ export type NavigationSnapshot = Readonly<{
   attempt: OpenAttempt;
   status: "opening" | OpenResult["status"];
   reason?: OpenFailure;
+  /** An incoming URL failed before it could create a history destination. */
+  ingress?: boolean;
+  retryable?: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
 }>;
@@ -56,6 +59,7 @@ export function createNavigationController(
   let disposed = false;
   let active: Operation;
   let snapshot: NavigationSnapshot;
+  let ingressRetry: (() => Promise<OpenResult>) | undefined;
   const listeners = new Set<() => void>();
   // Commit state and capture each caller's result before invoking external code.
   // Reentrant opens run against committed state and own their own result; deferred
@@ -109,6 +113,7 @@ export function createNavigationController(
   }
   function start(): Promise<OpenResult> {
     if (disposed) return Promise.resolve({ status: "cancelled" });
+    ingressRetry = undefined;
     const old = active;
     if (old) {
       settle(old, { status: "superseded" });
@@ -228,6 +233,16 @@ export function createNavigationController(
       });
     },
     retry() {
+      if (snapshot.ingress) {
+        if (disposed) return Promise.resolve({ status: "cancelled" as const });
+        return (
+          ingressRetry?.() ??
+          Promise.resolve<OpenResult>({
+            status: "failed",
+            reason: snapshot.reason ?? "invalid-target",
+          })
+        );
+      }
       return transaction(start);
     },
   });
@@ -276,15 +291,31 @@ export function createNavigationController(
     },
     cancel() {
       transaction(() => {
+        ingressRetry = undefined;
         const operation = active;
         finish(operation, { status: "cancelled" });
         effects.push(() => operation.controller.abort());
+      });
+    },
+    /** Keep pre-navigation recovery separate from the previous history visit. */
+    fail(reason: OpenFailure, retry?: () => Promise<OpenResult>) {
+      transaction(() => {
+        if (disposed) return;
+        void start();
+        ingressRetry = retry;
+        snapshot = Object.freeze({
+          ...snapshot,
+          ingress: true,
+          retryable: !!retry,
+        });
+        finish(active, { status: "failed", reason });
       });
     },
     dispose() {
       transaction(() => {
         if (disposed) return;
         disposed = true;
+        ingressRetry = undefined;
         unsubscribe();
         finish(active, { status: "cancelled" });
         const operation = active;

@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { Button } from "../../shared/design-system/ui/Button";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -19,6 +20,7 @@ import { useRowProfiles } from "../relay/react";
 import { MessageRow } from "./MessageRow";
 import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
+import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
@@ -33,7 +35,9 @@ export type ThreadPanelProps = {
   scope: string;
   channelName: string;
   channelId: string;
+  sessionConversation?: boolean | undefined;
   messageId: string;
+  replyRequest?: number | undefined;
   navigation?: PageNavigation | undefined;
   close(): void;
   onOpenLink(url: string): boolean;
@@ -50,6 +54,9 @@ export function ThreadPanel(props: ThreadPanelProps) {
   return (
     <aside
       className={styles.thread}
+      data-attachment-drop-zone=""
+      onDragOver={rejectUnhandledFileDrop}
+      onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -103,6 +110,8 @@ function OwnedThreadPanel({
   onOpenLink,
   onOpenMediaReview,
   canOpenLink,
+  sessionConversation,
+  replyRequest,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -138,12 +147,13 @@ function OwnedThreadPanel({
   return error ? (
     <div className={styles.empty} role="alert">
       <p>{error}</p>
-      <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+      <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
         Retry thread
-      </button>
+      </Button>
     </div>
   ) : view ? (
     <ThreadMessages
+      sessionConversation={sessionConversation}
       extensions={extensions}
       session={session}
       scope={scope}
@@ -152,6 +162,7 @@ function OwnedThreadPanel({
       view={view}
       navigation={navigation}
       messageId={messageId}
+      replyRequest={replyRequest}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}
@@ -174,7 +185,10 @@ function ThreadMessages({
   onOpenLink,
   onOpenMediaReview,
   canOpenLink,
+  sessionConversation,
+  replyRequest,
 }: {
+  sessionConversation?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -182,6 +196,7 @@ function ThreadMessages({
   channelName: string;
   messageId: string;
   view: ThreadView;
+  replyRequest?: number | undefined;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
@@ -239,10 +254,9 @@ function ThreadMessages({
     scroller,
     settled: positioned,
     messageId,
-    signal: navigation?.signal,
-    ready: rootTarget
-      ? snapshot.root?.id === messageId
-      : snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
+    signal: rootTarget ? undefined : navigation?.signal,
+    ready:
+      snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
     prepare: prepareTarget,
   });
@@ -257,12 +271,23 @@ function ThreadMessages({
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
+  const [replyFocus, setReplyFocus] = useState(0);
+  const focusReply = useCallback(() => setReplyFocus((value) => value + 1), []);
+  useEffect(() => {
+    if (replyRequest) focusReply();
+  }, [replyRequest, focusReply]);
   const [mediaPlayback, setMediaPlayback] = useState<MediaPlayback>();
   const [mediaCommentTime, setMediaCommentTime] = useState<number>();
   const [mediaSeek, setMediaSeek] = useState<{
     seconds: number;
     request: number;
   }>();
+  const handleMediaTime = useCallback((seconds: number) => {
+    setMediaSeek((current) => ({
+      seconds,
+      request: (current?.request ?? 0) + 1,
+    }));
+  }, []);
   const rootId = snapshot.root?.id;
   const openRootMedia = useCallback(
     (
@@ -274,7 +299,9 @@ function ThreadMessages({
     },
     [rootId, onOpenMediaReview],
   );
-  const videoAttachment = snapshot.root?.attachments.find((item) => item.video);
+  const videoAttachment = snapshot.root?.attachments.find(
+    (item) => item.kind === "video",
+  );
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
   // than exposing transport pagination as a conversation control.
   useEffect(() => {
@@ -284,9 +311,20 @@ function ThreadMessages({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;
+    if (!element || navigation?.signal.aborted) return;
+    // A mounted ordinary thread acknowledges the visit before slow history can
+    // exhaust navigation's deadline. Positioning still waits for bounded loading.
     if (
-      !element ||
-      (navigation && revealed.current !== navigation.signal) ||
+      rootTarget &&
+      snapshot.status !== "error" &&
+      snapshot.root?.id === messageId &&
+      revealed.current !== navigation.signal
+    ) {
+      revealed.current = navigation.signal;
+      navigation.complete({ status: "opened" });
+    }
+    if (
+      (navigation && !rootTarget && revealed.current !== navigation.signal) ||
       (!positioned.current &&
         (snapshot.status !== "ready" || snapshot.canLoadMore))
     )
@@ -308,10 +346,13 @@ function ThreadMessages({
   }, [
     snapshot.status,
     snapshot.canLoadMore,
+    snapshot.root,
+    messageId,
     rows,
     profiles,
     sent,
     navigation,
+    rootTarget,
     revealed,
     selectedRow,
   ]);
@@ -359,6 +400,7 @@ function ThreadMessages({
               extensions={extensions}
               session={session}
               scope={scope}
+              onReply={focusReply}
               row={snapshot.root}
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
@@ -381,13 +423,15 @@ function ThreadMessages({
                 : {})}
             />
             {videoAttachment && mediaPlayback && (
-              <button
-                type="button"
-                className={styles.mediaCommentAction}
-                onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
-              >
-                Comment at {formatMediaTime(mediaPlayback.seconds)}
-              </button>
+              <span className={styles.mediaCommentAction}>
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
+                >
+                  Comment at {formatMediaTime(mediaPlayback.seconds)}
+                </Button>
+              </span>
             )}
           </>
         ) : (
@@ -406,6 +450,7 @@ function ThreadMessages({
                 extensions={extensions}
                 session={session}
                 scope={scope}
+                onReply={snapshot.root ? focusReply : undefined}
                 row={row}
                 profile={profiles.get(row.authorId)}
                 participantProfiles={profiles}
@@ -415,15 +460,7 @@ function ThreadMessages({
                 canOpenLink={canOpenLink}
                 day={false}
                 retry={session.messages.retry}
-                {...(videoAttachment
-                  ? {
-                      onMediaTime: (seconds: number) =>
-                        setMediaSeek((current) => ({
-                          seconds,
-                          request: (current?.request ?? 0) + 1,
-                        })),
-                    }
-                  : {})}
+                {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
                 {...(onOpenMediaReview && rootId
                   ? { onOpenMediaReview: openRootMedia }
                   : {})}
@@ -444,14 +481,15 @@ function ThreadMessages({
         )}
         {(snapshot.error || snapshot.targetStatus === "unavailable") && (
           <div className={styles.threadHistoryControls}>
-            <button type="button" onClick={() => void view.refresh()}>
+            <Button type="button" onClick={() => void view.refresh()}>
               Retry thread
-            </button>
+            </Button>
           </div>
         )}
       </section>
       {snapshot.root && (
         <MessageComposer
+          sessionConversation={sessionConversation}
           key={`${scope}:${channelId}:${snapshot.root.id}`}
           extensions={extensions}
           session={session}
@@ -459,6 +497,8 @@ function ThreadMessages({
           channelId={channelId}
           channelName={channelName}
           threadRootId={snapshot.root.id}
+          editMessages={rows}
+          focusRequest={replyFocus}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           {...(videoAttachment && mediaCommentTime !== undefined

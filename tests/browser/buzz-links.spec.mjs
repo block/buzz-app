@@ -6,6 +6,7 @@ test.use({
   readState: true,
   threadUnread: true,
   pluginFixtures: true,
+  historyCounts: { alpha: 640, beta: 1 },
 });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const state = (page) =>
@@ -17,6 +18,13 @@ test("Buzz channel and message links render, reveal verified targets, and preser
 }) => {
   app.relay.holdProfiles([app.viewer]);
   await open(page, app);
+  const libraryReads = () =>
+    app.report.brokerRequests.filter(({ url }) =>
+      url.endsWith("/agent-library"),
+    ).length;
+  // Shared naming loads inventory once on session activation. Link previews
+  // reuse that evidence rather than starting another library read.
+  await expect.poll(libraryReads).toBe(1);
   const history = app.histories.get("primary/alpha");
   const target = history.find((row) => row.content === "Broadcast reply");
   const href = `buzz://message?channel=alpha&id=${target.id}`;
@@ -37,7 +45,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect(row).not.toContainText("<buzz:");
   const link = row.getByRole("link", { name: "Alpha", exact: true });
   await expect(link).toHaveCSS("text-decoration-line", "none");
-  await expect(link).toHaveCSS("color", "rgb(13, 116, 206)");
+  await expect(link).toHaveCSS("color", "rgb(17, 50, 100)");
   await link.hover();
   const preview = page.getByLabel("Message preview", { exact: true });
   await expect(
@@ -45,7 +53,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   ).toBeVisible();
   await expect(preview).toHaveClass(/buzz-preview-card/);
   await expect(preview.getByRole("img")).toHaveClass(/buzz-avatar/);
-  await expect(preview).toHaveCSS("font-size", "16px");
+  await expect(preview).toHaveCSS("font-size", "14px");
   await expect(preview.locator("strong")).not.toBeEmpty();
   await expect(preview.locator("time")).toHaveAttribute(
     "datetime",
@@ -101,9 +109,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   );
   await expect(link).toBeFocused();
   await expect(preview).toBeVisible();
-  expect(
-    app.report.brokerRequests.some(({ url }) => url.endsWith("/agent-library")),
-  ).toBe(false);
+  expect(libraryReads()).toBe(1);
   await link.press("Tab");
   await expect(preview).toBeFocused();
   await preview.press("Enter");
@@ -204,7 +210,7 @@ test("unavailable messages fail honestly and legacy links still open when Links 
     row.getByRole("link", { name: "Alpha", exact: true }).first(),
   ).toBeVisible();
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await page
     .getByRole("switch", { name: "Enable Links", exact: true })
@@ -217,7 +223,15 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   await expect.poll(async () => (await state(page)).status).toBe("opened");
   // The deliberately wrong hint must not select a different root or force a
   // visible root out of the ordinary timeline.
-  await row.locator("a").nth(1).click();
+  // Revealing the prior target can still reposition the timeline. Activate the
+  // unavailable link by keyboard so this routing check does not click a moving row.
+  const unavailable = row.locator("a").nth(1);
+  await unavailable.focus();
+  await expect(unavailable).toBeFocused();
+  await unavailable.press("Enter");
+  await expect
+    .poll(async () => (await state(page)).entry.target.messageId)
+    .toBe("0".repeat(64));
   await expect(button(page, "Retry navigation")).toBeVisible();
   expect((await state(page)).status).toBe("failed");
 });

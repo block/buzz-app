@@ -1,4 +1,20 @@
-import { createComputeStatusSigner } from "./compute-status.mjs";
+import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
+import { memoryResponseText } from "../src/features/agents/memory.ts";
+import { prepareMedia } from "./media-preparation.mjs";
+import { readProjectGit } from "./project-git.mjs";
+import { parseGitRead } from "../src/features/projects/git.ts";
+import {
+  prepareChannelKit,
+  decodeChannelKit,
+  admitChannelKit,
+  validCanvas,
+} from "./channel-kit.mjs";
+import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
+import { validChannelCommand } from "./session-commands.mjs";
+import {
+  directMessageEvent,
+  directMessageReceipt,
+} from "./direct-messages.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
   validateWorkflowEvent,
@@ -22,6 +38,7 @@ import {
   readSnapshotCommunity,
 } from "../src/features/relay/read-state-snapshot.ts";
 import { readAgentLibrary } from "./agent-library.mjs";
+import { createBuilderlab } from "./builderlab.mjs";
 import {
   decodeSidebarPreferences,
   SIDEBAR_REQUEST_BYTES,
@@ -49,18 +66,26 @@ import {
   ApiPaused,
   ApiCapacity,
   apiFailure,
+  presenceFilter,
+  presenceText,
 } from "../src/features/relay/http-admission.ts";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
+import { createReadStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import {
+  mediaByteLimit,
+  UPLOAD_TIMEOUT_MS,
+} from "../src/features/relay/attachment-limits.ts";
 import dc from "node:diagnostics_channel";
 import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
+import { schnorr } from "@noble/curves/secp256k1.js";
 
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
-  MAX_MEDIA_BYTES = 20 * 1024 * 1024,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 
@@ -131,14 +156,7 @@ export function createUpstream(base) {
   };
 }
 
-export function loadIdentity(
-  authorizedViewer,
-  {
-    service = "buzz-desktop",
-    platform = process.platform,
-    read = execFileSync,
-  } = {},
-) {
+function loadIdentity(authorizedViewer) {
   // Validate the explicit public pin before prompting for any credential access.
   const configured = authorizedViewer?.trim() ?? "";
   let expected;
@@ -155,14 +173,6 @@ export function loadIdentity(
     throw new Error(
       "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See README.md#relay-channels.",
     );
-  if (
-    !/^buzz-desktop(?:-dev(?:\.[a-z0-9][a-z0-9._-]{0,79})?|-demo\.[a-z0-9][a-z0-9._-]{0,79})?$/.test(
-      service,
-    )
-  )
-    throw new Error(
-      "Choose an existing Buzz credential service; no credential fallback",
-    );
   // The installed Buzz desktop keeps its secrets blob in the OS credential
   // store under service `buzz-desktop`, username `secrets`: the macOS Keychain,
   // or the freedesktop secret service on Linux (read through libsecret's
@@ -171,24 +181,31 @@ export function loadIdentity(
   const readers = {
     darwin: {
       command: "/usr/bin/security",
-      args: ["find-generic-password", "-s", service, "-a", "secrets", "-w"],
+      args: [
+        "find-generic-password",
+        "-s",
+        "buzz-desktop",
+        "-a",
+        "secrets",
+        "-w",
+      ],
       failure: "Keychain read unavailable or declined; no credential fallback",
     },
     linux: {
       command: "secret-tool",
-      args: ["lookup", "service", service, "username", "secrets"],
+      args: ["lookup", "service", "buzz-desktop", "username", "secrets"],
       failure:
         "Secret service read unavailable (needs libsecret-tools, an unlocked keyring in this desktop session, and Buzz desktop signed in); no credential fallback",
     },
   };
-  const reader = readers[platform];
+  const reader = readers[process.platform];
   if (!reader)
     throw new Error(
-      `Live identity is read from the OS credential store on macOS or Linux only (this is ${platform}); no credential fallback`,
+      `Live identity is read from the OS credential store on macOS or Linux only (this is ${process.platform}); no credential fallback`,
     );
   let raw;
   try {
-    raw = read(reader.command, reader.args, {
+    raw = execFileSync(reader.command, reader.args, {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 120000,
     })
@@ -229,6 +246,8 @@ async function relayAuthority(fetch, relay) {
     throw new Error("Relay did not advertise its identity");
   return {
     relayAuthor: author,
+    channelCreation:
+      Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -240,7 +259,7 @@ async function relayAuthority(fetch, relay) {
 export function validMessageTemplate(event) {
   return (
     event &&
-    [7, 9].includes(event.kind) &&
+    [7, 9, 40003].includes(event.kind) &&
     typeof event.content === "string" &&
     event.content.trim().length > 0 &&
     Buffer.byteLength(event.content) <= 32000 &&
@@ -256,10 +275,10 @@ export function validMessageTemplate(event) {
     ).length === 1 &&
     (() => {
       const references = event.tags.filter((tag) => tag[0] === "e");
-      if (event.kind === 7)
+      if (event.kind === 7 || event.kind === 40003)
         return (
           event.content === event.content.trim() &&
-          validReactionContent(event.content) &&
+          (event.kind === 40003 || validReactionContent(event.content)) &&
           references.length === 1 &&
           references[0].length === 2 &&
           /^[0-9a-f]{64}$/.test(references[0][1])
@@ -275,6 +294,71 @@ export function validMessageTemplate(event) {
         reply[3] === "reply"
       );
     })()
+  );
+}
+/** Channel-local NIP-09 removal; the relay enforces authorship of each target. */
+export function validMessageDeletion(event) {
+  if (
+    event?.kind !== 5 ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length > 106 ||
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag.every((value) => typeof value === "string") &&
+        ["h", "e", "k", "client-id"].includes(tag[0]),
+    )
+  )
+    return false;
+  const channels = event.tags.filter(([name]) => name === "h");
+  const targets = event.tags.filter(([name]) => name === "e");
+  const kinds = event.tags.filter(([name]) => name === "k");
+  return (
+    channels.length === 1 &&
+    channels[0][1].length > 0 &&
+    channels[0][1].length <= 256 &&
+    targets.length > 0 &&
+    targets.length <= 100 &&
+    targets.every(([, id]) => /^[0-9a-f]{64}$/.test(id)) &&
+    new Set(targets.map(([, id]) => id)).size === targets.length &&
+    kinds.length > 0 &&
+    kinds.length <= 3 &&
+    kinds.every(([, kind]) => ["7", "9", "40002"].includes(kind))
+  );
+}
+
+/** Only explicit bot enrollment; never removal, role elevation or arbitrary kind-9000 tags. */
+export function validAgentEnrollment(event) {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (
+    event?.kind !== 9000 ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length !== 4
+  )
+    return false;
+  const validators = {
+    h: uuid,
+    p: /^[0-9a-f]{64}$/,
+    role: /^bot$/,
+    "client-id": uuid,
+  };
+  return (
+    new Set(event.tags.map((tag) => tag?.[0])).size === 4 &&
+    event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        typeof tag[1] === "string" &&
+        Object.hasOwn(validators, tag[0]) &&
+        validators[tag[0]].test(tag[1]),
+    )
   );
 }
 export function validFilters(filters) {
@@ -322,14 +406,12 @@ export function relayBrokerPlugin({
   authorizedViewer,
   relayUrl,
   communityAliases,
-  credentialService = "buzz-desktop",
-  identity = () =>
-    loadIdentity(authorizedViewer, { service: credentialService }),
+  identity = () => loadIdentity(authorizedViewer),
   authority = relayAuthority,
   upstreamFetch,
   socketFactory,
-  agentLibraryPath,
-  agentLibrary = () => readAgentLibrary(agentLibraryPath),
+  agentLibrary = readAgentLibrary,
+  builderlab: builderlabOptions = {},
 } = {}) {
   const aliases = parseCommunityAliases(communityAliases);
   const defaultRelay = relayUrl?.trim() ? relayOrigin(relayUrl) : undefined;
@@ -338,7 +420,6 @@ export function relayBrokerPlugin({
     async configureServer(server) {
       const key = identity();
       const viewer = getPublicKey(key);
-      const signComputeStatus = createComputeStatusSigner(viewer, key);
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
@@ -382,10 +463,17 @@ export function relayBrokerPlugin({
       };
       const stats = { queries: 0, errors: 0, media: 0, connects: 0 };
       let inflight = 0;
+      let gitReads = 0;
+      let presenceFlight = false;
       let sidebarUploads = 0;
+      let attachmentUploads = 0;
       let libraryRead;
       const streams = new Map();
       const admissions = createHostAdmission();
+      const builderlab = createBuilderlab({
+        key: () => key,
+        ...builderlabOptions,
+      });
       server.httpServer?.once("close", () => {
         for (const { close } of streams.values()) close();
         key.fill(0);
@@ -396,7 +484,11 @@ export function relayBrokerPlugin({
         `[relay-broker] signing as ${viewer.slice(0, 8)}… for explicitly selected communities (lazy, scoped connections)`,
       );
       server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith("/api/relay/")) return next();
+        if (
+          !req.url?.startsWith("/api/relay/") &&
+          !req.url?.startsWith("/api/builderlab/")
+        )
+          return next();
         const startedAt = Date.now();
         const route = new URL(req.url, "http://localhost").pathname;
         res.on("finish", () => {
@@ -427,6 +519,44 @@ export function relayBrokerPlugin({
         res.once("close", release);
         if (res.destroyed) release();
         try {
+          if (url.pathname.startsWith("/api/builderlab/")) {
+            // Hosted communities plugin only; the session credential never leaves Node.
+            const action = url.pathname.slice("/api/builderlab/".length);
+            try {
+              if (action === "auth" && req.method === "GET")
+                return json(res, 200, { auth: await builderlab.auth() });
+              if (req.method !== "POST")
+                return json(res, 404, { error: "Unknown Builderlab route" });
+              let raw = "";
+              for await (const part of req) {
+                raw += part;
+                if (raw.length > 4096)
+                  return json(res, 413, { error: "Request too large" });
+              }
+              if (action === "login")
+                return json(res, 200, {
+                  auth: await builderlab.login(cancel.signal),
+                });
+              if (action === "sign-out") {
+                builderlab.signOut();
+                return json(res, 200, {});
+              }
+              if (action === "bind")
+                return json(res, 200, await builderlab.bind());
+              const result = await builderlab.call(
+                action,
+                raw ? JSON.parse(raw) : {},
+              );
+              return result
+                ? json(res, 200, result)
+                : json(res, 404, { error: "Unknown Builderlab route" });
+            } catch (error) {
+              return json(res, 502, {
+                error:
+                  error instanceof Error ? error.message : "Builderlab failed",
+              });
+            }
+          }
           if (url.pathname === "/api/relay/register" && req.method === "POST") {
             let raw = "";
             for await (const part of req) {
@@ -481,7 +611,10 @@ export function relayBrokerPlugin({
                 : {}),
             });
           }
-          if (route === "/api/relay/info" && req.method === "GET") {
+          if (
+            (route === "/api/relay/info" || route === "/api/relay/icon-info") &&
+            req.method === "GET"
+          ) {
             const response = await fetchUpstream(relay, {
               headers: { Accept: "application/nostr+json" },
               redirect: "error",
@@ -492,6 +625,9 @@ export function relayBrokerPlugin({
                 error: "Community discovery failed",
               });
             const info = await response.json();
+            // Saved-community icons are public NIP-11 metadata, not join admission.
+            if (route === "/api/relay/icon-info")
+              return json(res, 200, { icon: info?.icon });
             const gifSearchPath = relayKlipySearchPath(info);
             if (gifSearchPath)
               gifSearchPaths.set(relay, Promise.resolve(gifSearchPath));
@@ -524,10 +660,12 @@ export function relayBrokerPlugin({
             [
               "/api/relay/sidebar-preferences",
               "/api/relay/read-state-decode",
+              "/api/relay/channel-kit-decode",
             ].includes(route) &&
             req.method === "POST"
           ) {
             const readStateDecode = route === "/api/relay/read-state-decode";
+            const kitDecode = route === "/api/relay/channel-kit-decode";
             if (sidebarUploads >= SIDEBAR_UPLOAD_SLOTS)
               return json(res, 429, { error: "Sidebar decoder is busy" });
             sidebarUploads++;
@@ -541,7 +679,7 @@ export function relayBrokerPlugin({
                 bytes += Buffer.byteLength(part);
                 if (
                   bytes >
-                  (readStateDecode
+                  (readStateDecode || kitDecode
                     ? READ_STATE_DECODE_BYTES
                     : SIDEBAR_REQUEST_BYTES)
                 )
@@ -554,9 +692,11 @@ export function relayBrokerPlugin({
               return json(
                 res,
                 200,
-                readStateDecode
-                  ? decodeReadState(events, key)
-                  : decodeSidebarPreferences(events, key),
+                kitDecode
+                  ? decodeChannelKit(events, key, relay)
+                  : readStateDecode
+                    ? decodeReadState(events, key)
+                    : decodeSidebarPreferences(events, key),
               );
             } catch {
               if (!res.destroyed)
@@ -591,13 +731,27 @@ export function relayBrokerPlugin({
               viewer,
               ...(await getAuthority(relay)),
               relayUrl: relay,
-              computeStatus: true,
-              writeKinds: [7, 9, ...WORKFLOW_KINDS],
+              directMessages: true,
+              writeKinds: [
+                7,
+                9,
+                40003,
+                9000,
+                30078,
+                40100,
+                ...WORKFLOW_KINDS,
+                ...((await getAuthority(relay)).channelCreation ? [9007] : []),
+              ],
               workflowReads: true,
+              projectGit: true,
+              attachmentUploads: true,
               sidebarPreferences: true,
+              channelKit: true,
               readState: true,
               agentLibrary: true,
+              agentMemories: true,
               live: true,
+              presence: true,
               agentActivity: true,
             });
           }
@@ -607,9 +761,11 @@ export function relayBrokerPlugin({
               "/api/relay/stream-priority",
               "/api/relay/stream-interests",
               "/api/relay/stream-observer",
+              "/api/relay/stream-presence",
             ].includes(route) &&
             req.method === "POST"
           ) {
+            const publishingPresence = route === "/api/relay/stream-presence";
             const prioritizing = route === "/api/relay/stream-priority";
             const observing = route === "/api/relay/stream-observer";
             const updating = route === "/api/relay/stream-interests";
@@ -625,12 +781,22 @@ export function relayBrokerPlugin({
             let streamId,
               priority,
               observer,
+              status,
               interests,
               removed,
               interestRevision;
             try {
               const body = JSON.parse(raw);
               streamId = body.streamId;
+              if (publishingPresence) {
+                status = body.status;
+                if (
+                  status !== "online" &&
+                  status !== "away" &&
+                  status !== "offline"
+                )
+                  throw new Error("Invalid presence");
+              }
               if (observing) observer = observerGeneration(body.observer);
               if (updating) {
                 interests = liveChannels(body.channels);
@@ -657,10 +823,27 @@ export function relayBrokerPlugin({
             )
               return json(res, 400, { error: "Invalid live control" });
             const stream = streams.get(streamId);
+            if (publishingPresence && (!stream || stream.relay !== relay))
+              return json(res, 200, { accepted: null });
             if (!stream || stream.relay !== relay)
               return json(res, 404, {
                 error: "Live stream no longer available",
               });
+            if (publishingPresence) {
+              const cancel = new AbortController();
+              const abort = () => cancel.abort();
+              res.once("close", abort);
+              try {
+                const accepted = await stream.traffic.publishPresence(
+                  status,
+                  cancel.signal,
+                );
+                if (!res.destroyed) return json(res, 200, { accepted });
+              } finally {
+                res.off("close", abort);
+              }
+              return;
+            }
             if (updating) {
               if (interestRevision <= stream.interestRevision)
                 return json(res, 409, { error: "Stale interest control" });
@@ -849,6 +1032,53 @@ export function relayBrokerPlugin({
           }
           if (route === "/api/relay/stats" && req.method === "GET")
             return json(res, 200, { ...stats, connects: upstream.connects() });
+          if (
+            ["/api/relay/upload", "/api/relay/prepare-media"].includes(route) &&
+            req.method === "POST"
+          ) {
+            if (attachmentUploads >= 2)
+              return json(res, 429, { code: "capacity" });
+            attachmentUploads++;
+            try {
+              if (route === "/api/relay/prepare-media") {
+                await prepareMedia(
+                  req,
+                  cancel.signal,
+                  async (path, type, size, signal) => {
+                    signal.throwIfAborted();
+                    res.writeHead(200, {
+                      "Content-Type": type,
+                      "Content-Length": size,
+                      "Cache-Control": "no-store",
+                      "X-Content-Type-Options": "nosniff",
+                    });
+                    await pipeline(createReadStream(path), res, { signal });
+                  },
+                );
+                return;
+              }
+              const result = await uploadAttachment(
+                req,
+                relay,
+                key,
+                fetchUpstream,
+                cancel.signal,
+              );
+              return json(res, 200, result);
+            } catch (error) {
+              if (!res.destroyed)
+                return json(
+                  res,
+                  error instanceof UploadError ? error.status : 502,
+                  {
+                    code: error instanceof UploadError ? error.code : "failed",
+                  },
+                );
+            } finally {
+              attachmentUploads--;
+            }
+            return;
+          }
           if (route === "/api/relay/media" && req.method === "GET") {
             const target = new URL(url.searchParams.get("url") ?? "", relay);
             if (
@@ -864,7 +1094,10 @@ export function relayBrokerPlugin({
                 content: "Get buzz-media",
                 tags: [
                   ["t", "get"],
-                  ["expiration", String(now + 120)],
+                  [
+                    "expiration",
+                    String(now + Math.ceil(UPLOAD_TIMEOUT_MS / 1000) + 60),
+                  ],
                   ["server", new URL(relay).host],
                 ],
               },
@@ -876,6 +1109,10 @@ export function relayBrokerPlugin({
               (typeof range !== "string" || !/^bytes=\d+-\d*$/.test(range))
             )
               return json(res, 416, { error: "Media range rejected" });
+            const mediaDeadline = AbortSignal.any([
+              cancel.signal,
+              AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+            ]);
             const upstream = await fetchUpstream(target, {
               headers: {
                 Authorization:
@@ -884,81 +1121,117 @@ export function relayBrokerPlugin({
                 ...(range ? { Range: range } : {}),
               },
               redirect: "error",
-              signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+              signal: mediaDeadline,
             });
             stats.media++;
-            if (!upstream.ok)
+            if (!upstream.ok) {
+              await upstream.body?.cancel();
               return json(res, upstream.status, { error: "Media read failed" });
+            }
             const type = upstream.headers.get("content-type") ?? "";
-            const image = type.startsWith("image/");
-            const video = type.startsWith("video/");
-            if (!image && !video)
-              return json(res, 415, { error: "Media type rejected" });
+            const mediaType = type.split(";", 1)[0].trim().toLowerCase();
+            const trustedType =
+              /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(
+                mediaType,
+              );
+            const image =
+              trustedType &&
+              mediaType.startsWith("image/") &&
+              mediaType !== "image/svg+xml";
+            const video = trustedType && mediaType.startsWith("video/");
+            const audio = trustedType && mediaType.startsWith("audio/");
+            const streamable = video || audio;
+            const download = !image && !streamable;
             const length = Number(upstream.headers.get("content-length"));
-            if (
-              Number.isFinite(length) &&
-              length > MAX_MEDIA_BYTES &&
-              !(video && upstream.status === 206)
-            )
+            // Audio is read-compatible, not part of attachment upload parity.
+            const limit =
+              audio && upstream.status !== 206
+                ? 20 * 1024 * 1024
+                : mediaByteLimit(mediaType);
+            if (Number.isFinite(length) && length > limit) {
+              await upstream.body?.cancel();
               return json(res, 413, { error: "Media budget exceeded" });
+            }
             const headers = {
-              "Content-Type": type,
+              "Content-Type": download ? "application/octet-stream" : mediaType,
               "Cache-Control": "private, max-age=3600",
               "X-Content-Type-Options": "nosniff",
+              ...(download ? { "Content-Disposition": "attachment" } : {}),
               ...(upstream.headers.get("content-length")
                 ? { "Content-Length": upstream.headers.get("content-length") }
                 : {}),
               ...(upstream.headers.get("content-range")
                 ? { "Content-Range": upstream.headers.get("content-range") }
                 : {}),
-              ...(video
+              ...(upstream.headers.get("accept-ranges") || streamable
                 ? {
                     "Accept-Ranges":
                       upstream.headers.get("accept-ranges") ?? "bytes",
                   }
                 : {}),
             };
-            if (video) {
-              res.writeHead(upstream.status, headers);
-              if (!upstream.body) return res.end();
-              const stream = Readable.fromWeb(upstream.body);
-              // A range request may time out or be cancelled after headers. A
-              // piped Readable has no automatic error consumer; without this,
-              // Node treats the upstream abort as an uncaught process error and
-              // kills the live broker along with unrelated message traffic.
-              stream.once("error", () => res.destroy());
-              res.once("close", () => stream.destroy());
-              stream.pipe(res);
-              return;
+            res.writeHead(upstream.status, headers);
+            if (!upstream.body) return res.end();
+            let received = 0;
+            const meter = new Transform({
+              transform(chunk, _encoding, callback) {
+                received += chunk.length;
+                callback(
+                  received > limit ? new Error("Media budget exceeded") : null,
+                  chunk,
+                );
+              },
+            });
+            // All media/downloads use backpressure; failed streams cannot emit JSON after headers.
+            try {
+              await pipeline(Readable.fromWeb(upstream.body), meter, res, {
+                signal: mediaDeadline,
+              });
+            } catch {
+              res.destroy();
             }
-            const bytes = Buffer.from(await upstream.arrayBuffer());
-            if (bytes.length > MAX_MEDIA_BYTES)
-              return json(res, 413, { error: "Media budget exceeded" });
-            res.writeHead(200, headers);
-            return res.end(bytes);
+            return;
           }
           if (
             ![
-              "/api/relay/compute-status",
               "/api/relay/query",
+              "/api/relay/agent-memories",
+              "/api/relay/presence-snapshot",
               "/api/relay/sign",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
+              "/api/relay/channel-kit-prepare",
               "/api/relay/read-state-publish",
               "/api/relay/profile",
+              "/api/relay/direct-message",
+              "/api/relay/authorize-agent",
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/gifs",
               "/api/relay/workflow-runs",
+              "/api/relay/project-git",
             ].includes(route) ||
             req.method !== "POST"
           )
             return json(res, 404, { error: "Unknown broker route" });
+          const memory = route === "/api/relay/agent-memories";
+          const presence = route === "/api/relay/presence-snapshot";
           let raw = "";
-          for await (const part of req) {
-            raw += part;
-            if (raw.length > 65536)
-              return json(res, 413, { error: "Filter body too large" });
+          const uploadDeadline = memory
+            ? setTimeout(() => req.destroy(), 10000)
+            : undefined;
+          try {
+            for await (const part of req) {
+              raw += part;
+              if (
+                presence
+                  ? Buffer.byteLength(raw) > 20 * 1024
+                  : raw.length > 65536
+              )
+                return json(res, 413, { error: "Filter body too large" });
+            }
+          } finally {
+            clearTimeout(uploadDeadline);
           }
           let filters;
           try {
@@ -966,6 +1239,86 @@ export function relayBrokerPlugin({
           } catch {
             return json(res, 400, { error: "Filter body is not JSON" });
           }
+          let memoryAgent;
+          if (memory) {
+            try {
+              if (!scoped)
+                throw new Error("Memory reads need an explicit community");
+              const query = memoryFilter(filters, viewer);
+              memoryAgent = filters.agent;
+              filters = query;
+            } catch {
+              return json(res, 400, { error: "Invalid memory target" });
+            }
+          }
+          if (route === "/api/relay/channel-kit-prepare") {
+            try {
+              cancel.signal.throwIfAborted();
+              return json(res, 200, {
+                content: prepareChannelKit(filters, key, relay),
+              });
+            } catch {
+              return json(res, 400, { error: "Invalid channel recipe" });
+            }
+          }
+          if (route === "/api/relay/project-git") {
+            let input;
+            try {
+              input = parseGitRead(filters);
+            } catch {
+              return json(res, 400, { error: "Invalid repository read" });
+            }
+            if (gitReads >= 2)
+              return json(res, 429, { error: "Repository reads are busy" });
+            gitReads++;
+            try {
+              const result = await admissions(relay, viewer).api.run(
+                () =>
+                  readProjectGit({
+                    input,
+                    relay,
+                    key,
+                    signal: AbortSignal.any([
+                      cancel.signal,
+                      AbortSignal.timeout(12000),
+                    ]),
+                  }),
+                cancel.signal,
+              );
+              cancel.signal.throwIfAborted();
+              return json(res, 200, result);
+            } catch (error) {
+              if (!res.destroyed)
+                return json(res, error.status ?? 502, {
+                  error: "Repository content could not be read",
+                });
+              return;
+            } finally {
+              gitReads--;
+            }
+          }
+          if (route === "/api/relay/authorize-agent") {
+            if (
+              !scoped ||
+              filters?.owner !== viewer ||
+              !/^[0-9a-f]{64}$/.test(filters?.pubkey ?? "") ||
+              filters.pubkey === viewer ||
+              Object.keys(filters).length !== 2
+            )
+              return json(res, 400, {
+                error: "Invalid agent owner authorization",
+              });
+            cancel.signal.throwIfAborted();
+            const digest = createHash("sha256")
+              .update(`nostr:agent-auth:${filters.pubkey}:`)
+              .digest();
+            const signature = Buffer.from(schnorr.sign(digest, key)).toString(
+              "hex",
+            );
+            return json(res, 200, { auth: ["auth", viewer, "", signature] });
+          }
+          if (presence && !presenceFilter(filters))
+            return json(res, 400, { error: "Invalid presence filter" });
           let workflowPath;
           if (route === "/api/relay/workflow-runs") {
             try {
@@ -978,6 +1331,17 @@ export function relayBrokerPlugin({
             }
           }
           const profile = route === "/api/relay/profile";
+          const directMessage = route === "/api/relay/direct-message";
+          if (directMessage) {
+            try {
+              filters = directMessageEvent(filters, viewer, key);
+            } catch {
+              return json(res, 400, {
+                error: "Choose between one and eight other people.",
+                sent: false,
+              });
+            }
+          }
           const claim = route === "/api/relay/claim";
           const policy = route === "/api/relay/accept-policy";
           const gifs = route === "/api/relay/gifs";
@@ -1072,22 +1436,45 @@ export function relayBrokerPlugin({
               sent: false,
             });
           const timings = [];
-          const computeStatus = route === "/api/relay/compute-status";
-          if (computeStatus) {
-            try {
-              cancel.signal.throwIfAborted();
-              filters = await signComputeStatus(filters, cancel.signal);
-            } catch {
-              return json(res, 400, {
-                error: "Compute status rejected",
-                sent: false,
-              });
-            }
-          }
           const signing = route === "/api/relay/sign";
           const publishing = route === "/api/relay/publish";
           if (signing || publishing) {
-            if (![7, 9].includes(filters?.kind)) {
+            if ([9000, 9007].includes(filters?.kind)) {
+              const enrollment = validAgentEnrollment(filters);
+              const authority = await getAuthority(relay);
+              if (
+                !enrollment &&
+                !(
+                  validChannelCommand(filters) &&
+                  (filters.kind === 9000 || authority.channelCreation)
+                )
+              )
+                return json(res, 400, {
+                  error:
+                    "Agent enrollment or channel operation unavailable or invalid",
+                  sent: false,
+                });
+            } else if (filters?.kind === 30078 || filters?.kind === 40100) {
+              try {
+                if (
+                  !Number.isInteger(filters.created_at) ||
+                  Math.abs(filters.created_at - Date.now() / 1000) > 15 * 60
+                )
+                  throw new Error("Expired operation");
+                if (filters.kind === 30078)
+                  admitChannelKit(filters, key, relay);
+                else if (!validCanvas(filters))
+                  throw new Error("Invalid Canvas");
+              } catch {
+                return json(res, 400, {
+                  error: "Channel recipe or Canvas rejected",
+                  sent: false,
+                });
+              }
+            } else if (
+              ![7, 9, 40003].includes(filters?.kind) &&
+              !validMessageDeletion(filters)
+            ) {
               try {
                 validateWorkflowEvent(
                   { ...filters, pubkey: signing ? viewer : filters.pubkey },
@@ -1100,7 +1487,10 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
-            } else if (!validMessageTemplate(filters))
+            } else if (
+              [7, 9, 40003].includes(filters?.kind) &&
+              !validMessageTemplate(filters)
+            )
               return json(res, 400, { error: "Message rejected" });
             // Never sign or publish after the requesting browser has left.
             cancel.signal.throwIfAborted();
@@ -1124,8 +1514,8 @@ export function relayBrokerPlugin({
             if (filters.pubkey !== viewer || !verifyEvent(filters))
               return json(res, 400, { error: "Invalid outgoing signature" });
           } else if (
-            !computeStatus &&
             !profile &&
+            !directMessage &&
             !claim &&
             !policy &&
             !gifs &&
@@ -1172,7 +1562,7 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile || computeStatus
+              : profile || directMessage
                 ? "/events"
                 : claim
                   ? "/api/invites/claim"
@@ -1180,87 +1570,104 @@ export function relayBrokerPlugin({
                     ? "/api/invites/accept-policy"
                     : "/query");
           const method = workflowPath ? "GET" : "POST";
-          if (inflight >= MAX_INFLIGHT)
+          const lane = admissions(relay, viewer).api;
+          let releasePresence;
+          if (presence) {
+            releasePresence = !presenceFlight ? lane.tryPresence() : undefined;
+            if (!releasePresence) {
+              res.writeHead(204);
+              return res.end();
+            }
+            presenceFlight = true;
+          }
+          if (!presence && inflight >= MAX_INFLIGHT)
             return json(res, 429, {
               error: "Query concurrency limit",
               sent: false,
             });
-          inflight++;
+          if (!presence) inflight++;
           try {
-            const lane = admissions(relay, viewer).api;
             const body = workflowPath ? undefined : JSON.stringify(filters);
             const admissionStart = performance.now();
             let connectsBefore, upstreamStart;
             let response;
             const requestSignal = AbortSignal.any([
               cancel.signal,
-              AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+              AbortSignal.timeout(
+                presence || memory ? 10000 : UPSTREAM_TIMEOUT_MS,
+              ),
             ]);
-            response = await admittedApiRequest(
-              lane,
-              () => {
-                // Auth freshness and network timings begin at dispatch, not queue entry.
-                requestSignal.throwIfAborted();
+            const request = () => {
+              // Auth freshness and network timings begin at dispatch, not queue entry.
+              requestSignal.throwIfAborted();
+              timings.push(
+                `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
+              );
+              const authStart = performance.now();
+              const auth = finalizeEvent(
+                {
+                  kind: 27235,
+                  created_at: Math.floor(Date.now() / 1000),
+                  content: "",
+                  tags: [
+                    ["u", `${relay}${upstreamPath}`],
+                    ["method", method],
+                    ...(body === undefined
+                      ? []
+                      : [
+                          [
+                            "payload",
+                            createHash("sha256").update(body).digest("hex"),
+                          ],
+                        ]),
+                    ["nonce", randomBytes(16).toString("hex")],
+                  ],
+                },
+                key,
+              );
+              timings.push(
+                `auth;dur=${(performance.now() - authStart).toFixed(2)}`,
+              );
+              connectsBefore = upstream.connects();
+              upstreamStart = performance.now();
+              return fetchUpstream(`${relay}${upstreamPath}`, {
+                method,
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization:
+                    "Nostr " +
+                    Buffer.from(JSON.stringify(auth)).toString("base64"),
+                },
+                body,
+                redirect: "error",
+                signal: requestSignal,
+              }).then((response) => {
                 timings.push(
-                  `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
+                  `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
                 );
-                const authStart = performance.now();
-                const auth = finalizeEvent(
-                  {
-                    kind: 27235,
-                    created_at: Math.floor(Date.now() / 1000),
-                    content: "",
-                    tags: [
-                      ["u", `${relay}${upstreamPath}`],
-                      ["method", method],
-                      ...(body === undefined
-                        ? []
-                        : [
-                            [
-                              "payload",
-                              createHash("sha256").update(body).digest("hex"),
-                            ],
-                          ]),
-                      ["nonce", randomBytes(16).toString("hex")],
-                    ],
-                  },
-                  key,
+                return response;
+              });
+            };
+            response = presence
+              ? await request()
+              : await admittedApiRequest(
+                  lane,
+                  request,
+                  requestSignal,
+                  route === "/api/relay/query" &&
+                    req.headers["x-buzz-read-priority"] === "background"
+                    ? "background"
+                    : "foreground",
                 );
-                timings.push(
-                  `auth;dur=${(performance.now() - authStart).toFixed(2)}`,
-                );
-                connectsBefore = upstream.connects();
-                upstreamStart = performance.now();
-                return fetchUpstream(`${relay}${upstreamPath}`, {
-                  method,
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization:
-                      "Nostr " +
-                      Buffer.from(JSON.stringify(auth)).toString("base64"),
-                  },
-                  body,
-                  redirect: "error",
-                  signal: requestSignal,
-                }).then((response) => {
-                  timings.push(
-                    `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
-                  );
-                  return response;
-                });
-              },
-              requestSignal,
-              route === "/api/relay/query" &&
-                req.headers["x-buzz-read-priority"] === "background"
-                ? "background"
-                : "foreground",
-            );
-            const text =
-              snapshot && response.ok
-                ? await readSnapshotText(response)
-                : workflowPath && response.ok
-                  ? await workflowReadText(response)
-                  : await response.text();
+            const text = memory
+              ? await memoryResponseText(response)
+              : presence
+                ? await presenceText(response)
+                : snapshot && response.ok
+                  ? await readSnapshotText(response)
+                  : workflowPath && response.ok
+                    ? await workflowReadText(response)
+                    : await response.text();
             // The relay's own service time separates server work from network time.
             const relayMs = Number(
               response.headers.get("x-envoy-upstream-service-time"),
@@ -1283,16 +1690,44 @@ export function relayBrokerPlugin({
               } catch {
                 failure = apiFailure(response.status, undefined);
               }
+              if (presence && failure.quota === "api")
+                lane.pause(failure.retryAfterMs);
               return json(res, response.status, failure);
             }
-            if (profile || computeStatus) {
+            if (directMessage) {
+              try {
+                return json(res, 200, directMessageReceipt(text, filters.id));
+              } catch {
+                return json(res, 502, {
+                  error: "The direct message could not be opened. Try again.",
+                });
+              }
+            }
+            if (memory) {
+              try {
+                const listing = await decodeAgentMemory(
+                  JSON.parse(text),
+                  key,
+                  viewer,
+                  memoryAgent,
+                  requestSignal,
+                );
+                requestSignal.throwIfAborted();
+                return json(res, 200, listing);
+              } catch {
+                return json(res, 502, {
+                  error: "Memory listing could not be validated",
+                });
+              }
+            }
+            if (profile) {
               const receipt = JSON.parse(text);
               if (
                 receipt.event_id !== filters.id ||
                 typeof receipt.accepted !== "boolean"
               )
                 return json(res, 502, {
-                  error: "Publication could not be confirmed",
+                  error: "Profile publication could not be confirmed",
                 });
             }
             res.writeHead(200, {
@@ -1301,7 +1736,10 @@ export function relayBrokerPlugin({
             });
             res.end(text);
           } finally {
-            inflight--;
+            if (presence) {
+              presenceFlight = false;
+              releasePresence();
+            } else inflight--;
           }
         } catch (error) {
           if (res.destroyed) return; // The browser gave up first; nothing to answer.

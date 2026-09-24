@@ -1,3 +1,72 @@
+mod build_config;
 fn main() {
-    tauri_build::build()
+    println!("cargo:rerun-if-env-changed=BUZZ_BUILD_AGENT_ENV");
+    println!("cargo:rerun-if-changed=build_config.rs");
+    let raw = std::env::var("BUZZ_BUILD_AGENT_ENV").unwrap_or_default();
+    let (host, filter) =
+        build_config::parse(&raw).expect("Invalid private agent build configuration");
+    // Write even when unset: a same-target public rebuild must clear prior defaults.
+    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    std::fs::write(
+        output.join("agent_defaults.rs"),
+        format!("pub const HOST: &str = {host:?};\npub const FILTER: &str = {filter:?};\n"),
+    )
+    .expect("Could not write native connection defaults");
+    let mut attributes = tauri_build::Attributes::new();
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        // Tauri's resource linker covers bin targets, not the lib unit-test EXE.
+        // Link the same manifest into both without changing icons/version resources.
+        // https://github.com/tauri-apps/tauri/issues/13419
+        attributes = attributes
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+        let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
+            .join("windows-app-manifest.xml");
+        println!("cargo:rerun-if-changed={}", manifest.display());
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+    }
+    tauri_build::try_build(
+        attributes.app_manifest(tauri_build::AppManifest::new().commands(&[
+            "plugin_import_folder",
+            "plugin_import_git",
+            "plugin_import_install",
+            "plugin_import_discard",
+            "plugin_catalog",
+            "plugin_change",
+            "plugin_reload",
+            "plugin_module",
+            "plugin_recover",
+            "agent_control_create_prepare",
+            "agent_control_create_commit",
+            "agent_control_creation_profile",
+            "agent_control_snapshot",
+            "agent_control_save",
+            "agent_control_action",
+            "agent_control_import_preview",
+            "agent_control_import_commit",
+            "agent_models_begin",
+            "agent_models_cancel",
+            "agent_models_run",
+            "title_bar_double_click",
+            "notification_show",
+            "dock_permission",
+            "unread_indicator_set",
+            "terminal_create_owner",
+            "terminal_spawn",
+            "terminal_read",
+            "terminal_write",
+            "terminal_resize",
+            "terminal_close",
+            "terminal_close_owner",
+            "browser_attach",
+            "browser_set_bounds",
+            "browser_detach",
+            "browser_navigate",
+            "browser_action",
+            "browser_status",
+        ])),
+    )
+    .expect("Could not build Tauri resources")
 }

@@ -1,0 +1,133 @@
+import { MembershipChanged, type MemberAdditionIntent } from "./members";
+import type { AgentControl } from "../agents/control";
+import type { Delivery, LocalEvents } from "../relay/outbox";
+
+type Addition = Readonly<{
+  channelId: string;
+  pubkey: string;
+  pending: boolean;
+  confirmed: boolean;
+  error?: string;
+  removed?: boolean;
+}>;
+
+/** Session-owned continuation and recovery; closing a view never cancels intent. */
+export function createMemberAdditions(
+  signal: AbortSignal,
+  add: (
+    channelId: string,
+    pubkey: string,
+    intent: MemberAdditionIntent,
+  ) => Promise<void>,
+  start: (
+    channelId: string,
+    pubkey: string,
+    control: AgentControl | undefined,
+    retryStart: boolean,
+  ) => Promise<void>,
+  receipts?: LocalEvents,
+) {
+  let snapshot: readonly Addition[] = [];
+  const listeners = new Set<() => void>();
+  const pending = new Map<string, Promise<void>>();
+  const intents = new Map<string, MemberAdditionIntent>();
+  const deliveries = new WeakMap<MemberAdditionIntent, Delivery>();
+  const stopReceipts = receipts?.subscribe(() => {
+    const current = new Map(
+      receipts.snapshot().map((item) => [item.event.id, item.delivery]),
+    );
+    for (const intent of intents.values()) {
+      if (!intent.id) continue;
+      const delivery = current.get(intent.id);
+      // Failed outstanding records are removed only by durable explicit dismissal.
+      // Completed echoes can be evicted, so their absence never permits a new send.
+      if (
+        !delivery &&
+        !intent.confirmed &&
+        deliveries.get(intent) === "failed"
+      ) {
+        deliveries.delete(intent);
+        intent.dismissed = true;
+      } else if (delivery) deliveries.set(intent, delivery);
+    }
+  });
+  function publish(next: readonly Addition[]) {
+    snapshot = next;
+    for (const listener of listeners) listener();
+  }
+  signal.addEventListener(
+    "abort",
+    () => {
+      stopReceipts?.();
+      intents.clear();
+      publish([]);
+      listeners.clear();
+    },
+    { once: true },
+  );
+  return Object.freeze({
+    snapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    add(
+      channelId: string,
+      pubkey: string,
+      control?: AgentControl,
+    ): Promise<void> {
+      if (signal.aborted)
+        return Promise.reject(new Error("The community connection closed."));
+      const key = JSON.stringify([channelId, pubkey]);
+      const existing = pending.get(key);
+      if (existing) return existing;
+      const matches = (item: Addition) =>
+        item.channelId === channelId && item.pubkey === pubkey;
+      const previous = snapshot.find(matches);
+      const intent = intents.get(key) ?? {};
+      intents.set(key, intent);
+      let confirmed = previous?.confirmed ?? false;
+      const update = (item?: Addition) => {
+        if (!signal.aborted)
+          publish([
+            ...snapshot.filter((value) => !matches(value)),
+            ...(item ? [item] : []),
+          ]);
+      };
+      const operation = Promise.resolve()
+        .then(async () => {
+          signal.throwIfAborted();
+          const retryStart = confirmed;
+          if (!confirmed) {
+            await add(channelId, pubkey, intent);
+            confirmed = true;
+          }
+          signal.throwIfAborted();
+          await start(channelId, pubkey, control, retryStart);
+          update();
+        })
+        .catch((error: unknown) => {
+          update({
+            channelId,
+            pubkey,
+            pending: false,
+            confirmed: error instanceof MembershipChanged ? false : confirmed,
+            removed: error instanceof MembershipChanged,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Could not add this member. Try again.",
+          });
+          throw error;
+        })
+        .finally(() => {
+          pending.delete(key);
+        });
+      pending.set(key, operation);
+      update({ channelId, pubkey, pending: true, confirmed });
+      return operation;
+    },
+  });
+}

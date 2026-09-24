@@ -73,6 +73,7 @@ export function membershipDescription(
   rows: readonly ChannelMessage[],
   profiles: ReadonlyMap<string, Profile>,
   viewer?: string,
+  resolveName?: (id: string, fallback: string) => string,
 ) {
   const changes = rows.flatMap((row) =>
     row.membership ? [row.membership] : [],
@@ -85,7 +86,9 @@ export function membershipDescription(
       ? subject
         ? "You"
         : "you"
-      : (profiles.get(id)?.name ?? id.slice(0, 10));
+      : (resolveName?.(id, profiles.get(id)?.name ?? id.slice(0, 10)) ??
+        profiles.get(id)?.name ??
+        id.slice(0, 10));
   const joinNames = (ids: readonly string[]) =>
     new Intl.ListFormat(undefined, { type: "conjunction" }).format(
       ids.map((id) => name(id)),

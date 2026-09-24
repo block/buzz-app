@@ -30,6 +30,7 @@ function harness(module: PluginModule) {
     source: "external" as const,
     revision: "one",
     previous: null,
+    reloadable: true,
     error: null,
   };
   return { service, runtime, plugin };
@@ -88,13 +89,16 @@ it("bundled Emoji really registers a picker and a renderer, including reaction m
   expect(inlineMatches(content, h.service.inline.snapshot())).toHaveLength(1);
   expect(
     inlineMatches(
-      { ...content, reaction: { content: ":party:" } },
+      { ...content, reaction: { content: ":party:", events: [] } },
       h.service.inline.snapshot(),
     ),
   ).toHaveLength(0);
   expect(
     inlineMatches(
-      { ...content, reaction: { content: ":party:", emoji: custom } },
+      {
+        ...content,
+        reaction: { content: ":party:", emoji: custom, events: [] },
+      },
       h.service.inline.snapshot(),
     ),
   ).toHaveLength(1);

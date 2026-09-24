@@ -44,9 +44,63 @@ The pinned pnpm Hermit package supports Apple Silicon macOS but marks Intel macO
 on an unsupported platform; resolve that tooling gap first. Other platforms still
 need their own validation.
 
-- `just web`: install locked dependencies and start Vite on port 1430 or the
-  next available port, allowing parallel browser development across worktrees.
-- `just desktop`: install locked dependencies and start Tauri, which starts Vite.
+- `just web [args...]`: install locked dependencies and forward arguments to Vite,
+  e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
+  (default: derived from the worktree path) or the next available port, allowing
+  parallel browser development.
+  Use `just web profile` for opt-in Chromium and broker CPU profiles. Profiling
+  binds only `127.0.0.1`; wildcard, hostname, and IPv6 `--host` values are rejected
+  so the captured page and development broker have one unambiguous owner. Use
+  `just web profile --network` to additionally record sanitized browser network
+  metadata in `network.json`; payloads, cookies, authorization headers, query strings,
+  fragments, and WebSocket frame data are omitted. Use `just web profile --trace`
+  to record a Chromium DevTools Performance trace (`chromium-trace.json`, with
+  style/layout/paint events, React's performance tracks, and denser CPU samples)
+  in place of `chromium-renderer.cpuprofile`; traces are large, so keep traced
+  sessions short. Press Ctrl+C to finalize the capture; the command prints the
+  `.profiles/...-web` output directory. Load `.cpuprofile` and trace files in
+  Chromium DevTools (**Performance** > **Load profile**).
+- `just desktop [args...]`: install locked dependencies and forward arguments to
+  Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
+  builds the pinned agent runtime when missing/outdated, or verifies and reuses it.
+  A preparation failure stops launch; help does not prepare resources.
+  The desktop adapter consumes
+  `--port N` or `--port=N` to set both Vite's port and Tauri's development URL;
+  Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
+  the adapter derives a stable port from the worktree path (the same derivation
+  `just web` uses) and prints the chosen URL. Different paths can still collide.
+  All desktop builds use the `buzz` URL scheme. See [OS deep links](deep-links.md).
+  Desktop requires the exact port to be free; an occupied port fails rather than
+  opening another copy's server. Other arguments, including runner/application arguments after `--`, pass
+  through unchanged. Port configuration is prepended so Tauri parses it even with
+  implicit runner arguments. Explicit `--config` arguments merge afterward and can
+  override it; keep their development URL and frontend command consistent. Use `--`
+  before runner/application arguments if they contain their own `--port` flag.
+  On macOS, `just desktop profile` uses Instruments' Time Profiler to launch and
+  record only the Buzz native parent process, not every process on the desktop.
+  WebKit subprocesses and the Vite broker are outside this native trace; use web
+  profiling when renderer/broker CPU coverage is required. Native file watching is
+  disabled during capture. Press Ctrl+C to finalize and validate the trace; the
+  path, which opens in Instruments. Use `just profile-clean` to remove all generated
+  web and desktop captures.
+- `just desktop-bundle [args...]`: bundle a debug desktop app for testing OS deep
+  links on macOS, where the OS routes a scheme only to a bundled application. It
+  defaults to a `.app` bundle unless `--bundles` or `--no-bundle` says otherwise,
+  and passes everything else to `tauri build`. The bundle uses `buzz`, as does
+  release bundling with `pnpm tauri build`.
+- `just design [args...]`: install locked dependencies, start the standalone
+  design-system viewer, and open it in your browser. Arguments pass through to
+  Vite, e.g. `just design --port 1444`. The default port is 1442; an occupied port
+  fails rather than switching automatically. This starts neither Tauri nor the
+  live relay broker. Press Ctrl+C to stop it.
+- To pause notifications in your local dev server, set `BUZZ_DEV_NOTIFICATIONS=0`
+  in `.env.local` and restart the server. Only `0` pauses alerts and permission
+  requests; removing the setting restores normal behavior. Saved preferences are
+  untouched and production builds ignore the variable.
+- To open the default relay's community on a fresh dev port, set
+  `BUZZ_DEV_OPEN_RELAY=1` alongside `BUZZ_RELAY_URL` in `.env.local` and restart
+  the server. Only `1` enables it; a viewer's existing saved choice on that port,
+  including Personal space, wins. Production builds ignore the variable.
 - `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
   eventually start local Docker services including the Buzz relay backend.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe
@@ -66,9 +120,13 @@ isolated test buses, never use the desktop session bus or display real banners. 
 Installs run on every invocation to account for branch and lockfile changes.
 pnpm reuses its shared package cache; no node_modules directory needs to be copied
 into a new worktree. Native dependencies are fetched by Cargo as needed. Initial
-downloads and native compilation can take time. Desktop dev requires port 1430
-for its fixed native development URL. Browser dev prints its selected URL and can
-use a later port when 1430 is occupied.
+downloads and native compilation can take time. Parallel worktrees normally need
+no port flags: each derives a stable default from its path. Pass `--port` if paths
+collide, the default is occupied, or you run a second instance from one checkout;
+ports must be integers from 1 to 65535. Browser dev
+prints its selected URL and can use a later port when the requested port is
+occupied. Port selection does not isolate credentials or native plugin data;
+use the existing `BUZZODZ_PROFILE` setting for separate plugin profiles.
 Both run the development broker with your identity when the public
 `BUZZ_DEV_VIEWER` pin is configured in `.env.local`, and start without live
 identity otherwise; see [the setup and Keychain requirements](../README.md#relay-channels).
@@ -87,6 +145,24 @@ repository. Keychain credentials and pnpm's package cache remain machine-shared;
 do not copy private keys, `node_modules`, build output, `.npmrc`, or other ignored
 files. Install hooks separately as described below so existing custom hooks are
 never silently replaced.
+
+### Worktree Dock labels (macOS)
+
+`just desktop` adds the current branch suffix to the Dock icon in linked Git
+worktrees (for example, `person/my-feature` shows `my-feature`). Detached
+worktrees use the checkout directory name. Restart the desktop command after
+switching or renaming a branch; no Cargo clean is needed.
+
+The launcher reuses the existing badge design and generates an icon under the
+ignored `src-tauri/target/dev-icons/` directory. The generated bytes determine its
+filename, so changed labels, source artwork, or rendering update Tauri's embedded
+icon even with a warm build. Generation requires macOS Swift/AppKit and `iconutil`;
+if it fails, startup warns and continues with the ordinary icon. Explicit Tauri
+`--config` arguments still take precedence over the generated icon and port.
+
+Ordinary checkouts, non-macOS launches, and `pnpm tauri build` keep their existing
+icons. This does not change the app identifier, credentials, profiles, or
+notification settings.
 
 ## Interactive product iteration
 
@@ -116,8 +192,17 @@ While shaping the first version, default to **edit → human tries the running a
   CI suites locally by default. Run `just scan` only when explicitly requested or
   needed to reproduce a broad integration failure, not for every review,
   integration, or handoff. Attribute validation to the checked snapshot; later
-  edits require appropriate revalidation. Fix failures and rerun the affected
-  gate rather than repeating unchanged successful work. **Validated** means the
+  edits require appropriate revalidation. Before delivery, compare the branch's
+  merge base with the fetched target branch: GitHub PR checks run the merged tree,
+  which can include tests absent from the feature branch. Inspect incoming changes
+  that overlap changed UI contracts (including accessible names), integrate them,
+  and run the affected test files rather than assuming branch-only passes cover them.
+  Shared access-gating changes also affect standalone composer/reaction fixtures,
+  broker filter models, and restored-navigation/unread journeys. Repair stale
+  fixtures without loosening authority, then finish those journeys: an early mock
+  failure can mask a later production lifecycle regression.
+  Fix failures and rerun the affected gate rather than repeating unchanged successful
+  work. **Validated** means the
   required checks passed, not merely that the screen looked right; pending CI
   and untested native/browser behavior remain explicit gaps.
 
@@ -199,6 +284,11 @@ configuration/dependencies and hook-runner changes select this job; a missing ba
 runs it conservatively. Its selection is independent of the unit-test skip, so
 CSS-only and viewer-only errors still block a push. Documentation-only and
 native-only pushes skip both jobs. Both selected jobs must pass.
+On a busy machine, set `BUZZ_TEST_WORKERS=2 git push` to limit Vitest worker
+concurrency in the hook. The optional value must be a positive integer; leaving
+it unset preserves Vitest's default. This also applies to direct Vitest runs and
+does not change test selection, timeouts, assertions, or retries.
+
 Neither job fetches, installs dependencies, formats, builds Rust, or starts browsers.
 The design job disables pnpm dependency auto-repair. Install dependencies when
 switching branches, not during a push.
@@ -225,9 +315,6 @@ the complete suite still runs with `pnpm test` / `just scan`:
   doctests (including Tauri), and every Node integration test. The CLI integration
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
-- **Windows native notifications:** Clippy and all Tauri-package tests on Windows,
-  using the repository Rust pin through rustup (Hermit is not available there).
-  This compiles the Windows backend; it does not exercise OS banner interaction.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
 - **Browser journeys:** four runners (Chromium and WebKit, two file-level shards
   per engine), each with two workers. They start alongside measurements on separate
@@ -237,16 +324,38 @@ the complete suite still runs with `pnpm test` / `just scan`:
   outside the browser subprocess timeout. No measurement is repeated on shards,
   and no retry hides a failure. Functional jobs also run when measurements fail:
   this spends more runner minutes for faster, independent feedback.
-- **CI required:** fails unless every lane and every browser shard succeeds,
+- **CI required:** fails unless every automatic Linux lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status
   as a required repository check; the workflow does not change branch protection.
 
 Actions and tool versions are pinned, installs use the frozen lockfile, and
 Hermit/pnpm/Cargo/browser caches avoid repeat downloads and cold compilation.
-Superseded PR runs are cancelled. CI uses disposable Ubuntu/Windows runners and no live
+Superseded PR runs are cancelled. Automatic CI uses disposable Ubuntu runners and no live
 Buzz identity or signing credentials. It is not native GUI acceptance, a signed
 package, or a cross-platform release gate. `just scan` remains available locally;
 CI does not add full scans to commit/push or ordinary interactive feedback rounds.
+
+### On-demand Windows validation
+
+Automatic PR/main CI is Linux-only. Run the existing workflow manually for native
+Windows changes or release validation:
+
+```sh
+gh workflow run ci.yml --ref <branch>
+```
+
+A manual dispatch runs only **Windows native validation**: the same pinned Rust,
+Clippy and complete Tauri-package tests, without repeating Linux/browser jobs.
+Windows failures do not block the automatic `CI required` check; a Linux pass
+is not Windows validation. The job does not exercise OS banner interaction or
+packaged-app acceptance.
+
+For MSVC, `src-tauri/build.rs` links `windows-app-manifest.xml` into both the app
+and library unit-test executables. The XML matches Tauri's default Common Controls
+v6 manifest; icons/version resources remain Tauri-owned. This addresses
+[Tauri's library-test manifest gap](https://github.com/tauri-apps/tauri/issues/13419)
+without disabling IPC tests or native UI features. Non-MSVC builds retain Tauri's
+default resource path. Keep the manifest aligned when upgrading Tauri.
 
 ## Test organization
 

@@ -41,6 +41,11 @@ callers, and relevant design docs; preserve documented product decisions and
 ownership boundaries. Resolve answerable questions from evidence; ask before
 deviating from agreed scope or product behavior.
 
+Agent selection must consume `session.agentChoices`, not independently reconstruct
+native/legacy inventories. Keep usable partial choices distinct from complete
+inference evidence; preserve each action's membership/archive policy. See
+[shared agent selection](docs/agents.md#shared-agent-selection).
+
 Target **9/10+ for minimalness, elegance, and correctness**: the smallest complete
 solution, clear ownership, and no known material defects. Prefer existing patterns
 and subtraction. No opportunistic refactors, speculative abstractions, or new
@@ -49,6 +54,27 @@ adding alternate-adapter support, show the human the scope change and smallest
 complete alternative. Require a current caller or explicit approval for adapter
 parity. Review necessity separately from correctness; passing tests do not justify
 scope growth. Split at real ownership boundaries, not by deleting safety coverage.
+
+For non-trivial work, make that standard operational:
+
+- Before coding, publish a short scope checkpoint: required behavior, non-goals,
+  existing owners/platform support to reuse, expected files, and a rough production
+  diff budget (separate from tests/docs). A small fix needs only a sentence, not a
+  design ceremony.
+- Use one implementation owner per end-to-end change. Reviewers challenge necessity
+  as well as correctness; delegate bounded evidence/review, not competing rewrites.
+  Review the first working slice before expanding the design, without blocking
+  ordinary human UI feedback on a full validation cycle.
+- Justify each new abstraction, lifecycle owner, timer, retry policy, or shared
+  contract expansion against a current requirement. If the implementation materially
+  exceeds the checkpoint, stop adding machinery and show the smallest alternative
+  and any behavior tradeoff before continuing. Do not silently weaken agreed behavior.
+- Assess the combined feature diff, including stacked PRs. Passing tests, splitting
+  PRs, or already-invested work do not establish proportionality. Preserve required
+  regression coverage; do not game the budget by deleting tests or compressing code.
+  Keep speculative hardening and unrelated failures outside the task.
+- Close with one verified end-to-end result and explicit remaining gaps, not a chain
+  of green intermediate repairs presented as completion.
 
 Keep files cohesive and group modules and tests by owner. Treat size as a review
 signal, not a quota. Extract stable boundaries only when they simplify the
@@ -85,7 +111,8 @@ Do not infer layout, native editing or cross-window correctness from a DOM emula
 When moving coverage, map removed assertions to replacements and demonstrate that
 the replacement catches the regression before deleting the browser case.
 
-Generate only the fixture data the test needs. Share immutable builds and stateless
+Make minimal fixture data the default and opt into larger datasets only for an
+explicit scale, pagination or geometry contract. Share immutable builds and stateless
 servers, never mutable test state, identities or browser contexts. Preserve large
 datasets and isolated runners when scale or performance is the behavior under test.
 Record browser cases added/removed, their browser-only justification, replacement

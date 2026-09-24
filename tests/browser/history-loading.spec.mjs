@@ -1,7 +1,10 @@
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 
-test.use({ productionBroker: true });
+test.use({
+  productionBroker: true,
+  historyCounts: { alpha: 640, beta: 20 },
+});
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
 
@@ -75,7 +78,10 @@ test("saved top resumes automatic history on an upward gesture after remount", a
   await expect.poll(() => app.pending.length).toBe(1);
   await settle(page);
   await expect.poll(() => history(page).evaluate((e) => e.scrollTop)).toBe(0);
-  await page.getByRole("button", { name: "Home", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Projects", exact: true })
+    .first()
+    .click();
   // Remounting Channels captures the normal reading anchor in localStorage.
   // Reload gives a new session/finite head but preserves that user-owned anchor.
   await page.reload();

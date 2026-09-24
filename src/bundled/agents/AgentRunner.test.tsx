@@ -28,8 +28,10 @@ function Harness({ relay }: { relay: RelayData }) {
 function mount() {
   const state = {
     status: "ready",
+    generation: 0,
     viewer: "owner",
     community: "https://community.example",
+    session: {} as RelaySnapshot["session"],
   } as RelaySnapshot;
   return render(
     <Harness

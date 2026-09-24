@@ -1,17 +1,22 @@
+import { useChannelIdentityNames } from "../identity-names/react";
 import {
   Children,
   createContext,
   isValidElement,
+  memo,
   useContext,
+  useMemo,
+  useState,
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
 import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
-import { messageLinkParts, normalizeWrappedLinks } from "./message-link-parts";
+import { messageLinkParts } from "./message-link-parts";
 import {
   ReferenceText,
+  channelForLink,
   channelLinkLabel,
   emptyReferenceDirectory,
 } from "./ReferenceText";
@@ -25,17 +30,19 @@ import Markdown, {
 } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { remarkSpoilers } from "./remark-spoilers";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, messageParts } from "../relay/emoji";
-import {
-  MAX_MARKDOWN_LENGTH,
-  scanMarkdown,
-  safeMessageUrl,
-} from "../relay/message-content";
+import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { profileMentionParts } from "./profile-mentions";
+import {
+  isLiteralMarkdownContext,
+  prepareMarkdown,
+  type LiteralRange,
+} from "./markdown-preparation";
 
 type MarkdownNode = {
   type: string;
@@ -53,43 +60,28 @@ type MarkdownNode = {
   };
 };
 
-type InlinePart = { text: string; target?: string | undefined };
+type InlinePart = {
+  text: string;
+  target?: string | undefined;
+  literal?: boolean;
+};
 type ProtectedContent = {
   content: string;
   prefix: string;
   parts: InlinePart[];
 };
-const literalContext = (type: string) =>
-  [
-    "code",
-    "inlineCode",
-    "link",
-    "linkReference",
-    "image",
-    "imageReference",
-    "definition",
-    "html",
-  ].includes(type);
-
 /** Bind exact names on the FULL signed body, before Markdown decodes escapes or
  * divides emphasis. Reference labels must also survive unchanged for resolution. */
 function protectInlineContent(
-  row: ChannelMessage,
+  row: Pick<
+    ChannelMessage,
+    "content" | "edited" | "attachmentContentRemoved" | "mentions" | "emoji"
+  >,
   profiles: ReadonlyMap<string, Profile> | undefined,
-  tree: MarkdownNode,
+  literalRanges: readonly LiteralRange[],
+  agents: typeof emptyReferenceDirectory.agents,
+  spoilerDelimiters: readonly number[],
 ): ProtectedContent {
-  const literalRanges: { start: number; end: number }[] = [];
-  const visit = (node: MarkdownNode) => {
-    if (literalContext(node.type)) {
-      const start = node.position?.start.offset;
-      const end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined)
-        literalRanges.push({ start, end });
-    } else {
-      for (const child of node.children ?? []) visit(child);
-    }
-  };
-  visit(tree);
   let rangeIndex = 0;
   const isLiteral = (start: number, end: number) => {
     while (
@@ -124,7 +116,7 @@ function protectInlineContent(
     return `${prefix}${parts.length - 1}\uE002`;
   };
   let offset = 0;
-  const content = profileMentionParts(row, profiles)
+  const content = profileMentionParts(row, profiles, agents)
     .map((segment) => {
       const start = offset;
       offset += segment.text.length;
@@ -134,14 +126,60 @@ function protectInlineContent(
         .map((part) => {
           const partStart = partOffset;
           partOffset += part.length;
-          if (part.startsWith("https://")) return part;
+          const urlPart = part.startsWith("https://");
           let result = "";
           let end = 0;
-          for (const match of emojiMatches(part, row.emoji ?? [])) {
-            if (isLiteral(partStart + match.start, partStart + match.end))
+          // Protect explicitly encoded URL punctuation before GFM's fallback
+          // autolinker decodes it. Restore as literal text, not another URL scan.
+          const encoded = [...part.matchAll(/&#(58|46|64|x3a|x2e|x40);/gi)].map(
+            (match) => ({
+              start: match.index,
+              end: match.index + match[0].length,
+              literal: String.fromCodePoint(
+                match[1]?.toLowerCase().startsWith("x")
+                  ? Number.parseInt(match[1].slice(1), 16)
+                  : Number(match[1]),
+              ),
+            }),
+          );
+          const replacements = [
+            ...(urlPart
+              ? []
+              : Array.from(emojiMatches(part, row.emoji ?? []), (match) => ({
+                  ...match,
+                  literal: undefined,
+                }))),
+            ...(urlPart ? [] : encoded),
+            ...spoilerDelimiters
+              .filter(
+                (start) =>
+                  start >= partStart && start + 2 <= partStart + part.length,
+              )
+              .map((start) => ({
+                start: start - partStart,
+                end: start - partStart + 2,
+                literal: undefined,
+                spoiler: true,
+              })),
+          ].sort((a, b) => a.start - b.start);
+          for (const match of replacements) {
+            if (
+              match.start < end ||
+              isLiteral(partStart + match.start, partStart + match.end)
+            )
               continue;
             result += part.slice(end, match.start);
-            result += token({ text: part.slice(match.start, match.end) });
+            // Angle punctuation preserves the pipes' emphasis flanking while
+            // `<` terminates GFM autolinks. The private-use first character is
+            // not an HTML/autolink opener, so this remains a text delimiter.
+            result +=
+              "spoiler" in match
+                ? `<${prefix}spoiler\uE002>`
+                : token(
+                    match.literal
+                      ? { text: match.literal, literal: true }
+                      : { text: part.slice(match.start, match.end) },
+                  );
             end = match.end;
           }
           return result + part.slice(end);
@@ -154,6 +192,26 @@ function protectInlineContent(
 
 const placeholderPattern = (protectedContent: ProtectedContent) =>
   new RegExp(`${protectedContent.prefix}(\\d+)\uE002`, "g");
+
+function inlineProtectionKey(
+  row: ChannelMessage,
+  profiles: ReadonlyMap<string, Profile> | undefined,
+  agents: typeof emptyReferenceDirectory.agents,
+) {
+  const mentions = row.mentions.map((id) => [id, profiles?.get(id)?.name]);
+  const mentioned = new Set(row.mentions);
+  const agentNames = agents
+    .filter((agent) => mentioned.has(agent.pubkey))
+    .map((agent) => [agent.pubkey, agent.name]);
+  const emoji = row.emoji?.map(({ shortcode, url }) => [shortcode, url]);
+  return JSON.stringify([
+    row.edited === true,
+    row.attachmentContentRemoved === true,
+    mentions,
+    agentNames,
+    emoji,
+  ]);
+}
 
 /** Offer only Markdown prose to profile controls and inline plugins. */
 function remarkInlineContent(protectedContent: ProtectedContent) {
@@ -179,7 +237,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
   };
   return (tree: MarkdownNode) => {
     const visit = (parent: MarkdownNode) => {
-      if (literalContext(parent.type)) {
+      if (isLiteralMarkdownContext(parent.type)) {
         restoreLiteral(parent);
         return;
       }
@@ -197,7 +255,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
         )) {
           plain += child.value.slice(end, match.index);
           const part = protectedContent.parts[Number(match[1])];
-          if (part?.target) {
+          if (part?.target || part?.literal) {
             if (plain) parts.push({ text: plain });
             parts.push(part);
             plain = "";
@@ -214,6 +272,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
             hName: "span",
             hProperties: {
               "data-inline-text": part.text,
+              ...(part.literal ? { "data-literal-text": "true" } : {}),
               ...(part.target ? { "data-profile-target": part.target } : {}),
             },
           },
@@ -225,7 +284,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
 }
 
 const transformUrl: UrlTransform = (value) =>
-  parseBuzzLink(value) ? value : safeMessageUrl(value);
+  parseBuzzLink(value) || profileKey(value) ? value : safeMessageUrl(value);
 const labelText = (children: ReactNode): string =>
   Children.toArray(children)
     .map((child) =>
@@ -280,42 +339,68 @@ export function MessageMarkdown({
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
 }) {
-  if (row.content.length > MAX_MARKDOWN_LENGTH)
-    return <div className={styles.plainText}>{row.content}</div>;
-  let scan = scanMarkdown(row.content);
-  if (scan.tooDeep)
-    return <div className={styles.plainText}>{row.content}</div>;
-
-  const literalRanges: { start: number; end: number }[] = [];
-  const collectLiterals = (node: MarkdownNode) => {
-    if (literalContext(node.type) && node.type !== "link") {
-      const start = node.position?.start.offset,
-        end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined)
-        literalRanges.push({ start, end });
-    } else for (const child of node.children ?? []) collectLiterals(child);
-  };
-  collectLiterals(scan.tree);
-  const normalized = normalizeWrappedLinks(row.content, (start, end) =>
-    literalRanges.some((range) => start < range.end && end > range.start),
-  );
-  if (normalized !== row.content) {
-    row = { ...row, content: normalized };
-    scan = scanMarkdown(normalized);
-  }
-  const renderLink = (url: string, label?: string, children?: ReactNode) => (
-    <MessageLink
-      url={url}
-      label={label ?? channelLinkLabel(url, scope, directory.channels)}
-      registry={extensions?.links}
-      onOpenLink={onOpenLink}
+  const resolveName = useChannelIdentityNames(session, row.channelId);
+  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  if (prepared.kind === "plain")
+    return <div className={styles.plainText}>{prepared.content}</div>;
+  return (
+    <PreparedMessageMarkdown
+      row={row}
+      prepared={prepared}
+      directory={directory}
       session={session}
       scope={scope}
+      extensions={extensions}
+      media={media}
+      onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
+      participantProfiles={participantProfiles}
+      resolveName={resolveName}
+      largeEmoji={largeEmoji}
       interactive={interactive}
-    >
-      {children}
-    </MessageLink>
+    />
   );
+}
+
+function PreparedMessageMarkdown({
+  row: sourceRow,
+  prepared,
+  directory = emptyReferenceDirectory,
+  session,
+  scope,
+  extensions,
+  media,
+  onOpenLink,
+  canOpenLink,
+  participantProfiles,
+  resolveName,
+  largeEmoji = false,
+  interactive = true,
+}: Parameters<typeof MessageMarkdown>[0] & {
+  prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>;
+  resolveName: (pubkey: string, fallback: string) => string;
+}) {
+  const row =
+    prepared.content === sourceRow.content
+      ? sourceRow
+      : { ...sourceRow, content: prepared.content };
+  const renderLink = (url: string, label?: string, children?: ReactNode) => {
+    const channel = channelForLink(url, scope, directory.channels);
+    return (
+      <MessageLink
+        url={url}
+        label={label ?? channelLinkLabel(url, scope, directory.channels)}
+        registry={extensions?.links}
+        onOpenLink={onOpenLink}
+        session={session}
+        scope={scope}
+        interactive={interactive}
+        channelPrivate={!!channel?.private}
+      >
+        {children}
+      </MessageLink>
+    );
+  };
   const renderInline = (text: string) =>
     extensions ? (
       <InlineText
@@ -335,6 +420,7 @@ export function MessageMarkdown({
         <span key={key}>{renderLink(part.url, part.label)}</span>
       ) : (
         <ReferenceText
+          channelId={row.channelId}
           key={key}
           text={part.text}
           mentions={[]}
@@ -350,11 +436,79 @@ export function MessageMarkdown({
     });
   };
 
-  const protectedContent = protectInlineContent(
-    row,
-    participantProfiles ?? directory.profiles,
-    scan.tree,
+  const profiles = participantProfiles ?? directory.profiles;
+  const protectionKey = inlineProtectionKey(
+    sourceRow,
+    profiles,
+    directory.agents,
   );
+  // The key contains every row/profile/agent/emoji value consumed below. It
+  // avoids reparsing for equivalent folded rows without hiding live inputs.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: semantic key
+  const protectedContent = useMemo(
+    () =>
+      protectInlineContent(
+        {
+          content: prepared.content,
+          ...(sourceRow.edited ? { edited: true as const } : {}),
+          ...(sourceRow.attachmentContentRemoved
+            ? { attachmentContentRemoved: true as const }
+            : {}),
+          mentions: sourceRow.mentions,
+          ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
+        },
+        profiles,
+        prepared.literalRanges,
+        directory.agents,
+        prepared.spoilerDelimiters,
+      ),
+    [
+      prepared.content,
+      prepared.literalRanges,
+      prepared.spoilerDelimiters,
+      protectionKey,
+    ],
+  );
+  // Explicit profile links are identity locators, not signed notification intent.
+  // Reuse the same control and availability gate as bound prose mentions.
+  const renderProfile = (text: unknown, target: unknown) => {
+    const key = typeof target === "string" ? profileKey(target) : undefined;
+    const agent =
+      !!key &&
+      (directory.agents.some((agent) => agent.pubkey === key) ||
+        (participantProfiles ?? directory.profiles).get(key)?.isAgent);
+    const clickable =
+      interactive && typeof target === "string" && !!canOpenLink?.(target);
+    if (
+      typeof text === "string" &&
+      typeof target === "string" &&
+      (!interactive || clickable || agent)
+    ) {
+      const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
+      const Icon = agent ? RobotIcon : AtIcon;
+      const Mention = clickable ? "button" : "span";
+      return (
+        <Mention
+          type={clickable ? "button" : undefined}
+          className={referenceStyles.link}
+          data-mention-kind={agent ? "agent" : "person"}
+          aria-label={clickable ? `View ${label} profile` : undefined}
+          onClick={
+            clickable
+              ? (event) => {
+                  event.currentTarget.focus();
+                  onOpenLink(target);
+                }
+              : undefined
+          }
+        >
+          <Icon aria-hidden="true" className={referenceStyles.icon} />
+          {label}
+        </Mention>
+      );
+    }
+    return undefined;
+  };
   const components: MessageComponents = {
     p: ({ node: _node, ...props }) => (
       <p
@@ -363,8 +517,18 @@ export function MessageMarkdown({
         data-single-emoji={largeEmoji || undefined}
       />
     ),
-    a: ({ href, children }) =>
-      href ? (
+    a: ({ href, children }) => {
+      if (href && profileKey(href)) {
+        const label = labelText(children);
+        if (!interactive || !canOpenLink?.(href))
+          return (
+            <span>
+              {children} ({href})
+            </span>
+          );
+        return renderProfile(label.startsWith("@") ? label : `@${label}`, href);
+      }
+      return href ? (
         renderLink(
           href,
           labelText(children) === href ? undefined : labelText(children),
@@ -372,49 +536,34 @@ export function MessageMarkdown({
         )
       ) : (
         <span>{children}</span>
-      ),
+      );
+    },
     img: ({ node: _node, alt }) =>
       alt ? <span className={styles.imageAlt}>{alt}</span> : null,
     span: ({ node: _node, children, ...props }) => {
-      const { "data-inline-text": text, "data-profile-target": target } =
-        props as typeof props & {
-          "data-inline-text"?: unknown;
-          "data-profile-target"?: unknown;
-        };
-      if (
-        typeof text === "string" &&
-        typeof target === "string" &&
-        (!interactive || canOpenLink?.(target))
-      ) {
-        const agent = directory.agents.some(
-          (agent) => agent.pubkey === profileKey(target),
-        );
-        const Icon = agent ? RobotIcon : AtIcon;
-        const Mention = interactive ? "button" : "span";
+      if ((props as Record<string, unknown>)["data-spoiler"] === "true")
         return (
-          <Mention
-            type={interactive ? "button" : undefined}
-            className={referenceStyles.link}
-            data-mention-kind={agent ? "agent" : "person"}
-            aria-label={
-              interactive ? `View ${text.slice(1)} profile` : undefined
-            }
-            onClick={
-              interactive
-                ? (event) => {
-                    event.currentTarget.focus();
-                    onOpenLink(target);
-                  }
-                : undefined
-            }
-          >
-            <Icon aria-hidden="true" className={referenceStyles.icon} />
-            {text.slice(1)}
-          </Mention>
+          <MessageSpoiler key={row.content} interactive={interactive}>
+            {children}
+          </MessageSpoiler>
         );
-      }
+      const {
+        "data-inline-text": text,
+        "data-profile-target": target,
+        "data-literal-text": literalText,
+      } = props as typeof props & {
+        "data-inline-text"?: unknown;
+        "data-profile-target"?: unknown;
+        "data-literal-text"?: unknown;
+      };
+      const profile = renderProfile(text, target);
+      if (profile) return profile;
       return typeof text === "string" ? (
-        renderText(text)
+        literalText === "true" ? (
+          text
+        ) : (
+          renderText(text)
+        )
       ) : (
         <span {...props}>{children}</span>
       );
@@ -423,19 +572,65 @@ export function MessageMarkdown({
 
   const markdown = (
     <MessageComponentsContext value={components}>
-      <Markdown
-        remarkPlugins={[
-          remarkGfm,
-          remarkBreaks,
-          [remarkInlineContent, protectedContent],
-        ]}
-        components={markdownComponents}
-        skipHtml
-        urlTransform={transformUrl}
-      >
-        {protectedContent.content}
-      </Markdown>
+      <MarkdownBody protectedContent={protectedContent} />
     </MessageComponentsContext>
   );
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
+}
+
+const MarkdownBody = memo(function MarkdownBody({
+  protectedContent,
+}: {
+  protectedContent: ProtectedContent;
+}) {
+  return (
+    <Markdown
+      remarkPlugins={[
+        remarkGfm,
+        remarkBreaks,
+        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+        [remarkInlineContent, protectedContent],
+      ]}
+      components={markdownComponents}
+      skipHtml
+      urlTransform={transformUrl}
+    >
+      {protectedContent.content}
+    </Markdown>
+  );
+});
+
+function MessageSpoiler({
+  children,
+  interactive,
+}: {
+  children: ReactNode;
+  interactive: boolean;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <span className={styles.spoiler} data-revealed={revealed}>
+      {interactive ? (
+        <button
+          type="button"
+          className={styles.spoilerMask}
+          aria-label={revealed ? "Hide spoiler" : "Reveal spoiler"}
+          aria-expanded={revealed}
+          onClick={(event) => {
+            event.stopPropagation();
+            setRevealed(!revealed);
+          }}
+        />
+      ) : (
+        <span className={styles.spoilerMask} aria-hidden="true" />
+      )}
+      <span
+        className={styles.spoilerContent}
+        aria-hidden={!revealed}
+        inert={!revealed}
+      >
+        {children}
+      </span>
+    </span>
+  );
 }

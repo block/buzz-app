@@ -3,19 +3,186 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 
+const fixtureImage = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#666"/></svg>`;
+
+function fixtureMediaPlugin() {
+  return {
+    name: "messages-fixture-media",
+    configureServer(server) {
+      server.middlewares.use("/api/relay/media", (req, res, next) => {
+        if (req.method !== "GET") return next();
+        const url = new URL(req.url ?? "", "http://fixture.local");
+        const target = url.searchParams.get("url") ?? "";
+        if (!target.startsWith("https://fixture.test/media/")) return next();
+        res.writeHead(200, {
+          "Content-Type": "image/svg+xml",
+          "Content-Length": Buffer.byteLength(fixtureImage),
+        });
+        res.end(fixtureImage);
+      });
+    },
+  };
+}
+
+function createMessagesServer() {
+  return createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [fixtureMediaPlugin(), react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+}
+
+async function withMessagesFixture(page, run) {
+  const server = await createMessagesServer();
+  await server.listen();
+  try {
+    const address = server.httpServer.address();
+    await page.goto(
+      `http://127.0.0.1:${address.port}/tests/fixtures/messages.html`,
+    );
+    await run();
+  } finally {
+    await server.close();
+  }
+}
+
+async function visibleBox(locator) {
+  await expect(locator).toBeVisible();
+  await expect
+    .poll(async () => {
+      const box = await locator.boundingBox();
+      return box && box.width > 0 && box.height > 0;
+    })
+    .toBeTruthy();
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("Expected nonzero layout box");
+  return box;
+}
+
+function containedWithin(inner, outer) {
+  const epsilon = 1;
+  expect(inner.x).toBeGreaterThanOrEqual(outer.x - epsilon);
+  expect(inner.y).toBeGreaterThanOrEqual(outer.y - epsilon);
+  expect(inner.x + inner.width).toBeLessThanOrEqual(
+    outer.x + outer.width + epsilon,
+  );
+  expect(inner.y + inner.height).toBeLessThanOrEqual(
+    outer.y + outer.height + epsilon,
+  );
+}
+
+test("media review stage contains portrait video and image media", async ({
+  page,
+}) => {
+  await withMessagesFixture(page, async () => {
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.evaluate(() => {
+      const styles = window.messagesFixture.styles;
+      const host = document.createElement("div");
+      host.dataset.testid = "portrait-video-harness";
+      host.style.cssText =
+        "position:fixed;inset:0;padding:24px;display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-template-rows:auto minmax(0,1fr);";
+      host.innerHTML = `
+        <div style="grid-column:1 / -1;height:48px"></div>
+        <div data-testid="portrait-video-stage" class="${styles.mediaReviewStage}">
+          <video data-testid="portrait-video" style="aspect-ratio:9 / 16"></video>
+        </div>
+        <aside></aside>
+      `;
+      document.body.append(host);
+    });
+    const stage = page.getByTestId("portrait-video-stage");
+    const video = page.getByTestId("portrait-video");
+    containedWithin(await visibleBox(video), await visibleBox(stage));
+    await page
+      .getByTestId("portrait-video-harness")
+      .evaluate((host) => host.remove());
+
+    await page
+      .getByRole("button", { name: "Review image", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Image viewer" });
+    await expect(dialog).toBeVisible();
+    const reviewStage = dialog.locator('[class*="mediaReviewStage"]');
+    const imageStage = dialog.locator('[class*="imageReviewStage"]');
+    const image = imageStage.locator("img");
+    await expect(image).toHaveJSProperty("complete", true);
+    containedWithin(
+      await visibleBox(imageStage),
+      await visibleBox(reviewStage),
+    );
+    containedWithin(await visibleBox(image), await visibleBox(imageStage));
+  });
+});
+
+test("inline video controls hide only while playing off-hover on fine pointers", async ({
+  page,
+}) => {
+  await withMessagesFixture(page, async () => {
+    await page.evaluate(() => {
+      const styles = window.messagesFixture.styles;
+      const host = document.createElement("div");
+      host.dataset.testid = "video-controls-harness";
+      host.style.cssText = "position:fixed;left:32px;top:32px;";
+      host.innerHTML = `
+        <div data-testid="playing-preview" class="${styles.mediaPreview}" data-playing="true" style="--media-ratio:16 / 9;width:320px">
+          <video class="${styles.mediaVideo}"></video>
+          <span data-testid="playing-play" class="${styles.mediaPlay}"><button type="button">Play</button></span>
+          <span data-testid="playing-time" class="${styles.mediaTime}">0:01</span>
+          <span data-testid="playing-expand" class="${styles.mediaExpand}"><button type="button">Expand</button></span>
+        </div>
+        <div data-testid="idle-preview" class="${styles.mediaPreview}" style="--media-ratio:16 / 9;width:320px;margin-top:24px">
+          <video class="${styles.mediaVideo}"></video>
+          <span data-testid="idle-play" class="${styles.mediaPlay}"><button type="button">Play</button></span>
+          <span data-testid="idle-time" class="${styles.mediaTime}">0:00</span>
+          <span data-testid="idle-expand" class="${styles.mediaExpand}"><button type="button">Expand</button></span>
+        </div>
+      `;
+      document.body.append(host);
+    });
+    const finePointer = await page.evaluate(
+      () => matchMedia("(hover: hover) and (pointer: fine)").matches,
+    );
+    test.skip(
+      !finePointer,
+      "Browser project does not expose a hover-capable fine pointer.",
+    );
+    const preview = page.getByTestId("playing-preview");
+    await visibleBox(preview);
+    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "0");
+    }
+    await preview.hover();
+    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "1");
+    }
+    await page.mouse.move(1, 1);
+    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "0");
+    }
+    await page.getByTestId("playing-play").getByRole("button").focus();
+    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "1");
+    }
+    await page.getByRole("button", { name: "First root" }).focus();
+    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "0");
+    }
+    for (const control of ["idle-play", "idle-time", "idle-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "1");
+    }
+  });
+});
+
 // Independent source consumer proves safe ordinary-prop reuse, with real React,
 // thread reader and durable outbox. No developer env, broker, credentials or relay.
 test("media review hands off the thread draft, contains focus and keeps narrow controls reachable", async ({
   page,
 }) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
+  const server = await createMessagesServer();
   await server.listen();
   try {
     const address = server.httpServer.address();
@@ -87,14 +254,7 @@ test("media review hands off the thread draft, contains focus and keeps narrow c
 test("shared thread UI auto-loads, follows live replies, retries and isolates retargeted drafts", async ({
   page,
 }, testInfo) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
+  const server = await createMessagesServer();
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   try {
@@ -279,6 +439,13 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(history.locator("pre code")).toHaveCSS("white-space", "pre");
     await expect(history.locator("table")).toContainText("wide-column-one-");
     await expect(history.locator("pre code")).toContainText("wide-content-");
+    // Exercise native popup navigation without depending on a public website.
+    await page.context().route("https://example.com/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: "<p>External destination</p>",
+      }),
+    );
     const safeLink = history.getByRole("link", { name: "Safe link" });
     await expect(safeLink).toHaveAttribute("href", "https://example.com/path");
     await expect(safeLink).toHaveAttribute("rel", "noopener noreferrer");
@@ -297,17 +464,34 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await external.waitForLoadState("domcontentloaded");
     expect(external.url()).toBe("https://example.com/unhandled");
     await external.close();
-    await safeLink.click({ modifiers: ["ControlOrMeta"] });
-    await expect
-      .poll(() =>
-        page.evaluate(() => window.messagesFixture.report.links.length),
-      )
-      .toBe(2);
-    const modified = page
-      .context()
-      .pages()
-      .find((candidate) => candidate !== page);
-    await modified?.close();
+    // Observe after React's delegated handler, then suppress only the browser's
+    // cross-origin background tab (which crashes headless Chromium). Native
+    // unhandled navigation is exercised above; here we verify modifier ownership.
+    const stopObserving = await safeLink.evaluateHandle((link) => {
+      const observe = (event) => {
+        if (!event.composedPath().includes(link)) return;
+        link.dataset.modifiedClick = JSON.stringify({
+          prevented: event.defaultPrevented,
+          modified: event.ctrlKey || event.metaKey,
+        });
+        event.preventDefault();
+      };
+      document.addEventListener("click", observe);
+      return () => document.removeEventListener("click", observe);
+    });
+    try {
+      await safeLink.click({ modifiers: ["ControlOrMeta"] });
+      await expect(safeLink).toHaveAttribute(
+        "data-modified-click",
+        JSON.stringify({ prevented: false, modified: true }),
+      );
+      expect(
+        await page.evaluate(() => window.messagesFixture.report.links.length),
+      ).toBe(2);
+    } finally {
+      await stopObserving.evaluate((stop) => stop());
+      await stopObserving.dispose();
+    }
     await history.evaluate((element) => {
       for (const selector of ["pre", "table"]) {
         const item = element.querySelector(selector);
@@ -404,14 +588,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
 test("media review completions stay visible and preserve modal keyboard ownership", async ({
   page,
 }) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
+  const server = await createMessagesServer();
   await server.listen();
   try {
     const address = server.httpServer.address();
@@ -450,11 +627,9 @@ test("media review completions stay visible and preserve modal keyboard ownershi
       await mention.click();
       await expect(input).toHaveJSProperty("value", "@Fixture Reader ");
       await expect(input).toBeFocused();
-      await expect(
-        dialog.getByRole("region", {
-          name: "Notification recipients",
-        }),
-      ).toContainText("Fixture Reader");
+      await expect(input.locator(".inline-chip")).toContainText(
+        "Fixture Reader",
+      );
       for (const key of ["Enter", "Tab"]) {
         await input.fill(":smile");
         const emoji = page
@@ -491,14 +666,7 @@ test("media review completions stay visible and preserve modal keyboard ownershi
 test("exact reply media keeps its selected attachment and canonical thread", async ({
   page,
 }) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
+  const server = await createMessagesServer();
   await server.listen();
   try {
     const address = server.httpServer.address();
@@ -513,13 +681,20 @@ test("exact reply media keeps its selected attachment and canonical thread", asy
     await expect(dialog).toBeVisible();
     const comments = dialog.getByRole("region", { name: "Media comments" });
     await expect(comments).toContainText("Reply with image");
-    const addReaction = comments.getByRole("button", {
+    const exactReplyId = await page.evaluate(
+      () => window.messagesFixture.report.exactReplyId,
+    );
+    const reply = comments.locator(`[data-message-id="${exactReplyId}"]`);
+    await reply.hover();
+    const addReaction = reply.getByRole("button", {
       name: "Add reaction",
       exact: true,
     });
     await expect(addReaction).toBeVisible();
     await addReaction.click();
-    await page.getByRole("button", { name: "👍", exact: true }).last().click();
+    const search = page.locator('em-emoji-picker input[type="search"]');
+    await search.fill("grinning");
+    await page.getByRole("button", { name: "😀", exact: true }).click();
     await expect
       .poll(() =>
         page.evaluate(() => window.messagesFixture.report.publications.length),
@@ -529,9 +704,7 @@ test("exact reply media keeps its selected attachment and canonical thread", asy
       () => window.messagesFixture.report.publications[0],
     );
     expect(reaction.kind).toBe(7);
-    const exactReplyId = await page.evaluate(
-      () => window.messagesFixture.report.exactReplyId,
-    );
+    expect(reaction.content).toBe("😀");
     expect(reaction.tags).toContainEqual(["e", exactReplyId]);
     const draft = dialog.getByRole("textbox", { name: "Reply to thread" });
     await draft.fill("Canonical exact feedback");

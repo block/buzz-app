@@ -38,7 +38,7 @@ const matrixValues = (key) => {
 test("four independent browser jobs retain isolated measurements and native setup", () => {
   assert.deepEqual(matrixValues("engine"), ["chromium", "webkit"]);
   assert.deepEqual(matrixValues("shard"), ["1", "2"]);
-  assert.doesNotMatch(browser, /^ {4}(needs|if|continue-on-error):/m);
+  assert.doesNotMatch(browser, /^ {4}(needs|continue-on-error):/m);
   assert.doesNotMatch(browser, /^ {8}(include|exclude):/m);
   assert.match(browser, /^ {6}fail-fast: false$/m);
   assert.match(
@@ -146,23 +146,41 @@ test("workflow shards discover every functional test/project exactly once", (t) 
   );
 });
 
+test("automatic CI stays on Linux and manual dispatch runs only Windows", () => {
+  const { jobs } = parse(workflow);
+  for (const lane of ["javascript", "native", "measurements", "browser"]) {
+    assert.equal(jobs[lane].if, "github.event_name != 'workflow_dispatch'");
+    assert.equal(jobs[lane]["runs-on"], "ubuntu-24.04");
+  }
+  const windows = jobs["windows-native"];
+  assert.equal(windows.if, "github.event_name == 'workflow_dispatch'");
+  assert.equal(windows["runs-on"], "windows-2025");
+  assert.ok(
+    windows.steps.some(
+      (step) => step.run === "cargo test -p buzz-foundation --locked",
+    ),
+    "on-demand Windows validation retains the complete native package tests",
+  );
+});
+
 test("required gate executes its real shell and rejects every unsuccessful lane", () => {
   const required = job("required");
-  assert.match(required, /^ {4}name: CI required$/m);
-  assert.match(required, /^ {4}if: always\(\)$/m);
+  const { jobs } = parse(workflow);
+  assert.equal(
+    jobs.required.name,
+    `\${{ github.event_name == 'workflow_dispatch' && 'Automatic CI (not requested)' || 'CI required' }}`,
+  );
+  assert.equal(
+    jobs.required.if,
+    "always() && github.event_name != 'workflow_dispatch'",
+  );
   assert.doesNotMatch(required, /^ {8}if:/m);
   assert.match(
     required,
-    /^ {4}needs: \[javascript, native, windows-native, measurements, browser\]$/m,
+    /^ {4}needs: \[javascript, native, measurements, browser\]$/m,
   );
   assert.doesNotMatch(required, /continue-on-error/);
-  const lanes = [
-    "JAVASCRIPT",
-    "NATIVE",
-    "WINDOWS_NATIVE",
-    "MEASUREMENTS",
-    "BROWSER",
-  ];
+  const lanes = ["JAVASCRIPT", "NATIVE", "MEASUREMENTS", "BROWSER"];
   for (const lane of lanes)
     assert.ok(
       required.includes(

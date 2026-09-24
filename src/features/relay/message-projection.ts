@@ -7,6 +7,8 @@ import type { RelayProfiler } from "./profiling";
 import { channelRowKind as messageKind } from "./membership";
 const order = (a: ChannelMessage, b: ChannelMessage) =>
   a.createdAt - b.createdAt || b.id.localeCompare(a.id);
+const PARENT_OVERLAY_DEPTH = 2;
+const CHILD_OVERLAY_DEPTH = 1;
 
 /** Per-window indexes. New evidence folds only affected messages; status updates never fold. */
 export class MessageProjection {
@@ -19,6 +21,7 @@ export class MessageProjection {
     private channelId: string,
     private relayAuthor: string,
     private profiling: RelayProfiler,
+    private includeReplies: () => boolean = () => false,
   ) {}
   snapshot() {
     return this.rows;
@@ -57,6 +60,23 @@ export class MessageProjection {
         }
       }
     }
+    // A deletion of an edit/reaction changes its owning message, not a row
+    // whose ID is the overlay. Include removed inputs for failure rollback.
+    const parentQueue = [...affected].map((id) => ({ id, depth: 0 }));
+    const queuedParents = new Set(affected);
+    for (let index = 0; index < parentQueue.length; index++) {
+      const { id, depth } = parentQueue[index] ?? {};
+      if (!id || depth === undefined || depth >= PARENT_OVERLAY_DEPTH) continue;
+      const event = next.get(id) ?? this.inputs.get(id);
+      if (!event || messageKind(event.kind)) continue;
+      for (const parent of targets(event)) {
+        affected.add(parent);
+        if (!queuedParents.has(parent)) {
+          queuedParents.add(parent);
+          parentQueue.push({ id: parent, depth: depth + 1 });
+        }
+      }
+    }
     this.inputs = next;
     for (const [id, item] of deliveries) {
       const previous = this.deliveries.get(id);
@@ -79,14 +99,18 @@ export class MessageProjection {
         () => {
           for (const id of affected) {
             const event = next.get(id);
+            const overlayIds = this.overlayIds(id);
             const row =
               event && messageKind(event.kind)
-                ? foldMessages(this.channelId, this.relayAuthor, [
-                    event,
-                    ...[...(this.overlays.get(id) ?? [])].flatMap(
-                      (ref) => next.get(ref) ?? [],
-                    ),
-                  ])[0]
+                ? foldMessages(
+                    this.channelId,
+                    this.relayAuthor,
+                    [
+                      event,
+                      ...[...overlayIds].flatMap((ref) => next.get(ref) ?? []),
+                    ],
+                    { includeReplies: this.includeReplies() },
+                  )[0]
                 : undefined;
             if (row)
               this.messages.set(id, this.withDelivery(row, deliveries.get(id)));
@@ -97,6 +121,23 @@ export class MessageProjection {
         affected.size,
       );
     return this.rows;
+  }
+  private overlayIds(id: string) {
+    const overlayIds = new Set(this.overlays.get(id) ?? []);
+    let frontier = [...overlayIds];
+    for (let depth = 0; depth < CHILD_OVERLAY_DEPTH; depth++) {
+      const children: string[] = [];
+      for (const ref of frontier) {
+        for (const child of this.overlays.get(ref) ?? []) {
+          if (overlayIds.has(child)) continue;
+          overlayIds.add(child);
+          children.push(child);
+        }
+      }
+      frontier = children;
+      if (!frontier.length) break;
+    }
+    return overlayIds;
   }
   private withDelivery(
     row: ChannelMessage,

@@ -2,6 +2,12 @@
 
 ## Scope
 
+This document describes the read-only compatibility/mention slice. The Agents
+page also exposes [native local controls](agent-control.md) for create/import,
+saved settings, mention-to-add/wake and bundled Start/Stop/Restart. The read-only
+compatibility view below remains the browser fallback; native management has its
+own handover and rollback contract.
+
 V1 **reuses the current Buzz library and mentions existing agents in channels
 and threads**. No migration to relay-only storage. Creation, editing,
 add-existing membership and Save/recovery remain out of V1. The local development
@@ -70,7 +76,7 @@ with the existing local library/Keychain and source checkout dependencies.
   projects from JSON, so private fields may transiently exist in host memory;
   there is no claim that JavaScript strings are zeroized. Browser reads time out
   at ten seconds and session disposal/cache/access/disconnect fences clear them.
-- The page uses only `session.agentLibrary` and `session.archives`. Unused relay
+- The compatibility view uses only `session.agentLibrary` and `session.archives`. Unused relay
   ownership/configuration readers and native recovery code have been removed.
 - Avatars use saved library artwork, with initials on missing/failed images.
   Optional artwork accepts HTTPS without credentials or bounded raster data URLs,
@@ -106,6 +112,43 @@ packaged acceptance and the final integration gate remain outstanding. Earlier
 envelope/fixture validation does not certify the later compatibility adapter.
 
 
+## Shared agent selection
+
+`session.agentChoices` is the canonical read-only selection projection. Templates,
+mention pickers, the session agent chooser and their admission checks use it—not
+`agentLibrary` directly. It combines ready legacy identities and ready native
+identities in this exact community, deduplicated by public key. Native process
+status is not selection eligibility; stopped/native-only agents remain selectable.
+`agentLibrary` remains the old-library compatibility/import source. Agents management
+and the shared display-name resolver keep their own distinct presentation contracts.
+
+Do not build another agent inventory in a plugin. Retain the shared projection only
+while needed; explicit Refresh retries source failures. Retaining choices preserves
+ready evidence across menu remounts. Ordinary mentions subscribe to cached legacy
+hints without loading that library; session/template selectors ensure it on demand.
+Both use the app-owned native controller's idle-only ensure, not refresh-on-keystroke.
+The existing app controller
+owns native reads/processes, while the session projection adds no runner, polling,
+directory scan or signing authority. Session retirement revokes its candidates.
+A failed source contributes no stale candidates; another ready source can remain
+usable, with partial failures surfaced through Retry. `status: ready` means usable,
+not complete: automatic-recipient inference must honor `complete`, and automatic
+saved-template resolution must wait for required pending identity/roster evidence.
+
+Action policy stays explicit: ordinary member mentions use the channel roster and
+never acquire template archive gates. Ordinary nonmember enrollment admits managed
+same-community identities; session invitations also allow existing legacy choices.
+Templates additionally require verified non-archived state, and legacy-only choices
+need visible community membership. Save-as-template discloses an incomplete inferred
+lineup when either inventory or roster evidence is partial; it never claims a full
+channel-membership copy. Shared choice visibility is not permission to grant access.
+
+Regression sources: `features/agents/choices.test.ts` and
+`bundled/channel-templates/agent-selection.test.tsx`, plus existing chooser,
+composer and session-admission tests. These exercise shared selection and session admission, not native execution.
+Native/ACP acceptance and packaged validation remain separate gates; local hook
+and hosted CI results are recorded in the pull request.
+
 ## Exact channel-member mentions
 
 The shared channel summary now exposes exact members from its existing verified
@@ -118,11 +161,28 @@ profiles only on demand, and keeps selected identity spans in scoped drafts.
 Typing a name alone does not notify anyone. Editing a selected span removes its
 notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
-than guess. Even a same-text replacement drops the edited identity. Explicit recipient
-chips show who will be notified and can be removed without deleting the prose.
+than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes
+selected together receive visible key qualifiers; editing a selected span removes
+its notification intent. Chips remain available without the Mentions chooser.
+
+After an accepted send, the next draft starts with the exact selected agent-name
+mentions, deduplicated by key. Agent classification uses already-cached profile hints
+or the shared agent-choice projection (legacy and native), not a new lookup or
+permission grant. Human recipients and
+plain typed names are not carried forward. The prefill is an ordinary scoped draft:
+channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
+**Settings → Messages → Remember mentioned agents** defaults on and is saved on this
+device. Turning it off stops future prefills without changing the current draft;
+turning it back on does not restore old recipients. Session auto-recipient rules are
+unchanged. An outbox rejection preserves the original draft; acceptance is not proof
+of relay delivery or agent execution.
 
 `session.messages.send/reply` accepts up to 32 exact pubkeys and emits deduplicated
-`p` tags. Selection never invites someone. Current roster membership is checked at
+`p` tags. Selection never invites someone. The native local-agent flow now offers
+same-community managed agents too: the composer enrolls a selected nonmember on
+Send, verifies the roster, then calls this unchanged message API. See
+[local agent controls](agent-control.md#normal-desktop-workflow). Ordinary nonmember
+people are not automatically added. Current roster membership is checked at
 intent, before signing, and after signing before entering the transport publisher;
 retry/restored signed intent uses the same publisher check. Before **each**
 mention publication the session performs a bounded foreground finite read of this
@@ -374,3 +434,23 @@ These are targeted integration checks, not a completed `just scan`. The earlier
 scan was interrupted during browser tests; broader hosted CI, DCO and required
 review remain separate gates. Packaged native activity without the development
 broker remains unsupported.
+
+### Shared identity names
+
+Distinct agent keys with the same displayed name receive a short npub suffix,
+regardless of their profile links. Names are compared after trimming outer
+whitespace, with case preserved. Directory qualifiers use a middle-dot separator
+(`Honey · 2abc`). Unique displayed names have no suffix. These display labels are
+not serialized into mentions. The composer retains its existing inline-chip
+qualifiers for selected namesakes, independently of live directory labels. Collision
+checks include hidden library identities and ready native identities in the
+current community, using the same native/inventory/public-profile precedence.
+Name edits update the suffixes; they never merge identities or profile groups.
+
+The Agents plugin supplies display names through the app-owned identity-name
+service. Each relay session binds its own view. A ready native record takes
+precedence only in its matching community; otherwise the ready legacy display
+inventory supplies the name, then the public profile. Plugin disable restores
+public-profile names. These labels never change identity keys, membership,
+credentials, or runtime admission. Profile panels consume this view; other name
+surfaces are being migrated separately.

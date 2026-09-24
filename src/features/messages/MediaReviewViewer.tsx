@@ -1,3 +1,6 @@
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
   useMemo,
@@ -9,11 +12,12 @@ import {
 import { XIcon } from "../../shared/design-system/icons/index";
 import { createPortal } from "react-dom";
 import type { ConversationExtensions } from "../conversation/contracts";
-import type { Attachment } from "../relay/contracts";
+import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
 import { useKnownAgentPubkeys } from "../agents/use-known";
+import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { MessageComposer } from "./MessageComposer";
 import { ImageReviewStage } from "./ImageReviewStage";
 import { MessageRow } from "./MessageRow";
@@ -31,6 +35,7 @@ type MediaReviewViewerProps = {
   messageId: string;
   initialTime: number;
   restoreFocus?: RefObject<HTMLElement | null>;
+  onOpenLink(url: string): boolean;
   close(): void;
 };
 
@@ -103,17 +108,25 @@ function ResolvedReview({
         retry={view.refresh}
       />
     );
-  const threadRows = [
-    snapshot.root,
-    snapshot.target,
-    ...snapshot.replies,
-  ].filter((row): row is NonNullable<typeof row> => !!row);
+  const replies = [snapshot.target, ...snapshot.replies]
+    .filter(
+      (row): row is NonNullable<typeof row> =>
+        !!row && row.id !== snapshot.root?.id,
+    )
+    .filter(
+      (row, index, rows) =>
+        rows.findIndex((item) => item.id === row.id) === index,
+    )
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  const threadRows = [snapshot.root, ...replies];
   const attachmentAvailable = threadRows.some((row) =>
     row.attachments.some((item) => item.url === props.attachment.url),
   );
   const videoUrls = new Set(
     threadRows.flatMap((row) =>
-      row.attachments.filter((item) => item.video).map((item) => item.url),
+      row.attachments
+        .filter((item) => item.kind === "video")
+        .map((item) => item.url),
     ),
   );
   if (!attachmentAvailable)
@@ -123,13 +136,8 @@ function ResolvedReview({
       {...props}
       view={view}
       rootId={snapshot.root.id}
-      replies={
-        snapshot.target &&
-        snapshot.target.id !== snapshot.root.id &&
-        !snapshot.replies.some((row) => row.id === snapshot.target?.id)
-          ? [...snapshot.replies, snapshot.target]
-          : snapshot.replies
-      }
+      editMessages={threadRows}
+      replies={replies}
       limited={snapshot.limited}
       timecodesSeekable={videoUrls.size === 1}
     />
@@ -145,9 +153,11 @@ function ReviewShell({
   channelName,
   initialTime,
   close,
+  onOpenLink,
   view,
   rootId,
   replies = [],
+  editMessages = [],
   limited = false,
   timecodesSeekable = false,
   loading = false,
@@ -159,6 +169,7 @@ function ReviewShell({
 }: ActiveReviewProps & {
   view?: ThreadView;
   rootId?: string;
+  editMessages?: readonly ChannelMessage[];
   replies?: ReturnType<ThreadView["snapshot"]>["replies"];
   limited?: boolean;
   timecodesSeekable?: boolean;
@@ -173,13 +184,15 @@ function ReviewShell({
   const [currentTime, setCurrentTime] = useState(initialTime);
   const [includeTime, setIncludeTime] = useState(true);
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
+  const [mediaFailed, setMediaFailed] = useState(false);
   // selectionRequest intentionally re-applies a seek when the same URL/time is selected again.
   useEffect(() => {
     void selectionRequest;
+    setMediaFailed(false);
     setSelectedImageUrl(attachment.url);
     const seconds = Math.max(0, initialTime);
     const element = video.current;
-    if (!attachment.video || !element) {
+    if (attachment.kind !== "video" || !element) {
       setCurrentTime(seconds);
       return;
     }
@@ -191,7 +204,7 @@ function ReviewShell({
     if (element.readyState >= HTMLMediaElement.HAVE_METADATA) apply();
     else element.addEventListener("loadedmetadata", apply, { once: true });
     return () => element.removeEventListener("loadedmetadata", apply);
-  }, [attachment.url, attachment.video, initialTime, selectionRequest]);
+  }, [attachment.url, attachment.kind, initialTime, selectionRequest]);
   useModalBoundary(backdrop, closeButton, close, restoreFocus);
   const seek = (seconds: number) => {
     if (!video.current) return;
@@ -204,35 +217,37 @@ function ReviewShell({
         className={styles.mediaReviewViewer}
         role="dialog"
         aria-modal="true"
-        aria-label={attachment.video ? "Video review" : "Image viewer"}
+        aria-label={
+          attachment.kind === "video" ? "Video review" : "Image viewer"
+        }
       >
         <header className={styles.mediaReviewHeading} data-tauri-drag-region>
           <span data-tauri-drag-region>
-            {attachment.video ? "Video review" : "Image"}
+            {attachment.kind === "video" ? "Video review" : "Image"}
           </span>
-          <button
+          <IconButton
+            size="compact"
             ref={closeButton}
             type="button"
             aria-label="Close fullscreen viewer"
             onClick={close}
-          >
-            <XIcon size={20} aria-hidden="true" />
-          </button>
+            icon={<XIcon size={20} aria-hidden="true" />}
+          />
         </header>
         <div className={styles.mediaReviewStage}>
-          {!source || !rootId ? (
+          {!source || !rootId || mediaFailed ? (
             <p
               className={styles.mediaReviewUnavailable}
               role={error ? "alert" : "status"}
             >
               {error ?? (loading ? "Loading media…" : "Media unavailable")}
               {retry && (
-                <button type="button" onClick={() => void retry()}>
+                <Button size="sm" type="button" onClick={() => void retry()}>
                   Retry
-                </button>
+                </Button>
               )}
             </p>
-          ) : attachment.video ? (
+          ) : attachment.kind === "video" ? (
             // biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL.
             <video
               ref={video}
@@ -243,6 +258,7 @@ function ReviewShell({
               onLoadedMetadata={(event) => {
                 event.currentTarget.currentTime = initialTime;
               }}
+              onError={() => setMediaFailed(true)}
               onTimeUpdate={(event) =>
                 setCurrentTime(event.currentTarget.currentTime)
               }
@@ -253,10 +269,17 @@ function ReviewShell({
               selectedUrl={selectedImageUrl}
               select={setSelectedImageUrl}
               media={session.media}
+              onOpenLink={onOpenLink}
             />
           ) : null}
         </div>
-        <aside className={styles.mediaReviewConversation}>
+        <aside
+          className={styles.mediaReviewConversation}
+          aria-label="Media comments"
+          data-attachment-drop-zone=""
+          onDragOver={rejectUnhandledFileDrop}
+          onDrop={rejectUnhandledFileDrop}
+        >
           {rootId && source ? (
             <>
               <ReviewComments
@@ -266,21 +289,18 @@ function ReviewShell({
                 scope={scope}
                 extensions={extensions}
                 selectAttachment={selectAttachment}
-                {...(attachment.video && timecodesSeekable ? { seek } : {})}
+                {...(attachment.kind === "video" && timecodesSeekable
+                  ? { seek }
+                  : {})}
               />
-              {attachment.video && (
+              {attachment.kind === "video" && (
                 <div className={styles.mediaReviewTimeOption}>
                   <span>{formatMediaTime(currentTime)}</span>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={includeTime}
-                      onChange={(event) =>
-                        setIncludeTime(event.currentTarget.checked)
-                      }
-                    />
-                    Comment at current frame
-                  </label>
+                  <Checkbox
+                    label="Comment at current frame"
+                    checked={includeTime}
+                    onCheckedChange={setIncludeTime}
+                  />
                 </div>
               )}
               <MessageComposer
@@ -290,7 +310,8 @@ function ReviewShell({
                 channelId={channelId}
                 channelName={channelName}
                 threadRootId={rootId}
-                {...(attachment.video && includeTime
+                editMessages={editMessages}
+                {...(attachment.kind === "video" && includeTime
                   ? { mediaTimeSeconds: currentTime }
                   : {})}
                 hideMediaTimeIndicator
@@ -313,11 +334,13 @@ function ImageReviewGallery({
   selectedUrl,
   select,
   media,
+  onOpenLink,
 }: {
   view: ThreadView;
   selectedUrl: string;
   select(url: string): void;
   media(url: string): string | undefined;
+  onOpenLink(url: string): boolean;
 }) {
   const thread = useSyncExternalStore(
     view.subscribe,
@@ -329,7 +352,8 @@ function ImageReviewGallery({
     return [thread.root, thread.target, ...thread.replies]
       .flatMap((row) => row?.attachments ?? [])
       .filter(
-        (item) => !item.video && !seen.has(item.url) && !!seen.add(item.url),
+        (item) =>
+          item.kind === "image" && !seen.has(item.url) && !!seen.add(item.url),
       );
   }, [thread.root, thread.target, thread.replies]);
   return (
@@ -338,6 +362,7 @@ function ImageReviewGallery({
       selectedUrl={selectedUrl}
       media={media}
       select={select}
+      onOpenLink={onOpenLink}
     />
   );
 }

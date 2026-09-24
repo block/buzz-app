@@ -1,4 +1,5 @@
-import { useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { useChannelIdentityNames } from "../identity-names/react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { AtIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import type { RelaySession } from "../relay/session";
 import type { Profile, ChannelSummary } from "../relay/contracts";
@@ -24,11 +25,13 @@ const agentsSnapshot = () => undefined;
 
 export function useReferenceDirectory(
   session: RelaySession | undefined,
-  hasMentions: boolean,
+  selectedProfiles?: ReadonlyMap<string, Profile>,
 ) {
   const profiles = useSyncExternalStore(
-    session?.profiles?.subscribe ?? noop,
-    session?.profiles?.snapshot ?? profilesSnapshot,
+    selectedProfiles ? noop : (session?.profiles?.subscribe ?? noop),
+    selectedProfiles
+      ? () => selectedProfiles
+      : (session?.profiles?.snapshot ?? profilesSnapshot),
     profilesSnapshot,
   );
   const channels = useSyncExternalStore(
@@ -41,10 +44,6 @@ export function useReferenceDirectory(
     session?.agentLibrary?.snapshot ?? agentsSnapshot,
     agentsSnapshot,
   );
-  useEffect(() => {
-    if (hasMentions && agents?.status === "idle")
-      void session?.agentLibrary.refresh();
-  }, [session, hasMentions, agents?.status]);
   return {
     profiles,
     channels: channels?.channels ?? emptyChannels,
@@ -52,7 +51,7 @@ export function useReferenceDirectory(
   };
 }
 
-export function channelLinkLabel(
+export function channelForLink(
   url: string,
   scope: string | undefined,
   channels: readonly ChannelSummary[],
@@ -61,14 +60,29 @@ export function channelLinkLabel(
   const target =
     parsed?.format === "legacy"
       ? parsed
-      : parsed?.target.kind === "conversation" &&
+      : parsed?.format === "shared" &&
+          parsed.target.kind === "conversation" &&
           parsed.target.scope.communityOrigin === scope?.slice(0, -65)
         ? parsed.target
         : undefined;
-  const channel =
-    target && channels.find((item) => item.id === target.channelId);
+  return target && channels.find((item) => item.id === target.channelId);
+}
+
+export function channelLinkLabel(
+  url: string,
+  scope: string | undefined,
+  channels: readonly ChannelSummary[],
+) {
+  const channel = channelForLink(url, scope, channels);
+  const parsed = parseBuzzLink(url);
+  const target =
+    parsed?.format === "legacy"
+      ? parsed
+      : parsed?.format === "shared" && parsed.target.kind === "conversation"
+        ? parsed.target
+        : undefined;
   return channel
-    ? `${channel.channelType === "dm" || target.messageId ? "" : "#"}${channel.name}`
+    ? `${channel.channelType === "dm" || target?.messageId ? "" : "#"}${channel.name}`
     : undefined;
 }
 
@@ -81,6 +95,7 @@ export function ReferenceText({
   extensions,
   session,
   scope,
+  channelId,
   interactive = true,
 }: {
   text: string;
@@ -91,8 +106,10 @@ export function ReferenceText({
   extensions?: ConversationExtensions | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
+  channelId?: string | undefined;
   interactive?: boolean;
 }) {
+  const resolveName = useChannelIdentityNames(session, channelId);
   const references = messageReferences(
     text,
     mentions,
@@ -109,6 +126,10 @@ export function ReferenceText({
         {renderText(text.slice(offset, reference.start))}
       </span>,
     );
+    const label =
+      reference.kind === "channel"
+        ? reference.label.slice(1)
+        : resolveName(reference.id, reference.label.slice(1));
     const Icon = reference.kind === "agent" ? RobotIcon : AtIcon;
     parts.push(
       reference.kind === "channel" ? (
@@ -121,16 +142,17 @@ export function ReferenceText({
           session={session}
           scope={scope}
           interactive={interactive}
+          channelPrivate={!!reference.private}
         />
       ) : (
         <span
           key={reference.start}
           className={styles.link}
           data-mention-kind={reference.kind}
-          title={`${reference.kind === "agent" ? "Agent" : "Person"}: ${reference.label.slice(1)}\n${reference.id}`}
+          title={`${reference.kind === "agent" ? "Agent" : "Person"}: ${label}\n${reference.id}`}
         >
           <Icon aria-hidden="true" className={styles.icon} />
-          {reference.label.slice(1)}
+          {label}
         </span>
       ),
     );

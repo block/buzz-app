@@ -89,6 +89,7 @@ function setup() {
           source: "external",
           revision: "v1",
           previous: null,
+          reloadable: true,
           error: null,
         },
       ]);

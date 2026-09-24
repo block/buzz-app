@@ -1,4 +1,10 @@
-import { Popover } from "@base-ui/react/popover";
+import { useChannelIdentityNames } from "../../features/identity-names/react";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+} from "../../shared/design-system/ui/Popover";
 import {
   useCallback,
   useMemo,
@@ -39,32 +45,38 @@ function ActivityRow({
     selection.snapshot,
   );
   const profile = profiles.get(item.authorId);
-  const name = profile?.name ?? "Someone";
+  const resolveName = useChannelIdentityNames(session, item.channelId);
+  const name = resolveName(item.authorId, profile?.name ?? "Someone");
   return (
-    <button
-      type="button"
-      className={styles.activityItem}
-      aria-label={`Open unread thread from ${name}: ${item.preview}`}
-      onClick={() => onOpen(item)}
-    >
-      <Avatar
-        name={name}
-        src={profile?.picture ? session.media(profile.picture) : undefined}
-        className={styles.activityAvatar ?? ""}
-      />
-      <span className={styles.activityItemBody}>
-        <span className={styles.activityItemHeading}>
-          <strong>{name}</strong>
-          <span className={styles.activityTimestamp}>
-            {elapsed(item.createdAt)}
+    <div className={styles.activityItem}>
+      <NavigationItem
+        type="button"
+        aria-label={`Open unread thread from ${name}: ${item.preview}`}
+        onClick={() => onOpen(item)}
+        icon={
+          <Avatar
+            name={name}
+            src={profile?.picture ? session.media(profile.picture) : undefined}
+            className={styles.activityAvatar ?? ""}
+          />
+        }
+        label={
+          <span className={styles.activityItemBody}>
+            <span className={styles.activityItemHeading}>
+              <strong>{name}</strong>
+              <span className={styles.activityTimestamp}>
+                {elapsed(item.createdAt)}
+              </span>
+            </span>
+            <span className={styles.activityItemMeta}>
+              Thread
+              {item.unreadCount > 1 ? ` · ${item.unreadCount} unread` : ""}
+            </span>
+            <span className={styles.activityItemPreview}>{item.preview}</span>
           </span>
-        </span>
-        <span className={styles.activityItemMeta}>
-          Thread{item.unreadCount > 1 ? ` · ${item.unreadCount} unread` : ""}
-        </span>
-        <span className={styles.activityItemPreview}>{item.preview}</span>
-      </span>
-    </button>
+        }
+      />
+    </div>
   );
 }
 
@@ -96,7 +108,7 @@ export function ChannelActivityPopover({
   if (!items.length) return trigger;
   const stale = snapshot.freshness === "stale";
   return (
-    <Popover.Root
+    <PopoverRoot
       modal={false}
       open={open}
       onOpenChange={(next) => {
@@ -110,44 +122,37 @@ export function ChannelActivityPopover({
             .catch(() => {});
       }}
     >
-      <Popover.Trigger
+      <PopoverTrigger
         render={trigger}
         openOnHover
         delay={250}
         closeDelay={150}
       />
-      <Popover.Portal>
-        <Popover.Positioner
-          side="right"
-          align="start"
-          sideOffset={6}
-          collisionPadding={8}
-        >
-          <Popover.Popup
-            className={styles.activityPopover}
-            aria-label={`Activity in ${channelName}`}
-          >
-            {stale && (
-              <p className={styles.activityStale}>May be out of date</p>
-            )}
-            {open && (
-              <div className={styles.activityList}>
-                {items.map((item) => (
-                  <ActivityRow
-                    key={item.rootId}
-                    item={item}
-                    session={session}
-                    onOpen={(selected) => {
-                      setOpen(false);
-                      onOpenThread(selected);
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+      <PopoverPopup
+        side="right"
+        align="start"
+        sideOffset={6}
+        size="wide"
+        padding="list"
+        aria-label={`Activity in ${channelName}`}
+      >
+        {stale && <p className={styles.activityStale}>May be out of date</p>}
+        {open && (
+          <div className={styles.activityList}>
+            {items.map((item) => (
+              <ActivityRow
+                key={item.rootId}
+                item={item}
+                session={session}
+                onOpen={(selected) => {
+                  setOpen(false);
+                  onOpenThread(selected);
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </PopoverPopup>
+    </PopoverRoot>
   );
 }

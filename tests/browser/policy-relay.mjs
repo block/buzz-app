@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
  * The production broker owns all pacing, signing, SSE and retry controls. */
 export function policyRelay({
   viewer,
+  relayAuthor,
   answer,
   report,
   pending,
@@ -16,6 +17,10 @@ export function policyRelay({
   holdOlder = true,
 }) {
   const sockets = [];
+  let presenceHeld = false;
+  const presenceWaiters = [];
+  report.presenceSnapshots = [];
+  report.presencePublications = [];
   const requests = [];
   const rejected = [];
   report.liveRequests = requests;
@@ -56,6 +61,13 @@ export function policyRelay({
       socket.onmessage?.({ data: JSON.stringify(frame) });
   }
   return {
+    holdPresence() {
+      presenceHeld = true;
+    },
+    releasePresence() {
+      presenceHeld = false;
+      for (const release of presenceWaiters.splice(0)) release();
+    },
     holdContent() {
       heldContent = true;
     },
@@ -104,8 +116,12 @@ export function policyRelay({
       try {
         if (latencyMs)
           await new Promise((resolve) => setTimeout(resolve, latencyMs));
-        if (!init?.body && discovery)
-          return Response.json(discovery(communityOf(url)));
+        // NIP-11 is a public GET with no signed query body. The rail now reads
+        // it for saved communities, including inactive ones.
+        if (!init?.body) {
+          expect(new URL(url).pathname).toBe("/");
+          return Response.json(discovery?.(communityOf(url)) ?? {});
+        }
         expect(["/query", ...(acceptPublication ? ["/events"] : [])]).toContain(
           new URL(url).pathname,
         );
@@ -132,7 +148,9 @@ export function policyRelay({
             "#h": replies["#h"],
             limit: 1,
           });
-          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([9, 40002]);
+          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([
+            9, 40002, 40008,
+          ]);
           for (const filter of filters)
             report.queries.push({
               community: communityOf(url),
@@ -141,6 +159,39 @@ export function policyRelay({
             });
           return Response.json(
             filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
+        if (filters.length === 2 && filters[0].kinds?.includes(39000)) {
+          // Exact channel authority lookup, distinct from sidebar preferences.
+          const ids = filters[0]["#d"];
+          expect(Array.isArray(ids)).toBe(true);
+          expect(ids.length).toBeGreaterThan(0);
+          expect(ids.length).toBeLessThanOrEqual(128);
+          expect(new Set(ids).size).toBe(ids.length);
+          expect(filters).toEqual([
+            {
+              kinds: [39000],
+              authors: [relayAuthor],
+              "#d": ids,
+              limit: ids.length + 1,
+            },
+            {
+              kinds: [39002],
+              authors: [relayAuthor],
+              "#d": ids,
+              "#p": [viewer],
+              limit: ids.length + 1,
+            },
+          ]);
+          const community = communityOf(url);
+          for (const filter of filters)
+            report.queries.push({ community, filter, at: performance.now() });
+          return Response.json(
+            filters.flatMap((filter) =>
+              emptyRoster && filter.kinds.includes(39002)
+                ? []
+                : answer(community, filter),
+            ),
           );
         }
         if (filters.length !== 1) {
@@ -167,6 +218,43 @@ export function policyRelay({
         const filter = filters[0],
           community = communityOf(url);
         report.queries.push({ community, filter, at: performance.now() });
+        if (filter.kinds?.includes(20001)) {
+          expect(Object.keys(filter).sort()).toEqual([
+            "authors",
+            "kinds",
+            "limit",
+          ]);
+          expect(filter.authors.length).toBeGreaterThan(0);
+          expect(filter.authors.length).toBeLessThanOrEqual(256);
+          expect(filter.limit).toBe(filter.authors.length);
+          const snapshot = {
+            community,
+            filter,
+            pending: presenceHeld,
+            aborted: false,
+          };
+          report.presenceSnapshots.push(snapshot);
+          // Return the pending fetch, like the profile/content holds below.
+          // Awaiting it inside the fixture assertion catch misclassifies normal
+          // consumer cancellation as an unexpected protocol assertion failure.
+          if (presenceHeld)
+            return new Promise((resolve, reject) => {
+              const abort = () => {
+                snapshot.pending = false;
+                snapshot.aborted = true;
+                reject(init.signal.reason);
+              };
+              if (init.signal.aborted) return abort();
+              presenceWaiters.push(() => {
+                init.signal.removeEventListener("abort", abort);
+                snapshot.pending = false;
+                if (!snapshot.aborted)
+                  resolve(Response.json(answer(community, filter)));
+              });
+              init.signal.addEventListener("abort", abort, { once: true });
+            });
+          return Response.json(answer(community, filter));
+        }
         if (heldContent && filter.kinds?.includes(9))
           return new Promise((_resolve, reject) => {
             if (init.signal.aborted) reject(init.signal.reason);
@@ -289,6 +377,20 @@ export function policyRelay({
               this.routes.delete(id);
               return;
             }
+            if (kind === "EVENT" && id.kind === 20001) {
+              expect(this.authenticated).toBe(true);
+              expect(verifyEvent(id)).toBe(true);
+              expect(id.pubkey).toBe(viewer);
+              expect(id.kind).toBe(20001);
+              expect(["online", "away", "offline"]).toContain(id.content);
+              expect(id.tags).toEqual([]);
+              report.presencePublications.push({
+                community: this.community,
+                event: id,
+              });
+              queueMicrotask(() => emit(this, ["OK", id.id, true]));
+              return;
+            }
             if (kind === "EVENT" && acceptPublication) {
               expect(this.authenticated).toBe(true);
               setTimeout(() => {
@@ -301,7 +403,12 @@ export function policyRelay({
               }, latencyMs);
               return;
             }
-            expect(kind).toBe("REQ");
+            expect(
+              kind,
+              kind === "EVENT"
+                ? `Unexpected publication kind ${id?.kind}`
+                : `Unexpected relay frame ${kind}`,
+            ).toBe("REQ");
             expect(this.authenticated).toBe(true);
             requests.push({
               socket: sockets.indexOf(this),

@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   editMentionDraft,
   mentionDraft,
+  followupDraft,
   replaceMentionDraft,
 } from "./mention-draft";
 const first = { pubkey: "a".repeat(64), name: "Honey", start: 0, end: 6 };
@@ -34,6 +35,27 @@ it("actual edits before a mention move its span; extending or replacing a name d
   expect(editMentionDraft(draft, "Hi @Honey help").recipients).toEqual([]);
   expect(editMentionDraft(draft, draft.text).recipients).toEqual([]);
 });
+it("replacement edits keep only mentions outside the browser's target range", () => {
+  const draft = mentionDraft({
+    text: "@Honey @Honey what's next",
+    recipients: [first, second],
+  });
+  const edit = (start: number, end: number, inserted: string) =>
+    editMentionDraft(
+      draft,
+      draft.text.slice(0, start) + inserted + draft.text.slice(end),
+      { text: draft.text, start, end, inputType: "insertReplacementText" },
+    );
+  const quote = draft.text.indexOf("'");
+  expect(edit(quote, quote + 1, "’").recipients).toEqual([first, second]);
+  // Even same-text autocorrect on a selected name must revoke that identity.
+  expect(edit(0, 6, "@Honey").recipients).toEqual([second]);
+  expect(edit(7, 13, "@Honey").recipients).toEqual([first]);
+  expect(
+    editMentionDraft(draft, draft.text.replace("'", "’")).recipients,
+  ).toEqual([]);
+});
+
 it("legacy prose and malformed persisted metadata never infer recipients", () => {
   expect(mentionDraft("@Honey").recipients).toEqual([]);
   for (const recipient of [
@@ -85,4 +107,24 @@ it("captured replacement ranges never transfer identity across a matrix of same-
       }
     }
   }
+});
+
+it("followup drafts deduplicate exact keys, preserve namesakes, and enforce draft bounds", () => {
+  expect(followupDraft([first, second, first])).toEqual({
+    text: "@Honey @Honey ",
+    recipients: [first, second],
+  });
+  const many = Array.from({ length: 33 }, (_, i) => ({
+    pubkey: i.toString(16).padStart(64, "0"),
+    name: `Agent ${i}`,
+  }));
+  expect(followupDraft(many).recipients).toHaveLength(32);
+  expect(
+    followupDraft([{ ...first, name: "x".repeat(15998) }, second]).text,
+  ).toHaveLength(16000);
+  expect(followupDraft([{ ...first, name: "x".repeat(15999) }])).toEqual({
+    text: "",
+    recipients: [],
+  });
+  expect(followupDraft([])).toEqual({ text: "", recipients: [] });
 });

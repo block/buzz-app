@@ -1,11 +1,21 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { readView, writeView } from "../../shared/view-state";
 
+export const CHANNEL_SIDEBAR_DEFAULT_WIDTH = 260;
+export const CHANNEL_SIDEBAR_MIN_WIDTH = 124;
+export const CHANNEL_SIDEBAR_MAX_WIDTH = 520;
+
+export function clampChannelSidebarWidth(width: number) {
+  return Math.min(
+    CHANNEL_SIDEBAR_MAX_WIDTH,
+    Math.max(CHANNEL_SIDEBAR_MIN_WIDTH, Math.round(width)),
+  );
+}
+
 type SidebarView = {
-  search: string;
   collapsed: string[];
   scrollTop: number;
-  hiddenDms: string[];
+  width: number;
 };
 
 function restore(scope: string): SidebarView {
@@ -13,10 +23,6 @@ function restore(scope: string): SidebarView {
   const saved =
     raw && typeof raw === "object" ? (raw as Partial<SidebarView>) : {};
   return {
-    hiddenDms: Array.isArray(saved.hiddenDms)
-      ? saved.hiddenDms.filter((id): id is string => typeof id === "string")
-      : [],
-    search: typeof saved.search === "string" ? saved.search : "",
     collapsed: Array.isArray(saved.collapsed)
       ? saved.collapsed.filter((key): key is string => typeof key === "string")
       : [],
@@ -26,6 +32,10 @@ function restore(scope: string): SidebarView {
       saved.scrollTop >= 0
         ? saved.scrollTop
         : 0,
+    width:
+      typeof saved.width === "number" && Number.isFinite(saved.width)
+        ? clampChannelSidebarWidth(saved.width)
+        : CHANNEL_SIDEBAR_DEFAULT_WIDTH,
   };
 }
 
@@ -71,33 +81,12 @@ export function useSidebarView(scope: string, ready: boolean) {
     };
   }, [scope]);
 
-  const update = (next: SidebarView) => {
+  const update = useCallback((next: SidebarView) => {
     intent.current = next;
     setView(next);
-  };
-  return {
-    list,
-    search: view.search,
-    collapsed: view.collapsed,
-    hiddenDms: view.hiddenDms,
-    hideDm: (id: string) => {
-      const next = {
-        ...intent.current,
-        hiddenDms: [...new Set([...intent.current.hiddenDms, id])],
-      };
-      update(next);
-      writeView(scope, "channel-sidebar", next);
-    },
-    restoreDms: () => {
-      const next = { ...intent.current, hiddenDms: [] };
-      update(next);
-      writeView(scope, "channel-sidebar", next);
-    },
-    setSearch: (search: string) => {
-      pending.current = false;
-      update({ ...intent.current, search });
-    },
-    toggle: (key: string, open: boolean) => {
+  }, []);
+  const toggle = useCallback(
+    (key: string, open: boolean) => {
       const collapsed = intent.current.collapsed;
       if (collapsed.includes(key) === !open) return;
       pending.current = false;
@@ -107,6 +96,19 @@ export function useSidebarView(scope: string, ready: boolean) {
           ? collapsed.filter((id) => id !== key)
           : [...collapsed, key],
       });
+    },
+    [update],
+  );
+  return {
+    list,
+    collapsed: view.collapsed,
+    width: view.width,
+    toggle,
+    setWidth: (width: number) => {
+      const next = clampChannelSidebarWidth(width);
+      if (intent.current.width === next) return;
+      update({ ...intent.current, width: next });
+      writeView(scope, "channel-sidebar", { ...intent.current, width: next });
     },
   };
 }

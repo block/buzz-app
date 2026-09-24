@@ -6,8 +6,9 @@ test.use({
   savedSidebar: true,
   largeSidebar: true,
   developmentReact: true,
+  historyCounts: { alpha: 1, beta: 1 },
 });
-test("Home → Messages keeps saved groups, selected channel, and scroll on every visible frame without re-decoding", async ({
+test("Projects → Messages keeps saved groups, selected channel, and scroll on every visible frame without re-decoding", async ({
   page,
   app,
 }) => {
@@ -28,8 +29,11 @@ test("Home → Messages keeps saved groups, selected channel, and scroll on ever
     return element.scrollTop;
   });
   expect(scroll).toBeGreaterThan(100);
-  await page.getByRole("button", { name: "Home", exact: true }).first().click();
-  await expect(sidebar).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Projects", exact: true })
+    .first()
+    .click();
+  await expect(sidebar).toBeVisible();
   let release;
   const held = new Promise((resolve) => {
     release = resolve;
@@ -87,7 +91,7 @@ test("Home → Messages keeps saved groups, selected channel, and scroll on ever
     ).toEqual([]);
     expect(
       decodes,
-      "Remount must reuse the engine snapshot, not fetch/decode again",
+      "Page return must reuse the engine snapshot, not fetch/decode again",
     ).toBe(0);
   } finally {
     release();

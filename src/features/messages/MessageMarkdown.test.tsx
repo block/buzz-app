@@ -1,12 +1,17 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import {
-  isValidElement,
-  type ComponentProps,
-  type ReactElement,
-  type ReactNode,
-} from "react";
-import Markdown, { type Components } from "react-markdown";
+  act,
+  cleanup,
+  fireEvent,
+  render as renderDom,
+  screen,
+} from "@testing-library/react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { LockIcon, RobotIcon } from "../../shared/design-system/icons/index";
+import referenceStyles from "../../shared/InlineReference.module.css";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { StrictMode, type ComponentProps } from "react";
 import type {
   ConversationExtensions,
   InlineRenderer,
@@ -18,8 +23,25 @@ import { profileTarget } from "../profiles/target";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { MessageMarkdown } from "./MessageMarkdown";
-import { safeMessageUrl } from "../relay/message-content";
+import { createRelaySession } from "../relay/session";
+import { createAgentDirectory } from "../identity-names/testing";
+import { bindNames } from "../identity-names/service";
+import * as messageContent from "../relay/message-content";
+import { MAX_MARKDOWN_LENGTH, safeMessageUrl } from "../relay/message-content";
 import type { ChannelMessage } from "../relay/contracts";
+
+const markdownRenders = vi.hoisted(() => vi.fn());
+vi.mock("react-markdown", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-markdown")>();
+  return {
+    ...actual,
+    default: (properties: ComponentProps<typeof actual.default>) => {
+      markdownRenders();
+      const Markdown = actual.default;
+      return <Markdown {...properties} />;
+    },
+  };
+});
 
 const mic = "b".repeat(64),
   smith = "a".repeat(64),
@@ -64,32 +86,10 @@ function props(
 function render(content: string, options: RenderOptions = {}) {
   return renderToStaticMarkup(<MessageMarkdown {...props(content, options)} />);
 }
-
-// Invoke the real parser and component callbacks for handler evidence, without
-// replacing Markdown or claiming this server-side test establishes DOM focus.
-function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
-  if (Array.isArray(node)) return node.flatMap(elements);
-  if (!isValidElement<Record<string, unknown>>(node)) return [];
-  return [node, ...elements(node.props.children as ReactNode)];
-}
-function profileButtons(content: string, options: RenderOptions = {}) {
-  const rendered = elements(MessageMarkdown(props(content, options)));
-  const markdown = rendered.find((node) => node.type === Markdown);
-  if (!markdown) throw new Error("Missing Markdown");
-  const parsed = Markdown(markdown.props as ComponentProps<typeof Markdown>);
-  const Span = (markdown.props.components as Components).span;
-  const renderSpan = (
-    rendered.find((node) =>
-      Boolean((node.props.value as Components | undefined)?.span),
-    )?.props.value as Components | undefined
-  )?.span as (props: ComponentProps<"span">) => ReactNode;
-  if (typeof renderSpan !== "function")
-    throw new Error("Missing inline renderer");
-  return elements(parsed)
-    .filter((node) => node.type === Span)
-    .flatMap((node) => elements(renderSpan(node.props)))
-    .filter((node) => node.type === "button");
-}
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const party = {
   shortcode: "party_parrot",
@@ -117,10 +117,11 @@ const pluginRenderer: Contribution<InlineRenderer> = {
     })),
   component: ({ text }) => <mark>{text}</mark>,
 };
+const inlineRenderers = [emojiRenderer, pluginRenderer] as const;
 const extensions: ConversationExtensions = {
   tools: { snapshot: () => [], subscribe: () => () => {} },
   inline: {
-    snapshot: () => [emojiRenderer, pluginRenderer],
+    snapshot: () => inlineRenderers,
     subscribe: () => () => {},
   },
 };
@@ -209,6 +210,202 @@ second
   });
 });
 
+describe("mounted Markdown preparation", () => {
+  it("reuses pure preparation for equivalent rows and invalidates for edited text", () => {
+    const scan = vi.spyOn(messageContent, "scanMarkdown");
+    const initial = props("**first**");
+    const view = renderDom(
+      <StrictMode>
+        <MessageMarkdown {...initial} />
+      </StrictMode>,
+    );
+    const initialScans = scan.mock.calls.length;
+    const initialRenders = markdownRenders.mock.calls.length;
+    expect(initialScans).toBeGreaterThan(0);
+    expect(initialRenders).toBeGreaterThan(0);
+    expect(screen.getByText("first")).toHaveTextContent("first");
+
+    view.rerender(
+      <StrictMode>
+        <MessageMarkdown
+          {...initial}
+          row={{
+            ...initial.row,
+            delivery: "seen",
+            reactions: [{ content: "👍", events: [] }],
+          }}
+        />
+      </StrictMode>,
+    );
+    expect(scan).toHaveBeenCalledTimes(initialScans);
+    expect(markdownRenders).toHaveBeenCalledTimes(initialRenders);
+
+    view.rerender(
+      <StrictMode>
+        <MessageMarkdown
+          {...initial}
+          row={{ ...initial.row, content: "_second_" }}
+        />
+      </StrictMode>,
+    );
+    expect(scan.mock.calls.length).toBeGreaterThan(initialScans);
+    expect(markdownRenders.mock.calls.length).toBeGreaterThan(initialRenders);
+    expect(screen.getByText("second")).toBeInTheDocument();
+    expect(screen.queryByText("first")).not.toBeInTheDocument();
+  });
+
+  it("updates live plugin, media, directory, and interactivity inputs without reparsing", () => {
+    const metadataRenderer: Contribution<InlineRenderer> = {
+      id: "metadata",
+      key: "test/metadata",
+      pluginId: "test",
+      revision: "1",
+      title: "Metadata",
+      matches: ({ text }) =>
+        text === "PLUGIN" ? [{ start: 0, end: text.length }] : [],
+      component: ({ content, media }) => (
+        <mark>{`${content.message.replyCount}:${media("asset") ?? "none"}`}</mark>
+      ),
+    };
+    const metadataRenderers = [metadataRenderer] as const;
+    const liveExtensions: ConversationExtensions = {
+      ...extensions,
+      inline: {
+        snapshot: () => metadataRenderers,
+        subscribe: () => () => {},
+      },
+    };
+    const url = "buzz://channel/design";
+    const initial = props(`<${url}>\n\nPLUGIN`, {
+      extensions: liveExtensions,
+      media: () => "first-media",
+      directory: {
+        profiles: new Map(),
+        agents: [],
+        channels: [{ id: "design", name: "first", channelType: "forum" }],
+      },
+    });
+    const view = renderDom(<MessageMarkdown {...initial} />);
+    const initialRenders = markdownRenders.mock.calls.length;
+    expect(screen.getByRole("link", { name: "#first" })).toBeInTheDocument();
+    expect(screen.getByText("0:first-media")).toBeInTheDocument();
+
+    view.rerender(
+      <MessageMarkdown
+        {...initial}
+        row={{ ...initial.row, replyCount: 7 }}
+        media={() => "second-media"}
+        interactive={false}
+        directory={{
+          profiles: new Map(),
+          agents: [],
+          channels: [{ id: "design", name: "second", channelType: "forum" }],
+        }}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(initialRenders);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.getByText("#second")).toBeInTheDocument();
+    expect(screen.getByText("7:second-media")).toBeInTheDocument();
+
+    view.rerender(
+      <MessageMarkdown
+        {...initial}
+        row={{ ...initial.row, replyCount: 8 }}
+        extensions={undefined}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(initialRenders);
+    expect(screen.queryByText("7:second-media")).not.toBeInTheDocument();
+    expect(screen.getByText("PLUGIN")).toBeInTheDocument();
+  });
+
+  it("invalidates protected prose when live identity and security inputs change", () => {
+    const initial = props("@Mic and @Renamed", {
+      patch: { mentions: [mic] },
+      participantProfiles: new Map([[mic, { name: "Mic" }]]),
+    });
+    const view = renderDom(<MessageMarkdown {...initial} />);
+    expect(
+      screen.getByRole("button", { name: "View Mic profile" }),
+    ).toBeInTheDocument();
+
+    view.rerender(
+      <MessageMarkdown
+        {...initial}
+        participantProfiles={new Map([[mic, { name: "Renamed" }]])}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "View Mic profile" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "View Renamed profile" }),
+    ).toBeInTheDocument();
+
+    view.rerender(
+      <MessageMarkdown
+        {...initial}
+        row={{ ...initial.row, edited: true }}
+        participantProfiles={new Map([[mic, { name: "Renamed" }]])}
+      />,
+    );
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+
+    view.rerender(
+      <MessageMarkdown
+        {...initial}
+        row={{ ...initial.row, attachmentContentRemoved: true }}
+        participantProfiles={new Map([[mic, { name: "Renamed" }]])}
+      />,
+    );
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("invalidates event-local emoji bindings without retaining stale media", () => {
+    const initial = props(":party_parrot:", {
+      emoji: [party],
+      extensions,
+      media: () => "https://media.test/first.png",
+    });
+    const view = renderDom(<MessageMarkdown {...initial} />);
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "src",
+      "https://media.test/first.png",
+    );
+
+    view.rerender(
+      <MessageMarkdown
+        {...initial}
+        row={{ ...initial.row, emoji: [] }}
+        media={() => "https://media.test/stale.png"}
+      />,
+    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByText(":party_parrot:")).toBeInTheDocument();
+  });
+
+  it("crosses long and deep fallback boundaries after mount", () => {
+    const view = renderDom(<MessageMarkdown {...props("**parsed**")} />);
+    expect(screen.getByText("parsed").tagName).toBe("STRONG");
+
+    view.rerender(
+      <MessageMarkdown
+        {...props(`${"a".repeat(MAX_MARKDOWN_LENGTH + 1)} **literal**`)}
+      />,
+    );
+    expect(screen.getByText(/\*\*literal\*\*/)).toBeInTheDocument();
+
+    view.rerender(
+      <MessageMarkdown {...props(`${"> ".repeat(20_000)}**deep**`)} />,
+    );
+    expect(screen.getByText(/\*\*deep\*\*/)).toBeInTheDocument();
+
+    view.rerender(<MessageMarkdown {...props("**parsed again**")} />);
+    expect(screen.getByText("parsed again").tagName).toBe("STRONG");
+  });
+});
+
 describe("Markdown profile mentions", () => {
   it("binds exact signed names longest-first through surrounding emphasis", () => {
     const html = render("**@Mic Smith**, _@Mic_! @Other @Missing @Microscopic");
@@ -250,18 +447,29 @@ describe("Markdown profile mentions", () => {
   it("focuses the clicked mention before opening its exact profile target", () => {
     const calls: string[] = [];
     const canOpenLink = vi.fn((_target: string) => true);
-    const buttons = profileButtons("**@Mic Smith** then @Mic", {
-      canOpenLink,
-      onOpenLink: (target) => {
-        calls.push(target);
-        return true;
-      },
-    });
+    renderDom(
+      <MessageMarkdown
+        {...props("**@Mic Smith** then @Mic", {
+          canOpenLink,
+          onOpenLink: (target) => {
+            expect(document.activeElement).toBe(
+              target === profileTarget(smith) ? buttons[0] : buttons[1],
+            );
+            calls.push(target);
+            return true;
+          },
+        })}
+      />,
+    );
+    const buttons = screen.getAllByRole("button");
     expect(buttons).toHaveLength(2);
     for (const button of buttons) {
-      (button.props.onClick as (event: unknown) => void)({
-        currentTarget: { focus: () => calls.push("focus") },
+      const focus = button.focus.bind(button);
+      vi.spyOn(button, "focus").mockImplementation(() => {
+        calls.push("focus");
+        focus();
       });
+      fireEvent.click(button);
     }
     expect(calls).toEqual([
       "focus",
@@ -356,6 +564,62 @@ describe("Markdown profile mentions", () => {
     });
     expect(html.match(/<button/g)).toHaveLength(1);
     expect(html).toContain("@Mic Smith and <button");
+  });
+
+  it("updates a mounted mention label without changing signed binding or profile target", () => {
+    const owned = createRelaySession(null);
+    const session = owned.session;
+    const listeners = new Set<() => void>();
+    let localName = "Local Mic";
+    const provider = createAgentDirectory();
+    const names = bindNames(
+      {
+        profiles: session.profiles,
+        agentLibrary: {
+          snapshot: () => ({
+            status: "ready",
+            definitions: [],
+            identities: [{ id: "mic", pubkey: mic, name: localName }],
+          }),
+          subscribe: (listener) => {
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+          refresh: async () => {},
+          retain: () => () => {},
+        },
+      },
+      { snapshot: () => [provider], subscribe: () => () => {} },
+    );
+    const open = vi.fn(() => true);
+    const mounted = renderDom(
+      <MessageMarkdown
+        {...props("@Mic and @Local Mic", {
+          session: { ...session, names },
+          onOpenLink: open,
+        })}
+      />,
+    );
+    const button = mounted.getByRole("button", {
+      name: "View Local Mic profile",
+    });
+    expect(mounted.getAllByRole("button")).toHaveLength(1);
+    act(() => {
+      localName = "Renamed Mic";
+      for (const notify of listeners) notify();
+    });
+    expect(
+      mounted.getByRole("button", { name: "View Renamed Mic profile" }),
+    ).toBe(button);
+    expect(button.textContent).toBe("Renamed Mic");
+    fireEvent.click(button);
+    expect(open).toHaveBeenCalledWith(profileTarget(mic));
+    expect(profiles.get(mic)?.name).toBe("Mic");
+    mounted.unmount();
+    names.dispose();
+    owned.dispose();
   });
 
   it("cannot fabricate profile controls with literal, entity-encoded or legacy markers", () => {
@@ -462,7 +726,7 @@ it.each([false, true])(
   },
 );
 
-it("keeps resolved channel labels for Buzz autolinks", () => {
+it("keeps resolved private channel labels and lock icons for Buzz links", () => {
   const entry = {
     id: "link",
     title: "Links",
@@ -473,7 +737,7 @@ it("keeps resolved channel labels for Buzz autolinks", () => {
     component: ({ url }: { url: string }) => <LinkLabel href={url} />,
   };
   const href = `buzz://message?channel=design&id=${"a".repeat(64)}`;
-  const html = render(`<${href}> <buzz://channel/design>`, {
+  const html = render(`<${href}> <buzz://channel/design> #design`, {
     directory: {
       profiles: new Map(),
       agents: [],
@@ -482,6 +746,7 @@ it("keeps resolved channel labels for Buzz autolinks", () => {
           id: "design",
           name: "design",
           channelType: "forum",
+          private: true,
         },
       ],
     },
@@ -495,4 +760,319 @@ it("keeps resolved channel labels for Buzz autolinks", () => {
   const text = html.replace(/<[^>]*>/g, "");
   expect(text).toContain("design");
   expect(text).not.toContain("buzz://");
+  const lock = renderToStaticMarkup(
+    <LockIcon className={referenceStyles.icon} />,
+  );
+  expect(html.split(lock)).toHaveLength(3);
+});
+
+it("renders tagged agent library names and profile names with the same agent icon", () => {
+  const directory = {
+    profiles: new Map([[mic, { name: "Fizz" }]]),
+    channels: [],
+    agents: [{ pubkey: mic, name: "Fast Fizz" }],
+  };
+  const options = {
+    directory,
+    participantProfiles: directory.profiles,
+    patch: { mentions: [mic] },
+  };
+  for (const name of ["Fast Fizz", "Fizz"]) {
+    const html = render(`@${name} can you also join`, options);
+    expect(html).toContain('data-mention-kind="agent"');
+    expect(html).toContain(`aria-label="View ${name} profile"`);
+    expect(html).toContain(
+      renderToStaticMarkup(<RobotIcon className={referenceStyles.icon} />),
+    );
+  }
+  expect(
+    render("@Fast Fizz", { ...options, participantProfiles: new Map() }),
+  ).toContain('data-mention-kind="agent"');
+  for (const patch of [
+    { mentions: [] },
+    { edited: true as const },
+    { attachmentContentRemoved: true as const },
+  ])
+    expect(
+      render("@Fast Fizz", {
+        ...options,
+        patch: { ...options.patch, ...patch },
+      }),
+    ).not.toContain("data-mention-kind=");
+  expect(render("`@Fast Fizz`", options)).not.toContain("data-mention-kind=");
+  expect(
+    render("@Fast Fizz", {
+      ...options,
+      participantProfiles: new Map([[other, { name: "Fast Fizz" }]]),
+      patch: { mentions: [mic, other] },
+    }),
+  ).not.toContain("data-mention-kind=");
+});
+
+it("uses the agent icon for a known agent profile outside the local library", () => {
+  expect(
+    render("@Mic", {
+      participantProfiles: new Map([[mic, { name: "Mic", isAgent: true }]]),
+    }),
+  ).toContain('data-mention-kind="agent"');
+});
+
+it("keeps the agent icon without presenting an unavailable profile action", () => {
+  const html = render("@Fast Fizz can you also join", {
+    directory: {
+      profiles: new Map(),
+      channels: [],
+      agents: [{ pubkey: mic, name: "Fast Fizz" }],
+    },
+    canOpenLink: undefined,
+  });
+  expect(html).toContain('data-mention-kind="agent"');
+  expect(html).toContain(
+    renderToStaticMarkup(<RobotIcon className={referenceStyles.icon} />),
+  );
+  expect(html).not.toContain("<button");
+  expect(html).not.toContain('aria-label="View');
+});
+
+it("keeps explicit profile identities visible but inert when Profiles is unavailable", () => {
+  const target = profileTarget(mic);
+  const view = renderDom(
+    <MessageMarkdown
+      {...props(`[@Mic](${target})`, {
+        patch: { mentions: [] },
+        canOpenLink: () => false,
+      })}
+    />,
+  );
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
+  expect(view.container.textContent).toContain(target);
+  view.rerender(
+    <MessageMarkdown
+      {...props(`[@Mic](${target})`, {
+        patch: { mentions: [] },
+        interactive: false,
+      })}
+    />,
+  );
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
+  expect(view.container.textContent).toContain("Mic");
+});
+
+it.each([
+  "nostr:npub1invalid",
+  "nostr:nsec1invalid",
+  "nostr:note1invalid",
+  `${profileTarget(mic)}?relay=https://example.test`,
+  "javascript:alert%281%29",
+  "data:text/html,hello",
+])(
+  "does not open unsupported or malformed identity destinations: %s",
+  (target) => {
+    const html = render(`[@Mic](${target})`, { patch: { mentions: [] } });
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("href=");
+    expect(html).toContain("@Mic");
+  },
+);
+
+it("keeps explicit profile links literal inside code", () => {
+  const link = `[@Mic](${profileTarget(mic)})`;
+  const html = render(`\`${link}\``, { patch: { mentions: [] } });
+  expect(html).not.toContain("<button");
+  expect(html).not.toContain("href=");
+  expect(html).toContain(link);
+});
+
+describe("text spoilers", () => {
+  it("hides formatted content and link controls until reveal, and resets after edits", () => {
+    const view = renderDom(
+      <MessageMarkdown
+        {...props("Before ||**secret** [link](https://example.com)|| after")}
+      />,
+    );
+    const reveal = screen.getByRole("button", { name: "Reveal spoiler" });
+    const content = view.container.querySelector("[inert]");
+    expect(content).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    fireEvent.click(reveal);
+    expect(
+      screen.getByRole("button", { name: "Hide spoiler" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(view.container.querySelector("strong")).toHaveTextContent("secret");
+    expect(screen.getByRole("link", { name: "link" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hide spoiler" }));
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reveal spoiler" }));
+    view.rerender(<MessageMarkdown {...props("Before ||changed|| after")} />);
+    expect(
+      screen.getByRole("button", { name: "Reveal spoiler" }),
+    ).toBeInTheDocument();
+    expect(view.container.querySelector("[inert]")).toHaveTextContent(
+      "changed",
+    );
+  });
+
+  it.each([
+    "`||code||`",
+    "```\n||code||\n```",
+    "\\|\\|escaped\\|\\|",
+    "&#124;&#124;entity&#124;&#124;",
+    '<span title="||attribute||">raw</span>',
+    "![||alt||](https://image.test/a.png)",
+    "[link](https://example.com/||path||)",
+    "||unclosed",
+    "||||",
+    "| a | b |\n| - | - |\n| || | cell |",
+  ])("does not turn literal syntax into a reveal control: %s", (content) => {
+    expect(render(content)).not.toContain('aria-label="Reveal spoiler"');
+  });
+
+  it("keeps spoilers inert in noninteractive previews", () => {
+    const html = render("||secret [link](https://example.com)||", {
+      interactive: false,
+    });
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<a ");
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain('inert=""');
+  });
+});
+
+it.each(["one\n\ntwo", "https://example.com/path"])(
+  "hides serialized spoiler content before reveal: %s",
+  async (text) => {
+    const { composerSchema: schema, projectComposerDocument } = await import(
+      "./composer-document"
+    );
+    const { composerMarkdown } = await import("./composer-markdown");
+    const doc = schema.nodes.doc.create(
+      null,
+      schema.nodes.paragraph.create(
+        null,
+        schema.text(text, [schema.marks.spoiler.create()]),
+      ),
+    );
+    const wire = composerMarkdown(projectComposerDocument(doc).draft);
+    const view = renderDom(<MessageMarkdown {...props(wire)} />);
+    expect(
+      screen.getAllByRole("button", { name: "Reveal spoiler" }),
+    ).toHaveLength(text.includes("\n\n") ? 2 : 1);
+    const visibleText = [...view.container.querySelectorAll("p")]
+      .map((paragraph) => {
+        const clone = paragraph.cloneNode(true) as Element;
+        for (const hidden of clone.querySelectorAll('[aria-hidden="true"]'))
+          hidden.remove();
+        return clone.textContent?.trim();
+      })
+      .join("");
+    expect(visibleText).toBe("");
+    for (const button of screen.getAllByRole("button", {
+      name: "Reveal spoiler",
+    }))
+      fireEvent.click(button);
+    expect(view.container.textContent).toContain(
+      text.includes("\n") ? "one" : text,
+    );
+    if (!text.includes("\n"))
+      expect(screen.getByRole("link")).toHaveAttribute("href", text);
+  },
+);
+
+it("preserves a GFM table with adjacent pipes and an empty middle cell", () => {
+  const html = render("| A || C |\n| - | - | - |\n| a || c |");
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(
+    [...container.querySelectorAll("th")].map((cell) => cell.textContent),
+  ).toEqual(["A", "", "C"]);
+  expect(
+    [...container.querySelectorAll("td")].map((cell) => cell.textContent),
+  ).toEqual(["a", "", "c"]);
+  expect(html).not.toContain("Reveal spoiler");
+});
+
+it.each([
+  ["**||secret||**", "strong"],
+  ["_||secret||_", "em"],
+  ["~~||secret||~~", "del"],
+])("preserves authored formatting outside a spoiler: %s", (source, tag) => {
+  const view = renderDom(<MessageMarkdown {...props(source)} />);
+  const formatted = view.container.querySelector(tag);
+  expect(formatted).toHaveTextContent("secret");
+  expect(formatted?.querySelector("[inert]")).toHaveTextContent("secret");
+  expect(view.container.textContent).toBe("secret");
+  fireEvent.click(screen.getByRole("button", { name: "Reveal spoiler" }));
+  expect(formatted?.querySelector('[aria-hidden="false"]')).toHaveTextContent(
+    "secret",
+  );
+});
+
+it("keeps one channel Larry plain despite global namesakes and follows membership changes", () => {
+  const owned = createRelaySession(null);
+  const listeners = new Set<() => void>();
+  const people = new Map(
+    [mic, smith, other].map((key) => [
+      key,
+      { name: "Larry", isAgent: true as const },
+    ]),
+  );
+  let list = {
+    status: "ready" as const,
+    channels: [{ id: "channel", name: "Here", members: [mic] }],
+  };
+  const session = {
+    ...owned.session,
+    profiles: { ...owned.session.profiles, snapshot: () => people },
+    channels: {
+      ...owned.session.channels,
+      list: () => list,
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
+  };
+  const provider = createAgentDirectory();
+  const names = bindNames(
+    { profiles: session.profiles, agentLibrary: session.agentLibrary },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  const open = vi.fn(() => true);
+  const mounted = renderDom(
+    <MessageMarkdown
+      {...props("@Larry", {
+        session: { ...session, names },
+        participantProfiles: people,
+        patch: { mentions: [mic] },
+        onOpenLink: open,
+      })}
+    />,
+  );
+  expect(names.resolve(mic)).not.toBe("Larry");
+  const button = mounted.getByRole("button", { name: "View Larry profile" });
+  fireEvent.click(button);
+  expect(open).toHaveBeenCalledWith(profileTarget(mic));
+  act(() => {
+    list = {
+      ...list,
+      channels: [{ id: "channel", name: "Here", members: [mic, smith] }],
+    };
+    for (const listener of listeners) listener();
+  });
+  expect(button.textContent).toMatch(/^Larry · /);
+  act(() => {
+    list = {
+      ...list,
+      channels: [{ id: "channel", name: "Here", members: [mic] }],
+    };
+    for (const listener of listeners) listener();
+  });
+  expect(button.textContent).toBe("Larry");
+  mounted.unmount();
+  names.dispose();
+  owned.dispose();
 });

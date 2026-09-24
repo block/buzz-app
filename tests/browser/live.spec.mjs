@@ -1,7 +1,10 @@
 import { test, expect } from "./fixture.mjs";
 import { open, settle, upper, expectAnchor, end, anchor } from "./timeline.mjs";
 
-test.use({ productionBroker: true });
+test.use({
+  productionBroker: true,
+  historyCounts: { alpha: 640, beta: 20 },
+});
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
 const retry = (page) =>
@@ -76,7 +79,9 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   await retry(page).click();
   await expect.poll(() => app.relay.rejected.length).toBe(1);
   await expect(
-    page.getByRole("status").filter({ hasText: "rate-limited" }),
+    page
+      .getByRole("dialog", { name: "Live updates need attention", exact: true })
+      .filter({ hasText: "rate-limited" }),
   ).toBeVisible();
   const calls = heads(app, "alpha").length;
   await retry(page).click();
@@ -165,7 +170,9 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
     .click();
   await expect.poll(() => app.relay.rejected.length).toBe(1);
   await expect(
-    page.getByRole("status").filter({ hasText: "rate-limited" }),
+    page
+      .getByRole("dialog", { name: "Live updates need attention", exact: true })
+      .filter({ hasText: "rate-limited" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Alpha", exact: true }),

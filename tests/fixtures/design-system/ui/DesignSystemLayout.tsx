@@ -37,6 +37,7 @@ const SECTIONS: NavSection[] = [
       ["Spacing", "/design/spacing"],
       ["Radius", "/design/radius"],
       ["Elevation", "/design/elevation"],
+      ["Floating surfaces", "/design/floating-surfaces"],
       ["Glass", "/design/glass"],
       ["Motion", "/design/motion"],
       ["Base UI backing", "/design/components/base-ui"],
@@ -45,6 +46,7 @@ const SECTIONS: NavSection[] = [
   {
     heading: "System",
     items: [
+      ["Forms", "/design/forms"],
       ["Foundation alignment", "/design/foundation-alignment"],
       ["Maintaining the system", "/design/maintaining"],
       ["DESIGN.md", "/design/design-guide"],
@@ -56,6 +58,10 @@ const SECTIONS: NavSection[] = [
     items: [
       ["Overview", "/design/components", componentNavItems("components")],
     ],
+  },
+  {
+    heading: "Product patterns",
+    items: [["Messages", "/design/messages"]],
   },
   {
     heading: "Layout playgrounds",

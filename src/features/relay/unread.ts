@@ -18,6 +18,8 @@ import { threadReference } from "./thread-reference";
 
 export type UnreadSnapshot = Readonly<{
   target: ReadTarget;
+  /** Latest verified content evidence, including read and self-authored messages. */
+  latestMessage?: Readonly<{ id: string; createdAt: number }>;
   /** null means unobserved/denied, never a fabricated zero or an exact relay total. */
   observedCount: number | null;
   attentionCount: number | null;
@@ -79,7 +81,7 @@ export interface UnreadCapability {
   readonly syncedManualUnread: false;
 }
 const contentKind = (event: RelayEvent) =>
-  event.kind === 9 || event.kind === 40002;
+  event.kind === 9 || event.kind === 40002 || event.kind === 40008;
 const channelOf = (event: RelayEvent) => {
   const tags = event.tags.filter(([name]) => name === "h");
   return tags.length === 1 ? tags[0]?.[1] : undefined;
@@ -346,7 +348,16 @@ export function createUnread({
         .channels.find((channel) => channel.id === target.channelId)
         ?.channelType === "dm";
     indexEvidence();
+    let latest: RelayEvent | undefined;
     for (const entry of byChannel.get(target.channelId) ?? []) {
+      const event = entry.event;
+      if (
+        target.kind === "channel" &&
+        (!latest ||
+          event.created_at > latest.created_at ||
+          (event.created_at === latest.created_at && event.id < latest.id))
+      )
+        latest = event;
       if (!inTarget(entry.event, target) || !isUnread(entry, state)) continue;
       count++;
       if (priority(entry, dm)) attention++;
@@ -361,6 +372,9 @@ export function createUnread({
         : "none";
     return Object.freeze({
       target,
+      ...(latest
+        ? { latestMessage: { id: latest.id, createdAt: latest.created_at } }
+        : {}),
       observedCount: evidence ? count : null,
       attentionCount: evidence ? attention : null,
       coverage: evidence ? "observed" : "unknown",
@@ -370,6 +384,7 @@ export function createUnread({
     });
   }
   const equal = (a: UnreadSnapshot, b: UnreadSnapshot) =>
+    a.latestMessage?.id === b.latestMessage?.id &&
     a.observedCount === b.observedCount &&
     a.attentionCount === b.attentionCount &&
     a.coverage === b.coverage &&
@@ -620,7 +635,7 @@ export function createUnread({
           const result = await reader.read(
             [
               {
-                kinds: [9, 40002],
+                kinds: [9, 40002, 40008],
                 "#h": ids.slice(offset, offset + 128),
                 include_aux: true,
                 limit: 500,
@@ -654,7 +669,7 @@ export function createUnread({
     const owners = channelOwnership((id) => incoming.get(id) ?? events.get(id));
     for (const event of batch) {
       if (
-        ![9, 40002, 40003, 5, 9005].includes(event.kind) ||
+        ![9, 40002, 40008, 40003, 5, 9005].includes(event.kind) ||
         events.has(event.id)
       )
         continue;

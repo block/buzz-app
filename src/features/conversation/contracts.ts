@@ -9,6 +9,8 @@ export type ComposerToolProps = Readonly<{
   scope: string;
   channelId: string;
   threadRootId?: string | undefined;
+  /** Sessions may offer library agents; the host confirms channel admission before sending. */
+  inviteAgents?: boolean | undefined;
   disabled: boolean;
   /** False after removal, destination change, read-only state or a rejected edit. */
   insertText(text: string): boolean;
@@ -79,7 +81,15 @@ export type ComposerAccessory = Readonly<{
   order?: number;
   component: ComponentType<ComposerAccessoryProps>;
 }>;
+/** A whole message body, not an inline Markdown segment. No data or delivery ownership. */
+export type MessageRenderer = Readonly<{
+  id: string;
+  title: string;
+  matches(message: ChannelMessage): boolean;
+  component: ComponentType<{ message: ChannelMessage }>;
+}>;
 export type ConversationExtensions = Readonly<{
+  messages?: ContributionReader<MessageRenderer>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;
@@ -96,7 +106,7 @@ export type ComposerObservation = Readonly<{
 }>;
 export type CompletionContext = Pick<
   ComposerToolProps,
-  "session" | "scope" | "channelId" | "threadRootId"
+  "session" | "scope" | "channelId" | "threadRootId" | "inviteAgents"
 >;
 export type CompletionQuery = Readonly<{
   start: number;

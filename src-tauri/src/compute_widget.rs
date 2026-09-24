@@ -4,8 +4,8 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const LABEL: &str = "compute-widget";
 #[tauri::command]
-pub async fn compute_widget_open(
-    app: tauri::AppHandle,
+pub async fn compute_widget_open<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     host: tauri::State<'_, ComputeHost>,
 ) -> Result<(), String> {
     if !host.status()?.available {
@@ -30,7 +30,7 @@ pub async fn compute_widget_open(
 }
 
 #[tauri::command]
-pub fn compute_widget_close(app: tauri::AppHandle) -> Result<(), String> {
+pub fn compute_widget_close<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(LABEL) {
         window.close().map_err(|e| e.to_string())?;
     }

@@ -1,6 +1,21 @@
 // FOUNDATION: Type-only author entry. Runtime capabilities come from injected ctx.
 export type { PluginManifest, PluginModule } from "./api";
+export type { SettingsCard, SettingsCards } from "../features/settings/service";
+export type {
+  TemplateDraft,
+  TemplateEditorProps,
+  GroupDefaultProps,
+  SaveTemplateProps,
+  TemplateProvider,
+  TemplateProviders,
+} from "../features/channel-templates/provider";
 export type { Context } from "@deepseek-ai/cordis";
+export type {
+  IdentityNames,
+  NamingPolicy,
+} from "../features/identity-names/service";
+export type { NamingIdentity } from "../features/identity-names/policy";
+export type { Browser, BrowserViewProps } from "../features/browser/api";
 export type { Page, Pages } from "../features/pages/service";
 export type {
   Panel,
@@ -26,6 +41,7 @@ export type {
   InlineRange,
   InlineRenderer,
   LinkRenderer,
+  MessageRenderer,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
 
@@ -68,3 +84,14 @@ export type {
   NotificationInput,
   NotificationCategoryDescriptor,
 } from "../features/notifications/service";
+
+export type {
+  AgentControl,
+  AgentControlState,
+  AgentView,
+  AgentEdit,
+  AgentAction,
+  ControlSnapshot,
+  AgentImportPreview,
+  ImportSource,
+} from "../features/agents/control";

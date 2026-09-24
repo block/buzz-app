@@ -1,11 +1,13 @@
 // FOUNDATION: React startup. Keep initialization explicit and minimal.
+// Establish host CSS layer order before product modules import component layers.
+import "./shared/styles/globals.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createServices } from "./app/services";
 import { App } from "./app/App";
 import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/inter/wght-italic.css";
 import "@fontsource/jetbrains-mono/400.css";
-import "./shared/styles/globals.css";
 import { useKeyboardFocusVisibility } from "./shared/design-system/useKeyboardFocusVisibility";
 
 const container = document.getElementById("root");

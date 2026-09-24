@@ -58,6 +58,7 @@ describe("open target boundary", () => {
     for (const target of [
       { version: 1, kind: "home" },
       { version: 1, kind: "settings", section: "appearance" },
+      { version: 1, kind: "settings", section: "org.example/card" },
     ] as const)
       expect(bindSharedTarget(parseTargetLink(targetLink(target)), "")).toEqual(
         target,

@@ -1,0 +1,74 @@
+import { test, expect } from "vitest";
+import { mkdtemp, writeFile, symlink, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+
+test("generated author package exposes injected agentControl without host ownership", async () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const dir = await mkdtemp(join(tmpdir(), "buzz-author-consumer-"));
+  const env = {
+    ...process.env,
+    PATH: `${resolve(root, "bin")}:${process.env.PATH}`,
+  };
+  const run = (command, args) => {
+    const result = spawnSync(command, args, {
+      cwd: root,
+      env,
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  };
+  try {
+    await symlink(
+      resolve(root, "node_modules"),
+      join(dir, "node_modules"),
+      "dir",
+    );
+    run("node", ["scripts/build-author.mjs", join(dir, "author")]);
+    await writeFile(
+      join(dir, "consumer.ts"),
+      `
+import type { Context, AgentControl, NamingPolicy } from "@buzz/author";
+export const inject = ["agentControl", "identityNames"];
+export function apply(ctx: Context) {
+  const policy: NamingPolicy = {
+    id: "alternative",
+    resolve: (identities) => new Map(identities.map(({ pubkey, name }) => [pubkey, { name }])),
+  };
+  ctx.identityNames.register(policy);
+  const control: AgentControl = ctx.agentControl;
+  void control.refresh();
+  void control.action("sample", "stop");
+  // @ts-expect-error Native process lifetime is not plugin-owned.
+  control.dispose();
+}
+// @ts-expect-error Host construction is not exported to plugin authors.
+import type { provideAgentControl } from "@buzz/author";
+`,
+    );
+    await writeFile(
+      join(dir, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "ESNext",
+          moduleResolution: "Bundler",
+          strict: true,
+          skipLibCheck: true,
+          noEmit: true,
+          types: [],
+          paths: { "@buzz/author": ["./author/types/plugins/author.d.ts"] },
+        },
+        files: ["consumer.ts"],
+      }),
+    );
+    // Only generated declarations and the external consumer, never host source.
+    run("pnpm", ["exec", "tsc", "-p", join(dir, "tsconfig.json")]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 120_000);

@@ -1,11 +1,10 @@
 # Design system and appearance
 
-> **The design system going forward:** the imported system is documented in
-> [the handoff README](../src/shared/design-system/README.md) and displayed at
-> `/tests/fixtures/design-system.html`. New UI and existing surfaces moving off the
-> current styles should use it. This initial port does not migrate existing surfaces,
-> so the host styling described below still governs those callers until they move;
-> the host remains the single owner of appearance throughout the transition.
+The shared components live in `src/shared/design-system` and appear at
+`/tests/fixtures/design-system.html`. Buzz follows Block UI’s approach to semantic
+roles, controls and states, using Base UI for behavior and public fonts and assets.
+The app imports the same form and overlay styles as the component viewer.
+See [the adoption map](design-system-adoption.md) for ownership and retained adapters.
 
 The **host** owns appearance, including startup and recovery. A plugin must not be
 required to render the shell correctly. Pages still own their layout and behavior;
@@ -13,9 +12,10 @@ this is shared styling, not a second component registry or a parallel `core/` tr
 
 ## First release contract
 
-Settings → Appearance offers **Light** and **Dark**, defaulting to Light. The choice
+Settings → Appearance offers **Light**, **Dark**, and **System**, defaulting to Light. System
+follows the computer's color scheme as it changes. The choice
 is device-local (`buzz-appearance.v1` in browser-origin localStorage), not a community
-profile or relay event. There is no System mode, theme marketplace or appearance sync
+profile or relay event. There is no theme marketplace or appearance sync
 between devices. Another same-origin window observes saved changes without rebuilding
 pages or relay services. Failed storage reads open safely in Light; failed saves apply
 for this session and expose a retry in Appearance. Invalid stored values use Light.
@@ -32,66 +32,33 @@ Native window decorations and pre-WebView launch color are **not** controlled by
 CSS attribute. An attended packaged-app check is still needed before claiming native
 chrome/relaunch parity; no broad Tauri capability or CSP expansion was added here.
 
-## Tokens are the shared contract
+## Tokens and shared controls
 
-`src/shared/styles/tokens.css` is the only built-in color palette. Both modes define
-every paint role. `globals.css` exposes the roles through Tailwind 4, base elements,
-and small shared component classes. CSS modules and Tailwind use the same values.
+`src/shared/design-system/styles/tokens.css` owns the public palette and semantic
+roles. `src/shared/styles/tokens.css` is a compatibility bridge for older callers,
+not a second palette. The app imports one Tailwind reset and keeps its existing
+appearance service, storage and startup ownership.
 
-| Roles | Use |
-| --- | --- |
-| `--workspace`, `--shell-image`, `--shell-dot` | App canvas and decorative shell art |
-| `--surface`, `--surface-elevated` | Card and dialog/popover surfaces |
-| `--surface-accent`, `--surface-control`, `--surface-input`, `--surface-hover` | Subtle, control, input and hover fills |
-| `--text`, `--text-muted` | Primary and secondary text; do not lower text opacity to simulate muted text |
-| `--border`, `--border-input`, `--focus` | Decorative separators, visible input boundaries, keyboard focus |
-| `--primary` / `--on-primary`, `--action` / `--on-action` | Primary controls and the lavender composer action |
-| `--selected` / `--on-selected` | Selected controls; also expose selection semantically |
-| `--link`, `--danger`, `--warning`, `--success` | Meaningful foregrounds; pair status fills intentionally and include readable copy |
-| `--overlay`, `--elevation-*` | Backdrops and card/popover/dialog/dock shadows |
-| `--radius-card`, `--radius-card-compact`, `--radius-control` | Shared curvature; Tailwind `rounded-3xl` / `rounded-xl` map to card/control |
+| Group | Examples | Purpose |
+| --- | --- | --- |
+| Surface | `--surface-base`, `--surface-panel`, `--surface-popover` | Page, card, popup |
+| Text | `--text-standard`, `--text-subtle`, `--text-inverse`, `--text-danger` | Meaning and emphasis |
+| Border | `--border-standard`, `--border-prominent`, `--border-focus` | Edges and keyboard focus |
+| Affordance | `--affordance-prominent`, `--affordance-subtle`, `--affordance-danger` | Controls and actions |
 
-Existing `ink`, `muted`, `line`, `soft`, `shell` utilities remain compatible. New
-`surface`, `elevated`, `primary`, `on-primary`, `input-line`, `focus`, `overlay` and
-status utilities avoid literal palette colors. **Legacy `--accent` is a foreground**;
-do not reinterpret it as shadcn's accent background. If adding shadcn components,
-map their paired roles explicitly. No shadcn/Radix dependency was needed for this
-slice: native radios, buttons, fields and the existing dialogs supply the behavior.
+Shared components consume these roles; features consume shared components.
+Base UI owns focus, keyboard interaction, selection, portals and dismissal.
+Buzz owns visual styles and product behavior. Build missing shared components
+from Base UI rather than copying private components or wrapping another library.
 
-Typography uses the shared Inter/system sans stack with Tailwind's existing type
-scale: `text-sm` controls, `text-base` body/labels, `text-lg` section headings and
-`text-3xl` page headings. Existing conversation type sizes remain unchanged at 100%. Spacing
-uses Tailwind's 4px rhythm; preserve established responsive card gutters. Avoid
-creating new scales for the same values. Motion is optional and respects reduced
-motion; theme changes must not fade through the old mode's foreground/background.
-Existing shell/panel layering stays local to its owner; native modal dialogs use
-the browser top layer, not ever-increasing global z-index values.
+Use complete type roles with Inter and JetBrains Mono. Do not import proprietary
+fonts, private packages or internal business examples. Default, hover, pressed,
+focus, selected, disabled and loading states are shared component decisions.
+Loading must prevent repeated actions while preserving the label footprint.
 
-## Shared UI rules
-
-- `.ui-card` is the shared surface recipe; `.ui-choice` is a labeled native-radio
-  selection with hover, selected and focus-within states. The existing `.notice`,
-  `.error`, `.danger`, `.actions` and shell classes use the same palette.
-- Defaults/hover/focus/disabled come from base rules. Domain-specific components own
-  pressed/busy/error behavior. Disabled controls must not act; busy guards are not
-  replaced by CSS. A selected style must agree with ARIA (`aria-current="page"`
-  requires `aria-[current=page]:`, not Tailwind's boolean `aria-current:` variant).
-- Shared React components should be extracted for actual repeated behavior, not
-  empty wrappers around every native element. Do not migrate all dialogs merely to
-  add a component-library badge. Use an accessible headless primitive when the next
-  complex interaction warrants one, and test keyboard/focus behavior in context.
-- Do not invert images. Media/brand art retains its colors. All host-owned surfaces,
-  including loading/recovery, must inherit the mode. CSS variables inherit into
-  portals and shadow hosts; third-party Shadow DOM/canvas widgets may additionally
-  require an explicit mode adapter. Theme mode changes must not reset widget input.
-- `/tests/fixtures/design-system.html` now hosts the design system this app is
-  moving to, with its own components, tokens and documentation. It uses no relay
-  or identity services. The earlier offline diagnostic at that URL — one
-  Appearance section, some native controls, profile fields and a conversation
-  row — was replaced by it. The rules above still govern the styling that ships
-  today; verify those in the running app and its browser journeys. Surfaces move
-  onto the new system incrementally, and its documentation is the reference for
-  anything already on it.
+The standalone design viewer imports the real shared controls without app startup,
+identity or relay services. Check the actual app as well as specimens, in both
+themes and at narrow, intermediate and wide widths with enlarged text.
 
 ## Future theme contributions (design boundary, not implemented API)
 
@@ -122,15 +89,11 @@ picker. Browser regressions cover host Settings changes through an open widget,
 opening in Dark, and no updates after disposal. Mutation probes exercise the startup
 script, Settings writes/retry, host lifetime and widget initial/update/disposal paths.
 
-The initial integration batch passed the theme/picker journeys in both browsers,
-Node/Vitest/plugin-manager tests, formatting/types, build and Clippy. The broad browser
-run was **89/90**, not green: WebKit's `initial-position.spec.mjs` reload case reported
-a localhost access-control console warning. The identical failure reproduced on
-pre-theme `742a770` (one failure, two passes); its cause is not diagnosed or suppressed.
-Native Rust test targets compile but contain zero tests. Human light/dark visual
-approval and independent source review do not replace attended packaged-app
-chrome/relaunch acceptance. Browser evidence also does not cover third-party plugins
-that hard-code their own colors.
+Run the design guards, unit tests and relevant browser journeys for a changed
+component. Native window chrome and relaunch still need an attended packaged-app
+check; browser checks do not establish native acceptance or third-party plugin
+styling. Keep full batch validation separate from an interactive preview.
+
 
 
 ## Text size and shortcuts
@@ -155,9 +118,35 @@ font size by the scale again. Use unitless or scaled line-height so enlarged tex
 does not overlap. Independent plugins that hard-code sizes and third-party shadow
 widgets need their own adapter; this is not a forced CSS rewrite of arbitrary code.
 
+Settings → Shortcuts lists every host and active plugin shortcut from the live
+dispatcher, grouped by owner, with each owner's deliberate numeric order,
+per-row Change/Reset and Reset all. Buzz's host rows use a functional sequence
+(navigation, text sizing, search/settings, then development-only actions); plugins
+choose the order of their own actions. Equal orders use stable registry identity
+and then title as tie-breakers. It
+is built from existing components (`Input`, `Button`, `NavigationSection`,
+the Plugins-list row pattern) and `formatBinding`, which renders chords as glyphs
+in Control, Option, Shift, Command order on Apple platforms (⇧⌘K) and as words
+elsewhere (Ctrl+Shift+K), with a plain-words accessible label. A row whose chord
+another listed shortcut also answers to carries a plain "Also used by …" line in
+subtle text, no colour. Two pieces are
+provisional and await a design pass: the key-combo `<kbd>` chip
+(`src/features/shortcuts/KeyCombo.tsx`) and the inline key-capture control
+(`src/features/shortcuts/KeyCaptureControl.tsx`). Both are deliberately
+black-and-white: capture composes the shared Input with feature-owned sizing
+and keyboard handling; notices retain explicit alert text in neutral roles.
+The keycaps use standard text, surface, border and radius tokens. Both live outside
+`src/shared/design-system/ui/`, and are marked with a `DESIGN PASS PENDING` file
+comment and `data-design-pass="pending"` on their root so they are greppable.
+Capture keeps the shared keyboard-focus treatment. Escape cancels; Tab/Shift+Tab
+leave capture without saving, with an accessible instruction explaining the exit.
+Rows wrap their actions before the title collapses.
+
 `tests/browser/shortcuts.spec.mjs` covers real key dispatch to Settings and actual
 message/composer text, draft/node preservation, reset/limits/reload, modal/editor/
-Shadow DOM guards, and the independent example's disable/re-enable path. These
+Shadow DOM guards, the independent example's disable/re-enable path, and rebinding
+that example's shortcut from Settings → Shortcuts (host conflict refused, new chord
+fires, old chord does not, persists across reload, reset restores). These
 Chromium/WebKit checks use a fixture broker, not native menu accelerators. An
 attended desktop shortcut try remains necessary for native acceptance.
 
@@ -168,14 +157,11 @@ palette, typography roles, materials and component styles with one Tailwind rese
 It does not import the viewer's global entry, preference owner, docking vendor CSS
 or workspace experiments. Panel styling remains defined only by the shared system.
 
-Existing screens retain their palette, canvas, type sizes and native-control
-recipes. Compatibility names are temporary, not the vocabulary for new work.
-`bg-primary` retains the old action fill via an explicit compatibility utility;
-`text-primary` and `border-primary` belong to the system. The old control radius
-is explicitly named `--radius-legacy-control` to avoid overriding shared controls.
-Legacy monospace utilities and native code retain their system font stack; migrated
-boundaries select the shared mono face. No old paint role is aliased merely because it sounds similar: the current
-palettes differ, and aliasing them would silently recolor unmigrated screens.
+Bundled screens use semantic colors and shared controls. Compatibility names
+forward to the same shared roles; they are not the vocabulary for new work.
+`bg-primary` forwards to the prominent action role, while `text-primary` and
+`border-primary` keep their text and border meanings. Native plugin fallbacks
+remain available outside shared-control boundaries.
 
 Shared primitives carry `data-buzz-ui`, including portal popup roots. Legacy
 native-element selectors exclude that boundary and its descendants (without native CSS scope); shared typography starts there.
@@ -200,3 +186,51 @@ and the temporary font/color compatibility contracts. Remove compatibility check
 as their legacy consumers disappear; no separate legacy viewer or test suite is
 needed. Browser checks do not establish native or packaged acceptance. Broad scan
 remains an agreed integration-batch gate.
+
+## Baseline ownership and exceptions
+
+Bundled UI uses semantic roles, including renderer adapters. Change color values
+in the shared token layer and visual control recipes in the shared components.
+Feature CSS owns layout, not a second Button/Input recipe. `design:check` rejects
+direct palette consumption and feature selectors that override control paint,
+padding or typography; `design:census` includes the app and renderer string reads.
+These are static guardrails, not a substitute for browser checks.
+
+Anchored emoji, mention, completion, account and diagnostics surfaces use
+`popover-surface` for their border, fill, elevation and layer. Their placement,
+scrolling and specialized keyboard/editor interactions remain feature-owned.
+Popup selection uses the shared hover affordance so it stays visible on the
+raised dark surface. Compact completion/emoji layouts may select shared radius
+tokens to fit their inner geometry. Shared Button/IconButton `title` props render
+a shared Tooltip; content titles (full names, timestamps and media descriptions) remain native.
+
+Explicit exceptions: GIF and image tiles use native media buttons, image zoom
+uses a native range with semantic colors; rendered Markdown task
+checkboxes and inline links keep their content semantics; the rich editor uses
+native selection colors; terminal ANSI colors and decorative artwork remain
+renderer-owned. The design viewer's layout experiments are not bundled app UI.
+Plugin examples consume public CSS roles and host fallbacks. External plugins
+cannot be guaranteed to follow this system; no new plugin API is introduced here.
+
+The browser adoption regression changes semantic fill, type and spacing values
+and checks the actual Settings button, inline chips and production CSS inside
+message-history containers and anchored popups. It exists because DOM emulation
+cannot establish CSS layer ownership.
+
+## Message specimens
+
+`just design` includes **Product patterns → Messages**, a catalogue of current
+message content, attachments, delivery feedback, thread summaries, and membership
+activity. Examples render the production message components against local sample
+data; filters, narrow preview, and reset help compare states without a relay.
+
+Product specimens live in `tests/fixtures/message-gallery` and run in a separate
+iframe with the host stylesheet. `design:build` builds that document alongside the
+core viewer via `vite.message-gallery.config.ts`; the viewer's core-only bundle
+boundary remains intact. The iframe inherits the viewer's theme and fills the
+available viewport height.
+The gallery scrolls inside its isolated document so fullscreen media and its
+Close control stay visible. Theme changes reload sample state.
+
+This is a visual inventory, not live delivery or plugin validation. Composer,
+presence, unread tracking, and timeline pagination remain outside this first pass.

@@ -4,6 +4,7 @@ import type {
   Panels,
   RegisteredPanel,
 } from "../../features/panels/service";
+import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelView } from "../../features/panels/PanelView";
 import styles from "./Channels.module.css";
 
@@ -17,6 +18,7 @@ type Opening = {
 export function useChannelPanels(
   panels: Panels,
   context?: ChannelPanelContext,
+  onOpen?: () => void,
 ) {
   const available = useSyncExternalStore(
     panels.subscribe,
@@ -55,6 +57,7 @@ export function useChannelPanels(
     if (opening.trigger?.isConnected) opening.trigger.focus();
   };
   return {
+    close: () => setOpened(undefined),
     launchers: context && (
       <div className={styles.channelLaunchers}>
         {available
@@ -78,7 +81,8 @@ export function useChannelPanels(
                   )
                     return;
                   if (selected?.panel === panel) hide(selected);
-                  else
+                  else {
+                    onOpen?.();
                     setOpened({
                       panel,
                       context,
@@ -88,13 +92,32 @@ export function useChannelPanels(
                           ? document.activeElement
                           : null,
                     });
+                  }
                 }}
               />
             );
           })}
       </div>
     ),
-    content: selected && (
+    side: selected?.panel.channelPlacement === "side" && (
+      <Panel
+        aria-label={`${selected.panel.title} panel`}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            hide(selected);
+          }
+        }}
+      >
+        <PanelView
+          panel={selected.panel}
+          target={selected.target}
+          channelContext={context}
+          close={() => hide(selected)}
+        />
+      </Panel>
+    ),
+    content: selected && selected.panel.channelPlacement !== "side" && (
       <section
         className={styles.channelDrawer}
         aria-label={`${selected.panel.title} drawer`}

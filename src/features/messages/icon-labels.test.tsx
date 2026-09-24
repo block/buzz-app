@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { MediaAttachment } from "./MediaAttachment";
 import { ImageReviewStage } from "./ImageReviewStage";
 afterEach(cleanup);
 it("keeps playback controls named for their actions, not icon components", () => {
   const { container } = render(
     <MediaAttachment
-      attachment={{ url: "https://example.test/a.mp4", video: true }}
+      attachment={{ url: "https://example.test/a.mp4", kind: "video" }}
       media={(url) => url}
     />,
   );
@@ -26,18 +26,119 @@ it("keeps playback controls named for their actions, not icon components", () =>
     screen.getByRole("button", { name: "Play video" }),
   ).toBeInTheDocument();
 });
-it("keeps the image download accessible name", () => {
+it("keeps proxy images as downloads", () => {
   const url = "https://example.test/a.png";
+  const source = "/api/relay/media?url=https%3A%2F%2Fexample.test%2Fa.png";
   render(
     <ImageReviewStage
-      attachments={[{ url, video: false }]}
+      attachments={[{ url, kind: "image" }]}
+      selectedUrl={url}
+      media={() => source}
+      select={() => {}}
+      onOpenLink={() => false}
+    />,
+  );
+  const link = screen.getByRole("link", { name: "Download image" });
+  expect(link).toHaveAttribute("href", source);
+  expect(link).toHaveAttribute("download", "");
+  expect(
+    screen.queryByRole("link", { name: "Open image in browser" }),
+  ).toBeNull();
+});
+
+it("opens external images through the host opener without download semantics", () => {
+  const url = "https://example.test/a.png";
+  const open = vi.fn(() => true);
+  render(
+    <ImageReviewStage
+      attachments={[{ url, kind: "image" }]}
       selectedUrl={url}
       media={(url) => url}
       select={() => {}}
+      onOpenLink={open}
     />,
   );
-  expect(screen.getByRole("link", { name: "Download image" })).toHaveAttribute(
-    "href",
-    url,
+  const link = screen.getByRole("link", { name: "Open image in browser" });
+  expect(link).toHaveAttribute("href", url);
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", "noreferrer");
+  expect(link).not.toHaveAttribute("download");
+  expect(fireEvent.click(link)).toBe(false);
+  expect(open).toHaveBeenCalledWith(url);
+});
+
+it("keeps external image fallback navigation when the host does not handle it", () => {
+  const url = "https://example.test/unhandled.png";
+  const open = vi.fn(() => false);
+  render(
+    <ImageReviewStage
+      attachments={[{ url, kind: "image" }]}
+      selectedUrl={url}
+      media={(url) => url}
+      select={() => {}}
+      onOpenLink={open}
+    />,
   );
+  expect(
+    fireEvent.click(
+      screen.getByRole("link", { name: "Open image in browser" }),
+    ),
+  ).toBe(true);
+  expect(open).toHaveBeenCalledWith(url);
+});
+
+it("lets modified external image clicks use native browser behavior", () => {
+  const url = "https://example.test/a.png";
+  const open = vi.fn(() => true);
+  render(
+    <ImageReviewStage
+      attachments={[{ url, kind: "image" }]}
+      selectedUrl={url}
+      media={(url) => url}
+      select={() => {}}
+      onOpenLink={open}
+    />,
+  );
+  fireEvent.click(screen.getByRole("link", { name: "Open image in browser" }), {
+    metaKey: true,
+  });
+  expect(open).not.toHaveBeenCalled();
+});
+
+it("omits the image action for unsafe or missing sources", () => {
+  const url = "https://example.test/a.png";
+  const { rerender } = render(
+    <ImageReviewStage
+      attachments={[{ url, kind: "image" }]}
+      selectedUrl={url}
+      media={() => "blob:https://example.test/a.png"}
+      select={() => {}}
+      onOpenLink={() => false}
+    />,
+  );
+  expect(screen.queryByRole("link")).toBeNull();
+  rerender(
+    <ImageReviewStage
+      attachments={[{ url, kind: "image" }]}
+      selectedUrl={url}
+      media={() => undefined}
+      select={() => {}}
+      onOpenLink={() => false}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Image unavailable");
+  expect(screen.queryByRole("link")).toBeNull();
+});
+
+it("does not render stray file attachments as images", () => {
+  const { container } = render(
+    <MediaAttachment
+      attachment={{ url: "https://example.test/file.bin", kind: "file" }}
+      media={(url) => url}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Attachment unavailable",
+  );
+  expect(container.querySelector("img")).toBeNull();
 });

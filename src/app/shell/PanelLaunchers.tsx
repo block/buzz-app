@@ -1,7 +1,8 @@
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useState } from "react";
-import { ComputeWidgetLauncher } from "../../bundled/community-compute/ComputeWidgetLauncher";
 import { SidebarIcon } from "../../shared/design-system/icons/index";
 import type { RegisteredPanel } from "../../features/panels/service";
+import { ComputeWidgetLauncher } from "../../bundled/community-compute/ComputeWidgetLauncher";
 
 export function PanelLaunchers({
   panels,
@@ -12,28 +13,27 @@ export function PanelLaunchers({
   selected: RegisteredPanel | undefined;
   launch(panel: RegisteredPanel, trigger: HTMLButtonElement): void;
 }) {
-  return panels
-    .filter((panel) => panel.launcher)
-    .map((panel) =>
-      panel.pluginId === "buzz.community-compute" ? (
-        <ComputeWidgetLauncher key={`${panel.key}:${panel.revision}`} />
-      ) : (
-        <button
-          type="button"
-          key={`${panel.key}:${panel.revision}`}
-          className="shell-icon"
-          aria-label={panel.title}
-          title={panel.title}
-          aria-expanded={panel === selected}
-          onClick={(event) => launch(panel, event.currentTarget)}
-        >
+  return <>
+    {panels.filter((panel) => panel.launcher).map((panel) => (
+      <IconButton
+        type="button"
+        key={`${panel.key}:${panel.revision}`}
+        variant="chrome"
+        shape="round"
+        aria-label={panel.title}
+        title={panel.title}
+        aria-expanded={panel === selected}
+        onClick={(event) => launch(panel, event.currentTarget)}
+        icon={
           <LauncherIcon
             key={panel.launcher?.icon}
             src={panel.launcher?.icon ?? ""}
           />
-        </button>
-      ),
-    );
+        }
+      />
+    ))}
+    <ComputeWidgetLauncher enabled={panels.some((panel) => panel.pluginId === "buzz.community-compute")} />
+  </>;
 }
 function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
@@ -43,7 +43,7 @@ function LauncherIcon({ src }: { src: string }) {
     <img
       src={src}
       alt=""
-      className="object-contain"
+      className="size-4 object-contain"
       onError={() => setFailed(true)}
     />
   );

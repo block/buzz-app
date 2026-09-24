@@ -1,7 +1,11 @@
 import { test, expect } from "./fixture.mjs";
 import { anchor, expectAnchor, settle } from "./timeline.mjs";
 
-test.use({ membershipActivity: true, productionBroker: true });
+test.use({
+  membershipActivity: true,
+  productionBroker: true,
+  historyCounts: { alpha: 640, beta: 1 },
+});
 
 // Do not let the shared fixture's legacy WebKit exception mask timeline reflow
 // errors. These journeys must preserve the reader without observer-loop errors.
@@ -26,13 +30,19 @@ test("Channels renders grouped history and live membership without turning activ
     "Pinky added by you, along with Brain",
   );
   await expect(groups.locator("button")).toHaveCount(0);
-  const avatars = groups.first().locator("[data-avatar-shape]");
+  // Count each identity once; its overlap frame and shared artwork both
+  // carry the shape. Shared Avatar owns the single-letter fallback.
+  const avatars = groups
+    .first()
+    .locator(
+      "[data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape])",
+    );
   await expect(avatars).toHaveCount(2);
-  await expect(avatars.filter({ hasText: "PI" })).toHaveAttribute(
+  await expect(avatars.filter({ hasText: /^P$/ })).toHaveAttribute(
     "data-avatar-shape",
     "circle",
   );
-  await expect(avatars.filter({ hasText: "BR" })).toHaveAttribute(
+  await expect(avatars.filter({ hasText: /^B$/ })).toHaveAttribute(
     "data-avatar-shape",
     "squircle",
   );

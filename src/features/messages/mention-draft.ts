@@ -1,9 +1,17 @@
+import {
+  projectComposerDocument,
+  readComposerSnapshot,
+} from "./composer-document";
+
 export type MentionRecipient = Readonly<{ pubkey: string; name: string }>;
 export type DraftRecipient = MentionRecipient &
   Readonly<{ start: number; end: number }>;
+// Serializable draft metadata must not expose editor implementation types to plugins.
+export type ComposerSnapshot = { version: 1; content: unknown };
 export type MentionDraft = {
   text: string;
   recipients: readonly DraftRecipient[];
+  document?: ComposerSnapshot;
 };
 const boundary = (text: string, end: number) =>
   end === text.length || /[\s.,!?;:()[\]{}]/u.test(text[end] ?? "");
@@ -11,7 +19,11 @@ const boundary = (text: string, end: number) =>
 export function mentionDraft(value: unknown): MentionDraft {
   if (typeof value === "string") return { text: value, recipients: [] };
   if (!value || typeof value !== "object") return { text: "", recipients: [] };
-  const { text, recipients } = value as Record<string, unknown>;
+  const record = value as Record<string, unknown>;
+  const doc = readComposerSnapshot(record.document);
+  const { text, recipients, document } = doc
+    ? projectComposerDocument(doc).draft
+    : record;
   if (typeof text !== "string") return { text: "", recipients: [] };
   const safe = Array.isArray(recipients)
     ? recipients.filter(
@@ -32,10 +44,27 @@ export function mentionDraft(value: unknown): MentionDraft {
     : [];
   return {
     text,
+    ...(doc ? { document: document as ComposerSnapshot } : {}),
     recipients: safe
       .slice(0, 32)
       .map(({ pubkey, name, start, end }) => ({ pubkey, name, start, end })),
   };
+}
+/** Prefill exact, already-selected identities; never infer recipients from prose. */
+export function followupDraft(
+  recipients: readonly MentionRecipient[],
+): MentionDraft {
+  const next: MentionDraft = { text: "", recipients: [] };
+  const spans: DraftRecipient[] = [];
+  const unique = new Map(recipients.map((item) => [item.pubkey, item]));
+  for (const { pubkey, name } of [...unique.values()].slice(0, 32)) {
+    const start = next.text.length;
+    const text = `@${name} `;
+    if (start + text.length > 16000) break;
+    next.text += text;
+    spans.push({ pubkey, name, start, end: next.text.length - 1 });
+  }
+  return mentionDraft({ text: next.text, recipients: spans });
 }
 /** Known editor replacement keeps only untouched spans. */
 export function replaceMentionDraft(
@@ -79,6 +108,7 @@ export function editMentionDraft(
   ) {
     const insertion = [
       "insertText",
+      "insertReplacementText",
       "insertFromPaste",
       "insertLineBreak",
     ].includes(edit.inputType);

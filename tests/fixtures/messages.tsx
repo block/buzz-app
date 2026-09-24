@@ -10,6 +10,7 @@ import { ThreadPanel } from "../../src/features/messages/ThreadPanel";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { MediaReviewViewer } from "../../src/features/messages/MediaReviewViewer";
 import { ChannelTimeline } from "../../src/features/messages/ChannelTimeline";
+import styles from "../../src/features/messages/Messages.module.css";
 import { createRelaySession } from "../../src/features/relay/session";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import { threadReference } from "../../src/features/relay/threads";
@@ -36,12 +37,12 @@ const viewer = keypair(),
   agent = keypair(),
   relay = keypair();
 const media = [
-  { url: "https://fixture.test/media/one.png", video: false },
-  { url: "https://fixture.test/media/two.png", video: false },
+  { url: "https://fixture.test/media/one.png", kind: "image" },
+  { url: "https://fixture.test/media/two.png", kind: "image" },
 ] as const satisfies readonly Attachment[];
 const replyAttachment = {
   url: "https://fixture.test/media/reply.png",
-  video: false,
+  kind: "image",
 } as const satisfies Attachment;
 const roots = [
   signed(viewer, {
@@ -160,7 +161,7 @@ const owner = createRelaySession({
     if (url.startsWith("https://emoji.test/"))
       return "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
     return media.some((item) => item.url === url) || url.endsWith("reply.png")
-      ? "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='640' height='360' fill='%23666'/%3E%3C/svg%3E"
+      ? `/api/relay/media?url=${encodeURIComponent(url)}`
       : undefined;
   },
   subscribe(callbacks) {
@@ -214,7 +215,7 @@ const owner = createRelaySession({
     });
   },
   writer: {
-    kinds: [7, 9],
+    kinds: [5, 7, 9],
     async sign(template) {
       const event = signed(viewer, template);
       report.signings.push(event.id);
@@ -267,6 +268,7 @@ Object.assign(window, {
       events.push(event);
       incoming([event]);
     },
+    styles,
   },
 });
 function Fixture() {
@@ -375,6 +377,10 @@ function Fixture() {
           }
           initialTime={0}
           restoreFocus={reviewTrigger}
+          onOpenLink={(url) => {
+            report.links.push(url);
+            return !url.includes("unhandled");
+          }}
           close={() => setReview(undefined)}
         />
       )}

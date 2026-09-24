@@ -1,5 +1,8 @@
+import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useEffect, useRef, useState } from "react";
 import {
+  ArrowSquareOutIcon,
   CaretLeftIcon,
   CaretRightIcon,
   DownloadIcon,
@@ -7,6 +10,7 @@ import {
   PlusIcon,
 } from "../../shared/design-system/icons/index";
 import type { Attachment } from "../relay/contracts";
+import { isProxySource, safeOpenUrl } from "./attachment-source";
 import styles from "./Messages.module.css";
 
 const MIN_ZOOM = 1;
@@ -20,6 +24,7 @@ type ImageReviewStageProps = {
   selectedUrl: string;
   media(url: string): string | undefined;
   select(url: string): void;
+  onOpenLink(url: string): boolean;
 };
 
 function clamp(value: number, limit: number) {
@@ -31,6 +36,7 @@ export function ImageReviewStage({
   selectedUrl,
   media,
   select,
+  onOpenLink,
 }: ImageReviewStageProps) {
   const stage = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null);
@@ -46,6 +52,8 @@ export function ImageReviewStage({
   );
   const selected = attachments[selectedIndex] ?? attachments[0];
   const source = selected ? media(selected.url) : undefined;
+  const proxySource = source ? isProxySource(source) : false;
+  const externalSource = source ? safeOpenUrl(source) && !proxySource : false;
   const pannable = zoom > MIN_ZOOM;
 
   const panLimits = (nextZoom = zoom) => {
@@ -142,36 +150,36 @@ export function ImageReviewStage({
       >
         {attachments.length > 1 && (
           <div className={styles.imageReviewSwitcher}>
-            <button
+            <IconButton
+              size="compact"
               type="button"
               aria-label="Previous image"
               disabled={selectedIndex === 0}
               onClick={() => choose(selectedIndex - 1)}
-            >
-              <CaretLeftIcon size={18} aria-hidden="true" />
-            </button>
+              icon={<CaretLeftIcon size={18} aria-hidden="true" />}
+            />
             <span>
               {selectedIndex + 1} / {attachments.length}
             </span>
-            <button
+            <IconButton
+              size="compact"
               type="button"
               aria-label="Next image"
               disabled={selectedIndex === attachments.length - 1}
               onClick={() => choose(selectedIndex + 1)}
-            >
-              <CaretRightIcon size={18} aria-hidden="true" />
-            </button>
+              icon={<CaretRightIcon size={18} aria-hidden="true" />}
+            />
           </div>
         )}
         <div className={styles.imageReviewZoom}>
-          <button
+          <IconButton
+            size="compact"
             type="button"
             aria-label="Zoom out"
             disabled={zoom <= MIN_ZOOM}
             onClick={() => setBoundedZoom(zoom - ZOOM_STEP)}
-          >
-            <MinusIcon size={16} aria-hidden="true" />
-          </button>
+            icon={<MinusIcon size={16} aria-hidden="true" />}
+          />
           <input
             type="range"
             aria-label="Image zoom"
@@ -183,31 +191,55 @@ export function ImageReviewStage({
               setBoundedZoom(Number(event.currentTarget.value))
             }
           />
-          <button
+          <IconButton
+            size="compact"
             type="button"
             aria-label="Zoom in"
             disabled={zoom >= MAX_ZOOM}
             onClick={() => setBoundedZoom(zoom + ZOOM_STEP)}
-          >
-            <PlusIcon size={16} aria-hidden="true" />
-          </button>
-          <button
+            icon={<PlusIcon size={16} aria-hidden="true" />}
+          />
+          <Button
+            size="sm"
             type="button"
-            className={styles.imageReviewPercent}
             aria-label="Reset image zoom"
             onClick={() => setBoundedZoom(MIN_ZOOM)}
           >
             {Math.round(zoom * 100)}%
-          </button>
+          </Button>
         </div>
-        <a
-          href={source}
-          download
-          aria-label="Download image"
-          title="Download image"
-        >
-          <DownloadIcon size={17} aria-hidden="true" />
-        </a>
+        {proxySource && (
+          <IconButton
+            nativeButton={false}
+            role="link"
+            render={<a href={source} download />}
+            size="compact"
+            aria-label="Download image"
+            title="Download image"
+            icon={<DownloadIcon size={17} />}
+          />
+        )}
+        {externalSource && (
+          <IconButton
+            nativeButton={false}
+            role="link"
+            render={
+              <a
+                href={source}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+                  if (onOpenLink(source)) event.preventDefault();
+                }}
+              />
+            }
+            size="compact"
+            aria-label="Open image in browser"
+            title="Open image in browser"
+            icon={<ArrowSquareOutIcon size={17} />}
+          />
+        )}
       </div>
     </div>
   );

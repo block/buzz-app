@@ -1,3 +1,4 @@
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
   useRef,
@@ -89,18 +90,22 @@ export function MediaAttachment({
   if (!source)
     return (
       <span className={styles.attachmentUnavailable} role="status">
-        {attachment.video ? "Video unavailable" : "Image unavailable"}
+        {attachment.kind === "video"
+          ? "Video unavailable"
+          : "Image unavailable"}
       </span>
     );
 
   if (failed)
     return (
       <span className={styles.attachmentUnavailable} role="status">
-        {attachment.video ? "Video unavailable" : "Image unavailable"}
+        {attachment.kind === "video"
+          ? "Video unavailable"
+          : "Image unavailable"}
       </span>
     );
 
-  if (!attachment.video)
+  if (attachment.kind === "image")
     return (
       <>
         <button
@@ -140,6 +145,13 @@ export function MediaAttachment({
             document.body,
           )}
       </>
+    );
+
+  if (attachment.kind !== "video")
+    return (
+      <span className={styles.attachmentUnavailable} role="status">
+        Attachment unavailable
+      </span>
     );
 
   const videoElement = (
@@ -204,6 +216,7 @@ export function MediaAttachment({
     <>
       <div
         className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
+        data-playing={playing ? "true" : undefined}
         style={previewStyle}
       >
         {visiblePreview && !started && (
@@ -215,31 +228,37 @@ export function MediaAttachment({
           />
         )}
         {videoElement}
-        <button
-          type="button"
-          className={styles.mediaPlay}
-          aria-label={playing ? "Pause video" : "Play video"}
-          onClick={() => {
-            if (!video.current) return;
-            if (video.current.paused) void video.current.play();
-            else video.current.pause();
-          }}
-        >
-          {playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
-        </button>
+        <span className={styles.mediaPlay}>
+          <IconButton
+            size="compact"
+            variant="solid"
+            shape="round"
+            type="button"
+            aria-label={playing ? "Pause video" : "Play video"}
+            onClick={() => {
+              if (!video.current) return;
+              if (video.current.paused) void video.current.play();
+              else video.current.pause();
+            }}
+            icon={playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
+          />
+        </span>
         <span className={styles.mediaTime}>{formatMediaTime(currentTime)}</span>
-        <button
-          type="button"
-          className={styles.mediaExpand}
-          aria-label="Open video fullscreen"
-          onClick={() => {
-            video.current?.pause();
-            if (onOpenReview) onOpenReview(attachment, currentTime);
-            else setViewerOpen(true);
-          }}
-        >
-          <ArrowsOutIcon size={16} aria-hidden="true" />
-        </button>
+        <span className={styles.mediaExpand}>
+          <IconButton
+            size="compact"
+            variant="solid"
+            shape="round"
+            type="button"
+            aria-label="Open video fullscreen"
+            onClick={() => {
+              video.current?.pause();
+              if (onOpenReview) onOpenReview(attachment, currentTime);
+              else setViewerOpen(true);
+            }}
+            icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
+          />
+        </span>
       </div>
       {viewerOpen &&
         createPortal(
@@ -299,15 +318,18 @@ function MediaViewer({
         aria-label={title}
       >
         <div className={styles.mediaViewerDragRegion} data-tauri-drag-region />
-        <button
-          ref={closeButton}
-          type="button"
-          className={styles.mediaViewerClose}
-          aria-label="Close fullscreen viewer"
-          onClick={close}
-        >
-          <XIcon size={20} aria-hidden="true" />
-        </button>
+        <span className={styles.mediaViewerClose}>
+          <IconButton
+            size="compact"
+            variant="solid"
+            shape="round"
+            ref={closeButton}
+            type="button"
+            aria-label="Close fullscreen viewer"
+            onClick={close}
+            icon={<XIcon size={20} aria-hidden="true" />}
+          />
+        </span>
         {children}
       </section>
     </div>

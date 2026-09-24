@@ -1,164 +1,231 @@
 @layer components {
   .buzz-button {
-    display: inline-flex;
+    position: relative;
+    display: inline-grid;
+    place-items: center;
     min-width: 0;
-    height: var(--size-control);
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-row-gap);
+    /* The reference's 32/40/52px heights remain minimums for text scaling. */
+    min-height: var(--size-control);
     border: 0;
-    border-radius: var(--radius-control);
-    padding: 0 var(--space-control-inset);
+    border-radius: var(--radius-pill);
+    padding: var(--space-2) var(--space-6);
     background: transparent;
-    color: var(--text-primary);
+    color: var(--text-standard);
     font-family: inherit;
     @apply text-label;
     cursor: pointer;
     transition:
-      color var(--duration-state) var(--easing-state),
       background-color var(--duration-state) var(--easing-state),
-      opacity var(--duration-fast) var(--easing-state),
-      box-shadow var(--duration-state) var(--easing-state);
+      color var(--duration-state) var(--easing-state);
   }
-
-  .buzz-button[data-size="compact"] {
+  .buzz-button-label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    gap: var(--space-row-gap);
+    overflow-wrap: anywhere;
+  }
+  .buzz-button-label > svg,
+  .buzz-button-spinner {
+    width: var(--space-6);
+    height: var(--space-6);
+    flex-shrink: 0;
+  }
+  .buzz-button-spinner {
+    position: absolute;
+    animation: buzz-button-spin 1s linear infinite;
+  }
+  .buzz-button[data-size="sm"] {
     @apply text-label-sm;
-    height: var(--size-row);
-    border-radius: var(--radius-row);
-    padding-inline: var(--space-control-inset);
+    min-height: var(--size-control-sm);
+    padding: var(--space-1h) var(--space-4);
+  }
+  .buzz-button[data-size="sm"] .buzz-button-label > svg,
+  .buzz-button[data-size="sm"] .buzz-button-spinner {
+    width: var(--space-4);
+    height: var(--space-4);
+  }
+  .buzz-button[data-size="lg"] {
+    min-height: var(--size-control-lg);
+    padding-block: calc(var(--space-3) + var(--space-half));
+  }
+  .buzz-button[data-variant="prominent"] {
+    background: var(--affordance-prominent);
+    color: var(--text-inverse);
+  }
+  .buzz-button[data-variant="subtle"] {
+    background: var(--affordance-subtle);
+  }
+  .buzz-button[data-variant="inverted"] {
+    background: var(--surface-panel);
+  }
+  .buzz-button[data-variant="outline"] {
+    box-shadow: inset 0 0 0 1px var(--border-prominent);
+  }
+  .buzz-button[data-variant="destructive"] {
+    background: var(--affordance-danger);
+    color: var(--text-danger);
+  }
+  .buzz-button[data-variant="link"] {
+    text-underline-offset: var(--space-1);
   }
 
-  .buzz-button[data-variant="primary"] {
-    background: var(--neutral-11);
-    color: var(--neutral-1);
+  /* Only pointer devices get hover; keyboard focus remains the host's signal. */
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-variant="prominent"]:hover:not([data-disabled]) {
+      background: var(--affordance-prominent-hover);
+    }
+    .buzz-button:is(
+        [data-variant="subtle"],
+        [data-variant="outline"],
+        [data-variant="ghost"],
+        [data-variant="inverted"]
+      ):hover:not([data-disabled], [data-icon-variant="chrome"]) {
+      background: var(--affordance-subtle-hover);
+    }
+    .buzz-button[data-variant="destructive"]:hover:not([data-disabled]) {
+      background: var(--affordance-danger-hover);
+    }
+    .buzz-button[data-variant="link"]:hover:not([data-disabled]) {
+      text-decoration: underline;
+    }
+  }
+  .buzz-button[data-variant="prominent"]:is(
+    :active,
+    [aria-expanded="true"]
+  ):not([data-disabled]) {
+    background: var(--affordance-prominent-pressed);
+  }
+  .buzz-button:is(
+    [data-variant="subtle"],
+    [data-variant="outline"],
+    [data-variant="ghost"],
+    [data-variant="inverted"]
+  ):is(:active, [aria-expanded="true"]):not([data-disabled]) {
+    background: var(--affordance-subtle-pressed);
+  }
+  .buzz-button[data-variant="destructive"]:is(
+    :active,
+    [aria-expanded="true"]
+  ):not([data-disabled]) {
+    background: var(--affordance-danger-pressed);
+  }
+  .buzz-button[data-variant="link"]:is(:active, [aria-expanded="true"]):not(
+    [data-disabled]
+  ) {
+    text-decoration: underline;
   }
 
-  /* The accent's own hover step, not a fade. `opacity: 0.9` lightened the label
-     along with the fill and composited an unnamed colour nothing could measure —
-     the move check-color.mjs rejects everywhere else. */
-  .buzz-button[data-variant="primary"]:hover:not([data-disabled]) {
-    background: var(--neutral-12);
+  .buzz-button[data-loading] {
+    cursor: progress;
+  }
+  .buzz-button[data-loading] .buzz-button-label {
+    opacity: 0;
+  }
+  @keyframes buzz-button-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-button-spinner {
+      animation: none;
+    }
   }
 
-  .buzz-button[data-variant="quiet"] {
-    background: var(--neutral-2);
-    color: var(--text-primary);
-  }
-
-  /* Scoped with `:not([data-icon-variant])` because IconButton passes
-     `variant="ghost"` down to Button and carries its real appearance in
-     `data-icon-variant`. Both selectors match, and this one is more specific
-     (two pseudo-classes), so an unscoped neutral hover repainted a solid accent
-     IconButton light grey while its text stayed white — Lc 13, invisible. An
-     icon button's hover belongs to its icon variant; see below. */
-  .buzz-button[data-variant="quiet"]:hover:not([data-disabled]),
-  .buzz-button[data-variant="ghost"]:not(
-    [data-icon-variant],
-    [data-navigation-item]
-  ):hover:not([data-disabled]) {
-    background: var(--neutral-4);
-  }
-
-  .buzz-button[data-disabled] {
-    color: var(--text-disabled);
-    cursor: not-allowed;
-  }
-
+  /* IconButton shares Button emphasis and sizing; only geometry differs. */
   .buzz-button[data-icon-variant] {
+    min-height: 0;
     width: var(--size-control);
+    height: var(--size-control);
+    border-radius: var(--radius-control);
     flex: 0 0 auto;
     padding: 0;
   }
-
-  .buzz-button[data-icon-size="compact"] {
-    width: var(--size-row);
-    height: var(--size-row);
-    border-radius: var(--radius-row);
+  .buzz-button[data-icon-variant][data-size="sm"] {
+    width: var(--size-control-sm);
+    height: var(--size-control-sm);
   }
-
-  /* Toolbars need a less dense hit area than navigator-row actions while
-     keeping the same 16px icon artwork. */
-  .buzz-button[data-icon-size="toolbar"] {
-    width: 2rem;
-    height: 2rem;
-    border-radius: var(--radius-row);
+  /* Dense composer formatting options retain the original 28px layout. */
+  .buzz-button[data-icon-variant][data-icon-size="xs"] {
+    width: calc(var(--size-control-sm) - var(--space-1));
+    height: calc(var(--size-control-sm) - var(--space-1));
   }
-
-  .buzz-button[data-icon-size="large"] {
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: var(--radius-pill);
+  .buzz-button[data-icon-variant][data-size="lg"] {
+    width: var(--size-control-lg);
+    height: var(--size-control-lg);
   }
-
+  /* Preserve fill avatars and pointer-origin Tab traversal in WebKit. */
+  .buzz-button[data-icon-variant] .buzz-button-label {
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    pointer-events: none;
+  }
   .buzz-button[data-icon-shape="round"] {
     border-radius: var(--radius-pill);
   }
 
-  /* Every icon variant states its own hover. The one that did not —
-     `solid` — fell through to the neutral ghost hover and lost its accent. */
-  .buzz-button[data-icon-variant="quiet"] {
-    background: var(--neutral-2);
+  .buzz-button[data-icon-variant="ghost"][data-selected],
+  .buzz-button[data-icon-variant="ghost"][data-selected]:hover:not(
+    [data-disabled]
+  ) {
+    background: var(--affordance-selected);
   }
 
-  .buzz-button[data-icon-variant="quiet"]:hover:not([data-disabled]),
-  .buzz-button[data-icon-variant="ghost"]:hover:not([data-disabled]) {
-    background: var(--neutral-4);
-  }
-
-  .buzz-button[data-icon-variant="solid"] {
-    background: var(--neutral-11);
-    color: var(--neutral-1);
-  }
-
-  .buzz-button[data-icon-variant="solid"]:hover:not([data-disabled]) {
-    background: var(--neutral-12);
-  }
-
-  /* A gentle acknowledgement/submit action on a quiet surface. This cannot be
-     the primary fill: its job is available without pulling focus from writing. */
+  /* Buzz's existing composer and workspace treatments remain explicit. */
   .buzz-button[data-icon-variant="tint"] {
-    background: var(--purple-3);
-    color: var(--purple-12);
+    background: var(--affordance-accent);
+    color: var(--text-accent);
   }
-
-  .buzz-button[data-icon-variant="tint"]:hover:not([data-disabled]) {
-    background: var(--purple-4);
-  }
-
-  /* Chrome sits on the backdrop and is clickable, so it takes the interactive
-     material whole — fill, blur, rim, and hover in one line. It used to spell
-     out three of those four and get the hover from a separate rule. */
   .buzz-button[data-icon-variant="chrome"] {
     @apply glass-primary-interactive;
   }
-
-  /* Disabled owns the foreground across icon variants, independently of source
-     order. Accent fills also yield to neutral so unavailability cannot look
-     like an available send/stop action. Shape never changes state semantics. */
-  .buzz-button[data-icon-variant][data-disabled] {
-    color: var(--text-disabled);
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-variant="tint"]:hover:not([data-disabled]) {
+      background: var(--affordance-accent-hover);
+    }
+  }
+  .buzz-button[data-icon-variant="tint"]:is(
+    :active,
+    [aria-expanded="true"]
+  ):not([data-disabled]) {
+    background: var(--affordance-accent-hover);
   }
 
+  /* Disabled keeps variant geometry; loading keeps its available colors. */
+  .buzz-button[data-disabled]:not([data-loading]) {
+    color: var(--text-unavailable);
+    background: var(--affordance-disabled);
+    cursor: not-allowed;
+    box-shadow: none;
+  }
   .buzz-button:is(
+    [data-variant="ghost"],
+    [data-variant="outline"],
+    [data-variant="link"]
+  )[data-disabled]:not(
+    [data-loading],
     [data-icon-variant="tint"],
-    [data-icon-variant="solid"]
-  )[data-disabled] {
-    background: var(--neutral-3);
+    [data-icon-variant="chrome"]
+  ) {
+    background: transparent;
+  }
+  .buzz-button[data-variant="outline"][data-disabled]:not([data-loading]) {
+    box-shadow: inset 0 0 0 1px var(--border-standard);
   }
 
   /* A preview is supplemental context; destination cards can also open it.
      It is portal-rendered by Base UI so a clipped parent cannot hide it. */
   .buzz-preview-card {
-    z-index: 1000;
+    z-index: var(--layer-popover);
     display: grid;
     width: max-content;
     max-width: min(18rem, 75vw);
     gap: var(--space-1);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-control);
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-float);
-    box-shadow: var(--shadow-sm);
+    @apply floating-surface;
+    padding: var(--space-4);
     pointer-events: none;
     transform-origin: var(--transform-origin);
     transition:
@@ -187,16 +254,16 @@
 
   .buzz-preview-card-example {
     border: 0;
-    border-bottom: 1px solid var(--purple-8);
+    border-bottom: 1px solid var(--border-accent);
     padding: 0;
     background: transparent;
-    color: var(--text-primary);
+    color: var(--text-standard);
     font: inherit;
     cursor: pointer;
   }
 
   html[data-keyboard-navigation] .buzz-preview-card-example:focus-visible {
-    outline: 2px solid var(--text-primary);
+    outline: 2px solid var(--text-standard);
     outline-offset: 2px;
   }
 
@@ -209,11 +276,12 @@
     place-items: center;
     overflow: hidden;
     border-radius: var(--radius-pill);
-    background: var(--neutral-2);
-    color: var(--text-secondary);
+    background: var(--affordance-subtle);
+    color: var(--text-subtle);
   }
 
   .buzz-avatar[data-size="small"] {
+    @apply text-caption;
     width: 1.5rem;
     height: 1.5rem;
   }
@@ -263,9 +331,9 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border: 1px solid var(--border-primary);
+    border: 1px solid var(--border-standard);
     border-radius: var(--radius-panel);
-    background: var(--bg-panel);
+    background: var(--surface-panel);
     box-shadow: var(--shadow-xs);
   }
 
@@ -363,7 +431,7 @@
     height: 2rem;
     border-radius: var(--radius-pill);
     padding: 0 var(--space-4);
-    color: var(--text-secondary);
+    color: var(--text-subtle);
   }
 
   /* A hover *inside* a glass surface, which is not itself a material: no blur,
@@ -384,11 +452,11 @@
      state is irrelevant, not defending a rule from another rule. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab:hover:not([data-selected]) {
     background: var(--bg-glass-primary-hover);
-    color: var(--text-primary);
+    color: var(--text-standard);
   }
 
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-primary);
+    color: var(--text-standard);
   }
 
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-indicator {
@@ -406,11 +474,16 @@
      pill was not — there is no second surface to collide with the first. */
   .buzz-tabs[data-variant="panel"] {
     display: flex;
+    min-width: 0;
     align-items: center;
     gap: var(--space-4);
   }
 
   .buzz-tabs[data-variant="panel"] .buzz-tabs-list {
+    min-width: 0;
+    overflow-x: auto;
+    padding-inline: var(--space-1);
+    scroll-padding-inline: var(--space-1);
     gap: var(--space-5);
   }
 
@@ -423,18 +496,19 @@
      text carries more of the work. Tertiary is a meta role at the Lc 45 target
      and measures 60.6 light / 52.5 dark on these surfaces. */
   .buzz-tabs[data-variant="panel"] .buzz-tabs-tab {
+    flex-shrink: 0;
     height: 2.25rem;
     padding: 0;
-    color: var(--text-tertiary);
+    color: var(--text-metadata);
   }
 
   /* Excluded for the same reason as the chrome variant above. */
   .buzz-tabs[data-variant="panel"] .buzz-tabs-tab:hover:not([data-selected]) {
-    color: var(--text-primary);
+    color: var(--text-standard);
   }
 
   .buzz-tabs[data-variant="panel"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-primary);
+    color: var(--text-standard);
   }
 
   /* Sits on the container's bottom edge and spans the tab exactly. `height` is
@@ -444,7 +518,7 @@
     bottom: 0;
     height: 2px;
     border-radius: var(--radius-pill);
-    background: var(--text-primary);
+    background: var(--text-standard);
   }
 
   .panel-header {
@@ -467,7 +541,7 @@
     bottom: 0;
     left: var(--space-panel-inset);
     height: 1px;
-    background: var(--border-primary);
+    background: var(--border-standard);
     content: "";
     pointer-events: none;
   }
@@ -517,7 +591,7 @@
   .conversation-header-icon {
     display: flex;
     flex: 0 0 auto;
-    color: var(--text-secondary);
+    color: var(--text-subtle);
   }
 
   .conversation-header-title-block {
@@ -538,50 +612,11 @@
 
   .conversation-header-metadata {
     flex: 0 0 auto;
-    color: var(--text-secondary);
+    color: var(--text-subtle);
   }
 
   .conversation-header-context {
     margin-top: var(--space-1);
-  }
-
-  .search-field {
-    display: flex;
-    width: 100%;
-    height: var(--size-control);
-    align-items: center;
-    gap: var(--space-row-gap);
-    border-radius: var(--radius-control);
-    padding: 0 var(--space-control-inset);
-    background: var(--neutral-2);
-    color: var(--text-tertiary);
-  }
-
-  .search-field[data-variant="navigator"] {
-    border-radius: var(--radius-panel);
-  }
-
-  .search-field input {
-    min-width: 0;
-    flex: 1;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: var(--text-primary);
-    font: inherit;
-  }
-
-  html[data-keyboard-navigation] .search-field input:focus-visible {
-    outline: 2px solid var(--text-primary);
-    outline-offset: 2px;
-  }
-
-  .search-field input::placeholder {
-    color: var(--text-tertiary);
-  }
-
-  .search-field input::-webkit-search-cancel-button {
-    display: none;
   }
 
   .navigation-section {
@@ -629,15 +664,15 @@
     display: inline-flex;
     width: 100%;
     min-width: 0;
-    height: var(--size-row);
+    min-height: var(--size-row);
     align-items: center;
     gap: var(--space-row-gap);
     overflow: hidden;
     border: 0;
     border-radius: var(--radius-row);
-    padding: 0 var(--space-control-inset);
+    padding: var(--space-1) var(--space-control-inset);
     background: transparent;
-    color: var(--text-primary);
+    color: var(--text-standard);
     font: inherit;
     text-align: left;
     cursor: pointer;
@@ -650,13 +685,24 @@
      stronger statement. Keeping them separate prevents a selected destination
      from becoming indistinguishable the moment a pointer passes over it. */
   .navigation-item:hover:not([data-selected]) {
-    background: var(--neutral-2);
-    color: var(--text-primary);
+    background: var(--affordance-subtle);
+    color: var(--text-standard);
   }
 
   .navigation-item[data-selected] {
-    background: var(--neutral-3);
-    color: var(--text-primary);
+    background: var(--affordance-selected);
+    color: var(--text-standard);
+  }
+
+  .navigation-item[data-variant="option"] {
+    padding: var(--space-2);
+    transition: none;
+  }
+  .navigation-item[data-variant="option"]:focus-visible {
+    background: var(--affordance-floating-hover);
+    --text-metadata: var(--text-standard);
+    --text-subtle: var(--text-standard);
+    outline-offset: -2px;
   }
 
   .navigation-item[data-inset] {
@@ -673,13 +719,13 @@
 
   .navigation-item-trailing {
     flex: 0 0 auto;
-    color: var(--text-tertiary);
+    color: var(--text-metadata);
   }
 
   html[data-keyboard-navigation] .buzz-button:focus-visible,
   html[data-keyboard-navigation] .navigation-item:focus-visible,
   html[data-keyboard-navigation] .buzz-tabs-tab:focus-visible {
-    outline: 2px solid var(--text-primary);
+    outline: 2px solid var(--text-standard);
     outline-offset: 2px;
   }
 
@@ -693,25 +739,285 @@
 }
 
 @layer components {
+  /* The positioned portal owns the stacking context, not its popup child. */
+  .buzz-menu-positioner,
+  .buzz-popover-positioner {
+    z-index: var(--layer-popover);
+  }
+  .buzz-menu-popup {
+    min-width: 11.5rem;
+    max-width: min(20rem, var(--available-width), calc(100vw - var(--space-4)));
+    max-height: min(24rem, var(--available-height));
+    overflow-y: auto;
+    padding: var(--space-1);
+    @apply floating-surface;
+    color: var(--text-standard);
+  }
+  .buzz-menu-popup[data-size="wide"] {
+    max-width: min(28rem, var(--available-width), calc(100vw - var(--space-4)));
+  }
+  .buzz-menu-item {
+    display: flex;
+    min-height: var(--size-row);
+    align-items: center;
+    gap: var(--space-row-gap);
+    border-radius: var(--radius-pill);
+    padding: var(--space-1) var(--space-2);
+    color: var(--text-standard);
+    cursor: default;
+    outline: none;
+    user-select: none;
+  }
+  html[data-keyboard-navigation] .buzz-menu-item:focus-visible {
+    outline: 2px solid var(--border-focus);
+    /* Keep the ring inside the scrollable popup's clipping edge. */
+    outline-offset: -2px;
+  }
+  /* Floating rows need more separation than controls on a darker panel.
+     Supporting copy follows the brighter fill so it remains readable. */
+  .buzz-menu-item[data-highlighted],
+  .buzz-menu-item[data-popup-open],
+  .buzz-select-option[data-highlighted],
+  .buzz-popover-popup .navigation-item:hover:not([data-selected]) {
+    --text-subtle: var(--text-standard);
+    --text-metadata: var(--text-standard);
+    background: var(--affordance-floating-hover);
+  }
+  .buzz-menu-item[data-tone="danger"] {
+    color: var(--text-danger);
+  }
+  .buzz-menu-item[data-disabled] {
+    color: var(--text-unavailable);
+  }
+  .buzz-menu-icon,
+  .buzz-menu-item-indicator {
+    display: grid;
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+    place-items: center;
+    color: var(--text-subtle);
+  }
+  .buzz-menu-choice-label {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-row-gap);
+    overflow-wrap: anywhere;
+  }
+  .buzz-menu-item-indicator:not([data-checked]) {
+    visibility: hidden;
+  }
+  .buzz-menu-submenu-arrow,
+  .buzz-menu-trailing {
+    margin-inline-start: auto;
+    flex: 0 0 auto;
+    color: var(--text-subtle);
+  }
+  .buzz-menu-group-label {
+    padding: var(--space-2) var(--space-2) var(--space-1);
+    color: var(--text-subtle);
+  }
+  .buzz-menu-separator {
+    height: 1px;
+    margin: var(--space-1) 0;
+    background: var(--border-standard);
+  }
+  .buzz-menu-note {
+    margin: 0;
+    padding: var(--space-2);
+    color: var(--text-subtle);
+    overflow-wrap: anywhere;
+  }
+  .buzz-popover-popup {
+    /* Persistent navigation selection must remain visible on the raised fill. */
+    --affordance-selected: var(--affordance-subtle-hover);
+    @apply floating-surface;
+    width: 20rem;
+    max-width: min(var(--available-width), calc(100vw - var(--space-4)));
+    max-height: var(--available-height);
+    overflow-y: auto;
+    padding: var(--space-4);
+    color: var(--text-standard);
+  }
+  .buzz-popover-popup[data-size="compact"] {
+    width: 14rem;
+  }
+  /* Short action surfaces pair 10px outer corners with 8px inner rows.
+     Content surfaces keep the panel recipe, regardless of viewport width. */
+  .buzz-menu-popup[data-size="compact"],
+  .buzz-popover-popup[data-size="compact"] {
+    --affordance-floating-hover: var(--affordance-subtle-hover);
+    border-radius: var(--radius-row);
+  }
+  .buzz-menu-popup[data-size="compact"] .buzz-menu-item,
+  .buzz-popover-popup[data-size="compact"] .navigation-item {
+    border-radius: calc(var(--radius-row) * 0.8);
+    transition: none;
+  }
+  .buzz-popover-popup[data-size="compact"] .navigation-item:focus-visible {
+    background: var(--affordance-floating-hover);
+    outline-offset: -2px;
+  }
+  .buzz-popover-popup[data-size="wide"] {
+    width: 24rem;
+  }
+  .buzz-popover-popup[data-padding="list"] {
+    padding: var(--space-1);
+  }
+  .buzz-popover-popup[data-padding="none"] {
+    padding: 0;
+  }
+  .buzz-popover-title {
+    margin: 0;
+  }
+  .buzz-popover-description {
+    margin: var(--space-2) 0 0;
+    color: var(--text-subtle);
+  }
+  .buzz-choice-row {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-row-gap);
+  }
+  .buzz-choice-row-leading {
+    display: flex;
+    flex: 0 0 auto;
+  }
+  .buzz-choice-row-content {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: var(--space-half);
+    overflow-wrap: anywhere;
+  }
+  .buzz-choice-row-description,
+  .buzz-choice-row-trailing {
+    color: var(--text-subtle);
+  }
+  .buzz-choice-row-trailing {
+    flex: 0 0 auto;
+  }
+  .buzz-menu-item[data-disabled]
+    :is(
+      .buzz-choice-row-description,
+      .buzz-choice-row-trailing,
+      .buzz-menu-icon
+    ) {
+    color: inherit;
+  }
+  /* Use the dropdown unblur and offset at half duration and distance. Move from
+     the actual placement side, including flipped popovers and submenus. */
+  .buzz-menu-popup,
+  .buzz-popover-popup {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+    transform-origin: var(--transform-origin);
+    transition:
+      opacity calc(var(--duration-state) / 2) var(--easing-state),
+      transform calc(var(--duration-state) / 2) var(--easing-settle),
+      filter calc(var(--duration-state) / 2) var(--easing-state);
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    opacity: 0;
+    filter: blur(var(--space-half));
+    transform: translateY(calc(-1 * var(--space-half)));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-side="top"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateY(var(--space-half));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-side="right"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateX(calc(-1 * var(--space-half)));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-side="left"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateX(var(--space-half));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-ending-style]) {
+    transition-duration: calc(var(--duration-fast) / 2);
+  }
+  html[data-keyboard-navigation] :is(.buzz-menu-popup, .buzz-popover-popup) {
+    transition: none;
+    transform: none;
+    filter: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-menu-popup,
+    .buzz-popover-popup {
+      transition: none;
+      transform: none;
+      filter: none;
+    }
+  }
+}
+
+@layer components {
   .buzz-select {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
-    color: var(--text-secondary);
+    color: var(--text-subtle);
   }
   .buzz-select-popup {
     min-width: var(--anchor-width);
     max-width: calc(100vw - var(--space-6));
     max-height: var(--available-height);
     overflow-y: auto;
-    padding: var(--space-1);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-control);
-    background: var(--bg-float);
-    color: var(--text-primary);
-    box-shadow: var(--shadow-sm);
-    z-index: 1000;
+    @apply floating-surface;
+    padding: var(--space-2);
+    color: var(--text-standard);
+    z-index: var(--layer-popover);
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+    transform-origin: var(--transform-origin);
+    /* Product-directed exception: a 4px unblur accompanies the short entry. */
+    transition:
+      opacity var(--duration-state) var(--easing-state),
+      transform var(--duration-state) var(--easing-settle),
+      filter var(--duration-state) var(--easing-state);
+  }
+  .buzz-select-popup:where([data-starting-style], [data-ending-style]) {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--space-1)));
+    filter: blur(var(--space-1));
+  }
+  .buzz-select-popup:where([data-side="top"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateY(var(--space-1));
+  }
+  .buzz-select-popup:where([data-ending-style]) {
+    transition-duration: var(--duration-fast);
+  }
+  html[data-keyboard-navigation] .buzz-select-popup {
+    transition: none;
+    transform: none;
+    filter: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-select-popup {
+      transition: none;
+      transform: none;
+      filter: none;
+    }
   }
   .buzz-select-group-label {
     padding: var(--space-2) var(--space-3) var(--space-1);
@@ -726,11 +1032,10 @@
     cursor: default;
   }
   .buzz-select-option[data-highlighted] {
-    background: var(--neutral-4);
     outline: none;
   }
   .buzz-select-option[data-selected] {
-    color: var(--text-primary);
+    color: var(--text-standard);
   }
 }
 
@@ -752,15 +1057,15 @@
     border-radius: var(--radius-row);
     padding: var(--space-2);
     background: transparent;
-    color: var(--text-primary);
+    color: var(--text-standard);
     text-align: start;
     cursor: pointer;
   }
   .buzz-accordion:not([data-variant="activity"]) .buzz-accordion-trigger:hover {
-    background: var(--neutral-3);
+    background: var(--affordance-selected);
   }
   .buzz-accordion-trigger:focus-visible {
-    outline: 2px solid var(--text-primary);
+    outline: 2px solid var(--text-standard);
     outline-offset: 2px;
   }
   .buzz-accordion-trigger[aria-expanded="true"] > svg {
@@ -769,6 +1074,7 @@
   .buzz-accordion-panel {
     padding: var(--space-2);
   }
+  .buzz-accordion[data-variant="form"],
   .buzz-accordion[data-variant="navigation"] {
     margin: 0;
   }
@@ -785,7 +1091,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-3);
-    color: var(--text-primary);
+    color: var(--text-standard);
     cursor: pointer;
   }
   .buzz-switch-control {
@@ -794,24 +1100,24 @@
     height: 1.25rem;
     align-items: center;
     padding: 0.125rem;
-    border: 1px solid var(--border-primary);
+    border: 1px solid var(--border-standard);
     border-radius: var(--radius-pill);
-    background: var(--neutral-4);
+    background: var(--affordance-subtle-hover);
     cursor: pointer;
     transition:
       background-color var(--duration-state) var(--easing-state),
       border-color var(--duration-state) var(--easing-state);
   }
   .buzz-switch-control[data-checked] {
-    border-color: var(--purple-8);
-    background: var(--purple-8);
+    border-color: var(--affordance-prominent);
+    background: var(--affordance-prominent);
   }
   .buzz-switch-thumb {
     display: block;
     width: 0.875rem;
     height: 0.875rem;
     border-radius: var(--radius-pill);
-    background: var(--bg-panel);
+    background: var(--text-inverse);
     box-shadow: var(--shadow-xs);
     transform: translateX(0);
     transition: transform var(--duration-settle) var(--easing-settle);
@@ -821,18 +1127,18 @@
   }
   .buzz-switch-control[data-disabled] {
     cursor: not-allowed;
-    background: var(--neutral-3);
+    background: var(--affordance-selected);
   }
   .buzz-switch-control[data-disabled] .buzz-switch-thumb {
-    background: var(--neutral-5);
+    background: var(--affordance-subtle-pressed);
     box-shadow: none;
   }
   .buzz-switch:has(.buzz-switch-control[data-disabled]) {
-    color: var(--text-disabled);
+    color: var(--text-unavailable);
     cursor: not-allowed;
   }
   html[data-keyboard-navigation] .buzz-switch-control:focus-visible {
-    outline: 2px solid var(--text-primary);
+    outline: 2px solid var(--text-standard);
     outline-offset: 2px;
   }
 }
@@ -844,7 +1150,7 @@
   .buzz-accordion[data-variant="activity"] .buzz-accordion-trigger {
     justify-content: flex-start;
     padding: var(--space-2) 0;
-    color: var(--text-secondary);
+    color: var(--text-subtle);
     overflow-wrap: anywhere;
   }
   .buzz-accordion[data-variant="activity"] .buzz-accordion-trigger > svg {
@@ -887,20 +1193,20 @@
   .buzz-tabs[data-variant="workspace"] .buzz-tabs-tab {
     padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-pill);
-    color: var(--text-secondary);
+    color: var(--text-subtle);
     background: transparent;
   }
   .buzz-tabs[data-variant="workspace"]
     .buzz-tabs-tab:hover:not([data-preview]) {
-    background: var(--neutral-3);
-    color: var(--text-primary);
+    background: var(--affordance-selected);
+    color: var(--text-standard);
   }
   .buzz-tabs[data-variant="workspace"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-primary);
+    color: var(--text-standard);
   }
   .buzz-tabs[data-variant="workspace"] .buzz-tabs-tab[data-preview] {
-    background: var(--purple-3);
-    color: var(--text-primary);
+    background: var(--affordance-accent);
+    color: var(--text-standard);
   }
   .buzz-tabs[data-variant="workspace"] .buzz-tabs-indicator {
     display: none;
@@ -916,7 +1222,7 @@
     z-index: -1;
     border-radius: inherit;
     pointer-events: none;
-    background: var(--purple-3);
+    background: var(--affordance-accent);
     animation: workspace-tab-arrival calc(var(--duration-settle) * 3) ease-out
       both;
   }

@@ -1,11 +1,13 @@
-import { Input } from "@base-ui/react/input";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
+import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { useId, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowForm } from "./WorkflowForm";
-import { draftError, hasWebhookTrigger } from "./editor-model";
+import { draftIssue, hasWebhookTrigger } from "./editor-model";
 import { getWorkflowActivationWarning } from "./workflowActivationWarning";
 import {
   formStateToYaml,
@@ -55,7 +57,9 @@ export function WorkflowEditor({
       : parsed.ok
         ? parsed.state
         : null;
-  const error = draftError(yaml);
+  const issue = draftIssue(yaml);
+  const error = issue?.message;
+  const showingForm = mode === "form" && !!form;
   const secretGate = hasWebhookTrigger(yaml)
     ? "Webhook-trigger saves are unavailable until secure one-time-secret display is supported."
     : undefined;
@@ -89,18 +93,22 @@ export function WorkflowEditor({
   return (
     <section aria-label="Workflow editor" className="workflow-editor">
       <div className="workflow-toolbar">
-        <label htmlFor={`${id}-1`} className="workflow-field workflow-name">
-          Workflow name
-          <Input
-            id={`${id}-1`}
-            value={fields.name ?? ""}
-            disabled={readOnly || busy || locked || !fields.editable}
-            autoCapitalize="off"
-            onValueChange={(name) =>
-              changeHeader(yamlWithWorkflowName(yaml, name), { name })
-            }
-          />
-        </label>
+        <div className="workflow-name">
+          <Field
+            label="Workflow name"
+            error={showingForm && issue?.field === "name" ? error : undefined}
+          >
+            <Input
+              id={`${id}-1`}
+              value={fields.name ?? ""}
+              disabled={readOnly || busy || locked || !fields.editable}
+              autoCapitalize="off"
+              onValueChange={(name) =>
+                changeHeader(yamlWithWorkflowName(yaml, name), { name })
+              }
+            />
+          </Field>
+        </div>
         <Switch
           label="Enabled in configuration"
           checked={fields.enabled !== false}
@@ -127,24 +135,27 @@ export function WorkflowEditor({
           setMode(next);
         }}
       />
-      {modeError && (
-        <p role="alert" className="text-red-12">
+      {modeError && !error && (
+        <p role="alert" className="text-danger">
           {modeError}
         </p>
       )}
       {mode === "form" && form ? (
         <WorkflowForm
           state={form}
+          issue={issue}
           onChange={mutateForm}
           disabled={readOnly || busy || locked}
         />
       ) : (
-        <div className="workflow-field">
-          <label htmlFor={`${id}-yaml`}>Workflow YAML</label>
-          <textarea
+        <Field
+          label="Workflow YAML"
+          error={error}
+          description="Original text is kept until you edit. Form changes may reformat YAML. Schedules use UTC."
+        >
+          <Textarea
             id={`${id}-yaml`}
-            aria-describedby={`${id}-yaml-help`}
-            className="text-mono workflow-yaml"
+            variant="code"
             rows={18}
             spellCheck={false}
             autoCapitalize="off"
@@ -152,17 +163,14 @@ export function WorkflowEditor({
             value={yaml}
             onChange={(event) => {
               setFormDraft(null);
+              setModeError(null);
               onChange(event.currentTarget.value);
             }}
           />
-          <span id={`${id}-yaml-help`} className="text-body-sm text-secondary">
-            Original text is kept until you edit. Form changes may reformat
-            YAML. Schedules use UTC.
-          </span>
-        </div>
+        </Field>
       )}
-      {error && (
-        <p role="status" className="text-red-12">
+      {showingForm && error && !issue?.field && (
+        <p role="status" className="text-danger">
           {error}
         </p>
       )}

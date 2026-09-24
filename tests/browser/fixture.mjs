@@ -27,18 +27,24 @@ export const historySize = 640;
 export const test = base.extend({
   productionBroker: [false, { option: true }],
   actionProfile: [false, { option: true }],
+  profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
+  presenceThreadAuthors: [0, { option: true }],
   threadUnreadMentions: [false, { option: true }],
   exactMessages: [false, { option: true }],
+  openSearch: [false, { option: true }],
+  sessionChannels: [[], { option: true }],
+  sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
   expectedPageFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
+  iconCongestion: [false, { option: true }],
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
-  historyCounts: [{ alpha: historySize, beta: 80 }, { option: true }],
+  historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
@@ -50,14 +56,20 @@ export const test = base.extend({
       browser,
       productionBroker,
       actionProfile,
+      profilePicture,
       readState,
       threadUnread,
+      presenceThreadAuthors,
       threadUnreadMentions,
       exactMessages,
+      openSearch,
+      sessionChannels,
+      sessionParents,
       sidebarUnread,
       savedSidebar,
       expectedPageFailure,
       largeSidebar,
+      iconCongestion,
       dmLabels,
       tallMessages,
       membershipActivity,
@@ -133,7 +145,9 @@ export const test = base.extend({
       : dmLabels
         ? ["dm-peer"]
         : [];
-    const rosterIds = [...channels, ...dmIds];
+    const rosterIds = [
+      ...new Set([...channels, ...dmIds, ...Object.values(sessionParents)]),
+    ];
     if (savedSidebar) {
       const key = nip44.v2.utils.getConversationKey(userKey, viewer);
       for (const community of ["primary", "secondary"]) {
@@ -173,6 +187,9 @@ export const test = base.extend({
     // Tall histories leave room above the older-page prefetch threshold, even
     // with the compact message type and an extra upward resize-test gesture.
     const histories = new Map();
+    for (const community of ["primary", "secondary"])
+      for (const parent of Object.values(sessionParents))
+        histories.set(`${community}/${parent}`, []);
     const historyStarted = performance.now();
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
@@ -192,6 +209,28 @@ export const test = base.extend({
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
     const targetEvents = [];
+    let searchTarget;
+    if (openSearch) {
+      const root = sign(
+        9,
+        [["h", "open"]],
+        "Public conversation root",
+        userKey,
+        1699999000,
+      );
+      searchTarget = sign(
+        9,
+        [
+          ["h", "open"],
+          ["e", root.id, "", "reply"],
+        ],
+        "crew-search exact public reply",
+        userKey,
+        1699999001,
+      );
+      histories.set("primary/open", [root]);
+      targetEvents.push(searchTarget);
+    }
     let exact;
     if (exactMessages) {
       const root = histories.get("primary/alpha")[2];
@@ -251,6 +290,10 @@ export const test = base.extend({
     const threadReplies = new Map(
       exact ? [[exact.root.id, exact.replies]] : [],
     );
+    if (searchTarget)
+      threadReplies.set(searchTarget.tags.find(([key]) => key === "e")[1], [
+        searchTarget,
+      ]);
     const threadSummaries = [];
     if (threadUnread) {
       const history = histories.get("primary/alpha");
@@ -338,6 +381,42 @@ export const test = base.extend({
         ),
       );
     }
+    // Signed upstream-only stress data; production traversal and mounting stay real.
+    let presenceThread;
+    if (presenceThreadAuthors) {
+      const threadRoot = histories
+        .get("primary/alpha")
+        .find((event) => event.content === "Thread root 0");
+      if (!threadRoot) throw new Error("Presence thread requires threadUnread");
+      const replies = Array.from({ length: presenceThreadAuthors }, (_, i) =>
+        sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["e", threadRoot.id, "", "reply"],
+          ],
+          `Distinct author reply ${i}`,
+          generateSecretKey(),
+          threadRoot.created_at + i + 20,
+        ),
+      );
+      threadReplies.set(threadRoot.id, replies);
+      // The ordinary unread fixture also broadcasts one reply into the timeline.
+      // This stress case owns exactly the distinct replies above, not that extra row.
+      histories.set(
+        "primary/alpha",
+        histories
+          .get("primary/alpha")
+          .filter(
+            (event) =>
+              !event.tags.some(
+                ([key, value]) =>
+                  key === "e" && value.toLowerCase() === threadRoot.id,
+              ),
+          ),
+      );
+      presenceThread = { root: threadRoot, replies };
+    }
     if (actionProfile) {
       const root = histories
         .get("primary/alpha")
@@ -405,25 +484,48 @@ export const test = base.extend({
       response.end(JSON.stringify(body));
     };
     const answer = (community, filter) => {
+      if (filter.kinds?.includes(30617) || filter.kinds?.includes(30621)) {
+        expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
+        return [];
+      }
+      if (filter.kinds?.includes(20001))
+        return filter.authors.map((author) =>
+          sign(20001, [["p", author]], "online"),
+        );
       if (filter.kinds?.includes(39002))
-        return rosterIds.map((id) =>
-          sign(39002, [
-            ["d", id],
-            ["p", viewer],
-            ...participants
-              .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
-              .map((pubkey) => ["p", pubkey]),
-          ]),
-        );
+        return rosterIds
+          .filter((id) => !filter["#d"] || filter["#d"].includes(id))
+          .map((id) =>
+            sign(39002, [
+              ["d", id],
+              ["p", viewer],
+              ...participants
+                .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
+                .map((pubkey) => ["p", pubkey]),
+            ]),
+          );
       if (filter.kinds?.includes(39000))
-        return rosterIds.map((id) =>
-          sign(39000, [
-            ["d", id],
-            ["name", id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id],
-            ...(dmIds.includes(id) ? [["t", "dm"], ["hidden"]] : []),
-            ...(hiddenChannels.has(id) ? [["hidden"]] : []),
-          ]),
-        );
+        return [...rosterIds, ...(openSearch ? ["open"] : [])]
+          .filter((id) => !filter["#d"] || filter["#d"].includes(id))
+          .map((id) =>
+            sign(39000, [
+              ["d", id],
+              ["name", id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id],
+              ...(id === "open" ? [["public"], ["t", "stream"]] : []),
+              ...(dmIds.includes(id) ? [["t", "dm"], ["hidden"]] : []),
+              ...(sessionChannels.includes(id)
+                ? [
+                    ["t", "stream"],
+                    ["private"],
+                    [
+                      "about",
+                      `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
+                    ],
+                  ]
+                : []),
+              ...(hiddenChannels.has(id) ? [["hidden"]] : []),
+            ]),
+          );
       if (filter.kinds?.includes(30078)) {
         const events = [...readEvents.get(community).values()];
         if (readState && filter.read_state_snapshot === 1)
@@ -446,6 +548,15 @@ export const test = base.extend({
           kinds: [30030],
           "#d": ["buzz:custom-emoji"],
           limit: 500,
+        });
+        return [];
+      }
+      if (filter.kinds?.includes(30315)) {
+        expect(filter).toEqual({
+          kinds: [30315],
+          authors: [expect.any(String)],
+          "#d": ["general"],
+          limit: 1,
         });
         return [];
       }
@@ -476,6 +587,17 @@ export const test = base.extend({
               ]
             : []),
         ];
+      if (filter.search !== undefined)
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.content.toLowerCase().includes(filter.search.toLowerCase()),
+          )
+          .slice(0, filter.limit);
       if (filter.ids)
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
@@ -501,6 +623,13 @@ export const test = base.extend({
               event.tags.some(
                 ([key, value]) => key === "e" && filter["#e"].includes(value),
               ),
+          )
+          .filter(
+            (event) =>
+              filter.until === undefined ||
+              event.created_at < filter.until ||
+              (event.created_at === filter.until &&
+                event.id > filter.before_id),
           )
           .toSorted(
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
@@ -564,6 +693,13 @@ export const test = base.extend({
               ? [...threadReplies.values()].flat()
               : []),
           ])
+          .filter(
+            (event) =>
+              filter.until === undefined ||
+              event.created_at < filter.until ||
+              (event.created_at === filter.until &&
+                event.id > filter.before_id),
+          )
           .toSorted(
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
@@ -627,6 +763,44 @@ export const test = base.extend({
     const acceptReadPublication = (community, event) => {
       expect(verifyEvent(event)).toBe(true);
       expect(event.pubkey).toBe(viewer);
+      if (event.kind === 9) {
+        report.publications.push({ community, event });
+        const channel = event.tags.find(([name]) => name === "h")?.[1];
+        histories.get(`${community}/${channel}`).push(event);
+        relay.publish(community, event);
+        return;
+      }
+      if ([7, 5].includes(event.kind)) {
+        const channel = event.tags.find(([name]) => name === "h")?.[1];
+        const history = histories.get(`${community}/${channel}`);
+        expect(history).toBeDefined();
+        const ids = event.tags
+          .filter(([name]) => name === "e")
+          .map(([, id]) => id);
+        expect(ids.length).toBeGreaterThan(0);
+        for (const id of ids) {
+          const target = [
+            ...history,
+            ...[...threadReplies.values()].flat(),
+          ].find((row) => row.id === id);
+          expect(target).toBeDefined();
+          expect(target.tags).toContainEqual(["h", channel]);
+          if (event.kind === 7) expect(target.kind).toBe(9);
+          else {
+            expect(target.pubkey).toBe(viewer);
+            expect([7, 9]).toContain(target.kind);
+            expect(event.tags).toContainEqual(["k", String(target.kind)]);
+          }
+        }
+        if (event.kind === 7) expect(ids).toHaveLength(1);
+        if (!history.some((row) => row.id === event.id)) {
+          history.push(event);
+          targetEvents.push(event);
+        }
+        report.publications.push({ community, event });
+        relay.publish(community, event);
+        return;
+      }
       expect(event.kind).toBe(30078);
       expect(event.tags).toContainEqual(["t", "read-state"]);
       const blob = JSON.parse(
@@ -649,9 +823,13 @@ export const test = base.extend({
     const relay = productionBroker
       ? policyRelay({
           viewer,
+          relayAuthor: getPublicKey(relayKey),
           answer,
           report,
           pending,
+          // The production broker advertises read-state writes for every session,
+          // not only tests opting into complete snapshot reads.
+          acceptPublication: acceptReadPublication,
           ...(actionProfile
             ? {
                 latencyMs: 40,
@@ -689,7 +867,6 @@ export const test = base.extend({
                     max_bytes: 8388608,
                   },
                 }),
-                acceptPublication: acceptReadPublication,
               }
             : {}),
         })
@@ -713,17 +890,33 @@ export const test = base.extend({
           throw new Error(`Unexpected community: ${request.url}`);
         if (route === "gif-info" && request.method === "GET")
           return send(response, {});
-        if (route === "info" && request.method === "GET")
+        if (
+          (route === "info" || route === "icon-info") &&
+          request.method === "GET"
+        )
           return send(response, { policy: null });
         if (route === "session") {
           report.sessions.push(community);
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
-            writeKinds: [9],
+            writeKinds: sessionChannels.length ? [9, 9007] : [9],
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });
+        }
+        if (sessionChannels.length && route === "sign") {
+          expect(body.kind).toBe(9);
+          return send(response, finalizeEvent(body, userKey));
+        }
+        if (sessionChannels.length && route === "publish") {
+          expect(verifyEvent(body)).toBe(true);
+          expect(body.pubkey).toBe(viewer);
+          expect(body.kind).toBe(9);
+          const channel = body.tags.find(([key]) => key === "h")?.[1];
+          expect(sessionChannels).toContain(channel);
+          histories.get(`${community}/${channel}`).push(body);
+          return send(response, { accepted: true, event_id: body.id });
         }
         if (
           ["stream-interests", "stream-priority", "stream-observer"].includes(
@@ -802,7 +995,7 @@ export const test = base.extend({
               .map((event) => [event.id, event]),
           ).values(),
         ];
-        if (filter.until !== undefined) {
+        if (filter.until !== undefined && filter["#h"]?.length) {
           pending.push({
             community,
             channel: filter["#h"][0],
@@ -816,6 +1009,10 @@ export const test = base.extend({
         send(response, { error: String(error) }, 500);
       }
     };
+    const heldIcons = [];
+    const iconRequests = [];
+    const foregroundRequests = [];
+    let iconsReleased = false;
     let server;
     try {
       server = await preview({
@@ -824,6 +1021,21 @@ export const test = base.extend({
           {
             name: "fixture-relay",
             async configurePreviewServer(server) {
+              if (iconCongestion) {
+                server.middlewares.use((req, res, next) => {
+                  if (req.url?.includes("/icon-info")) {
+                    iconRequests.push(req.url);
+                    if (iconsReleased) return send(res, {});
+                    heldIcons.push(res);
+                    return;
+                  }
+                  if (req.url === "/foreground-probe") {
+                    foregroundRequests.push(req.url);
+                    return send(res, { reached: true });
+                  }
+                  next();
+                });
+              }
               if (relay) {
                 report.brokerRequests = [];
                 server.middlewares.use((req, res, next) => {
@@ -842,7 +1054,7 @@ export const test = base.extend({
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
-                  agentLibrary: () => [],
+                  agentLibrary: () => ({ definitions: [], identities: [] }),
                   ...(readState
                     ? {}
                     : {
@@ -897,29 +1109,52 @@ export const test = base.extend({
         }
       });
       await page.addInitScript(
-        ({ viewer }) => {
+        ({ viewer, profilePicture, iconCongestion }) => {
           const key = `buzz-client.v1:${viewer}`;
           if (!localStorage.getItem(key))
             localStorage.setItem(
               key,
               JSON.stringify({
-                profile: { name: "Browser Fixture", picture: "" },
-                memberships: [
-                  { id: "primary", name: "Primary" },
-                  { id: "secondary", name: "Secondary" },
-                ],
+                profile: { name: "Browser Fixture", picture: profilePicture },
+                memberships: iconCongestion
+                  ? [
+                      { id: "primary", name: "Primary" },
+                      { id: "secondary", name: "Secondary" },
+                      ...Array.from({ length: 6 }, (_, index) => ({
+                        id: `https://saved-${index}.example`,
+                        name: `Saved ${index}`,
+                      })),
+                    ]
+                  : [
+                      { id: "primary", name: "Primary" },
+                      { id: "secondary", name: "Secondary" },
+                    ],
                 selected: "primary",
               }),
             );
         },
-        { viewer },
+        { viewer, profilePicture, iconCongestion },
       );
       await use({
+        sign: (template) => finalizeEvent(template, userKey),
         origin,
         report,
+        iconCongestion: iconCongestion
+          ? {
+              iconRequests,
+              foregroundRequests,
+              release() {
+                iconsReleased = true;
+                for (const response of heldIcons)
+                  if (!response.writableEnded) send(response, {});
+              },
+            }
+          : undefined,
         pending,
         histories,
+        presenceThread,
         exact,
+        searchTarget,
         membership(
           type,
           targetIndex,
@@ -1037,7 +1272,7 @@ export const test = base.extend({
           targetEvents.push(event);
           relay.publish("primary", event);
         },
-        reply(rootId, own = false) {
+        reply(rootId, own = false, deliver = true) {
           const replies = threadReplies.get(rootId);
           if (!replies) throw new Error("Unknown fixture thread");
           const event = sign(
@@ -1051,14 +1286,14 @@ export const test = base.extend({
             replies.at(-1).created_at + 1,
           );
           replies.push(event);
-          relay.publish("primary", event);
+          if (deliver) relay.publish("primary", event);
           return event;
         },
-        append(community, channel, content, deliver = true, own = true) {
+        append(community, channel, content, deliver = true, own = true, root) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
             9,
-            [["h", channel]],
+            [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
             content ?? `Live append ${history.length}`,
             own ? userKey : peerKey,
             (history.at(-1)?.created_at ?? 1700000900) + 1,
@@ -1123,6 +1358,9 @@ export const test = base.extend({
         ),
       ).toEqual([]);
     } finally {
+      if (iconCongestion)
+        for (const response of heldIcons)
+          if (!response.writableEnded) send(response, {});
       await writeFile(
         testInfo.outputPath("evidence.json"),
         JSON.stringify(report, null, 2),

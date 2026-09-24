@@ -1,20 +1,22 @@
-import { nativeComputeStatus } from "../community-compute/native";
-import type { ComputeStatusSource } from "../community-compute/status";
+import type { AgentControl } from "../agents/control";
+import type { IdentityNames } from "../identity-names/service";
+import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
 import type { ReadTransport } from "./transport";
+import { nativeComputeStatus } from "../community-compute/native";
+import type { ComputeStatusSource } from "../community-compute/status";
 
 export type RelaySnapshot = Readonly<{
   status: "disconnected" | "connecting" | "ready" | "error";
   generation: number;
   scope?: string;
+  community?: string;
   session: RelaySession;
   viewer?: string;
-  error?: string;
   compute?: ComputeStatusSource;
-  /** Exact community endpoint; scope additionally partitions by viewer. */
-  community?: string;
+  error?: string;
 }>;
 export type RelayData = {
   snapshot(): RelaySnapshot;
@@ -34,13 +36,16 @@ declare module "@deepseek-ai/cordis" {
 export function provideRelay(
   ctx: Context,
   connect?: (signal: AbortSignal) => Promise<ReadTransport>,
+  presenceActivity?: PresenceActivity,
+  identityNames?: IdentityNames,
+  agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
 ) {
-  let compute: ReturnType<typeof nativeComputeStatus>;
   let disposed = false;
   let generation = 0;
   let controller: AbortController | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
-  let store = createRelaySession(null);
+  let computeStatus: ReturnType<typeof nativeComputeStatus>;
+  let store = createRelaySession(null, { identityNames });
   let snapshot: RelaySnapshot = Object.freeze({
     status: "disconnected",
     generation,
@@ -52,13 +57,13 @@ export function provideRelay(
     for (const listener of listeners) listener();
   };
   const reset = () => {
-    compute?.dispose();
-    compute = undefined;
     generation++;
     controller?.abort();
     clearTimeout(deadline);
     store.dispose();
-    store = createRelaySession(null);
+    computeStatus?.dispose();
+    computeStatus = undefined;
+    store = createRelaySession(null, { identityNames });
   };
   const service: RelayData = {
     snapshot: () => snapshot,
@@ -93,6 +98,9 @@ export function provideRelay(
             if (disposed || signal.aborted || current !== generation) return;
             store.dispose();
             store = createRelaySession(transport, {
+              identityNames,
+              agentChoices,
+              ...(presenceActivity ? { presenceActivity } : {}),
               prepared: true,
               // Keep intent preparation, but do not fetch every unopened channel.
               warm: false,
@@ -101,13 +109,13 @@ export function provideRelay(
                 transport.scope ?? transport.relayAuthor,
               ),
             });
-            compute = nativeComputeStatus(transport);
+            computeStatus = nativeComputeStatus(transport);
             publish({
-              ...(compute ? { compute: compute.source } : {}),
-              ...(transport.scope ? { community: transport.scope } : {}),
               status: "ready",
               generation,
               viewer: transport.viewer,
+              community: transport.scope ?? transport.relayAuthor,
+              ...(computeStatus ? { compute: computeStatus.source } : {}),
               scope: `${transport.scope ?? transport.relayAuthor}:${transport.viewer}`,
               session: store.session,
             });

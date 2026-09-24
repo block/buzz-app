@@ -1,6 +1,7 @@
+import { useChannelIdentityNames } from "../identity-names/react";
 import { useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
-import styles from "./Messages.module.css";
+import styles from "./TypingIndicator.module.css";
 
 /** Shared presentation only. Mounting more consumers creates no relay work. */
 export function TypingIndicator({
@@ -16,6 +17,7 @@ export function TypingIndicator({
     session.typing.subscribe,
     session.typing.snapshot,
   );
+  const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -24,20 +26,21 @@ export function TypingIndicator({
     (entry) =>
       entry.channelId === channelId && entry.threadRootId === threadRootId,
   );
+  if (!matching.length) return null;
   // Reuse already available names; optional typing must not trigger profile reads.
   const names = matching
     .slice(0, 3)
-    .map(({ pubkey }) => profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
+    .map(({ pubkey }) =>
+      resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10)),
+    );
   const others = matching.length - names.length;
   return (
     <div className={styles.typing}>
-      {matching.length > 0 && (
-        <span role="status" aria-label="Typing activity">
-          {names.join(", ")}
-          {others > 0 ? ` and ${others} others` : ""}
-          {matching.length === 1 ? " is typing…" : " are typing…"}
-        </span>
-      )}
+      <span role="status" aria-label="Typing activity">
+        {names.join(", ")}
+        {others > 0 ? ` and ${others} others` : ""}
+        {matching.length === 1 ? " is typing…" : " are typing…"}
+      </span>
     </div>
   );
 }

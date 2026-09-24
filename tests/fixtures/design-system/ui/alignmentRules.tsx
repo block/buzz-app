@@ -52,7 +52,7 @@ const RULES = [
         "Reading text",
         "body-medium; reference default 16px",
         "text-body → text-body-lg in the reading paragraph",
-        "Compare 14 with 16px-equivalent locally, not a global body change.",
+        "Buzz currently maps text-body to 14px / 20px by design direction.",
       ],
       [
         "Control labels",
@@ -170,7 +170,7 @@ export function AlignmentRules() {
         <p className="text-body-sm text-secondary">
           Reference: BlockUI’s September 2026 specification snapshot. Some
           reference metrics remain provisional. The examples use Inter and
-          Tabler; no proprietary fonts, icons, or implementation are included.
+          Phosphor; no proprietary fonts, icons, or implementation are included.
         </p>
       </Section>
     </>

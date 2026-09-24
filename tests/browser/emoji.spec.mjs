@@ -246,7 +246,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       ["Shift+ArrowRight", ""],
     ]) {
       await draft().press(key);
-      expect(await selectedDraftText()).toBe(selected);
+      await expect.poll(selectedDraftText).toBe(selected);
     }
     await draft().evaluate((element) => element.setSelectionRange(0, 0));
     for (const [key, selected] of [
@@ -256,27 +256,30 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       ["Shift+ArrowLeft", ""],
     ]) {
       await draft().press(key);
-      expect(await selectedDraftText()).toBe(selected);
+      await expect.poll(selectedDraftText).toBe(selected);
     }
     await draft().fill(":party:hello");
     await draft().evaluate((element) => element.setSelectionRange(7, 7));
     await draft().press("Shift+ArrowLeft");
-    expect(await selectedDraftText()).toBe(":party:");
+    await expect.poll(selectedDraftText).toBe(":party:");
     await draft().press("Backspace");
     await expect(draft()).toHaveJSProperty("value", "hello");
     // Visible source text and unavailable emoji retain ordinary character selection.
     for (const literal of [":unknown:", ":nosource:"]) {
       await draft().fill(literal);
       await draft().press("Shift+ArrowLeft");
-      expect(await selectedDraftText()).toBe(":");
+      await expect.poll(selectedDraftText).toBe(":");
     }
     await page.locator("main").evaluate((main) => {
       main.style.width = "300px";
     });
     await draft().fill(Array(24).fill(":party:").join(" "));
     const largeCustom = draft();
-    await expect(largeCustom.locator("img")).toHaveCount(24);
-    await expect(largeCustom.locator("img").last()).toHaveCSS("width", "42px");
+    await expect(largeCustom.locator("img[data-copy-emoji]")).toHaveCount(24);
+    await expect(largeCustom.locator("img[data-copy-emoji]").last()).toHaveCSS(
+      "width",
+      "42px",
+    );
     expect(
       await largeCustom.evaluate(
         (group) => group.scrollWidth <= group.clientWidth,
@@ -284,7 +287,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBe(true);
     expect(
       await largeCustom
-        .locator("img")
+        .locator("img[data-copy-emoji]")
         .last()
         .evaluate((image) => image.offsetTop),
     ).toBeGreaterThan(0);
@@ -292,7 +295,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       path: test.info().outputPath("large-custom-emoji-draft.png"),
     });
     const lastCustomBounds = await largeCustom
-      .locator("img")
+      .locator("img[data-copy-emoji]")
       .last()
       .boundingBox();
     const inputBounds = await draft().boundingBox();
@@ -366,29 +369,43 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(toneMenu).toHaveCount(0);
     await expect(skinTone).toBeFocused();
     await search.focus();
-    const searchIcon = page.locator('[aria-label="Emoji picker"] > svg');
+    const searchIcon = page.locator("em-emoji-picker .search .loupe svg");
     await expectPhosphor(searchIcon, "magnifying-glass");
     await expect(
-      page.locator('[aria-label="Emoji picker"] > svg:visible'),
+      page.locator("em-emoji-picker .search .loupe svg:visible"),
     ).toHaveCount(1);
     await expect(page.locator("em-emoji-picker .search .loupe")).toHaveCSS(
       "visibility",
-      "hidden",
+      "visible",
     );
-    await expect(search).toHaveCSS("height", "28px");
-    await expect(search).toHaveCSS("margin-left", "2px");
-    await expect(search).toHaveCSS("margin-right", "2px");
+    const searchField = page.locator("em-emoji-picker .search-field");
+    await expect(searchField).toHaveCSS("height", "40px");
+    await expect(search).toHaveCSS("margin-left", "0px");
+    await expect(search).toHaveCSS("margin-right", "0px");
     await expect(search).toHaveCSS("border-top-width", "0px");
-    await expect(search).toHaveCSS("border-radius", "14px");
-    await expect(search).toHaveCSS("background-color", "rgb(240, 240, 240)");
+    await expect(searchField).toHaveCSS("border-radius", "159984px");
+    await expect(searchField).toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
     await expect(search).toHaveCSS("color", "rgb(0, 0, 0)");
     await expect(search).toHaveCSS("outline-style", "none");
-    await expect(search).toHaveCSS(
-      "box-shadow",
-      "rgb(0, 0, 0) 0px 0px 0px 2px",
-    );
+    await expect(search).toHaveCSS("box-shadow", "none");
+    const expectSearchAlignment = async () => {
+      const offsets = await searchField.evaluate((field) => {
+        const bounds = field.getBoundingClientRect();
+        return [...field.querySelectorAll("input, svg")].map((element) => {
+          const rect = element.getBoundingClientRect();
+          return Math.abs(
+            rect.top + rect.height / 2 - bounds.top - bounds.height / 2,
+          );
+        });
+      });
+      for (const offset of offsets) expect(offset).toBeLessThan(1);
+    };
+    await expectSearchAlignment();
     const surface = page.locator("em-emoji-picker #root");
-    const region = page.getByRole("region", { name: "Emoji picker" });
+    const region = page.getByRole("dialog", { name: "Emoji picker" });
     await expect(surface).toHaveAttribute("data-theme", "light");
     await expect(region).toHaveCSS("background-color", "rgb(255, 255, 255)");
     await expect(region).toHaveCSS("border-radius", "24px");
@@ -400,18 +417,27 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(surface).toHaveCSS("width", "360px");
     const initialRegion = await region.boundingBox();
     const initialSurface = await surface.boundingBox();
-    const searchGutters = await search.evaluate((input) => {
+    const searchGutters = await searchField.evaluate((input) => {
       const searchBounds = input.getBoundingClientRect();
       const rootBounds = input
         .getRootNode()
         .querySelector("#root")
         .getBoundingClientRect();
       return {
+        top: searchBounds.top - rootBounds.top,
         left: searchBounds.left - rootBounds.left,
         right: rootBounds.right - searchBounds.right,
       };
     });
     expect(searchGutters.left).toBeCloseTo(searchGutters.right, 1);
+    expect(searchGutters.top).toBe(12);
+    expect(searchGutters.left).toBe(12);
+    const searchBox = await search.boundingBox();
+    const searchIconBox = await searchIcon.boundingBox();
+    expect(searchIconBox.y + searchIconBox.height / 2).toBeCloseTo(
+      searchBox.y + searchBox.height / 2,
+      1,
+    );
     expect(initialSurface.height).toBeCloseTo(
       Math.min(348, page.viewportSize().height * 0.4),
       1,
@@ -440,31 +466,33 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBe(true);
     await search.fill("party");
     const emojiClear = page.locator("em-emoji-picker .search .delete");
-    await expect(emojiClear).toHaveCSS("right", "10px");
+    await expect(emojiClear).toHaveCSS("position", "static");
+    await expect(emojiClear).toHaveCSS("width", "32px");
+    await expect(emojiClear).toHaveCSS("height", "32px");
     await expect(emojiClear.locator("svg")).toHaveAttribute(
       "viewBox",
       "0 0 256 256",
     );
     await expect(emojiClear.locator("svg")).toHaveCSS("width", "16px");
     await expect(emojiClear.locator("svg")).toHaveCSS("height", "16px");
-    await expect(emojiClear).toHaveCSS("color", "rgb(82, 82, 82)");
-    await expectPhosphor(emojiClear.locator("svg"), "x-circle");
+    await expect(emojiClear).toHaveCSS("color", "rgb(102, 102, 102)");
+    await expectPhosphor(emojiClear.locator("svg"), "x");
     await expect(emojiClear.locator("svg path")).toHaveCSS(
       "fill",
-      "rgb(82, 82, 82)",
+      "rgb(102, 102, 102)",
     );
     // Mart recreates the clear control when search empties, and on picker remount.
     await search.fill("");
     await expect(emojiClear).toHaveCount(0);
     await search.fill("party");
-    await expectPhosphor(emojiClear.locator("svg"), "x-circle");
+    await expectPhosphor(emojiClear.locator("svg"), "x");
     await picker.click();
     await expect(page.locator("em-emoji-picker")).toHaveCount(0);
     await picker.click();
     await search.fill("party");
-    await expectPhosphor(emojiClear.locator("svg"), "x-circle");
+    await expectPhosphor(emojiClear.locator("svg"), "x");
     await expect(
-      page.locator('[aria-label="Emoji picker"] > svg:visible'),
+      page.locator("em-emoji-picker .search .loupe svg:visible"),
     ).toHaveCount(1);
     const insert = page.getByRole("button", {
       name: ":party:",
@@ -483,16 +511,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         document.documentElement.dataset.colorMode = mode;
       }, mode);
       await expect(surface).toHaveAttribute("data-theme", mode);
-      await expect(search).toHaveCSS(
+      await expect(searchField).toHaveCSS(
         "background-color",
-        mode === "dark" ? "rgb(16, 16, 16)" : "rgb(240, 240, 240)",
+        mode === "dark" ? "rgb(26, 26, 26)" : "rgb(255, 255, 255)",
       );
-      await expect(search).toHaveCSS(
-        "box-shadow",
-        mode === "dark"
-          ? "rgb(255, 255, 255) 0px 0px 0px 2px"
-          : "rgb(0, 0, 0) 0px 0px 0px 2px",
-      );
+      await expect(search).toHaveCSS("box-shadow", "none");
       await expect(search).toHaveCSS("font-family", /Inter Variable/);
 
       await expect(search).toHaveValue("party");
@@ -509,6 +532,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     );
     await expect(search).toHaveValue("party");
     await expect(page.locator("em-emoji-picker nav")).toHaveCount(0);
+    // Reflow can move this standalone fixture below the viewport. CSS visibility
+    // alone does not establish that elementFromPoint can reach every result.
+    await region.scrollIntoViewIfNeeded();
     const narrowRegion = await region.boundingBox();
     const narrowSurface = await surface.boundingBox();
     expect(narrowRegion.width).toBe(narrowSurface.width + 2);
@@ -517,7 +543,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     expect(narrowRegion.y + 1).toBe(narrowSurface.y);
     const pane = await page.locator("main").boundingBox();
     const popover = await page
-      .getByRole("region", { name: "Emoji picker" })
+      .getByRole("dialog", { name: "Emoji picker" })
       .boundingBox();
     expect(popover.x).toBeGreaterThanOrEqual(pane.x);
     expect(popover.x + popover.width).toBeLessThanOrEqual(pane.x + pane.width);
@@ -591,14 +617,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     expect(emojiGridGutters.left).toBeCloseTo(emojiGridGutters.right, 1);
     expect(emojiGridGutters.left).toBeCloseTo(12, 1);
-    const scrollbar = page.locator("em-emoji-picker .buzz-scrollbar-track");
-    const scrollbarThumb = scrollbar.locator(".buzz-scrollbar-thumb");
-    await expect(scrollbar).toBeVisible();
-    await expect(scrollbar).toHaveCSS("right", "4px");
-    await expect(scrollbar).toHaveCSS("opacity", "0.6");
-    await expect(scrollbarThumb).toHaveCSS(
-      "background-color",
-      "rgb(149, 149, 149)",
+    const scroll = page.locator("em-emoji-picker .scroll");
+    await expect(scroll).toHaveCSS("scrollbar-width", "thin");
+    await expect(scroll).toHaveCSS(
+      "scrollbar-color",
+      "rgb(128, 128, 128) rgba(0, 0, 0, 0)",
     );
     for (const [index, result] of searchRowPositions.entries())
       expect(result.x).toBeCloseTo(firstRow[index].x, 1);
@@ -876,6 +899,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await search.fill("grinning");
     await page.getByRole("button", { name: "😀", exact: true }).click();
     await expect(draft()).toHaveJSProperty("value", "😀A draft");
+    // The shared popup retains its contents through its exit transition.
+    // Finish that lifecycle before inspecting the separate composer error.
+    await expect(region).toHaveCount(0);
     await draft().fill(":party:");
     await draft().press("Enter");
     await expect(draft()).toHaveJSProperty("value", ":party:");
@@ -923,7 +949,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await draft().fill(longDraft);
     await expect(draft()).toHaveJSProperty("value", longDraft);
     await expect(draft()).toContainText("long text long text");
-    await expect(draft().locator("img")).toHaveCount(1);
+    await expect(draft().locator("img[data-copy-emoji]")).toHaveCount(1);
     await expect
       .poll(() =>
         draft().evaluate(
@@ -972,7 +998,15 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(draft()).toHaveCSS("font-size", "42px");
     await draft().fill("😀 🙏 👏 hello");
     await expect(draft()).not.toHaveAttribute("data-single-emoji", "true");
-    await expect(draft()).toHaveCSS("font-size", "14px");
+    const bodySize = await draft().evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.fontSize = "var(--text-body)";
+      element.parentElement.append(probe);
+      const size = getComputedStyle(probe).fontSize;
+      probe.remove();
+      return size;
+    });
+    await expect(draft()).toHaveCSS("font-size", bodySize);
     const publicationCount = await page.evaluate(
       () => window.emojiFixture.report.publications.length,
     );

@@ -1,4 +1,11 @@
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { Button } from "../../shared/design-system/ui/Button";
+import {
+  useCallback,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { RelaySession } from "../../features/relay/session";
 import styles from "./Channels.module.css";
 
@@ -6,10 +13,12 @@ export function UnreadBadge({
   session,
   channelId,
   dm = false,
+  label,
 }: {
   session: RelaySession;
   channelId: string;
   dm?: boolean;
+  label?: ReactNode;
 }) {
   const target = useMemo(
     () => ({ kind: "channel" as const, channelId }),
@@ -42,22 +51,25 @@ export function UnreadBadge({
   const manual = snapshot.manual !== "none";
   const unread = manual || (count ?? 0) > 0;
   const threadCount = activity.items?.length ?? 0;
-  if (!unread && !threadCount) return null;
+  if (!unread && !threadCount && label === undefined) return null;
   const priority = dm || (snapshot.attentionCount ?? 0) > 0;
   const showUnreadDot = priority && threadCount === 0;
-  const label = manual
+  const unreadLabel = manual
     ? `Marked unread${snapshot.manual === "local-only" ? " on this device only" : ""}`
     : `${count} observed unread messages${snapshot.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`;
   const threadLabel = `${threadCount} unread ${threadCount === 1 ? "thread" : "threads"}${activity.freshness === "stale" ? "; may be out of date" : ""}`;
   return (
     <>
+      {label !== undefined && (
+        <span data-channel-unread-title={unread || undefined}>{label}</span>
+      )}
       {unread && (
         <span
           className={styles.unreadState}
           data-channel-unread=""
           data-priority={priority}
           role="img"
-          aria-label={label}
+          aria-label={unreadLabel}
         />
       )}
       {showUnreadDot && (
@@ -103,17 +115,17 @@ export function UnreadOptions({
   return (
     <>
       {channelId && (
-        <button
+        <Button
           type="button"
           onClick={() =>
             run(session.unread.markUnreadLocal({ kind: "channel", channelId }))
           }
         >
           Mark unread on this device
-        </button>
+        </Button>
       )}
       {channelId && sync.capability === "frontier-sync" && (
-        <button
+        <Button
           type="button"
           onClick={() => {
             const last = session.channels
@@ -131,7 +143,7 @@ export function UnreadOptions({
           }}
         >
           Mark read through loaded messages
-        </button>
+        </Button>
       )}
       {error && <p role="alert">{error}</p>}
       <details>
@@ -145,13 +157,13 @@ export function UnreadOptions({
           Read sync: {sync.capability} · {sync.status}
         </p>
         {sync.error && <p role="alert">{sync.error}</p>}
-        <button type="button" onClick={() => run(session.unread.refresh())}>
+        <Button type="button" onClick={() => run(session.unread.refresh())}>
           Refresh unread observations
-        </button>
+        </Button>
         {sync.capability === "frontier-sync" && (
-          <button type="button" onClick={() => run(session.unread.retrySync())}>
+          <Button type="button" onClick={() => run(session.unread.retrySync())}>
             Retry read sync
-          </button>
+          </Button>
         )}
       </details>
     </>

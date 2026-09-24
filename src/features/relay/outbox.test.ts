@@ -563,3 +563,424 @@ it("a queued retry deadline preserves unknown evidence without another dispatch"
   ).toBe("unknown");
   expect(h.publish).not.toHaveBeenCalled();
 });
+
+for (const outcome of [
+  "ack",
+  "echo",
+  "unknown-then-echo",
+  "rejected",
+  "unknown",
+] as const) {
+  it(`delivered notification follows ${outcome}, never enqueue/sign or unknown outcome`, async () => {
+    const storage = memoryStorage();
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const publish = vi.fn(
+      () =>
+        new Promise<void>((yes, no) => {
+          resolve = yes;
+          reject = no;
+        }),
+    );
+    const owner = createOutbox(
+      viewer.pubkey,
+      {
+        sign: async (template) => signed(viewer, template),
+        publish,
+      },
+      storage,
+    );
+    const notified = vi.fn();
+    owner.outbox.observeSend((event) => () => notified(event));
+    const id = owner.outbox.send({
+      kind: 9,
+      content: "wake",
+      tags: [["h", "c"]],
+    });
+    try {
+      await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+      expect(notified).not.toHaveBeenCalled();
+      const event = owner.outbox.snapshot()[0]?.signed;
+      assert.exists(event);
+      if (outcome === "ack") resolve();
+      else if (outcome === "echo") owner.observe([event]);
+      else
+        reject(
+          outcome === "rejected"
+            ? new PublishRejected("no")
+            : new Error("lost ACK"),
+        );
+      await flush();
+      if (outcome === "unknown-then-echo") {
+        expect(notified).not.toHaveBeenCalled();
+        expect(owner.outbox.snapshot()[0]?.delivery).toBe("unknown");
+        owner.observe([event]);
+      }
+      const confirmed = ["ack", "echo", "unknown-then-echo"].includes(outcome);
+      expect(notified).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+      if (confirmed) {
+        expect(notified).toHaveBeenCalledWith({
+          id: event.id,
+          pubkey: event.pubkey,
+          kind: event.kind,
+          content: event.content,
+          tags: event.tags,
+          created_at: event.created_at,
+        });
+        owner.observe([event]);
+        owner.outbox.retry(id);
+        await flush();
+        expect(notified).toHaveBeenCalledOnce();
+      }
+      owner.dispose();
+      const restored = createOutbox(
+        viewer.pubkey,
+        {
+          sign: async (template) => signed(viewer, template),
+          publish,
+        },
+        storage,
+      );
+      restored.outbox.observeSend((event) => () => notified(event));
+      await restored.ready;
+      restored.observe([event]);
+      expect(notified).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+      restored.dispose();
+    } finally {
+      owner.dispose();
+    }
+  });
+}
+
+it("a failing delivered observer cannot turn a confirmed send into failure", async () => {
+  const owner = createOutbox(
+    viewer.pubkey,
+    {
+      sign: async (template) => signed(viewer, template),
+      publish: async () => {},
+    },
+    memoryStorage(),
+  );
+  const next = vi.fn();
+  owner.outbox.observeSend(() => () => {
+    throw new Error("observer");
+  });
+  owner.outbox.observeSend(() => next);
+  try {
+    owner.outbox.send({ kind: 9, content: "hello", tags: [] });
+    await vi.waitFor(() => expect(next).toHaveBeenCalledOnce());
+    expect(owner.outbox.snapshot()[0]?.delivery).toBe("accepted");
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("restores a retained creation to retained storage when dismissal cannot persist", async () => {
+  const event = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [["h", "11111111-1111-4111-8111-111111111111"]],
+  });
+  const retained: OutgoingEvent = { event, signed: event, delivery: "seen" };
+  let records: readonly OutgoingEvent[] = [retained];
+  const save = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("journal unavailable"))
+    .mockImplementation(async (next: readonly OutgoingEvent[]) => {
+      records = structuredClone(next);
+    });
+  const owner = createOutbox(
+    viewer.pubkey,
+    {
+      sign: async (template) => signed(viewer, template),
+      publish: async () => {},
+    },
+    { load: () => structuredClone(records), save },
+  );
+  try {
+    await owner.ready;
+    expect(owner.outbox.snapshot()).toHaveLength(0);
+    await expect(owner.outbox.dismiss(event.id)).rejects.toThrow(
+      "journal unavailable",
+    );
+    expect(owner.outbox.snapshot()).toHaveLength(0);
+    expect(owner.local.snapshot()).toEqual([retained]);
+    await vi.waitFor(() =>
+      expect(records).toMatchObject([
+        { event: { id: event.id }, delivery: "seen" },
+      ]),
+    );
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("keeps creation receipts when an access purge races journal hydration", async () => {
+  const creation = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [["h", "11111111-1111-4111-8111-111111111111"]],
+  });
+  const message = signed(viewer, {
+    kind: 9,
+    content: "private content",
+    tags: [["h", "11111111-1111-4111-8111-111111111111"]],
+  });
+  let hydrate!: (items: readonly OutgoingEvent[]) => void;
+  const owner = createOutbox(
+    viewer.pubkey,
+    {
+      sign: async (template) => signed(viewer, template),
+      publish: async () => {},
+    },
+    {
+      load: () =>
+        new Promise((resolve) => {
+          hydrate = resolve;
+        }),
+      save: async () => {},
+    },
+  );
+  try {
+    owner.purgeConfirmed((event) => event.kind === 9007);
+    hydrate([
+      { event: creation, signed: creation, delivery: "seen" },
+      { event: message, signed: message, delivery: "seen" },
+    ]);
+    await owner.ready;
+    expect(owner.outbox.snapshot()).toHaveLength(0);
+    expect(owner.local.snapshot().map(({ event }) => event.id)).toEqual([
+      creation.id,
+    ]);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it.each(["commit", "reject", "echo"] as const)(
+  "serializes delayed dismissal with concurrent intent: %s",
+  async (outcome) => {
+    const event = signed(viewer, {
+      kind: 40003,
+      content: "Retained edit",
+      tags: [["e", "a".repeat(64)]],
+    });
+    const pending: OutgoingEvent = { event, signed: event, delivery: "failed" };
+    let records: readonly OutgoingEvent[] = [pending];
+    let release = () => {};
+    let reject = (_error: Error) => {};
+    const gate = new Promise<void>((resolve, fail) => {
+      release = resolve;
+      reject = fail;
+    });
+    let saving = () => {};
+    const started = new Promise<void>((resolve) => {
+      saving = resolve;
+    });
+    let hold = true;
+    const sign = vi.fn(async (template: EventTemplate) =>
+      signed(viewer, template),
+    );
+    const publish = vi.fn(async () => {});
+    const owner = createOutbox(
+      viewer.pubkey,
+      { sign, publish },
+      {
+        load: () => records,
+        async save(next) {
+          if (hold && !next.some((item) => item.event.id === event.id)) {
+            saving();
+            await gate;
+          }
+          records = next;
+        },
+      },
+    );
+    try {
+      await owner.ready;
+      const dismissal = owner.outbox.dismiss(event.id);
+      const result = dismissal.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await started;
+      const duplicate = owner.outbox.dismiss(event.id);
+      expect(duplicate).toBe(dismissal);
+      let duplicateSettled = false;
+      const duplicateResult = duplicate.then(
+        () => {
+          duplicateSettled = true;
+        },
+        (error: unknown) => {
+          duplicateSettled = true;
+          return error;
+        },
+      );
+      await Promise.resolve();
+      expect(duplicateSettled).toBe(false);
+      expect(owner.outbox.snapshot()).toEqual([pending]);
+      expect(owner.local.snapshot()).toEqual([pending]);
+      owner.outbox.retry(event.id);
+      expect(owner.outbox.snapshot()).toEqual([pending]);
+      const nextId = owner.outbox.send({
+        kind: 9,
+        content: "Concurrent intent",
+        tags: [["h", "c"]],
+      });
+      if (outcome === "echo") owner.observe([event]);
+      hold = false;
+      if (outcome === "commit") release();
+      else reject(new Error("Disk unavailable"));
+      expect(await result).toEqual(
+        outcome === "commit" ? undefined : new Error("Disk unavailable"),
+      );
+      expect(await duplicateResult).toEqual(await result);
+      await vi.waitFor(() =>
+        expect(
+          owner.outbox.snapshot().find((item) => item.event.id === nextId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+      await vi.waitFor(() =>
+        expect(records.find((item) => item.event.id === nextId)?.delivery).toBe(
+          "accepted",
+        ),
+      );
+      expect(publish).toHaveBeenCalledTimes(1);
+      expect(sign).toHaveBeenCalledTimes(1);
+      const remaining = records.find((item) => item.event.id === event.id);
+      if (outcome === "commit") expect(remaining).toBeUndefined();
+      else
+        expect(remaining).toMatchObject({
+          event,
+          delivery: outcome === "echo" ? "seen" : "failed",
+        });
+      expect(
+        owner.outbox.snapshot().some((item) => item.event.id === event.id),
+      ).toBe(outcome === "reject");
+    } finally {
+      release();
+      owner.dispose();
+    }
+  },
+);
+
+it("fences caller-scoped admission before signing and at publisher entry", async () => {
+  const h = setup();
+  const template = {
+    kind: 9000,
+    content: "",
+    tags: [
+      ["h", "c"],
+      ["p", "a".repeat(64)],
+    ],
+  };
+  let active = true;
+  const first = h.outbox.send(template, undefined, () => active);
+  active = false;
+  await vi.waitFor(() =>
+    expect(
+      h.outbox.snapshot().find((row) => row.event.id === first)?.delivery,
+    ).toBe("failed"),
+  );
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(() => h.outbox.retry(first)).toThrow(/cancelled/);
+  active = true;
+  h.outbox.retry(first, () => active);
+  await vi.waitFor(() => expect(h.sign).toHaveBeenCalledOnce());
+  const request = h.signatures.shift();
+  assert.exists(request);
+  active = false;
+  request.resolve(signed(viewer, request.event));
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("failed"),
+  );
+  expect(h.publish).not.toHaveBeenCalled();
+  active = true;
+  h.outbox.retry(first, () => active);
+  await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  const dispatched = h.publications.shift();
+  assert.exists(dispatched);
+  active = false; // Past publisher entry: result may have reached the relay.
+  dispatched.resolve();
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("accepted"),
+  );
+});
+
+it("promotes a legacy saved invitation when a profile retries it with live admission", async () => {
+  const storage = memoryStorage();
+  const event = signed(viewer, {
+    kind: 9000,
+    content: "",
+    tags: [
+      ["h", "c"],
+      ["p", "a".repeat(64)],
+    ],
+  });
+  const { sig: _sig, ...unsigned } = event;
+  await storage.save([{ event: unsigned, delivery: "failed" }]);
+  const h = setup(storage);
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot()[0]?.event.id).toBe(event.id),
+  );
+  const id = event.id;
+  expect(h.outbox.snapshot()[0]?.guarded).toBeUndefined();
+
+  let active = true;
+  h.outbox.retry(id, () => active);
+  await vi.waitFor(() => expect(h.sign).toHaveBeenCalledOnce());
+  const request = h.signatures.shift();
+  assert.exists(request);
+  // A pre-hardening saved intent is now guarded, even while signing is held.
+  active = false;
+  request.resolve(signed(viewer, request.event));
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("failed"),
+  );
+  expect(h.outbox.snapshot()[0]?.guarded).toBe(true);
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(() => h.outbox.retry(id)).toThrow(/cancelled/);
+
+  const restored = setup(storage);
+  await vi.waitFor(() =>
+    expect(restored.outbox.snapshot()[0]?.event.id).toBe(id),
+  );
+  expect(restored.outbox.snapshot()[0]?.guarded).toBe(true);
+  expect(() => restored.outbox.retry(id)).toThrow(/cancelled/);
+  expect(restored.publish).not.toHaveBeenCalled();
+});
+
+it("does not replay a guarded addition through generic retry or after hydration", async () => {
+  const storage = memoryStorage();
+  const h = setup(storage);
+  let active = true;
+  const id = h.outbox.send(
+    {
+      kind: 9000,
+      content: "",
+      tags: [
+        ["h", "c"],
+        ["p", "a".repeat(64)],
+      ],
+    },
+    undefined,
+    () => active,
+  );
+  active = false;
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("failed"),
+  );
+  expect(() => h.outbox.retry(id)).toThrow(/cancelled/);
+  const restored = setup(storage);
+  await vi.waitFor(() =>
+    expect(restored.outbox.snapshot()[0]?.event.id).toBe(id),
+  );
+  expect(restored.outbox.snapshot()[0]?.guarded).toBe(true);
+  expect(() => restored.outbox.retry(id)).toThrow(/cancelled/);
+  expect(restored.sign).not.toHaveBeenCalled();
+  expect(restored.publish).not.toHaveBeenCalled();
+  restored.outbox.retry(id, () => true); // Explicit renewed admission may reuse the exact event.
+  await vi.waitFor(() => expect(restored.sign).toHaveBeenCalledOnce());
+});

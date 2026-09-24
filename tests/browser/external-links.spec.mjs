@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
-import { end } from "./timeline.mjs";
+import { end, settle } from "./timeline.mjs";
 
+test.use({ historyCounts: { alpha: 1, beta: 0 } });
 const github = "https://github.com/block/buzz/pull/1";
 const ordinary = "https://example.test/external-link";
 const unsupported = "https://github.com/block/buzz/blob/main/README.md";
@@ -16,6 +17,7 @@ async function openMessages(page) {
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();
+  await settle(page);
 }
 
 async function popup(page, anchor) {
@@ -68,7 +70,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   await expect(panel).toBeVisible();
 
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await page.getByRole("switch", { name: "Enable GitHub" }).click();
   await openMessages(page);
@@ -79,7 +81,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   ).toBeVisible();
 
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await page.getByRole("switch", { name: "Enable GitHub" }).click();
   await openMessages(page);

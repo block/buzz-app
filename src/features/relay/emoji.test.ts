@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createEmojiDirectory } from "./emoji-directory";
-import { EMOJI_SET, emojiTags, referencedEmoji } from "./emoji";
+import {
+  EMOJI_SET,
+  emojiTags,
+  referencedEmoji,
+  validReactionContent,
+} from "./emoji";
 import { createRelaySession } from "./session";
 import { foldMessages } from "./fold";
 import { PublishRejected } from "./outbox";
@@ -20,6 +25,7 @@ const viewer = keypair(),
   relay = keypair(),
   member = keypair();
 const url = "https://a.test/media/party.png";
+const nostrUrl = "nostr:emoji:party";
 function set(key = member, time = 1, tags = [["emoji", "party", url]]) {
   return signed(key, {
     kind: 30030,
@@ -57,16 +63,17 @@ function session(scope = "a", publishSucceeds = false) {
   owners.push(owner);
   return { ...owner, wire, live, sign, publish, query };
 }
-it("normalizes first-wins tags and leaves URL fragments out of text references", () => {
-  expect(
-    emojiTags({
-      tags: [
-        ["emoji", ":PaRtY:", url],
-        ["emoji", "party", "ignored"],
-        ["emoji", "bad code", url],
-      ],
-    }),
-  ).toEqual([{ shortcode: "party", url }]);
+it("normalizes first-wins scheme-agnostic emoji tags and leaves URL fragments out of text references", () => {
+  const nonHttpsSet = set(member, 1, [
+    ["emoji", ":PaRtY:", nostrUrl],
+    ["emoji", "party", "ignored"],
+    ["emoji", "sparkles", "ipfs://bafkreiemoji"],
+    ["emoji", "bad code", url],
+  ]);
+  expect(emojiTags(nonHttpsSet)).toEqual([
+    { shortcode: "party", url: nostrUrl },
+    { shortcode: "sparkles", url: "ipfs://bafkreiemoji" },
+  ]);
   expect(
     referencedEmoji(":PARTY: :party: https://a.test/:link: :other:"),
   ).toEqual(["party", "other"]);
@@ -110,7 +117,7 @@ it("actual session cold send is draft-safe; A/B sends, replies and signed retrie
     .respond([
       set(member, 1, [["emoji", "party", "https://b.test/media/party.png"]]),
     ]);
-  aRead.respond([set()]);
+  aRead.respond([set(member, 1, [["emoji", "party", nostrUrl]])]);
   await bReady;
   await flush();
   const sendId = a.session.messages.send("c", ":unknown:party:");
@@ -129,7 +136,7 @@ it("actual session cold send is draft-safe; A/B sends, replies and signed retrie
     ["emoji", "party", "https://b.test/media/party.png"],
   ]);
   expect(aEvent?.tags.filter(([name]) => name === "emoji")).toEqual([
-    ["emoji", "party", url],
+    ["emoji", "party", nostrUrl],
   ]);
   expect(bEvent?.tags).toEqual(
     expect.arrayContaining([
@@ -149,7 +156,7 @@ it("actual session cold send is draft-safe; A/B sends, replies and signed retrie
   expect(a.publish.mock.calls[1]?.[0].tags).toContainEqual([
     "emoji",
     "party",
-    url,
+    nostrUrl,
   ]);
   expect(a.session.emoji.snapshot().entries[0]?.url).toBe("https://new.test/p");
 });
@@ -190,7 +197,7 @@ it("reconciles retained channel reactions through confirmation and access loss",
   expect(h.session.channels.window("c").rows[0]?.id).toBe(root.id);
   const id = h.session.messages.react(root.id, "👍");
   expect(h.session.channels.window("c").rows[0]?.reactions).toEqual([
-    { content: "👍" },
+    { content: "👍", events: [{ id, authorId: viewer.pubkey }] },
   ]);
   await flush();
   await flush();
@@ -207,7 +214,7 @@ it("reconciles retained channel reactions through confirmation and access loss",
   await flush();
   expect(h.session.outbox?.snapshot()).toHaveLength(0);
   expect(h.session.channels.window("c").rows[0]?.reactions).toEqual([
-    { content: "👍" },
+    { content: "👍", events: [{ id, authorId: viewer.pubkey }] },
   ]);
   h.live.receive([roster(relay, "c", [], 2)]);
   expect(h.session.channels.window("c").rows).toEqual([]);
@@ -242,23 +249,24 @@ it("accepts every catalog shortcode length through session reaction authoring", 
     });
   }
 });
-it("reactions use the loaded target and preserve custom emoji on a failed delivery retry", async () => {
+it("custom emoji reactions are colon-wrapped, bounded, tagged, and retry original URLs", async () => {
   const h = session();
   const root = message(member, "c", "React here", 1);
   h.live.receive([root]);
   const ready = h.session.emoji.ensure();
-  h.wire.next().respond([set()]);
+  h.wire.next().respond([set(member, 1, [["emoji", "party", nostrUrl]])]);
   await ready;
   const id = h.session.messages.react(root.id, ":party:");
   await flush();
   await flush();
   const event = h.publish.mock.calls[0]?.[0];
+  expect(validReactionContent(":party:")).toBe(true);
   expect(event).toMatchObject({ kind: 7, content: ":party:" });
   expect(event?.tags).toEqual(
     expect.arrayContaining([
       ["h", "c"],
       ["e", root.id],
-      ["emoji", "party", url],
+      ["emoji", "party", nostrUrl],
     ]),
   );
   h.live.receive([set(member, 9, [["emoji", "party", "https://new.test/p"]])]);
@@ -269,6 +277,9 @@ it("reactions use the loaded target and preserve custom emoji on a failed delive
   expect(h.publish.mock.calls[1]?.[0]).toEqual(event);
   expect(() => h.session.messages.react("missing", "👍")).toThrow(/Load/);
   expect(() => h.session.messages.react(root.id, " ")).toThrow(/empty/);
+  expect(validReactionContent("x".repeat(64))).toBe(true);
+  expect(validReactionContent("x".repeat(65))).toBe(false);
+  expect(validReactionContent(`:${"x".repeat(64)}:`)).toBe(true);
   expect(() => h.session.messages.react(root.id, "x".repeat(65))).toThrow(
     /long/,
   );
@@ -411,9 +422,28 @@ it("fold preserves historical message/edit mappings and per-reaction URLs withou
       ],
     }),
   );
+  const deletedReaction = signed(viewer, {
+    kind: 7,
+    content: ":party:",
+    tags: [
+      ["e", original.id],
+      ["emoji", "party", "nostr:emoji:deleted"],
+    ],
+  });
+  const deleteReaction = signed(viewer, {
+    kind: 5,
+    content: "",
+    tags: [["e", deletedReaction.id]],
+  });
   const tagged = edit(viewer, 2, [["emoji", "party", "https://edited.test/p"]]);
   const fold = (...extra: RelayEvent[]) =>
-    foldMessages("c", relay.pubkey, [original, ...reactions, ...extra])[0];
+    foldMessages("c", relay.pubkey, [
+      original,
+      ...reactions,
+      deletedReaction,
+      deleteReaction,
+      ...extra,
+    ])[0];
   expect(fold(tagged)?.emoji).toEqual([
     { shortcode: "party", url: "https://edited.test/p" },
   ]);

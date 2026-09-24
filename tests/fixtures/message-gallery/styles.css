@@ -1,0 +1,58 @@
+/* Only documentation layout; message styles remain owned by the product. */
+html,
+body {
+  min-height: 0;
+  background: var(--surface-panel);
+}
+.message-gallery {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-1) 0 var(--space-8);
+}
+.message-gallery-controls,
+.message-gallery-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.message-gallery-controls {
+  gap: var(--space-3);
+}
+.message-gallery-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.message-gallery-examples {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+.message-gallery-examples[data-narrow] {
+  max-width: 390px;
+  width: 100%;
+}
+.message-gallery-example {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.message-gallery header p {
+  margin-top: var(--space-2);
+}
+.message-gallery-frame {
+  min-width: 0;
+  padding: var(--space-6);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel);
+}
+.message-gallery-thread {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-standard);
+}

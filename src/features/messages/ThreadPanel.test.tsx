@@ -1,3 +1,5 @@
+import { Button } from "../../shared/design-system/ui/Button";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useReading } from "./use-reading";
@@ -16,6 +18,9 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { MediaAttachment } from "./MediaAttachment";
 import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
+import type { PageNavigation } from "../navigation/service";
+import { createNavigationController } from "../navigation/controller";
+import { createMemoryHistory } from "../navigation/history";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
 import type { ChannelMessage } from "../relay/contracts";
 
@@ -110,7 +115,7 @@ function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
 function button(tree: ReactNode, label: string) {
   const found = elements(tree).find(
     (e) =>
-      (e.type === "button" || e.type === IconButton) &&
+      (e.type === "button" || e.type === Button || e.type === IconButton) &&
       (e.props.children === label || e.props["aria-label"] === label),
   );
   expect(found, label).toBeDefined();
@@ -129,7 +134,30 @@ const row: ChannelMessage = {
   reactions: [],
   replyCount: 2,
 };
-function setup(onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"]) {
+function ordinaryNavigation() {
+  return {
+    entryId: "thread-visit",
+    target: {
+      version: 1,
+      kind: "conversation",
+      channelId: "channel",
+      messageId: row.id,
+      threadRootId: row.id,
+      scope: {
+        viewer: row.authorId,
+        communityOrigin: "https://fixture.invalid",
+      },
+    },
+    signal: new AbortController().signal,
+    complete: vi.fn<PageNavigation["complete"]>(() => true),
+    resolve: vi.fn(() => true),
+    forSession: vi.fn<PageNavigation["forSession"]>(),
+  } satisfies PageNavigation;
+}
+function setup(
+  navigation?: PageNavigation,
+  onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"],
+) {
   const snapshot: ThreadSnapshot = {
     status: "ready",
     root: row,
@@ -150,7 +178,7 @@ function setup(onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"]) {
   const session = {
     thread,
     profiles: { ensure },
-    agentLibrary: createAgentLibrary(undefined).queries,
+    agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry: vi.fn() },
     // Geometry fixtures are read-only; reading behavior has its own boundary tests.
     unread: { sync: () => ({ capability: "unsupported" }) },
@@ -165,6 +193,7 @@ function setup(onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"]) {
       channelName: "General",
       channelId: "channel",
       messageId: row.id,
+      navigation,
       close,
       onOpenLink: () => false,
       ...(onOpenMediaReview ? { onOpenMediaReview } : {}),
@@ -351,9 +380,9 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
     row: {
       ...row,
       attachments: [
-        { url: "https://safe.test/a.png", video: false },
-        { url: "https://user:secret@unsafe.test/a.png", video: false },
-        { url: "http://unsafe.test/a.png", video: false },
+        { url: "https://safe.test/a.png", kind: "image" },
+        { url: "https://user:secret@unsafe.test/a.png", kind: "image" },
+        { url: "http://unsafe.test/a.png", kind: "image" },
       ],
     },
     profile: undefined,
@@ -368,7 +397,7 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
   expect(attachments).toHaveLength(1);
   expect(attachments[0]?.props.attachment).toEqual({
     url: "https://safe.test/a.png",
-    video: false,
+    kind: "image",
   });
 });
 
@@ -444,9 +473,10 @@ it("the actual message reply button opens its selected message and canonical thr
 });
 
 function messagesHarness(
+  navigation?: PageNavigation,
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"],
 ) {
-  const h = setup(onOpenMediaReview);
+  const h = setup(navigation, onOpenMediaReview);
   h.render();
   h.effects();
   const child = elements(h.render()).find(
@@ -568,9 +598,9 @@ it("preserves reading above the bottom through live updates and refresh, then re
 });
 it("routes media in replies through the resolved root review workspace", () => {
   const open = vi.fn();
-  const h = messagesHarness(open);
+  const h = messagesHarness(undefined, open);
   const root = { ...row, id: "resolved-root" };
-  const attachment = { url: "https://safe/image.png", video: false };
+  const attachment = { url: "https://safe/image.png", kind: "image" as const };
   h.snapshot.root = root;
   h.snapshot.replies = [{ ...row, id: "reply", attachments: [attachment] }];
   h.render();
@@ -678,15 +708,25 @@ it("finishes automatic pages before initial positioning and preserves a readerâ€
   h.effects();
   expect(h.element.scrollTop).toBe(4900);
 });
-it.each([false, true])(
-  "positions after automatic loading stops (limited=%s), without restarting pagination",
-  (limited) => {
-    const h = messagesHarness();
+it.each([
+  { limited: false, routed: false },
+  { limited: true, routed: false },
+  { limited: false, routed: true },
+  { limited: true, routed: true },
+])(
+  "positions after automatic loading stops (limited=$limited, routed=$routed), without restarting pagination",
+  ({ limited, routed }) => {
+    const navigation = routed ? ordinaryNavigation() : undefined;
+    const h = messagesHarness(navigation);
     h.snapshot.canLoadMore = true;
     h.render();
     h.effects();
     expect(h.element.scrollTop).toBe(0);
     expect(h.view.loadMore).toHaveBeenCalledTimes(1);
+    if (navigation)
+      expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
+        status: "opened",
+      });
     h.snapshot.status = "loading";
     h.render();
     h.effects();
@@ -700,12 +740,28 @@ it.each([false, true])(
     h.effects();
     expect(h.element.scrollTop).toBe(4200);
     expect(h.view.loadMore).toHaveBeenCalledTimes(1);
+    // A live update follows without completing the same visit twice.
+    h.snapshot.replies = [...h.snapshot.replies, { ...row, id: "live" }];
+    h.render();
+    h.effects();
+    if (navigation)
+      expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
+        status: "opened",
+      });
   },
 );
-it.each(["onWheel", "onTouchMove", "onPointerDown", "onKeyDown"])(
-  "a user %s gesture before the page completes wins over initial positioning",
-  (handler) => {
-    const h = messagesHarness();
+it.each(
+  [false, true].flatMap((routed) =>
+    ["onWheel", "onTouchMove", "onPointerDown", "onKeyDown"].map((handler) => ({
+      routed,
+      handler,
+    })),
+  ),
+)(
+  "a user $handler gesture before the page completes wins over initial positioning (routed=$routed)",
+  ({ routed, handler }) => {
+    const navigation = routed ? ordinaryNavigation() : undefined;
+    const h = messagesHarness(navigation);
     h.snapshot.status = "loading";
     const section = h.render();
     h.effects();
@@ -714,8 +770,85 @@ it.each(["onWheel", "onTouchMove", "onPointerDown", "onKeyDown"])(
     h.render();
     h.effects();
     expect(h.element.scrollTop).toBe(0);
+    if (navigation)
+      expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
+        status: "opened",
+      });
   },
 );
+it("ordinary routed loading failure completes as unavailable, never as an opened visit", () => {
+  const navigation = ordinaryNavigation();
+  const h = messagesHarness(navigation);
+  h.snapshot.status = "error";
+  h.render();
+  h.effects();
+  expect(h.element.scrollTop).toBe(0);
+  expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
+    status: "failed",
+    reason: "unavailable",
+  });
+});
+it("a presented ordinary thread survives the real navigation deadline while history is pending", async () => {
+  vi.useFakeTimers();
+  const controller = createNavigationController(createMemoryHistory());
+  let release = () => {};
+  try {
+    const navigation = ordinaryNavigation();
+    const result = controller.navigation.open(navigation.target);
+    const { attempt } = controller.navigation.snapshot();
+    navigation.signal = attempt.signal;
+    navigation.complete.mockImplementation((result) =>
+      controller.complete(attempt, result),
+    );
+    const h = messagesHarness(navigation);
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.view.loadMore.mockImplementation(() => held);
+    h.snapshot.canLoadMore = true;
+    h.render();
+    h.effects();
+    expect(h.view.loadMore).toHaveBeenCalledTimes(1);
+    h.snapshot.status = "loading";
+    h.render();
+    h.effects();
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(controller.navigation.snapshot().status).toBe("opened");
+    expect(await result).toEqual({ status: "opened" });
+    expect(attempt.signal.aborted).toBe(false);
+    expect(h.view.dispose).not.toHaveBeenCalled();
+    expect(h.element.scrollTop).toBe(0);
+    release();
+    await held;
+    h.snapshot.status = "ready";
+    h.snapshot.canLoadMore = false;
+    h.render();
+    h.effects();
+    expect(h.element.scrollTop).toBe(3400);
+    expect(navigation.complete).toHaveBeenCalledTimes(1);
+    h.unmount();
+  } finally {
+    release();
+    controller.dispose();
+    vi.useRealTimers();
+  }
+});
+it("revoked ordinary presentation cannot position or complete after loading", () => {
+  const controller = new AbortController();
+  const navigation = { ...ordinaryNavigation(), signal: controller.signal };
+  const h = messagesHarness(navigation);
+  h.snapshot.status = "loading";
+  h.snapshot.root = undefined;
+  h.render();
+  h.effects();
+  controller.abort();
+  expect(h.view.dispose).toHaveBeenCalledTimes(1);
+  h.snapshot.status = "ready";
+  h.render();
+  h.effects();
+  expect(h.element.scrollTop).toBe(0);
+  expect(navigation.complete).not.toHaveBeenCalled();
+});
 it("shows bounded participant avatars on the real reply control, through the media boundary with fallback initials", () => {
   const participants = ["p1", "p2", "p3", "p4", "p5"];
   const media = vi.fn((url: string) =>
@@ -735,20 +868,26 @@ it("shows bounded participant avatars on the real reply control, through the med
     onOpenThread: () => {},
   });
   const control = button(tree, "View thread: 2 replies");
-  const images = elements(control).filter((e) => e.type === "img");
-  expect(images).toHaveLength(1);
-  expect(images[0]?.props).toMatchObject({
-    src: "https://proxy/avatar",
-    alt: "",
-    loading: "lazy",
-  });
-  const image = { hidden: false };
-  const avatar = images[0];
-  if (!avatar) throw new Error("Missing avatar");
-  (avatar.props.onError as (event: unknown) => void)({
-    currentTarget: image,
-  });
-  expect(image.hidden).toBe(true);
+  const avatars = elements(control).filter((e) => e.type === Avatar);
+  expect(avatars.map((avatar) => avatar.props)).toEqual([
+    {
+      src: "https://proxy/avatar",
+      alt: "",
+      fallback: "Alice",
+      size: "fill",
+      shape: "circle",
+    },
+    {
+      src: undefined,
+      alt: "",
+      fallback: "Brain",
+      size: "fill",
+      shape: "circle",
+    },
+    { src: undefined, alt: "", fallback: "p3", size: "fill", shape: "circle" },
+  ]);
+  expect(media).toHaveBeenCalledWith("https://safe/avatar", "small");
+  expect(media).toHaveBeenCalledWith("http://unsafe", "small");
   expect(
     elements(control)
       .filter((e) => e.props.title)

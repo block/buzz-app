@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useIdentityNames } from "../../features/identity-names/react";
+import type { IdentityNameView } from "../../features/identity-names/service";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -7,7 +9,9 @@ import { selectProfiles } from "../../features/relay/profile-selection";
 export function useChannelLabels(
   roster: readonly ChannelSummary[],
   queries: ProfileQueries,
+  names?: IdentityNameView,
 ) {
+  const resolveName = useIdentityNames(names);
   const channels = useMemo(
     () =>
       roster.filter(
@@ -42,18 +46,32 @@ export function useChannelLabels(
     if (membership && missing)
       void queries.ensure(missing.split(":"), "background").catch(() => {});
   }, [queries, missing, membership]);
-  return useMemo(
+  const labelled = useRef(
+    new WeakMap<ChannelSummary, { name: string; channel: ChannelSummary }>(),
+  );
+  const labelledChannels = useMemo(
     () =>
       channels.map((channel) => {
         if (channel.channelType !== "dm" || !channel.participants)
           return channel;
         const name = channel.participants.length
           ? channel.participants
-              .map((id) => profiles.get(id)?.name ?? id.slice(0, 10))
+              .map((id) =>
+                resolveName(
+                  id,
+                  profiles.get(id)?.name ?? id.slice(0, 10),
+                  channel.participants,
+                ),
+              )
               .join(", ")
           : "Notes to self";
-        return { ...channel, name };
+        const previous = labelled.current.get(channel);
+        if (previous?.name === name) return previous.channel;
+        const result = { ...channel, name };
+        labelled.current.set(channel, { name, channel: result });
+        return result;
       }),
-    [channels, profiles],
+    [channels, profiles, resolveName],
   );
+  return { channels: labelledChannels, profiles };
 }

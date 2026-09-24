@@ -1,5 +1,6 @@
 import {
   TYPE_FAMILIES,
+  TYPE_SOURCE,
   TYPE_RAMPS,
   TYPE_ROLES,
   type TypeRole,
@@ -37,12 +38,12 @@ export function TypographyPage() {
     <>
       <PageHeader
         title="Typography"
-        intro="Nine sizes, ten roles, two faces. A role carries its whole setting — size, line height, letter spacing, weight — because those four are one decision rather than four, so text-body alone produces correctly set text and there is nothing left to get wrong."
+        intro="Type roles combine size, line height, letter spacing and weight. Use Inter for interface and reading text, and JetBrains Mono for code and identifiers."
       />
 
       <Section
         title="The faces"
-        description="Both already ship in every current Buzz client, so this is a decision to keep rather than to make. Inter is drawn for interface text at small sizes, which is most of this product."
+        description="Two font families, each with a defined purpose."
       >
         <Specimens>
           {TYPE_FAMILIES.map((family) => (
@@ -65,7 +66,7 @@ export function TypographyPage() {
 
       <Section
         title="The roles"
-        description="Named for the job the text does, never for its size. text-title, not text-28 — a size name is a value in disguise and goes stale the moment the ramp moves. Each specimen is set in the role it documents."
+        description="Choose a role for the job the text does. Each sample uses its named utility; values list size, line height, letter spacing and weight."
       >
         <Specimens>
           {TYPE_ROLES.map((role) => (
@@ -81,7 +82,7 @@ export function TypographyPage() {
               <Row key={`${ramp.id}-${step.step}`}>
                 <div className="flex flex-wrap items-baseline gap-x-4">
                   <code className="w-28 shrink-0 text-mono text-primary">
-                    {ramp.id} {step.step}
+                    {ramp.id}.{step.step}
                   </code>
                   <span className="w-20 shrink-0 text-body-sm text-secondary">
                     {step.value}
@@ -94,43 +95,11 @@ export function TypographyPage() {
         </Section>
       ))}
 
-      <Section
-        title="Two rules"
-        description="Both are inherited rather than invented — the existing client learned each of them the expensive way."
-      >
-        <Rows>
-          <Row>
-            <p className="text-body text-primary">
-              Every size is relative. Never px.
-            </p>
-            <p className="mt-1.5 max-w-xl text-body-sm text-secondary">
-              Fixed pixel text freezes against keyboard zoom and ignores the
-              person's font-size preference. The current client shipped a
-              message-timeline regression from exactly this and now has a CI
-              guard rejecting arbitrary size literals. This ramp derives
-              entirely from one virtual rem, so both dials work by construction.
-            </p>
-          </Row>
-          <Row>
-            <p className="text-body text-primary">
-              No all-caps, and no tracked-out labels.
-            </p>
-            <p className="mt-1.5 max-w-xl text-body-sm text-secondary">
-              A capitalised label is harder to read than the sentence-case
-              version and reads as enterprise chrome. Section labels earn their
-              quietness from size and colour — text-body-sm on text-tertiary —
-              rather than from being shouted. There is no uppercase utility in
-              this system.
-            </p>
-          </Row>
-        </Rows>
-      </Section>
-
       <Note>
-        The Cash Sans and BlockUI type variables that appear in the design
-        exploration are contamination from another Figma library linked into
-        that file. They exist nowhere in any Buzz codebase and need no cleanup —
-        only a decision not to inherit them.
+        Values are shown at 100% text size and scale with the text-size
+        preference. A role supplies its own line height; section titles use 24px
+        type on a 24px line. Reference:{" "}
+        <a href={TYPE_SOURCE}>Typography source specification</a>.
       </Note>
     </>
   );

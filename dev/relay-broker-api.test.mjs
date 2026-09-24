@@ -2,14 +2,20 @@ import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
 import { createServer } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { ReadableStream } from "node:stream/web";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
-import { finalizeEvent, getPublicKey, verifyEvent } from "nostr-tools";
+import {
+  finalizeEvent,
+  getPublicKey,
+  verifyEvent,
+  nip44,
+  generateSecretKey,
+} from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
-import { PublishRejected } from "../src/features/relay/outbox.ts";
+import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
 
 // Only wall time is controlled. Real timers/performance.now still exercise HTTP admission.
 let wallClock;
@@ -20,7 +26,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 // Real browser HTTP -> production broker. Ephemeral key; upstream I/O is entirely local.
-async function harness(respond) {
+async function harness(respond, capabilities = {}) {
   const key = new Uint8Array(32);
   key[31] = 7;
   const viewer = getPublicKey(key);
@@ -41,14 +47,19 @@ async function harness(respond) {
     communityAliases: fixtureAliases,
     identity: () => key,
     socketFactory: socket.factory,
-    authority: async () => ({ relayAuthor: viewer }),
+    authority: async () => ({ relayAuthor: viewer, ...capabilities }),
     upstreamFetch: async (url, init) => {
       const upstreamUrl = String(url);
       const authorization = new Headers(init?.headers).get("Authorization");
       const auth = authorization
         ? JSON.parse(Buffer.from(authorization.slice(6), "base64").toString())
         : undefined;
-      if (upstreamUrl !== fixtureRelayUrl) expect(auth).toBeDefined();
+      if (
+        upstreamUrl === fixtureRelayUrl ||
+        upstreamUrl === `${fixtureRelayUrl}/api/join-policy`
+      )
+        expect(auth).toBeUndefined();
+      else expect(auth).toBeDefined();
       if (auth) {
         expect(verifyEvent(auth)).toBe(true);
         expect(auth.created_at).toBe(Math.floor(Date.now() / 1000));
@@ -113,6 +124,36 @@ const success = (call) =>
       ? { accepted: true, event_id: call.body.id }
       : [],
   );
+
+test("saved icon discovery survives join-policy failure without changing join discovery", async () => {
+  const icon = "https://images.example/icon@2x.png";
+  const h = await harness((call) => {
+    if (call.url === fixtureRelayUrl) return Response.json({ icon });
+    if (call.url === `${fixtureRelayUrl}/api/join-policy`)
+      return new Response("unavailable", { status: 503 });
+    return new Response(null, { status: 404 });
+  });
+  try {
+    const iconResponse = await h.get("icon-info");
+    expect(iconResponse.status).toBe(200);
+    expect(await iconResponse.json()).toEqual({ icon });
+    expect(h.calls.map(({ url }) => url)).toEqual([fixtureRelayUrl]);
+
+    const joinResponse = await h.get("info");
+    const joinBody = await joinResponse.json();
+    expect([joinResponse.status, joinBody]).toEqual([
+      503,
+      { error: "Could not load join policy" },
+    ]);
+    expect(h.calls.map(({ url }) => url)).toEqual([
+      fixtureRelayUrl,
+      fixtureRelayUrl,
+      `${fixtureRelayUrl}/api/join-policy`,
+    ]);
+  } finally {
+    await h.close();
+  }
+});
 
 test("GIF capability discovery does not depend on join-policy availability", async () => {
   const h = await harness((call) => {
@@ -212,6 +253,275 @@ test("GIF search follows the relay-advertised KLIPY path with signed, bounded in
   }
 });
 
+test("media proxy returns generic files as neutralized authenticated downloads", async () => {
+  const bytes = Buffer.from("%PDF-1.7\nfixture pdf\n");
+  const h = await harness((call) => {
+    expect(call.url).toBe(`${fixtureRelayUrl}/media/file.pdf`);
+    return new Response(bytes, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Length": String(bytes.length),
+        "Accept-Ranges": "bytes",
+      },
+    });
+  });
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file.pdf`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(response.headers.get("content-disposition")).toBe("attachment");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+    expect(h.calls).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy neutralizes active content as downloads", async () => {
+  const activeTypes = [
+    "text/html",
+    "image/svg+xml",
+    "image/svg+xml; charset=utf-8",
+    "IMAGE/SVG+XML",
+  ];
+  for (const contentType of activeTypes) {
+    const bytes = Buffer.from(`<script>${contentType}</script>`);
+    const h = await harness(
+      () =>
+        new Response(bytes, {
+          headers: {
+            "Content-Type": contentType,
+            "Content-Length": String(bytes.length),
+          },
+        }),
+    );
+    try {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(response.headers.get("content-disposition")).toBe("attachment");
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+    } finally {
+      await h.close();
+    }
+  }
+});
+
+test("media proxy neutralizes comma-joined content types as downloads", async () => {
+  const bytes = Buffer.from("fake png then svg");
+  const h = await harness(
+    () =>
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "image/png, image/svg+xml",
+          "Content-Length": String(bytes.length),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(response.headers.get("content-disposition")).toBe("attachment");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy strips smuggled inline content type parameters", async () => {
+  const bytes = Buffer.from("fake png then svg");
+  const h = await harness(
+    () =>
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "image/png;x, image/svg+xml",
+          "Content-Length": String(bytes.length),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy neutralizes missing or empty content types as downloads", async () => {
+  for (const headers of [{}, { "Content-Type": "" }]) {
+    const bytes = Buffer.from("unknown bytes");
+    const h = await harness(
+      () =>
+        new Response(bytes, {
+          headers: { ...headers, "Content-Length": String(bytes.length) },
+        }),
+    );
+    try {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(response.headers.get("content-disposition")).toBe("attachment");
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+    } finally {
+      await h.close();
+    }
+  }
+});
+
+test("media proxy keeps raster images inline with exact bytes", async () => {
+  const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const h = await harness(
+    () =>
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "image/png",
+          "Content-Length": String(bytes.length),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/pixel.png`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  } finally {
+    await h.close();
+  }
+});
+
+test.each([
+  ["application/zip", 100],
+  ["image/png", 50],
+  ["image/gif", 10],
+  ["video/mp4", 500],
+])(
+  "media proxy rejects %s above its %i MiB declared budget",
+  async (type, mib) => {
+    let cancelled = false;
+    const h = await harness(
+      () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": type,
+              "Content-Length": String(mib * 1024 * 1024 + 1),
+            },
+          },
+        ),
+    );
+    try {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+      );
+      expect(response.status).toBe(413);
+      expect(await response.json()).toEqual({ error: "Media budget exceeded" });
+      expect(cancelled).toBe(true);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test("unknown-length media is metered, cancelled on overflow and leaves the broker usable", async () => {
+  let cancelled = false;
+  let oversized = true;
+  const chunk = new Uint8Array(1024 * 1024);
+  const h = await harness(() =>
+    oversized
+      ? new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.enqueue(chunk);
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { headers: { "Content-Type": "image/gif" } },
+        )
+      : new Response("ok", { headers: { "Content-Type": "text/plain" } }),
+  );
+  try {
+    // Either the initial read or the body must fail: an over-budget stream must
+    // never complete successfully after headers have already reached the client.
+    await expect(
+      (async () => {
+        const response = await h.get("media?url=/media/file.gif");
+        await response.arrayBuffer();
+      })(),
+    ).rejects.toThrow();
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+    oversized = false;
+    const next = await h.get("media?url=/media/file.txt");
+    expect(next.headers.get("content-disposition")).toBe("attachment");
+    expect(await next.text()).toBe("ok");
+  } finally {
+    await h.close();
+  }
+});
+
+test("media deadline cancels the response pipeline after headers", async () => {
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  let cancelled = false;
+  const h = await harness(
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1]));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { headers: { "Content-Type": "video/mp4" } },
+      ),
+  );
+  try {
+    const response = await h.get("media?url=/media/clip.mp4");
+    const reader = response.body.getReader();
+    expect((await reader.read()).value).toEqual(new Uint8Array([1]));
+    deadline.abort();
+    await expect(reader.read()).rejects.toThrow();
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+  } finally {
+    await h.close();
+  }
+});
+
 test("media proxy streams authenticated video ranges and preserves seek headers", async () => {
   const bytes = Buffer.from("video-range");
   const h = await harness((call) => {
@@ -220,7 +530,7 @@ test("media proxy streams authenticated video ranges and preserves seek headers"
     return new Response(bytes, {
       status: 206,
       headers: {
-        "Content-Type": "video/mp4",
+        "Content-Type": 'video/mp4; codecs="avc1.42E01E"',
         "Content-Length": String(bytes.length),
         "Content-Range": "bytes 100-110/1000",
         "Accept-Ranges": "bytes",
@@ -238,6 +548,112 @@ test("media proxy streams authenticated video ranges and preserves seek headers"
     expect(response.headers.get("accept-ranges")).toBe("bytes");
     expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
     expect(h.calls).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy streams authenticated audio ranges and preserves seek headers", async () => {
+  const bytes = Buffer.from("audio-range");
+  const h = await harness((call) => {
+    expect(call.url).toBe(`${fixtureRelayUrl}/media/audio.mp3`);
+    expect(call.headers.Range).toBe("bytes=100-");
+    return new Response(bytes, {
+      status: 206,
+      headers: {
+        "Content-Type": "Audio/MPEG; charset=utf-8",
+        "Content-Length": String(bytes.length),
+        "Content-Range": "bytes 100-110/1000",
+        "Accept-Ranges": "bytes",
+      },
+    });
+  });
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/audio.mp3`)}`,
+      { headers: { Range: "bytes=100-" } },
+    );
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-type")).toBe("audio/mpeg");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(response.headers.get("content-range")).toBe("bytes 100-110/1000");
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+    expect(h.calls).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy rejects oversized non-range audio", async () => {
+  const h = await harness(
+    () =>
+      new Response("too large", {
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Content-Length": String(20 * 1024 * 1024 + 1),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/audio.mp3`)}`,
+    );
+    expect(response.status).toBe(413);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy neutralizes non-media content types as downloads", async () => {
+  const bytes = Buffer.from("plain");
+  const h = await harness(
+    () =>
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "text/plain",
+          "Content-Length": String(bytes.length),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file.txt`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(response.headers.get("content-disposition")).toBe("attachment");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("accept-ranges")).toBeNull();
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy strips smuggled audio content type parameters", async () => {
+  const bytes = Buffer.from("fake audio then svg");
+  const h = await harness(
+    () =>
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "audio/mpeg;x, image/svg+xml",
+          "Content-Length": String(bytes.length),
+          "Accept-Ranges": "bytes",
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/audio.mp3`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("audio/mpeg");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
   } finally {
     await h.close();
   }
@@ -586,6 +1002,507 @@ test("both real sign and publish routes admit direct replies but reject arbitrar
       }
     }
     expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("held optional snapshot body leaves ordinary broker capacity free and start credit untouched", async () => {
+  let release;
+  const h = await harness((call) => {
+    if (call.body?.[0]?.kinds?.includes(20001))
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            release = () => {
+              controller.enqueue(new TextEncoder().encode("[]"));
+              controller.close();
+            };
+          },
+        }),
+      );
+    return Response.json([]);
+  });
+  const presence = [{ kinds: [20001], authors: [h.event.pubkey], limit: 1 }];
+  try {
+    const snapshot = h.post("presence-snapshot", presence);
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    const duplicate = await h.post("presence-snapshot", presence);
+    expect(duplicate.status).toBe(204);
+    expect((await h.post("query", filters)).status).toBe(200);
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1].at - h.calls[0].at).toBeLessThan(400);
+    release();
+    release = undefined;
+    expect(await (await snapshot).json()).toEqual([]);
+    expect(
+      (await h.post("presence-snapshot", [{ ...presence[0], authors: [] }]))
+        .status,
+    ).toBe(400);
+    expect(
+      (
+        await h.post("presence-snapshot", [
+          { ...presence[0], authors: Array(257).fill(h.event.pubkey) },
+        ])
+      ).status,
+    ).toBe(400);
+    expect(h.calls).toHaveLength(2);
+  } finally {
+    release?.();
+    await h.close();
+  }
+});
+
+test("presence snapshot progresses while an ordinary response body is held", async () => {
+  let release;
+  const h = await harness((call) => {
+    if (call.body?.[0]?.kinds?.includes(20001)) return Response.json([]);
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          release = () => {
+            controller.enqueue(new TextEncoder().encode("[]"));
+            controller.close();
+          };
+        },
+      }),
+    );
+  });
+  let ordinary;
+  try {
+    ordinary = h.post("query", filters, undefined, "background");
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    const snapshot = await h.post("presence-snapshot", [
+      { kinds: [20001], authors: [h.event.pubkey], limit: 1 },
+    ]);
+    expect(snapshot.status).toBe(200);
+    expect(await snapshot.json()).toEqual([]);
+    expect(h.calls).toHaveLength(2);
+    const missing = await h.post("stream-presence", {
+      streamId: "0".repeat(32),
+      status: "online",
+    });
+    expect(await missing.json()).toEqual({ accepted: null });
+  } finally {
+    release?.();
+    await ordinary;
+    await h.close();
+  }
+});
+test.each([undefined, "22222222-2222-4222-8222-222222222222"])(
+  "real outbox creates, invites and sends without Sessions support (parent: %s)",
+  async (parent) => {
+    const h = await harness(
+      (call) =>
+        Response.json(
+          call.url.endsWith("/events")
+            ? { accepted: true, event_id: call.body.id }
+            : [],
+        ),
+      { channelCreation: true },
+    );
+    let owner;
+    let traffic;
+    try {
+      const transport = await connectBrokerTransport(h.base);
+      traffic = await openBrokerSocket(transport);
+      expect(transport.writer.kinds).toContain(9007);
+      expect(transport.writer.kinds).not.toContain(9050);
+      owner = createOutbox(transport.viewer, transport.writer, {
+        load: () => [],
+        save: () => {},
+      });
+      const id = "11111111-1111-4111-8111-111111111111";
+      const creationId = owner.outbox.send({
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", id],
+          ["name", "Work"],
+          ["visibility", "private"],
+          ["channel_type", "stream"],
+          [
+            "about",
+            `Buzz session (buzz.sessions/v1)${parent ? `\nparent:${parent}` : ""}`,
+          ],
+        ],
+      });
+      await vi.waitFor(() =>
+        expect(
+          owner.local.snapshot().find((row) => row.event.id === creationId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+      const temporaryCreationId = owner.outbox.send({
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", "33333333-3333-4333-8333-333333333333"],
+          ["name", "Standup"],
+          ["visibility", "open"],
+          ["channel_type", "stream"],
+          ["ttl", "604800"],
+        ],
+      });
+      await vi.waitFor(() =>
+        expect(
+          owner.local
+            .snapshot()
+            .find((row) => row.event.id === temporaryCreationId)?.delivery,
+        ).toBe("accepted"),
+      );
+      const invitationId = owner.outbox.send({
+        kind: 9000,
+        content: "",
+        tags: [
+          ["h", id],
+          ["p", "a".repeat(64)],
+        ],
+      });
+      await vi.waitFor(() =>
+        expect(
+          owner.local.snapshot().find((row) => row.event.id === invitationId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+      const messageId = owner.outbox.send({
+        kind: 9,
+        content: "Hello",
+        tags: [
+          ["h", id],
+          ["p", "a".repeat(64)],
+        ],
+      });
+      await vi.waitFor(() =>
+        expect(
+          owner.local.snapshot().find((row) => row.event.id === messageId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+      expect(h.publications.map((event) => event.kind)).toEqual([
+        9007, 9007, 9000, 9,
+      ]);
+      const denied = await h.post("sign", {
+        kind: 9050,
+        created_at: 1700000000,
+        content: JSON.stringify({ action: "create", title: "Work" }),
+        tags: [["h", id]],
+      });
+      expect(denied.status).toBe(400);
+    } finally {
+      owner?.dispose();
+      traffic?.dispose();
+      await h.close();
+    }
+  },
+);
+
+test.each(["sign", "publish"])(
+  "%s rejects truncated channel creation tags as a client error",
+  async (route) => {
+    const h = await harness(success, { channelCreation: true });
+    try {
+      const required = [
+        ["h", "11111111-1111-4111-8111-111111111111"],
+        ["name", "Work"],
+        ["visibility", "open"],
+        ["channel_type", "stream"],
+      ];
+      for (let length = 0; length < required.length; length++) {
+        const response = await h.post(route, {
+          kind: 9007,
+          created_at: 1700000000,
+          content: "",
+          tags: required.slice(0, length),
+        });
+        expect(response.status).toBe(400);
+      }
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test("member addition works without channel creation, while role elevation remains rejected", async () => {
+  const h = await harness(success);
+  let traffic;
+  let owner;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    traffic = await openBrokerSocket(transport);
+    expect(transport.writer.kinds).toContain(9000);
+    expect(transport.writer.kinds).not.toContain(9007);
+    owner = createOutbox(transport.viewer, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    const tags = [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["p", "a".repeat(64)],
+    ];
+    const id = owner.outbox.send({ kind: 9000, content: "", tags });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === id)?.delivery,
+      ).toBe("accepted"),
+    );
+    expect(h.publications).toHaveLength(1);
+    for (const role of ["owner", "admin", "member"]) {
+      const denied = await h.post("sign", {
+        kind: 9000,
+        content: "",
+        created_at: 1700000000,
+        tags: [...tags, ["role", role]],
+      });
+      expect(denied.status).toBe(400);
+    }
+  } finally {
+    owner?.dispose();
+    traffic?.dispose();
+    await h.close();
+  }
+});
+
+test("edit capability signs and publishes canonical replacements, rejecting malformed edits locally", async () => {
+  const h = await harness(success);
+  try {
+    await h.start();
+    expect((await (await h.get("session")).json()).writeKinds).toContain(40003);
+    const template = {
+      ...h.event,
+      kind: 40003,
+      content: "corrected **message**",
+      tags: [
+        ["h", "c"],
+        ["e", h.event.id],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({
+      kind: 40003,
+      content: template.content,
+      tags: template.tags,
+      pubkey: h.event.pubkey,
+    });
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [["h", "c"]],
+        [
+          ["h", "c"],
+          ["e", "bad"],
+        ],
+        [
+          ["h", "c"],
+          ["e", h.event.id, "", "reply"],
+        ],
+        [...event.tags, ["e", "a".repeat(64)]],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+      expect((await h.post(route, { ...event, content: " " })).status).toBe(
+        400,
+      );
+      expect(
+        (await h.post(route, { ...event, content: "x".repeat(32001) })).status,
+      ).toBe(400);
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("message/reaction deletions pass real signing and publication without admitting workflow or arbitrary deletion shapes", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const template = {
+      kind: 5,
+      content: "",
+      created_at: h.event.created_at,
+      tags: [
+        ["h", "c"],
+        ["e", "a".repeat(64)],
+        ["k", "7"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.kind).toBe(5);
+    expect((await h.post("publish", event)).status).toBe(200);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [
+          ["h", "c"],
+          ["e", "invalid"],
+          ["k", "7"],
+        ],
+        [
+          ["h", "c"],
+          ["e", "a".repeat(64)],
+          ["k", "30030"],
+        ],
+        [...template.tags, ["a", `30620:${h.event.pubkey}:workflow`]],
+        [...template.tags, ["h", "other"]],
+        [
+          ["h", "c"],
+          ["k", "7"],
+        ],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("direct-message transport signs only bounded participants and binds the returned channel to its receipt", async () => {
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  const h = await harness((call) =>
+    Response.json({
+      accepted: true,
+      event_id: call.body.id,
+      message: `response:${JSON.stringify({ channel_id: channelId })}`,
+    }),
+  );
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const recipients = ["a".repeat(64), "b".repeat(64)];
+    await expect(
+      transport.openDirectMessage(recipients, new AbortController().signal),
+    ).resolves.toBe(channelId);
+    const event = h.calls[0].body;
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.kind).toBe(41010);
+    expect(event.pubkey).toBe(h.event.pubkey);
+    expect(event.content).toBe("");
+    expect(event.tags.filter(([tag]) => tag === "p")).toEqual(
+      recipients.map((key) => ["p", key]),
+    );
+    await transport.openDirectMessage(recipients, new AbortController().signal);
+    expect(h.calls[1].body.id).not.toBe(event.id);
+    for (const pubkeys of [
+      [],
+      [h.event.pubkey],
+      [recipients[0], recipients[0]],
+      Array(9).fill(recipients[0]),
+      ["invalid"],
+    ]) {
+      expect((await h.post("direct-message", { pubkeys })).status).toBe(400);
+    }
+    expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test.each([
+  {
+    accepted: false,
+    message: 'response:{"channel_id":"11111111-1111-4111-8111-111111111111"}',
+  },
+  {
+    accepted: true,
+    event_id: "wrong",
+    message: 'response:{"channel_id":"11111111-1111-4111-8111-111111111111"}',
+  },
+  { accepted: true, message: 'response:{"channel_id":"not-a-channel"}' },
+])("direct-message rejects an invalid command receipt: %j", async (receipt) => {
+  const h = await harness((call) =>
+    Response.json({ event_id: call.body.id, ...receipt }),
+  );
+  try {
+    const response = await h.post("direct-message", {
+      pubkeys: ["a".repeat(64)],
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).not.toHaveProperty("channelId");
+  } finally {
+    await h.close();
+  }
+});
+
+test("memory reads use captured relay and owner, not submitted identity/filter authority, through HTTP host and transport", async () => {
+  const owner = new Uint8Array(32);
+  owner[31] = 7;
+  const viewer = getPublicKey(owner),
+    agent = generateSecretKey(),
+    author = getPublicKey(agent);
+  const key = nip44.v2.utils.getConversationKey(agent, viewer);
+  const memory = finalizeEvent(
+    {
+      kind: 30174,
+      created_at: 1,
+      tags: [
+        ["p", viewer],
+        [
+          "d",
+          createHmac("sha256", key)
+            .update("agent-memory/v1/d-tag\0mem/test")
+            .digest("hex"),
+        ],
+      ],
+      content: nip44.v2.encrypt(
+        JSON.stringify({ slug: "mem/test", value: "private" }),
+        key,
+      ),
+    },
+    agent,
+  );
+  let forbidden = false;
+  const h = await harness((call) => {
+    expect(call.url).toBe(`${fixtureRelayUrl}/query`);
+    expect(call.body).toEqual([
+      { kinds: [30174], authors: [author], "#p": [viewer], limit: 256 },
+    ]);
+    expect(call.auth.pubkey).toBe(viewer);
+    return forbidden
+      ? new Response("denied", { status: 403 })
+      : Response.json([memory]);
+  });
+  try {
+    const transport = await connectBrokerTransport(
+      h.base,
+      undefined,
+      fixtureRelayUrl,
+    );
+    expect(transport.readAgentMemories).toBeDefined();
+    const listing = await transport.readAgentMemories(
+      author,
+      new AbortController().signal,
+    );
+    expect(listing).toEqual({
+      entries: [
+        { slug: "mem/test", body: "private", eventId: memory.id, createdAt: 1 },
+      ],
+      partial: false,
+    });
+    const scoped = `${encodeURIComponent(fixtureRelayUrl)}/agent-memories`;
+    for (const body of [
+      { agent: viewer },
+      { agent: author, owner: viewer },
+      { agent: author, kinds: [9] },
+    ]) {
+      expect((await h.post(scoped, body)).status).toBe(400);
+    }
+    expect((await h.post("agent-memories", { agent: author })).status).toBe(
+      400,
+    );
+    expect(h.calls).toHaveLength(1);
+    forbidden = true;
+    await expect(
+      transport.readAgentMemories(author, new AbortController().signal),
+    ).rejects.toMatchObject({ name: "MemoryDenied" });
+    expect(h.calls).toHaveLength(2);
   } finally {
     await h.close();
   }

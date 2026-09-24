@@ -152,20 +152,16 @@ function OwnedCompletion({
     };
   }, [active]);
   const items = result?.items ?? [];
-  const visible = !result || !!(items.length || result.status || result.retry);
+  // Matching syntax is not evidence of pending work. Providers publish their
+  // own status when needed; an empty/unpublished result must not flash a portal.
+  const visible = !!(items.length || result?.status || result?.retry);
   const count = items.length + (result?.retry ? 1 : 0);
   const index =
     selected === RETRY && result?.retry
       ? items.length
       : items.findIndex((item) => item.id === selected);
   const selectedIndex = index < 0 ? 0 : index;
-  const status =
-    result?.status ??
-    (!result
-      ? "Loading suggestions…"
-      : !items.length && !result.retry
-        ? "No matches"
-        : undefined);
+  const status = result?.status;
   function accept(index: number) {
     if (!active() || latest.current !== result) return false;
     if (index === items.length && result?.retry) {
@@ -180,13 +176,17 @@ function OwnedCompletion({
   }
   useLayoutEffect(() => {
     const element = input.current;
-    if (!element || !visible) return;
-    element.setAttribute("aria-autocomplete", "list");
-    element.setAttribute("aria-haspopup", "listbox");
-    element.setAttribute("aria-controls", id);
-    if (count)
-      element.setAttribute("aria-activedescendant", `${id}-${selectedIndex}`);
-    else element.removeAttribute("aria-activedescendant");
+    // Escape must still dismiss an unpublished provider without advertising a
+    // nonexistent listbox. A settled empty result leaves ordinary keys alone.
+    if (!element || (!visible && result)) return;
+    if (visible) {
+      element.setAttribute("aria-autocomplete", "list");
+      element.setAttribute("aria-haspopup", "listbox");
+      element.setAttribute("aria-controls", id);
+      if (count)
+        element.setAttribute("aria-activedescendant", `${id}-${selectedIndex}`);
+      else element.removeAttribute("aria-activedescendant");
+    }
     const handle: NonNullable<CompletionEditor["keys"]["current"]> = (
       event,
     ) => {

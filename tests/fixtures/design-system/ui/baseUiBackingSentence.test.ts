@@ -20,7 +20,7 @@ describe("inline inheritance description", () => {
   });
   it("combines both libraries in one sentence", () => {
     expect(sentenceFor("search-field")).toBe(
-      "Inherits Base UI Field, Base UI Input and Button.",
+      "Inherits Base UI Input, Field and Button.",
     );
   });
   it("adds no absence commentary for native components", () => {

@@ -22,7 +22,8 @@ frontend hot reload alone is not enough.
 
 Settings independently enables/disables Channels and GitHub. Disabling GitHub
 removes its link handler and open panel; shared channel data remains available.
-Disabling Channels removes its page while the app-owned data survives.
+Channels is required by the current host; optional page removal does not dispose
+the app-owned sidebar or session data.
 
 The broker uses the existing authorized Buzz identity in the OS secret store (macOS
 Keychain, Linux secret service) and
@@ -45,7 +46,11 @@ This is not a new native login.
 - `features/messages` owns reusable `ChannelTimeline`, `MessageRow`, `ThreadPanel`,
   `MessageComposer`, delivery presentation, styles and reading geometry. They accept
   ordinary props over the shared session; none owns a connection or outbox.
-- `bundled/channels` owns page registration, channel selection/navigation, sidebar,
+- `features/channel-navigation` owns the persistent sidebar and its scoped UI handoff
+  for session draft rows and preparing DMs. App composes it beside independent pages;
+  sidebar actions use the normal navigation controller. It reuses session capabilities
+  and existing sidebar components without another relay/cache or plugin registry.
+- `bundled/channels` owns page registration, conversation selection/navigation,
   diagnostics, layout and panel placement. `shared/view-state.ts` partitions persisted
   drafts and view intent by community/viewer scope.
 - `bundled/github` registers and implements the panel. Channels uses the panel
@@ -60,8 +65,9 @@ Keep page-specific navigation and arrangement in the plugin; compose shared mess
 components rather than copying them. Session reconciliation, authorization, retained
 reads and durable outbox recovery remain host-owned even if Channels is disabled.
 
-The workspace React key includes community/viewer scope **and** connection
-generation. This resets session-owned component state on switching or reconnecting;
+The sidebar and Channels workspace React keys include community/viewer scope **and**
+connection generation. This resets their session-owned state on switching or
+reconnecting, not unrelated page drafts;
 drafts, channel selection and reading geometry retain their stable scope keys.
 
 Saved sidebar groups, ordering, assignments and stars live in the session's
@@ -73,11 +79,118 @@ late completion cannot repopulate a retired snapshot. These are account-owned
 preferences, not channel access grants: sidebar sections still intersect the
 authorized roster. There is no new disk cache or automatic cross-device sync.
 
-Search, collapsed section keys and sidebar scroll remain separate, scoped view
-intent. They are saved on page exit and restored before paint when the roster and
-groups are available; navigation history does not own them. The saved-groups
+Collapsed section keys and sidebar scroll remain separate, scoped view intent.
+They survive page switches in the same mounted sidebar, are saved when that
+sidebar exits its session, and restore before paint when the roster and groups
+are available; navigation history does not own them. Search lives in the top-bar
+palette; legacy sidebar filters are ignored. The saved-groups
 browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
+
+Channel row actions share one sidebar-owned `ContextMenuRoot` / `MenuPopup`, labelled
+`Actions for <channel>`. **New session** comes first; additional sidebar actions
+should extend that popup, with a separator only when another action group follows.
+`ChannelSidebarItem` owns the context trigger inside its memo boundary, using stable
+`onOpenMenu` props. It wraps the activity select surface rather than merging popup
+props onto the activity button; session disclosure and child rows stay outside.
+The popup and trigger are enabled only when `rowActions` supplies actual items;
+each action owns its eligibility, so Sessions availability never gates sibling
+actions. `useChannelRowMenu` owns channel id, the full rendered section key
+(`starred`, `channels`, `group:<id>`, etc.), and the keyboard anchor. It clears
+that state if the row leaves that section or loses its last action; moving back
+or restoring eligibility does not reopen the menu. For future group commands,
+derive the saved group id separately from `group:<id>` rather than conflating it
+with rendered placement. Right-clicking the separate session disclosure remains
+outside the parent menu trigger, as do child-session rows.
+
+Sidebar create-channel dialogs and partial-setup recovery stay available on other
+pages. Completion is fenced to the originating relay session and navigates to a
+normal conversation destination. New-session intent uses the Channels version-1
+page route `{ kind: "new-session", parentId }`; Channels checks parent access/type
+and Sessions availability. Only parent intent, never draft text, enters history.
+Preparing-DM suppression captures the pre-open roster and exact member set, hiding
+only newly prepared DMs until confirmation; leaving New message or replacing the
+session clears that handoff. Timeline readers and reading leases stay in visible
+conversation content and unmount when leaving Messages.
+
+## Starting a direct message
+
+The **+** action in the DMs sidebar header opens **New message**, a routed empty
+conversation in Messages. The header remains available before the first DM exists. Its inline **To:**
+field owns a paginated people picker and up to eight recipient chips, excluding
+this viewer. Agent profiles are offered only when their exact public key appears
+in the ready native control snapshot for this community. Public profile hints and
+the compatibility library do not establish control; this filter also applies to
+searches and cached results. Selected agent chips are revalidated against the
+current ready control snapshot before a fresh open and again before enqueueing.
+Already queued messages retain exact-event recovery. Namesake identities show
+unambiguous shared public-key labels in their options and selected chips. Human profiles remain available while controls load
+or fail. The shared popover hugs shorter result lists up to ten rows (or available
+viewport space), then scrolls. Search placeholders retain the previous result count
+within that cap. An initial 15-profile preview paints first; bounded background batches
+continue without scrolling, including for searches. Pages containing only excluded
+agents keep loading; an empty result is shown only after all matching pages finish.
+Directory reads use the verified scheduler without
+admitting browse results into shared conversation profiles, so a large directory
+cannot evict sidebar names. Each incoming batch shares the mention pickers' name
+ranking, but new identities append so visible rows never reshuffle. This is not a
+globally alphabetical directory: the relay pages by profile update time. Completed
+pages and recent searches stay in memory for this account/community session, so
+returning or clearing a search resumes the same results. Typing immediately filters
+loaded names without replacing local matches with a loading placeholder. Once the
+browse directory is complete, searches stay local; while it is incomplete, remote
+matches can append in the background. A failed background read
+keeps existing people visible and offers retry. Mentions retain their conversation-specific
+eligibility. Before a DM exists, a composer-local `DraftMentionRoster` supplies
+only the selected recipient identities and names to both mention tools. Removing
+a selection updates both menus; an already-inserted mention still requires actual
+DM membership on Send. Mentioning never opens the DM early or adds recipients.
+The existing `MessageComposer` owns the draft and ordinary input behavior. Its placeholder is blank before selection and lists the selected names
+afterward. Disabled mention and emoji icons stay unfilled. No timeline is mounted before the first message is confirmed. DMs omit the date
+pill at the beginning of their complete history, while retaining message times
+and date separators between days.
+
+`features/direct-messages` owns selection, scoped view intent, and the isolated
+chip-removal effect. The five-frame effect lasts 400 ms (a gentler 180 ms fade
+with reduced motion); audio is best effort. The copied assets retain their MIT
+notice in `public/recipient-removal/LICENSE.txt`.
+
+The relay session exposes `directMessages` over its existing verified reader and
+outbox. People are kind-0 pages: a 15-profile browse preview (30 for search), followed by
+30-profile browse batches. Searches retain 30-profile pages because profile metadata
+can be large enough to exceed the read budget in larger batches. Remote name
+searches are debounced by 150 ms.
+Opening uses the development broker's purpose-bound `/direct-message` endpoint:
+it signs kind 41010 with one to eight distinct other participant keys, checks the
+exact command receipt, and returns the canonical channel ID. A unique client tag
+allows reissuing this participant-set command after a lost response without
+receiving a generic duplicate-event receipt. No private key or arbitrary signing
+capability is exposed to the page. Other host adapters report this capability as
+unavailable until they implement it.
+
+Before sending, the session requires signed DM metadata and an exact signed roster
+containing the viewer and selected people. The first kind-9 message then uses the
+normal durable outbox. Navigation waits for an accepted receipt or verified echo.
+A failure retains recipients and draft; an uncertain delivery retries its exact
+event ID. The outbox persists recovery metadata with the operation before publication and
+retains it through confirmed delivery until the composer durably acknowledges it.
+Hydration must finish before a fresh send; one recovery key prevents duplicate
+first sends. Definitively failed operations restore newer editable draft and recipient
+views; uncertain operations keep their durable recovery payload authoritative.
+Before acknowledgement retires recovery, saved views are removed and their absence
+is verified. Cleanup failure retains recovery for confirmation-only retry. A page
+reopened during acknowledgement resets its recovered editor when retirement finishes.
+Local storage is a convenience for editable drafts. Only a
+definitively failed recovery operation can be removed (including through
+Diagnostics), releasing the preserved draft for editing or a changed recipient set. A changed set also invalidates the prepared destination.
+Page exit cancels preparation and its delivery waiter, while the outbox retains
+ownership of already queued messages. Reopening recovers the pending event rather
+than enqueueing a duplicate.
+
+Focused coverage lives in `NewMessage.test.tsx`, `direct-messages.test.ts`,
+`relay-broker-api.test.mjs`, and the Chromium/WebKit `new-message.spec.mjs` journey.
+The browser journey uses the production app and broker with ephemeral identities
+and modeled upstream I/O; it does not send messages to a live community.
 
 ## Performance and correctness carried from Astra
 
@@ -202,15 +315,15 @@ Channels supports plain-text Markdown authoring with a shared durable outbox and
 Channel and thread messages render CommonMark plus GFM headings, emphasis, lists, quotes,
 tables, task lists, strikethrough and code, while preserving chat-style single line breaks.
 Only credential-free HTTPS links are active; raw HTML is ignored and inline remote images
-are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji
-remain event-local and are not substituted inside links or code. Authenticated live traffic
-reconciles through the same session. Channel creation and composer preview/toolbars are not
-implemented. Reply counts open a bounded thread view; attachments are links. Routine freshness
-labels are not shown; Conversation options → Diagnostics
+are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji remain
+event-local and are not substituted inside links or code.
+Authenticated live traffic reconciles through the same session. Channel creation and composer
+preview/toolbars are not implemented. Reply counts open a bounded thread view; attachments are
+links. Routine freshness labels are not shown; Channel Settings → Diagnostics
 exposes refresh, outbox inspection and timings. Packaged builds do not
 include the development relay broker. GitHub fetches public data only; signed-in
 GitHub actions remain on GitHub. A saved-groups/stars failure keeps its specific
-reason under **Conversation options → Diagnostics → Saved groups and stars**.
+reason under **Channel Settings → Diagnostics → Saved groups and stars**.
 `Preference query` includes reader queueing, transport and verification; use relay
 timings to separate those. `Preference decode` identifies the local decoder stage.
 The diagnostic does not trigger another request or change retry policy.

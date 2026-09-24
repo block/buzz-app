@@ -1,4 +1,5 @@
 import "../../src/shared/styles/globals.css";
+import { MessageSettings } from "../../src/app/MessageSettings";
 import { StrictMode, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
@@ -6,6 +7,8 @@ import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
 import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
+import { bindNames } from "../../src/features/identity-names/service";
+import { createAgentDirectory } from "../../src/features/identity-names/testing";
 import { createRelaySession } from "../../src/features/relay/session";
 import {
   keypair,
@@ -27,7 +30,11 @@ const publications: RelayEvent[] = [];
 let incoming = (_events: readonly RelayEvent[]) => {};
 let releaseProfiles = () => {};
 let libraryReads = 0;
+const reads: (readonly number[])[] = [];
+let pendingReads = 0;
 let libraryIncludesFirst = false;
+const naming = new URLSearchParams(location.search).has("identity-names");
+let colliding = false;
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
 const profileGate = delayed
   ? new Promise<void>((resolve) => {
@@ -38,15 +45,31 @@ const owner = createRelaySession(
   {
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
-    media: (url) => url,
+    media: (url) =>
+      url.startsWith("https://avatars.test/") ? new URL(url).pathname : url,
+    ...(new URLSearchParams(location.search).has("attachments")
+      ? {
+          async uploadAttachment() {
+            throw new Error("Toolbar fixture does not upload files");
+          },
+        }
+      : {}),
     // Synthetic, lazy capability: only the explicit fixture action loads it.
     async readAgentLibrary() {
       libraryReads++;
       return {
         definitions: [],
-        identities: libraryIncludesFirst
-          ? [{ pubkey: first.pubkey, name: "Honey" }]
-          : [],
+        identities: naming
+          ? [
+              { pubkey: first.pubkey, name: "Honey" },
+              {
+                pubkey: second.pubkey,
+                name: colliding ? "Honey" : "Other Honey",
+              },
+            ]
+          : libraryIncludesFirst
+            ? [{ pubkey: first.pubkey, name: "Honey" }]
+            : [],
       };
     },
     subscribe(callbacks) {
@@ -55,21 +78,34 @@ const owner = createRelaySession(
       return { update() {}, retry() {}, dispose() {} };
     },
     async query(filters) {
-      if (filters.some((filter) => filter.kinds?.includes(0)))
-        await profileGate;
-      const events = [
-        roster(relay, "c", members, time),
-        metadata(relay, "c", "General"),
-        roster(relay, "other", [viewer.pubkey], time),
-        metadata(relay, "other", "Other"),
-        profile(viewer, { name: "Viewer" }),
-        profile(first, { name: delayed ? "Mary Jane" : "Honey" }),
-        profile(second, { name: "Honey", is_agent: true }),
-        ...publications,
-      ];
-      return events.filter((event) =>
-        filters.some((filter) => matchesEvent(event, filter)),
-      );
+      reads.push(filters.flatMap((filter) => filter.kinds ?? []));
+      pendingReads++;
+      try {
+        if (filters.some((filter) => filter.kinds?.includes(0)))
+          await profileGate;
+        const events = [
+          roster(relay, "c", members, time),
+          metadata(relay, "c", "General"),
+          roster(relay, "other", [viewer.pubkey], time),
+          metadata(relay, "other", "Other"),
+          profile(viewer, { name: "Viewer" }),
+          profile(first, {
+            name: delayed ? "Mary Jane" : "Honey",
+            picture: "https://avatars.test/bestie.png",
+          }),
+          profile(second, {
+            name: "Honey",
+            is_agent: true,
+            picture: "https://avatars.test/app-icon.png",
+          }),
+          ...publications,
+        ];
+        return events.filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        );
+      } finally {
+        pendingReads--;
+      }
     },
     writer: {
       kinds: [9],
@@ -86,6 +122,12 @@ const owner = createRelaySession(
   },
   { outboxStorage: { load: () => [], save: () => {} } },
 );
+const nameProvider = createAgentDirectory();
+const names = bindNames(owner.session, {
+  snapshot: () => [nameProvider],
+  subscribe: () => () => {},
+});
+const namedSession = { ...owner.session, names };
 owner.session.channels.ensureList();
 const context = new Context();
 const disabledCalls: {
@@ -136,6 +178,11 @@ const plugins = createPluginManager(context, {
 const conversation = new ConversationService(context);
 Object.assign(window, {
   mentionFixture: {
+    async collide(value: boolean) {
+      colliding = value;
+      await owner.session.agentLibrary.refresh();
+    },
+    qualifier: (key: string) => names?.lookup(key)?.qualifier,
     first: first.pubkey,
     second: second.pubkey,
     publications,
@@ -151,6 +198,7 @@ Object.assign(window, {
     },
     releaseProfiles: () => releaseProfiles(),
     libraryReads: () => libraryReads,
+    reads: () => ({ kinds: reads, pending: pendingReads }),
     setLibraryAgent(included: boolean) {
       libraryIncludesFirst = included;
       return owner.session.agentLibrary.refresh();
@@ -184,12 +232,15 @@ function Fixture() {
       </button>
       <conversation.ui.Composer
         disabled={disabled}
-        session={owner.session}
+        session={namedSession}
         scope="mentions-fixture"
         channelId="c"
         channelName="General"
         {...(thread ? { threadRootId: "a".repeat(64) } : {})}
       />
+      {new URLSearchParams(location.search).has("settings") && (
+        <MessageSettings />
+      )}
     </main>
   );
 }

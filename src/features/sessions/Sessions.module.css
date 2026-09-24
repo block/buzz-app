@@ -1,0 +1,135 @@
+.work {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.timeline {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.timeline > * {
+  flex: 1;
+  min-height: 0;
+}
+.composer {
+  padding: var(--space-3) var(--space-6);
+}
+.composer > p {
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  padding: var(--space-2) var(--space-1) 0;
+}
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8);
+  height: 100%;
+  text-align: center;
+}
+.empty p {
+  color: var(--text-subtle);
+  max-width: 420px;
+}
+.empty h1,
+.empty h2 {
+  font-size: var(--text-heading);
+  font-weight: var(--type-weight-medium);
+}
+@media (max-width: 720px) {
+  .composer {
+    padding: var(--space-2);
+  }
+}
+
+.availability {
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: 1.6;
+  margin: var(--space-3) var(--space-4) 0;
+}
+
+.start {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-4) 0;
+  overflow-y: auto;
+}
+
+.startContent,
+.column {
+  width: 55%;
+}
+
+.startContent {
+  margin-top: auto;
+}
+
+.column {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-inline: auto;
+  padding-bottom: var(--space-4);
+}
+
+@media (max-width: 760px) {
+  .startContent {
+    width: 100%;
+  }
+
+  .column {
+    width: calc(100% - 2 * var(--space-2));
+    padding-bottom: var(--space-2);
+  }
+
+  .start {
+    padding: var(--space-2);
+  }
+}
+
+.agentTrigger {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(240px, 45vw);
+}
+.agentTrigger .agentAvatar {
+  width: 24px;
+  height: 24px;
+}
+.agentName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-caption);
+}
+.agentTrigger > svg,
+.agentTrigger .agentAvatar {
+  flex-shrink: 0;
+}
+
+.timeline > .targetNavigation {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-panel-inset);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+}
+.targetNavigation button {
+  cursor: pointer;
+}

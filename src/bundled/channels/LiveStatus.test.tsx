@@ -1,4 +1,14 @@
-import { expect, it } from "vitest";
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render as mount,
+  screen,
+} from "@testing-library/react";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+afterEach(cleanup);
 import { renderToStaticMarkup } from "react-dom/server";
 import type { RelaySession } from "../../features/relay/session";
 import { LiveStatus } from "./LiveStatus";
@@ -27,14 +37,18 @@ function render(
     subscribe: () => () => {},
     retry() {},
   };
-  return renderToStaticMarkup(
+  const component = (
     <LiveStatus
       live={live}
       channelId="a"
       partialRoster={partialRoster}
       diagnostics={diagnostics}
-    />,
+    />
   );
+  if (diagnostics) return renderToStaticMarkup(component);
+  cleanup();
+  mount(component, { wrapper: ToastProvider });
+  return document.querySelector(".buzz-toast")?.textContent ?? "";
 }
 it.each<Partial<Snapshot>>([
   {},
@@ -156,4 +170,54 @@ it("keeps partial roster coverage visible even with healthy established routes",
   expect(render({ routes: [recovering] }, true)).toContain(
     "Some channels are missing",
   );
+});
+
+it("diagnostics does not duplicate notices; changing the selected channel/session replaces recovery ownership", () => {
+  const oldRetry = vi.fn();
+  const retry = vi.fn();
+  const live = (channelId: string, action: () => void) => {
+    const snapshot: Snapshot = {
+      ...base,
+      routes: [{ ...channel, channelId, status: "error" }],
+    };
+    return {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      retry: action,
+    };
+  };
+  const oldSession = live("a", oldRetry);
+  const newSession = live("b", retry);
+  const content = (
+    session: typeof oldSession,
+    channelId: string,
+    visible = true,
+  ) => (
+    <ToastProvider>
+      {visible && (
+        <>
+          <LiveStatus
+            live={session}
+            channelId={channelId}
+            partialRoster={false}
+            diagnostics
+          />
+          <LiveStatus
+            live={session}
+            channelId={channelId}
+            partialRoster={false}
+          />
+        </>
+      )}
+    </ToastProvider>
+  );
+  const view = mount(content(oldSession, "a"));
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  view.rerender(content(newSession, "b"));
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Retry live updates" }));
+  expect(retry).toHaveBeenCalledOnce();
+  expect(oldRetry).not.toHaveBeenCalled();
+  view.rerender(content(newSession, "b", false));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

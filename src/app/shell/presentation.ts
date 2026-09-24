@@ -1,15 +1,16 @@
 import {
   BrowserIcon,
-  HouseIcon,
   ChatsCircleIcon,
+  FolderSimpleIcon,
   GearIcon,
+  LightningIcon,
+  RobotIcon,
 } from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 
 // Shell-owned presentation keeps plugin content independent of navigation chrome.
 // Add page identities here; unknown plugins inherit a consistent layout default.
 export const shellPresentation = {
-  home: { label: "Home", icon: HouseIcon, tone: "sky" },
   settings: { label: "Settings", icon: GearIcon, tone: "lavender" },
   channels: { label: "Messages", icon: ChatsCircleIcon, tone: "lime" },
 } as const;
@@ -37,7 +38,14 @@ export function pagePresentation(page: RegisteredPage) {
   if (page.id === "channels") return shellPresentation.channels;
   return {
     label: page.title,
-    icon: BrowserIcon,
+    icon:
+      page.key === "buzz.projects/projects"
+        ? FolderSimpleIcon
+        : page.key === "buzz.agents/agents"
+          ? RobotIcon
+          : page.key === "buzz.workflows/workflows"
+            ? LightningIcon
+            : BrowserIcon,
     tone: page.layout === "workspace" ? "lime" : "sky",
   };
 }

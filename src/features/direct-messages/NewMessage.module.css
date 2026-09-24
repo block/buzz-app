@@ -1,0 +1,285 @@
+@reference "../../shared/styles/globals.css";
+
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.recipientHeader {
+  margin: 0;
+  min-width: 0;
+  border: 0;
+  position: relative;
+  z-index: 3;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border-standard);
+}
+.toField {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-height: 32px;
+  cursor: text;
+}
+.toField > label {
+  @apply text-body-sm;
+  color: var(--text-subtle);
+  margin-right: var(--space-1);
+}
+.toInput {
+  @apply text-body-sm;
+  flex: 1;
+  min-width: 140px;
+  width: 140px;
+  padding: var(--space-1) 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-standard);
+}
+.toInput::placeholder {
+  color: var(--text-subtle);
+}
+.toField:focus-within {
+  border-radius: var(--radius-control);
+}
+.chip {
+  @apply text-body-sm;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-chip-inset) var(--space-2) var(--space-chip-inset)
+    var(--space-chip-inset);
+  max-width: 240px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+}
+.chipName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remove {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  padding: 0;
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+  cursor: pointer;
+  background: transparent;
+}
+.remove:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.remove:disabled {
+  cursor: default;
+}
+.removeIcon {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
+  opacity: 0;
+}
+.remove:focus-visible .removeIcon {
+  opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .remove:hover:not(:disabled) .removeIcon {
+    opacity: 1;
+  }
+}
+.agent {
+  @apply text-caption;
+  color: var(--text-subtle);
+}
+.pickerPositioner {
+  z-index: var(--layer-popover);
+}
+.picker {
+  @apply popover-surface;
+  width: min(380px, var(--available-width));
+  padding: var(--space-1);
+}
+.people {
+  --radius-row: max(0px, calc(var(--radius-control) - var(--space-1)));
+  max-height: min(400px, 50vh, calc(var(--available-height) - 10px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.picker p {
+  @apply text-body-sm;
+  padding: var(--space-3);
+  color: var(--text-subtle);
+}
+.loadingRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-row-gap);
+  min-height: var(--size-row);
+  padding: var(--space-1) var(--space-control-inset);
+}
+.loadingAvatar,
+.loadingName {
+  position: relative;
+  overflow: hidden;
+  background: var(--border-standard);
+  border-radius: var(--radius-pill);
+}
+.loadingAvatar {
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+}
+.loadingName {
+  width: 42%;
+  height: 12px;
+}
+.loadingRow:nth-child(2n) .loadingName {
+  width: 56%;
+}
+.loadingRow:nth-child(3n) .loadingName {
+  width: 34%;
+}
+.loadingAvatar::after,
+.loadingName::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--surface-popover),
+    transparent
+  );
+  opacity: 0.7;
+  animation: peopleShimmer 1.4s linear infinite;
+}
+@keyframes peopleShimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loadingAvatar::after,
+  .loadingName::after {
+    animation: none;
+    display: none;
+  }
+}
+.blank {
+  flex: 1;
+  min-height: 0;
+}
+.feedback {
+  @apply text-body-sm;
+  color: var(--text-subtle);
+  padding-inline: var(--space-6);
+}
+.feedback:empty {
+  display: none;
+}
+.feedback p {
+  margin-block: var(--space-2);
+}
+.feedback [role="alert"] {
+  color: var(--text-danger);
+}
+.effects {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 10000;
+}
+.burst {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  transform: translate(-50%, -50%);
+  contain: layout paint style;
+  animation: removalLifetime 400ms linear;
+}
+.frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  animation: removalFrame 80ms step-end;
+}
+.frame:nth-child(2) {
+  animation-delay: 80ms;
+}
+.frame:nth-child(3) {
+  animation-delay: 160ms;
+}
+.frame:nth-child(4) {
+  animation-delay: 240ms;
+}
+.frame:nth-child(5) {
+  animation-delay: 320ms;
+}
+@keyframes removalLifetime {
+  from,
+  to {
+    opacity: 1;
+  }
+}
+@keyframes removalFrame {
+  0%,
+  99.99% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .burst {
+    width: 40px;
+    height: 40px;
+    animation-duration: 180ms;
+  }
+  .frame {
+    display: none;
+  }
+  .frame:nth-child(3) {
+    display: block;
+    animation: removalFade 180ms ease-out both;
+    animation-delay: 0ms;
+  }
+}
+@keyframes removalFade {
+  from {
+    opacity: 0.7;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (max-width: 640px) {
+  .recipientHeader {
+    margin: 0;
+    min-width: 0;
+    border: 0;
+    padding-inline: var(--space-3);
+  }
+  .chip {
+    max-width: 190px;
+  }
+}

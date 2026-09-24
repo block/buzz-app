@@ -4,6 +4,8 @@ import { PluginRuntime } from "../../plugins/runtime";
 import { PagesService } from "../pages/service";
 import { PanelsService } from "../panels/service";
 import { ConversationService } from "../conversation/service";
+import { SettingsCardsService } from "../settings/service";
+import { TemplateProvidersService } from "../channel-templates/provider";
 import { provideRelay } from "../relay/service";
 import { provideNavigation } from "../navigation/service";
 import * as channelsPlugin from "../../bundled/channels";
@@ -17,6 +19,7 @@ const plugin = (id: string): PluginInfo => ({
   source: "bundled",
   revision: "one",
   previous: null,
+  reloadable: false,
   error: null,
 });
 it("independently unloads panels without removing the page or shared data", async () => {
@@ -27,6 +30,8 @@ it("independently unloads panels without removing the page or shared data", asyn
   const pages = new PagesService(root),
     panels = new PanelsService(root);
   new ConversationService(root);
+  new SettingsCardsService(root);
+  new TemplateProvidersService(root);
   provideNavigation(root);
   const relay = provideRelay(root);
   const desired = (ids: string[]) => ids.map(plugin);
@@ -132,6 +137,11 @@ it("validates and freezes launcher metadata without changing target resolution",
       expect(() => ctx.panels.register({ ...base, launcher } as never)).toThrow(
         "launcher",
       );
+    }
+    for (const channelPlacement of [null, "left", "", 42, {}]) {
+      expect(() =>
+        ctx.panels.register({ ...base, channelPlacement } as never),
+      ).toThrow("placement");
     }
     const launcher = { icon: "/icon.png", target: "" };
     ctx.panels.register({ ...base, launcher });

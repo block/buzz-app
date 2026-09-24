@@ -14,15 +14,14 @@
     display: inline-flex;
     max-width: 16rem;
     align-items: center;
-    gap: var(--space-chip-gap);
     border: 0;
     border-radius: var(--radius-chip);
     padding-inline: var(--space-chip-inset);
-    background: var(--purple-3);
+    background: var(--affordance-accent);
     /* Primary text, not accent text. The tint is doing the colour work, so the
        label stays the same weight as the sentence it sits in — a chip marks a
        reference, it does not shout. */
-    color: var(--text-primary);
+    color: var(--text-standard);
     font: inherit;
     /* Hugs the text it sits in rather than stretching the line. */
     line-height: 1.35;
@@ -42,11 +41,11 @@
   button.inline-chip:hover,
   html[data-keyboard-navigation] button.inline-chip:focus-visible,
   button.inline-chip[data-popup-open] {
-    background: var(--purple-4);
+    background: var(--affordance-accent-hover);
   }
 
   html[data-keyboard-navigation] .inline-chip:focus-visible {
-    outline: 2px solid var(--purple-8);
+    outline: 2px solid var(--border-focus);
     outline-offset: 2px;
   }
 
@@ -56,8 +55,8 @@
    * reads as inert rather than pretending to be actionable.
    */
   .inline-chip[data-state="unresolved"] {
-    background: var(--neutral-2);
-    color: var(--text-tertiary);
+    background: var(--surface-inset);
+    color: var(--text-metadata);
   }
 
   .inline-chip-label {
@@ -65,6 +64,35 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .inline-chip-qualifier {
+    display: grid;
+    grid-template-columns: 1fr;
+    flex: 0 0 auto;
+    overflow: hidden;
+    white-space: pre;
+  }
+
+  .inline-chip-qualifier > span {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .inline-chip-qualifier[data-reveal] {
+    animation: inline-chip-qualifier-reveal var(--duration-settle)
+      var(--easing-settle);
+  }
+
+  @keyframes inline-chip-qualifier-reveal {
+    from {
+      grid-template-columns: 0fr;
+      opacity: 0;
+    }
+    to {
+      grid-template-columns: 1fr;
+      opacity: 1;
+    }
   }
 
   /**
@@ -76,6 +104,7 @@
    * preference and keyboard zoom rather than freezing at one size.
    */
   .inline-chip-icon {
+    margin-inline-end: var(--space-chip-gap);
     width: 1.1em;
     height: 1.1em;
     flex: 0 0 auto;
@@ -86,6 +115,9 @@
   @media (prefers-reduced-motion: reduce) {
     .inline-chip {
       transition-duration: 0ms;
+    }
+    .inline-chip-qualifier[data-reveal] {
+      animation: none;
     }
   }
 

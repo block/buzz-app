@@ -112,3 +112,44 @@ test("the upstream pool reuses warm connections and reports only new connects", 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("broker permits bounded replacement edits with exactly one canonical target", () => {
+  const edit = {
+    kind: 40003,
+    content: "edited Markdown **body**",
+    created_at: 1788810000,
+    tags: [
+      ["h", "channel"],
+      ["e", "a".repeat(64)],
+      ["client-id", "unique"],
+    ],
+  };
+  assert.equal(validMessageTemplate(edit), true);
+  for (const invalid of [
+    { ...edit, content: " " },
+    { ...edit, content: "x".repeat(32001) },
+    { ...edit, content: " padded " },
+    { ...edit, created_at: NaN },
+    { ...edit, kind: 5 },
+    { ...edit, tags: [["h", "channel"]] },
+    { ...edit, tags: [["e", "a".repeat(64)]] },
+    {
+      ...edit,
+      tags: [
+        ["h", "channel"],
+        ["e", "invalid"],
+      ],
+    },
+    {
+      ...edit,
+      tags: [
+        ["h", "channel"],
+        ["e", "a".repeat(64), "", "reply"],
+      ],
+    },
+    { ...edit, tags: [...edit.tags, ["e", "b".repeat(64)]] },
+    { ...edit, tags: [...edit.tags, ["h", "other"]] },
+    { ...edit, tags: [...edit.tags, ["e", 42]] },
+  ])
+    assert.equal(validMessageTemplate(invalid), false);
+});

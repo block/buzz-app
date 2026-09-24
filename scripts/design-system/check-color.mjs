@@ -106,29 +106,9 @@ const PALETTE_HUES = [
   "orange",
 ];
 
-/**
- * **Palette steps are public now. Only glass is private.**
- *
- * This rule used to reject `var(--neutral-4)` in a component, on the reasoning
- * that a screen should say what a thing *is* rather than which colour it takes.
- * That reasoning was imported from Tailwind, where `neutral-800` is a single
- * literal and naming it really does break dark mode.
- *
- * It does not hold here. **Every step in this palette is authored per mode**, so
- * `neutral-4` is one value in light and another in dark and a component naming it
- * behaves correctly in both. Once that is true, a role whose light and dark
- * values are the same step is a name in front of a number — and a name in front
- * of a number hides the decision rather than recording it. Nineteen roles were
- * exactly that.
- *
- * Glass stays private for a different reason, which has nothing to do with
- * naming: a glass fill without its blur, rim, and lift is not glass. It is
- * reachable only through the `glass-primary` / `glass-secondary` utilities, which
- * carry the whole material. That is enforced below.
- *
- * Hues are enumerated rather than matched as `[a-z]+` because a palette step and
- * a non-colour token are the same shape: `--neutral-4` and `--space-4`.
- */
+/** Glass is consumed as a complete material, never as a bare fill. Direct
+ * palette consumption in production is checked by check-adoption.mjs; viewer
+ * swatches may inspect the palette. */
 const PRIVATE_TOKEN = /var\(\s*--glass-\d+\s*\)/g;
 
 /**
@@ -316,66 +296,27 @@ function auditLayers() {
     }
   }
 
-  // 2. THE ROLES THAT REMAIN MUST BE MODE-ASYMMETRIC.
-  //
-  // This replaces four checks that audited the identity families — that each
-  // referenced a palette step, that none was missing, that no two shared a step,
-  // that dark never restated one. All four are gone because their subject is:
-  // nineteen roles were deleted once palette steps became reachable as classes,
-  // and the ones left are the four surfaces plus emphasis.
-  //
-  // The invariant now worth enforcing is the TEST FOR WHETHER A ROLE IS EARNED.
-  // A surface role exists precisely because light and dark take *different* ramp
-  // steps, so no single class can express it. If someone adds a surface role
-  // whose two modes agree, the name is doing nothing and a class would say it —
-  // that is the mistake this catches, in the same shape it already happened.
-  //
-  // Two reasons earn a name whose modes agree, per DESIGN.md § When a name is
-  // earned. Each entry states which one, so the list reads as decisions rather
-  // than as accumulated exceptions.
-  //
-  //   • the name enforces a rule a ramp cannot state — there are three levels
-  //     of text and one border weight;
-  //   • a pattern repeated across screens has been named for the pattern.
-  //
-  // What this still catches is the mistake it was written for: a role invented
-  // by symmetry, restating one step, that no design asked for.
-  const NAME_IS_EARNED = new Map([
-    [
-      "--border-control",
-      "An input boundary must clear 3:1 against its surface, unlike a decorative divider.",
-    ],
-    ["--text-primary", "Three text levels, enforced by name."],
-    ["--text-secondary", "Three text levels, enforced by name."],
-    ["--text-tertiary", "Three text levels, enforced by name."],
-    ["--text-disabled", "Unavailability is a rule, not a fourth level."],
-    ["--border-primary", "One shared border weight, enforced by name."],
-    ["--text-on-accent", "Paired text follows its fill, not the mode."],
-  ]);
-
-  const roleNames = [
-    ...new Set(
-      [...modes.light.matchAll(/^\s*(--(?:bg|text|border)-[a-z0-9-]+):/gm)].map(
-        (m) => m[1],
-      ),
+  // Semantic names describe purpose even when both themes choose the same step.
+  // Require every new semantic role to declare both modes and reference a token.
+  const roles = [
+    ...modes.light.matchAll(
+      /^\s*(--(?:surface|affordance|text|border)-[a-z0-9-]+):/gm,
     ),
   ];
-
-  for (const name of roleNames) {
-    if (NAME_IS_EARNED.has(name)) continue;
-    // Glass materials are a bundled treatment, not a surface step, and `bg-app`
-    // swaps a whole gradient rather than a step.
-    if (name.includes("glass") || name === "--bg-app") continue;
-
-    const light = read(modes.light, name);
-    const dark = read(modes.dark, name);
-    if (dark && dark !== light) continue; // earns its name
-
-    failures.push({
-      at: rel,
-      found: `${name}: ${light}`,
-      why: `Same value in both modes. Write ${light?.replace(/var\(--(.+)\)/, "$1") ?? "the step"} where it is used — unless this name is earned, in which case add it to NAME_IS_EARNED with its reason: a rule a ramp cannot state, or a pattern repeated across screens that is now named for the pattern.`,
-    });
+  for (const [, name] of roles) {
+    for (const [mode, code] of Object.entries(modes)) {
+      if (name === "--text-on-accent") continue; // Fixed white paired with the accent fill; measured by check-contrast.
+      const value =
+        read(code, name) ??
+        (mode === "dark" ? read(modes.light, name) : undefined);
+      if (!value || !/^var\(--[a-z0-9-]+\)$/.test(value)) {
+        failures.push({
+          at: rel,
+          found: `${name} (${mode}): ${value ?? "missing"}`,
+          why: "Semantic roles must reference a shared token in both modes.",
+        });
+      }
+    }
   }
 }
 

@@ -82,3 +82,130 @@ test("editing selected name plus pasting same name cannot transfer notification 
     );
   }
 });
+
+// Native contenteditable selection and React's no-op render boundary need a browser.
+test("typing after an unchanged agent prefill does not consume a stale caret command", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/mentions.html");
+  const agent = await page.evaluate(() => window.mentionFixture.second);
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  await page
+    .getByRole("button", { name: "Mention a member", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: `Honey (agent) ${agent}`, exact: true })
+    .click();
+  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await expect(input).toBeFocused();
+  // Repeat with the exact same next draft. Clicking Send or refocusing the
+  // editor would introduce another render and conceal the pending command.
+  for (const count of [1, 2]) {
+    await page.keyboard.press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.mentionFixture.publications.length),
+      )
+      .toBe(count);
+    await expect(input).toHaveJSProperty("value", "@Honey ");
+  }
+  for (const [index, character] of [..."nice"].entries()) {
+    await page.keyboard.type(character);
+    await expect(input).toHaveJSProperty(
+      "value",
+      `@Honey ${"nice".slice(0, index + 1)}`,
+    );
+    await expect(input).toHaveJSProperty("selectionStart", 8 + index);
+    await expect(input).toHaveJSProperty("selectionEnd", 8 + index);
+  }
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
+    .toBe(3);
+  const sent = await page.evaluate(() => window.mentionFixture.publications[2]);
+  expect(sent.content).toBe("@Honey nice");
+  expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", agent]]);
+  await expect(input).toHaveJSProperty("value", "@Honey ");
+});
+
+// Reproduce focus returning between the native DOM edit and input/selectionchange.
+// Normal locator typing focuses first and cannot exercise this browser boundary.
+test("focus during the first edit after send preserves the advanced native caret", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/mentions.html");
+  const agent = await page.evaluate(() => window.mentionFixture.second);
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  await page
+    .getByRole("button", { name: "Mention a member", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: `Honey (agent) ${agent}`, exact: true })
+    .click();
+  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await page.keyboard.type("hello");
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
+    .toBe(1);
+  await expect(input).toHaveJSProperty("value", "@Honey ");
+
+  const firstEdit = await input.evaluate((el) => {
+    el.setSelectionRange(el.value.length, el.value.length);
+    el.blur();
+    const focusedBefore = document.activeElement === el;
+    const allowed = el.dispatchEvent(
+      new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "insertText",
+        data: "n",
+      }),
+    );
+    if (!allowed) throw new Error("First insertion was prevented");
+    // Model the native insertion while unfocused. Advancing the real browser
+    // Selection returns focus synchronously, before the queued selectionchange.
+    const selection = getSelection();
+    const node = selection.focusNode;
+    const offset = selection.focusOffset;
+    if (!(node instanceof Text))
+      throw new Error("Expected editable text caret");
+    node.insertData(offset, "n");
+    selection.setBaseAndExtent(node, offset + 1, node, offset + 1);
+    const result = {
+      focusedBefore,
+      focusedAfter: document.activeElement === el,
+      // Native DOM edits reach the transaction model at the mutation-observer
+      // boundary. Inspect the native caret here, then the model below.
+      caret: [offset + 1, selection.focusOffset],
+    };
+    el.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "n",
+      }),
+    );
+    return result;
+  });
+  expect(firstEdit).toEqual({
+    focusedBefore: false,
+    focusedAfter: true,
+    caret: [2, 2],
+  });
+  await expect(input).toHaveJSProperty("value", "@Honey n");
+  await expect(input).toHaveJSProperty("selectionStart", 8);
+  // Do not refocus with a locator action: continue from that native selection.
+  await page.keyboard.type("ice");
+  await expect(input).toHaveJSProperty("value", "@Honey nice");
+  await expect(input).toHaveJSProperty("selectionStart", 11);
+  await expect(input).toHaveJSProperty("selectionEnd", 11);
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
+    .toBe(2);
+  const sent = await page.evaluate(() => window.mentionFixture.publications[1]);
+  expect(sent.content).toBe("@Honey nice");
+  expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", agent]]);
+  await expect(input).toHaveJSProperty("value", "@Honey ");
+});

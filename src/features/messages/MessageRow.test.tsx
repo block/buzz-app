@@ -1,4 +1,13 @@
+// @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render as renderDom,
+  screen,
+} from "@testing-library/react";
+import { messageCopyText } from "./message-copy";
+import { profileTarget } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
 import { keypair, message, signed } from "../relay/testing";
@@ -333,7 +342,7 @@ it.each([
         row={{
           ...row,
           attachments: [
-            { url: "https://image.test/shot.png", video: false, dimensions },
+            { url: "https://image.test/shot.png", kind: "image", dimensions },
           ],
         }}
         profile={undefined}
@@ -358,7 +367,7 @@ it("does not bypass the session media resolver to paint an inaccessible attachme
         attachments: [
           {
             url: "https://image.test/original.png",
-            video: false,
+            kind: "image",
             blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj",
           },
         ],
@@ -432,7 +441,7 @@ it("requests a small profile image without downsizing message attachments", () =
       row={{
         ...row,
         attachments: [
-          { url: "https://image.test/attachment.png", video: false },
+          { url: "https://image.test/attachment.png", kind: "image" },
         ],
       }}
       profile={{ name: "Author", picture: "https://image.test/avatar.png" }}
@@ -446,3 +455,211 @@ it("requests a small profile image without downsizing message attachments", () =
   expect(media).toHaveBeenCalledWith("https://image.test/avatar.png", "small");
   expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
 });
+
+it("renders generic file attachments as download cards", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/report.pdf",
+            kind: "file",
+            name: "report.pdf",
+            size: 1536,
+            mime: "application/pdf",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain(
+    'href="/api/relay/media?url=https%3A%2F%2Ffiles.test%2Freport.pdf"',
+  );
+  expect(html).toContain('download="report.pdf"');
+  expect(html).toContain('aria-label="Download report.pdf"');
+  expect(html).toContain("report.pdf");
+  expect(html).toContain("2 KB");
+  expect(html).not.toContain("Open image attachment");
+  expect(html).not.toContain("<img");
+});
+
+it("renders unavailable generic files without a download link", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/missing.pdf",
+            kind: "file",
+            mime: "application/pdf",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain("PDF file");
+  expect(html).toContain("File unavailable");
+  expect(html).toContain('role="status"');
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(container.querySelector("a")).toBeNull();
+  expect(html).not.toContain("Open image attachment");
+});
+
+it("renders proxy audio attachments with an inline player", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/audio.mp3",
+            kind: "audio",
+            duration: 12,
+          },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain('aria-label="Play audio"');
+  expect(html).toContain('aria-label="Seek audio"');
+  expect(html).toContain("0:00 / 0:12");
+  expect(html).not.toContain("Download file");
+});
+
+it("renders external audio sources as open file cards", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/audio.mp3",
+            kind: "audio",
+            name: "audio.mp3",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain('aria-label="Open audio.mp3"');
+  expect(html).toContain("Open file");
+  expect(html).not.toContain('aria-label="Play audio"');
+});
+
+it("renders missing audio sources as unavailable file cards", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/audio.mp3",
+            kind: "audio",
+            mime: "audio/mpeg",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain("MPEG file");
+  expect(html).toContain("File unavailable");
+  expect(html).toContain('role="status"');
+  expect(html).not.toContain('aria-label="Play audio"');
+});
+
+it.each([9, 40002])(
+  "preserves copied kind %s identities through resend, fold, and profile opening without adding recipients",
+  (kind) => {
+    const author = keypair(),
+      relay = keypair();
+    const people = [keypair(), keypair()];
+    const profiles = new Map(
+      people.map(({ pubkey }) => [pubkey, { name: "Morgan" }]),
+    );
+    const copies = people.map(({ pubkey }) => {
+      const [original] = foldMessages("channel", relay.pubkey, [
+        signed(author, {
+          kind,
+          content:
+            kind === 40002
+              ? JSON.stringify({ content: "Hello @Morgan" })
+              : "Hello @Morgan",
+          tags: [
+            ["h", "channel"],
+            ["p", pubkey],
+          ],
+        }),
+      ]);
+      if (!original) throw new Error("missing original");
+      return messageCopyText(original, profiles, []);
+    });
+    const content = copies.join(" and ");
+    const [resent] = foldMessages("channel", relay.pubkey, [
+      signed(author, {
+        kind,
+        content: kind === 40002 ? JSON.stringify({ content }) : content,
+        tags: [["h", "channel"]],
+      }),
+    ]);
+    if (!resent) throw new Error("missing resent message");
+    expect(resent.mentions).toEqual([]);
+    expect(messageCopyText(resent, profiles, [])).toBe(content);
+    const open = vi.fn((_target: string) => true);
+    try {
+      renderDom(
+        <MessageRow
+          row={resent}
+          profile={undefined}
+          participantProfiles={profiles}
+          media={() => undefined}
+          onOpenLink={open}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      const references = screen.getAllByRole("button", {
+        name: "View Morgan profile",
+      });
+      expect(references).toHaveLength(2);
+      references.forEach((reference) => {
+        fireEvent.click(reference);
+        expect(document.activeElement).toBe(reference);
+      });
+      expect(open.mock.calls).toEqual(
+        people.map(({ pubkey }) => [profileTarget(pubkey)]),
+      );
+      expect(resent.mentions).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  },
+);

@@ -1,274 +1,168 @@
-import {
-  ArrowsClockwiseIcon,
-  UsersIcon,
-} from "../../shared/design-system/icons/index";
-import { Button } from "../../shared/design-system/ui/Button";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
-import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
-import { avatarSource } from "../../shared/avatar-source";
-import {
-  groupAgentLibrary,
-  type AgentLibrary,
-} from "../../features/agents/library";
+import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useSyncExternalStore } from "react";
-import type { RelayData } from "../../features/relay/service";
-import type { RelaySession } from "../../features/relay/session";
+import type {
+  AgentControl,
+  AgentControlState,
+  AgentView,
+} from "../../features/agents/control";
+import type { RelayData, RelaySnapshot } from "../../features/relay/service";
+import { relayOrigin } from "../../features/communities/destination";
 import { useRelayConnection } from "../../features/relay/react";
-import {
-  AgentRunner,
-  useAgentRunner,
-  type AgentRunnerControls,
-} from "./AgentRunner";
+import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import { AgentLibrary } from "./AgentLibrary";
+import { Button } from "../../shared/design-system/ui/Button";
+import { AgentCard } from "./AgentCard";
+import { AgentControlPanel } from "./AgentControlPanel";
+import { ManagedAgentActions } from "./ManagedAgentActions";
 
-export function AgentsPage({ relay }: { relay: RelayData }) {
+export function AgentsPage({
+  relay,
+  control,
+}: {
+  relay: RelayData;
+  control?: AgentControl;
+}) {
   const connection = useRelayConnection(relay);
+  const resolveName = useIdentityNames(connection.session.names);
+  let importDestination = "";
+  if (
+    connection.viewer &&
+    connection.scope?.endsWith(`:${connection.viewer}`)
+  ) {
+    try {
+      importDestination = relayOrigin(
+        connection.scope.slice(0, -(connection.viewer.length + 1)),
+      );
+    } catch {
+      // A non-URL fixture or unavailable connection needs an explicit destination.
+    }
+  }
+  const library =
+    connection.status === "ready" ? (
+      <AgentLibrary
+        key={`${connection.scope}:${connection.generation}`}
+        session={connection.session}
+      />
+    ) : (
+      <div>
+        <p>Connect to a community to browse the old library.</p>
+        {connection.status === "error" && (
+          <Button onClick={() => relay.retry()}>Retry connection</Button>
+        )}
+      </div>
+    );
   return (
     <div className="h-full min-h-0">
       <FullPageSurface aria-label="Agents">
         <div className="h-full min-h-0 overflow-auto p-panel-inset text-body">
-          <h1 className="m-0 text-title text-primary">Agents</h1>
-          {connection.status === "ready" ? (
-            <MyAgents
-              key={`${connection.scope}:${connection.generation}`}
-              session={connection.session}
-              relay={relay}
-            />
-          ) : (
-            <div className="mt-6">
-              <p className="text-body">
-                {connection.status === "connecting"
-                  ? "Connecting to your community…"
-                  : "Connect to a community to browse your agents."}
-              </p>
-              {connection.status === "error" && (
-                <Button onClick={() => relay.retry()}>Retry connection</Button>
-              )}
-            </div>
-          )}
+          <div className="mx-auto flex max-w-6xl flex-col gap-panel-gap">
+            {!control && (
+              <h1 className="m-0 text-title text-primary">Agents</h1>
+            )}
+            {control ? (
+              <AgentControlPanel
+                control={control}
+                resolveName={resolveName}
+                importDestination={importDestination}
+                createOwner={
+                  connection.status === "ready" ? connection.viewer : undefined
+                }
+              >
+                {(state, edit, importedId, label) =>
+                  state.status === "unavailable" ? (
+                    library
+                  ) : (
+                    <ManagedAgents
+                      key={`${connection.scope}:${connection.generation}`}
+                      state={state}
+                      label={label}
+                      edit={edit}
+                      importedId={importedId}
+                      control={control}
+                      connection={connection}
+                    />
+                  )
+                }
+              </AgentControlPanel>
+            ) : (
+              <>
+                <p className="text-secondary">
+                  Open the desktop app to import and run agents. You can still
+                  mention existing channel members.
+                </p>
+                {library}
+              </>
+            )}
+          </div>
         </div>
       </FullPageSurface>
     </div>
   );
 }
-function MyAgents({
-  session,
-  relay,
+function ManagedAgents({
+  state,
+  edit,
+  importedId,
+  control,
+  connection,
+  label,
 }: {
-  session: RelaySession;
-  relay: RelayData;
+  label(agent: AgentView): string;
+  state: AgentControlState;
+  edit(agent: AgentView, avatar?: string): void;
+  importedId: string | null;
+  control: AgentControl;
+  connection: RelaySnapshot;
 }) {
-  const runner = useAgentRunner(relay);
-  const library = session.agentLibrary;
-  const archives = session.archives;
+  const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(
     library.subscribe,
     library.snapshot,
     library.snapshot,
   );
-  const archive = useSyncExternalStore(
-    archives.subscribe,
-    archives.snapshot,
-    archives.snapshot,
-  );
-  const refresh = () => {
-    void library.refresh();
-    void archives.refresh();
-  };
   useEffect(() => {
-    void library.refresh();
-    void archives.refresh();
-  }, [library, archives]);
-  const { groups, custom, unknown } = groupAgentLibrary(
-    snapshot,
-    (key) => archives.state(key) === "archived",
-  );
-  const loading = snapshot.status === "loading";
+    if (connection.status === "ready") void library.refresh();
+  }, [library, connection.status]);
   return (
-    <div className="mx-auto mt-2 max-w-6xl space-y-section-gap">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="m-0 text-body text-secondary">Your agents from Buzz.</p>
-        <Button
-          variant="quiet"
-          size="compact"
-          disabled={loading || snapshot.status === "unavailable"}
-          onClick={refresh}
-        >
-          <ArrowsClockwiseIcon size={16} aria-hidden="true" />
-          {snapshot.status === "error" ? "Retry" : "Refresh agents"}
-        </Button>
+    <section aria-label="My agents" className="flex flex-col gap-4">
+      <h2 className="sr-only">My agents</h2>
+      <p className="m-0 text-body-sm text-secondary">
+        Mention an agent in a channel to add it and start it. Stop old Buzz and
+        its listeners before using an imported identity here.
+      </p>
+      {state.data?.agents.length === 0 && (
+        <p>No agents yet. Create an agent or import one from old Buzz below.</p>
+      )}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
+        {state.data?.agents.map((agent) => {
+          const identity = snapshot.identities.find(
+            (entry) => entry.pubkey === agent.pubkey,
+          );
+          const avatar =
+            identity?.avatar ??
+            snapshot.definitions.find(
+              (entry) => entry.id === identity?.definitionId,
+            )?.avatar;
+          return (
+            <AgentCard
+              key={agent.id}
+              name={label(agent)}
+              avatar={avatar}
+              identities={[agent]}
+              session={connection.session}
+              editable={[agent]}
+              onEdit={edit}
+            >
+              <ManagedAgentActions
+                agent={agent}
+                state={state}
+                control={control}
+                imported={agent.id === importedId}
+              />
+            </AgentCard>
+          );
+        })}
       </div>
-      {loading && (
-        <p className="text-body" role="status">
-          Reading your Buzz library…
-        </p>
-      )}
-      {snapshot.status === "idle" && (
-        <p className="text-body" role="status">
-          Library cleared. Refresh to read it again.
-        </p>
-      )}
-      {snapshot.status === "unavailable" && (
-        <p className="text-body" role="status">
-          The current Buzz library is available through the local live
-          development host. See README for live setup.
-        </p>
-      )}
-      {snapshot.error && (
-        <p className="text-body" role="alert">
-          {snapshot.error}
-        </p>
-      )}
-      {snapshot.status === "ready" && (
-        <>
-          <section aria-label="My agents" className="space-y-3">
-            <h2 className="m-0 flex items-center gap-2 text-heading">
-              My agents{" "}
-              <span className="rounded-md bg-neutral-2 px-2 py-0.5 text-body-sm font-normal text-secondary">
-                {groups.length}
-              </span>
-            </h2>
-            {!groups.length && (
-              <p className="py-8 text-center text-body text-secondary">
-                No selected agents in your Buzz library.
-              </p>
-            )}
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-4">
-              {groups.map((group) => (
-                <AgentCard
-                  key={group.id}
-                  name={group.name}
-                  avatar={group.avatar ?? group.identities[0]?.avatar}
-                  identities={group.identities}
-                  session={session}
-                  runner={runner}
-                />
-              ))}
-            </div>
-          </section>
-          {!!custom.length && (
-            <section aria-label="Custom agents" className="space-y-3">
-              <h2 className="m-0 text-heading">Custom agents</h2>
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-4">
-                {custom.map((identity) => (
-                  <AgentCard
-                    key={identity.pubkey}
-                    name={identity.name}
-                    avatar={identity.avatar}
-                    identities={[identity]}
-                    session={session}
-                    runner={runner}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-          {!!unknown.length && (
-            <section aria-label="Unknown agents" className="space-y-3">
-              <h2 className="m-0 text-heading">Other identities</h2>
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-4">
-                {unknown.map((identity) => (
-                  <AgentCard
-                    key={identity.pubkey}
-                    name={identity.name}
-                    avatar={identity.avatar}
-                    identities={[identity]}
-                    session={session}
-                    runner={runner}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-          {archive.status !== "ready" && (
-            <p className="text-body text-secondary">
-              Archive visibility is unknown. Library entries remain visible;
-              this does not grant channel access.
-            </p>
-          )}
-          <p className="border-t border-primary pt-4 text-body-sm text-secondary">
-            Mention existing members with @ in a channel or thread. This is your
-            current Buzz library, read-only. Replies require a running agent;
-            configured desktop builds show runner controls on the matching agent
-            card.
-          </p>
-        </>
-      )}
-    </div>
-  );
-}
-function AgentCard({
-  name,
-  avatar,
-  identities,
-  session,
-  runner,
-}: {
-  name: string;
-  avatar?: string | undefined;
-  identities: AgentLibrary["identities"];
-  session: RelaySession;
-  runner: AgentRunnerControls;
-}) {
-  const source = avatarSource(avatar);
-  const picture = source?.startsWith("data:")
-    ? source
-    : source
-      ? session.media(source, "small")
-      : undefined;
-  return (
-    <article className="flex min-w-0 flex-col rounded-2xl border border-primary p-4">
-      <div className="flex min-h-36 flex-1 items-center justify-center py-5">
-        <Avatar
-          alt={name}
-          fallback={name}
-          src={picture ?? null}
-          size="large"
-          shape="squircle"
-        />
-      </div>
-      <h3 className="m-0 truncate text-label" title={name}>
-        {name}
-      </h3>
-      <AgentRunner
-        controls={runner}
-        pubkeys={identities.map((identity) => identity.pubkey)}
-      />
-      {identities.length ? (
-        <Accordion
-          items={[
-            {
-              value: "identities",
-              title: (
-                <span className="flex items-center gap-2">
-                  <UsersIcon size={16} aria-hidden="true" />
-                  <span className="sr-only">{name}: </span>
-                  {identities.length}{" "}
-                  {identities.length === 1 ? "identity" : "identities"}
-                </span>
-              ),
-              content: (
-                <ul className="mt-2 space-y-3 border-t border-primary pt-3">
-                  {identities.map((identity) => (
-                    <li key={identity.pubkey}>
-                      <span className="font-semibold text-primary">
-                        {identity.name}
-                      </span>
-                      <p className="m-0 mt-1 select-all break-all text-mono-sm">
-                        {identity.pubkey}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              ),
-            },
-          ]}
-        />
-      ) : (
-        <p className="m-0 mt-1 text-body-sm text-secondary">
-          No linked identity
-        </p>
-      )}
-    </article>
+    </section>
   );
 }

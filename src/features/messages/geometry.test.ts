@@ -29,3 +29,21 @@ it("invalidates geometry for changed content, profiles, width, session, and hist
   first.dispose();
   second.dispose();
 });
+
+it("invalidates row geometry when resolved author or mention labels change", () => {
+  const author = keypair();
+  const rows = foldMessages("a", "relay", [
+    message(author, "a", "hello", 20),
+  ]).map((row) => ({ ...row, mentions: ["mentioned"] }));
+  const names = new Map([
+    [author.pubkey, "Author"],
+    ["mentioned", "Mention"],
+  ]);
+  const resolve = (id: string, fallback: string) => names.get(id) ?? fallback;
+  const original = geometrySignature(rows, new Map(), resolve);
+  names.set("mentioned", "Longer mention");
+  const renamedMention = geometrySignature(rows, new Map(), resolve);
+  expect(renamedMention).not.toBe(original);
+  names.set(author.pubkey, "Longer author");
+  expect(geometrySignature(rows, new Map(), resolve)).not.toBe(renamedMention);
+});

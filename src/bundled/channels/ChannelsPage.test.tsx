@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Panels } from "../../features/panels/service";
+import type { PagesReader } from "../../features/pages/service";
 import { ChannelsPage, mediaReviewForDestination } from "./ChannelsPage";
 
 // This is a shallow element-boundary test, not a React render. Navigation effects
@@ -9,6 +10,10 @@ import { ChannelsPage, mediaReviewForDestination } from "./ChannelsPage";
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useEffect: () => {},
+  useSyncExternalStore: (
+    _subscribe: PagesReader["subscribe"],
+    snapshot: PagesReader["snapshot"],
+  ) => snapshot(),
 }));
 // Inspect the actual element returned at the workspace boundary, not a parallel
 // key helper. React uses this key to decide whether to retain the subtree.
@@ -16,10 +21,19 @@ vi.mock("../../features/relay/react", async (original) => ({
   ...(await original<typeof import("../../features/relay/react")>()),
   useRelayConnection: (relay: RelayData) => relay.snapshot(),
 }));
+const providers = {
+  snapshot: () => [],
+  subscribe: () => () => {},
+  register: () => {},
+};
+const pages = {
+  subscribe: () => () => {},
+  snapshot: () => [],
+} as PagesReader;
 function workspace(scope: string, generation: number) {
   const snapshot = { status: "ready", scope, generation } as RelaySnapshot;
   const relay = { snapshot: () => snapshot } as RelayData;
-  const page = ChannelsPage({ relay, panels: {} as Panels });
+  const page = ChannelsPage({ providers, relay, panels: {} as Panels, pages });
   return page.props.children as ReactElement<{ scope: string }>;
 }
 
@@ -77,8 +91,10 @@ it("the actual workspace receives session-bound authority, never the page's reus
       subscribe: () => () => {},
     }).request;
     const rendered = ChannelsPage({
+      providers,
       relay,
       panels: {} as Panels,
+      pages,
       navigation: parent,
     });
     const workspace = rendered.props.children as ReactElement<{
@@ -94,8 +110,10 @@ it("the actual workspace receives session-bound authority, never the page's reus
     ).toBe(false);
     expect(parent.signal.aborted).toBe(false);
     const replacement = ChannelsPage({
+      providers,
       relay,
       panels: {} as Panels,
+      pages,
       navigation: parent,
     }).props.children as typeof workspace;
     expect(replacement.props.navigation.complete({ status: "opened" })).toBe(

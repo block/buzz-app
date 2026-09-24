@@ -24,20 +24,28 @@ test("mention completion distinguishes exact agent identity without reshaping a 
     "circle",
   );
   await expectAvatarShape(
-    page.getByRole("option", { name: `Honey ${keys.agent}`, exact: true }),
+    page.getByRole("option", {
+      name: `Honey (agent) ${keys.agent}`,
+      exact: true,
+    }),
     "squircle",
   );
   await input.fill("");
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
-  const picker = page.getByRole("region", { name: "Mention a channel member" });
+  const picker = page.getByRole("dialog", {
+    name: "Mention a member or agent",
+  });
   await expectAvatarShape(
     picker.getByRole("button", { name: `Honey ${keys.human}`, exact: true }),
     "circle",
   );
   await expectAvatarShape(
-    picker.getByRole("button", { name: `Honey ${keys.agent}`, exact: true }),
+    picker.getByRole("button", {
+      name: `Honey (agent) ${keys.agent}`,
+      exact: true,
+    }),
     "squircle",
   );
 });
@@ -49,25 +57,28 @@ test("open completion republishes library-only display hints without changing th
     first: window.mentionFixture.first,
     second: window.mentionFixture.second,
   }));
+  // The shared naming provider retains library facts when this fixture mounts.
+  // Opening completion must not create a second load owner.
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.libraryReads()))
+    .toBe(1);
   await input.fill("@Ho");
   const first = page.getByRole("option", {
-    name: `Honey ${keys.first}`,
-    exact: true,
+    name: new RegExp(keys.first),
   });
   const second = page.getByRole("option", {
-    name: `Honey ${keys.second}`,
-    exact: true,
+    name: new RegExp(keys.second),
   });
   await expectAvatarShape(first, "circle");
   await expectAvatarShape(second, "squircle");
-  // Opening completion subscribes to the library; it must not load it.
+  // Completion observes the existing naming demand; it does not reload it.
   expect(await page.evaluate(() => window.mentionFixture.libraryReads())).toBe(
-    0,
+    1,
   );
 
   for (const [included, reads] of [
-    [true, 1],
-    [false, 2],
+    [true, 2],
+    [false, 3],
   ]) {
     await page.evaluate(
       (included) => window.mentionFixture.setLibraryAgent(included),
@@ -111,7 +122,7 @@ for (const mode of ["light", "dark"]) {
       await expect(selected).toBeInViewport({ ratio: 1 });
       await expect(selected).toHaveCSS(
         "background-color",
-        mode === "dark" ? "rgb(51, 51, 51)" : "rgb(232, 232, 232)",
+        mode === "dark" ? "rgb(64, 64, 64)" : "rgb(232, 232, 232)",
       );
       const surface = await popup.evaluate(
         (element) => getComputedStyle(element).backgroundColor,
@@ -166,18 +177,14 @@ test("typeahead replaces only the query and publishes selected namesake identity
     el.dispatchEvent(new Event("select", { bubbles: true }));
   });
   const option = page.getByRole("option", {
-    name: `Honey ${keys.second}`,
+    name: `Honey (agent) ${keys.second}`,
     exact: true,
   });
   await expect(option).toBeVisible();
   await option.click();
   await expect(input).toBeFocused();
   await expect(input).toHaveJSProperty("value", "Before @Honey  after");
-  await expect(
-    page
-      .getByRole("region", { name: "Notification recipients" })
-      .getByRole("button"),
-  ).toHaveCount(1);
+  await expect(input.locator(".inline-chip")).toHaveCount(1);
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -218,12 +225,14 @@ test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preser
   await expect(input).toHaveJSProperty("value", "😄");
   await expect(input).toBeFocused();
   await input.press("Shift+ArrowLeft");
-  expect(
-    await input.evaluate((element) => [
-      element.selectionStart,
-      element.selectionEnd,
-    ]),
-  ).toEqual([0, "😄".length]);
+  await expect
+    .poll(() =>
+      input.evaluate((element) => [
+        element.selectionStart,
+        element.selectionEnd,
+      ]),
+    )
+    .toEqual([0, "😄".length]);
   await input.press("ArrowRight");
   expect(
     await page.evaluate(() => window.mentionFixture.publications.length),
@@ -273,14 +282,14 @@ test("completion resumes after selection collapses to the original caret", async
   await input.fill(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Shift+ArrowLeft");
-  expect(
-    await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
-  ).toEqual([5, 6]);
+  await expect
+    .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([5, 6]);
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await input.press("ArrowRight");
-  expect(
-    await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
-  ).toEqual([6, 6]);
+  await expect
+    .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([6, 6]);
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
   await expect(input).toHaveJSProperty("value", "😄");
@@ -443,17 +452,30 @@ test("selection follows IDs through reordering and rejected replacement never fa
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", "B ");
   await input.fill("!limit");
+  await expect
+    .poll(() => page.evaluate(() => window.completionFixture.queries().at(-1)))
+    .toBe("limit");
   const next = await page.evaluate(
     () => window.completionFixture.queries().length - 1,
   );
-  await page.evaluate(
-    (index) =>
-      window.completionFixture.publish(index, {
-        items: [
-          { id: "long", label: "Too long", edit: { text: "x".repeat(16001) } },
-        ],
-      }),
-    next,
+  expect(
+    await page.evaluate(
+      (index) =>
+        window.completionFixture.publish(index, {
+          items: [
+            {
+              id: "long",
+              label: "Too long",
+              edit: { text: "x".repeat(16001) },
+            },
+          ],
+        }),
+      next,
+    ),
+  ).toBe(true);
+  await expect(page.getByRole("option", { name: "Too long" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", "!limit");
@@ -627,7 +649,10 @@ test("current custom catalog drives typeahead and signed tags across community r
   expect(suggestionBox.width).toBeCloseTo(composerBox.width * 0.375, 1);
   await first.click();
   await expect(input).toHaveJSProperty("value", ":party-parrot:");
-  await expect(composer.locator("img")).toHaveCSS("width", "42px");
+  await expect(composer.locator("img[data-copy-emoji]")).toHaveCSS(
+    "width",
+    "42px",
+  );
   await input.press("Shift+ArrowLeft");
   expect(
     await input.evaluate((element) =>
@@ -676,7 +701,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   ).toBe(":party-parrot: hello");
   await input.fill(":party-parrot:");
   await expect(input).toHaveAttribute("data-single-emoji", "true");
-  const renderedEmoji = input.locator("img");
+  const renderedEmoji = input.locator("img[data-copy-emoji]");
   await expect(renderedEmoji).toHaveCount(1);
   await expect(renderedEmoji).toHaveCSS("width", "42px");
   await expect(renderedEmoji).toHaveCSS("height", "42px");
@@ -817,14 +842,23 @@ test("recovery is a keyboard-selectable action without transferring editor focus
   const input = page.getByRole("textbox", { name: "Message #Test" });
   for (const withChoice of [false, true]) {
     await input.fill(`!retry-${withChoice}`);
+    // fill() finishes before React necessarily mounts the next provider. Wait
+    // for this query, not whichever historical request happened to be last.
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.completionFixture.queries().at(-1)),
+      )
+      .toBe(`retry-${withChoice}`);
     const index = await page.evaluate(
       () => window.completionFixture.queries().length - 1,
     );
-    await page.evaluate(
-      ({ index, withChoice }) =>
-        window.completionFixture.fail(index, withChoice),
-      { index, withChoice },
-    );
+    expect(
+      await page.evaluate(
+        ({ index, withChoice }) =>
+          window.completionFixture.fail(index, withChoice),
+        { index, withChoice },
+      ),
+    ).toBe(true);
     const retry = page.getByRole("option", { name: "Retry suggestions" });
     // Publishing updates React state; wait for the options and keyboard handler
     // to commit before ArrowUp, or the browser moves the caret instead.
@@ -865,6 +899,8 @@ test("channel and actual ThreadPanel composers keep separate completion and draf
   await expect(thread).toHaveJSProperty("value", "@Fixture Reader ");
   await expect(main).toHaveJSProperty("value", ":smile");
   await main.focus();
+  await expect(main).toHaveJSProperty("selectionStart", 6);
+  await expect(main).toHaveJSProperty("selectionEnd", 6);
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await main.press("Tab");
   await expect(main).toHaveJSProperty("value", "😄");
@@ -922,9 +958,7 @@ test("a later emoji trigger wins after a mention without discarding recipient in
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
   await expect(input).toHaveJSProperty("value", "@Honey 😄");
-  await expect(
-    page.getByRole("region", { name: "Notification recipients" }),
-  ).toHaveCount(0);
+  await expect(input.locator(".inline-chip")).toHaveCount(0);
 });
 
 test("portal bounds hold when the focused composer moves outside the viewport", async ({
@@ -934,6 +968,9 @@ test("portal bounds hold when the focused composer moves outside the viewport", 
   await page.goto("/tests/fixtures/typeahead.html");
   const input = page.getByRole("textbox", { name: "Message #Test" });
   await input.fill("!geometry");
+  await expect
+    .poll(() => page.evaluate(() => window.completionFixture.queries().at(-1)))
+    .toBe("geometry");
   const index = await page.evaluate(
     () => window.completionFixture.queries().length - 1,
   );

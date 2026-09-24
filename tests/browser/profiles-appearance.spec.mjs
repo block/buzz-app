@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
+test.use({ historyCounts: { alpha: 20, beta: 0 } });
 for (const mode of ["light", "dark"]) {
   test(`Profiles uses shared styles and host keyboard focus in ${mode} mode`, async ({
     page,
@@ -53,18 +54,22 @@ for (const mode of ["light", "dark"]) {
       "color",
       mode === "light" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)",
     );
-    await expect(region).toHaveCSS("font-size", "16px");
+    await expect(region).toHaveCSS("font-size", "14px");
     await expect(
       panel.getByRole("heading", { name: "Fixture Reader", exact: true }),
     ).toHaveCSS("font-size", "24px");
-    await expect(key).toHaveCSS("font-size", "13px");
+    await expect(key).toHaveCSS("font-size", "12px");
     await expect(key).toHaveCSS("font-family", /JetBrains Mono/);
-    await expect(copy).toHaveCSS("height", "30px");
-    await expect(copy).toHaveCSS("border-radius", "10px");
+    await expect(copy).toHaveCSS("height", "32px");
+    const pill = await copy.evaluate((el) => ({
+      radius: parseFloat(getComputedStyle(el).borderRadius),
+      height: el.getBoundingClientRect().height,
+    }));
+    expect(pill.radius).toBeGreaterThanOrEqual(pill.height / 2);
     await copy.hover();
     await expect(copy).toHaveCSS(
       "background-color",
-      mode === "light" ? "rgb(218, 218, 218)" : "rgb(35, 35, 35)",
+      mode === "light" ? "rgb(232, 232, 232)" : "rgb(64, 64, 64)",
     );
     await page.keyboard.press(
       browserName === "webkit" && process.platform === "darwin"
@@ -72,26 +77,61 @@ for (const mode of ["light", "dark"]) {
         : "Tab",
     );
     await copy.focus();
+    await expect(copy).toBeFocused();
     await expect(copy).toHaveCSS("outline-width", "2px");
     await page.mouse.click(2, 2);
     await copy.focus();
     await expect(copy).toHaveCSS("outline-style", "none");
-    // The host preference scales type once, not control geometry.
+    // Text controls can grow beyond their minimum to contain enlarged type.
     const modifier = process.platform === "darwin" ? "Meta" : "Control";
     await page.keyboard.press(`${modifier}+=`);
-    await expect(region).toHaveCSS("font-size", "17.6px");
-    await expect(key).toHaveCSS("font-size", "14.3px");
-    await expect(copy).toHaveCSS("height", "30px");
+    await expect(region).toHaveCSS("font-size", "15.4px");
+    await expect(key).toHaveCSS("font-size", "13.2px");
+    await expect(copy).toHaveCSS("min-height", "32px");
+    await expect
+      .poll(() =>
+        copy.evaluate((element) => {
+          const button = element.getBoundingClientRect();
+          const label = element
+            .querySelector(".buzz-button-label")
+            .getBoundingClientRect();
+          return (
+            button.height >= 32 &&
+            label.top >= button.top &&
+            label.bottom <= button.bottom &&
+            label.left >= button.left &&
+            label.right <= button.right
+          );
+        }),
+      )
+      .toBe(true);
     await page.keyboard.press(`${modifier}+0`);
     for (const width of [1280, 900, 390]) {
       await page.setViewportSize({ width, height: 800 });
       await expect(key).toBeVisible();
+      const bounds = await region.boundingBox();
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
       expect(
         await region.evaluate((el) => el.scrollWidth > el.clientWidth),
       ).toBe(false);
       expect(await key.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
         false,
       );
+      // A narrow page scrolls its tab strip, not the profile's content column.
+      const tabs = region.getByRole("tablist", { name: "Profile sections" });
+      const infoTab = tabs.getByRole("tab", { name: "Info", exact: true });
+      const memories = tabs.getByRole("tab", { name: "Memories", exact: true });
+      await infoTab.focus();
+      await infoTab.press("End");
+      await expect(memories).toBeFocused();
+      await expect(memories).toBeInViewport({ ratio: 1 });
+      await memories.press("Enter");
+      await expect(memories).toHaveAttribute("aria-selected", "true");
+      await memories.press("Home");
+      await infoTab.press("Enter");
+      await expect(infoTab).toHaveAttribute("aria-selected", "true");
+      await copy.scrollIntoViewIfNeeded();
+      await expect(copy).toBeInViewport({ ratio: 1 });
       await panel.screenshot({
         path: info.outputPath(`profile-${mode}-${width}.png`),
       });

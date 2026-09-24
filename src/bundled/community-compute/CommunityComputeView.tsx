@@ -212,7 +212,6 @@ export function CommunityComputeView({
             <section className={styles.sharing} aria-label="Compute settings">
               <Switch
                 label="Share this machine"
-                className="text-label-sm"
                 checked={!!sharing}
                 disabled={
                   !controls ||

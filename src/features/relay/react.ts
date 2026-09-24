@@ -28,9 +28,10 @@ export function useRowProfiles(
   queries: ProfileQueries,
   rows: readonly ChannelMessage[],
 ) {
+  const ids = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
   const selection = useMemo(
-    () => selectProfiles(queries, [...new Set(rows.flatMap(rowProfileIds))]),
-    [queries, rows],
+    () => selectProfiles(queries, ids ? ids.split(":") : []),
+    [queries, ids],
   );
   return useSyncExternalStore(
     selection.subscribe,

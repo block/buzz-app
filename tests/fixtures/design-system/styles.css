@@ -41,6 +41,9 @@
 
   .design-system-nav-sections {
     gap: var(--space-6);
+    /* Real trailing scroll space, not another navigation item. Keep it on
+       the content so the final link can move away from the viewport edge. */
+    padding-block-end: calc(var(--space-6) * 3);
   }
 
   .design-system-nav-section {
@@ -69,9 +72,12 @@
       color var(--duration-state) var(--easing-state);
   }
 
-  .design-system-nav-link:hover,
+  .design-system-nav-link:hover:not(.design-system-nav-link-active) {
+    background: var(--affordance-panel-hover);
+  }
+
   .design-system-nav-link-active {
-    background: var(--neutral-3);
+    background: var(--affordance-selected);
   }
 
   .design-system-content {
@@ -406,4 +412,85 @@
       align-items: flex-start;
     }
   }
+}
+
+/* Keep gallery overlays inside the visible document, including narrow layouts. */
+.design-system-shell:has(.messages-page) {
+  height: 100dvh;
+  overflow: hidden;
+}
+.design-system-content:has(.messages-page) {
+  min-height: 0;
+}
+.design-system-reading-column:has(> .messages-page) {
+  height: 100%;
+}
+.messages-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.messages-page > .component-page-heading {
+  flex-shrink: 0;
+}
+.messages-page > iframe {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+}
+@media (max-width: 63.999rem) {
+  .design-system-shell:has(.messages-page) > .design-system-nav {
+    max-height: 25dvh;
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+}
+
+/* Form documentation layout only; controls come from the shared system. */
+.form-doc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-block: var(--space-6);
+}
+.form-doc-preview {
+  width: 100%;
+}
+.form-doc-preview[data-narrow="true"] {
+  max-width: 22rem;
+}
+.form-doc-example {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
+}
+.form-doc-example .component-specimen-frame {
+  display: block;
+}
+.form-doc-fields {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  width: 100%;
+}
+.form-doc-input-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: start;
+}
+.form-doc-input-action > input {
+  flex: 1 1 10rem;
+}
+.form-doc-guidance {
+  display: grid;
+  gap: var(--space-4);
+  margin-block: var(--space-8);
+}
+.form-doc-code {
+  overflow: auto;
+  padding: var(--space-4);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
 }

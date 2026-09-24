@@ -1,7 +1,11 @@
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 
-test.use({ productionBroker: true, readState: true });
+test.use({
+  productionBroker: true,
+  readState: true,
+  historyCounts: { alpha: 640, beta: 20 },
+});
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
 const alpha = (page) => page.getByRole("button", { name: /^Alpha/ });
@@ -44,8 +48,65 @@ async function visible(page) {
   });
 }
 async function options(page) {
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  const trigger = page.getByRole("button", {
+    name: "Channel settings",
+    exact: true,
+  });
+  const opening = (await trigger.getAttribute("aria-expanded")) === "false";
+  await trigger.click();
+  if (opening) await page.getByText("Diagnostics", { exact: true }).click();
 }
+
+// The real startup composition must order optional catalog reads after channel
+// authority; completing that first roster cancels reads already in flight.
+test("Messages startup waits for channel discovery before loading templates", async ({
+  page,
+  app,
+}) => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let catalogRequested = false;
+  page.on("request", (request) => {
+    if (!request.url().endsWith("/query")) return;
+    const filters = request.postDataJSON();
+    if (filters.some((filter) => filter["#t"]?.includes("buzz-channel-kit-v1")))
+      catalogRequested = true;
+  });
+  await page.route("**/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (filters.some((filter) => filter.kinds?.includes(39002) && filter["#p"]))
+      await gate;
+    await route.continue();
+  });
+  // Emoji loading is a later effect in the same mounted Messages workspace.
+  // Observing it establishes that the earlier template effect has run.
+  const workspaceStarted = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/query") &&
+      request.postDataJSON().some((filter) => filter.kinds?.includes(30030)),
+  );
+  const catalogLoaded = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/query") &&
+      response
+        .request()
+        .postDataJSON()
+        .some((filter) => filter["#t"]?.includes("buzz-channel-kit-v1")),
+  );
+  try {
+    await page.goto(app.origin);
+    await workspaceStarted;
+    expect(catalogRequested).toBe(false);
+  } finally {
+    release();
+  }
+  await catalogLoaded;
+  await composer(page).waitFor();
+  await settle(page);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
 
 test("built sidebar → visible dwell → durable journal → encrypted broker publication; reload preserves intent", async ({
   page,

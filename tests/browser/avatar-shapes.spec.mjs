@@ -67,7 +67,11 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/avatar-shapes.html`,
     );
-    const avatars = page.locator("[data-avatar-shape]");
+    // Group wrappers and their shared artwork both carry the shape; count each
+    // displayed identity once, while retaining the inset paint assertions.
+    const avatars = page.locator(
+      "[data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape])",
+    );
     await expect(avatars).toHaveCount(15);
     for (const image of await avatars.locator("img").all()) {
       await expect
@@ -77,31 +81,40 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
     }
     const system = page.getByRole("region", { name: "System avatars" });
     const insetAvatars = page.locator(
-      "button[aria-label^='View thread:'] [data-avatar-shape], [data-membership-row] [data-avatar-shape]",
+      "button[aria-label^='View thread:'] [data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape]), [data-membership-row] [data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape])",
     );
     await expect(insetAvatars).toHaveCount(4);
     async function expectInsetArtwork(pictures = true) {
       for (const avatar of await insetAvatars.all()) {
         const shape = await avatar.getAttribute("data-avatar-shape");
-        const size = await avatar.evaluate((el) =>
-          el.closest("[data-membership-row]") ? 28 : 24,
+        const membership = await avatar.evaluate(
+          (el) => !!el.closest("[data-membership-row]"),
         );
+        const size = membership ? 28 : 24;
+        const inset = membership ? 2 : 1.5;
         await expect(avatar).toHaveCSS("width", `${size}px`);
         await expect(avatar).toHaveCSS("height", `${size}px`);
-        await expect(avatar).toHaveCSS("border-width", "2px");
+        await expect(avatar).toHaveCSS(
+          "border-width",
+          membership ? "2px" : "0px",
+        );
+        await expect(avatar).toHaveCSS("padding", membership ? "0px" : "1.5px");
         for (const image of await avatar.locator("img").all()) {
-          await expect(image).toHaveCSS("width", `${size - 4}px`);
-          await expect(image).toHaveCSS("height", `${size - 4}px`);
+          await expect(image).toHaveCSS("width", `${size - 2 * inset}px`);
+          await expect(image).toHaveCSS("height", `${size - 2 * inset}px`);
         }
-        // Sample inside the overlap border: an outer mask alone leaves the
+        // Sample inside the overlap ring: an outer mask alone leaves the
         // actual image/fallback corners square even when its CSS says squircle.
-        const paint = await pixels(page, avatar, 2);
-        const surface = await avatar.evaluate((el) => {
-          const rgb = getComputedStyle(el)
-            .borderTopColor.match(/\d+/g)
+        const paint = await pixels(page, avatar, inset);
+        const surface = await avatar.evaluate((el, membership) => {
+          const style = getComputedStyle(el);
+          const rgb = (
+            membership ? style.borderTopColor : style.backgroundColor
+          )
+            .match(/\d+/g)
             .map(Number);
           return [...rgb.slice(0, 3), 255];
-        });
+        }, membership);
         const artwork = pictures
           ? [255, 0, 255, 255]
           : await avatar
@@ -185,7 +198,8 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
     const button = page.getByRole("button", { name: "View Agent profile" });
     await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await button.hover();
-    await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    // The shared ghost IconButton supplies its semantic dark hover treatment.
+    await expect(button).toHaveCSS("background-color", "rgb(64, 64, 64)");
     await button.click();
     await expect(page.getByRole("status")).toHaveText("Profile opened");
     await expect(button).toHaveCSS("outline-style", "none");

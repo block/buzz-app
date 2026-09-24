@@ -46,6 +46,9 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     } catch (error) {
       return { status: "recovery", reason: String(error), canReset: true };
     }
+    // Channels is required even when an older installation saved it disabled.
+    for (const plugin of catalog.plugins)
+      if (plugin.manifest.id === "buzz.channels") plugin.enabled = true;
     return { status: "ready", catalog, externalPluginsPaused: false };
   }
   async function getCatalog(): Promise<StorageResult> {
@@ -65,6 +68,8 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
       (action !== "enable" && action !== "disable")
     )
       throw new Error("Bundled plugins can only be enabled or disabled");
+    if (id === "buzz.channels" && action === "disable")
+      throw new Error("Channels is required and cannot be disabled");
     localStorage.setItem(
       storageKey,
       JSON.stringify({
@@ -91,6 +96,10 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     if (!desktop) throw new Error("Local plugins require the desktop app");
     return invoke("plugin_module", { id, revision });
   }
+  async function reloadPlugin(id: string): Promise<StorageResult> {
+    if (!desktop) throw new Error("Plugin reload requires the desktop app");
+    return invoke("plugin_reload", { id });
+  }
 
   const imports: PluginImports | undefined = desktop
     ? {
@@ -102,7 +111,14 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
         discard: (token) => invoke("plugin_import_discard", { token }),
       }
     : undefined;
-  return { getCatalog, changePlugin, recoverSettings, readModule, imports };
+  return {
+    getCatalog,
+    changePlugin,
+    recoverSettings,
+    readModule,
+    reloadPlugin,
+    imports,
+  };
 }
 export type PluginStorage = Omit<
   ReturnType<typeof createPluginStorage>,

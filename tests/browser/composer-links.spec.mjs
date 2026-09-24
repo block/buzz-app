@@ -7,6 +7,11 @@ test("editable composer renders links and mentions while preserving source and n
   page,
   browserName,
 }) => {
+  // Keep the empty-after-send contract under test; agent-prefill behavior has
+  // separate coverage in mention-edit.spec.mjs.
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
+  });
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
@@ -29,11 +34,11 @@ test("editable composer renders links and mentions while preserving source and n
       page.getByRole("region", { name: "Draft preview" }),
     ).toHaveCount(0);
     await expect(preview.locator('[data-link-kind="github"]')).toHaveCount(2);
-    await expect(preview.locator('[data-mention-kind="person"]')).toHaveText(
-      "Alex Chen",
-    );
-    await expect(preview.locator('[data-mention-kind="agent"]')).toHaveText(
-      "Build Bot",
+    await expect(
+      preview.locator('.inline-chip[data-kind="person"]'),
+    ).toHaveText("@Alex Chen");
+    await expect(preview.locator('.inline-chip[data-kind="agent"]')).toHaveText(
+      "@Build Bot",
     );
     const delivered = page.locator('[data-message-id="link-row"]');
     const deliveredLink = delivered
@@ -106,9 +111,11 @@ test("editable composer renders links and mentions while preserving source and n
     }
     await page.keyboard.press("ArrowRight");
     const drag = await input.evaluate((el) => {
-      const text = el.querySelector("[data-editor-text]");
       const range = document.createRange();
-      range.selectNodeContents(text);
+      // The editor now contains block paragraphs. Selecting the outer editor
+      // measures their full width, not the painted text; WebKit will not start
+      // a text drag at that outside edge. Use the actual paragraph contents.
+      range.selectNodeContents(el.querySelector("p"));
       const end = range.getBoundingClientRect();
       return {
         start: el.getBoundingClientRect().left,
@@ -142,8 +149,8 @@ test("editable composer renders links and mentions while preserving source and n
       expected.length,
     );
     await expect(preview.locator("strong")).toHaveText("GitHub");
-    await expect(preview.locator('[data-mention-kind="agent"]')).toHaveText(
-      "Build Bot",
+    await expect(preview.locator('.inline-chip[data-kind="agent"]')).toHaveText(
+      "@Build Bot",
     );
     await input.press("Enter");
     expect(await page.evaluate(() => window.linkComposerFixture.sent)).toEqual([
@@ -152,20 +159,71 @@ test("editable composer renders links and mentions while preserving source and n
     await expect(input).toHaveJSProperty("value", "");
     await expect(preview.locator("[data-source]")).toHaveCount(0);
 
+    // Empty editors still need a real text caret after send, refocus and delete.
+    for (const state of ["sent", "refocused", "deleted"]) {
+      if (state === "refocused") {
+        await input.evaluate((el) => el.blur());
+        await input.focus();
+      } else if (state === "deleted") {
+        await input.pressSequentially("x");
+        await input.press("Backspace");
+      } else await input.focus();
+      await expect(input).toHaveJSProperty("value", "");
+      const emptyCaret = await input.evaluate((el) => {
+        const selection = getSelection().getRangeAt(0);
+        // ProseMirror uses an empty paragraph + BR, not a zero-width source
+        // character. A collapsed element Range has no rect in Chromium; its
+        // BR supplies the same native caret line box.
+        const caretRange = selection.cloneRange();
+        if (
+          !caretRange.getBoundingClientRect().height &&
+          selection.startContainer instanceof Element &&
+          selection.startContainer.childNodes[selection.startOffset]
+            ?.nodeName === "BR"
+        )
+          caretRange.selectNode(
+            selection.startContainer.childNodes[selection.startOffset],
+          );
+        const caret = caretRange.getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        return {
+          height: caret.height,
+          left: caret.left - box.left,
+          top: caret.top - box.top,
+          bottom: box.bottom - caret.bottom,
+          selection: [el.selectionStart, el.selectionEnd],
+        };
+      });
+      expect(emptyCaret.height, state).toBeGreaterThan(10);
+      expect(Math.abs(emptyCaret.left), state).toBeLessThan(2);
+      expect(emptyCaret.top, state).toBeGreaterThanOrEqual(0);
+      expect(emptyCaret.bottom, state).toBeGreaterThanOrEqual(0);
+      expect(emptyCaret.selection, state).toEqual([0, 0]);
+    }
+
     const pasted = "@Alex Chen [Drive](https://drive.google.com/file/example)";
     await input.fill(pasted);
-    await expect(preview.locator("[data-mention-kind]")).toHaveCount(0);
+    await expect(preview.locator(".inline-chip")).toHaveCount(0);
     await expect(preview.locator('[data-link-kind="drive"]')).toHaveText(
       "Drive",
     );
     await page.reload();
     await expect(input).toHaveJSProperty("value", pasted);
-    await expect(preview.locator("[data-mention-kind]")).toHaveCount(0);
+    await expect(preview.locator(".inline-chip")).toHaveCount(0);
     // A rendered item at the end must have a real caret box after its label.
     const linkSource = "See https://github.com/block/buzz-app";
     await input.fill(linkSource);
     const caretBox = await input.evaluate((el) => {
-      const caret = getSelection().getRangeAt(0).getBoundingClientRect();
+      const range = getSelection().getRangeAt(0).cloneRange();
+      if (
+        !range.getBoundingClientRect().height &&
+        range.startContainer instanceof Element
+      ) {
+        const child = range.startContainer.childNodes[range.startOffset];
+        const boundary = child?.nodeName === "IMG" ? child.nextSibling : child;
+        if (boundary?.nodeName === "BR") range.selectNode(boundary);
+      }
+      const caret = range.getBoundingClientRect();
       const link = el.querySelector("[data-source]").getBoundingClientRect();
       return {
         x: caret.x,
@@ -260,6 +318,7 @@ test("editable composer renders links and mentions while preserving source and n
     for (const source of [pastedUrl, `[${pastedUrl}](${pastedUrl})`]) {
       for (const restoredInsideLabel of [false, true]) {
         await input.fill("");
+        await expect(input).toHaveJSProperty("value", "");
         await input.evaluate((el, source) => {
           const clipboardData = new DataTransfer();
           clipboardData.setData("text/plain", source);
@@ -330,6 +389,7 @@ test("editable composer renders links and mentions while preserving source and n
       },
     ]) {
       await input.fill(initial);
+      await expect(input).toHaveJSProperty("value", initial);
       await input.evaluate(
         (el, { source, caret }) => {
           el.setSelectionRange(caret, caret);
@@ -433,15 +493,23 @@ test("editable composer renders links and mentions while preserving source and n
       .click();
     await input.evaluate((el) => el.setSelectionRange(7, 17));
     await input.press("Backspace");
-    await expect(input.locator('[data-mention-kind="person"]')).toHaveCount(0);
-    await expect(input.locator('[data-mention-kind="agent"]')).toHaveCount(1);
+    await expect(input.locator('.inline-chip[data-kind="person"]')).toHaveCount(
+      0,
+    );
+    await expect(input.locator('.inline-chip[data-kind="agent"]')).toHaveCount(
+      1,
+    );
     await input.press("ControlOrMeta+z");
-    await expect(input.locator('[data-mention-kind="person"]')).toHaveCount(1);
+    await expect(input.locator('.inline-chip[data-kind="person"]')).toHaveCount(
+      1,
+    );
     expect(
       await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
     ).toEqual([7, 17]);
     await input.press("ControlOrMeta+Shift+z");
-    await expect(input.locator('[data-mention-kind="person"]')).toHaveCount(0);
+    await expect(input.locator('.inline-chip[data-kind="person"]')).toHaveCount(
+      0,
+    );
     await input.press("Enter");
     expect(
       (await page.evaluate(() => window.linkComposerFixture.sent)).at(-1),

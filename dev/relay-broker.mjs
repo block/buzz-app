@@ -13,6 +13,7 @@ import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validChannelCommand } from "./session-commands.mjs";
 import {
   adminReason,
+  claimReason,
   inviteRequest,
   memberCommand,
 } from "./community-admin.mjs";
@@ -1354,6 +1355,9 @@ export function relayBrokerPlugin({
           const invite = route === "/api/relay/invite";
           const member = route === "/api/relay/member";
           const gifs = route === "/api/relay/gifs";
+          // Only these routes may surface an exact, allowed relay refusal.
+          const refusal =
+            invite || member ? adminReason : claim ? claimReason : undefined;
           if (invite || member) {
             // Community-bound only; the relay remains the authority for roles.
             if (!scoped)
@@ -1684,7 +1688,7 @@ export function relayBrokerPlugin({
                     req.headers["x-buzz-read-priority"] === "background"
                     ? "background"
                     : "foreground",
-                  invite || member ? adminReason : undefined,
+                  refusal,
                 );
             const text = memory
               ? await memoryResponseText(response)
@@ -1717,7 +1721,7 @@ export function relayBrokerPlugin({
               } catch {}
               failure = apiFailure(response.status, body);
               // Admission already bounded the body and kept only an allowed refusal.
-              const reason = (invite || member) && adminReason(body);
+              const reason = refusal?.(body);
               if (reason) failure = { ...failure, error: reason };
               if (presence && failure.quota === "api")
                 lane.pause(failure.retryAfterMs);

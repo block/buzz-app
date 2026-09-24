@@ -1523,11 +1523,14 @@ async function communityAdmin(respond) {
   };
 }
 
-test("invite claim forwards relay-shaped v1 and v2 codes", async () => {
+test("invite claim forwards relay-shaped codes and names exact refusals", async () => {
+  let refusal;
   const { h, post } = await communityAdmin((call) =>
-    call.url.endsWith("/api/invites/claim")
-      ? Response.json({ status: "joined" })
-      : new Response(null, { status: 404 }),
+    !call.url.endsWith("/api/invites/claim")
+      ? new Response(null, { status: 404 })
+      : refusal
+        ? Response.json({ error: refusal }, { status: 403 })
+        : Response.json({ status: "joined" }),
   );
   try {
     for (const code of ["v2.mvQwZTr9C31MUkGj_-", "eyJjIjoxfQ.bWFj"]) {
@@ -1542,6 +1545,19 @@ test("invite claim forwards relay-shaped v1 and v2 codes", async () => {
     for (const code of ["", "a b", "a/b", "x".repeat(257)])
       expect((await post("claim", { code })).status).toBe(400);
     expect(h.calls).toHaveLength(calls);
+    for (const error of [
+      "invite_exhausted",
+      "invite_expired",
+      "invite_invalid",
+      "database said: secret detail",
+    ]) {
+      refusal = error;
+      const response = await post("claim", { code: "v2.abc" });
+      expect(response.status).toBe(403);
+      expect((await response.json()).error).toBe(
+        error.startsWith("invite_") ? error : "Relay request failed (403)",
+      );
+    }
   } finally {
     await h.close();
   }

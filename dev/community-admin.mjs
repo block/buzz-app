@@ -61,3 +61,16 @@ export function adminReason(body) {
     ? reason
     : undefined;
 }
+
+// Exact invite-claim refusal codes (buzz-relay api/invites.rs claim_invite).
+const CLAIM_REASONS = new Set([
+  "invite_expired",
+  "invite_exhausted",
+  "invite_invalid",
+]);
+
+/** Exact relay claim refusal code; anything else stays generic. */
+export function claimReason(body) {
+  const reason = body?.error;
+  return CLAIM_REASONS.has(reason) ? reason : undefined;
+}

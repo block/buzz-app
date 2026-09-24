@@ -49,11 +49,24 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
       target.y < visibleTop + 8
         ? target.y - visibleTop - 8
         : target.y + target.height - visibleBottom + 8;
-    const before = await scroller.evaluate((element) => element.scrollTop);
+    const before = await scroller.evaluate((element) => {
+      // A changed scrollTop is only partial progress in WebKit. Observe native
+      // completion before another wheel or a geometry-based loop exit.
+      element.dataset.wheelComplete = "false";
+      element.addEventListener(
+        "scrollend",
+        () => {
+          element.dataset.wheelComplete = "true";
+        },
+        { once: true },
+      );
+      return element.scrollTop;
+    });
     await page.mouse.wheel(
       0,
       Math.sign(distance) * Math.max(Math.abs(distance), 24),
     );
+    await expect(scroller).toHaveAttribute("data-wheel-complete", "true");
     await expect
       .poll(() => scroller.evaluate((element) => element.scrollTop))
       .not.toBe(before);

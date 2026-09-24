@@ -276,6 +276,7 @@ export function foldMessages(
         authorId: event.pubkey,
         createdAt: event.created_at,
         content: projected.content,
+        ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
         ...(edits.length ? { edited: true as const } : {}),
         ...(projected.content !== content &&

@@ -1,0 +1,86 @@
+import { useEffect, useState, useSyncExternalStore } from "react";
+import type { RelaySession } from "../../features/relay/session";
+import type { ChannelList } from "../../features/relay/contracts";
+
+// Presentation latch only, never roster/access data. Warm page remounts reveal
+// immediately, but new relay/viewer sessions start independently.
+const startupSessions = new WeakMap<
+  SidebarStartupSession,
+  { revealed: boolean; unreadDone: boolean }
+>();
+export const SIDEBAR_REVEAL_BUDGET_MS = 1500;
+// Only page-owned presentation depends on these signals. No new relay work.
+export type SidebarStartupSession = {
+  live: Pick<RelaySession["live"], "subscribe" | "snapshot">;
+  unread: Pick<RelaySession["unread"], "ensure">;
+};
+
+export function useSidebarStartup(
+  session: SidebarStartupSession,
+  list: ChannelList,
+  preferences: ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>,
+) {
+  // ChannelWorkspace is keyed by scope and connection generation; the hook is
+  // remounted for a replacement session, while page-only remounts reuse latches.
+  const [retained] = useState(() => {
+    const state = startupSessions.get(session) ?? {
+      revealed: false,
+      unreadDone: false,
+    };
+    startupSessions.set(session, state);
+    return state;
+  });
+  const [revealed, setRevealed] = useState(retained.revealed);
+  const [unreadDone, setUnreadDone] = useState(retained.unreadDone);
+  const [expired, setExpired] = useState(false);
+  const live = useSyncExternalStore(
+    session.live.subscribe,
+    session.live.snapshot,
+    session.live.snapshot,
+  );
+  const rosterAvailable = list.status === "ready" || list.status === "error";
+  useEffect(() => {
+    if (!rosterAvailable) return;
+    let mounted = true;
+    void session.unread
+      .ensure()
+      .catch(() => {})
+      .then(() => {
+        // Only the UI subscription ends on page exit; the session still owns
+        // this shared read. Preserve settlement if it finishes while away.
+        retained.unreadDone = true;
+        if (mounted) setUnreadDone(true);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [session, rosterAvailable, retained]);
+  useEffect(() => {
+    if (revealed || !rosterAvailable) return;
+    const timer = setTimeout(() => setExpired(true), SIDEBAR_REVEAL_BUDGET_MS);
+    return () => clearTimeout(timer);
+  }, [revealed, rosterAvailable]);
+  const preferencesReady =
+    !!preferences.data ||
+    preferences.status === "error" ||
+    preferences.status === "unsupported";
+  const namesReady =
+    live.roster.state !== "pending" && live.roster.state !== "idle";
+  const recent = Object.values(preferences.data?.sort ?? {}).includes("recent");
+  const activityReady =
+    !recent ||
+    list.activityStatus === "ready" ||
+    list.activityStatus === "error" ||
+    list.activityStatus === "unavailable";
+  const settled = preferencesReady && namesReady && activityReady && unreadDone;
+  const ready = revealed || (rosterAvailable && (expired || settled));
+  useEffect(() => {
+    if (!ready || revealed) return;
+    retained.revealed = true;
+    setRevealed(true);
+  }, [ready, revealed, retained]);
+  return {
+    ready,
+    updating: ready && !settled,
+  };
+}

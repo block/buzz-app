@@ -246,3 +246,9 @@ export const PencilSimpleIcon = defineIcon(
 
 import { ListChecksIcon as PhosphorListChecksIcon } from "@phosphor-icons/react/dist/csr/ListChecks";
 export const ListChecksIcon = defineIcon("phosphor", PhosphorListChecksIcon);
+
+import { ArrowsDownUpIcon as PhosphorArrowsDownUpIcon } from "@phosphor-icons/react/dist/csr/ArrowsDownUp";
+export const ArrowsDownUpIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowsDownUpIcon,
+);

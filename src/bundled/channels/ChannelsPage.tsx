@@ -12,7 +12,15 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ContextMenuRoot,
   MenuItem,
+  MenuRoot,
+  MenuTrigger,
   MenuPopup,
+  MenuSubmenu,
+  MenuSubmenuTrigger,
+  MenuSubmenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
 import { useChannelPanels } from "./useChannelPanels";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
@@ -47,6 +55,7 @@ import {
 } from "react";
 import {
   CaretRightIcon,
+  ArrowsDownUpIcon,
   DotsThreeIcon,
   PlugIcon,
   ChatCircleIcon,
@@ -94,6 +103,7 @@ import {
   CHANNEL_SIDEBAR_MIN_WIDTH,
   useSidebarView,
 } from "./useSidebarView";
+import { useSidebarStartup } from "./useSidebarStartup";
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
@@ -257,9 +267,7 @@ function ChannelWorkspace({
   useEffect(() => {
     void queries.emoji.ensure();
   }, [queries]);
-  useEffect(() => {
-    if (list.status === "ready") void queries.unread.ensure();
-  }, [queries, list.status]);
+  const startup = useSidebarStartup(queries, list, preferences);
   const available = useSyncExternalStore(
     panels.subscribe,
     panels.snapshot,
@@ -325,11 +333,9 @@ function ChannelWorkspace({
     [navigate],
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
+  const [sectionMenu, setSectionMenu] = useState<{ key: string }>();
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
-  const sidebar = useSidebarView(
-    scope,
-    list.status === "ready" && preferences.status !== "loading",
-  );
+  const sidebar = useSidebarView(scope, startup.ready);
   const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
     queries.profiles,
@@ -916,21 +922,33 @@ function ChannelWorkspace({
   const drawer = useChannelPanels(panels, drawerContext, () =>
     setSettings(undefined),
   );
-  const sections = sidebarSections(
-    sidebarChannels,
-    personal
-      ? {
-          sections: personal.groups.map((g, order) => ({
-            id: g.id,
-            name: g.name,
-            order,
-          })),
-          assignments: personal.assignments,
-          starred: preferences.data?.starred ?? [],
-        }
-      : preferences.data,
-    hiddenDms.hiddenIds,
-  );
+  const displayedPreferences = personal
+    ? {
+        ...preferences.data,
+        sections: personal.groups.map((g, order) => ({
+          id: g.id,
+          name: g.name,
+          order,
+        })),
+        assignments: personal.assignments,
+        starred: preferences.data?.starred ?? [],
+      }
+    : preferences.data;
+  const sections = startup.ready
+    ? sidebarSections(sidebarChannels, displayedPreferences, hiddenDms.hiddenIds)
+    : [];
+  const closeSectionMenu = useCallback(() => setSectionMenu(undefined), []);
+  const setSectionSort = (key: string, mode: "alpha" | "recent") => {
+    // The session applies the choice immediately and owns rollback/retry state.
+    void preferences
+      .setSort(
+        key.startsWith("group:") ? `section:${key.slice(6)}` : key,
+        mode,
+        displayedPreferences?.sections.map((section) => section.id) ?? [],
+      )
+      .catch(() => {});
+    closeSectionMenu();
+  };
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
   const rowActions = (channel: ChannelSummary) => {
@@ -1033,6 +1051,7 @@ function ChannelWorkspace({
               return (
                 <details
                   key={section.key}
+                  data-sidebar-section={section.key}
                   className={styles.channelSection}
                   open={!sidebar.collapsed.includes(section.key)}
                 >
@@ -1121,6 +1140,85 @@ function ChannelWorkspace({
                         />
                       </span>
                     )}
+                    {preferences.sortWritable && (
+                      <MenuRoot
+                        open={sectionMenu?.key === section.key}
+                        onOpenChange={(open) => {
+                          if (open) {
+                            closeSectionMenu();
+                            setSectionMenu({ key: section.key });
+                          } else if (sectionMenu?.key === section.key)
+                            closeSectionMenu();
+                        }}
+                      >
+                        <MenuTrigger
+                          render={(props) => (
+                            <span className={styles.sectionSortAction}>
+                              <IconButton
+                                {...props}
+                                type="button"
+                                size="sm"
+                                icon={
+                                  <DotsThreeIcon size={16} aria-hidden="true" />
+                                }
+                                aria-label={`More actions for ${section.title}`}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  props.onClick?.(event);
+                                }}
+                              />
+                            </span>
+                          )}
+                        />
+                        <MenuPopup
+                          align="end"
+                          aria-label={`Actions for ${section.title}`}
+                        >
+                          <MenuSubmenu>
+                            <MenuSubmenuTrigger>
+                              <MenuIcon>
+                                <ArrowsDownUpIcon size={20} />
+                              </MenuIcon>
+                              Sort
+                            </MenuSubmenuTrigger>
+                            <MenuSubmenuPopup
+                              aria-label={`Sort ${section.title}`}
+                              finalFocus={false}
+                            >
+                              <MenuRadioGroup
+                                value={
+                                  preferences.data?.sort?.[
+                                    section.key.startsWith("group:")
+                                      ? `section:${section.key.slice(6)}`
+                                      : section.key
+                                  ] ?? "alpha"
+                                }
+                                onValueChange={(mode) =>
+                                  void setSectionSort(
+                                    section.key,
+                                    mode as "alpha" | "recent",
+                                  )
+                                }
+                              >
+                                <MenuRadioItem
+                                  closeOnClick={false}
+                                  value="recent"
+                                >
+                                  Recent
+                                </MenuRadioItem>
+                                <MenuRadioItem
+                                  closeOnClick={false}
+                                  value="alpha"
+                                >
+                                  A–Z
+                                </MenuRadioItem>
+                              </MenuRadioGroup>
+                            </MenuSubmenuPopup>
+                          </MenuSubmenu>
+                        </MenuPopup>
+                      </MenuRoot>
+                    )}
                   </summary>
                   {section.rows.map((channel) => {
                     const sessions = childrenByParent.get(channel.id);
@@ -1206,11 +1304,45 @@ function ChannelWorkspace({
                 {list.error}
               </p>
             )}
-            {list.status === "ready" && !channels.length && (
+            {!startup.ready && (
+              <p className={styles.empty} role="status">
+                Loading your sidebar…
+              </p>
+            )}
+            {startup.ready && list.status === "ready" && !channels.length && (
               <p className={styles.empty}>No channels yet.</p>
             )}
           </SidebarUnread>
-          {preferences.status === "error" ? (
+          {startup.updating && (
+            <p className={styles.preferenceNotice} role="status">
+              Updating sidebar details…
+            </p>
+          )}
+          {preferences.sortErrors?.map(({ group, mode, error }) => (
+            <div key={group} className={styles.preferenceNotice} role="alert">
+              <p>
+                Couldn’t save the sort order for{" "}
+                {sections.find(
+                  ({ key }) =>
+                    key ===
+                    (group.startsWith("section:")
+                      ? `group:${group.slice(8)}`
+                      : group),
+                )?.title ?? "this section"}
+                . {error}
+              </p>
+              <button type="button" onClick={() => setSectionSort(group, mode)}>
+                Retry sort
+              </button>
+              <button
+                type="button"
+                onClick={() => preferences.dismissSortError(group)}
+              >
+                Dismiss
+              </button>
+            </div>
+          ))}
+          {startup.ready && preferences.status === "error" ? (
             <ToastNotice
               title="Saved groups and stars couldn’t refresh"
               description="Your conversations are still available."
@@ -1220,11 +1352,9 @@ function ChannelWorkspace({
                 Retry
               </Button>
             </ToastNotice>
-          ) : preferences.status !== "ready" ? (
+          ) : startup.ready && preferences.status === "unsupported" ? (
             <p className={styles.preferenceNotice} role="status">
-              {preferences.status === "loading"
-                ? "Loading saved groups and stars…"
-                : "Saved groups and stars aren’t supported by this host yet."}
+              Saved groups and stars aren’t supported by this host yet.
             </p>
           ) : null}
         </div>

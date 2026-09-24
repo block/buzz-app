@@ -544,3 +544,25 @@ it("does not revive a completed receipt after failed re-add dismissal and restar
   await t.managedAdd();
   expect(new Set(t.publish.mock.calls.map(([event]) => event.id)).size).toBe(3);
 });
+
+it("never replaces a legacy invitation after recovery adoption fails to save", async () => {
+  const t = setup();
+  await t.ready();
+  t.setEcho();
+  t.setApply(false);
+  await expect(t.managedAdd()).rejects.toThrow();
+  await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("seen"));
+  t.legacy();
+  t.restart();
+  await t.ready();
+  t.setSaveFailure(true);
+  await expect(t.managedAdd()).rejects.toThrow(/Storage unavailable/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  t.setSaveFailure(false);
+  await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.records()[0]?.recovery).toBeDefined();
+  t.confirmPerson();
+  await t.managedAdd();
+  expect(t.publish).toHaveBeenCalledOnce();
+});

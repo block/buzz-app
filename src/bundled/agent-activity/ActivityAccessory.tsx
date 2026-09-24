@@ -1,5 +1,10 @@
 import { useChannelIdentityNames } from "../../features/identity-names/react";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   DotsThreeIcon,
@@ -81,9 +86,9 @@ export function ActivityAccessory({
             working > 0 || typing.some((entry) => entry.agent === agent);
           const picture = identities.get(agent)?.picture;
           return (
-            <Tooltip
+            <ActivityEntry
               key={agent}
-              content={
+              tooltip={
                 <>
                   <p className="text-body-sm">
                     {threadRootId ? (
@@ -107,17 +112,14 @@ export function ActivityAccessory({
                   <code className="font-mono text-mono">{agent}</code>
                 </>
               }
-            >
-              <ActivityEntry
-                session={session}
-                agent={agent}
-                src={picture ? (session.media(picture) ?? null) : null}
-                name={name}
-                isWorking={isWorking}
-                target={target}
-                open={open}
-              />
-            </Tooltip>
+              session={session}
+              agent={agent}
+              src={picture ? (session.media(picture) ?? null) : null}
+              name={name}
+              isWorking={isWorking}
+              target={target}
+              open={open}
+            />
           );
         })}
       </div>
@@ -133,6 +135,7 @@ function ActivityEntry({
   isWorking,
   target,
   open,
+  tooltip,
 }: {
   session: ComposerAccessoryProps["session"];
   agent: string;
@@ -141,42 +144,45 @@ function ActivityEntry({
   isWorking: boolean;
   target: ReturnType<typeof activityTarget>;
   open: ComposerAccessoryProps["open"];
+  tooltip: ReactNode;
 }) {
   const presence = usePresenceStatus(session.presence, agent);
   const Icon = isWorking ? DotsThreeIcon : QuestionIcon;
   return (
-    <NavigationItem
-      aria-label={`View activity for ${name} ${agent.slice(0, 12)}`}
-      aria-description={
-        presence === "unknown" ? undefined : `Presence: ${presence}`
-      }
-      onClick={() => open(target)}
-      icon={
-        <Avatar
-          src={src}
-          alt=""
-          fallback={name}
-          size="small"
-          shape="squircle"
-          statusBadge={presence === "unknown" ? undefined : presence}
-        />
-      }
-      label={
-        <>
-          <span className={styles.name}>{name}</span>
-          {" · "}
-          <span className={styles.status}>
-            {isWorking ? "working" : "status unknown"}
-          </span>
-        </>
-      }
-      trailing={
-        <Icon
-          className={styles.indicator}
-          data-working={isWorking || undefined}
-          size={18}
-        />
-      }
-    />
+    <Tooltip content={tooltip}>
+      <NavigationItem
+        aria-label={`View activity for ${name} ${agent.slice(0, 12)}`}
+        aria-description={
+          presence === "unknown" ? undefined : `Presence: ${presence}`
+        }
+        onClick={() => open(target)}
+        icon={
+          <Avatar
+            src={src}
+            alt=""
+            fallback={name}
+            size="small"
+            shape="squircle"
+            statusBadge={presence === "unknown" ? undefined : presence}
+          />
+        }
+        label={
+          <>
+            <span className={styles.name}>{name}</span>
+            {" · "}
+            <span className={styles.status}>
+              {isWorking ? "working" : "status unknown"}
+            </span>
+          </>
+        }
+        trailing={
+          <Icon
+            className={styles.indicator}
+            data-working={isWorking || undefined}
+            size={18}
+          />
+        }
+      />
+    </Tooltip>
   );
 }

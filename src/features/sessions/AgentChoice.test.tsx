@@ -116,7 +116,7 @@ it("names known agent presence on the selected trigger and choices", async () =>
   });
   await user.click(trigger);
   expect(
-    screen.getByRole("menuitemradio", { name: "Fizz, away" }),
+    await screen.findByRole("menuitemradio", { name: "Fizz, away" }),
   ).toBeTruthy();
   act(() => {
     status = "unknown";

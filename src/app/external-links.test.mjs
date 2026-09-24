@@ -14,11 +14,12 @@ it("registers the desktop link fallback in the production native builder", () =>
   );
 });
 
-it("grants only HTTP(S) opening to the main window, without file or application access", () => {
+it("grants only HTTP(S) opening to the main webview, without file or application access", () => {
   const capability = JSON.parse(
     read("../../src-tauri/capabilities/default.json"),
   );
-  expect(capability.windows).toEqual(["main"]);
+  expect(capability.webviews).toEqual(["main"]);
+  expect(capability.windows).toBeUndefined();
   expect(capability.remote).toBeUndefined();
   const openerPermissions = capability.permissions.filter((permission) =>
     (typeof permission === "string"

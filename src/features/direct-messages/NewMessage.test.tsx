@@ -64,6 +64,7 @@ function setup() {
     open: vi.fn<RelaySession["directMessages"]["open"]>(async () => channel),
     delivered: vi.fn(async () => {}),
     delivery: vi.fn<RelaySession["directMessages"]["delivery"]>(() => "failed"),
+    subscribeOpened: () => () => {},
   };
   let operations: readonly OutgoingEvent[] = [];
   const outboxListeners = new Set<() => void>();
@@ -105,6 +106,7 @@ function setup() {
       operations = [];
       notifyOutbox();
     }),
+    recover: async () => {},
     acknowledge: vi.fn(async () => {
       operations = [];
       notifyOutbox();

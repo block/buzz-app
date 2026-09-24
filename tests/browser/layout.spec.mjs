@@ -52,9 +52,12 @@ async function link(page, app, target) {
       },
     }),
   );
+  // A return from a compose route can still be restoring the timeline.
+  await settle(page);
   app.append("primary", "alpha", `Please review ${target}`);
   const trigger = page.getByRole("link", { name: target, exact: true });
   await expect(trigger).toBeVisible();
+  await settle(page);
   await trigger.scrollIntoViewIfNeeded();
   // Appending and bringing an offscreen link into view can both scroll Virtua.
   // These are panel-layout checks, not clicks during an in-flight correction.

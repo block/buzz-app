@@ -474,11 +474,16 @@
      pill was not — there is no second surface to collide with the first. */
   .buzz-tabs[data-variant="panel"] {
     display: flex;
+    min-width: 0;
     align-items: center;
     gap: var(--space-4);
   }
 
   .buzz-tabs[data-variant="panel"] .buzz-tabs-list {
+    min-width: 0;
+    overflow-x: auto;
+    padding-inline: var(--space-1);
+    scroll-padding-inline: var(--space-1);
     gap: var(--space-5);
   }
 
@@ -491,6 +496,7 @@
      text carries more of the work. Tertiary is a meta role at the Lc 45 target
      and measures 60.6 light / 52.5 dark on these surfaces. */
   .buzz-tabs[data-variant="panel"] .buzz-tabs-tab {
+    flex-shrink: 0;
     height: 2.25rem;
     padding: 0;
     color: var(--text-metadata);

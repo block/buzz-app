@@ -42,6 +42,7 @@ function fixture() {
     subscribe: () => () => {},
     observeSend: () => () => {},
     ready: async () => {},
+    recover: async () => {},
     acknowledge: async () => {},
     supports: () => true,
     send: vi.fn((value) => {

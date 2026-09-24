@@ -154,3 +154,38 @@ it("publishes owner-only changes and removal without treating profile claims as 
     reader.dispose();
   }
 });
+
+it("reacts to NIP-05-only replacements and removal without asserting verification", () => {
+  const wire = scriptedTransport(user.pubkey, keypair().pubkey);
+  const reader = createRelayReader(wire.transport);
+  const directory = createProfileDirectory(reader.reader);
+  const selection = selectProfiles(directory.queries, [user.pubkey]);
+  const changed = vi.fn();
+  const unsubscribe = selection.subscribe(changed);
+  try {
+    directory.accept([profile(user, { name: "Mic" }, 1)]);
+    const before = selection.snapshot();
+    changed.mockClear();
+    directory.accept([
+      profile(user, { name: "Mic", nip05: "  mic@example.org  " }, 2),
+    ]);
+    expect(selection.snapshot()).not.toBe(before);
+    expect(selection.snapshot().get(user.pubkey)?.nip05).toBe(
+      "mic@example.org",
+    );
+    expect(changed).toHaveBeenCalledTimes(1);
+    directory.accept([
+      profile(user, { name: "Mic", nip05: "mic@example.org" }, 3),
+    ]);
+    expect(changed).toHaveBeenCalledTimes(1);
+    directory.accept([
+      profile(user, { name: "Mic", nip05: { unsafe: true } }, 4),
+    ]);
+    expect(selection.snapshot().get(user.pubkey)).toEqual({ name: "Mic" });
+    expect(changed).toHaveBeenCalledTimes(2);
+  } finally {
+    unsubscribe();
+    directory.dispose();
+    reader.dispose();
+  }
+});

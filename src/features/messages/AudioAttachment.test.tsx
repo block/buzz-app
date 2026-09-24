@@ -58,9 +58,11 @@ it("toggles the accessible play control name", () => {
   );
   const audio = container.querySelector("audio");
   if (!audio) throw new Error("Missing audio element");
-  expect(
-    screen.getByRole("button", { name: "Play audio" }),
-  ).toBeInTheDocument();
+  const playButton = screen.getByRole("button", { name: "Play audio" });
+  expect(playButton).toBeInTheDocument();
+  expect(playButton).toHaveAttribute("data-icon-variant", "solid");
+  expect(playButton).toHaveAttribute("data-icon-size", "compact");
+  expect(playButton).toHaveAttribute("data-icon-shape", "round");
   fireEvent.play(audio);
   expect(
     screen.getByRole("button", { name: "Pause audio" }),
@@ -172,15 +174,26 @@ it("ignores non-finite media durations", () => {
   expect(screen.getByText("0:00 / 1:23")).toBeInTheDocument();
 });
 
-it("disables seeking until a total duration is known", () => {
-  render(
+it("keeps playback enabled while disabling seek until metadata supplies a duration", () => {
+  const { container } = render(
     <AudioAttachment
       attachment={{ url: "https://fixture.test/audio.mp3", kind: "audio" }}
       source={source}
     />,
   );
+  const audio = container.querySelector("audio");
+  if (!audio) throw new Error("Missing audio element");
+
   expect(screen.getByText("0:00")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Play audio" })).toBeEnabled();
   expect(screen.getByRole("slider", { name: "Seek audio" })).toBeDisabled();
+
+  setDuration(audio, 83);
+  fireEvent.loadedMetadata(audio);
+
+  expect(screen.getByRole("button", { name: "Play audio" })).toBeEnabled();
+  expect(screen.getByRole("slider", { name: "Seek audio" })).toBeEnabled();
+  expect(screen.getByText("0:00 / 1:23")).toBeInTheDocument();
 });
 
 it("updates bare elapsed slider value text before duration is known", () => {
@@ -500,22 +513,26 @@ it("renders an unavailable card on load errors", () => {
   expect(screen.getByRole("status")).toHaveTextContent("Audio unavailable");
 });
 
-it("resets load failure when the source changes", async () => {
+it("resets load failure and playback display when the source changes", async () => {
   const attachment = {
     url: "https://fixture.test/audio.mp3",
     kind: "audio",
+    duration: 83,
   } as const;
   const { container, rerender } = render(
     <AudioAttachment attachment={attachment} source={source} />,
   );
   const audio = container.querySelector("audio");
   if (!audio) throw new Error("Missing audio element");
+  audio.currentTime = 42;
+  fireEvent.timeUpdate(audio);
+  expect(screen.getByText("0:42 / 1:23")).toBeInTheDocument();
   fireEvent.error(audio);
   expect(screen.getByRole("status")).toHaveTextContent("Audio unavailable");
 
   rerender(
     <AudioAttachment
-      attachment={attachment}
+      attachment={{ url: attachment.url, kind: attachment.kind }}
       source="/api/relay/media?url=https%3A%2F%2Ffixture.test%2Frecovered.mp3"
     />,
   );
@@ -524,6 +541,8 @@ it("resets load failure when the source changes", async () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument(),
   );
   expect(container.querySelector("audio")).toBeInTheDocument();
+  expect(screen.getByText("0:00")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Play audio" })).toBeEnabled();
 });
 
 it("toggles playback from the play/pause button", async () => {

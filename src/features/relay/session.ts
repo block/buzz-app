@@ -1,4 +1,6 @@
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { createMemberAdditions } from "../channel-members/operations";
+import { addChannelMember, startAddedAgent } from "../channel-members/members";
 import type { AgentControl } from "../agents/control";
 import { createAgentChoices, templateAgentChoices } from "../agents/choices";
 import { parseLineup } from "../channel-templates/model";
@@ -9,6 +11,7 @@ import {
   type ChannelCreationInput,
 } from "../channel-templates/setup";
 import { createPresence } from "../presence/presence";
+import { createAgentMemories } from "../agents/memory";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
 import { sessionMetadata } from "../sessions/metadata";
@@ -185,6 +188,7 @@ export function createRelaySession(
   let revision = 0;
   let accessEpoch = 0;
   let cacheClearEpoch = 0;
+  let cacheClearing = 0;
   // Access changes update every owned snapshot before invoking subscribers.
   // A subscriber of one projection may synchronously read any other projection.
   let revoking = 0;
@@ -333,6 +337,7 @@ export function createRelaySession(
       profiles.clear();
       emoji.clear();
       activity.clear();
+      memories.clear();
       presence.clear();
       archives.clear();
       workflows.clear();
@@ -499,6 +504,13 @@ export function createRelaySession(
   );
   const profiles = createProfileDirectory(verified, localViews, notify);
   const emoji = createEmojiDirectory(verified, notify);
+  let memoryConnected = !transport?.subscribe;
+  const memories = createAgentMemories(
+    transport?.readAgentMemories,
+    transport?.viewer ?? "",
+    () => !closed && !revoking && !cacheClearing && memoryConnected,
+    notify,
+  );
   const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
   const agentChoices = createAgentChoices({
     scope: `${transport?.scope ?? transport?.relayAuthor}:${transport?.viewer}`,
@@ -1072,7 +1084,32 @@ export function createRelaySession(
       }
     },
   });
+  const memberAdditions = createMemberAdditions(
+    lifetime.signal,
+    async (channelId, pubkey, intent): Promise<void> => {
+      await addChannelMember(
+        session,
+        channelId,
+        pubkey,
+        lifetime.signal,
+        intent,
+        writes?.local,
+      );
+    },
+    async (channelId, pubkey, control, retryStart): Promise<void> => {
+      await startAddedAgent(
+        control,
+        session,
+        channelId,
+        pubkey,
+        lifetime.signal,
+        retryStart,
+      );
+    },
+    writes?.local,
+  );
   const session = Object.freeze({
+    memberAdditions,
     presence,
     viewer: transport?.viewer,
     scope: readScope,
@@ -1222,6 +1259,7 @@ export function createRelaySession(
     agentChoices,
     workflows: workflows.capability,
     agentActivity: activity.queries,
+    agentMemories: memories.capability,
     archives: archives.queries,
     media: (url: string, size?: "small") => transport?.media(url, size),
     /** A plugin may request writes from this same interface when the host supports them. */
@@ -1610,9 +1648,13 @@ export function createRelaySession(
     },
     state(snapshot) {
       if (closed) return;
+      memoryConnected = snapshot.status === "connected";
       activity.state(snapshot);
       presence.connected(snapshot.status === "connected");
-      if (snapshot.status !== "connected") typing.clear();
+      if (snapshot.status !== "connected") {
+        typing.clear();
+        memories.clear();
+      }
       if (
         snapshot.status !== "connected" &&
         liveSnapshot.status === "connected"
@@ -1703,34 +1745,42 @@ export function createRelaySession(
   return {
     session,
     async clearCache() {
-      accessEpoch++;
-      cancelUploads();
-      cacheClearEpoch++;
-      activity.clear();
-      presence.clear();
-      typing.clear();
-      sidebarPreferences.clear();
-      channelKit.clear();
-      // New windows must not yield to or receive errors from retired owners.
-      catchups.clear();
-      catchupQueue.clear();
-      for (const clear of views.values()) clear(true);
-      recent.clear();
-      unread.clear();
-      requests.invalidate();
-      profiles.clear();
-      emoji.clear();
-      agentLibrary.clear();
-      archives.clear();
-      workflows.clear();
-      await channels.clearCache();
-      updateInterests();
+      // Keep memory admission closed through asynchronous and overlapping purges.
+      cacheClearing++;
+      try {
+        accessEpoch++;
+        cancelUploads();
+        cacheClearEpoch++;
+        activity.clear();
+        memories.clear();
+        presence.clear();
+        typing.clear();
+        sidebarPreferences.clear();
+        channelKit.clear();
+        // New windows must not yield to or receive errors from retired owners.
+        catchups.clear();
+        catchupQueue.clear();
+        for (const clear of views.values()) clear(true);
+        recent.clear();
+        unread.clear();
+        requests.invalidate();
+        profiles.clear();
+        emoji.clear();
+        agentLibrary.clear();
+        archives.clear();
+        workflows.clear();
+        await channels.clearCache();
+        updateInterests();
+      } finally {
+        cacheClearing--;
+      }
     },
     dispose() {
       closed = true;
       typing.dispose();
       lifetime.abort();
       activity.dispose();
+      memories.dispose();
       presence.dispose();
       sidebarPreferences.dispose();
       stopInterests();

@@ -547,6 +547,15 @@ export const test = base.extend({
         });
         return [];
       }
+      if (filter.kinds?.includes(30315)) {
+        expect(filter).toEqual({
+          kinds: [30315],
+          authors: [expect.any(String)],
+          "#d": ["general"],
+          limit: 1,
+        });
+        return [];
+      }
       if (filter.kinds?.includes(0))
         return [
           sign(0, [], JSON.stringify({ name: "Fixture Reader" }), userKey),
@@ -814,6 +823,9 @@ export const test = base.extend({
           answer,
           report,
           pending,
+          // The production broker advertises read-state writes for every session,
+          // not only tests opting into complete snapshot reads.
+          acceptPublication: acceptReadPublication,
           ...(actionProfile
             ? {
                 latencyMs: 40,
@@ -851,7 +863,6 @@ export const test = base.extend({
                     max_bytes: 8388608,
                   },
                 }),
-                acceptPublication: acceptReadPublication,
               }
             : {}),
         })

@@ -55,7 +55,7 @@ it("keeps custom mode separate from saved values and supports an unset provider"
   await user.clear(screen.getByRole("textbox", { name: "Executable" }));
   await user.type(
     screen.getByRole("textbox", { name: "Executable" }),
-    "/custom/agent",
+    "/custom/buzz-agent",
   );
   expect(screen.getByRole("textbox", { name: "Custom provider" })).toHaveValue(
     "provider",
@@ -63,7 +63,7 @@ it("keeps custom mode separate from saved values and supports an unset provider"
   await user.click(screen.getByRole("combobox", { name: "Provider" }));
   await user.click(await screen.findByRole("option", { name: "Not set" }));
   expect(screen.getByRole("status")).toHaveTextContent(
-    '{"command":"/custom/agent","provider":""}',
+    '{"command":"/custom/buzz-agent","provider":""}',
   );
 });
 

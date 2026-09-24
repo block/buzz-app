@@ -22,10 +22,13 @@ export function AgentHarnessEditor({
   const executable = draft.command.replaceAll("\\", "/").split("/").at(-1);
   const harness =
     options.find((option) => option.command === draft.command) ??
-    options.find(
-      (option) =>
-        option.command.replaceAll("\\", "/").split("/").at(-1) === executable,
-    );
+    (executable === "goose" || executable === "buzz-pi-acp"
+      ? options.find(
+          (option) =>
+            option.command.replaceAll("\\", "/").split("/").at(-1) ===
+            executable,
+        )
+      : undefined);
   const external = harness?.label === "Goose" || harness?.label === "Pi";
   return (
     <div className="space-y-4">

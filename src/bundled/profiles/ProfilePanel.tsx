@@ -27,6 +27,7 @@ import { selectProfiles } from "../../features/relay/profile-selection";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
 
 export function ProfilePanel({
@@ -178,6 +179,13 @@ function ProfileDetails({
                   <p className={styles.about}>{profile.about}</p>
                 )}
                 {children}
+                {agentPubkeys.has(pubkey) && (
+                  <ProfileAgentIdentity
+                    session={session}
+                    pubkey={pubkey}
+                    context={context}
+                  />
+                )}
                 <ProfileActivity
                   session={session}
                   pubkey={pubkey}

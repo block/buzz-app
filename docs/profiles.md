@@ -45,6 +45,33 @@ add the agent again from the managed-agent profile. Older unguarded invitation
 records can be promoted to guarded intent when reused through that profile flow.
 Remove from outbox does not revoke an invitation already dispatched to the relay.
 
+## Agent identity
+
+For an identity with an agent hint (below), the Info tab adds a small **Agent**
+section. It shows only claims backed by verifiable relay evidence:
+
+- **Owner** comes from the NIP-OA `auth` tag on the identity's own winning
+  signature-verified kind 0 (newest `created_at`, lower id on ties). A
+  session-owned `session.observe` view supplies that event: it merges live
+  events, refreshes on reconnect and resets on purge. Verification is bound
+  to that exact event id, so an auth-only change or a lagging older read
+  never keeps or restores a previous owner. It requires exactly one tag,
+  owner ≠ agent, conditions evaluated against the event, and a valid BIP-340
+  signature over `nostr:agent-auth:<agent>:<conditions>`. A verified owner is
+  shown as "Authorized by …", never as the author. It opens the owner's
+  profile in the same slot when the host can open it. A missing or invalid
+  tag reads **Not verified**, and a failed read or unavailable view reads
+  **Unknown**. The existing `isAgent` shape check, avatar shape and local
+  library never supply an owner.
+- **Archive** reuses the relay-scoped `session.archives` snapshot:
+  archived, not archived, or unknown when unavailable or failed.
+
+A failed read shows **Retry agent details**. Reopening the profile also retries
+a failed archive read once. Nothing retries automatically in a loop.
+
+Agent type and capabilities are not shown: buzz-app has no reader or contract
+for their source (old Buzz kind 10100). This section has no controls.
+
 ## Boundaries
 
 - Shared message UI recognizes author-avatar targets and identity-bound mentions.

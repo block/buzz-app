@@ -125,12 +125,16 @@ test("Settings hides the Channels off switch and can recover a saved disabled pl
     .getByRole("button", { name: "Open Settings", exact: true })
     .click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
-  await page
-    .getByRole("switch", { name: "Enable Channels", exact: true })
-    .click();
+  const channelsSwitch = page.getByRole("switch", {
+    name: "Enable Channels",
+    exact: true,
+  });
+  await channelsSwitch.focus();
+  await page.keyboard.press("Space");
+  await expect(channelsSwitch).toHaveCount(0);
   await expect(
-    page.getByRole("switch", { name: "Enable Channels", exact: true }),
-  ).toHaveCount(0);
+    page.getByRole("button", { name: "Plugins", exact: true }),
+  ).toBeFocused();
   await page.reload();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await expect(

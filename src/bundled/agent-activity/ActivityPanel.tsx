@@ -1,3 +1,4 @@
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import { useIdentityNames } from "../../features/identity-names/react";
 import {
   useEffect,
@@ -63,6 +64,10 @@ export function ActivityDetails({
   const agentChoices = useMemo(
     () => [...new Set([...agents, ...(selected ? [selected] : [])])],
     [agents, selected],
+  );
+  const fallbackKeys = useMemo(
+    () => publicKeyLabels(agentChoices),
+    [agentChoices],
   );
   const resolveName = useIdentityNames(session.names);
   const profiles = useMemo(
@@ -157,7 +162,12 @@ export function ActivityDetails({
                     label: "Observed agents",
                     options: agentChoices.map((key) => ({
                       value: key,
-                      label: `${resolveName(key, identities.get(key)?.name ?? "Agent")} · ${key.slice(0, 12)}…`,
+                      label: resolveName(
+                        key,
+                        identities.get(key)?.name ??
+                          `Agent · ${fallbackKeys.get(key) ?? key}`,
+                        agentChoices,
+                      ),
                     })),
                   },
                 ]}

@@ -152,7 +152,7 @@ test("qualified names preserve keyboard selection and completed-name dismissal",
   await expect(options).toHaveCount(1);
   await expect(options).toContainText("Other Honey");
   await input.press("Tab");
-  await expect(chips).toHaveText("@Honey");
+  await expect(chips).toHaveText("@Other Honey");
   await input.press("Enter");
   await expect.poll(publications).toHaveLength(1);
   expect((await publications())[0].tags.filter(([tag]) => tag === "p")).toEqual(
@@ -167,8 +167,12 @@ test("qualified names preserve keyboard selection and completed-name dismissal",
     const selectedKey = (await options.first().innerText()).includes(keys[0])
       ? keys[0]
       : keys[1];
+    const qualifier = await page.evaluate(
+      (key) => window.mentionFixture.qualifier(key),
+      selectedKey,
+    );
     await input.press(accept);
-    await expect(chips).toHaveText("@Honey");
+    await expect(chips).toHaveText(`@Honey · ${qualifier}`);
     await expect(input).toHaveJSProperty("value", "@Honey ");
     await expect(page.getByRole("listbox")).toHaveCount(0);
     const count = (await publications()).length;

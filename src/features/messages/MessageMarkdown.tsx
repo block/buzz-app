@@ -1,4 +1,4 @@
-import { useIdentityNames } from "../identity-names/react";
+import { useChannelIdentityNames } from "../identity-names/react";
 import {
   Children,
   createContext,
@@ -339,7 +339,7 @@ export function MessageMarkdown({
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
 }) {
-  const resolveName = useIdentityNames(session?.names);
+  const resolveName = useChannelIdentityNames(session, row.channelId);
   const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
@@ -420,6 +420,7 @@ function PreparedMessageMarkdown({
         <span key={key}>{renderLink(part.url, part.label)}</span>
       ) : (
         <ReferenceText
+          channelId={row.channelId}
           key={key}
           text={part.text}
           mentions={[]}

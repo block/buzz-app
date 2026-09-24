@@ -403,7 +403,12 @@ export function policyRelay({
               }, latencyMs);
               return;
             }
-            expect(kind).toBe("REQ");
+            expect(
+              kind,
+              kind === "EVENT"
+                ? `Unexpected publication kind ${id?.kind}`
+                : `Unexpected relay frame ${kind}`,
+            ).toBe("REQ");
             expect(this.authenticated).toBe(true);
             requests.push({
               socket: sockets.indexOf(this),

@@ -25,7 +25,6 @@ pub enum SessionStatus {
 #[derive(Debug, PartialEq, Eq)]
 pub enum KeychainError {
     Unavailable,
-    ReadFailed,
 }
 
 pub trait Keychain: Send + Sync {
@@ -163,7 +162,6 @@ pub async fn check_session(
                 message: "BuilderLab login is unavailable on this platform".into(),
             }
         }
-        Err(KeychainError::ReadFailed) => return SessionStatus::LoggedOut,
     };
     let endpoint = format!("{base}{ENDPOINT_PATH}");
     let response = match transport.post(&endpoint, &credential).await {

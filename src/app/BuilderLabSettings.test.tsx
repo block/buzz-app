@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom/vitest";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { BuilderLabSettings } from "./BuilderLabSettings";
 
@@ -13,6 +14,8 @@ beforeEach(() => {
   vi.mocked(isTauri).mockReturnValue(true);
   vi.mocked(invoke).mockReset();
 });
+
+afterEach(cleanup);
 
 it("checks once when the tab becomes active and shows the logged-in result", async () => {
   vi.mocked(invoke).mockResolvedValue({ status: "available" });

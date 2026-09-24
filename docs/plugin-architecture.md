@@ -210,7 +210,8 @@ no channel membership or access.
 Canvas reads occur on open and explicit Refresh, not on a timer. Missing assignee
 and member profiles use the existing shared background directory. Typing an unfinished
 new item stays local; Add, checkbox and assignment actions save automatically.
-Controls pause while saving. If the loaded Canvas was written in the current second,
+Task actions pause while saving; the new-item input stays editable and retains
+its text when the save finishes. If the loaded Canvas was written in the current second,
 a single cancellable wait respects its timestamp ordering; there is no background
 retry loop. Failures and recovered drafts expose Retry rather than silently publishing
 on reopen. Save uses the existing session Canvas/outbox contract, including its 24 KiB limit, fresh membership check,

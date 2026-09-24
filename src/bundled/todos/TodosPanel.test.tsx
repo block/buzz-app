@@ -20,6 +20,7 @@ import { createRelaySession } from "../../features/relay/session";
 import { bindNames } from "../../features/identity-names/service";
 import { agentDirectory } from "../../features/identity-names/testing";
 import { assignTodo, readTodos } from "./model";
+import * as model from "./model";
 import { TodosPanel } from "./TodosPanel";
 const context = {
   scope: "todos-test",
@@ -343,7 +344,7 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
   f.canvas.save.mockRejectedValueOnce(new Error("Offline"));
   await user.click(select());
   expect(
-    screen.getByRole("option", { name: `Alex · ${labels.get(a)}` }),
+    await screen.findByRole("option", { name: `Alex · ${labels.get(a)}` }),
   ).toBeInTheDocument();
   expect(
     screen.getByRole("option", { name: `Alex · ${labels.get(b)}` }),
@@ -594,7 +595,7 @@ it("scopes live naming to channel members rather than out-of-channel namesakes",
   expect(trigger).toHaveTextContent(/^Alex$/);
   await user.click(trigger);
   expect(
-    screen.getByRole("option", {
+    await screen.findByRole("option", {
       name: `Alex · ${publicKeyLabels([a]).get(a)}`,
     }),
   ).toBeInTheDocument();
@@ -602,3 +603,138 @@ it("scopes live naming to channel members rather than out-of-channel namesakes",
   view.unmount();
   names.dispose();
 });
+
+it.each([
+  ["valid", original],
+  ["malformed", "## Todos\n\n## Todos"],
+])(
+  "reuses parsing results and errors for unchanged Canvas content: %s",
+  async (_label, content) => {
+    const f = fixture(),
+      user = userEvent.setup();
+    const parse = vi.spyOn(model, "readTodos");
+    f.canvas.read.mockResolvedValue({ ...head, content });
+    const view = render(<TodosPanel {...f.props} />);
+    await saved();
+    const baseline = parse.mock.calls.length;
+    if (content === original) {
+      const input = screen.getByRole("textbox", { name: "New todo" });
+      await user.type(input, "Eggs");
+      await user.clear(input);
+    } else {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "more than one Todos",
+      );
+    }
+    view.rerender(
+      <TodosPanel
+        {...f.props}
+        context={{ ...context, channelName: "Renamed" }}
+      />,
+    );
+    expect(parse).toHaveBeenCalledTimes(baseline);
+    expect(f.canvas.save).not.toHaveBeenCalled();
+    const changed = "## Todos\n- [ ] Changed";
+    f.canvas.read.mockResolvedValue({ ...head, content: changed });
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("checkbox", { name: "Changed" });
+    expect(parse).toHaveBeenCalledTimes(baseline + 1);
+    expect(parse).toHaveBeenLastCalledWith(changed);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  },
+);
+
+it.each(["success", "failure", "closed"])(
+  "retains next-item typing through a pending autosave: %s",
+  async (outcome) => {
+    const f = fixture(),
+      user = userEvent.setup();
+    const actualSave = f.canvas.save.getMockImplementation();
+    if (!actualSave) throw new Error("Expected fixture save");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.canvas.save.mockImplementationOnce(async (...args) => {
+      await gate;
+      if (outcome === "failure") throw new Error("Offline");
+      return actualSave(...args);
+    });
+    const view = render(<TodosPanel {...f.props} />);
+    await screen.findByRole("checkbox", { name: "First" });
+    const input = screen.getByRole("textbox", { name: "New todo" });
+    try {
+      await user.type(input, "Milk{Enter}");
+      await waitFor(() => expect(f.canvas.save).toHaveBeenCalledTimes(1));
+      expect(screen.getByRole("status")).toHaveTextContent("Saving");
+      expect(input).toBeEnabled();
+      expect(input).toHaveFocus();
+      await user.type(input, "Eggs{Enter}");
+      expect(input).toHaveValue("Eggs");
+      expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+      expect(screen.getByRole("checkbox", { name: "Milk" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+      expect(
+        screen.getByRole("combobox", { name: "Assignee for Milk" }),
+      ).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "Add" }));
+      expect(f.canvas.save).toHaveBeenCalledTimes(1);
+      expect(
+        screen.queryByRole("checkbox", { name: "Eggs" }),
+      ).not.toBeInTheDocument();
+      expect(
+        readView(context.scope, `todos-draft-v1:${context.channelId}`, null),
+      ).toEqual(
+        expect.objectContaining({
+          input: "Eggs",
+          content: expect.stringContaining("- [ ] Milk"),
+        }),
+      );
+      if (outcome === "closed") view.unmount();
+    } finally {
+      await act(async () => {
+        release();
+        await f.canvas.save.mock.results[0]?.value.catch(() => {});
+      });
+    }
+    if (outcome !== "closed") {
+      if (outcome === "failure")
+        await screen.findByText(/Your changes are still here/);
+      else await saved();
+      expect(input).toHaveValue("Eggs");
+      expect(input).toHaveFocus();
+      view.unmount();
+    }
+    render(<TodosPanel {...f.props} />);
+    await screen.findByRole("checkbox", { name: "Milk" });
+    expect(screen.getByRole("textbox", { name: "New todo" })).toHaveValue(
+      "Eggs",
+    );
+    expect(f.canvas.save).toHaveBeenCalledTimes(1);
+    if (outcome === "failure") {
+      await screen.findByText(/Recovered unsaved changes/);
+      await user.click(retry());
+      await saved();
+      expect(screen.getByRole("textbox", { name: "New todo" })).toHaveValue(
+        "Eggs",
+      );
+      expect(f.canvas.save).toHaveBeenCalledTimes(2);
+    }
+    expect(
+      readView(context.scope, `todos-draft-v1:${context.channelId}`, null),
+    ).toEqual(
+      expect.objectContaining({
+        input: "Eggs",
+        base: "b".repeat(64),
+        original: expect.stringContaining("- [ ] Milk"),
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await saved();
+    expect(screen.getByRole("checkbox", { name: "Eggs" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "New todo" })).toHaveValue("");
+    expect(f.canvas.save).toHaveBeenCalledTimes(outcome === "failure" ? 3 : 2);
+  },
+);

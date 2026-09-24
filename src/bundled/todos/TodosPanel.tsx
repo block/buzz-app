@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -77,6 +78,7 @@ export function TodosPanel({
   const [saved] = useState(() => readDraft(context.scope, key));
   const savedDirty = !!saved && saved.content !== saved.original;
   const [draft, setDraft] = useState<Draft>(saved ?? empty);
+  const latestDraft = useRef(draft);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<"load" | "save">();
   const [error, setError] = useState("");
@@ -100,6 +102,7 @@ export function TodosPanel({
   const dirty = draft.content !== draft.original;
   const update = useCallback(
     (next: Draft) => {
+      latestDraft.current = next;
       setDraft(next);
       writeView(
         context.scope,
@@ -195,7 +198,7 @@ export function TodosPanel({
       if (!active() || generation !== operation.current) return;
       savedAt.current = head.created_at;
       update({
-        ...next,
+        ...latestDraft.current,
         original: head.content,
         content: head.content,
         base: head.id,
@@ -210,15 +213,19 @@ export function TodosPanel({
       if (active() && generation === operation.current) setBusy(undefined);
     }
   };
-  let parsed: ReturnType<typeof readTodos> | undefined;
-  let parseError = "";
-  try {
-    parsed = readTodos(draft.content);
-  } catch (reason) {
-    parseError = reason instanceof Error ? reason.message : String(reason);
-  }
-  const disabled =
-    !loaded || !!busy || !canvas.available || !!parseError || conflict;
+  const { parsed, parseError } = useMemo(() => {
+    try {
+      return { parsed: readTodos(draft.content), parseError: "" };
+    } catch (reason) {
+      return {
+        parsed: undefined,
+        parseError: reason instanceof Error ? reason.message : String(reason),
+      };
+    }
+  }, [draft.content]);
+  const inputDisabled =
+    !loaded || busy === "load" || !canvas.available || !!parseError || conflict;
+  const disabled = inputDisabled || busy === "save";
   const items = parsed?.items ?? [];
   const remaining = items.filter((item) => !item.checked).length;
   const peopleKey = [
@@ -328,9 +335,9 @@ export function TodosPanel({
                 id={`${prefix}-new`}
                 placeholder="Add a todo…"
                 value={draft.input}
-                disabled={disabled}
+                disabled={inputDisabled}
                 onChange={(event) =>
-                  update({ ...draft, input: event.target.value })
+                  update({ ...latestDraft.current, input: event.target.value })
                 }
               />
             </Field>

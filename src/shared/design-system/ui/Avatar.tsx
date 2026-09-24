@@ -38,22 +38,28 @@ export function Avatar({
   fallback,
   size = "default",
   shape = "circle",
+  statusBadge,
 }: {
   src?: string | null | undefined;
   alt: string;
   fallback: string;
   size?: AvatarSize;
   shape?: "circle" | "squircle";
+  statusBadge?: "online" | "away" | "offline";
 }) {
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
-  return (
+  const artwork = (
     <BaseAvatar.Root
       data-buzz-ui=""
       className="buzz-avatar"
       data-size={size}
       data-avatar-shape={shape}
       role={alt ? "img" : undefined}
-      aria-label={alt || undefined}
+      aria-label={
+        alt
+          ? `${alt}${statusBadge && shape === "circle" ? `, ${statusBadge}` : ""}`
+          : undefined
+      }
       aria-hidden={!alt || undefined}
     >
       {src ? (
@@ -62,5 +68,16 @@ export function Avatar({
         <span aria-hidden="true">{initial}</span>
       )}
     </BaseAvatar.Root>
+  );
+  if (!statusBadge || shape !== "circle") return artwork;
+  return (
+    <span
+      className="buzz-avatar-status"
+      data-size={size}
+      data-status={statusBadge}
+    >
+      {artwork}
+      <span className="buzz-avatar-status-dot" aria-hidden="true" />
+    </span>
   );
 }

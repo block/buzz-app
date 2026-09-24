@@ -395,6 +395,35 @@ export const ROLE_GROUPS: RoleGroup[] = [
     ],
   },
   {
+    id: "semantic-status",
+    name: "Status",
+    description:
+      "Presence badge colors, paired across light and dark surfaces.",
+    roles: [
+      {
+        token: "status-online",
+        variable: "--status-online",
+        pointsAt: "green-9 light / green-11 dark",
+        use: "Online presence dot.",
+        status: "core",
+      },
+      {
+        token: "status-away",
+        variable: "--status-away",
+        pointsAt: "amber-9 light / amber-11 dark",
+        use: "Away presence dot.",
+        status: "core",
+      },
+      {
+        token: "status-offline",
+        variable: "--status-offline",
+        pointsAt: "neutral-8 light / neutral-10 dark",
+        use: "Offline presence dot.",
+        status: "core",
+      },
+    ],
+  },
+  {
     id: "semantic-border",
     name: "Border",
     description: "Shared border roles, with values for both themes.",

@@ -4,6 +4,138 @@ import { PHOSPHOR_ICONS } from "../../../src/shared/design-system/icons/inventor
 
 const viewer = "/tests/fixtures/design-system.html";
 
+test("status badges keep avatar sizes and show a clear cutout in both modes", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/avatar`);
+  const badges = page.locator(".buzz-avatar-status");
+  await expect(badges).toHaveCount(5);
+  await expect(
+    page.getByRole("img", { name: "Morgan Martin, online" }),
+  ).toHaveCount(3);
+  await expect(
+    page.getByRole("img", { name: "Morgan Martin, away" }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("img", { name: "Morgan Martin, offline" }),
+  ).toHaveCount(1);
+  for (const [index, size] of [24, 32, 40].entries()) {
+    const badge = badges.nth(index);
+    const avatar = badge.locator(".buzz-avatar");
+    const dot = badge.locator(".buzz-avatar-status-dot");
+    await expect(avatar).toHaveCSS("width", `${size}px`);
+    await expect(avatar).toHaveCSS("height", `${size}px`);
+    await expect(dot).toHaveCSS("width", `${size / 4}px`);
+    await expect(avatar).toHaveCSS("mask-image", /^url\(/);
+    const placement = await badge.evaluate((el) => {
+      const art = el.querySelector(".buzz-avatar")?.getBoundingClientRect();
+      const point = el
+        .querySelector(".buzz-avatar-status-dot")
+        ?.getBoundingClientRect();
+      if (!art || !point) throw new Error("Status avatar parts are missing");
+      return [
+        point.x + point.width / 2 - art.x,
+        point.y + point.height / 2 - art.y,
+      ];
+    });
+    expect(placement[0]).toBeCloseTo(size * 0.85, 1);
+    expect(placement[1]).toBeCloseTo(size * 0.85, 1);
+  }
+  const plain = page
+    .locator(".component-specimen")
+    .filter({ hasText: "large · no badge" })
+    .locator(".buzz-avatar");
+  await expect(plain).toHaveCSS("mask-image", "none");
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const [index, size] of [24, 32, 40].entries()) {
+      await expect(badges.nth(index).locator(".buzz-avatar")).toHaveCSS(
+        "width",
+        `${size}px`,
+      );
+    }
+  }
+
+  const large = badges.nth(2);
+  await expect(large.locator("img")).toHaveAttribute("data-loaded", "true");
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    for (const [status, color] of Object.entries(
+      mode === "light"
+        ? {
+            online: "rgb(48, 164, 108)",
+            away: "rgb(255, 197, 61)",
+            offline: "rgb(128, 128, 128)",
+          }
+        : {
+            online: "rgb(61, 214, 140)",
+            away: "rgb(255, 202, 22)",
+            offline: "rgb(164, 164, 164)",
+          },
+    )) {
+      await expect(
+        page
+          .locator(
+            `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot`,
+          )
+          .first(),
+      ).toHaveCSS("background-color", color);
+    }
+    const box = await large.boundingBox();
+    if (!box) throw new Error("Large status avatar is not visible");
+    const clip = {
+      x: Math.floor(box.x),
+      y: Math.floor(box.y),
+      width: Math.ceil(box.x + box.width) - Math.floor(box.x),
+      height: Math.ceil(box.y + box.height) - Math.floor(box.y),
+    };
+    const png = await page.screenshot({ clip });
+    const paint = await page.evaluate(
+      async ({ base64, box, clip }) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${base64}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Canvas context is unavailable");
+        context.drawImage(image, 0, 0);
+        const pixel = (x: number, y: number) =>
+          [
+            ...context.getImageData(
+              Math.floor(box.x - clip.x + x),
+              Math.floor(box.y - clip.y + y),
+              1,
+              1,
+            ).data,
+          ].slice(0, 3);
+        return {
+          background: pixel(39, 39),
+          gap: pixel(28, 34),
+          dot: pixel(34, 34),
+          artwork: pixel(18, 20),
+        };
+      },
+      { base64: png.toString("base64"), box, clip },
+    );
+    const difference = (a: number[], b: number[]) =>
+      Math.max(...a.map((value, index) => Math.abs(value - (b[index] ?? 0))));
+    expect(difference(paint.gap, paint.background), `${mode} gap`).toBeLessThan(
+      12,
+    );
+    expect(
+      difference(paint.dot, paint.background),
+      `${mode} dot`,
+    ).toBeGreaterThan(30);
+    expect(
+      difference(paint.artwork, paint.background),
+      `${mode} artwork`,
+    ).toBeGreaterThan(30);
+  }
+});
+
 test("built viewer loads every specimen and foundation without app connections", async ({
   page,
 }) => {

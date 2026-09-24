@@ -496,6 +496,9 @@
   --text-danger: var(--red-12);
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
+  --status-online: var(--green-9);
+  --status-away: var(--amber-9);
+  --status-offline: var(--neutral-8);
   --text-accent: var(--purple-12);
   --text-link: var(--blue-12);
   --affordance-link-hover: var(--blue-4);
@@ -540,6 +543,9 @@
   --text-danger: var(--red-12);
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
+  --status-online: var(--green-11);
+  --status-away: var(--amber-11);
+  --status-offline: var(--neutral-10);
   --text-accent: var(--purple-12);
   --text-link: var(--blue-12);
   --affordance-link-hover: var(--blue-4);

@@ -16,6 +16,8 @@ import {
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
+import { createRelaySession } from "../src/features/relay/session.ts";
+import { feedbackEvent } from "../src/features/relay/product-feedback.ts";
 
 // Only wall time is controlled. Real timers/performance.now still exercise HTTP admission.
 let wallClock;
@@ -2045,6 +2047,99 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
     );
     expect(h.publications).toHaveLength(1);
   } finally {
+    live?.dispose();
+    await h.close();
+  }
+});
+||||||| parent of 9f8153e (feat: add private text feedback from account menu)
+
+test("product feedback signs and publishes only private bounded text/category", async () => {
+  const h = await harness(success);
+  try {
+    await h.start();
+    expect((await (await h.get("session")).json()).writeKinds).toContain(42000);
+    const template = {
+      ...h.event,
+      kind: 42000,
+      content: "This broke",
+      tags: [
+        ["category", "bug"],
+        ["client-id", "fixture"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({
+      kind: 42000,
+      content: template.content,
+      tags: template.tags,
+    });
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+    for (const route of ["sign", "publish"]) {
+      for (const invalid of [
+        { tags: [["h", "c"]] },
+        {
+          tags: [
+            ["category", "bug"],
+            ["category", "praise"],
+          ],
+        },
+        { tags: [["category", "idea"]] },
+        { tags: [null] },
+        { content: " \n " },
+        { content: "é".repeat(16_385) },
+      ])
+        expect((await h.post(route, { ...event, ...invalid })).status).toBe(
+          400,
+        );
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("private feedback crosses the real broker and session without a readback or shared view", async () => {
+  const h = await harness(success);
+  let live;
+  let owner;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    live = await openBrokerSocket(transport);
+    owner = createRelaySession(transport, {
+      outboxStorage: { load: () => [], save() {} },
+    });
+    const outbox = owner.session.outbox;
+    expect(outbox).toBeDefined();
+    await outbox.ready();
+    const id = outbox.send(feedbackEvent("Controlled private text", "bug"));
+    await vi.waitFor(() => {
+      const result = outbox.snapshot()[0];
+      if (result?.delivery === "failed")
+        throw new Error(result.error ?? "failed");
+      expect(result?.delivery).toBe("accepted");
+    });
+    expect(h.publications).toHaveLength(1);
+    expect(h.publications[0]).toMatchObject({
+      id,
+      kind: 42000,
+      content: "Controlled private text",
+    });
+    expect(verifyEvent(h.publications[0])).toBe(true);
+    expect(h.publications[0].tags.some(([name]) => name === "h")).toBe(false);
+    const feedbackReads = h.calls.filter(
+      ({ body }) =>
+        Array.isArray(body) && body.some(({ ids }) => ids?.includes(id)),
+    );
+    expect(feedbackReads).toEqual([]);
+    expect(
+      owner.session.observe([{ kinds: [42000], limit: 20 }]).snapshot().events,
+    ).toEqual([]);
+  } finally {
+    owner?.dispose();
     live?.dispose();
     await h.close();
   }

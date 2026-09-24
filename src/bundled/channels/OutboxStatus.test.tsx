@@ -44,6 +44,29 @@ it("does not offer generic retry for guarded invitations from either profile or 
   expect(retry).not.toHaveBeenCalled();
 });
 
+it("does not show private feedback body or generic retry in the channel outbox", () => {
+  const retry = vi.fn();
+  const items = [
+    {
+      ...invitation,
+      event: { ...invitation.event, kind: 42000, content: "private report" },
+    },
+  ];
+  const outbox = {
+    snapshot: () => items,
+    subscribe: () => () => {},
+    retry,
+    dismiss: vi.fn(),
+  } as unknown as Outbox;
+  render(<OutboxStatus outbox={outbox} profiling={createRelayProfiler()} />);
+  fireEvent.click(screen.getByText("Outbox · 0 items"));
+  expect(screen.queryByText(/private report/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry" }),
+  ).not.toBeInTheDocument();
+  expect(retry).not.toHaveBeenCalled();
+});
+
 it("preserves generic retry for legacy unguarded invitations", () => {
   const retry = show(invitation);
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));

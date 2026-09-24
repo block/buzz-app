@@ -84,6 +84,7 @@ export function App({ services }: { services: AppServices }) {
             if (!recovering) select("buzz.channels/channels");
           }}
           communities={services.communities}
+          accountActions={services.accountActions}
           searchServices={services}
           launchers={
             <PanelLaunchers

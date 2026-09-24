@@ -1,0 +1,180 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
+import type { RelayData } from "../../features/relay/service";
+import type { OutgoingEvent } from "../../features/relay/outbox";
+import { keypair, signed } from "../../features/relay/testing";
+import { FeedbackDialog } from "./FeedbackDialog";
+
+const subscribe = () => () => {};
+const author = keypair();
+const pending = (
+  delivery: OutgoingEvent["delivery"],
+  content = "Saved earlier",
+) =>
+  ({
+    event: signed(author, { kind: 42000, content, tags: [] }),
+    delivery,
+  }) as OutgoingEvent;
+function fixture(
+  entries: readonly OutgoingEvent[] = [],
+  status: "ready" | "disconnected" = "ready",
+) {
+  const send = vi.fn();
+  const retry = vi.fn();
+  const dismiss = vi.fn(async () => {});
+  const outbox = {
+    subscribe,
+    snapshot: () => entries,
+    ready: async () => {},
+    supports: () => true,
+    send,
+    retry,
+    dismiss,
+  };
+  let snapshot = { generation: 0, status, session: { outbox } };
+  const listeners = new Set<() => void>();
+  const relay = {
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snapshot: () => snapshot,
+  } as unknown as RelayData;
+  return {
+    relay,
+    send,
+    retry,
+    dismiss,
+    switchTo(next: typeof snapshot) {
+      snapshot = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+afterEach(cleanup);
+
+it("publishes trimmed text/category without a channel tag", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  await user.click(screen.getByRole("button", { name: "Bug" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Your feedback" }),
+    "This broke",
+  );
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  expect(h.send).toHaveBeenCalledWith({
+    kind: 42000,
+    content: "This broke",
+    tags: [["category", "bug"]],
+  });
+});
+
+it("restores outstanding intent and retries only its event id", async () => {
+  const user = userEvent.setup();
+  const h = fixture([pending("unknown")]);
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  expect(screen.getByText("Saved earlier")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("textbox", { name: "Your feedback" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry same feedback" }));
+  expect(h.retry).toHaveBeenCalledWith(pending("unknown").event.id);
+  expect(h.send).not.toHaveBeenCalled();
+});
+
+it("keeps accepted intent on close and clears it only after explicit Done", async () => {
+  const user = userEvent.setup();
+  const h = fixture([pending("accepted")]);
+  const close = vi.fn();
+  render(<FeedbackDialog open onOpenChange={close} relay={h.relay} />);
+  const closeButton = screen.getAllByRole("button", { name: "Close" }).at(-1);
+  if (!closeButton) throw new Error("Missing Close button");
+  await user.click(closeButton);
+  expect(h.dismiss).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  await waitFor(() =>
+    expect(h.dismiss).toHaveBeenCalledWith(pending("accepted").event.id),
+  );
+});
+
+it("does not publish or retry while disconnected", async () => {
+  const h = fixture([pending("failed")], "disconnected");
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  expect(
+    screen.getByRole("button", { name: "Retry same feedback" }),
+  ).toBeDisabled();
+});
+
+it("drops the previous relay draft on account switch", async () => {
+  const user = userEvent.setup();
+  const old = fixture();
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={old.relay} />);
+  await user.click(screen.getByRole("button", { name: "Bug" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Your feedback" }),
+    "Private A",
+  );
+  const nextEntries: readonly OutgoingEvent[] = [];
+  const nextOutbox = {
+    subscribe,
+    snapshot: () => nextEntries,
+    ready: async () => {},
+    supports: () => true,
+    send: vi.fn(),
+    retry: vi.fn(),
+    dismiss: vi.fn(async () => {}),
+  };
+  act(() =>
+    old.switchTo({
+      generation: 1,
+      status: "ready",
+      session: { outbox: nextOutbox },
+    }),
+  );
+  expect(screen.getByRole("textbox", { name: "Your feedback" })).toHaveValue(
+    "",
+  );
+  expect(screen.getByRole("button", { name: "Bug" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  expect(screen.getByRole("button", { name: "Send feedback" })).toBeDisabled();
+  expect(old.send).not.toHaveBeenCalled();
+});
+
+it("waits for saved feedback hydration before allowing a new send", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  let finishLoad!: () => void;
+  const loaded = new Promise<void>((resolve) => {
+    finishLoad = resolve;
+  });
+  const original = h.relay.snapshot();
+  const outbox = original.session.outbox;
+  if (!outbox) throw new Error("Outbox unavailable");
+  const delayed = {
+    subscribe,
+    snapshot: outbox.snapshot,
+    supports: () => true,
+    send: h.send,
+    retry: h.retry,
+    dismiss: h.dismiss,
+    ready: () => loaded,
+  };
+  h.switchTo({ generation: 1, status: "ready", session: { outbox: delayed } });
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  await user.type(
+    screen.getByRole("textbox", { name: "Your feedback" }),
+    "Before hydration",
+  );
+  expect(screen.getByRole("button", { name: "Send feedback" })).toBeDisabled();
+  expect(h.send).not.toHaveBeenCalled();
+  finishLoad();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send feedback" })).toBeEnabled(),
+  );
+});

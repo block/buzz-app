@@ -13,6 +13,7 @@ import {
   bindMessageNotifications,
   notificationAuthorized,
 } from "../features/notifications/messages";
+import { AccountActionsService } from "../features/account-actions/service";
 import { ShortcutsService } from "../features/shortcuts/service";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
@@ -41,6 +42,7 @@ export function createServices() {
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
+  const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
   const channelTemplates = new TemplateProvidersService(ctx);
@@ -76,6 +78,7 @@ export function createServices() {
     navigation,
     navigationHost,
     shortcuts,
+    accountActions,
     shortcutBindings,
     conversation,
     settingsCards,

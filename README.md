@@ -57,15 +57,14 @@ Press Ctrl+C to stop the server.
 
 ### OS deep links
 
-Desktop builds register a URL scheme with the OS. Released builds register `buzz://`,
-the scheme in-app links already use, so opening a `buzz://message?channel=…&id=…` or
-`buzz://channel/<id>` link outside the app focuses it and opens that conversation,
-on a cold start too. `just desktop` claims a per-worktree `buzz-dev-…://` instead,
-printed at startup and overridable with `--scheme`, so a machine with the released
-Buzz installed routes test links here. macOS only routes a scheme to a bundled app,
-so test there with `just desktop-bundle`; Windows and Linux dev builds register
-themselves at launch. See [OS deep links](docs/deep-links.md) for per-platform steps
-and limits.
+Desktop builds register `buzz://` with the OS, the scheme in-app links already use, so
+opening a `buzz://message?channel=…&id=…` or `buzz://channel/<id>` link outside the
+app focuses it and opens that conversation, on a cold start too. `just desktop`
+registers the same scheme; on a machine that also has the released Buzz installed,
+pass `--scheme <value>` to claim one of your own for test links. macOS only routes a
+scheme to a bundled app, so test there with `just desktop-bundle`; Windows and Linux
+dev builds register themselves at launch. See [OS deep links](docs/deep-links.md) for
+per-platform steps and limits.
 
 ## Relay channels
 

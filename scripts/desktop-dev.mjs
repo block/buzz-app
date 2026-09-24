@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { desktopOverlay, isScheme, options } from "./desktop-config.mjs";
 import { worktreePort } from "./worktree-port.mjs";
-import { worktreeScheme } from "./worktree-scheme.mjs";
 
 const args = process.argv.slice(2);
 const { values, forwarded, rest } = options(args, ["port", "scheme"]);
@@ -16,9 +15,7 @@ if (
   process.exit(1);
 }
 if (values.scheme !== undefined && !isScheme(values.scheme)) {
-  console.error(
-    "--scheme must be a lowercase URL scheme, such as buzz or buzz-dev-3fa9c1.",
-  );
+  console.error("--scheme must be a lowercase URL scheme, such as buzz-dev.");
   process.exit(1);
 }
 const port = values.port === undefined ? undefined : Number(values.port);
@@ -37,10 +34,10 @@ if (!help) {
   if (prepared.status !== 0) process.exit(prepared.status ?? 1);
 }
 const root = fileURLToPath(new URL("../", import.meta.url));
-// Without --scheme, each worktree claims its own OS scheme rather than the released
-// `buzz`, so links can be tested on a machine that also has Buzz installed.
-const scheme = values.scheme ?? worktreeScheme(root);
-const config = desktopOverlay(root, scheme);
+// Only an explicit --scheme touches the OS scheme. Without it this build registers
+// the `buzz` that tauri.conf.json declares, as a release build does; pass one when
+// an installed Buzz on this machine would otherwise receive the test links.
+const config = desktopOverlay(root, values.scheme);
 // Tauri's own --port controls its static-file server, not our Vite server.
 // Without --port, each worktree derives its own stable port; vite.config.ts
 // derives the same one, so devUrl and Vite's strict port cannot disagree.
@@ -49,18 +46,16 @@ config.build = {
   devUrl: `http://localhost:${devPort}`,
   beforeDevCommand: `pnpm dev:desktop --port ${devPort}`,
 };
-if (!help) {
-  const overrides = [
-    port === undefined ? "--port" : null,
-    values.scheme === undefined ? "--scheme" : null,
-  ].filter(Boolean);
+if (!help)
   console.log(
-    `Desktop dev server on ${config.build.devUrl}; deep links open as ${scheme}://` +
-      (overrides.length
-        ? ` (derived from the worktree path; pass ${overrides.join(" or ")} to override)`
-        : ""),
+    `Desktop dev server on ${config.build.devUrl}` +
+      (port === undefined
+        ? " (derived from the worktree path; pass --port to override)"
+        : "") +
+      (values.scheme === undefined
+        ? ""
+        : `; deep links open as ${values.scheme}://`),
   );
-}
 // Prepend: Tauri treats everything after a bare positional as runner args.
 // Explicit user configs merge afterward and retain precedence.
 forwarded.unshift("--config", JSON.stringify(config));

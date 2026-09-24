@@ -28,18 +28,20 @@ export function options(args, names) {
   return { values, forwarded, rest: args.slice(index) };
 }
 
-// What a development launch overlays on the committed Tauri config: this worktree's
-// icon and its own OS scheme. `tauri.conf.json` declares the release scheme, which
-// an installed Buzz also owns, so claiming it locally would make deep links
-// untestable; a release build passes no overlay at all. Tauri merges this into the
-// config that `tauri-codegen` embeds and the bundler reads, so the shell, the
-// Info.plist, the Windows registry entries and the Linux desktop file all follow.
-// JSON merge patch replaces arrays outright, so the scheme list is overridden
-// rather than extended, and `buzz` is not registered alongside.
+// What a launcher overlays on the committed Tauri config: this worktree's icon and,
+// only when the caller passed `--scheme`, another OS scheme. Nothing touches the
+// scheme by default, so a development build registers the `buzz` that
+// `tauri.conf.json` declares exactly as a release build does; the override exists
+// for a machine where an installed Buzz would otherwise receive every test link.
+// Tauri merges the overlay into the config that `tauri-codegen` embeds and the
+// bundler reads, so the shell, the Info.plist, the Windows registry entries and the
+// Linux desktop file all follow. JSON merge patch replaces arrays outright, so an
+// overlaid scheme replaces the committed one rather than joining it, and `buzz` is
+// not registered alongside.
 export function desktopOverlay(root, scheme) {
-  const config = {
-    plugins: { "deep-link": { desktop: { schemes: [scheme] } } },
-  };
+  const config = {};
+  if (scheme !== undefined)
+    config.plugins = { "deep-link": { desktop: { schemes: [scheme] } } };
   const icon = worktreeIcon(root);
   if (icon) config.bundle = { icon: [icon] };
   return config;

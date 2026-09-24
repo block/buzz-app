@@ -10,7 +10,7 @@ use tauri::{ipc::Channel, Manager};
 
 /// The scheme in-app links use, and the only one the webview ever sees. Which
 /// scheme the OS routes here is a configuration question: `tauri.conf.json`
-/// declares the release value and a development launch overlays a per-worktree one
+/// declares it and a launcher's `--scheme` may overlay another
 /// (`scripts/desktop-config.mjs`), so an accepted link is rewritten to this scheme
 /// before it is queued and nothing downstream learns how it arrived.
 const CANONICAL_SCHEME: &str = "buzz";
@@ -220,8 +220,8 @@ mod tests {
     use super::*;
     use tauri::ipc::InvokeResponseBody;
 
-    /// A development launch overlays a scheme of this shape; none of the tests may
-    /// depend on the committed release value beyond the one test that reads it.
+    /// A launch given `--scheme` overlays a scheme like this one; none of the tests
+    /// may depend on the committed value beyond the one test that reads it.
     const OVERLAID: &str = "buzz-dev-3fa9c1";
 
     /// A shell configured the way `setup` configures one from an overlaid config.
@@ -247,10 +247,11 @@ mod tests {
 
     #[test]
     fn the_committed_config_declares_the_canonical_scheme_and_nothing_else() {
-        // Release builds pass no `--config` overlay, so this value is what an
-        // installed Buzz Foundation claims, and it must be the scheme in-app links
-        // and **Copy link** already use. Vitest checks the same file against the
-        // webview's `buzz:` guard.
+        // No build overlays a scheme unless its launcher was given `--scheme`, so
+        // this value is what an installed Buzz Foundation and a plain `just desktop`
+        // both claim, and it must be the scheme in-app links and **Copy link**
+        // already use. Vitest checks the same file against the webview's `buzz:`
+        // guard.
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(

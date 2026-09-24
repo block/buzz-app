@@ -14,7 +14,6 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { portForPath } from "../../scripts/worktree-port.mjs";
-import { schemeForPath } from "../../scripts/worktree-scheme.mjs";
 import { runtimeFixture } from "./agent-runtime-fixture.mjs";
 
 // Real Git worktrees and subprocesses; only Swift rendering and pnpm are stubs.
@@ -80,7 +79,6 @@ function fixture(t) {
       "desktop-dev.mjs",
       "worktree-icon.mjs",
       "worktree-port.mjs",
-      "worktree-scheme.mjs",
     ]) {
       copyFileSync(
         new URL(`../../scripts/${file}`, import.meta.url),
@@ -159,7 +157,7 @@ test("failed generation warns, removes partial output, and falls back", (t) => {
   );
 });
 
-test("macOS launcher combines icon, port and scheme before explicit config and runner arguments", {
+test("macOS launcher combines icon, port and a chosen scheme before explicit config and runner arguments", {
   skip: process.platform !== "darwin",
 }, (t) => {
   const { linked, git, run, render } = fixture(t);
@@ -174,10 +172,10 @@ test("macOS launcher combines icon, port and scheme before explicit config and r
     "app-port",
     "$(pnpm injected)",
   ];
-  const launch = (...portArgs) => {
+  const launch = (...launcherArgs) => {
     const { stdout } = run(linked, [
       "scripts/desktop-dev.mjs",
-      ...portArgs,
+      ...launcherArgs,
       ...forwarded,
     ]);
     return { stdout, call: JSON.parse(stdout.trim().split("\n").at(-1)) };
@@ -186,25 +184,21 @@ test("macOS launcher combines icon, port and scheme before explicit config and r
     devUrl: `http://localhost:${port}`,
     beforeDevCommand: `pnpm dev:desktop --port ${port}`,
   });
-  // The worktree's root selects both its port and the OS scheme it claims.
+  // The worktree's root selects its port; the OS scheme stays whatever
+  // tauri.conf.json declares unless --scheme is passed.
   const root = git("-C", linked, "rev-parse", "--show-toplevel");
   const port = portForPath(root);
-  const plugins = {
-    "deep-link": { desktop: { schemes: [schemeForPath(root)] } },
-  };
   // An explicit --port wins over the worktree-derived default.
   const explicit = launch("--port=1431");
   assert.deepEqual(explicit.call.slice(0, 3), ["tauri", "dev", "--config"]);
   const config = JSON.parse(explicit.call[3]);
   assert.equal(readFileSync(config.bundle.icon[0], "utf8"), "first-label");
-  assert.deepEqual(config.build, build(1431));
-  assert.deepEqual(config.plugins, plugins);
+  assert.deepEqual(config, { bundle: config.bundle, build: build(1431) });
   assert.deepEqual(explicit.call.slice(4), forwarded);
-  // Only the scheme is still derived here, so only it is offered for override.
-  assert.match(explicit.stdout, /pass --scheme to override/);
+  // Nothing is derived here, so nothing is offered for override.
+  assert.doesNotMatch(explicit.stdout, /derived from the worktree path/);
   const derived = launch();
   assert.deepEqual(JSON.parse(derived.call[3]), {
-    plugins,
     bundle: config.bundle,
     build: build(port),
   });
@@ -212,17 +206,23 @@ test("macOS launcher combines icon, port and scheme before explicit config and r
   assert.match(
     derived.stdout,
     new RegExp(
-      `^Desktop dev server on http://localhost:${port}; deep links open as ${schemeForPath(root)}:// \\(derived from the worktree path; pass --port or --scheme to override\\)$`,
+      `^Desktop dev server on http://localhost:${port} \\(derived from the worktree path; pass --port to override\\)$`,
       "m",
     ),
   );
+  // A chosen scheme joins the icon and port in the same overlay.
+  const chosen = launch("--scheme", "buzz-dev");
+  assert.deepEqual(JSON.parse(chosen.call[3]), {
+    plugins: { "deep-link": { desktop: { schemes: ["buzz-dev"] } } },
+    bundle: config.bundle,
+    build: build(port),
+  });
+  assert.deepEqual(chosen.call.slice(4), forwarded);
+  assert.match(chosen.stdout, /; deep links open as buzz-dev:\/\/$/m);
   // A failed icon generation leaves the rest of the overlay in place.
   render("process.exit(1);");
   const fallback = launch();
-  assert.deepEqual(JSON.parse(fallback.call[3]), {
-    plugins,
-    build: build(port),
-  });
+  assert.deepEqual(JSON.parse(fallback.call[3]), { build: build(port) });
   assert.deepEqual(fallback.call.slice(4), forwarded);
 });
 

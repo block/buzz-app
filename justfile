@@ -18,7 +18,7 @@ web *args: install
 desktop *args: install
     if [ "${1:-}" = "profile" ]; then shift; set -m; node scripts/profile-dev.mjs desktop "$@"; else exec node scripts/desktop-dev.mjs "$@"; fi
 
-# Bundle a debug desktop app claiming this worktree's deep-link scheme (macOS testing).
+# Bundle a debug desktop app for deep-link testing; macOS routes a scheme only to a bundle.
 [positional-arguments]
 desktop-bundle *args: install
     exec node scripts/desktop-build.mjs "$@"

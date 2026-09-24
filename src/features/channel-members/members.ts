@@ -124,6 +124,10 @@ export async function addChannelMember(
                 ([tag, value]) => tag === "role" && value !== "bot",
               ),
         );
+  if (pending?.guarded && !channel()?.members?.includes(pubkey))
+    throw new Error(
+      "Retry this invitation from the agent’s profile so its eligibility can be checked.",
+    );
   const recovery = { key: `member-add:${channelId}:${pubkey}`, value: "1" };
   if (pending && !pending.acknowledged)
     await outbox.recover(pending.event.id, recovery);
@@ -166,15 +170,7 @@ export async function addChannelMember(
       recovery,
     );
   if (pending?.delivery === "failed" || pending?.delivery === "unknown")
-    outbox.retry(
-      id,
-      pending.guarded
-        ? () => {
-            check();
-            return true;
-          }
-        : undefined,
-    );
+    outbox.retry(id);
   intent.id = id;
   intent.dismissed = false;
   intent.confirmed = false;

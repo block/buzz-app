@@ -570,7 +570,7 @@ it("never replaces a legacy invitation after recovery adoption fails to save", a
   expect(t.publish).toHaveBeenCalledOnce();
 });
 
-it("renews Members permission when recovering a guarded invitation after restart", async () => {
+it("does not bypass profile eligibility when recovering a guarded invitation after restart", async () => {
   const t = setup();
   await t.ready();
   t.setFail("Receipt lost", true);
@@ -581,9 +581,6 @@ it("renews Members permission when recovering a guarded invitation after restart
   t.restart();
   await t.ready();
   t.setFail("");
-  await t.managedAdd();
-  expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
-    first,
-    first,
-  ]);
+  await expect(t.managedAdd()).rejects.toThrow(/agent’s profile/);
+  expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([first]);
 });

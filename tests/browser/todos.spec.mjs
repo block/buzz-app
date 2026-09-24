@@ -85,19 +85,23 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   const input = drawer.getByRole("textbox", { name: "New todo" });
   await input.fill("Ship it");
   await input.press("Enter");
+  await expect(drawer.getByRole("status")).toHaveText("Saved in Canvas");
   const todo = drawer.getByRole("checkbox", { name: "Ship it", exact: true });
   await todo.focus();
   await todo.press("Space");
   await expect(todo).toBeChecked();
+  await expect(drawer.getByRole("status")).toHaveText("Saved in Canvas");
   await expect(todo).toBeFocused();
   const assignee = drawer
     .getByRole("group", { name: "Assignee for Ship it", exact: true })
     .getByRole("combobox");
   await assignee.click();
   await page.getByRole("option", { name: /Fixture Reader/ }).click();
-  await drawer.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    drawer.getByRole("button", { name: "Save", exact: true }),
+  ).toHaveCount(0);
   await expect(drawer.getByRole("status")).toHaveText("Saved in Canvas");
-  expect(writes).toHaveLength(1);
+  expect(writes).toHaveLength(3);
   expect(head.content).toBe(
     original.replace(
       "## Todos",
@@ -168,9 +172,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(
     drawer.getByRole("button", { name: "Refresh" }),
   ).toBeInViewport();
-  await expect(
-    drawer.getByRole("button", { name: "Save", exact: true }),
-  ).toBeInViewport();
+  await expect(drawer.getByRole("status")).toBeInViewport();
   expect(await drawer.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
     true,
   );

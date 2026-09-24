@@ -18,6 +18,7 @@ import { readView } from "../../shared/view-state";
 import type { ChannelList } from "../../features/relay/contracts";
 import { createRelaySession } from "../../features/relay/session";
 import { bindNames } from "../../features/identity-names/service";
+import { agentDirectory } from "../../features/identity-names/testing";
 import { assignTodo, readTodos } from "./model";
 import { TodosPanel } from "./TodosPanel";
 const context = {
@@ -31,6 +32,7 @@ const original =
   "# Instructions\nLeave this alone.\n\n## Todos\n\n- [ ] First\n- [x] Done\n\n## Decisions\nKeep this too.\n";
 const head = signed(keypair(), {
   kind: 40100,
+  created_at: 1700000000,
   content: original,
   tags: [["h", context.channelId]],
 });
@@ -83,26 +85,31 @@ beforeEach(() => localStorage.clear());
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
-const save = () => screen.getByRole("button", { name: /^Save$/ });
+const retry = () => screen.getByRole("button", { name: /^Retry$/ });
+const saved = () =>
+  waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Saved in Canvas"),
+  );
 it("adds and checks tasks, saves exact base, preserves other Markdown and restores saved content", async () => {
   const f = fixture(),
     user = userEvent.setup();
   const view = render(<TodosPanel {...f.props} />);
   await screen.findByRole("checkbox", { name: "First" });
-  expect(save()).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: /^Retry$/ }),
+  ).not.toBeInTheDocument();
   const input = screen.getByRole("textbox", { name: "New todo" });
   await user.type(input, "New item{Enter}");
   expect(input).toHaveFocus();
   await user.click(screen.getByRole("checkbox", { name: "New item" }));
   expect(screen.getByRole("checkbox", { name: "New item" })).toHaveFocus();
-  expect(screen.getByRole("status")).toHaveTextContent("Unsaved changes");
-  await user.click(save());
-  await waitFor(() => expect(save()).toBeDisabled());
-  expect(f.canvas.save).toHaveBeenCalledWith(
+  await saved();
+  expect(f.canvas.save).toHaveBeenLastCalledWith(
     context.channelId,
     original.replace("## Todos", "## Todos\n\n- [x] New item\n"),
-    head.id,
+    "b".repeat(64),
   );
   expect(
     readView(context.scope, `todos-draft-v1:${context.channelId}`, null),
@@ -117,9 +124,9 @@ it("keeps failed save changes through close/reopen and confirms destructive refr
   const f = fixture(),
     user = userEvent.setup();
   const view = render(<TodosPanel {...f.props} />);
-  await user.click(await screen.findByRole("checkbox", { name: "First" }));
+  await screen.findByRole("checkbox", { name: "First" });
   f.external();
-  await user.click(save());
+  await user.click(screen.getByRole("checkbox", { name: "First" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Your changes are still here",
   );
@@ -129,7 +136,9 @@ it("keeps failed save changes through close/reopen and confirms destructive refr
     "Canvas changed elsewhere",
   );
   expect(screen.getByRole("checkbox", { name: "First" })).toBeChecked();
-  expect(save()).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: /^Retry$/ }),
+  ).not.toBeInTheDocument();
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   await user.click(screen.getByRole("button", { name: "Refresh" }));
   expect(screen.getByRole("checkbox", { name: "First" })).toBeChecked();
@@ -144,14 +153,16 @@ it("retrying a failed read preserves a restored draft without asking to discard"
   const f = fixture(),
     user = userEvent.setup();
   const view = render(<TodosPanel {...f.props} />);
+  f.canvas.save.mockRejectedValueOnce(new Error("Offline"));
   await user.click(await screen.findByRole("checkbox", { name: "First" }));
+  await screen.findByRole("alert");
   view.unmount();
   f.canvas.read.mockRejectedValueOnce(new Error("Offline"));
   render(<TodosPanel {...f.props} />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
   const confirm = vi.spyOn(window, "confirm");
   await user.click(screen.getByRole("button", { name: "Refresh" }));
-  await waitFor(() => expect(save()).toBeEnabled());
+  await waitFor(() => expect(retry()).toBeEnabled());
   expect(screen.getByRole("checkbox", { name: "First" })).toBeChecked();
   expect(confirm).not.toHaveBeenCalled();
 });
@@ -168,12 +179,12 @@ it("ignores retired reads and reconciles a save completed after unmount without 
       <TodosPanel {...f.props} />
     </StrictMode>,
   );
-  await user.click(await screen.findByRole("checkbox", { name: "First" }));
+  await screen.findByRole("checkbox", { name: "First" });
   await act(async () => {
     release({ ...head, content: "Old read" });
     await pending;
   });
-  expect(screen.getByRole("checkbox", { name: "First" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "First" })).not.toBeChecked();
   const actualSave = f.canvas.save.getMockImplementation();
   if (!actualSave) throw new Error("Expected fixture save");
   let finish!: () => void;
@@ -184,8 +195,12 @@ it("ignores retired reads and reconciles a save completed after unmount without 
     await gate;
     return actualSave(...args);
   });
-  await user.click(save());
-  expect(save()).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: "First" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Saving");
+  expect(screen.getByRole("checkbox", { name: "First" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   view.unmount();
   await act(async () => {
     finish();
@@ -193,7 +208,9 @@ it("ignores retired reads and reconciles a save completed after unmount without 
   });
   render(<TodosPanel {...f.props} />);
   expect(await screen.findByRole("checkbox", { name: "First" })).toBeChecked();
-  expect(save()).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: /^Retry$/ }),
+  ).not.toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(f.canvas.save).toHaveBeenCalledTimes(1);
 });
@@ -201,9 +218,9 @@ it("fences new writes after plugin retirement and isolates channel drafts", asyn
   const f = fixture(),
     user = userEvent.setup();
   const view = render(<TodosPanel {...f.props} />);
-  await user.click(await screen.findByRole("checkbox", { name: "First" }));
+  await screen.findByRole("checkbox", { name: "First" });
   f.retire();
-  await user.click(save());
+  await user.click(screen.getByRole("checkbox", { name: "First" }));
   expect(f.canvas.save).not.toHaveBeenCalled();
   view.unmount();
   render(
@@ -215,7 +232,9 @@ it("fences new writes after plugin retirement and isolates channel drafts", asyn
   expect(
     await screen.findByRole("checkbox", { name: "First" }),
   ).not.toBeChecked();
-  expect(save()).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: /^Retry$/ }),
+  ).not.toBeInTheDocument();
 });
 it("exposes malformed sections and unavailable hosts without permitting writes", async () => {
   const f = fixture();
@@ -226,7 +245,9 @@ it("exposes malformed sections and unavailable hosts without permitting writes",
     "more than one Todos",
   );
   expect(screen.getByRole("textbox", { name: "New todo" })).toBeDisabled();
-  expect(save()).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: /^Retry$/ }),
+  ).not.toBeInTheDocument();
 });
 
 it("rebases an input-only recovery draft without discarding the typed item", async () => {
@@ -247,7 +268,7 @@ it("rebases an input-only recovery draft without discarding the typed item", asy
     "Still typing",
   );
   await user.click(screen.getByRole("button", { name: /^Add$/ }));
-  await user.click(save());
+  await saved();
   expect(f.canvas.save).toHaveBeenCalledWith(
     context.channelId,
     expect.stringContaining("Remote edit."),
@@ -262,7 +283,7 @@ it("keeps the editor usable when local recovery storage is unavailable", async (
   });
   render(<TodosPanel {...f.props} />);
   await user.click(await screen.findByRole("checkbox", { name: "First" }));
-  await user.click(save());
+  await saved();
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent("Saved in Canvas"),
   );
@@ -319,6 +340,7 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
     );
   const view = render(<TodosPanel {...f.props} people={users} />);
   await screen.findByRole("checkbox", { name: "First" });
+  f.canvas.save.mockRejectedValueOnce(new Error("Offline"));
   await user.click(select());
   expect(
     screen.getByRole("option", { name: `Alex · ${labels.get(a)}` }),
@@ -337,8 +359,6 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
       name: "Alex",
     },
   );
-  f.canvas.save.mockRejectedValueOnce(new Error("Offline"));
-  await user.click(save());
   await screen.findByRole("alert");
   view.unmount();
   const restored = render(<TodosPanel {...f.props} people={users} />);
@@ -356,8 +376,8 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
     for (const listener of profileListeners) listener();
   });
   expect(select()).toHaveTextContent("Renamed");
-  await user.click(save());
-  await waitFor(() => expect(save()).toBeDisabled());
+  await user.click(retry());
+  await saved();
   expect(f.canvas.save).toHaveBeenLastCalledWith(
     context.channelId,
     expected,
@@ -371,14 +391,16 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
     for (const listener of rosterListeners) listener();
   });
   expect(select()).toHaveTextContent(/^Renamed$/);
-  expect(save()).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: /^Retry$/ }),
+  ).not.toBeInTheDocument();
   act(() => select().focus());
   await user.keyboard("{ArrowDown}");
   expect(
     await screen.findByRole("option", { name: /not in channel/ }),
   ).toHaveAttribute("aria-disabled", "true");
   await user.click(await screen.findByRole("option", { name: "Unassigned" }));
-  await user.click(save());
+  await saved();
   expect(f.canvas.save).toHaveBeenLastCalledWith(
     context.channelId,
     original,
@@ -445,7 +467,9 @@ it("shows saved identity when profiles fail, disables missing-roster assignments
     channels: [{ id: context.channelId, name: "Team", members: [] }],
   };
   await user.click(stale);
-  expect(save()).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: /^Retry$/ }),
+  ).not.toBeInTheDocument();
   roster = {
     ...roster,
     channels: [{ id: context.channelId, name: "Team" }],
@@ -456,4 +480,126 @@ it("shows saved identity when profiles fail, disables missing-roster assignments
   expect(
     screen.getByText("Channel members unavailable or out of date."),
   ).toBeInTheDocument();
+});
+
+it("waits for the next Canvas second, saves once and cancels a pending wait on close", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  vi.setSystemTime(1700000000250);
+  const f = fixture();
+  f.canvas.read.mockResolvedValue({ ...head, created_at: 1700000000 });
+  const view = render(<TodosPanel {...f.props} />);
+  await act(async () => {});
+  act(() => screen.getByRole("checkbox", { name: "First" }).click());
+  expect(screen.getByRole("status")).toHaveTextContent("Saving…");
+  expect(f.canvas.save).not.toHaveBeenCalled();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(749);
+  });
+  expect(f.canvas.save).not.toHaveBeenCalled();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
+  expect(f.canvas.save).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("status")).toHaveTextContent("Saved in Canvas");
+  view.unmount();
+  localStorage.clear();
+  const pending = fixture();
+  pending.canvas.read.mockResolvedValue({ ...head, created_at: 1700000001 });
+  const closing = render(<TodosPanel {...pending.props} />);
+  await act(async () => {});
+  act(() => screen.getByRole("checkbox", { name: "First" }).click());
+  expect(screen.getByRole("status")).toHaveTextContent("Saving…");
+  closing.unmount();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(pending.canvas.save).not.toHaveBeenCalled();
+  expect(
+    readView<{ content: string }>(
+      context.scope,
+      `todos-draft-v1:${context.channelId}`,
+      { content: "" },
+    ).content,
+  ).toContain("- [x] First");
+});
+
+it("retains failed autosaves for explicit retry, without writing typed input or retrying on reopen", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  const view = render(<TodosPanel {...f.props} />);
+  await screen.findByRole("checkbox", { name: "First" });
+  await user.type(
+    screen.getByRole("textbox", { name: "New todo" }),
+    "Still typing",
+  );
+  expect(f.canvas.save).not.toHaveBeenCalled();
+  f.canvas.save.mockRejectedValueOnce(new Error("Offline"));
+  await user.click(screen.getByRole("checkbox", { name: "First" }));
+  await screen.findByRole("alert");
+  expect(f.canvas.save).toHaveBeenCalledTimes(1);
+  view.unmount();
+  render(<TodosPanel {...f.props} />);
+  await screen.findByText(/Recovered unsaved changes/);
+  expect(f.canvas.save).toHaveBeenCalledTimes(1);
+  await user.click(retry());
+  await saved();
+  expect(f.canvas.save).toHaveBeenCalledTimes(2);
+  expect(f.canvas.save.mock.calls[1]).toEqual(f.canvas.save.mock.calls[0]);
+  expect(screen.getByRole("textbox", { name: "New todo" })).toHaveValue(
+    "Still typing",
+  );
+});
+
+it("scopes live naming to channel members rather than out-of-channel namesakes", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  const a = "a".repeat(64),
+    outside = "b".repeat(64);
+  const profiles = new Map([
+    [a, { name: "Alex" }],
+    [outside, { name: "Alex" }],
+  ]);
+  const roster = {
+    status: "ready" as const,
+    channels: [{ id: context.channelId, name: "Team", members: [a] }],
+  };
+  const directory = {
+    snapshot: () => profiles,
+    subscribe: () => () => {},
+    ensure: async () => {},
+  };
+  const names = bindNames(
+    { profiles: directory, agentLibrary: session.agentLibrary },
+    {
+      snapshot: () => [agentDirectory],
+      subscribe: () => () => {},
+    },
+  );
+  expect(names.resolve(a, "")).not.toBe("Alex");
+  const users = {
+    ...people,
+    profiles: directory,
+    names,
+    channels: { ...people.channels, list: () => roster },
+  };
+  const content = assignTodo(
+    original,
+    readTodos(original).items[0]?.offset ?? -1,
+    { pubkey: a, name: "Alex" },
+  );
+  f.canvas.read.mockResolvedValue({ ...head, content });
+  const view = render(<TodosPanel {...f.props} people={users} />);
+  await screen.findByRole("checkbox", { name: "First" });
+  const trigger = screen.getByRole("combobox", { name: "Assignee for First" });
+  expect(trigger).toHaveTextContent(/^Alex$/);
+  await user.click(trigger);
+  expect(
+    screen.getByRole("option", {
+      name: `Alex · ${publicKeyLabels([a]).get(a)}`,
+      exact: true,
+    }),
+  ).toBeInTheDocument();
+  expect(screen.getAllByRole("option")).toHaveLength(2);
+  view.unmount();
+  names.dispose();
 });

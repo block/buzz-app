@@ -7,7 +7,7 @@ import type { RelayEvent } from "../../src/features/relay/events";
 import { Button } from "../../src/shared/design-system/ui/Button";
 const initial =
   "# Launch notes\n\nThis text is outside the todo list.\n\n## Todos\n\n- [ ] Review the first working version\n- [ ] Try a longer task label that wraps naturally on a narrow screen without squashing the checkbox\n- [x] Keep the list readable without the plugin\n\n## Decisions\n\nKeep it simple.\n";
-let head = { id: "preview-1", content: initial } as RelayEvent;
+let head = { id: "preview-1", content: initial, created_at: 0 } as RelayEvent;
 let revision = 1;
 const canvas = {
   available: true,
@@ -17,7 +17,14 @@ const canvas = {
   async save(_channel: string, content: string, expected: string | undefined) {
     if (expected !== head.id)
       throw new Error("Canvas changed. Refresh before saving.");
-    head = { ...head, id: `preview-${++revision}`, content };
+    if (head.created_at >= Math.floor(Date.now() / 1000))
+      throw new Error("Please wait a second before saving Canvas again");
+    head = {
+      ...head,
+      id: `preview-${++revision}`,
+      content,
+      created_at: Math.floor(Date.now() / 1000),
+    };
     return head;
   },
 };

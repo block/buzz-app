@@ -67,10 +67,12 @@ export function TodosPanel({
     people.channels.subscribeList,
     people.channels.list,
   );
-  const resolveName = useIdentityNames(people.names);
+  const resolveIdentity = useIdentityNames(people.names);
   const members = list.channels.find(
     (channel) => channel.id === context.channelId,
   )?.members;
+  const resolveName = (pubkey: string, fallback: string) =>
+    resolveIdentity(pubkey, fallback, members ?? []);
   const key = `todos-draft-v1:${context.channelId}`;
   const [saved] = useState(() => readDraft(context.scope, key));
   const savedDirty = !!saved && saved.content !== saved.original;
@@ -80,12 +82,18 @@ export function TodosPanel({
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState(false);
   const operation = useRef(0);
-  const input = useRef<HTMLInputElement>(null);
+  const saving = useRef(false);
+  const savedAt = useRef(0);
+  const cancelWait = useRef<(() => void) | undefined>(undefined);
   const prefix = useId();
   const focusAfterToggle = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
-    if (focusAfterToggle.current) {
-      document.getElementById(focusAfterToggle.current)?.focus();
+    if (focusAfterToggle.current && !busy) {
+      const target = document.getElementById(focusAfterToggle.current);
+      if (document.activeElement === document.body)
+        (
+          target?.querySelector<HTMLElement>("[role=combobox]") ?? target
+        )?.focus();
       focusAfterToggle.current = undefined;
     }
   });
@@ -110,6 +118,7 @@ export function TodosPanel({
       try {
         const head = await canvas.read(context.channelId);
         if (!active() || generation !== operation.current) return;
+        savedAt.current = head?.created_at ?? 0;
         setLoaded(true);
         const alreadySaved = !!saved && saved.content === head?.content;
         const changed =
@@ -122,6 +131,8 @@ export function TodosPanel({
           setError(
             "Canvas changed elsewhere. Your draft is kept. Refresh to review the saved Canvas before saving.",
           );
+        else if (!replace && savedDirty && !alreadySaved)
+          setError("Recovered unsaved changes. Retry to save them to Canvas.");
         if (replace || !savedDirty || alreadySaved)
           update({
             ...empty,
@@ -144,22 +155,47 @@ export function TodosPanel({
     void load();
     return () => {
       operation.current++;
+      cancelWait.current?.();
     };
   }, [load]);
-  const save = async () => {
-    if (!active() || busy || !loaded || !dirty || conflict) return;
+  const save = async (next = draft) => {
+    if (
+      !active() ||
+      saving.current ||
+      busy ||
+      !loaded ||
+      next.content === next.original ||
+      conflict ||
+      !canvas.available
+    )
+      return;
+    saving.current = true;
     const generation = ++operation.current;
     setBusy("save");
     setError("");
     try {
+      // Canvas revisions use whole seconds. Wait once, without retrying a write.
+      const delay = (savedAt.current + 1) * 1000 - Date.now();
+      if (delay > 0) {
+        await new Promise<void>((resolve) => {
+          const timer = window.setTimeout(resolve, Math.min(delay, 1000));
+          cancelWait.current = () => {
+            window.clearTimeout(timer);
+            resolve();
+          };
+        });
+        cancelWait.current = undefined;
+      }
+      if (!active() || generation !== operation.current) return;
       const head = await canvas.save(
         context.channelId,
-        draft.content,
-        draft.base ?? undefined,
+        next.content,
+        next.base ?? undefined,
       );
       if (!active() || generation !== operation.current) return;
+      savedAt.current = head.created_at;
       update({
-        ...draft,
+        ...next,
         original: head.content,
         content: head.content,
         base: head.id,
@@ -170,6 +206,7 @@ export function TodosPanel({
           `Todos couldn’t save. Your changes are still here. ${reason instanceof Error ? reason.message : String(reason)}`,
         );
     } finally {
+      saving.current = false;
       if (active() && generation === operation.current) setBusy(undefined);
     }
   };
@@ -226,10 +263,11 @@ export function TodosPanel({
     .sort((a, b) => a.label.localeCompare(b.label));
 
   const change = (edit: () => string) => {
-    if (!active() || disabled) return;
+    if (!active() || disabled || saving.current) return;
     try {
-      update({ ...draft, content: edit() });
-      setError("");
+      const next = { ...draft, content: edit() };
+      update(next);
+      void save(next);
     } catch (reason) {
       setError(String(reason));
     }
@@ -264,15 +302,22 @@ export function TodosPanel({
             className={styles.add}
             onSubmit={(event) => {
               event.preventDefault();
-              if (!active() || disabled || !draft.input.trim()) return;
+              if (
+                !active() ||
+                disabled ||
+                saving.current ||
+                !draft.input.trim()
+              )
+                return;
               try {
-                update({
+                const next = {
                   ...draft,
                   content: addTodo(draft.content, draft.input),
                   input: "",
-                });
-                setError("");
-                input.current?.focus();
+                };
+                focusAfterToggle.current = `${prefix}-new`;
+                update(next);
+                void save(next);
               } catch (reason) {
                 setError(String(reason));
               }
@@ -280,7 +325,7 @@ export function TodosPanel({
           >
             <Field label="New todo" labelVisibility="hidden">
               <Input
-                ref={input}
+                id={`${prefix}-new`}
                 placeholder="Add a todo…"
                 value={draft.input}
                 disabled={disabled}
@@ -385,6 +430,7 @@ export function TodosPanel({
                                 }
                               />
                               <fieldset
+                                id={`${prefix}-${item.offset}-assignee`}
                                 className={styles.assignee}
                                 aria-label={`Assignee for ${item.label}`}
                               >
@@ -450,6 +496,7 @@ export function TodosPanel({
                                         !currentMembers.includes(pubkey))
                                     )
                                       return;
+                                    focusAfterToggle.current = `${prefix}-${item.offset}-assignee`;
                                     change(() =>
                                       assignTodo(
                                         draft.content,
@@ -486,11 +533,13 @@ export function TodosPanel({
       <footer className={styles.footer}>
         <div className={styles.summary}>
           <p role="status" className="text-caption">
-            {dirty
-              ? "Unsaved changes"
-              : loaded
-                ? "Saved in Canvas"
-                : "Channel Canvas"}
+            {busy === "save"
+              ? "Saving…"
+              : dirty
+                ? "Unsaved changes"
+                : loaded
+                  ? "Saved in Canvas"
+                  : "Channel Canvas"}
           </p>
         </div>
         <div className={styles.actions}>
@@ -512,15 +561,16 @@ export function TodosPanel({
           >
             Refresh
           </Button>
-          <Button
-            size="sm"
-            variant={error ? "subtle" : "prominent"}
-            loading={busy === "save"}
-            disabled={disabled || !dirty}
-            onClick={() => void save()}
-          >
-            Save
-          </Button>
+          {dirty && !busy && !conflict && !parseError && (
+            <Button
+              size="sm"
+              variant="prominent"
+              disabled={disabled}
+              onClick={() => void save()}
+            >
+              Retry
+            </Button>
+          )}
         </div>
       </footer>
     </div>

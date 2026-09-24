@@ -177,9 +177,9 @@ not cross-version capability negotiation.
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
 it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
-side panel, with add/check/uncheck, one optional assignee per item, and explicit
-Save/Refresh. It uses shared controls and theme tokens; Channels still owns panel
-geometry, responsive placement and selection. Terminal remains in the bottom drawer.
+side panel, with add/check/uncheck, one optional assignee per item, automatic
+saving after each action, and explicit Refresh. It uses shared controls and theme
+tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
 
 The source of truth is ordinary Markdown in one root level-two `Todos` section:
 
@@ -201,15 +201,19 @@ An optional terminal suffix records assignment as ordinary Markdown:
 placeholder shown here. Only that exact structural suffix is assignment metadata;
 other links/prose remain task text. The public key is identity; names are escaped
 presentation. Assign/change/clear edits only the suffix. The selector uses the
-current channel member roster, with public-key qualifiers for namesakes. Missing
-rosters disable assignment controls; failed profile reads retain key/name fallbacks
+current channel member roster, including that boundary for shared naming policy,
+with public-key qualifiers in the opened choices. Missing rosters disable assignment controls; failed profile reads retain key/name fallbacks
 and offer retry. Profile renames never rewrite saved Canvas. Former members remain
 visible and can be changed or cleared. Assignment sends no notification and grants
 no channel membership or access.
 
 Canvas reads occur on open and explicit Refresh, not on a timer. Missing assignee
-and member profiles use the existing shared background directory. Save uses the existing
-session Canvas/outbox contract, including its 24 KiB limit, fresh membership check,
+and member profiles use the existing shared background directory. Typing an unfinished
+new item stays local; Add, checkbox and assignment actions save automatically.
+Controls pause while saving. If the loaded Canvas was written in the current second,
+a single cancellable wait respects its timestamp ordering; there is no background
+retry loop. Failures and recovered drafts expose Retry rather than silently publishing
+on reopen. Save uses the existing session Canvas/outbox contract, including its 24 KiB limit, fresh membership check,
 optimistic head comparison and exact confirmation. This is **not atomic concurrency
 control**; simultaneous saves can overwrite edits. Detected conflicts retain the
 local draft and require reviewing the saved Canvas. Refresh confirms before discarding

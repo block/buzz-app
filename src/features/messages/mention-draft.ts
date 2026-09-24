@@ -1,9 +1,16 @@
+import {
+  projectComposerDocument,
+  readComposerSnapshot,
+  type ComposerSnapshot,
+} from "./composer-document";
+
 export type MentionRecipient = Readonly<{ pubkey: string; name: string }>;
 export type DraftRecipient = MentionRecipient &
   Readonly<{ start: number; end: number }>;
 export type MentionDraft = {
   text: string;
   recipients: readonly DraftRecipient[];
+  document?: ComposerSnapshot;
 };
 const boundary = (text: string, end: number) =>
   end === text.length || /[\s.,!?;:()[\]{}]/u.test(text[end] ?? "");
@@ -11,7 +18,11 @@ const boundary = (text: string, end: number) =>
 export function mentionDraft(value: unknown): MentionDraft {
   if (typeof value === "string") return { text: value, recipients: [] };
   if (!value || typeof value !== "object") return { text: "", recipients: [] };
-  const { text, recipients } = value as Record<string, unknown>;
+  const record = value as Record<string, unknown>;
+  const doc = readComposerSnapshot(record.document);
+  const { text, recipients, document } = doc
+    ? projectComposerDocument(doc).draft
+    : record;
   if (typeof text !== "string") return { text: "", recipients: [] };
   const safe = Array.isArray(recipients)
     ? recipients.filter(
@@ -32,6 +43,7 @@ export function mentionDraft(value: unknown): MentionDraft {
     : [];
   return {
     text,
+    ...(doc ? { document: document as ComposerSnapshot } : {}),
     recipients: safe
       .slice(0, 32)
       .map(({ pubkey, name, start, end }) => ({ pubkey, name, start, end })),

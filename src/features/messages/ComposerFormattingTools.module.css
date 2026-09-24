@@ -1,0 +1,54 @@
+.tools {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+  gap: var(--space-1);
+  padding-block: var(--space-1);
+}
+.ingress,
+.expanded,
+.close {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.ingress {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.expanded {
+  min-width: 0;
+  flex: 1;
+}
+.fixed,
+.close {
+  flex-shrink: 0;
+}
+.divider {
+  width: 1px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-inline: var(--space-1);
+  background: var(--border-standard);
+  opacity: 0.6;
+}
+.scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+.options {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-half);
+  width: max-content;
+  /* Keep keyboard outlines inside the scroll clip without shifting icons. */
+  padding-block: var(--space-half);
+}

@@ -39,14 +39,13 @@ import {
 import {
   mentionDraft,
   followupDraft,
-  editMentionDraft,
-  replaceMentionDraft,
   type MentionDraft,
-  type MentionEdit,
   type MentionRecipient,
 } from "./mention-draft";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
+import { ComposerLinkDialog } from "./ComposerLinkDialog";
+import { ComposerFormattingTools } from "./ComposerFormattingTools";
 import type {
   ConversationExtensions,
   CompletionEdit,
@@ -57,7 +56,12 @@ import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
-import { sourceOffset, type ComposerInputElement } from "./composer-dom";
+import { composerMarkdown } from "./composer-markdown";
+import type {
+  ComposerInputElement,
+  ComposerLinkEdit,
+  ComposerFormat,
+} from "./composer-dom";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
   status: "idle",
@@ -194,30 +198,12 @@ function Composer({
   const restoreSelection = useRef<{ start: number; end: number } | undefined>(
     undefined,
   );
-  const compositionSaved = useRef(false);
-  const history = useRef<{
-    past: { draft: MentionDraft; start: number; end: number }[];
-    future: { draft: MentionDraft; start: number; end: number }[];
-  }>({ past: [], future: [] });
-  const saveDraft = (
-    next: MentionDraft,
-    before?: { start: number; end: number },
-  ) => {
-    if (
-      next.text === valueRef.current.text &&
-      JSON.stringify(next.recipients) ===
-        JSON.stringify(valueRef.current.recipients)
-    )
-      return false;
-    if (!compositionSaved.current)
-      history.current.past.push({
-        draft: valueRef.current,
-        start: before?.start ?? input.current?.selectionStart ?? 0,
-        end: before?.end ?? input.current?.selectionEnd ?? 0,
-      });
-    if (completion.composing.current) compositionSaved.current = true;
-    history.current.past = history.current.past.slice(-100);
-    history.current.future = [];
+  const [linkEdit, setLinkEdit] = useState<ComposerLinkEdit | null>(null);
+  const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
+    [],
+  );
+  const saveDraft = (next: MentionDraft) => {
+    if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
     updateDraft(next);
     writeView(scope, draftKey, next);
@@ -275,38 +261,10 @@ function Composer({
     draft,
     emojiCatalog.entries,
   );
-  const edit = useRef<MentionEdit | undefined>(undefined);
   const completion = useCompletionEditor(
     input,
     !editingDisabled && !!outbox?.supports(9),
   );
-  useEffect(() => {
-    const element = input.current;
-    if (!element) return;
-    const capture = (event: InputEvent) => {
-      const target = event.getTargetRanges?.()[0];
-      const targeted =
-        target &&
-        element.contains(target.startContainer) &&
-        element.contains(target.endContainer);
-      // Smart punctuation/autocorrect can replace text behind the caret.
-      // Only the browser's target range identifies which spans were touched.
-      edit.current = {
-        text: element.value,
-        start: targeted
-          ? sourceOffset(element, target.startContainer, target.startOffset)
-          : element.selectionStart,
-        end: targeted
-          ? sourceOffset(element, target.endContainer, target.endOffset)
-          : element.selectionEnd,
-        inputType: event.isComposing
-          ? "insertCompositionText"
-          : event.inputType,
-      };
-    };
-    element.addEventListener("beforeinput", capture);
-    return () => element.removeEventListener("beforeinput", capture);
-  }, []);
   useEffect(() => {
     if (outbox?.supports(9)) void session.emoji.ensure();
   }, [session, outbox]);
@@ -323,29 +281,6 @@ function Composer({
     input.current?.setSelectionRange(caret.current, caret.current);
     caret.current = undefined;
   });
-  function undo(redo: boolean) {
-    if (
-      editingDisabled ||
-      input.current?.readOnly ||
-      completion.composing.current
-    )
-      return;
-    const source = redo ? history.current.future : history.current.past;
-    const destination = redo ? history.current.past : history.current.future;
-    const next = source.pop();
-    if (!next) return;
-    destination.push({
-      draft: valueRef.current,
-      start: input.current?.selectionStart ?? 0,
-      end: input.current?.selectionEnd ?? 0,
-    });
-    valueRef.current = next.draft;
-    updateDraft(next.draft);
-    writeView(scope, draftKey, next.draft);
-    caret.current = undefined;
-    restoreSelection.current = { start: next.start, end: next.end };
-    completion.invalidate();
-  }
   function insert(
     text: string,
     recipient?: MentionRecipient,
@@ -362,30 +297,15 @@ function Composer({
       typeof text !== "string"
     )
       return false;
-    const current = valueRef.current;
-    const start = range?.start ?? caret.current ?? input.current.selectionStart;
-    const end = range?.end ?? caret.current ?? input.current.selectionEnd;
-    const edited = replaceMentionDraft(current, start, end, text);
-    if (edited.text.length > 16000) {
-      setError("Message is too long to insert text");
-      return false;
-    }
-    if (recipient && edited.recipients.length >= 32) {
+    if (recipient && valueRef.current.recipients.length >= 32) {
       setError("Choose at most 32 recipients");
       return false;
     }
-    const next = recipient
-      ? mentionDraft({
-          text: edited.text,
-          recipients: [
-            ...edited.recipients,
-            { ...recipient, start, end: start + text.length - 1 },
-          ],
-        })
-      : edited;
     completion.invalidate();
-    caret.current = start + text.length;
-    saveDraft(next);
+    if (!input.current.insertText(text, recipient, range)) {
+      setError("Message is too long to insert text");
+      return false;
+    }
     setError(undefined);
     return true;
   }
@@ -523,8 +443,8 @@ function Composer({
         return;
       const content =
         threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, captured.text)
-          : captured.text;
+          ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
+          : composerMarkdown(captured);
       const uploaded = capturedAttachments.flatMap((item) =>
         item.uploaded ? [item.uploaded] : [],
       );
@@ -554,7 +474,7 @@ function Composer({
       // An unchanged prefill may not render. Do not leave a caret command for
       // the next keystroke to consume after inserting its first character.
       caret.current = changed ? next.text.length : undefined;
-      history.current = { past: [], future: [] };
+      input.current?.reset(next);
       input.current?.focus();
       if (!changed)
         input.current?.setSelectionRange(next.text.length, next.text.length);
@@ -593,14 +513,7 @@ function Composer({
             session={session}
             recipients={value.recipients}
             disabled={editingDisabled}
-            remove={(pubkey) =>
-              saveDraft({
-                ...value,
-                recipients: value.recipients.filter(
-                  (item) => item.pubkey !== pubkey,
-                ),
-              })
-            }
+            remove={(pubkey) => input.current?.removeRecipient(pubkey)}
           />
         )}
       </div>
@@ -713,7 +626,12 @@ function Composer({
             channelId={channelId}
             extensions={extensions}
             emoji={emojiCatalog.entries}
-            onUndo={undo}
+            onDraftChange={(next) => {
+              saveDraft(next);
+              completion.observe(true);
+            }}
+            onFormatsChange={setActiveFormats}
+            onEditLink={setLinkEdit}
             data-single-emoji={largeEmojiDraft || undefined}
             maxLength={16000}
             placeholder={label}
@@ -725,27 +643,11 @@ function Composer({
               completion.observe();
             }}
             onCompositionStart={() => {
-              compositionSaved.current = false;
               completion.composing.current = true;
               completion.invalidate();
             }}
             onCompositionEnd={() => {
-              compositionSaved.current = false;
               completion.composing.current = false;
-              completion.observe(true);
-            }}
-            // onInput also observes same-text replacements, which onChange omits.
-            onInput={(event) => {
-              const range = edit.current;
-              edit.current = undefined;
-              saveDraft(
-                editMentionDraft(
-                  valueRef.current,
-                  event.currentTarget.value,
-                  range,
-                ),
-                range,
-              );
               completion.observe(true);
             }}
             onKeyDown={(event) => {
@@ -812,7 +714,15 @@ function Composer({
             </div>
           )}
         <div className={styles.composerActions}>
-          <div className={styles.composerTools}>
+          <ComposerFormattingTools
+            disabled={editingDisabled}
+            activeFormats={activeFormats}
+            toggleFormat={(format) => input.current?.toggleFormat(format)}
+            editLink={() => {
+              const edit = input.current?.editLink();
+              if (edit) setLinkEdit(edit);
+            }}
+          >
             {extensions ? (
               <ComposerTools
                 registry={extensions.tools}
@@ -830,7 +740,7 @@ function Composer({
             ) : (
               renderLeadingTools(null)
             )}
-          </div>
+          </ComposerFormattingTools>
           {trailingTool ??
             (sessionConversation ? (
               <SessionAgentControl
@@ -882,6 +792,14 @@ function Composer({
           </Button>
         )}
       </form>
+      {linkEdit && (
+        <ComposerLinkDialog
+          edit={linkEdit}
+          input={input}
+          disabled={editingDisabled}
+          close={() => setLinkEdit(null)}
+        />
+      )}
     </>
   );
 }

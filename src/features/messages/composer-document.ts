@@ -1,0 +1,452 @@
+import { Schema, type Node as EditorNode } from "prosemirror-model";
+import { bulletList, orderedList, listItem } from "prosemirror-schema-list";
+import { composerLinkUrl } from "./composer-link";
+import { scanMarkdown } from "../relay/message-content";
+import type { MentionDraft, DraftRecipient } from "./mention-draft";
+
+/** The document owns editable marks and exact source tokens. Unimplemented
+ * Markdown stays source text, never round-trips through an HTML serializer. */
+export const composerSchema = new Schema<
+  | "doc"
+  | "paragraph"
+  | "blockquote"
+  | "code_block"
+  | "bullet_list"
+  | "ordered_list"
+  | "list_item"
+  | "text"
+  | "hard_break"
+  | "token",
+  | "recipient"
+  | "literal"
+  | "link"
+  | "code"
+  | "spoiler"
+  | "bold"
+  | "italic"
+  | "strike"
+>({
+  nodes: {
+    doc: { content: "block+" },
+    paragraph: {
+      group: "block",
+      content: "inline*",
+      whitespace: "pre",
+      toDOM: () => ["p", 0],
+      parseDOM: [{ tag: "p" }, { tag: "div" }],
+    },
+    blockquote: {
+      group: "block",
+      content: "block+",
+      defining: true,
+      toDOM: () => ["blockquote", 0],
+      parseDOM: [{ tag: "blockquote" }],
+    },
+    code_block: {
+      group: "block",
+      content: "text*",
+      marks: "recipient",
+      code: true,
+      defining: true,
+      toDOM: () => ["pre", { spellcheck: "false" }, ["code", 0]],
+      parseDOM: [{ tag: "pre", preserveWhitespace: "full" }],
+    },
+    bullet_list: { ...bulletList, group: "block", content: "list_item+" },
+    ordered_list: { ...orderedList, group: "block", content: "list_item+" },
+    list_item: { ...listItem, content: "paragraph block*" },
+    text: { group: "inline" },
+    hard_break: {
+      group: "inline",
+      inline: true,
+      selectable: false,
+      leafText: () => "\n",
+      toDOM: () => ["br"],
+      parseDOM: [{ tag: "br" }],
+    },
+    token: {
+      group: "inline",
+      inline: true,
+      atom: true,
+      selectable: false,
+      attrs: {
+        source: {},
+        recipient: { default: null },
+        editAsText: { default: false },
+      },
+      leafText: (node) => node.attrs.source,
+      toDOM: (node) => [
+        "span",
+        { "data-source": node.attrs.source, contenteditable: "false" },
+        node.attrs.source,
+      ],
+      parseDOM: [
+        {
+          tag: "span[data-source]",
+          getAttrs: (element) => ({
+            source: element.getAttribute("data-source"),
+          }),
+        },
+      ],
+    },
+  },
+  marks: {
+    recipient: {
+      attrs: { pubkey: {}, name: {} },
+      inclusive: false,
+      toDOM: () => ["span", 0],
+    },
+    literal: { inclusive: false, toDOM: () => ["span", 0] },
+    link: {
+      attrs: {
+        href: {
+          validate: (value) => {
+            if (typeof value !== "string" || !composerLinkUrl(value))
+              throw new RangeError("Invalid link");
+          },
+        },
+      },
+      inclusive: false,
+      toDOM: (mark) => ["a", { href: composerLinkUrl(mark.attrs.href) }, 0],
+      parseDOM: [
+        {
+          tag: "a[href]",
+          getAttrs: (element) => {
+            const href = composerLinkUrl(element.getAttribute("href") ?? "");
+            return href ? { href } : false;
+          },
+        },
+      ],
+    },
+    code: {
+      code: true,
+      inclusive: false,
+      excludes: "bold italic strike link",
+      toDOM: () => ["code", { spellcheck: "false" }, 0],
+      parseDOM: [{ tag: "code" }],
+    },
+    spoiler: {
+      toDOM: () => ["span", { "data-spoiler": "" }, 0],
+      parseDOM: [{ tag: "span[data-spoiler]" }],
+    },
+    bold: {
+      toDOM: () => ["strong", 0],
+      parseDOM: [{ tag: "strong" }, { tag: "b" }],
+    },
+    italic: { toDOM: () => ["em", 0], parseDOM: [{ tag: "em" }, { tag: "i" }] },
+    strike: {
+      toDOM: () => ["s", 0],
+      parseDOM: [{ tag: "s" }, { tag: "del" }, { tag: "strike" }],
+    },
+  },
+});
+
+export type SourceToken = { start: number; end: number; editAsText?: boolean };
+export type SourceRange = { start: number; end: number };
+
+export function markdownRanges(text: string) {
+  const { tree, tooDeep } = scanMarkdown(text);
+  const bold: SourceRange[] = [],
+    literal: SourceRange[] = [];
+  if (tooDeep) return { bold, literal: [{ start: 0, end: text.length }] };
+  const pending = [tree];
+  while (pending.length) {
+    const node = pending.pop();
+    if (!node) continue;
+    const start = node.position?.start.offset,
+      end = node.position?.end.offset;
+    if (start === undefined || end === undefined) continue;
+    if (
+      [
+        "code",
+        "inlineCode",
+        "image",
+        "imageReference",
+        "definition",
+        "html",
+      ].includes(node.type)
+    ) {
+      literal.push({ start, end });
+      continue;
+    }
+    if (node.type === "strong") bold.push({ start, end });
+    pending.push(...(node.children ?? []));
+  }
+  return { bold, literal };
+}
+
+/** Draft text stays the editing/completion coordinate space. Formatting metadata
+ * is local authoring state; message publication serializes it separately. */
+export function readComposerDocument(
+  draft: MentionDraft,
+  tokens: readonly SourceToken[],
+) {
+  const nodes: EditorNode[] = [];
+  const restored = readComposerSnapshot(draft.document);
+  if (restored) {
+    // Mention provenance is explicit metadata, never inferred from matching text.
+    const source = projectComposerDocument(restored);
+    const content = (node: EditorNode, position: number): EditorNode => {
+      const start = source.source(position),
+        end = source.source(position + node.nodeSize);
+      const valid = (identity: { pubkey: string; name: string }) =>
+        draft.recipients.some(
+          (item) =>
+            item.pubkey === identity.pubkey &&
+            item.name === identity.name &&
+            item.start <= start &&
+            item.end >= end,
+        );
+      const marks = node.marks.filter(
+        (mark) =>
+          mark.type !== composerSchema.marks.recipient ||
+          valid(mark.attrs as { pubkey: string; name: string }),
+      );
+      if (node.isText) return node.mark(marks);
+      if (node.type.name === "token")
+        return node.type.create(
+          {
+            ...node.attrs,
+            recipient:
+              node.attrs.recipient && valid(node.attrs.recipient)
+                ? node.attrs.recipient
+                : null,
+          },
+          null,
+          marks,
+        );
+      const children: EditorNode[] = [];
+      node.forEach((child, offset) => {
+        children.push(content(child, position + 1 + offset));
+      });
+      return node.type.create(node.attrs, children, marks);
+    };
+    return content(restored, -1);
+  }
+  const points = [
+    ...new Set([
+      0,
+      draft.text.length,
+      ...tokens.flatMap((token) => [token.start, token.end]),
+    ]),
+  ].sort((a, b) => a - b);
+  let offset = 0;
+  while (offset < draft.text.length) {
+    const token = tokens.find((token) => token.start === offset);
+    if (token) {
+      nodes.push(
+        composerSchema.nodes.token.create({
+          source: draft.text.slice(token.start, token.end),
+          editAsText: !!token.editAsText,
+          recipient:
+            draft.recipients.find(
+              (item) => item.start === token.start && item.end === token.end,
+            ) ?? null,
+        }),
+      );
+      offset = token.end;
+    } else {
+      const end = points.find((point) => point > offset) ?? draft.text.length;
+      nodes.push(composerSchema.text(draft.text.slice(offset, end)));
+      offset = end;
+    }
+  }
+  return composerSchema.nodes.doc.create(
+    null,
+    composerSchema.nodes.paragraph.create(null, nodes),
+  );
+}
+
+/** Document positions, editable text offsets, and serialized Markdown offsets
+ * are distinct. No generated Markdown delimiter enters this map. */
+export function projectComposerDocument(doc: EditorNode) {
+  let text = "";
+  const positions = new Array<number>(doc.content.size + 1).fill(0);
+  const recipients: DraftRecipient[] = [];
+  const carets: number[] = [];
+  const blocks: { from: number; to: number; start: number; code: boolean }[] =
+    [];
+  const tokens: (SourceToken & {
+    from: number;
+    to: number;
+    node: EditorNode;
+  })[] = [];
+  doc.descendants((node, position) => {
+    if (node.isTextblock) {
+      if (blocks.length) text += "\n";
+      positions[position] = text.length;
+      positions[position + 1] = text.length;
+      carets.push(position + 1);
+      blocks.push({
+        from: position + 1,
+        to: position + node.nodeSize - 1,
+        start: text.length,
+        code: !!node.type.spec.code,
+      });
+      return;
+    }
+    if (!node.isInline) return;
+    const start = text.length;
+    const content: string = node.isText
+      ? node.textContent
+      : node.type.name === "hard_break"
+        ? "\n"
+        : node.attrs.source;
+    positions[position] = start;
+    text += content;
+    if (node.isText)
+      for (let i = 0; i <= content.length; i++) {
+        positions[position + i] = start + i;
+        carets.push(position + i);
+      }
+    else {
+      positions[position + node.nodeSize] = text.length;
+      carets.push(position, position + node.nodeSize);
+    }
+    const identity = composerSchema.marks.recipient.isInSet(node.marks);
+    if (identity) {
+      const previous = recipients.at(-1);
+      if (previous?.end === start && previous.pubkey === identity.attrs.pubkey)
+        recipients[recipients.length - 1] = { ...previous, end: text.length };
+      else
+        recipients.push({
+          pubkey: identity.attrs.pubkey,
+          name: identity.attrs.name,
+          start,
+          end: text.length,
+        });
+    }
+    if (node.type.name === "token") {
+      tokens.push({
+        start,
+        end: text.length,
+        from: position,
+        to: position + node.nodeSize,
+        node,
+        editAsText: node.attrs.editAsText,
+      });
+      if (node.attrs.recipient)
+        recipients.push({ ...node.attrs.recipient, start, end: text.length });
+    }
+  });
+  for (let i = 1; i < positions.length; i++)
+    positions[i] = Math.max(positions[i] ?? 0, positions[i - 1] ?? 0);
+  positions[positions.length - 1] = text.length;
+  return {
+    draft: {
+      text,
+      recipients,
+      document: { version: 1, content: doc.toJSON() },
+    } satisfies MentionDraft,
+    positions,
+    tokens,
+    blocks,
+    source(position: number) {
+      return (
+        positions[Math.max(0, Math.min(position, positions.length - 1))] ??
+        text.length
+      );
+    },
+    position(offset: number, bias = 1) {
+      offset = Math.max(0, Math.min(offset, text.length));
+      let closest = carets[0] ?? 1;
+      for (const position of carets) {
+        const value = positions[position] ?? text.length;
+        if (value === offset) return position;
+        if (value > offset) return bias < 0 ? closest : position;
+        closest = position;
+      }
+      return closest;
+    },
+  };
+}
+
+/** Already-rich content is not Markdown syntax. Preserve UTF-16 offsets and
+ * line breaks so raw prose can use the parser without borrowing rich delimiters. */
+export function composerMarkdownContext(
+  doc: EditorNode,
+  source = projectComposerDocument(doc),
+) {
+  let text = source.draft.text;
+  const protectedRanges: SourceRange[] = [];
+  const mask = (from: number, to: number) => {
+    const start = source.source(from),
+      end = source.source(to);
+    protectedRanges.push({ start, end });
+    text =
+      text.slice(0, start) +
+      text.slice(start, end).replace(/[^\r\n]/g, "x") +
+      text.slice(end);
+  };
+  doc.descendants((node, position) => {
+    if (node.isTextblock && node.type.spec.code) {
+      mask(position + 1, position + node.nodeSize - 1);
+      return false;
+    }
+    if (
+      node.isInline &&
+      (["code", "link", "literal"] as const).some((name) =>
+        composerSchema.marks[name].isInSet(node.marks),
+      )
+    )
+      mask(position, position + node.nodeSize);
+  });
+  return { text, protected: protectedRanges };
+}
+
+/** Local persistence envelope. The schema, not parallel mark ranges, owns shape. */
+export type ComposerSnapshot = { version: 1; content: unknown };
+export function readComposerSnapshot(value: unknown): EditorNode | undefined {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("version" in value) ||
+    value.version !== 1 ||
+    !("content" in value)
+  )
+    return;
+  const pending = [{ node: value.content, depth: 0 }];
+  let count = 0,
+    length = 0;
+  while (pending.length) {
+    const item = pending.pop();
+    if (!item) break;
+    if (
+      ++count > 32001 ||
+      item.depth > 100 ||
+      !item.node ||
+      typeof item.node !== "object"
+    )
+      return;
+    const node = item.node as Record<string, unknown>;
+    if (typeof node.type !== "string" || !composerSchema.nodes[node.type])
+      return;
+    if (node.type === "text") {
+      if (typeof node.text !== "string") return;
+      length += node.text.length;
+    }
+    if (node.type === "token") {
+      if (
+        !node.attrs ||
+        typeof node.attrs !== "object" ||
+        !("source" in node.attrs) ||
+        typeof node.attrs.source !== "string"
+      )
+        return;
+      length += node.attrs.source.length;
+    }
+    if (length > 16000) return;
+    if (node.content !== undefined) {
+      if (!Array.isArray(node.content)) return;
+      for (const child of node.content)
+        pending.push({ node: child, depth: item.depth + 1 });
+    }
+  }
+  try {
+    const doc = composerSchema.nodeFromJSON(value.content);
+    if (doc.type !== composerSchema.nodes.doc) return;
+    doc.check();
+    return doc;
+  } catch {
+    return;
+  }
+}

@@ -7,6 +7,12 @@ import {
   type DeepLinkShell,
 } from "./deep-links";
 import { targetLink, type OpenTarget } from "./targets";
+import {
+  createNavigationController,
+  type OpenFailure,
+  type OpenResult,
+} from "./controller";
+import { createMemoryHistory } from "./history";
 
 const native = vi.hoisted(() => ({ value: false }));
 const invoked = vi.hoisted(() => ({
@@ -157,15 +163,22 @@ function harness(initial: Client, pending: string[] = []) {
   let client = initial;
   const clientListeners = new Set<() => void>();
   const log: string[] = [];
+  const controller = createNavigationController(createMemoryHistory());
   const host = {
     navigation: {
+      ...controller.navigation,
       open: vi.fn(async (target: OpenTarget) => {
         log.push(`open:${JSON.stringify(target)}`);
-        return { status: "opened" as const };
+        const result = controller.navigation.open(target);
+        controller.complete(controller.navigation.snapshot().attempt, {
+          status: "opened",
+        });
+        return result;
       }),
     },
-    fail: vi.fn((reason: string) => {
+    fail: vi.fn((reason: OpenFailure, retry?: () => Promise<OpenResult>) => {
       log.push(`fail:${reason}`);
+      controller.fail(reason, retry);
     }),
   };
   const stop = bindDeepLinks(
@@ -182,10 +195,14 @@ function harness(initial: Client, pending: string[] = []) {
     shell,
   );
   return {
+    controller,
     host,
     take,
     log,
-    stop,
+    stop() {
+      stop();
+      controller.dispose();
+    },
     watchers,
     arrive(...urls: unknown[]) {
       queue.push(...(urls as string[]));
@@ -223,14 +240,12 @@ it("waits for loading to finish even for links that will fail, then reports them
   expect(t.log).toEqual(["fail:invalid-target"]);
   t.stop();
 });
-it("opens later arrivals in order and surfaces unsupported ones through the host", async () => {
+it("opens the latest intent from a burst without presenting superseded destinations", async () => {
   const t = harness(ready);
   await settle();
   t.arrive("buzz://channel/general", copied, messageLink);
   await settle();
   expect(t.log).toEqual([
-    channelOpen,
-    "fail:invalid-target",
     `open:${JSON.stringify({
       version: 1,
       kind: "conversation",
@@ -242,16 +257,177 @@ it("opens later arrivals in order and surfaces unsupported ones through the host
   ]);
   t.stop();
 });
-it("fails a message link as unavailable when the ready client has no selected community", async () => {
+it("retains the incoming message for Retry after community selection", async () => {
   const t = harness({ status: "ready", viewer, selected: null });
   await settle();
   t.arrive(messageLink);
   await settle();
   expect(t.log).toEqual(["fail:unavailable"]);
   t.become({ selected: origin });
-  // Nothing is retained for automatic retry in this slice.
   expect(t.log).toEqual(["fail:unavailable"]);
+  await expect(t.host.navigation.retry()).resolves.toEqual({
+    status: "opened",
+  });
+  expect(t.host.navigation.snapshot().entry.target).toMatchObject({
+    messageId: message,
+    threadRootId: root,
+  });
   t.stop();
+});
+it("waits for an identity and community, then retries the incoming URL rather than Home", async () => {
+  const t = harness({ status: "unavailable", selected: null }, [messageLink]);
+  try {
+    await vi.waitFor(() =>
+      expect(t.host.navigation.snapshot().retryable).toBe(true),
+    );
+    t.become(ready);
+    await expect(t.host.navigation.retry()).resolves.toEqual({
+      status: "opened",
+    });
+    expect(t.host.navigation.snapshot().entry.target).toMatchObject({
+      kind: "conversation",
+      scope: { viewer, communityOrigin: origin },
+      messageId: message,
+    });
+  } finally {
+    t.stop();
+  }
+});
+it("retains only the latest URL across repeated drains while loading", async () => {
+  const t = harness(loading, [messageLink]);
+  try {
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+    for (let i = 0; i < 40; i++) {
+      t.arrive(`buzz://channel/channel-${i}`);
+      await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(i + 2));
+    }
+    t.become(ready);
+    expect(t.host.navigation.open).toHaveBeenCalledTimes(1);
+    expect(t.host.navigation.snapshot().entry.target).toMatchObject({
+      channelId: "channel-39",
+    });
+  } finally {
+    t.stop();
+  }
+});
+it.each(["viewer", "selected"] as const)(
+  "rejects obsolete intent when the bound %s changes during loading",
+  async (key) => {
+    const t = harness({ ...ready, status: "loading" }, [messageLink]);
+    try {
+      await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+      t.become({
+        ...ready,
+        [key]: key === "viewer" ? "f".repeat(64) : elsewhere,
+      });
+      await expect(t.host.navigation.retry()).resolves.toEqual({
+        status: "failed",
+        reason: "denied",
+      });
+      expect(t.host.navigation.open).not.toHaveBeenCalled();
+    } finally {
+      t.stop();
+    }
+  },
+);
+it("a newer user visit dismisses a recoverable incoming URL", async () => {
+  const t = harness({ status: "ready", viewer, selected: null }, [messageLink]);
+  try {
+    await vi.waitFor(() =>
+      expect(t.host.navigation.snapshot().retryable).toBe(true),
+    );
+    await t.host.navigation.open({ version: 1, kind: "home" });
+    t.become(ready);
+    expect(t.host.navigation.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "home",
+    });
+    expect(t.host.navigation.snapshot().ingress).toBeUndefined();
+    expect(t.host.navigation.open).toHaveBeenCalledTimes(1);
+  } finally {
+    t.stop();
+  }
+});
+it("a malformed newer arrival replaces retained recovery without reviving the old URL", async () => {
+  const t = harness({ status: "ready", viewer, selected: null }, [messageLink]);
+  try {
+    await vi.waitFor(() =>
+      expect(t.host.navigation.snapshot().retryable).toBe(true),
+    );
+    t.arrive("buzz://unsupported");
+    await vi.waitFor(() =>
+      expect(t.host.navigation.snapshot().reason).toBe("invalid-target"),
+    );
+    t.become(ready);
+    await expect(t.host.navigation.retry()).resolves.toEqual({
+      status: "failed",
+      reason: "invalid-target",
+    });
+    expect(t.host.navigation.open).not.toHaveBeenCalled();
+  } finally {
+    t.stop();
+  }
+});
+it("a newer in-flight arrival wins when readiness changes during the drain", async () => {
+  const t = harness(loading, [messageLink]);
+  let release!: (urls: string[]) => void;
+  try {
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+    t.take.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    t.arrive("buzz://channel/newer");
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    try {
+      t.become(ready);
+      expect(t.host.navigation.open).not.toHaveBeenCalled();
+    } finally {
+      release(["buzz://channel/newer"]);
+    }
+    await vi.waitFor(() =>
+      expect(t.host.navigation.snapshot().entry.target).toMatchObject({
+        channelId: "newer",
+      }),
+    );
+    expect(t.host.navigation.open).toHaveBeenCalledTimes(1);
+  } finally {
+    t.stop();
+  }
+});
+it("same-visit normalization does not discard a shell read", async () => {
+  const t = harness(ready);
+  let release!: (urls: string[]) => void;
+  try {
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+    t.take.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    t.arrive(messageLink);
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    try {
+      expect(
+        t.controller.resolve(t.host.navigation.snapshot().attempt, {
+          version: 1,
+          kind: "settings",
+        }),
+      ).toBe(true);
+    } finally {
+      release([messageLink]);
+    }
+    await vi.waitFor(() =>
+      expect(t.host.navigation.snapshot().entry.target).toMatchObject({
+        messageId: message,
+      }),
+    );
+  } finally {
+    t.stop();
+  }
 });
 it("ignores non-string shell entries and keeps going", async () => {
   const t = harness(ready);
@@ -261,9 +437,10 @@ it("ignores non-string shell entries and keeps going", async () => {
   expect(t.log).toEqual([channelOpen]);
   t.stop();
 });
-it("reports a failing shell read without throwing or navigating", async () => {
+it("reports a failing shell read without throwing and can drain on the next ping", async () => {
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const t = harness(ready);
+  await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
   t.take.mockRejectedValueOnce(new Error("no shell"));
   t.arrive("buzz://channel/general");
   await settle();
@@ -271,12 +448,73 @@ it("reports a failing shell read without throwing or navigating", async () => {
     "Could not read pending deep links",
     expect.any(Error),
   );
-  expect(t.log).toEqual([channelOpen]);
+  expect(t.log).toEqual([]);
+  t.arrive();
+  await vi.waitFor(() => expect(t.log).toEqual([channelOpen]));
   t.stop();
+});
+it.each(["navigation", "viewer", "selected"] as const)(
+  "discards a shell read completed after newer %s intent",
+  async (change) => {
+    const t = harness(ready);
+    let release!: (urls: string[]) => void;
+    try {
+      await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+      t.take.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      );
+      t.arrive(messageLink);
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      try {
+        if (change === "navigation")
+          await t.host.navigation.open({ version: 1, kind: "home" });
+        else
+          t.become({
+            [change]: change === "viewer" ? "f".repeat(64) : elsewhere,
+          });
+      } finally {
+        release([messageLink]);
+      }
+      // A subsequent empty drain is a completion barrier for the held read.
+      t.take.mockResolvedValueOnce([]);
+      t.arrive();
+      await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(3));
+      expect(t.host.navigation.snapshot().entry.target).toEqual({
+        version: 1,
+        kind: "home",
+      });
+      expect(t.host.navigation.open).toHaveBeenCalledTimes(
+        change === "navigation" ? 1 : 0,
+      );
+    } finally {
+      t.stop();
+    }
+  },
+);
+it("latches the first available account and community before retry", async () => {
+  const t = harness({ status: "unavailable", selected: null }, [messageLink]);
+  try {
+    await vi.waitFor(() =>
+      expect(t.host.navigation.snapshot().retryable).toBe(true),
+    );
+    t.become(ready);
+    t.become({ viewer: "f".repeat(64), selected: elsewhere });
+    await expect(t.host.navigation.retry()).resolves.toEqual({
+      status: "failed",
+      reason: "denied",
+    });
+    expect(t.host.navigation.open).not.toHaveBeenCalled();
+  } finally {
+    t.stop();
+  }
 });
 it("still drains once when the shell cannot deliver updates, without aborting startup", async () => {
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  const host = { navigation: { open: vi.fn() }, fail: vi.fn() };
+  const controller = createNavigationController(createMemoryHistory());
+  const host = { ...controller, fail: vi.fn() };
   const stop = bindDeepLinks(
     host,
     { snapshot: () => ready, subscribe: () => () => {} },
@@ -292,8 +530,9 @@ it("still drains once when the shell cannot deliver updates, without aborting st
     "Deep link updates are unavailable",
     expect.any(Error),
   );
-  expect(host.fail).toHaveBeenCalledWith("invalid-target");
+  expect(host.fail).toHaveBeenCalledWith("invalid-target", undefined);
   stop();
+  controller.dispose();
 });
 it("stops draining and reacting after disposal", async () => {
   const t = harness(loading, ["buzz://channel/general"]);
@@ -308,7 +547,7 @@ it("stops draining and reacting after disposal", async () => {
 });
 it("is a no-op in the browser build, where no shell exists", async () => {
   expect(createDeepLinkShell()).toBeUndefined();
-  const host = { navigation: { open: vi.fn() }, fail: vi.fn() };
+  const host = createNavigationController(createMemoryHistory());
   const subscribe = vi.fn(() => () => {});
   const stop = bindDeepLinks(host, {
     snapshot: () => ready,
@@ -318,6 +557,7 @@ it("is a no-op in the browser build, where no shell exists", async () => {
   expect(subscribe).not.toHaveBeenCalled();
   expect(invoked.fn).not.toHaveBeenCalled();
   stop();
+  host.dispose();
 });
 it("bridges the Tauri shell with raw strings only and detaches its ping channel on stop", async () => {
   native.value = true;

@@ -124,13 +124,14 @@ describe("navigation attempts over one history driver", () => {
     });
     expect(nav.snapshot().attempt.signal.aborted).toBe(true);
     expect(listener).toHaveBeenCalled();
-    // Retry re-runs the kept visit; the failure does not linger on it.
-    const retry = nav.retry();
-    expect(nav.snapshot().status).toBe("opening");
-    expect(nav.snapshot().reason).toBeUndefined();
+    // An invalid incoming URL cannot accidentally retry the previous visit.
+    await expect(nav.retry()).resolves.toEqual({
+      status: "failed",
+      reason: "invalid-target",
+    });
+    expect(nav.snapshot().status).toBe("failed");
+    expect(nav.snapshot().retryable).toBe(false);
     expect(nav.snapshot().entry).toBe(entry);
-    host.complete(nav.snapshot().attempt, { status: "opened" });
-    await expect(retry).resolves.toEqual({ status: "opened" });
     // A failure while another open is pending supersedes it like any new intent.
     const pending = nav.open(page);
     host.fail("unavailable");

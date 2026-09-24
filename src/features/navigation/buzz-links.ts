@@ -1,4 +1,9 @@
 import {
+  entityTarget,
+  parseEntityLink,
+  type EntityRoute,
+} from "../projects/routes";
+import {
   bindSharedTarget,
   parseOpenTarget,
   parseTargetLink,
@@ -7,6 +12,7 @@ import {
 } from "./targets";
 
 type BuzzLink =
+  | { format: "entity"; route: EntityRoute }
   | { format: "shared"; target: SharedTarget }
   | {
       format: "legacy";
@@ -41,6 +47,8 @@ export function parseBuzzLink(href: string): BuzzLink | null {
       return null;
     if (url.hostname === "open")
       return { format: "shared", target: parseTargetLink(href) };
+    const entity = parseEntityLink(url);
+    if (entity) return { format: "entity", route: entity };
     const channelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
     const eventPattern = /^[a-f0-9]{64}$/i;
     if (url.hostname === "channel" && !url.search) {
@@ -88,6 +96,7 @@ export function parseBuzzLink(href: string): BuzzLink | null {
 export function buzzLinkKind(href: string) {
   const link = parseBuzzLink(href);
   if (!link) return null;
+  if (link.format === "entity") return "buzz";
   const target =
     link.format === "shared"
       ? link.target
@@ -105,6 +114,7 @@ export function buzzLinkTarget(href: string, scope: NavigationScope) {
   if (!link) return null;
   if (link.format === "shared")
     return bindSharedTarget(link.target, scope.viewer);
+  if (link.format === "entity") return entityTarget(link.route, scope);
   const { format: _format, ...destination } = link;
   return parseOpenTarget({
     version: 1,

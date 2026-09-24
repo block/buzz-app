@@ -1,0 +1,452 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { Context } from "@deepseek-ai/cordis";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import {
+  StrictMode,
+  useLayoutEffect,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { afterEach, expect, it, vi } from "vitest";
+import { finalizeEvent, getPublicKey } from "nostr-tools";
+import {
+  provideNavigation,
+  type PageNavigation,
+} from "../../features/navigation/service";
+import type { GitRead } from "../../features/projects/git";
+import type { ReadFilter } from "../../features/relay/events";
+import { ReadError } from "../../features/relay/errors";
+import type { LiveCallbacks } from "../../features/relay/live";
+import { entityTarget, type EntityRoute } from "../../features/projects/routes";
+import type { GitSnapshot } from "../../features/projects/git";
+import type { RelayData, RelaySnapshot } from "../../features/relay/service";
+import { createRelaySession } from "../../features/relay/session";
+import { matchesEvent } from "../../features/relay/projection";
+import { ProjectsPage } from "./ProjectsPage";
+
+const key = new Uint8Array(32).fill(5),
+  owner = getPublicKey(key);
+const scope = { viewer: owner, communityOrigin: "https://community.example" };
+const repo = finalizeEvent(
+  {
+    kind: 30617,
+    created_at: 1,
+    content: "Repository description",
+    tags: [
+      ["d", "repo"],
+      ["name", "Real repository"],
+      ["buzz-channel", "private-channel"],
+      ["h", "stray-channel"],
+    ],
+  },
+  key,
+);
+const project = finalizeEvent(
+  {
+    kind: 30621,
+    created_at: 1,
+    content: "Project overview",
+    tags: [
+      ["d", "project"],
+      ["name", "Real project"],
+      ["a", `30617:${owner}:repo`],
+    ],
+  },
+  key,
+);
+const issue = finalizeEvent(
+  {
+    kind: 1621,
+    created_at: 2,
+    content: "The issue body",
+    tags: [
+      ["a", `30617:${owner}:repo`],
+      ["subject", "Selected issue"],
+    ],
+  },
+  key,
+);
+const pr = finalizeEvent(
+  {
+    kind: 1618,
+    created_at: 2,
+    content: "The pull request body",
+    tags: [
+      ["a", `30617:${owner}:repo`],
+      ["subject", "Selected pull request"],
+    ],
+  },
+  key,
+);
+const git = {
+  head: "a".repeat(40),
+  commits: [
+    {
+      hash: "a".repeat(40),
+      author: "Contributor",
+      date: 2,
+      subject: "Selected commit",
+    },
+  ],
+  files: [{ path: "README.md", hash: "b".repeat(40), size: 6 }],
+  readme: "# Actual README",
+  file: null,
+  diff: null,
+} satisfies GitSnapshot;
+const disposals: (() => void | Promise<void>)[] = [];
+afterEach(async () => {
+  cleanup();
+  for (const dispose of disposals.splice(0)) await dispose();
+  window.history.replaceState(null, "", "/");
+  vi.restoreAllMocks();
+});
+function setup(route?: EntityRoute) {
+  const roster = (allowed: boolean, created_at = 1) =>
+    finalizeEvent(
+      {
+        kind: 39002,
+        created_at,
+        content: "",
+        tags: [["d", "private-channel"], ...(allowed ? [["p", owner]] : [])],
+      },
+      key,
+    );
+  const channel = finalizeEvent(
+    {
+      kind: 39000,
+      created_at: 1,
+      content: "",
+      tags: [
+        ["d", "private-channel"],
+        ["name", "Private channel"],
+        ["private"],
+      ],
+    },
+    key,
+  );
+  let live: LiveCallbacks | undefined;
+  const ctx = new Context();
+  const host = provideNavigation(ctx);
+  const readGit = vi.fn(
+    async (input: GitRead): Promise<GitSnapshot> => ({
+      ...git,
+      ...(input.commit
+        ? { diff: "diff --git a/readme b/readme\n+actual change" }
+        : {}),
+      ...(input.path
+        ? { file: { path: input.path, content: "actual file", size: 11 } }
+        : {}),
+    }),
+  );
+  const query = vi.fn(async (filters: readonly ReadFilter[]) =>
+    [repo, project, issue, pr, roster(true), channel].filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
+    ),
+  );
+  const store = createRelaySession(
+    {
+      viewer: owner,
+      relayAuthor: owner,
+      scope: scope.communityOrigin,
+      query,
+      media: () => undefined,
+      projectGit: { read: readGit },
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    { warm: false },
+  );
+  let connection: RelaySnapshot = {
+    status: "ready",
+    scope: `${scope.communityOrigin}:${owner}`,
+    viewer: owner,
+    generation: 1,
+    session: store.session,
+  };
+  const listeners = new Set<() => void>();
+  const relay: RelayData = {
+    snapshot: () => connection,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    retry() {},
+    disconnect() {},
+    async clearCache() {},
+  };
+  disposals.push(
+    () => store.dispose(),
+    () => ctx.fiber.dispose(),
+  );
+  const promise = host.navigation.open(
+    route
+      ? entityTarget(route, scope)
+      : {
+          version: 1,
+          kind: "page",
+          pluginId: "buzz.projects",
+          pageId: "projects",
+          scope,
+        },
+  );
+  function Presentation() {
+    const snapshot = useSyncExternalStore(
+      host.navigation.subscribe,
+      host.navigation.snapshot,
+    );
+    const [request, setRequest] = useState<PageNavigation>();
+    useLayoutEffect(() => {
+      const binding = host.request(snapshot.attempt, {
+        valid: () => true,
+        subscribe: () => () => {},
+      });
+      setRequest(binding.request);
+      return binding.dispose;
+    }, [snapshot.attempt]);
+    return (
+      <ProjectsPage
+        relay={relay}
+        navigation={request}
+        open={host.navigation.open}
+      />
+    );
+  }
+  return {
+    host,
+    relay,
+    store,
+    readGit,
+    revoke() {
+      live?.receive([roster(false, 5)]);
+    },
+    query,
+    promise,
+    mount: () =>
+      render(
+        <StrictMode>
+          <Presentation />
+        </StrictMode>,
+      ),
+    replace() {
+      connection = { ...connection, generation: 2, status: "disconnected" };
+      for (const listener of listeners) listener();
+    },
+  };
+}
+it.each([
+  {
+    route: { type: "repo", owner, dtag: "repo" },
+    heading: "Real repository",
+    content: "Actual README",
+  },
+  {
+    route: { type: "project", owner, dtag: "project" },
+    heading: "Real project",
+    content: "Project overview",
+  },
+  {
+    route: { type: "issue", owner, dtag: "repo", id: issue.id },
+    heading: "Selected issue",
+    content: "The issue body",
+  },
+  {
+    route: { type: "pr", owner, dtag: "repo", id: pr.id },
+    heading: "Selected pull request",
+    content: "The pull request body",
+  },
+] as { route: EntityRoute; heading: string; content: string }[])(
+  "presents actual $route.type content before acknowledging navigation",
+  async ({ route, heading, content }) => {
+    const t = setup(route);
+    t.mount();
+    await screen.findByText(content);
+    expect(
+      screen.getByRole("heading", { name: heading, level: 1 }),
+    ).toHaveFocus();
+    await expect(t.promise).resolves.toEqual({ status: "opened" });
+  },
+);
+it.each([
+  "files",
+  "commits",
+  "contributors",
+  "issues",
+  "prs",
+  "channels",
+] as const)("renders the requested $0 tab", async (tab) => {
+  const t = setup({ type: "repo", owner, dtag: "repo", tab });
+  t.mount();
+  await waitFor(() =>
+    expect(t.host.navigation.snapshot().status).toBe("opened"),
+  );
+  const label = {
+    files: "Files",
+    commits: "Commits",
+    contributors: "Contributors",
+    issues: "Issues",
+    prs: "Pull requests",
+    channels: "Channels",
+  }[tab];
+  expect(screen.getByRole("tab", { name: label })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("region", { name: label })).toBeVisible();
+});
+it("holds navigation pending for Git content, then opens the exact commit changes", async () => {
+  const t = setup({
+    type: "repo",
+    owner,
+    dtag: "repo",
+    tab: "commits",
+    commit: git.head,
+  });
+  let release: (value: GitSnapshot) => void = () => {};
+  t.readGit.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  t.mount();
+  try {
+    await waitFor(() => expect(t.readGit).toHaveBeenCalled());
+    expect(screen.getByRole("status")).toHaveTextContent("Loading project");
+    expect(t.host.navigation.snapshot().status).toBe("opening");
+  } finally {
+    await act(async () => release({ ...git, diff: "+actual selected change" }));
+  }
+  expect(
+    await screen.findByRole("region", { name: "Commit changes" }),
+  ).toHaveTextContent("+actual selected change");
+  await expect(t.promise).resolves.toEqual({ status: "opened" });
+});
+it("reports missing entities and retries the same destination", async () => {
+  const t = setup({ type: "issue", owner, dtag: "repo", id: "f".repeat(64) });
+  t.mount();
+  await expect(t.promise).resolves.toEqual({
+    status: "failed",
+    reason: "not-found",
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent("not found");
+  const kept = t.host.navigation.snapshot().entry.target;
+  await act(async () => {
+    void t.host.navigation.retry();
+  });
+  await waitFor(() =>
+    expect(t.host.navigation.snapshot().status).toBe("failed"),
+  );
+  expect(t.host.navigation.snapshot().entry.target).toEqual(kept);
+});
+it("a newer entity visit cancels old content and Back restores the prior route", async () => {
+  const t = setup({ type: "repo", owner, dtag: "repo", tab: "files" });
+  t.mount();
+  await expect(t.promise).resolves.toEqual({ status: "opened" });
+  await userEvent.click(screen.getByRole("button", { name: "README.md" }));
+  await screen.findByText("actual file");
+  await act(async () => {
+    void t.host.navigation.open(
+      entityTarget({ type: "issue", owner, dtag: "repo", id: issue.id }, scope),
+    );
+  });
+  await screen.findByText("The issue body");
+  expect(screen.queryByText("actual file")).not.toBeInTheDocument();
+  await act(async () => t.host.navigation.back());
+  await screen.findByRole("button", { name: "README.md" });
+  expect(screen.queryByText("actual file")).not.toBeInTheDocument();
+});
+it("session replacement prevents a late read from opening or revealing old content", async () => {
+  const t = setup({ type: "repo", owner, dtag: "repo" });
+  let release: (value: GitSnapshot) => void = () => {};
+  t.readGit.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  t.mount();
+  await waitFor(() => expect(t.readGit).toHaveBeenCalled());
+  await act(async () => t.replace());
+  await act(async () => release(git));
+  expect(screen.queryByText("Actual README")).not.toBeInTheDocument();
+  expect(t.host.navigation.snapshot().status).toBe("failed");
+});
+it.each([
+  undefined,
+  { type: "project", owner, dtag: "project" } as EntityRoute,
+])(
+  "opens a repository from the directory or a project's members",
+  async (route) => {
+    const t = setup(route);
+    t.mount();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Real repository" }),
+    );
+    await screen.findByText("Actual README");
+    expect(t.host.navigation.snapshot().entry.target).toMatchObject(
+      entityTarget({ type: "repo", owner, dtag: "repo" }, scope),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Real repository", level: 1 }),
+    ).toHaveFocus();
+  },
+);
+it("keeps global repository metadata visible when Git access is denied, but fails a files destination", async () => {
+  const t = setup({ type: "repo", owner, dtag: "repo" });
+  t.readGit.mockRejectedValue(new ReadError("denied", "Access denied"));
+  t.mount();
+  await screen.findByText("Repository description");
+  await expect(t.promise).resolves.toEqual({ status: "opened" });
+  expect(
+    within(screen.getByRole("region", { name: "Overview" })).getByRole(
+      "status",
+    ),
+  ).toHaveTextContent("require access");
+  expect(
+    screen.queryByText("No README in this repository."),
+  ).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("tab", { name: "Files" }));
+  await waitFor(() =>
+    expect(t.host.navigation.snapshot()).toMatchObject({
+      status: "failed",
+      reason: "denied",
+    }),
+  );
+});
+it.each([undefined, "files", "commits"] as const)(
+  "removes already loaded Git content when access is revoked ($0)",
+  async (tab) => {
+    const t = setup({
+      type: "repo",
+      owner,
+      dtag: "repo",
+      ...(tab ? { tab } : {}),
+    });
+    t.mount();
+    await expect(t.promise).resolves.toEqual({ status: "opened" });
+    expect(t.readGit).toHaveBeenCalled();
+    await act(async () => t.revoke());
+    expect(screen.queryByText("Actual README")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "README.md" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Selected commit" }),
+    ).not.toBeInTheDocument();
+    if (tab) expect(screen.getByRole("alert")).toBeVisible();
+    else expect(screen.getByText("Repository description")).toBeVisible();
+  },
+);

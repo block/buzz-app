@@ -6,7 +6,8 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { communityDestination } from "../communities/destination";
 import type { ClientSnapshot } from "../communities/service";
 import { parseBuzzLink } from "./buzz-links";
-import type { OpenFailure, OpenResult } from "./controller";
+import { entityTarget } from "../projects/routes";
+import type { Navigation, OpenFailure, OpenResult } from "./controller";
 import { parseOpenTarget, type OpenTarget } from "./targets";
 
 export type DeepLinkStep =
@@ -18,9 +19,9 @@ export type DeepLinkShell = Readonly<{
   watch(listener: () => void): () => void;
 }>;
 export type DeepLinkHost = Readonly<{
-  navigation: Readonly<{ open(target: OpenTarget): Promise<OpenResult> }>;
+  navigation: Pick<Navigation, "open" | "snapshot" | "subscribe">;
   /** Host-only: record an ingress that produced no destination. */
-  fail(reason: OpenFailure): void;
+  fail(reason: OpenFailure, retry?: () => Promise<OpenResult>): void;
 }>;
 type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
 
@@ -42,6 +43,13 @@ export function deepLinkStep(
   if (!link || link.format === "shared") return { fail: "invalid-target" };
   try {
     if (!client.viewer || !client.selected) return { fail: "unavailable" };
+    if (link.format === "entity")
+      return {
+        open: entityTarget(link.route, {
+          viewer: client.viewer,
+          communityOrigin: communityDestination(client.selected).url,
+        }),
+      };
     const { format: _format, ...destination } = link;
     return {
       open: parseOpenTarget({
@@ -59,8 +67,8 @@ export function deepLinkStep(
   }
 }
 
-/** Drain the shell's queue now and on every later arrival, then open each link in
- * arrival order once the client has finished loading. Nothing is auto-joined. */
+/** Latest intent wins, as with a user's navigation. At most one unbound URL is
+ * retained. Once bound, the ordinary controller owns presentation and retry. */
 export function bindDeepLinks(
   host: DeepLinkHost,
   communities: Readonly<{
@@ -71,34 +79,124 @@ export function bindDeepLinks(
 ): () => void {
   if (!shell) return () => {};
   let closed = false;
-  const held: string[] = [];
+  let held:
+    | {
+        url: string;
+        viewer: string | undefined;
+        selected: string | null;
+        reported: boolean;
+      }
+    | undefined;
+  let attempt = host.navigation.snapshot().attempt;
+  let client = communities.snapshot();
+  let clientEpoch = 0;
+  const openHeld = (): Promise<OpenResult> => {
+    if (closed || !held) return Promise.resolve({ status: "cancelled" });
+    const client = communities.snapshot();
+    const incoming = held;
+    if (
+      (incoming.viewer && incoming.viewer !== client.viewer) ||
+      (incoming.selected && incoming.selected !== client.selected)
+    ) {
+      held = undefined;
+      host.fail("denied");
+      return Promise.resolve({ status: "failed", reason: "denied" });
+    }
+    if (client.status === "loading")
+      return Promise.resolve({ status: "failed", reason: "unavailable" });
+    const step = deepLinkStep(incoming.url, client);
+    if ("open" in step) {
+      held = undefined;
+      return host.navigation.open(step.open);
+    }
+    if (step.fail !== "unavailable") held = undefined;
+    else incoming.reported = true;
+    host.fail(step.fail, held ? openHeld : undefined);
+    attempt = host.navigation.snapshot().attempt;
+    return Promise.resolve({ status: "failed", reason: step.fail });
+  };
   const flush = () => {
-    if (closed) return;
-    while (held.length) {
-      const client = communities.snapshot();
-      if (client.status === "loading") return;
-      const step = deepLinkStep(held.shift() as string, client);
-      if ("open" in step) void host.navigation.open(step.open);
-      else host.fail(step.fail);
+    if (closed || !held) return;
+    const client = communities.snapshot();
+    held.viewer ??= client.viewer;
+    held.selected ??= client.selected;
+    if (
+      (held.viewer && held.viewer !== client.viewer) ||
+      (held.selected && held.selected !== client.selected)
+    ) {
+      held = undefined;
+      host.fail("denied");
+    } else if (client.status !== "loading" && !held.reported && !draining) {
+      void openHeld();
     }
   };
-  // Drains run one at a time so two arrivals cannot reorder each other.
-  let draining = Promise.resolve();
-  const drain = () => {
-    draining = draining.then(async () => {
-      let urls: readonly string[];
-      try {
-        urls = await shell.take();
-      } catch (error) {
-        if (!closed) console.error("Could not read pending deep links", error);
-        return;
+  // Pings coalesce while a read is in flight; neither URLs nor waiting drains grow.
+  let draining = false;
+  let requested = false;
+  const drain = async () => {
+    requested = true;
+    if (draining || closed) return;
+    draining = true;
+    try {
+      while (requested && !closed) {
+        requested = false;
+        const started = host.navigation.snapshot().attempt;
+        const epoch = clientEpoch;
+        let urls: readonly string[];
+        try {
+          urls = await shell.take();
+        } catch (error) {
+          if (!closed)
+            console.error("Could not read pending deep links", error);
+          continue;
+        }
+        if (
+          closed ||
+          epoch !== clientEpoch ||
+          started.id !== host.navigation.snapshot().attempt.id
+        )
+          continue;
+        let url: string | undefined;
+        for (let index = urls.length - 1; index >= 0; index--) {
+          const candidate = urls[index];
+          if (typeof candidate === "string") {
+            url = candidate;
+            break;
+          }
+        }
+        if (url === undefined) continue;
+        const client = communities.snapshot();
+        held = {
+          url,
+          viewer: client.viewer,
+          selected: client.selected,
+          reported: false,
+        };
+        if (client.status !== "loading") void openHeld();
+        else flush();
       }
-      if (closed) return;
-      for (const url of urls) if (typeof url === "string") held.push(url);
+    } finally {
+      draining = false;
       flush();
-    });
+    }
   };
-  const stopClient = communities.subscribe(flush);
+  const stopClient = communities.subscribe(() => {
+    const next = communities.snapshot();
+    if (
+      (client.viewer && client.viewer !== next.viewer) ||
+      (client.selected && client.selected !== next.selected)
+    )
+      clientEpoch++;
+    client = next;
+    flush();
+  });
+  const stopNavigation = host.navigation.subscribe(() => {
+    const next = host.navigation.snapshot();
+    // fail() emits synchronously; its ingress marker distinguishes our failure
+    // from a newer user visit, including Back/Forward and Go Home.
+    if (next.attempt.id !== attempt.id && !next.ingress) held = undefined;
+    attempt = next.attempt;
+  });
   // A broken shell bridge must never keep the app from opening.
   let stopShell = () => {};
   try {
@@ -111,8 +209,9 @@ export function bindDeepLinks(
     if (closed) return;
     closed = true;
     stopClient();
+    stopNavigation();
     stopShell();
-    held.length = 0;
+    held = undefined;
   };
 }
 

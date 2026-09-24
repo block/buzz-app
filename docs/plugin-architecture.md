@@ -46,7 +46,8 @@ features/shortcuts/     in-app binding dispatch, focus rules and plugin ownershi
 features/relay/         shared channel data, queries, profiles and durable delivery
 features/messages/      reusable timeline, message, thread and composer UI
 bundled/channels/       Channels navigation, sidebar, page layout and panel placement
-bundled/projects/       title-only Projects page scaffold
+bundled/projects/       repository/project pages, issue/PR details and Git views
+features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
 features/agents/        app-owned control capability; separate session-owned library
 bundled/github/         builtin GitHub panel plugin
@@ -93,7 +94,11 @@ removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
 The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles, Terminal and Links. Projects
-is an enabled-by-default scaffold with only a centered title and no relay dependency.
+is enabled by default and owns versioned, validated entity page routes. It resolves
+signed metadata through the session reader and reports navigation completion only
+after destination content is presented. Git browsing uses a narrow host-owned,
+authenticated development broker capability; plugins cannot choose a signer or
+remote URL. See [entity links and limits](deep-links.md).
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and

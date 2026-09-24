@@ -1,4 +1,6 @@
 import { prepareMedia } from "./media-preparation.mjs";
+import { readProjectGit } from "./project-git.mjs";
+import { parseGitRead } from "../src/features/projects/git.ts";
 import {
   prepareChannelKit,
   decodeChannelKit,
@@ -453,6 +455,7 @@ export function relayBrokerPlugin({
       };
       const stats = { queries: 0, errors: 0, media: 0, connects: 0 };
       let inflight = 0;
+      let gitReads = 0;
       let presenceFlight = false;
       let sidebarUploads = 0;
       let attachmentUploads = 0;
@@ -685,6 +688,7 @@ export function relayBrokerPlugin({
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               workflowReads: true,
+              projectGit: true,
               attachmentUploads: true,
               sidebarPreferences: true,
               channelKit: true,
@@ -1147,6 +1151,7 @@ export function relayBrokerPlugin({
               "/api/relay/accept-policy",
               "/api/relay/gifs",
               "/api/relay/workflow-runs",
+              "/api/relay/project-git",
             ].includes(route) ||
             req.method !== "POST"
           )
@@ -1174,6 +1179,42 @@ export function relayBrokerPlugin({
               });
             } catch {
               return json(res, 400, { error: "Invalid channel recipe" });
+            }
+          }
+          if (route === "/api/relay/project-git") {
+            let input;
+            try {
+              input = parseGitRead(filters);
+            } catch {
+              return json(res, 400, { error: "Invalid repository read" });
+            }
+            if (gitReads >= 2)
+              return json(res, 429, { error: "Repository reads are busy" });
+            gitReads++;
+            try {
+              const result = await admissions(relay, viewer).api.run(
+                () =>
+                  readProjectGit({
+                    input,
+                    relay,
+                    key,
+                    signal: AbortSignal.any([
+                      cancel.signal,
+                      AbortSignal.timeout(12000),
+                    ]),
+                  }),
+                cancel.signal,
+              );
+              cancel.signal.throwIfAborted();
+              return json(res, 200, result);
+            } catch (error) {
+              if (!res.destroyed)
+                return json(res, error.status ?? 502, {
+                  error: "Repository content could not be read",
+                });
+              return;
+            } finally {
+              gitReads--;
             }
           }
           if (route === "/api/relay/authorize-agent") {

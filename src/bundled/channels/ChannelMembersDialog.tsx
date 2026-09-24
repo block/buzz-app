@@ -1,14 +1,16 @@
 import { npubEncode } from "nostr-tools/nip19";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { AgentControl } from "../../features/agents/control";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
-import {
-  addChannelMember,
-  canAddMembers,
-  startAddedAgent,
-} from "../../features/channel-members/members";
+import { canAddMembers } from "../../features/channel-members/members";
 import {
   formatPublicKey,
   publicKeyLabels,
@@ -73,13 +75,27 @@ export function ChannelMembersDialog({
   trigger: React.RefObject<HTMLButtonElement | null>;
 }) {
   const input = useRef<HTMLElement>(null);
+  const focusedAdd = useRef<{ key: string; button: HTMLButtonElement } | null>(
+    null,
+  );
   const lifetime = useRef<AbortController>(undefined);
-  const pending = useRef(new Set<string>());
   const [query, setQuery] = useState("");
-  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const additions = useSyncExternalStore(
+    session.memberAdditions.subscribe,
+    session.memberAdditions.snapshot,
+    session.memberAdditions.snapshot,
+  ).filter((item) => item.channelId === channelId);
+  const busy = new Set(
+    additions.filter((item) => item.pending).map((item) => item.pubkey),
+  );
+  const errors = Object.fromEntries(
+    additions
+      .filter((item) => item.error)
+      .map((item) => [item.pubkey, item.error]),
+  );
   const [notice, setNotice] = useState("");
   const [rosterError, setRosterError] = useState("");
+  const [nameError, setNameError] = useState("");
   const [rosterBusy, setRosterBusy] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const list = useSyncExternalStore(
@@ -153,11 +169,12 @@ export function ChannelMembersDialog({
   useEffect(() => {
     if (!memberKey) return;
     let current = true;
+    setNameError("");
     void session.profiles
       .ensure(memberKey.split(":"), "background")
       .catch(() => {
         if (current)
-          setRosterError(
+          setNameError(
             "Some names could not load. Public keys still identify members. Try again.",
           );
       });
@@ -201,35 +218,30 @@ export function ChannelMembersDialog({
     (person) => !members.has(person.pubkey) && !archived.has(person.pubkey),
   );
   const keys = publicKeyLabels([...members, ...candidates.keys()]);
+  // A confirmed addition replaces its focused Add button with a static member row.
+  // DOM removal does not emit blur, so restore focus only if it was not moved elsewhere.
+  useLayoutEffect(() => {
+    const previous = focusedAdd.current;
+    if (!previous || !memberKey.split(":").includes(previous.key)) return;
+    focusedAdd.current = null;
+    if (
+      document.activeElement === previous.button ||
+      document.activeElement === document.body
+    )
+      input.current?.focus();
+  }, [memberKey]);
   const add = async (key: string) => {
     const signal = lifetime.current?.signal;
-    if (!signal || pending.current.has(key)) return;
-    pending.current.add(key);
-    setBusy(new Set(pending.current));
-    setErrors((old) => {
-      const next = { ...old };
-      delete next[key];
-      return next;
-    });
+    if (!signal) return;
     setNotice("");
     try {
-      await addChannelMember(session, channelId, key, signal);
-      await startAddedAgent(control, session, channelId, key, signal);
+      await session.memberAdditions.add(channelId, key, control);
       if (!signal.aborted) setNotice(`${label(key)} is in the channel.`);
-    } catch (error) {
-      if (!signal.aborted)
-        setErrors((old) => ({
-          ...old,
-          [key]:
-            error instanceof Error
-              ? error.message
-              : "Could not add this member. Try again.",
-        }));
-    } finally {
-      pending.current.delete(key);
-      if (!signal.aborted) setBusy(new Set(pending.current));
+    } catch {
+      // Session-owned recovery remains visible if this dialog closes and reopens.
     }
   };
+
   const row = (
     key: string,
     name: string,
@@ -268,8 +280,18 @@ export function ChannelMembersDialog({
         icon={avatar}
         trailing={busy.has(key) ? "Adding…" : "Add"}
         aria-label={`Add ${name} (${keys.get(key)})`}
-        disabled={busy.has(key) || rosterBusy || !!rosterError}
-        onClick={() => void add(key)}
+        aria-disabled={busy.has(key) || undefined}
+        disabled={rosterBusy || !!rosterError}
+        onBlur={(event) => {
+          if (focusedAdd.current?.button === event.currentTarget)
+            focusedAdd.current = null;
+        }}
+        onClick={(event) => {
+          if (busy.has(key)) return;
+          if (document.activeElement === event.currentTarget)
+            focusedAdd.current = { key, button: event.currentTarget };
+          void add(key);
+        }}
       />
     ) : (
       <li key={key} className="flex items-center gap-3 px-control-inset py-2">
@@ -378,6 +400,14 @@ export function ChannelMembersDialog({
             </section>
           )}
         </div>
+        {nameError && (
+          <p role="status" className="text-body-sm text-subtle">
+            {nameError}{" "}
+            <Button onClick={() => setRefresh((value) => value + 1)}>
+              Retry names
+            </Button>
+          </p>
+        )}
         {agents.error && (
           <p role="alert" className="text-body-sm text-danger">
             Some agents could not load.{" "}
@@ -397,12 +427,14 @@ export function ChannelMembersDialog({
         {Object.entries(errors).map(([key, error]) => (
           <p role="alert" key={key} className="text-body-sm text-danger">
             {label(key)}: {error}{" "}
-            <Button
-              disabled={busy.has(key) || !canAdd}
-              onClick={() => void add(key)}
-            >
-              {busy.has(key) ? "Retrying…" : "Retry"}
-            </Button>
+            {!additions.find((item) => item.pubkey === key)?.removed && (
+              <Button
+                disabled={busy.has(key) || !canAdd}
+                onClick={() => void add(key)}
+              >
+                {busy.has(key) ? "Retrying…" : "Retry"}
+              </Button>
+            )}
           </p>
         ))}
         {notice && (

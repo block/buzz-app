@@ -94,13 +94,11 @@ fn parse_response(value: &Value) -> Result<Vec<String>, String> {
     for model in models {
         let provider = model["provider"].as_str().ok_or(FAILURE)?;
         let id = model["id"].as_str().ok_or(FAILURE)?;
-        if [provider, id]
-            .iter()
-            .any(|s| s.is_empty() || s.len() > 512 || s.chars().any(char::is_control))
-            || provider.contains('/')
-        {
+        if provider.is_empty() || id.is_empty() {
             return Err("Pi returned an invalid model ID".into());
         }
+        buzz_agent_controller::pi::validate_selection(provider, id)
+            .map_err(|_| "Pi returned an invalid model ID")?;
         result.push(format!("{provider}/{id}"));
     }
     result.sort();

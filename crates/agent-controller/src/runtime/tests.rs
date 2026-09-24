@@ -809,6 +809,25 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
         controller.store.agents().unwrap()[0].environment["PI_CODING_AGENT_DIR"],
         a.environment["PI_CODING_AGENT_DIR"]
     );
+    for (provider, model) in [
+        ("custom".to_owned(), "a,b".to_owned()),
+        ("custom".to_owned(), "-model".to_owned()),
+        ("custom,other".to_owned(), "model".to_owned()),
+        ("-provider".to_owned(), "model".to_owned()),
+        ("bad/provider".to_owned(), "model".to_owned()),
+        ("p".repeat(129), "model".to_owned()),
+        ("custom".to_owned(), "m".repeat(513)),
+    ] {
+        let mut invalid = saved.clone();
+        invalid.harness.provider = provider;
+        invalid.harness.model = model;
+        assert!(controller
+            .bundle
+            .as_ref()
+            .unwrap()
+            .command(&invalid, &key)
+            .is_err());
+    }
     let mut configured = saved.clone();
     configured.harness.model.clear();
     assert!(controller

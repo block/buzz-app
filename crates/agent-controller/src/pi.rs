@@ -142,18 +142,7 @@ impl PiContext {
     }
 
     pub(crate) fn adapter_args(&self, harness: &HarnessEdit) -> Result<Vec<String>> {
-        if !harness.provider.is_empty() && harness.model.is_empty() {
-            return Err("Choose a Pi model for the selected provider, or clear both fields to use Pi defaults".into());
-        }
-        for value in [&harness.provider, &harness.model] {
-            if value.len() > 512
-                || value.starts_with('-')
-                || value.contains([',', '\0'])
-                || value.chars().any(char::is_control)
-            {
-                return Err("Invalid Pi provider or model ID".into());
-            }
-        }
+        validate_selection(&harness.provider, &harness.model)?;
         let mut args = vec!["--".into()];
         args.extend(self.args.clone());
         if !harness.provider.is_empty() {
@@ -164,4 +153,28 @@ impl PiContext {
         }
         Ok(args)
     }
+}
+
+/// Selection constraints shared by catalog discovery and ACP launch.
+/// Empty selectors retain Pi defaults; model IDs may contain namespace slashes.
+pub fn validate_selection(provider: &str, model: &str) -> Result<()> {
+    if !provider.is_empty() && model.is_empty() {
+        return Err(
+            "Choose a Pi model for the selected provider, or clear both fields to use Pi defaults"
+                .into(),
+        );
+    }
+    if provider.contains('/') {
+        return Err("Invalid Pi provider or model ID".into());
+    }
+    for (value, limit) in [(provider, 128), (model, 512)] {
+        if value.len() > limit
+            || value.starts_with('-')
+            || value.contains(',')
+            || value.chars().any(char::is_control)
+        {
+            return Err("Invalid Pi provider or model ID".into());
+        }
+    }
+    Ok(())
 }

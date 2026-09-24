@@ -14,6 +14,30 @@ fn catalog_keeps_exact_ids_and_provider_boundaries_and_redacts_errors() {
         assert!(!error.contains("secret"));
     }
 }
+#[test]
+fn catalog_rejects_selections_that_save_or_launch_cannot_accept() {
+    for (provider, id) in [
+        ("custom".to_owned(), "a,b".to_owned()),
+        ("custom".to_owned(), "-model".to_owned()),
+        ("custom,other".to_owned(), "model".to_owned()),
+        ("-provider".to_owned(), "model".to_owned()),
+        ("p".repeat(129), "model".to_owned()),
+        ("custom".to_owned(), "m".repeat(513)),
+    ] {
+        let response = json!({"type":"response","command":"get_available_models","success":true,
+            "data":{"models":[{"provider":provider,"id":id}]}});
+        assert!(parse_response(&response).is_err(), "{provider}/{id}");
+    }
+    let provider = "p".repeat(128);
+    let id = format!("namespace/{}", "m".repeat(502));
+    let response = json!({"type":"response","command":"get_available_models","success":true,
+        "data":{"models":[{"provider":provider,"id":id}]}});
+    assert_eq!(
+        parse_response(&response).unwrap(),
+        [format!("{provider}/{id}")]
+    );
+}
+
 #[cfg(unix)]
 fn fixture(script: &str) -> (tempfile::TempDir, PiContext) {
     use std::os::unix::fs::PermissionsExt;

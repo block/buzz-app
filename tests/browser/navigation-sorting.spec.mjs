@@ -126,6 +126,42 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   await expect(
     menu.getByRole("menuitemradio", { name: "Recent" }),
   ).toHaveAttribute("aria-checked", "true");
+  // Real layout verifies that the shared pill recipe reaches both the lone
+  // submenu trigger and grouped radio choices, without feature-local corners.
+  const sort = page
+    .getByRole("menu", { name: "More actions for Channels", exact: true })
+    .getByRole("menuitem", { name: "Sort", exact: true });
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.colorMode = value;
+    }, mode);
+    for (const width of [720, 1000, 1440]) {
+      await page.setViewportSize({ width, height: 950 });
+      const radius = await sort.evaluate((element) => {
+        const rem = Number.parseFloat(
+          getComputedStyle(element).getPropertyValue("--radius-pill"),
+        );
+        const rootSize = Number.parseFloat(
+          getComputedStyle(document.documentElement).fontSize,
+        );
+        return `${rem * rootSize}px`;
+      });
+      for (const item of [
+        sort,
+        menu.getByRole("menuitemradio", { name: "Recent" }),
+        menu.getByRole("menuitemradio", { name: "A–Z" }),
+      ]) {
+        for (const corner of [
+          "top-left",
+          "top-right",
+          "bottom-left",
+          "bottom-right",
+        ]) {
+          await expect(item).toHaveCSS(`border-${corner}-radius`, radius);
+        }
+      }
+    }
+  }
   await expect(menu).toHaveCSS("opacity", "1");
   await expect(
     page.getByRole("menu", { name: "More actions for Channels", exact: true }),

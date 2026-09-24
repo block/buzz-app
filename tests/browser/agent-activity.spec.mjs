@@ -420,6 +420,13 @@ test("profile activity opens the exact agent and originating channel before its 
     profile.getByRole("region", { name: "Activity preview" }).locator("time"),
   ).toHaveAttribute("datetime", JSON.parse(expected.plaintext).timestamp);
   const preview = profile.getByRole("region", { name: "Activity preview" });
+  await profile.getByRole("tab", { name: "Channels", exact: true }).click();
+  await expect(preview).toHaveCount(0);
+  await profile.getByRole("tab", { name: "Info", exact: true }).click();
+  await expect(preview.locator("time")).toHaveAttribute(
+    "datetime",
+    JSON.parse(expected.plaintext).timestamp,
+  );
   // Exercise painted theme/layout, not the separate appearance persistence contract.
   for (const mode of ["light", "dark"]) {
     await page.locator("html").evaluate((element, mode) => {

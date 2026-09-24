@@ -6,7 +6,7 @@ directory. Agents retains agent-specific configuration/operations; this slice
 adds no ownership/running badge, editor, agent-library read or execution API.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
-The in-pane “Latest activity” preview shows the latest observed turn timestamp
+The Info tab's “Latest activity” preview shows the latest observed turn timestamp
 from the same session-owned snapshot, restricted to this exact public key and
 originating channel (including threads). It uses a short date and time rather than
 a relative age that could become stale between snapshot updates. No context means

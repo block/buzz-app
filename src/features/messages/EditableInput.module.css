@@ -1,4 +1,5 @@
 .input {
+  position: relative;
   width: 100%;
   min-height: 1.5rem;
   max-height: 12rem;
@@ -14,6 +15,10 @@
 }
 .input[data-empty]::before {
   content: attr(data-placeholder);
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--text-subtle);
   pointer-events: none;
   position: absolute;

@@ -77,6 +77,7 @@ export type MessageComposerProps = {
   channelId: string;
   channelName: string;
   label?: string | undefined;
+  placeholder?: string | undefined;
   sessionConversation?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
@@ -95,6 +96,8 @@ export type MessageComposerProps = {
   submission?: {
     draftKey: string;
     initialDraft?: MentionDraft | string | undefined;
+    /** A durable operation overrides disposable view state during recovery. */
+    recoveredDraft?: MentionDraft | undefined;
     locked: boolean;
     disabled: boolean;
     submit: (draft: MentionDraft) => void;
@@ -122,6 +125,7 @@ function Composer({
   channelId,
   channelName,
   label: customLabel,
+  placeholder,
   onSend,
   editMessages,
   onOpenLink,
@@ -183,7 +187,8 @@ function Composer({
   const agentChoices = inviteAgents || !!sessionConversation;
   const [value, updateDraft] = useState(() =>
     mentionDraft(
-      readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+      submission?.recoveredDraft ??
+        readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
     ),
   );
   const draft = value.text;
@@ -803,7 +808,8 @@ function Composer({
             onUndo={undo}
             data-single-emoji={largeEmojiDraft || undefined}
             maxLength={16000}
-            placeholder={label}
+            aria-label={label}
+            placeholder={placeholder ?? label}
             onFocus={() => completion.observe(true)}
             onBlur={() => {
               completion.invalidate();

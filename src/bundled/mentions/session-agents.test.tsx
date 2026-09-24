@@ -74,6 +74,69 @@ function setup(parent: boolean | null = true) {
   } as unknown as RelaySession;
   return { session, library, key };
 }
+it("uses the same alphabetical and prefix ordering for typed and button mentions", async () => {
+  const test = setup();
+  const keys = ["c", "d", "e"].map((key) => key.repeat(64));
+  const names = ["Zoe", "Adam Avery", "Avery"];
+  const profiles = new Map(
+    keys.map((key, index) => [key, { name: names[index] ?? key }]),
+  );
+  const list: ReturnType<RelaySession["channels"]["list"]> = {
+    status: "ready",
+    channels: [
+      { id: "parent", name: "Parent", channelType: "stream", members: keys },
+    ],
+  };
+  const session = {
+    ...test.session,
+    channels: { ...test.session.channels, list: () => list },
+    profiles: { ...test.session.profiles, snapshot: () => profiles },
+  } satisfies RelaySession;
+  const publish = vi.fn();
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@", start: 1, end: 1 },
+    query: { start: 0, end: 1, query: "" },
+    publish,
+  };
+  const view = render(<MentionCompletion {...props} />);
+  const completionNames = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.label,
+    );
+  expect(completionNames()).toEqual(["Adam Avery", "Avery", "Zoe"]);
+  view.rerender(
+    <MentionCompletion
+      {...props}
+      query={{ start: 0, end: 6, query: "avery" }}
+    />,
+  );
+  expect(completionNames()).toEqual(["Avery", "Adam Avery"]);
+  view.unmount();
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const pickerNames = () =>
+    screen
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"))
+      .filter((label) => keys.some((key) => label?.endsWith(key)))
+      .map((label) => label?.slice(0, -65));
+  expect(pickerNames()).toEqual(["Adam Avery", "Avery", "Zoe"]);
+  await user.type(screen.getByRole("searchbox"), "avery");
+  expect(pickerNames()).toEqual(["Avery", "Adam Avery"]);
+  test.library.dispose();
+});
 it("offers outside agents in the session mention picker while ordinary channel pickers keep their roster", async () => {
   const test = setup(),
     user = userEvent.setup(),

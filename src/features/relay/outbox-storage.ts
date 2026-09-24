@@ -79,7 +79,9 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
             old &&
             old.delivery === operation.delivery &&
             old.error === operation.error &&
-            old.signed?.id === operation.signed?.id
+            old.signed?.id === operation.signed?.id &&
+            old.recovery?.key === operation.recovery?.key &&
+            old.recovery?.value === operation.recovery?.value
           )
             continue;
           events.put({ scope, id, operation });

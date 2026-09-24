@@ -21,6 +21,7 @@ import {
 } from "./reader";
 import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
+import { createDirectMessages } from "./direct-messages";
 import { createWorkSessions } from "./work-sessions";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
@@ -1087,6 +1088,27 @@ export function createRelaySession(
     channelKit: channelKit.capability,
     canvas: channelKit.canvas,
     workSessions,
+    directMessages: createDirectMessages(
+      transport,
+      verified,
+      channels.queries,
+      writes?.outbox,
+      writes?.local,
+      lifetime.signal,
+      {
+        async read(filters, settings) {
+          const epoch = accessEpoch;
+          const cleared = cacheClearEpoch;
+          // Browsing still uses verified, scheduled reads, but must not evict
+          // conversation profiles by admitting the whole directory into shared views.
+          const events = await requests.reader.read(filters, settings);
+          settings?.signal?.throwIfAborted();
+          if (closed || epoch !== accessEpoch || cleared !== cacheClearEpoch)
+            throw new DOMException("Stale directory read", "AbortError");
+          return events;
+        },
+      },
+    ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
     live,

@@ -474,8 +474,9 @@ test("avatar choices publish through the existing socket and persist across relo
   await expect(
     page.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
-  await expect(badge).toHaveCSS("background-image", /linear-gradient/);
-  await expect(badge).toHaveCSS("box-shadow", /inset/);
+  await expect(badge).toHaveCSS("background-color", "rgb(171, 100, 0)");
+  await expect(badge).toHaveCSS("background-image", "none");
+  await expect(badge).toHaveCSS("box-shadow", "none");
   await avatar.screenshot({ path: test.info().outputPath("avatar-away.png") });
   await expect.poll(() => published("away")).toBeGreaterThan(0);
   const editor = page.getByRole("textbox", {
@@ -496,9 +497,9 @@ test("avatar choices publish through the existing socket and persist across relo
   await expect(
     page.getByRole("img", { name: "Your status: Offline" }),
   ).toBeVisible();
-  await expect(badge).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(badge).toHaveCSS("background-color", "rgb(128, 128, 128)");
   await expect(badge).toHaveCSS("background-image", "none");
-  await expect(badge).toHaveCSS("box-shadow", /inset/);
+  await expect(badge).toHaveCSS("box-shadow", "none");
   await avatar.screenshot({
     path: test.info().outputPath("avatar-offline.png"),
   });

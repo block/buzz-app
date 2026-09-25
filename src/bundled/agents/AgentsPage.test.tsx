@@ -21,6 +21,8 @@ import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
+import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import { profileTarget } from "../../features/profiles/target";
 
 const disposals: (() => void)[] = [];
 afterEach(() => {
@@ -37,6 +39,7 @@ function setup(
     target: OpenTarget,
     options?: { replace?: boolean },
   ) => Promise<{ status: "opened" }>,
+  panels?: Panels,
 ) {
   const f = controlFixture();
   configure?.(f);
@@ -72,7 +75,7 @@ function setup(
     media: () => undefined,
   });
   disposals.push(() => owned.dispose());
-  const baseSession =
+  const session =
     mode === "archived"
       ? {
           ...owned.session,
@@ -82,20 +85,6 @@ function setup(
           },
         }
       : owned.session;
-  const directMessageOpen = vi.fn(
-    async (_pubkeys: readonly string[], _signal: AbortSignal) => "agent-dm",
-  );
-  const session =
-    mode === "connected"
-      ? {
-          ...baseSession,
-          directMessages: {
-            ...baseSession.directMessages,
-            available: true,
-            open: directMessageOpen,
-          },
-        }
-      : baseSession;
   let snapshot: RelaySnapshot = {
     status:
       mode === "disconnected"
@@ -136,13 +125,13 @@ function setup(
       control={control}
       navigation={navigation}
       {...(open ? { open } : {})}
+      {...(panels ? { panels } : {})}
     />,
   );
   return {
     f,
     read,
     control,
-    directMessageOpen,
     changeScope(scope: string, generation: number) {
       snapshot = { status: "ready", scope, generation, session };
       for (const listener of listeners) listener();
@@ -159,60 +148,54 @@ function setup(
     },
   };
 }
-it("starts a direct conversation with the selected managed agent", async () => {
-  const open = vi.fn(async () => ({ status: "opened" as const }));
-  const { f, directMessageOpen } = setup(
-    "connected",
-    undefined,
-    undefined,
-    open,
-  );
+it("opens the selected managed agent in the existing profile panel", async () => {
+  let profileTargetSeen = "";
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: ({ target }: { target: string }) => {
+      profileTargetSeen = target;
+      return <p>Existing profile panel</p>;
+    },
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  const { f } = setup("ready", undefined, undefined, undefined, panels);
   const [card] = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
   });
   if (!card) throw Error("Missing managed card");
 
-  fireEvent.click(within(card).getByRole("button", { name: "Message" }));
+  fireEvent.click(within(card).getByRole("button", { name: "View profile" }));
 
-  await waitFor(() =>
-    expect(directMessageOpen).toHaveBeenCalledWith(
-      [f.agent.pubkey],
-      expect.any(AbortSignal),
-    ),
-  );
-  await waitFor(() =>
-    expect(open).toHaveBeenCalledWith({
-      version: 1,
-      kind: "conversation",
-      channelId: "agent-dm",
-      scope: {
-        viewer: "de".repeat(32),
-        communityOrigin: "https://relay.example.test",
-      },
-    }),
-  );
+  expect(
+    await screen.findByRole("complementary", { name: "Profile" }),
+  ).toBeVisible();
+  expect(screen.getByText("Existing profile panel")).toBeVisible();
+  expect(profileTargetSeen).toBe(profileTarget(f.agent.pubkey));
+  fireEvent.click(screen.getByRole("button", { name: "Close Profile panel" }));
+  expect(screen.queryByRole("complementary", { name: "Profile" })).toBeNull();
 });
 
-it("reports a direct-message failure and allows a retry", async () => {
-  const open = vi.fn(async () => ({ status: "opened" as const }));
-  const { directMessageOpen } = setup("connected", undefined, undefined, open);
-  directMessageOpen
-    .mockRejectedValueOnce(new Error("Relay refused the DM."))
-    .mockResolvedValueOnce("agent-dm");
-  const [card] = await screen.findAllByRole("article", {
+it("omits View profile when the profile panel is unavailable", async () => {
+  setup();
+  const cards = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
   });
-  if (!card) throw Error("Missing managed card");
-
-  fireEvent.click(within(card).getByRole("button", { name: "Message" }));
-  expect(await within(card).findByRole("alert")).toHaveTextContent(
-    "Relay refused the DM.",
-  );
-  expect(open).not.toHaveBeenCalled();
-
-  fireEvent.click(within(card).getByRole("button", { name: "Message" }));
-  await waitFor(() => expect(open).toHaveBeenCalledOnce());
-  expect(within(card).queryByRole("alert")).toBeNull();
+  expect(
+    cards.some((card) =>
+      within(card).queryByRole("button", { name: "View profile" }),
+    ),
+  ).toBe(false);
 });
 
 it("shows one managed card per exact destination and keeps unimported templates out of My agents", async () => {

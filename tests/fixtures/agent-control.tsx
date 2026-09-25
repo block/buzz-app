@@ -16,6 +16,9 @@ import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKe
 import "../../src/shared/styles/globals.css";
 
 const fixture = controlFixture();
+// Browser journeys start with an explicitly manual-start agent. The shared
+// control fixture remains explicit-on for the profile preference tests.
+fixture.agent.startOnAppLaunch = false;
 const modelCalls: string[] = [];
 let modelMode = "success";
 let releaseModels: (() => void) | undefined;

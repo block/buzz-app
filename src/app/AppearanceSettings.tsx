@@ -3,7 +3,12 @@ import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Field } from "../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { Button } from "../shared/design-system/ui/Button";
-import { useCallback, useRef, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import {
   MonitorIcon,
   MoonIcon,
@@ -20,12 +25,20 @@ export function AppearanceSettings({
   active?: boolean;
 }) {
   const increaseButton = useRef<HTMLButtonElement>(null);
+  const pendingFocus = useRef<HTMLButtonElement | null>(null);
   const resetRef = useCallback((node: HTMLButtonElement | null) => {
     if (!node) return;
     return () => {
-      if (document.activeElement === node) increaseButton.current?.focus();
+      if (document.activeElement === node)
+        pendingFocus.current = increaseButton.current;
     };
   }, []);
+  useLayoutEffect(() => {
+    // At 200%, Increase is still disabled during Reset's ref cleanup.
+    const target = pendingFocus.current;
+    pendingFocus.current = null;
+    if (target?.isConnected) target.focus();
+  });
   const { preference, error, fontScale, fontError } = useSyncExternalStore(
     appearance.subscribe,
     appearance.snapshot,

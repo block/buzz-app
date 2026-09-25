@@ -105,30 +105,33 @@ it("shows reset only away from the default size and hides it after reset", () =>
   appearance.dispose();
 });
 
-it("returns focused Reset to Increase text size, including storage failure", async () => {
-  const user = userEvent.setup();
-  const appearance = createAppearance();
-  render(
-    <ToastProvider>
-      <AppearanceSettings appearance={appearance} />
-    </ToastProvider>,
-  );
-  const increase = screen.getByRole("button", { name: "Increase text size" });
-  await user.click(increase);
-  screen.getByRole("button", { name: "Reset text size" }).focus();
-  vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
-    throw new Error("denied");
-  });
-  await user.keyboard("{Enter}");
-  expect(
-    screen.queryByRole("button", { name: "Reset text size" }),
-  ).not.toBeInTheDocument();
-  expect(increase).toHaveFocus();
-  expect(
-    screen.getByRole("button", { name: "Retry saving text size" }),
-  ).toBeVisible();
-  appearance.dispose();
-});
+it.each([1.1, 2])(
+  "returns focused Reset from %s to Increase, including storage failure",
+  async (scale) => {
+    const user = userEvent.setup();
+    const appearance = createAppearance();
+    render(
+      <ToastProvider>
+        <AppearanceSettings appearance={appearance} />
+      </ToastProvider>,
+    );
+    const increase = screen.getByRole("button", { name: "Increase text size" });
+    act(() => appearance.setFontScale(scale));
+    screen.getByRole("button", { name: "Reset text size" }).focus();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+      throw new Error("denied");
+    });
+    await user.keyboard("{Enter}");
+    expect(
+      screen.queryByRole("button", { name: "Reset text size" }),
+    ).not.toBeInTheDocument();
+    expect(increase).toHaveFocus();
+    expect(
+      screen.getByRole("button", { name: "Retry saving text size" }),
+    ).toBeVisible();
+    appearance.dispose();
+  },
+);
 
 it.each([false, true])(
   "external reset hands off only the retiring control's focus (%s)",
@@ -172,3 +175,19 @@ it.each([false, true])(
     appearance.dispose();
   },
 );
+
+it("does not hand off Reset focus when the settings form unmounts", () => {
+  const appearance = createAppearance();
+  appearance.setFontScale(2);
+  const view = render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const increase = screen.getByRole("button", { name: "Increase text size" });
+  screen.getByRole("button", { name: "Reset text size" }).focus();
+  const focus = vi.spyOn(increase, "focus");
+  view.unmount();
+  expect(focus).not.toHaveBeenCalled();
+  appearance.dispose();
+});

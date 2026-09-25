@@ -146,6 +146,37 @@ test("zoom keys resize real message/composer text, not window or spacing, and pe
   await page.keyboard.press("Enter");
   await scale(page, 1);
   await expect(button(page, "Increase text size")).toBeFocused();
+  // At 200%, the handoff target is disabled until the reset commit finishes.
+  for (const reset of ["keyboard", "external", "external-unfocused"]) {
+    for (let i = 0; i < 10; i++)
+      await button(page, "Increase text size").click();
+    await scale(page, 2);
+    await expect(button(page, "Increase text size")).toBeDisabled();
+    const light = page.getByRole("radio", { name: "Light", exact: true });
+    await (reset === "external-unfocused"
+      ? light
+      : button(page, "Reset text size")
+    ).focus();
+    if (reset === "keyboard") await page.keyboard.press("Enter");
+    else
+      await page.evaluate(() => {
+        localStorage.setItem("buzz-font-scale.v1", "1");
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: "buzz-font-scale.v1",
+            newValue: "1",
+            storageArea: localStorage,
+          }),
+        );
+      });
+    await scale(page, 1);
+    await expect(button(page, "Reset text size")).toHaveCount(0);
+    await expect(
+      reset === "external-unfocused"
+        ? light
+        : button(page, "Increase text size"),
+    ).toBeFocused();
+  }
 });
 
 test("independent plugin consumes injected shortcuts; disable/re-enable and editor guards work", async ({

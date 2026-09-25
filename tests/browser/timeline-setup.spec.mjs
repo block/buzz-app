@@ -91,70 +91,61 @@ test("reading setup rejects an immobile timeline instead of accepting a bottom a
       passive: false,
     });
   });
-  await expect(upper(page)).rejects.toThrow(
-    "reading gesture moves away from bottom",
-  );
+  await expect(upper(page)).rejects.toThrow("timeline wheel gesture completes");
 });
 
-test("reading setup drains a timed-out DOM read before returning its rejection", async ({
+test("wheel setup drains a timed-out DOM read before returning its rejection", async ({
   page,
-  app,
 }) => {
-  await open(page, app);
-  await history(page).evaluate((element) => {
-    element.addEventListener("wheel", (event) => event.preventDefault(), {
-      passive: false,
-    });
-  });
-  const wheel = page.mouse.wheel.bind(page.mouse);
+  const { wheel } = await import("./timeline.mjs");
+  await page.setContent(
+    '<section role="region" aria-label="Channel message history" style="height:200px;overflow:auto"><div style="height:2000px"></div></section>',
+  );
+  await history(page).hover();
   const getByRole = page.getByRole.bind(page);
   const poll = expect.poll;
   const readStarted = Promise.withResolvers();
   const releaseRead = Promise.withResolvers();
   const pollEnded = Promise.withResolvers();
-  let holdNextRead = false;
   let readFinished = false;
   let returned = false;
-  page.mouse.wheel = async (x, y) => {
-    await wheel(x, y);
-    if (y < 0) holdNextRead = true;
-  };
   page.getByRole = (...args) => {
     const locator = getByRole(...args);
-    if (args[0] === "region" && args[1]?.name === "Channel message history") {
-      const evaluate = locator.evaluate.bind(locator);
-      locator.evaluate = async (...evaluateArgs) => {
-        if (holdNextRead) {
-          holdNextRead = false;
+    const evaluateHandle = locator.evaluateHandle.bind(locator);
+    locator.evaluateHandle = async (...evaluateArgs) => {
+      const handle = await evaluateHandle(...evaluateArgs);
+      const evaluate = handle.evaluate.bind(handle);
+      let first = true;
+      handle.evaluate = async (...readArgs) => {
+        if (first) {
+          first = false;
           readStarted.resolve();
           await releaseRead.promise;
+          const result = await evaluate(...readArgs);
+          readFinished = true;
+          return result;
         }
-        const result = await evaluate(...evaluateArgs);
-        readFinished = true;
-        return result;
+        return evaluate(...readArgs);
       };
-    }
+      return handle;
+    };
     return locator;
   };
   expect.poll = (callback, options) => {
-    if (options?.message !== "reading gesture moves away from bottom") {
-      return poll(callback, options);
-    }
     const matcher = poll(callback, { ...options, timeout: 100 });
     return {
-      toBeGreaterThan: async (before) => {
+      toBe: async (expected) => {
         try {
-          return await matcher.toBeGreaterThan(before);
+          return await matcher.toBe(expected);
         } finally {
           pollEnded.resolve();
         }
       },
     };
   };
-  const outcome = upper(page).then(
+  const outcome = wheel(page, -100).then(
     () => {
       returned = true;
-      return undefined;
     },
     (error) => {
       returned = true;
@@ -163,9 +154,7 @@ test("reading setup drains a timed-out DOM read before returning its rejection",
   );
   try {
     await readStarted.promise;
-    readFinished = false;
     await pollEnded.promise;
-    // Let rejection continuations run, with the DOM operation still held.
     await new Promise((resolve) => setImmediate(resolve));
     expect(
       returned,
@@ -174,13 +163,12 @@ test("reading setup drains a timed-out DOM read before returning its rejection",
     releaseRead.resolve();
     const result = await outcome;
     expect(readFinished).toBe(true);
-    expect(result?.message).toContain("reading gesture moves away from bottom");
+    expect(result?.message).toContain("timeline wheel gesture completes");
   } finally {
     releaseRead.resolve();
     await outcome;
     expect.poll = poll;
     page.getByRole = getByRole;
-    page.mouse.wheel = wheel;
   }
 });
 
@@ -257,6 +245,64 @@ test("wheel baseline rejects input blocked at the edge instead of accepting a st
       100,
     );
   } finally {
+    page.mouse.wheel = input;
+  }
+});
+
+test("upper waits for end's held final movement before capturing the reading anchor", async ({
+  page,
+}) => {
+  const { settle } = await import("./timeline.mjs");
+  await page.setContent(
+    '<section role="region" aria-label="Channel message history" style="height:200px;overflow:auto"><div data-message-id="row" style="height:2000px"><p style="margin:0">Reading row</p></div></section>',
+  );
+  await history(page).evaluate((element) => {
+    window.heldEnd = false;
+    window.upwardGestures = 0;
+    window.releaseEnd = () => {
+      window.holdEnd = false;
+      element.dispatchEvent(new Event("scrollend"));
+    };
+    window.holdEnd = true;
+    element.addEventListener("wheel", (event) => {
+      if (event.deltaY < 0) window.upwardGestures++;
+    });
+    element.addEventListener("scrollend", (event) => {
+      if (window.holdEnd) {
+        event.stopImmediatePropagation();
+        window.heldEnd = true;
+      }
+    });
+  });
+  const input = page.mouse.wheel.bind(page.mouse);
+  let first = true;
+  page.mouse.wheel = (x, y) => {
+    const distance = first ? y - 2 : y;
+    first = false;
+    return input(x, distance);
+  };
+  const outcome = upper(page);
+  try {
+    await expect.poll(() => page.evaluate(() => window.heldEnd)).toBe(true);
+    await settle(page);
+    expect(
+      await page.evaluate(() => window.upwardGestures),
+      "end must complete before upper reverses input",
+    ).toBe(0);
+    await page.evaluate(() => {
+      window.holdEnd = false;
+    });
+    // Deliver the withheld 2px tail with real input; only then may upper reverse.
+    await input(0, 2);
+    const saved = await outcome;
+    expect(saved).toEqual(await anchor(page));
+    expect(await history(page).evaluate((element) => element.scrollTop)).toBe(
+      1150,
+    );
+    expect(await page.evaluate(() => window.upwardGestures)).toBe(1);
+  } finally {
+    await page.evaluate(() => window.releaseEnd());
+    await outcome;
     page.mouse.wheel = input;
   }
 });

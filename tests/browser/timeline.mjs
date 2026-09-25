@@ -6,14 +6,14 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const composer = (page, name) =>
   page.getByRole("textbox", { name: `Message #${name}`, exact: true });
 
-export async function settle(page) {
+export async function settle(page, scroller = history(page)) {
   // Wait for geometry to stop moving, rather than assuming a fixed animation delay.
   let previous;
   let stable = 0;
   await expect
     .poll(
       async () => {
-        const value = await history(page).evaluate((element) =>
+        const value = await scroller.evaluate((element) =>
           JSON.stringify([
             element.scrollTop,
             element.scrollHeight,
@@ -33,8 +33,8 @@ export async function settle(page) {
 }
 // Use for gestures that must move before capturing a reading baseline. Geometry
 // can pause mid-gesture in Linux WebKit; only scrollend closes native input.
-export async function wheel(page, deltaY) {
-  const completion = await history(page).evaluateHandle((element) => {
+export async function wheel(page, deltaY, scroller = history(page)) {
+  const completion = await scroller.evaluateHandle((element) => {
     const state = { started: false, done: false };
     const started = () => {
       state.started = true;
@@ -42,7 +42,7 @@ export async function wheel(page, deltaY) {
     const ended = (event) => {
       if (event.target === element && state.started) state.done = true;
     };
-    element.addEventListener("wheel", started, { once: true });
+    element.addEventListener("wheel", started, { once: true, passive: true });
     element.addEventListener("scrollend", ended);
     return {
       state,
@@ -63,7 +63,7 @@ export async function wheel(page, deltaY) {
         },
       )
       .toBe(true);
-    await settle(page);
+    await settle(page, scroller);
   } finally {
     // expect.poll does not cancel a DOM read when its deadline expires.
     await pendingRead;
@@ -127,7 +127,9 @@ export async function edge(page, direction) {
   await history(page).hover();
   // Send one real gesture for the actual distance, not an arbitrary 100,000px
   // overshoot. At the boundary, retain input so production can initiate paging.
-  await page.mouse.wheel(0, direction * Math.max(1, await distance()));
+  const remaining = await distance();
+  if (remaining >= 4) await wheel(page, direction * remaining);
+  else await page.mouse.wheel(0, direction * Math.max(1, remaining));
   await expect
     .poll(distance, { message: "wheel reaches timeline edge" })
     .toBeLessThan(4);
@@ -165,21 +167,11 @@ export async function upper(page) {
   for (let gesture = 0; gesture < 4; gesture++) {
     const before = await distance();
     if (before > 400) break;
-    await page.mouse.wheel(0, -(650 - before));
-    // expect.poll races its deadline; it does not cancel an in-flight callback.
-    // Drain the final DOM read before a caller handles the expected rejection
-    // and closes the page, otherwise its element handle can arrive after close.
-    let pendingRead;
-    try {
-      await expect
-        .poll(() => (pendingRead = distance()), {
-          message: "reading gesture moves away from bottom",
-        })
-        .toBeGreaterThan(before);
-    } finally {
-      await pendingRead;
-    }
-    await settle(page);
+    await wheel(page, -(650 - before));
+    expect(
+      await distance(),
+      "reading gesture moves away from bottom",
+    ).toBeGreaterThan(before);
   }
   expect(await distance(), "reading position is above bottom").toBeGreaterThan(
     400,

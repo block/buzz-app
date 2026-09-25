@@ -65,6 +65,18 @@ export function useMentionChoices(
         ...selected.map((p) => p.pubkey),
       ]),
     ];
+    // Directory pages are menu-local, not cached profiles. Name them only when no
+    // other source knows the key, so namesakes in this choice set are qualified.
+    const facts = [
+      ...directory.people
+        .filter((person) => !session.names?.resolve(person.pubkey))
+        .map(({ pubkey, name, isAgent }) => ({
+          pubkey,
+          name,
+          ...(isAgent ? { isAgent } : {}),
+        })),
+      ...selected,
+    ];
     return candidates.map((choice) => ({
       ...choice,
       label:
@@ -72,7 +84,7 @@ export function useMentionChoices(
           choice.recipient.pubkey,
           choice.recipient.name,
           keys,
-          selected,
+          facts,
         ) ?? choice.recipient.name,
     }));
   }, [session, channelId, invite, roster, selected, directory.people]);

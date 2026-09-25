@@ -74,6 +74,8 @@ export interface ReadTransport {
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
   readonly channelLifecycle?: RelayWriter;
+  /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
+  readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
   /** Explicit relay-advertised session command support. */
@@ -277,6 +279,7 @@ export async function connectBrokerTransport(
     attachmentUploads?: boolean;
     directMessages?: boolean;
     channelLifecycle?: boolean;
+    identityArchives?: boolean;
     relayUrl?: string;
     relayHttpUrl?: string;
     live?: boolean;
@@ -310,6 +313,30 @@ export async function connectBrokerTransport(
     "Content-Type": "application/json",
     // Matched development frontend/host: publication requires the existing owner.
     "X-Buzz-Live-ID": traffic?.identity?.() ?? "",
+  });
+  /** Dedicated shape-limited host sign/publish routes, separate from the outbox writer. */
+  const routeWriter = (route: string): RelayWriter => ({
+    async sign(template: EventTemplate, signal: AbortSignal) {
+      const response = await fetch(`${endpoint}/${route}-sign`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(template),
+        signal,
+      });
+      if (!response.ok) throw new Error((await readApiFailure(response)).error);
+      return eventDto(await response.json());
+    },
+    async publish(event: RelayEvent, signal: AbortSignal) {
+      const response = await fetch(`${endpoint}/${route}-publish`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: publicationHeaders(),
+        body: JSON.stringify(event),
+        signal,
+      });
+      return acceptPublish(response, event.id);
+    },
   });
   return {
     profiling,
@@ -654,38 +681,10 @@ export async function connectBrokerTransport(
         }
       : {}),
     ...(session.channelLifecycle === true
-      ? {
-          channelLifecycle: {
-            async sign(template: EventTemplate, signal: AbortSignal) {
-              const response = await fetch(
-                `${endpoint}/channel-lifecycle-sign`,
-                {
-                  method: "POST",
-                  credentials: "same-origin",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(template),
-                  signal,
-                },
-              );
-              if (!response.ok)
-                throw new Error((await readApiFailure(response)).error);
-              return eventDto(await response.json());
-            },
-            async publish(event: RelayEvent, signal: AbortSignal) {
-              const response = await fetch(
-                `${endpoint}/channel-lifecycle-publish`,
-                {
-                  method: "POST",
-                  credentials: "same-origin",
-                  headers: publicationHeaders(),
-                  body: JSON.stringify(event),
-                  signal,
-                },
-              );
-              return acceptPublish(response, event.id);
-            },
-          },
-        }
+      ? { channelLifecycle: routeWriter("channel-lifecycle") }
+      : {}),
+    ...(session.identityArchives === true
+      ? { identityArchive: routeWriter("identity-archive") }
       : {}),
     ...(session.writeKinds
       ? {

@@ -22,6 +22,7 @@ process evidence and visible **Start / Stop**. **Edit**, **Duplicate**, and
 settings and a fresh identity; write-only environment values require re-entry.
 Delete stops the local process and removes this app's settings and Keychain key
 after confirmation. It does not archive the relay identity or erase messages.
+Deployed remote records are refused.
 Same-key identities at different destinations have separate
 cards; actions use native ID/revision, never the display name. Managed controls
 remain available when the old library is disconnected, unavailable or archived.

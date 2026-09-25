@@ -309,3 +309,6 @@ export const ArrowsDownUpIcon = defineIcon(
   "phosphor",
   PhosphorArrowsDownUpIcon,
 );
+
+import { InfoIcon as PhosphorInfoIcon } from "@phosphor-icons/react/dist/csr/Info";
+export const InfoIcon = defineIcon("phosphor", PhosphorInfoIcon);

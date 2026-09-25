@@ -11,6 +11,7 @@ import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
+import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
 import {
   prepareChannelKit,
   decodeChannelKit,
@@ -448,6 +449,27 @@ export function validAgentEnrollment(event) {
         Object.hasOwn(validators, tag[0]) &&
         validators[tag[0]].test(tag[1]),
     )
+  );
+}
+/** Base Buzz agent delete: only removal of one member, relay-authorized. */
+export function validAgentRemoval(event) {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const [h, p, clientId, ...extra] = Array.isArray(event?.tags)
+    ? event.tags
+    : [];
+  return (
+    event?.kind === 9001 &&
+    event.content === "" &&
+    Number.isSafeInteger(event.created_at) &&
+    event.created_at >= 0 &&
+    !extra.length &&
+    [h, p, clientId].every((tag) => Array.isArray(tag) && tag.length === 2) &&
+    h[0] === "h" &&
+    uuid.test(h[1]) &&
+    p[0] === "p" &&
+    /^[0-9a-f]{64}$/.test(p[1]) &&
+    clientId[0] === "client-id" &&
+    uuid.test(clientId[1])
   );
 }
 export function validChannelActivityFilters(filters) {
@@ -1135,6 +1157,7 @@ export function relayBrokerPlugin({
                 40003,
                 42000,
                 9000,
+                9001,
                 30078,
                 40100,
                 1984,
@@ -1142,6 +1165,7 @@ export function relayBrokerPlugin({
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               channelLifecycle: true,
+              identityArchives: true,
               workflowReads: true,
               projectGit: true,
               attachmentUploads: true,
@@ -1604,6 +1628,8 @@ export function relayBrokerPlugin({
               "/api/relay/sign",
               "/api/relay/channel-lifecycle-sign",
               "/api/relay/channel-lifecycle-publish",
+              "/api/relay/identity-archive-sign",
+              "/api/relay/identity-archive-publish",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
               "/api/relay/channel-kit-prepare",
@@ -1878,14 +1904,30 @@ export function relayBrokerPlugin({
           const lifecycle =
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/channel-lifecycle-publish";
+          const archive =
+            route === "/api/relay/identity-archive-sign" ||
+            route === "/api/relay/identity-archive-publish";
           const signing =
             route === "/api/relay/sign" ||
-            route === "/api/relay/channel-lifecycle-sign";
+            route === "/api/relay/channel-lifecycle-sign" ||
+            route === "/api/relay/identity-archive-sign";
           const publishing =
             route === "/api/relay/publish" ||
-            route === "/api/relay/channel-lifecycle-publish";
+            route === "/api/relay/channel-lifecycle-publish" ||
+            route === "/api/relay/identity-archive-publish";
           if (signing || publishing) {
-            if (lifecycle) {
+            if (archive) {
+              try {
+                validateArchiveRequestTemplate(filters);
+                if (!(await getAuthority(relay)).archiveAuthority)
+                  throw new Error("Archive authority unavailable");
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid identity archive request",
+                  sent: false,
+                });
+              }
+            } else if (lifecycle) {
               try {
                 validateLifecycleTemplate(filters);
               } catch {
@@ -1898,6 +1940,12 @@ export function relayBrokerPlugin({
               if (!validStatusTemplate(filters))
                 return json(res, 400, {
                   error: "Status rejected",
+                  sent: false,
+                });
+            } else if (filters?.kind === 9001) {
+              if (!validAgentRemoval(filters))
+                return json(res, 400, {
+                  error: "Agent removal invalid",
                   sent: false,
                 });
             } else if ([9000, 9007].includes(filters?.kind)) {

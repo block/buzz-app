@@ -188,8 +188,7 @@ confirmation, not app runs.
 
 - Before reviewing, read block/buzz's [`VISION.md` and `VISION_*.md` docs](https://github.com/block/buzz) for the affected surface, the relevant design docs under `docs/`, and the PR's stated goal and linked
   issue. Review the change against what it is trying to do.
-- Judge minimalism, elegance, and correctness, aiming for 9/10 on each. A score
-  below 9 names the concrete defect and the fix.
+- Judge the change against the 9/10 bar in [Engineering standard](#engineering-standard). A score below 9 names the concrete defect and the fix.
 - Recommend blocking only for concrete correctness, security, or agreed-contract
   defects with a realistic failure scenario: state the defect, how it fails, and
   the fix. Label everything else (nits, wording, speculative hardening,

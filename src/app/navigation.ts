@@ -80,31 +80,24 @@ export function useAppNavigation(services: AppServices) {
       }
     }
   }
-  if (
-    target.kind === "settings" &&
-    target.section &&
-    ![
+  if (target.kind === "settings" && target.section) {
+    const builtIn = [
       "profile",
       "plugins",
       "appearance",
       "shortcuts",
       "agents",
       "notifications",
-    ].includes(target.section) &&
-    !target.section.startsWith("community-") &&
-    !(developerMode && target.section === "developer")
-  ) {
-    // Grouped plugin cards are addressed by contribution key.
-    const section = target.section;
-    const owner = section.split("/")[0] ?? "";
-    if (!settingsCards.some((card) => card.group && card.key === section)) {
-      if (
-        startup === "loading" ||
-        plugins.activation[owner]?.status === "starting"
-      )
-        waiting = true;
-      else failure = "unavailable";
-    }
+    ].includes(target.section);
+    const contributed = settingsCards.some(
+      (card) => `community-${card.id}` === target.section,
+    );
+    if (
+      !builtIn &&
+      !contributed &&
+      !(developerMode && target.section === "developer")
+    )
+      failure = "unavailable";
   }
   // Legacy Home targets (including unaddressed startup) resolve to Messages.
   // Resolve in place before paint: links and history share one policy.
@@ -153,9 +146,11 @@ export function useAppNavigation(services: AppServices) {
         subscribe(listener) {
           const stopPages = services.pages.subscribe(listener);
           const stopClient = services.communities.subscribe(listener);
+          const stopSettingsCards = services.settingsCards.subscribe(listener);
           return () => {
             stopPages();
             stopClient();
+            stopSettingsCards();
           };
         },
       },

@@ -25,6 +25,7 @@ impl Credentials for Memory {
 fn agent(workspace: &Path) -> Agent {
     let relay_url = "wss://relay.example".to_owned();
     Agent {
+        picture: None,
         id: agent_id(PUB, &relay_url),
         pubkey: PUB.into(),
         relay_url,
@@ -215,6 +216,7 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     controller.action(&a.id, Action::Start).unwrap();
     assert_eq!(controller.running.len(), 1);
     let edit = AgentEdit {
+        picture: None,
         name: "Edited".into(),
         system_prompt: "changed prompt".into(),
         workspace: a.workspace.clone(),
@@ -298,6 +300,7 @@ fn new_records_launch_preference_is_independent_of_start_and_stop() {
     );
     let edit = AgentEdit {
         name: a.name.clone(),
+        picture: None,
         system_prompt: a.system_prompt.clone(),
         workspace: a.workspace.clone(),
         harness: a.harness.clone(),
@@ -836,6 +839,7 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
     let cache = config.join("buzz-agent/oauth/databricks");
     assert!(cache.is_dir());
     let edit = AgentEdit {
+        picture: None,
         name: a.name.clone(),
         system_prompt: a.system_prompt.clone(),
         workspace: a.workspace.clone(),
@@ -1194,6 +1198,7 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
     fs::write(&goose, "#!/bin/sh\nexit 0\n").unwrap();
     fs::set_permissions(&goose, fs::Permissions::from_mode(0o700)).unwrap();
     let edit = |override_provider: Option<&str>| AgentEdit {
+        picture: None,
         name: "Goose".into(),
         system_prompt: String::new(),
         workspace: dir.path().display().to_string(),
@@ -1340,6 +1345,7 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
     );
     let edit = AgentEdit {
         name: a.name.clone(),
+        picture: None,
         system_prompt: a.system_prompt.clone(),
         workspace: a.workspace.clone(),
         harness: a.harness.clone(),

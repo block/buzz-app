@@ -1,11 +1,19 @@
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { useRelayConnection } from "../../features/relay/react";
+import { avatarSource } from "../../shared/avatar-source";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { StatusEmoji } from "../../features/user-status/StatusEmoji";
 import { Button } from "../../shared/design-system/ui/Button";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
-import { useId, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   SmileyIcon,
   CheckIcon,
@@ -32,6 +40,9 @@ import type {
 import type { Communities } from "../../features/communities/service";
 import styles from "./ProfileButton.module.css";
 
+const noSubscription = () => () => {};
+const noLiveSnapshot = () => undefined;
+
 export function ProfileButton({
   communities,
   accountActions,
@@ -43,10 +54,11 @@ export function ProfileButton({
   settingsSelected: boolean;
   onSettings(): void;
 }) {
-  const { profile: localProfile, viewer } = useSyncExternalStore(
-    communities.subscribe,
-    communities.snapshot,
-  );
+  const {
+    profile: localProfile,
+    viewer,
+    selected,
+  } = useSyncExternalStore(communities.subscribe, communities.snapshot);
   const presence = useSyncExternalStore(
     communities.presence.subscribe,
     communities.presence.snapshot,
@@ -56,13 +68,54 @@ export function ProfileButton({
   ];
   const connection = useRelayConnection(communities.relay);
   const session = connection.session;
+  // The selected session owns community identity; never copy it into local defaults.
+  const profiles =
+    selected && connection.viewer === viewer ? session?.profiles : undefined;
+  const readProfile = useCallback(
+    () => (viewer ? profiles?.snapshot().get(viewer) : undefined),
+    [profiles, viewer],
+  );
+  const communityProfile = useSyncExternalStore(
+    profiles?.subscribe ?? noSubscription,
+    readProfile,
+    readProfile,
+  );
+  const live = useSyncExternalStore(
+    session?.live.subscribe ?? noSubscription,
+    session?.live.snapshot ?? noLiveSnapshot,
+    session?.live.snapshot ?? noLiveSnapshot,
+  );
+  const roster = live?.roster;
+  const liveStatus = live?.status;
+  useEffect(() => {
+    if (
+      !profiles ||
+      !viewer ||
+      connection.status !== "ready" ||
+      roster?.state !== "verified" ||
+      (liveStatus !== "connected" && liveStatus !== "unavailable")
+    )
+      return;
+    // Roster setup can cancel earlier reads, and disk hydration can hold an old
+    // profile. Refresh once at this authority boundary through the same session.
+    const controller = new AbortController();
+    void session
+      .read([{ kinds: [0], authors: [viewer], limit: 5 }], {
+        priority: "background",
+        fresh: true,
+        signal: controller.signal,
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [profiles, viewer, connection.status, session, roster, liveStatus]);
+  const profile = selected ? communityProfile : localProfile;
+  const displayName = profile?.name.trim();
   const name =
-    localProfile.name.trim() ||
+    displayName ||
     (viewer ? formatPublicKey(viewer) : undefined) ||
     "Your profile";
-  const picture = localProfile.picture.startsWith("https://")
-    ? localProfile.picture
-    : undefined;
+  const source = avatarSource(profile?.picture);
+  const picture = selected ? source && session?.media(source, "small") : source;
   const status = useUserStatus(session?.statuses, viewer ?? "");
   const statusEditor = useStatusEditor(session, viewer ?? undefined);
   const profileTrigger = useRef<HTMLButtonElement>(null);
@@ -85,9 +138,7 @@ export function ProfileButton({
       src={picture}
       alt=""
       fallback={name}
-      fallbackContent={
-        localProfile.name.trim() ? undefined : <UserIcon size={19} />
-      }
+      fallbackContent={displayName ? undefined : <UserIcon size={19} />}
       size="fill"
       statusBadge={viewer ? presence.status : undefined}
     />

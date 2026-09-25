@@ -23,6 +23,8 @@ pub struct AgentView {
     pub pubkey: String,
     pub relay_url: String,
     pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
     pub system_prompt: String,
     pub workspace: String,
     pub harness: HarnessView,
@@ -75,6 +77,8 @@ pub enum ProcessStatus {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentEdit {
     pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
     pub system_prompt: String,
     pub workspace: String,
     pub harness: HarnessEdit,
@@ -98,6 +102,8 @@ pub(crate) struct Agent {
     pub pubkey: String,
     pub relay_url: String,
     pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
     pub system_prompt: String,
     pub workspace: String,
     pub harness: HarnessEdit,
@@ -124,6 +130,7 @@ impl Agent {
             pubkey: self.pubkey.clone(),
             relay_url: self.relay_url.clone(),
             name: self.name.clone(),
+            picture: self.picture.clone(),
             system_prompt: self.system_prompt.clone(),
             workspace: self.workspace.clone(),
             harness: HarnessView {
@@ -183,6 +190,14 @@ impl Agent {
             && !record["backend_agent_id"].is_null()
     }
     pub fn apply(&mut self, edit: AgentEdit) -> Result<()> {
+        if let Some(picture) = edit.picture {
+            validate_picture(&picture)?;
+            if self.picture.as_ref() != Some(&picture) {
+                self.picture = Some(picture);
+                self.extra
+                    .insert("profilePending".into(), Value::Bool(true));
+            }
+        }
         self.name = edit.name;
         self.system_prompt = edit.system_prompt;
         self.workspace = edit.workspace;
@@ -217,6 +232,9 @@ impl Agent {
             return Err("Agent name is required".into());
         }
         text(&self.name, 256, "Agent name")?;
+        if let Some(picture) = &self.picture {
+            validate_picture(picture)?;
+        }
         text(&self.system_prompt, 128 * 1024, "System prompt")?;
         text(&self.workspace, 4096, "Workspace")?;
         if !Path::new(&self.workspace).is_absolute() {
@@ -322,4 +340,22 @@ fn validate_env_key(key: &str) -> Result<()> {
     } else {
         Ok(())
     }
+}
+
+fn validate_picture(value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.len() <= 2048 {
+        if let Ok(url) = url::Url::parse(value) {
+            if url.scheme() == "https"
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+            {
+                return Ok(());
+            }
+        }
+    }
+    Err("Avatar must be an HTTPS image URL without credentials".into())
 }

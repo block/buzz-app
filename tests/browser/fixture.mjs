@@ -16,6 +16,7 @@ import { execFileSync } from "node:child_process";
 import { relayBrokerPlugin } from "../../dev/relay-broker.mjs";
 import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
+import { fixtureBody } from "./fixture-body.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 export const channels = ["alpha", "beta"];
@@ -140,6 +141,17 @@ export const test = base.extend({
       key = relayKey,
       time = 1700000000,
     ) => finalizeEvent({ kind, tags, content, created_at: time }, key);
+    const profiles = new Map(
+      ["primary", "secondary"].map((community) => [
+        community,
+        sign(
+          0,
+          [],
+          JSON.stringify({ name: "Fixture Reader", picture: profilePicture }),
+          userKey,
+        ),
+      ]),
+    );
     const participants = largeSidebar
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
@@ -581,6 +593,7 @@ export const test = base.extend({
       errors: [],
       consoleErrors: [],
       unexpected: [],
+      cancelledRequests: [],
       measurements: [],
     };
     const pending = [];
@@ -758,7 +771,7 @@ export const test = base.extend({
       }
       if (filter.kinds?.includes(0))
         return [
-          sign(0, [], JSON.stringify({ name: "Fixture Reader" }), userKey),
+          profiles.get(community),
           ...membershipKeys
             .filter((key) => filter.authors?.includes(getPublicKey(key)))
             .map((key) =>
@@ -1150,9 +1163,9 @@ export const test = base.extend({
           requestedCommunity.match(
             /^https:\/\/(primary|secondary)\.(?:example|fixture\.invalid)$/,
           )?.[1] ?? requestedCommunity;
-        let raw = "";
-        for await (const part of request) raw += part;
-        const body = raw ? JSON.parse(raw) : undefined;
+        const parsed = await fixtureBody(request, report);
+        if (!parsed) return; // The client disconnected; there is no response to send.
+        const { body } = parsed;
         if (route === "identity") return send(response, { viewer });
         if (route === "register") return send(response, {});
         if (!["primary", "secondary"].includes(community))
@@ -1246,6 +1259,25 @@ export const test = base.extend({
             streamOwners.delete(streamId);
           });
           return;
+        }
+        if (route === "profile" && request.method === "POST") {
+          const { existing, name, picture, about } = body;
+          const event = sign(
+            0,
+            [],
+            JSON.stringify({
+              ...existing,
+              name: name.trim(),
+              display_name: name.trim(),
+              picture,
+              about,
+            }),
+            userKey,
+            profiles.get(community).created_at + 1,
+          );
+          profiles.set(community, event);
+          // Deliberately no live echo: Save must confirm through a signed read.
+          return send(response, { accepted: true, event_id: event.id });
         }
         if (route !== "query" || request.method !== "POST")
           throw new Error(

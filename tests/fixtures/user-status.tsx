@@ -92,6 +92,11 @@ const owners = [0, 1].map(() =>
 const first = owners[0]?.session,
   second = owners[1]?.session;
 if (!first || !second) throw new Error("Missing fixture sessions");
+// Model the connected session lifecycle so community-profile reads can start.
+for (const listener of listeners) {
+  listener.state({ status: "connected", routes: [] });
+  listener.established();
+}
 const scope = `https://status.test:${viewer.pubkey}`;
 const client = {
   profile: { name: "Alice", picture: "" },

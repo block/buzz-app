@@ -22,7 +22,6 @@ import type { OpenTarget } from "../navigation/targets";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
-  ContextMenuRoot,
   MenuItem,
   MenuIcon,
   MenuPopup,
@@ -525,6 +524,17 @@ function ReadySidebar({
     setReadWrite(undefined);
     closeMenu();
   }, [closeMenu]);
+  const rowMenuFinalFocus = useCallback(
+    (channelId: string) =>
+      startingSession.current
+        ? (document
+            .getElementById("new-session-prompt")
+            ?.querySelector<HTMLElement>('[role="textbox"]') ?? false)
+        : (sidebar.list.current?.querySelector<HTMLButtonElement>(
+            `[data-channel-id="${CSS.escape(channelId)}"]`,
+          ) ?? false),
+    [sidebar.list],
+  );
   useLayoutEffect(() => {
     if (!rowFocus) return;
     sidebar.list.current
@@ -849,7 +859,7 @@ function ReadySidebar({
                         menuEnabled &&
                         rowMenu?.channelId === channel.id &&
                         rowMenu.sectionKey === section.key;
-                      const channelItem = (
+                      return (
                         <ChannelSidebarItem
                           profile={
                             channel.channelType === "dm" &&
@@ -876,41 +886,24 @@ function ReadySidebar({
                           menuEnabled={menuEnabled}
                           sectionKey={section.key}
                           onOpenMenu={openRowMenu}
+                          menuOpen={menuOpen}
+                          menuAnchor={menuOpen ? rowMenu.anchor : undefined}
+                          menuContent={
+                            menuOpen ? (
+                              <>
+                                {actions}
+                                {readWrite?.pending && (
+                                  <p role="status">Saving…</p>
+                                )}
+                                {readWrite?.error && (
+                                  <p role="alert">{readWrite.error}</p>
+                                )}
+                              </>
+                            ) : undefined
+                          }
+                          onCloseMenu={closeRowMenu}
+                          menuFinalFocus={rowMenuFinalFocus}
                         />
-                      );
-                      if (!menuEnabled) return channelItem;
-                      return (
-                        <ContextMenuRoot
-                          key={channel.id}
-                          open={menuOpen}
-                          onOpenChange={(open) => {
-                            if (open) openRowMenu(channel, section.key);
-                            else if (menuOpen) closeRowMenu();
-                          }}
-                        >
-                          {channelItem}
-                          <MenuPopup
-                            aria-label={`Actions for ${channel.name}`}
-                            anchor={menuOpen ? rowMenu.anchor : undefined}
-                            finalFocus={() =>
-                              startingSession.current
-                                ? (document
-                                    .getElementById("new-session-prompt")
-                                    ?.querySelector<HTMLElement>(
-                                      '[role="textbox"]',
-                                    ) ?? false)
-                                : (sidebar.list.current?.querySelector<HTMLButtonElement>(
-                                    `[data-channel-id="${CSS.escape(channel.id)}"]`,
-                                  ) ?? false)
-                            }
-                          >
-                            {actions}
-                            {readWrite?.pending && <p role="status">Saving…</p>}
-                            {readWrite?.error && (
-                              <p role="alert">{readWrite.error}</p>
-                            )}
-                          </MenuPopup>
-                        </ContextMenuRoot>
                       );
                     })}
                   </details>

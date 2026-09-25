@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelayData } from "../../features/relay/service";
 import type { OutgoingEvent } from "../../features/relay/outbox";
+import { feedbackEvent } from "../../features/relay/product-feedback";
 import { keypair, signed } from "../../features/relay/testing";
 import { FeedbackDialog } from "./FeedbackDialog";
 
@@ -351,7 +359,7 @@ it("does not close a reopened dialog when old Done completes", async () => {
   expect(close).not.toHaveBeenCalled();
 });
 
-it("does not offer attachments when the session has no private upload capability", () => {
+it("does not offer attachments when the session has no upload capability", () => {
   const h = fixture();
   const entries: readonly OutgoingEvent[] = [];
   const outbox = {
@@ -390,6 +398,53 @@ const uploaded = (name: string, type: string, ext: string) => ({
   size: 64,
   sha256: hash,
   url: `https://relay.test/media/${hash}.${ext}`,
+});
+
+it("ignores an image upload completed after closing", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  let release!: () => void;
+  let started!: () => void;
+  const began = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  h.upload.mockImplementationOnce((_file) => {
+    started();
+    return new Promise((resolve) => {
+      release = () => resolve(uploaded("screen.gif", "image/gif", "gif"));
+    });
+  });
+  const close = vi.fn();
+  render(<FeedbackDialog open onOpenChange={close} relay={h.relay} />);
+  await waitFor(() =>
+    expect(screen.getByLabelText("Attach image (optional)")).toBeEnabled(),
+  );
+  fireEvent.change(screen.getByLabelText("Attach image (optional)"), {
+    target: {
+      files: [
+        new File(
+          [
+            new Uint8Array([
+              71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 0, 0, 0, 0x21, 0xf9, 4, 0, 10,
+              0, 0, 0, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0, 0x3b,
+            ]),
+          ],
+          "screen.gif",
+          { type: "image/gif" },
+        ),
+      ],
+    },
+  });
+  await began;
+  const signal = h.upload.mock.calls[0]?.[1] as AbortSignal;
+  const closeButton = screen.getAllByRole("button", { name: "Close" }).at(-1);
+  if (!closeButton) throw new Error("Missing Close button");
+  await user.click(closeButton);
+  expect(signal.aborted).toBe(true);
+  release();
+  await waitFor(() => expect(close).toHaveBeenCalledWith(false));
+  expect(screen.queryByText(/Image uploaded/)).not.toBeInTheDocument();
+  expect(h.send).not.toHaveBeenCalled();
 });
 
 it("uploads an image before submission and retries the signed intent without another upload", async () => {
@@ -518,6 +573,61 @@ it("uploads diagnostics only on explicit opt-in and sends a text-file descriptor
       tags: [expect.arrayContaining(["m application/octet-stream"])],
     }),
   );
+});
+
+it("preflights diagnostics descriptor overhead at the content boundary", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  const descriptor = uploaded(
+    "feedback-diagnostics.txt",
+    "application/octet-stream",
+    "abcdefgh",
+  );
+  h.upload.mockResolvedValue(descriptor);
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  await user.click(
+    screen.getByRole("checkbox", { name: "Attach diagnostics" }),
+  );
+  const remaining =
+    32 * 1024 -
+    feedbackEvent("a", null, [descriptor], "https://relay.test").content
+      .length +
+    1;
+  fireEvent.change(screen.getByRole("textbox", { name: "Your feedback" }), {
+    target: { value: "x".repeat(remaining) },
+  });
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  await waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
+  expect(h.upload).toHaveBeenCalledTimes(1);
+  expect(h.send.mock.calls[0]?.[0].content.length).toBe(32 * 1024);
+});
+
+it("rejects diagnostics content overflow before uploading", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  await user.click(
+    screen.getByRole("checkbox", { name: "Attach diagnostics" }),
+  );
+  const descriptor = uploaded(
+    "feedback-diagnostics.txt",
+    "application/octet-stream",
+    "abcdefgh",
+  );
+  const remaining =
+    32 * 1024 -
+    feedbackEvent("a", null, [descriptor], "https://relay.test").content
+      .length +
+    1;
+  fireEvent.change(screen.getByRole("textbox", { name: "Your feedback" }), {
+    target: { value: "x".repeat(remaining + 1) },
+  });
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Feedback must contain text and fit within relay limits.",
+  );
+  expect(h.upload).not.toHaveBeenCalled();
+  expect(h.send).not.toHaveBeenCalled();
 });
 
 it("reuses an uploaded diagnostics descriptor after a failed send", async () => {

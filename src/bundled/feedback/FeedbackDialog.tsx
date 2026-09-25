@@ -78,9 +78,6 @@ function FeedbackForConnection({
       dialogEpoch.current++;
     };
   }, []);
-  useEffect(() => {
-    if (!open) setBusy(false);
-  }, [open]);
   const outbox = connection.session.outbox;
   const entries = useSyncExternalStore(
     outbox?.subscribe ?? noSubscription,
@@ -182,37 +179,48 @@ function FeedbackForConnection({
     setError("");
     const attempt = ++uploadAttempt.current;
     try {
-      // Check text limits before creating an unreferenced diagnostics blob.
-      feedbackEvent(
-        message,
-        category,
-        image ? [image] : [],
-        connection.session.feedbackUpload?.origin,
-      );
       const attachments = image ? [image] : [];
+      const upload = connection.session.feedbackUpload;
+      let diagnostics: File | undefined;
       if (includeDiagnostics) {
         if (uploadedDiagnostics) {
           attachments.push(uploadedDiagnostics);
         } else {
-          const upload = connection.session.feedbackUpload;
           if (!upload) throw new UploadError("unavailable");
           const controller = new AbortController();
           uploadController.current = controller;
-          const diagnostics = await feedbackDiagnostics();
+          diagnostics = await feedbackDiagnostics();
           controller.signal.throwIfAborted();
           if (!mounted.current || attempt !== uploadAttempt.current) return;
-          const result = await upload.upload(diagnostics, controller.signal);
-          controller.signal.throwIfAborted();
-          if (!mounted.current || attempt !== uploadAttempt.current) return;
-          if (
-            result.type !== "application/octet-stream" &&
-            result.type !== "text/plain"
-          )
-            throw new UploadError("invalid");
-          setUploadedDiagnostics(result);
-          attachments.push(result);
-          uploadController.current = null;
+          // validateUploadResult confines the URL to this origin, a 64-hex
+          // hash and at most eight extension characters. Reserve that maximum
+          // (and the longer allowed MIME) before storing diagnostics bytes.
+          attachments.push({
+            name: diagnostics.name,
+            type: "application/octet-stream",
+            size: diagnostics.size,
+            sha256: "0".repeat(64),
+            url: `${new URL(upload.origin).origin}/media/${"0".repeat(64)}.abcdefgh`,
+          });
         }
+      }
+      feedbackEvent(message, category, attachments, upload?.origin);
+      if (diagnostics && upload) {
+        const controller = uploadController.current;
+        if (!controller) return;
+        controller.signal.throwIfAborted();
+        if (!mounted.current || attempt !== uploadAttempt.current) return;
+        const result = await upload.upload(diagnostics, controller.signal);
+        controller.signal.throwIfAborted();
+        if (!mounted.current || attempt !== uploadAttempt.current) return;
+        if (
+          result.type !== "application/octet-stream" &&
+          result.type !== "text/plain"
+        )
+          throw new UploadError("invalid");
+        setUploadedDiagnostics(result);
+        attachments[attachments.length - 1] = result;
+        uploadController.current = null;
       }
       if (!mounted.current || attempt !== uploadAttempt.current) return;
       outbox.send(
@@ -249,6 +257,9 @@ function FeedbackForConnection({
         return;
       setMessage("");
       setCategory(null);
+      setImage(undefined);
+      setUploadedDiagnostics(undefined);
+      setIncludeDiagnostics(false);
       setError("");
       close();
     } catch (reason) {

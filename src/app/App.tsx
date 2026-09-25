@@ -63,6 +63,7 @@ export function App({ services }: { services: AppServices }) {
           sidebar={() =>
             settings ? (
               <SettingsSidebar
+                cards={services.settingsCards}
                 selected={
                   route.target.kind === "settings"
                     ? (route.target.section ?? "profile")

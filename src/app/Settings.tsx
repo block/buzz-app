@@ -77,8 +77,13 @@ export function Settings({
     | undefined;
 }) {
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
-  const [selected, setSelected] =
-    useState<(typeof settingsSections)[number]["id"]>("profile");
+  const messageCards = contributed.filter((card) => !card.group);
+  const [chosen, setSelected] = useState("profile");
+  const selected =
+    settingsSections.some((section) => section.id === chosen) ||
+    contributed.some((card) => card.group && card.key === chosen)
+      ? chosen
+      : "profile";
   const requestedSection =
     navigation?.target.kind === "settings"
       ? (navigation.target.section ?? "profile")
@@ -86,10 +91,11 @@ export function Settings({
   useEffect(() => {
     if (
       requestedSection &&
-      settingsSections.some((section) => section.id === requestedSection)
+      (settingsSections.some((section) => section.id === requestedSection) ||
+        contributed.some((card) => card.group && card.key === requestedSection))
     )
-      setSelected(requestedSection as typeof selected);
-  }, [requestedSection]);
+      setSelected(requestedSection);
+  }, [requestedSection, contributed]);
   useEffect(() => {
     if (requestedSection === selected)
       navigation?.complete({ status: "opened" });
@@ -125,7 +131,7 @@ export function Settings({
           <div hidden={selected !== "messages"}>
             <MessageSettings active={selected === "messages"} />
             {selected === "messages" &&
-              contributed.map((card) => (
+              messageCards.map((card) => (
                 <OwnedContribution key={card.key} entry={card} registry={cards}>
                   {(entry, active) => {
                     const Card = entry.component;
@@ -134,6 +140,18 @@ export function Settings({
                 </OwnedContribution>
               ))}
           </div>
+          {contributed.map(
+            (card) =>
+              card.group &&
+              selected === card.key && (
+                <OwnedContribution key={card.key} entry={card} registry={cards}>
+                  {(entry, active) => {
+                    const Card = entry.component;
+                    return <Card active={active} />;
+                  }}
+                </OwnedContribution>
+              ),
+          )}
           <div hidden={selected !== "profile"}>
             <ProfileSettings communities={communities} />
           </div>

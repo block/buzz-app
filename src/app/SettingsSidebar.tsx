@@ -1,6 +1,8 @@
+import { useSyncExternalStore } from "react";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { ArrowLeftIcon } from "../shared/design-system/icons";
+import type { SettingsCards } from "../features/settings/service";
 import { settingsSections } from "./Settings";
 import channelStyles from "../bundled/channels/Channels.module.css";
 import styles from "./Settings.module.css";
@@ -15,13 +17,22 @@ const groups = [
 
 export function SettingsSidebar({
   selected,
+  cards,
   onBack,
   onSection,
 }: {
   selected: string;
+  cards: SettingsCards;
   onBack: () => void;
   onSection: (section: string) => void;
 }) {
+  const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
+  const contributedGroups = [
+    ...new Set(contributed.flatMap((card) => card.group ?? [])),
+  ].map((label) => ({
+    label,
+    entries: contributed.filter((card) => card.group === label),
+  }));
   return (
     <div className="shell-sidebar-default">
       <Panel as="aside" aria-label="Settings sidebar">
@@ -65,6 +76,29 @@ export function SettingsSidebar({
                 </section>
               );
             })}
+            {contributedGroups.map((group) => (
+              <section
+                key={group.label}
+                aria-labelledby={`settings-${group.label}`}
+              >
+                <h2
+                  id={`settings-${group.label}`}
+                  className={styles.settingsGroupTitle}
+                >
+                  {group.label}
+                </h2>
+                <div className={styles.settingsGroupItems}>
+                  {group.entries.map((card) => (
+                    <NavigationItem
+                      key={card.key}
+                      label={card.title}
+                      selected={selected === card.key}
+                      onClick={() => onSection(card.key)}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
           </nav>
         </div>
       </Panel>

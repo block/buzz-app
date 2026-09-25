@@ -327,6 +327,12 @@ test("resizing, collapsed groups and new unread evidence update only the display
     "open",
     "",
   );
+  await expect(
+    list(page).locator("details").first().locator("[inert]"),
+  ).toHaveCount(0);
+  await expect(row(page, "Beta")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(row(page, "alpha")).toBeFocused();
   // A tall viewport makes every row visible; shrinking restores the bottom cue.
   await scroll(page, 0);
   await page.setViewportSize({ width: 1440, height: 6000 });

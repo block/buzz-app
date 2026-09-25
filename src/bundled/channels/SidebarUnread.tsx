@@ -116,15 +116,21 @@ export function SidebarUnread({
     if (!target) return;
     const { row } = target;
     const section = row.closest("details");
-    if (section) section.open = true;
-    const rect = row.getBoundingClientRect();
-    viewport.scrollTop +=
-      rect.top -
-      viewport.getBoundingClientRect().top -
-      (viewport.clientHeight - rect.height) / 2;
-    // Continue keyboard navigation at the revealed row, not the start of the
-    // roster. Its existing focus preparation still applies; focus is not selection.
-    row.focus({ preventScroll: true });
+    if (section && !section.open) {
+      // Use the section's controlled toggle path so React removes `inert`
+      // before focus enters the newly expanded content.
+      section.querySelector<HTMLElement>("summary")?.click();
+    }
+    requestAnimationFrame(() => {
+      const rect = row.getBoundingClientRect();
+      viewport.scrollTop +=
+        rect.top -
+        viewport.getBoundingClientRect().top -
+        (viewport.clientHeight - rect.height) / 2;
+      // Continue keyboard navigation at the revealed row, not the start of the
+      // roster. Its existing focus preparation still applies; focus is not selection.
+      row.focus({ preventScroll: true });
+    });
   };
   return (
     <div className={styles.channelListFrame}>

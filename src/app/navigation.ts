@@ -271,7 +271,9 @@ export function useAppNavigation(services: AppServices) {
       // Retrying presentation must also repair its failed dependency. Only touch the
       // selected, authorized destination; never reconnect an unrelated community.
       if (
-        (pageKey === channelsKey || pageKey === "buzz.projects/projects") &&
+        (pageKey === channelsKey ||
+          pageKey === "buzz.projects/projects" ||
+          pageKey === "buzz.agents/agents") &&
         !state.ingress &&
         !failure &&
         !waiting

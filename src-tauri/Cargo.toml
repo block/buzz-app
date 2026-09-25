@@ -54,6 +54,7 @@ objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std
 webview2-com = "=0.38.2"
 windows-core = "=0.61.2"
 tauri-winrt-notification = "=0.8.1"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] }

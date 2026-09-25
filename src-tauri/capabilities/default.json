@@ -12,6 +12,8 @@
     "allow-plugin-reload",
     "allow-plugin-module",
     "allow-plugin-recover",
+    "allow-plugin-host-run-command",
+    "allow-plugin-host-request",
     "allow-agent-control-create-prepare",
     "allow-agent-control-create-commit",
     "allow-agent-control-creation-profile",

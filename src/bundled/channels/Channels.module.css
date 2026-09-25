@@ -276,7 +276,7 @@ html[data-keyboard-navigation]
   margin-left: var(--space-panel-gap);
 }
 /* Settings replaces the primary surface without collapsing its retained layout. */
-.panelStack > :not(.companion) {
+.panelStack > :is(:has(> .settingsPanel), .retainedPanel[inert]) {
   grid-area: 1 / 1;
 }
 .retainedPanel {

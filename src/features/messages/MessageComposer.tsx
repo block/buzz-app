@@ -218,8 +218,13 @@ function Composer({
       previous &&
       (previous === document.activeElement ||
         (!previous.isConnected && document.activeElement === document.body))
-    )
-      input.current?.focus();
+    ) {
+      const editor = input.current;
+      if (!editor) return;
+      const end = editor.value.length;
+      editor.setSelectionRange(end, end);
+      editor.focus();
+    }
   }, []);
   const nonmembers = useNonmemberMentions(session, channelId, () =>
     input.current?.focus(),

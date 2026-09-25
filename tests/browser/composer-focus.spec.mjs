@@ -23,8 +23,12 @@ test("selecting a channel or DM focuses its composer and retains drafts", async 
     await expect(input).toBeFocused();
     if (index < 2) {
       await page.keyboard.type(`Draft for ${name}`);
+      await expect(input).toHaveText(`Draft for ${name}`);
+    } else {
+      await expect(input).toHaveText(`Draft for ${name}`);
+      await page.keyboard.type(" continued");
+      await expect(input).toHaveText(`Draft for ${name} continued`);
     }
-    await expect(input).toHaveText(`Draft for ${name}`);
   }
   const settings = page.getByRole("button", {
     name: "Channel settings",

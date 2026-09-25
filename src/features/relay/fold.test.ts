@@ -83,7 +83,7 @@ describe("message fold", () => {
       rootOnly,
     ]);
     const expectedTen = [b, same]
-      .sort((x, y) => y.id.localeCompare(x.id))
+      .sort((x, y) => x.id.localeCompare(y.id))
       .map((event) => event.id);
     expect(rows.map((row) => row.id)).toEqual([
       ...expectedTen,

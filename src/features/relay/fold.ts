@@ -18,6 +18,7 @@ import {
 } from "./message-content";
 
 import { channelRowKind, membershipChange } from "./membership";
+import { compareMessages, eventMs } from "./message-order";
 const HEX64 = /^[0-9a-f]{64}$/;
 
 function isLegacyVoiceNote(mime: string | undefined, name: string | undefined) {
@@ -236,6 +237,7 @@ export function foldMessages(
             channelId,
             authorId: event.pubkey,
             createdAt: event.created_at,
+            createdAtMs: eventMs(event),
             content: "",
             membership,
             mentions: Object.freeze([]),
@@ -283,6 +285,7 @@ export function foldMessages(
         replyParentId: threadReference(event)?.parentId,
         authorId: event.pubkey,
         createdAt: event.created_at,
+        createdAtMs: eventMs(event),
         content: projected.content,
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
@@ -341,9 +344,7 @@ export function foldMessages(
       }),
     );
   }
-  return rows.sort(
-    (a, b) => a.createdAt - b.createdAt || b.id.localeCompare(a.id),
-  );
+  return rows.sort(compareMessages);
 }
 
 /** Count people, but retain event IDs for author-only removal and duplicate cleanup. */

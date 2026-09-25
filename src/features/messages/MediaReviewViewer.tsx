@@ -15,6 +15,7 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
+import { compareMessages } from "../relay/message-order";
 import { useRowProfiles } from "../relay/react";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rejectUnhandledFileDrop } from "./use-file-drop";
@@ -117,7 +118,7 @@ function ResolvedReview({
       (row, index, rows) =>
         rows.findIndex((item) => item.id === row.id) === index,
     )
-    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    .sort(compareMessages);
   const threadRows = [snapshot.root, ...replies];
   const attachmentAvailable = threadRows.some((row) =>
     row.attachments.some((item) => item.url === props.attachment.url),

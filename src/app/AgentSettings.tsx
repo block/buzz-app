@@ -69,11 +69,7 @@ export function AgentSettings({
       <h2 id="agent-settings-title" className="mt-0 mb-6 text-label">
         Agents
       </h2>
-      <section
-        id="agent-harnesses"
-        aria-labelledby="harnesses-title"
-        className={styles.card}
-      >
+      <section aria-labelledby="harnesses-title" className={styles.card}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <h3 id="harnesses-title" className="m-0 text-label">

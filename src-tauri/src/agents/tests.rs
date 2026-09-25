@@ -131,19 +131,6 @@ fn harnesses_classify_cli_and_adapter_separately() {
     assert_eq!(pi_status(true, true, false), "cli-needed");
     assert_eq!(pi_status(true, false, true), "adapter-needed");
     assert_eq!(pi_status(true, true, true), "ready");
-
-    let options = harness_options();
-    assert_eq!(options.len(), 3);
-    assert_eq!(options[0].status, "ready");
-    assert_eq!(
-        options[1].status,
-        if installed_goose().is_some() {
-            "ready"
-        } else {
-            "cli-needed"
-        }
-    );
-    assert_eq!(options[2].available, options[2].status == "ready");
 }
 
 #[test]
@@ -161,7 +148,12 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
             "providers":[{"value":"databricks_v2", "label":"Databricks v2"}]
         })
     );
+    assert_eq!(before["harnessOptions"].as_array().unwrap().len(), 3);
     assert_eq!(before["harnessOptions"][2]["label"], "Pi");
+    assert_eq!(
+        before["harnessOptions"][2]["available"],
+        before["harnessOptions"][2]["status"] == "ready"
+    );
     assert_eq!(before["harnessOptions"][2]["defaultArgs"], json!([]));
     assert_eq!(
         before["harnessOptions"][2]["status"],

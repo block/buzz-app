@@ -329,13 +329,15 @@ function ProfileDetails({
                     control={control}
                     pubkey={pubkey}
                     context={context}
+                    navigation={navigation}
                     session={session}
                     canOpenPrivate={verifiedOwner === viewer && !!viewer}
                     selectedId={instanceId}
                     scope={scope}
                     communityOrigin={communityOrigin}
                     viewer={viewer}
-                    knownAgent={agentPubkeys.has(pubkey)}
+                    knownAgent={knownAgent}
+                    owned={knownAgent && !!viewer && verifiedOwner === viewer}
                   />
                 )}
                 <div className={styles.publicKey}>

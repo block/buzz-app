@@ -8,6 +8,9 @@ import { bytesToHex } from "nostr-tools/utils";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { attestedOwner } from "../../features/agents/owner-attestation";
+import { controlFixture } from "../../features/agents/control-testing";
+import { createAgentControl } from "../../features/agents/control";
+import type { Navigation } from "../../features/navigation/controller";
 import { profileTarget } from "../../features/profiles/target";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import type { LiveCallbacks } from "../../features/relay/live";
@@ -622,3 +625,80 @@ it.each(["remove", "replace", "equal-time removal"])(
     }
   },
 );
+
+it("offers instructions only for a signed owner with a unique native instance", async () => {
+  const agent = keypair();
+  const ownerKey = keypair();
+  const outsider = keypair();
+  for (const viewer of [ownerKey, outsider]) {
+    const head = timedProfile(agent, [auth(agent, ownerKey)], 3);
+    const h = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: relayKey.pubkey,
+      scope: "wss://relay.example.test",
+      media: () => undefined,
+      query: async (filters) =>
+        filters.some((filter) => filter.kinds?.includes(0)) ? [head] : [],
+      subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
+    });
+    owners.push(h);
+    const fixture = controlFixture();
+    fixture.agent.pubkey = agent.pubkey;
+    const control = createAgentControl(fixture.host);
+    const snapshot = {
+      status: "ready" as const,
+      generation: 1,
+      viewer: viewer.pubkey,
+      scope: `https://relay.example.test:${viewer.pubkey}`,
+      session: h.session,
+    };
+    const relay: RelayData = {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      retry() {},
+      disconnect() {},
+      clearCache: async () => {},
+    };
+    const open = vi.fn(async () => ({ status: "opened" as const }));
+    const panel = render(
+      <ProfilePanel
+        relay={relay}
+        control={control}
+        navigation={{ open } as unknown as Navigation}
+        target={profileTarget(agent.pubkey) ?? ""}
+        close={() => {}}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Helper" });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("region", { name: "Linked agent instances" }),
+      ).toHaveTextContent("Fixture agent"),
+    );
+    if (viewer === ownerKey) {
+      const button = await screen.findByRole("button", {
+        name: "Agent instructions",
+      });
+      await userEvent.setup().click(button);
+      expect(open).toHaveBeenCalledWith({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.agents",
+        pageId: "agents",
+        scope: {
+          viewer: viewer.pubkey,
+          communityOrigin: "https://relay.example.test",
+        },
+        route: { version: 1, params: { pubkey: agent.pubkey } },
+      });
+    } else {
+      await screen.findByRole("button", { name: "View in Agents" });
+      expect(
+        screen.queryByRole("button", { name: "Agent instructions" }),
+      ).toBeNull();
+      expect(open).not.toHaveBeenCalled();
+    }
+    panel.unmount();
+    control.dispose();
+  }
+});

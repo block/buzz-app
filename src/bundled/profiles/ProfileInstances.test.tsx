@@ -11,6 +11,7 @@ import type {
   AgentControl,
   AgentControlState,
 } from "../../features/agents/control";
+import type { Navigation } from "../../features/navigation/controller";
 import type { RelaySession } from "../../features/relay/session";
 import { instanceTarget } from "../../features/profiles/instance-target";
 import { ProfileInstances } from "./ProfileInstances";
@@ -42,6 +43,8 @@ function fixture() {
     refresh,
   } as unknown as AgentControl;
   const open = vi.fn(() => true);
+  const openPage = vi.fn(async () => ({ status: "opened" as const }));
+  const navigation = { open: openPage } as unknown as Navigation;
   const context = { open, canOpen: () => true, channelId: "channel" };
   let archiveSnapshot = { status: "idle", archived: [] as string[] };
   const archiveListeners = new Set<() => void>();
@@ -69,6 +72,8 @@ function fixture() {
   return {
     control,
     context,
+    navigation,
+    openPage,
     session,
     open,
     update,
@@ -85,6 +90,7 @@ it("uses native exact identity and community, never library display links", () =
     <ProfileInstances
       control={f.control}
       context={f.context}
+      navigation={f.navigation}
       session={f.session}
       canOpenPrivate
       pubkey={person}
@@ -114,6 +120,15 @@ it("uses native exact identity and community, never library display links", () =
   expect(screen.getByText("matched")).toBeTruthy();
   expect(f.ensureArchives).toHaveBeenCalledOnce();
   expect(screen.queryByText(/wrong-key|wrong-relay|stopped/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Agent instructions" }));
+  expect(f.openPage).toHaveBeenCalledWith({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: { viewer, communityOrigin: "https://relay.example.test" },
+    route: { version: 1, params: { pubkey: person } },
+  });
   fireEvent.click(screen.getByRole("button", { name: "matched" }));
   expect(f.open).toHaveBeenCalledWith(
     instanceTarget({
@@ -258,4 +273,54 @@ it("does not refresh or display instances for a human without a native match", (
   expect(
     screen.queryByRole("region", { name: "Linked agent instances" }),
   ).toBeNull();
+});
+
+it("hides edit ingress without owner evidence or an unambiguous ready native match", () => {
+  const f = fixture();
+  const props = {
+    control: f.control,
+    context: f.context,
+    navigation: f.navigation,
+    session: f.session,
+    pubkey: person,
+    viewer,
+    scope: `https://relay.example.test:${viewer}`,
+    communityOrigin: "https://relay.example.test",
+    knownAgent: true,
+  };
+  const page = render(<ProfileInstances {...props} />);
+  f.update({
+    status: "ready",
+    busy: false,
+    error: null,
+    data: {
+      runtimeAvailable: true,
+      agents: [
+        instance("one", person, "wss://relay.example.test"),
+      ] as NonNullable<AgentControlState["data"]>["agents"],
+    },
+  });
+  expect(
+    screen.queryByRole("button", { name: "Agent instructions" }),
+  ).toBeNull();
+  page.rerender(<ProfileInstances {...props} owned />);
+  expect(
+    screen.getByRole("button", { name: "Agent instructions" }),
+  ).toBeTruthy();
+  f.update({
+    status: "ready",
+    busy: false,
+    error: null,
+    data: {
+      runtimeAvailable: true,
+      agents: [
+        instance("one", person, "wss://relay.example.test"),
+        instance("two", person, "wss://relay.example.test"),
+      ] as NonNullable<AgentControlState["data"]>["agents"],
+    },
+  });
+  expect(
+    screen.queryByRole("button", { name: "Agent instructions" }),
+  ).toBeNull();
+  expect(f.openPage).not.toHaveBeenCalled();
 });

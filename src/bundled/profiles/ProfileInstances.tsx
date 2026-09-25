@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import type { AgentControl } from "../../features/agents/control";
+import type { Navigation } from "../../features/navigation/controller";
 import type { PanelProps } from "../../features/panels/service";
 import type { RelaySession } from "../../features/relay/session";
 import { instanceTarget } from "../../features/profiles/instance-target";
@@ -10,6 +11,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 export function ProfileInstances({
   control,
   context,
+  navigation,
   session,
   canOpenPrivate = false,
   selectedId,
@@ -18,10 +20,12 @@ export function ProfileInstances({
   communityOrigin,
   viewer,
   knownAgent,
+  owned = false,
   errorHandledByActions = false,
 }: {
   control: AgentControl;
   context?: PanelProps["context"];
+  navigation?: Navigation | undefined;
   session: RelaySession;
   canOpenPrivate?: boolean;
   selectedId?: string | undefined;
@@ -30,6 +34,7 @@ export function ProfileInstances({
   communityOrigin: string | undefined;
   viewer: string | undefined;
   knownAgent: boolean;
+  owned?: boolean;
   /** The composed Info actions surface owns controller failure and recovery. */
   errorHandledByActions?: boolean;
 }) {
@@ -126,6 +131,33 @@ export function ProfileInstances({
             );
           })}
         </ul>
+      )}
+      {owned && instances.length === 1 && navigation && viewer && (
+        <Button
+          size="compact"
+          variant="ghost"
+          onClick={() => {
+            // Recheck the native snapshot before opening an owner-scoped editor.
+            const current = control.snapshot();
+            const currentMatches =
+              scope && current.status === "ready"
+                ? sameCommunityAgents(current.data?.agents ?? [], scope).filter(
+                    (agent) => agent.pubkey === pubkey,
+                  )
+                : [];
+            if (currentMatches.length !== 1) return;
+            void navigation.open({
+              version: 1,
+              kind: "page",
+              pluginId: "buzz.agents",
+              pageId: "agents",
+              scope: { viewer, communityOrigin },
+              route: { version: 1, params: { pubkey } },
+            });
+          }}
+        >
+          Agent instructions
+        </Button>
       )}
     </section>
   );

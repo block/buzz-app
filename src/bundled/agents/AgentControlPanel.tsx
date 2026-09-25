@@ -1,5 +1,7 @@
 import type { useIdentityNames } from "../../features/identity-names/react";
 import { useAgentControl } from "../../features/agents/control-react";
+import { sameCommunityAgents } from "../../features/agents/choices";
+import type { PageNavigation } from "../../features/navigation/service";
 import { useEffect, useState, type ReactNode } from "react";
 import type {
   AgentControl,
@@ -23,11 +25,17 @@ export function AgentControlPanel({
   createOwner,
   resolveName,
   children,
+  editTarget,
+  editRequest,
+  onCloseTarget,
 }: {
   resolveName?: ReturnType<typeof useIdentityNames>;
   control: AgentControl;
   importDestination?: string;
   createOwner?: string | undefined;
+  editTarget?: string | null;
+  editRequest?: PageNavigation;
+  onCloseTarget?: () => void;
   children?: (
     state: AgentControlState,
     edit: (agent: AgentView, avatar?: string) => void,
@@ -49,8 +57,10 @@ export function AgentControlPanel({
     avatar?: string;
   } | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
-  const edit = (agent: AgentView, avatar?: string) =>
+  const edit = (agent: AgentView, avatar?: string) => {
     setSelected({ id: agent.id, ...(avatar ? { avatar } : {}) });
+    if (editTarget) onCloseTarget?.();
+  };
   const duplicate = (agent: AgentView) =>
     setAdding({
       destination: agent.relayUrl,
@@ -81,7 +91,36 @@ export function AgentControlPanel({
       ...facts,
       { pubkey: agent.pubkey, name: agent.name, isAgent: true },
     ]) ?? agent.name;
-  const editing = state.data?.agents.find((agent) => agent.id === selected?.id);
+  // Route selection takes precedence over card-local editing. Never guess among
+  // multiple native records for the same public identity in this community.
+  const routed =
+    editTarget && importDestination && createOwner
+      ? sameCommunityAgents(
+          state.data?.agents ?? [],
+          `${importDestination}:${createOwner}`,
+        ).filter((agent) => agent.pubkey === editTarget)
+      : [];
+  const editing = editTarget
+    ? routed.length === 1
+      ? routed[0]
+      : undefined
+    : state.data?.agents.find((agent) => agent.id === selected?.id);
+  useEffect(() => {
+    if (
+      !editRequest ||
+      editRequest.signal.aborted ||
+      state.status === "loading" ||
+      state.status === "idle"
+    )
+      return;
+    if (state.status !== "ready") {
+      editRequest.complete({ status: "failed", reason: "unavailable" });
+    } else if (editing) {
+      editRequest.complete({ status: "opened" });
+    } else {
+      editRequest.complete({ status: "failed", reason: "not-found" });
+    }
+  }, [editRequest, editing, state.status]);
   const deletion = state.data?.agents.find((agent) => agent.id === deleting);
   return (
     <section

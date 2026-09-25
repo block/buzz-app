@@ -1,12 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import {
-  open,
-  upper,
-  anchor,
-  expectAnchor,
-  settle,
-  wheelToCompletion,
-} from "./timeline.mjs";
+import { open, upper, anchor, expectAnchor } from "./timeline.mjs";
 
 // Reading setup must not accidentally exercise older-page loading.
 test.use({
@@ -98,70 +91,61 @@ test("reading setup rejects an immobile timeline instead of accepting a bottom a
       passive: false,
     });
   });
-  await expect(upper(page)).rejects.toThrow(
-    "reading gesture moves away from bottom",
-  );
+  await expect(upper(page)).rejects.toThrow("timeline wheel gesture completes");
 });
 
-test("reading setup drains a timed-out DOM read before returning its rejection", async ({
+test("wheel setup drains a timed-out DOM read before returning its rejection", async ({
   page,
-  app,
 }) => {
-  await open(page, app);
-  await history(page).evaluate((element) => {
-    element.addEventListener("wheel", (event) => event.preventDefault(), {
-      passive: false,
-    });
-  });
-  const wheel = page.mouse.wheel.bind(page.mouse);
+  const { wheel } = await import("./timeline.mjs");
+  await page.setContent(
+    '<section role="region" aria-label="Channel message history" style="height:200px;overflow:auto"><div style="height:2000px"></div></section>',
+  );
+  await history(page).hover();
   const getByRole = page.getByRole.bind(page);
   const poll = expect.poll;
   const readStarted = Promise.withResolvers();
   const releaseRead = Promise.withResolvers();
   const pollEnded = Promise.withResolvers();
-  let holdNextRead = false;
   let readFinished = false;
   let returned = false;
-  page.mouse.wheel = async (x, y) => {
-    await wheel(x, y);
-    if (y < 0) holdNextRead = true;
-  };
   page.getByRole = (...args) => {
     const locator = getByRole(...args);
-    if (args[0] === "region" && args[1]?.name === "Channel message history") {
-      const evaluate = locator.evaluate.bind(locator);
-      locator.evaluate = async (...evaluateArgs) => {
-        if (holdNextRead) {
-          holdNextRead = false;
+    const evaluateHandle = locator.evaluateHandle.bind(locator);
+    locator.evaluateHandle = async (...evaluateArgs) => {
+      const handle = await evaluateHandle(...evaluateArgs);
+      const evaluate = handle.evaluate.bind(handle);
+      let first = true;
+      handle.evaluate = async (...readArgs) => {
+        if (first) {
+          first = false;
           readStarted.resolve();
           await releaseRead.promise;
+          const result = await evaluate(...readArgs);
+          readFinished = true;
+          return result;
         }
-        const result = await evaluate(...evaluateArgs);
-        readFinished = true;
-        return result;
+        return evaluate(...readArgs);
       };
-    }
+      return handle;
+    };
     return locator;
   };
   expect.poll = (callback, options) => {
-    if (options?.message !== "reading gesture moves away from bottom") {
-      return poll(callback, options);
-    }
     const matcher = poll(callback, { ...options, timeout: 100 });
     return {
-      toBeGreaterThan: async (before) => {
+      toBe: async (expected) => {
         try {
-          return await matcher.toBeGreaterThan(before);
+          return await matcher.toBe(expected);
         } finally {
           pollEnded.resolve();
         }
       },
     };
   };
-  const outcome = upper(page).then(
+  const outcome = wheel(page, -100).then(
     () => {
       returned = true;
-      return undefined;
     },
     (error) => {
       returned = true;
@@ -170,9 +154,7 @@ test("reading setup drains a timed-out DOM read before returning its rejection",
   );
   try {
     await readStarted.promise;
-    readFinished = false;
     await pollEnded.promise;
-    // Let rejection continuations run, with the DOM operation still held.
     await new Promise((resolve) => setImmediate(resolve));
     expect(
       returned,
@@ -181,71 +163,165 @@ test("reading setup drains a timed-out DOM read before returning its rejection",
     releaseRead.resolve();
     const result = await outcome;
     expect(readFinished).toBe(true);
-    expect(result?.message).toContain("reading gesture moves away from bottom");
+    expect(result?.message).toContain("timeline wheel gesture completes");
   } finally {
     releaseRead.resolve();
     await outcome;
     expect.poll = poll;
     page.getByRole = getByRole;
-    page.mouse.wheel = wheel;
   }
 });
 
-test("wheel completion waits through stable geometry and a held input tail", async ({
+// No app fixture: these controls exercise native input/scrollend ordering only.
+test("wheel baseline waits through a geometry pause until the final input completes", async ({
   page,
 }) => {
-  // Real browser scrolling, without an app build. Hold completion delivery so
-  // stable geometry cannot accidentally stand in for the wheel lifecycle.
-  await page.setContent(`
-    <section role="region" aria-label="Channel message history"
-      style="height:200px;width:400px;overflow:auto">
-      <div data-message-id="reading"><p style="margin:0;height:1600px">Reading</p></div>
-    </section>
-  `);
-  await expect(wheelToCompletion(page, -17)).rejects.toThrow(
-    "wheel completion requires room to scroll",
+  const { wheel, settle } = await import("./timeline.mjs");
+  await page.setContent(
+    '<section role="region" aria-label="Channel message history" style="height:200px;overflow:auto"><div style="height:2000px"></div></section>',
   );
   await history(page).evaluate((element) => {
     window.heldScrollEnds = 0;
-    element.addEventListener(
-      "scrollend",
-      (event) => {
-        if (event.isTrusted) {
-          event.stopImmediatePropagation();
-          window.heldScrollEnds++;
-        }
-      },
-      { capture: true },
-    );
+    window.holdScrollEnd = true;
+    element.addEventListener("scrollend", (event) => {
+      if (window.holdScrollEnd) {
+        event.stopImmediatePropagation();
+        window.heldScrollEnds++;
+      }
+    });
   });
+  await history(page).hover();
   let finished = false;
-  const outcome = wheelToCompletion(page, 633).then(
-    () => {
-      finished = true;
-    },
-    (error) => {
-      finished = true;
-      return error;
-    },
-  );
+  const outcome = wheel(page, 300).then(() => {
+    finished = true;
+  });
   try {
-    await page.waitForFunction(() => window.heldScrollEnds === 1);
+    await expect.poll(() => page.evaluate(() => window.heldScrollEnds)).toBe(1);
+    // Geometry-only settling would return here: explicitly hold the final
+    // movement, rather than hoping a slow machine produces a long enough pause.
     await settle(page);
-    const paused = await anchor(page);
-    expect(finished, "stable geometry is not wheel completion").toBe(false);
-    // Deliver the remaining movement only after the old geometry poll passed.
-    await page.mouse.wheel(0, 17);
-    await page.waitForFunction(() => window.heldScrollEnds === 2);
-    await settle(page);
-    expect(finished, "the completion event is still held").toBe(false);
-    await history(page).dispatchEvent("scrollend");
-    expect(await outcome).toBeUndefined();
-    const completed = await anchor(page);
-    expect(completed.id).toBe(paused.id);
-    expect(paused.y - completed.y).toBeGreaterThan(4);
-    await expectAnchor(page, completed);
+    expect(finished, "stationary geometry is not completed input").toBe(false);
+    await page.evaluate(() => {
+      window.holdScrollEnd = false;
+    });
+    await page.mouse.wheel(0, 100);
+    await outcome;
+    expect(await history(page).evaluate((element) => element.scrollTop)).toBe(
+      400,
+    );
   } finally {
+    await page.evaluate(() => {
+      window.holdScrollEnd = false;
+    });
     await history(page).dispatchEvent("scrollend");
     await outcome;
+  }
+});
+
+test("wheel baseline rejects input blocked at the edge instead of accepting a stale completion", async ({
+  page,
+}) => {
+  const { wheel } = await import("./timeline.mjs");
+  await page.setContent(
+    '<section role="region" aria-label="Channel message history" style="height:200px;overflow:auto"><div style="height:2000px"></div></section>',
+  );
+  await history(page).hover();
+  const input = page.mouse.wheel.bind(page.mouse);
+  page.mouse.wheel = async (...args) => {
+    // A completion from before this gesture must not satisfy its observer.
+    await history(page).dispatchEvent("scrollend");
+    await input(...args);
+  };
+  try {
+    await expect(wheel(page, -100)).rejects.toThrow(
+      "timeline wheel gesture completes",
+    );
+    expect(await history(page).evaluate((element) => element.scrollTop)).toBe(
+      0,
+    );
+    // Failure must remove its observer; a later ordinary gesture still works.
+    await wheel(page, 100);
+    expect(await history(page).evaluate((element) => element.scrollTop)).toBe(
+      100,
+    );
+  } finally {
+    page.mouse.wheel = input;
+  }
+});
+
+test("upper waits for end's held final movement before capturing the reading anchor", async ({
+  page,
+}) => {
+  const { settle } = await import("./timeline.mjs");
+  await page.setContent(
+    '<section role="region" aria-label="Channel message history" style="height:200px;overflow:auto"><div data-message-id="row" style="height:2000px"><p style="margin:0">Reading row</p></div></section>',
+  );
+  await history(page).evaluate((element) => {
+    window.heldEnd = false;
+    window.upwardGestures = 0;
+    window.releaseEnd = () => {
+      window.holdEnd = false;
+      element.dispatchEvent(new Event("scrollend"));
+    };
+    window.holdEnd = true;
+    element.addEventListener("wheel", (event) => {
+      if (event.deltaY < 0) window.upwardGestures++;
+    });
+    element.addEventListener("scrollend", (event) => {
+      if (window.holdEnd) {
+        event.stopImmediatePropagation();
+        window.heldEnd = true;
+      }
+    });
+  });
+  const input = page.mouse.wheel.bind(page.mouse);
+  const poll = expect.poll;
+  const waitingForCompletion = Promise.withResolvers();
+  expect.poll = (callback, options) =>
+    poll(async () => {
+      const value = await callback();
+      if (
+        options?.message === "timeline wheel gesture completes" &&
+        (await page.evaluate(() => window.heldEnd))
+      )
+        waitingForCompletion.resolve();
+      return value;
+    }, options);
+  let first = true;
+  page.mouse.wheel = (x, y) => {
+    const distance = first ? y - 2 : y;
+    first = false;
+    return input(x, distance);
+  };
+  const outcome = upper(page);
+  try {
+    await expect.poll(() => page.evaluate(() => window.heldEnd)).toBe(true);
+    // Observe the helper's wait, not just the browser's held event: otherwise
+    // this negative check can beat upper's continuation even without the barrier.
+    await waitingForCompletion.promise;
+    await settle(page);
+    expect(
+      await page.evaluate(() => window.upwardGestures),
+      "end must complete before upper reverses input",
+    ).toBe(0);
+    await page.evaluate(() => {
+      window.holdEnd = false;
+    });
+    // Deliver the withheld 2px tail with real input; only then may upper reverse.
+    await input(0, 2);
+    const saved = await outcome;
+    expect(saved).toEqual(await anchor(page));
+    expect(await history(page).evaluate((element) => element.scrollTop)).toBe(
+      1150,
+    );
+    expect(await page.evaluate(() => window.upwardGestures)).toBe(1);
+  } finally {
+    await page.evaluate(() => window.releaseEnd());
+    try {
+      await outcome;
+    } finally {
+      expect.poll = poll;
+      page.mouse.wheel = input;
+    }
   }
 });

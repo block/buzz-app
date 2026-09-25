@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { anchor, settle, upper, expectAnchor } from "./timeline.mjs";
+import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 // Resize tests must not enter the fixture’s deliberately held paging path.
@@ -134,7 +134,7 @@ scroll(
     await settle(page);
     const initialOffset = await history.evaluate((el) => el.scrollTop);
     await history.hover();
-    await page.mouse.wheel(0, -300);
+    await wheel(page, -300);
     await expect
       .poll(() => history.evaluate((el) => el.scrollTop))
       .toBeLessThan(initialOffset - 100);
@@ -649,9 +649,10 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
         ? toggle.y - visibleTop - 8
         : toggle.y + toggle.height - visibleBottom + 8;
     const before = await settingsPage.evaluate((el) => el.scrollTop);
-    await page.mouse.wheel(
-      0,
+    await wheel(
+      page,
       Math.sign(distance) * Math.max(Math.abs(distance), 24),
+      settingsPage,
     );
     await expect
       .poll(() => settingsPage.evaluate((el) => el.scrollTop), {
@@ -723,7 +724,7 @@ readingTest(
       gesture++
     ) {
       const before = await history.evaluate((el) => el.scrollTop);
-      await page.mouse.wheel(0, -300);
+      await wheel(page, -300);
       await expect
         .poll(() => history.evaluate((el) => el.scrollTop))
         .toBeLessThan(before);

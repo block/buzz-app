@@ -21,24 +21,20 @@ const pendingSnapshot: EventViewSnapshot = Object.freeze({
   events: [],
 });
 
-/** "Managed by" from verifiable relay evidence only: a verified NIP-OA owner on
- * the agent's winning signed kind 0. Mounted for an agent hint, which decides
- * visibility but never who owns the key. Renders nothing without a verified owner. */
-export function ProfileAgentIdentity({
-  session,
-  pubkey,
-  viewer,
-  context,
-}: {
-  session: RelaySession;
-  pubkey: string;
-  viewer: string | undefined;
-  context: PanelProps["context"];
-}) {
+/** Verified NIP-OA owner of the winning signed kind 0, or none. Agent hints
+ * decide whether to mount this view; they never establish ownership. */
+export function useVerifiedAgentOwner(
+  session: RelaySession,
+  pubkey: string | undefined,
+): string | undefined {
   // A session-owned view: live events, reconnect refresh and purge, no polling.
   // Capacity or a closed session leaves no view; reopening the profile retries.
   const [view, setView] = useState<ProfileView | null>();
   useEffect(() => {
+    if (!pubkey) {
+      setView(null);
+      return;
+    }
     let owned: ProfileView;
     try {
       owned = session.observe([{ kinds: [0], authors: [pubkey], limit: 1 }]);
@@ -61,10 +57,10 @@ export function ProfileAgentIdentity({
   // Without a live view nothing can signal an auth-only change, so show nothing.
   const directoryHead = useSyncExternalStore(
     session.profiles.subscribe,
-    () => session.profiles.event?.(pubkey),
-    () => session.profiles.event?.(pubkey),
+    () => (pubkey ? session.profiles.event?.(pubkey) : undefined),
+    () => (pubkey ? session.profiles.event?.(pubkey) : undefined),
   );
-  const head = view ? directoryHead : undefined;
+  const head = view && pubkey ? directoryHead : undefined;
   const latest = events.events
     .filter(
       (event) =>
@@ -87,11 +83,22 @@ export function ProfileAgentIdentity({
   useEffect(() => {
     if (events.status === "idle") void view?.refresh();
   }, [view, events.status]);
-  const owner =
-    verified && latest && verified.id === latest.id
-      ? verified.owner
-      : undefined;
-  if (!owner) return null;
+  return verified && latest && verified.id === latest.id
+    ? verified.owner
+    : undefined;
+}
+
+export function ProfileAgentIdentity({
+  session,
+  owner,
+  viewer,
+  context,
+}: {
+  session: RelaySession;
+  owner: string;
+  viewer: string | undefined;
+  context: PanelProps["context"];
+}) {
   return (
     <section aria-label="Agent identity" className={styles.agentIdentity}>
       <h3 className="text-body">Managed by</h3>

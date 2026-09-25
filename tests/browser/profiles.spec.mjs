@@ -27,6 +27,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await avatar.focus();
   await avatar.press("Enter");
   await expect(key).toHaveText(npubs.viewer);
+  await expect(panel.getByRole("tab", { name: "Memories" })).toHaveCount(0);
   const portrait = panel.getByRole("img", { name: "Viewer avatar" });
   await expect(portrait).toBeVisible();
   const name = panel.getByRole("heading", { name: "Viewer", exact: true });
@@ -107,11 +108,10 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(mention).toBeFocused();
   await mention.press("Space");
   await expect(key).toHaveText(npubs.mic);
+  await expect(panel.getByRole("tab", { name: "Memories" })).toHaveCount(0);
   expect(
     await page.evaluate(() => window.profilesFixture.report.memoryReads),
   ).toEqual([]);
-  await panel.getByRole("tab", { name: "Memories" }).click();
-  await expect(panel.getByText("Core memory", { exact: true })).toBeVisible();
   await page.evaluate(() =>
     window.profilesFixture.change("disable", "buzz.profiles"),
   );
@@ -148,6 +148,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     panel.getByRole("img", { name: "Pinky avatar" }),
   ).toHaveAttribute("data-size", "fill");
   await expect(panel.getByText("Agent profile", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("tab", { name: "Memories" })).toBeVisible();
   await panel.getByRole("tab", { name: "Channels" }).click();
   await expect(panel.getByRole("region", { name: "Channels" })).toContainText(
     "#One",
@@ -224,8 +225,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
       });
     }
   }
-  await panel.getByRole("tab", { name: "Memories" }).click();
-  await expect(panel.getByText("Core memory", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("tab", { name: "Memories" })).toHaveCount(0);
   await page.evaluate(() => window.profilesFixture.replace());
   await expect(panel).toHaveCount(0);
   await expect(page.getByText("Core memory", { exact: true })).toHaveCount(0);

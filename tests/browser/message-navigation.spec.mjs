@@ -430,7 +430,7 @@ const readingTest = test.extend({ tallMessages: true });
 readingTest(
   "exact thread navigation leaves the ordinary channel reading anchor unchanged",
   async ({ page, app }, testInfo) => {
-    const { settle, anchor, expectAnchor, wheelToCompletion } = await import(
+    const { settle, wheel, anchor, expectAnchor } = await import(
       "./timeline.mjs"
     );
     await open(page, app);
@@ -500,8 +500,8 @@ readingTest(
       record("installed");
     });
     try {
-      await wheelToCompletion(page, -650);
-      await settle(page);
+      await history.hover();
+      await wheel(page, -650);
       const reading = await anchor(page);
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
       await page

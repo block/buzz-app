@@ -45,6 +45,17 @@ test("editable composer renders links and mentions while preserving source and n
       .locator('a:has([data-link-kind="github"])')
       .first();
     const deliveredMentions = delivered.locator("[data-mention-kind]");
+    // Match the app's bundled typeface before comparing native font boxes.
+    // document.fonts.ready alone cannot detect a missing @font-face import.
+    await page.evaluate(() => document.fonts.ready);
+    expect(
+      await page.evaluate(() =>
+        Array.from(document.fonts).some(
+          (font) =>
+            font.family.includes("Inter Variable") && font.status === "loaded",
+        ),
+      ),
+    ).toBe(true);
     const inlineStyles = await Promise.all(
       [deliveredLink, deliveredMentions.nth(0), deliveredMentions.nth(1)].map(
         (locator) =>

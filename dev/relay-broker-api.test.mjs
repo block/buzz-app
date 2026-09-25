@@ -2376,14 +2376,17 @@ test("feedback media tags pass broker signing only for tenant-local bounded desc
 
 test("private feedback crosses the real broker and session without a readback or shared view", async () => {
   const h = await harness(success);
-  let live;
   let owner;
   try {
     const transport = await connectBrokerTransport(h.base);
-    live = await openBrokerSocket(transport);
     owner = createRelaySession(transport, {
       outboxStorage: { load: () => [], save() {} },
     });
+    // The session owns its own stream; waiting on a separate subscription does
+    // not establish that the publication owner's live ID has been admitted.
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().status).toBe("connected"),
+    );
     const outbox = owner.session.outbox;
     expect(outbox).toBeDefined();
     await outbox.ready();
@@ -2412,7 +2415,6 @@ test("private feedback crosses the real broker and session without a readback or
     ).toEqual([]);
   } finally {
     owner?.dispose();
-    live?.dispose();
     await h.close();
   }
 });
@@ -2453,3 +2455,41 @@ test("broker HTTP summaries respect live levels and trace excludes private filte
     setLogLevel("info");
   }
 });
+
+test.each([
+  [new SyntaxError("private response body"), "SyntaxError", 500],
+  [
+    new TypeError("private URL", { cause: { code: "ECONNREFUSED" } }),
+    "TypeError (ECONNREFUSED)",
+    502,
+  ],
+  [
+    Object.assign(new Error("private message"), {
+      name: "private name",
+      code: "private code",
+    }),
+    "Error",
+    500,
+  ],
+])(
+  "broker failure logs preserve safe categories/codes, not private exception text (%#)",
+  async (error, summary, status) => {
+    const logger = getLogger("relay-broker");
+    const reporters = [...logger.options.reporters];
+    const lines = [];
+    logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+    setLogLevel("info");
+    const h = await harness(() => {
+      throw error;
+    });
+    try {
+      expect((await h.post("query", filters)).status).toBe(status);
+      expect(lines).toContain(`Request failed: POST /relay/query: ${summary}`);
+      expect(lines.join(" ")).not.toContain("private");
+    } finally {
+      await h.close();
+      logger.setReporters(reporters);
+      setLogLevel("info");
+    }
+  },
+);

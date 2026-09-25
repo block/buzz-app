@@ -172,3 +172,8 @@ frames are outside this TypeScript logger.
 The implementation uses [Consola](https://github.com/unjs/consola) through
 `src/features/developer/logging.ts`; new owned TypeScript diagnostics can reuse
 `getLogger("component")`. Do not wrap the global console or dump raw payloads.
+The shared TypeScript logger is also bundled with production clients at Info;
+only its Vite settings endpoint/control and live level synchronization are dev-only.
+The former `buzz.debug.relay` localStorage switch is replaced by this control.
+Failure logs use static WebSocket reasons and allowlisted broker exception categories
+and network codes, not arbitrary error messages/stacks that may embed private data.

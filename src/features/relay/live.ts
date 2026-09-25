@@ -423,6 +423,7 @@ export function subscribeRelayTraffic(
     const valid = () => !closed && current === generation;
     const reconnect = (reason: string) => {
       if (!valid()) return;
+      log.warn(`${peer} ${reason}`);
       clearSocket();
       connection = "retrying";
       connectionError = reason;
@@ -439,6 +440,7 @@ export function subscribeRelayTraffic(
     };
     const terminal = (reason: string) => {
       if (!valid()) return;
+      log.error(`${peer} ${reason}`);
       clearSocket();
       connection = "error";
       connectionError = reason;
@@ -450,7 +452,6 @@ export function subscribeRelayTraffic(
       ws = socketFactory(url);
       socket = ws;
     } catch {
-      log.warn(`${peer} connection unavailable`);
       reconnect("Live connection unavailable");
       return;
     }
@@ -465,11 +466,7 @@ export function subscribeRelayTraffic(
     };
     ws.onmessage = async (event) => {
       if (!valid()) return;
-      if (
-        !valid() ||
-        typeof event.data !== "string" ||
-        event.data.length > 1024 * 1024
-      ) {
+      if (typeof event.data !== "string" || event.data.length > 1024 * 1024) {
         logSocketFrame(peer, "←", event.data);
         return;
       }
@@ -607,14 +604,8 @@ export function subscribeRelayTraffic(
         );
       }
     };
-    ws.onerror = () => {
-      if (valid()) log.warn(`${peer} connection interrupted`);
-      reconnect("Live connection interrupted");
-    };
-    ws.onclose = (event) => {
-      if (valid()) log.info(`${peer} closed code=${event?.code ?? "unknown"}`);
-      reconnect("Live connection closed");
-    };
+    ws.onerror = () => reconnect("Live connection interrupted");
+    ws.onclose = () => reconnect("Live connection closed");
   }
   connect();
   return {

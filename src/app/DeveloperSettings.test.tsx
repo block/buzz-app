@@ -24,8 +24,11 @@ it("loads the saved level, changes it live, and displays remote changes", async 
   const control = screen.getByRole("combobox", { name: "Log level" });
   await waitFor(() => expect(control).toBeEnabled());
   expect(control).toHaveTextContent("Debug");
-  await user.click(control);
-  await user.click(screen.getByRole("option", { name: "Trace" }));
+  await user.tab();
+  expect(control).toHaveFocus();
+  await user.keyboard("{ArrowDown}");
+  await screen.findByRole("option", { name: "Trace" });
+  await user.keyboard("{End}{Enter}");
   await waitFor(() => expect(control).toHaveTextContent("Trace"));
   expect(logLevel()).toBe("trace");
   act(() => setLogLevel("warn"));
@@ -44,8 +47,11 @@ it("shows save failure without pretending the level was persisted", async () => 
   render(<DeveloperSettings relay={relay} />);
   const control = screen.getByRole("combobox", { name: "Log level" });
   await waitFor(() => expect(control).toBeEnabled());
-  await user.click(control);
-  await user.click(screen.getByRole("option", { name: "Silent" }));
+  await user.tab();
+  expect(control).toHaveFocus();
+  await user.keyboard("{ArrowDown}");
+  await screen.findByRole("option", { name: "Silent" });
+  await user.keyboard("{Home}{Enter}");
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Log level wasn’t saved",
   );

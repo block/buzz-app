@@ -597,6 +597,30 @@ const CONNECT_FAILURES = new Set([
 ]);
 export const isConnectFailure = (error) =>
   CONNECT_FAILURES.has(error?.code) || CONNECT_FAILURES.has(error?.cause?.code);
+const NETWORK_FAILURES = new Set([
+  ...CONNECT_FAILURES,
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "UND_ERR_SOCKET",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+]);
+// Exception messages and stacks can contain response bodies or credentialed URLs.
+// Keep diagnostic categories/codes without turning errors into payload dumps.
+function failureSummary(error) {
+  const category = [
+    "TypeError",
+    "SyntaxError",
+    "RangeError",
+    "AbortError",
+  ].includes(error?.name)
+    ? error.name
+    : "Error";
+  const code = [error?.code, error?.cause?.code].find((value) =>
+    NETWORK_FAILURES.has(value),
+  );
+  return `${category}${code ? ` (${code})` : ""}`;
+}
 const json = (res, code, body) => {
   res.writeHead(code, {
     "Content-Type": "application/json",
@@ -2545,7 +2569,9 @@ export function relayBrokerPlugin({
               error: "Query concurrency limit",
               sent: false,
             });
-          log.error(`Request failed: ${req.method} ${httpLabel(url.pathname)}`);
+          log.error(
+            `Request failed: ${req.method} ${httpLabel(url.pathname)}: ${failureSummary(error)}`,
+          );
           if (res.headersSent) return;
           // The relay was never reached, so nothing was delivered: the client may
           // treat this as a definite failure rather than an unknown outcome.

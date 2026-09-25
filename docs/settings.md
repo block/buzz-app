@@ -82,8 +82,10 @@ Do not expose the control until the native host owns the complete lifecycle:
 
 The first implementation may be macOS-only if other platforms show an explicit
 unsupported state. Linux and Windows need their own inhibitor decisions and native
-acceptance. Agent runtime catalogs and inherited global defaults remain separate
-product slices; individual-agent configuration stays on the Agents page.
+acceptance. The approved
+[Harnesses and global agent defaults](agent-control.md#planned-harnesses-and-agent-defaults)
+are separate implementation slices; individual-agent configuration stays on the
+Agents page.
 
 ## Settings coverage ledger
 
@@ -102,7 +104,7 @@ when a product decision or complete Buzz 1.0 owner exists.
 | Per-category sounds and sound preview | Pending a sound catalog, assets, preview, persistence, and delivery contract. |
 | Agent conversation behavior | Implemented under **Agents**. |
 | Keep awake while agents are active | Approved as a future device-wide preference; requires the bounded native lifecycle above. |
-| Agent runtimes and inherited defaults | Separate future native-agent product decisions; individual configuration remains on the Agents page. |
+| Harnesses and global agent defaults | Approved for Settings → Agents, pending implementation; individual configuration remains on the Agents page. See [the planned contract](agent-control.md#planned-harnesses-and-agent-defaults). |
 | Voice, custom emoji, local archive, and channel templates | Pending dedicated product and implementation slices. |
 | Compute, experiments, mobile pairing, and updates | Pending dedicated native/app capability owners. |
 | Community profiles and administration | Planned for the Communities list-detail architecture below. |

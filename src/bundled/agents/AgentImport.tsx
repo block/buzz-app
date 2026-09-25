@@ -157,11 +157,13 @@ export function AgentImport({
                       ),
                     );
                   })
-                  .catch(() => {
+                  .catch((problem) => {
                     if (generation.current !== current) return;
                     setPreview(null);
                     setError(
-                      "Import did not complete. Reload the list before trying again.",
+                      problem instanceof Error && problem.message
+                        ? problem.message
+                        : "Import did not complete. Reload the list before trying again.",
                     );
                   });
               }}

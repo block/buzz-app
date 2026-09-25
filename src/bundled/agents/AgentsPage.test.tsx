@@ -1856,3 +1856,82 @@ it("refreshes the consumed preview after a repair so the next agent can be repai
   expect(commits).toEqual(["team-preview-1", "team-preview-2"]);
   expect(f.calls.some((call) => call.action === "start")).toBe(false);
 });
+
+it.each([
+  {
+    name: "mismatched source library",
+    rejection:
+      "Source team binding differs from the imported agent; choose its original library",
+    expected: "choose its original library",
+    fromControl: false,
+  },
+  {
+    name: "changed saved revision",
+    rejection: "Agent settings changed; preview the team import again",
+    expected: "Agent settings changed; preview the team import again",
+    fromControl: false,
+  },
+  {
+    name: "unknown native failure",
+    rejection: new Error("raw private diagnostic"),
+    expected: "Could not confirm the operation.",
+    fromControl: false,
+  },
+  {
+    name: "unknown control failure",
+    rejection: { detail: "raw private diagnostic" },
+    expected: "Import did not complete. Reload the list before trying again.",
+    fromControl: true,
+  },
+])(
+  "retains safe repair recovery after status refresh: $name",
+  async ({ rejection, expected, fromControl }) => {
+    const commit = vi.fn().mockRejectedValue(rejection);
+    const { f, control } = setup("ready", (fixture) => {
+      fixture.agent.needsTeamImport = true;
+      fixture.host.previewImport = async () => ({
+        token: "team-preview",
+        sourcePath: "/fixture/installed/managed-agents.json",
+        warnings: [],
+        candidates: [fixture.agent],
+      });
+      if (!fromControl) fixture.host.commitImport = commit;
+    });
+    // Unexpected control-level failures retain the fallback; native failures go
+    // through the real projection's sanitized error boundary.
+    if (fromControl)
+      vi.spyOn(control, "commitImport").mockImplementation(commit);
+    await screen.findAllByRole("article", { name: "Agent Fixture agent" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Import or repair from old Buzz" }),
+    );
+    fireEvent.change(screen.getByLabelText("Destination community"), {
+      target: { value: f.agent.relayUrl },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+    const panel = within(
+      screen.getByRole("region", { name: "Import from old Buzz" }),
+    );
+    fireEvent.click(
+      await panel.findByRole("button", {
+        name: "Repair team import for Fixture agent",
+      }),
+    );
+    expect(await panel.findByRole("alert")).toHaveTextContent(expected);
+    await act(async () => control.refresh());
+    expect(control.snapshot()).toMatchObject({ status: "ready", error: null });
+    expect(panel.getByRole("alert")).toHaveTextContent(expected);
+    expect(screen.queryByText(/raw private diagnostic/)).toBeNull();
+    expect(f.agent.needsTeamImport).toBe(true);
+    expect(commit).toHaveBeenCalledExactlyOnceWith("team-preview", [
+      f.agent.id,
+    ]);
+    expect(f.calls.some((call) => call.action === "start")).toBe(false);
+    fireEvent.click(panel.getByRole("button", { name: "Retry" }));
+    await panel.findByRole("button", {
+      name: "Repair team import for Fixture agent",
+    });
+    expect(panel.queryByRole("alert")).toBeNull();
+    expect(commit).toHaveBeenCalledTimes(1);
+  },
+);

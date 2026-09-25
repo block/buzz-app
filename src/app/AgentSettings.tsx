@@ -1,8 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type {
-  AgentControl,
-  GooseInstallReport,
-} from "../features/agents/control";
+import type { AgentControl } from "../features/agents/control";
 import {
   setRememberAgentsPreference,
   useRememberAgentsPreference,
@@ -40,14 +37,14 @@ export function AgentSettings({
   const preference = useRememberAgentsPreference();
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
-  const [installing, setInstalling] = useState(false);
-  const [installResult, setInstallResult] = useState<GooseInstallReport | null>(
-    null,
-  );
-  const [installError, setInstallError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const copyAttempt = useRef(0);
   const state = useSyncExternalStore(control.subscribe, control.snapshot);
+  const {
+    installing,
+    report: installResult,
+    error: installError,
+  } = state.gooseInstall ?? { installing: false, report: null, error: null };
   useEffect(() => {
     if (active) void control.refresh();
   }, [active, control]);
@@ -58,23 +55,6 @@ export function AgentSettings({
   const available = harnesses.every((option) => !!option?.status);
   const goose = harnesses[1];
   const pi = harnesses[2];
-  const installGoose = async () => {
-    if (!control.installGoose || installing) return;
-    setInstalling(true);
-    setInstallResult(null);
-    setInstallError("");
-    try {
-      setInstallResult(await control.installGoose());
-    } catch {
-      setInstallError(
-        "Couldn’t install Goose. Try again or check the desktop app.",
-      );
-    } finally {
-      // The control lane is no longer busy; this snapshot re-runs installed().
-      await control.refresh();
-      setInstalling(false);
-    }
-  };
   const change = (enabled: boolean) =>
     setError(setRememberAgentsPreference(enabled));
   const copy = async (name: string, command: string) => {
@@ -112,7 +92,9 @@ export function AgentSettings({
           <Button
             size="sm"
             type="button"
-            disabled={state.status === "unavailable" || state.busy}
+            disabled={
+              state.status === "unavailable" || state.busy || installing
+            }
             loading={checking}
             onClick={() => {
               setChecking(true);
@@ -161,13 +143,16 @@ export function AgentSettings({
                     {option?.label === "Goose" &&
                       option.status === "cli-needed" &&
                       option.installSupported &&
-                      control.installGoose && (
+                      control.installGoose &&
+                      !installResult?.ready && (
                         <Button
                           size="sm"
                           type="button"
                           loading={installing}
                           disabled={state.busy || installing}
-                          onClick={() => void installGoose()}
+                          onClick={() => {
+                            void control.installGoose?.().catch(() => {});
+                          }}
                         >
                           Install
                         </Button>

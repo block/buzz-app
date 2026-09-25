@@ -162,6 +162,12 @@ export interface AgentControlState {
   status: "idle" | "loading" | "ready" | "error" | "unavailable";
   data: ControlSnapshot | null;
   busy: boolean;
+  /** App-lifetime install progress and last result, independent of agent writes. */
+  gooseInstall?: {
+    installing: boolean;
+    report: GooseInstallReport | null;
+    error: string | null;
+  };
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
   pendingCredentialWrite?: boolean;
@@ -245,6 +251,7 @@ export function createAgentControl(
     status: host ? "idle" : "unavailable",
     data: null,
     busy: false,
+    gooseInstall: { installing: false, report: null, error: null },
     error: host ? null : agentControlUnavailable,
   };
   const listeners = new Set<() => void>();
@@ -252,6 +259,7 @@ export function createAgentControl(
   let generation = 0;
   let stopped = 0;
   let read: Promise<void> | null = null;
+  let installNeedsRefresh = false;
   const update = (patch: Partial<AgentControlState>) => {
     if (disposed) return;
     state = { ...state, ...patch };
@@ -305,6 +313,18 @@ export function createAgentControl(
     return pending;
   }
 
+  async function refreshAfterInstall(): Promise<void> {
+    if (!installNeedsRefresh || disposed || state.busy) return;
+    installNeedsRefresh = false;
+    // An earlier snapshot may have started before the installer completed.
+    if (read) await read;
+    if (state.busy) {
+      installNeedsRefresh = true;
+      return;
+    }
+    await refresh();
+  }
+
   async function run<T>(
     operation: (host: AgentControlHost) => Promise<T>,
     apply: (result: T) => void,
@@ -356,6 +376,7 @@ export function createAgentControl(
           busy: !!(state.pendingLaunch || state.pendingCredentialWrite),
         });
       }
+      void refreshAfterInstall();
     }
   }
 
@@ -391,11 +412,36 @@ export function createAgentControl(
       : {}),
     ...(installGoose
       ? {
-          installGoose: () =>
-            run(
-              () => installGoose(),
-              () => {},
-            ),
+          installGoose: async () => {
+            if (disposed) throw new Error(agentControlUnavailable);
+            if (state.gooseInstall?.installing)
+              throw new Error("A Goose installation is already in progress.");
+            if (state.status !== "ready" || state.busy)
+              throw new Error("Refresh local agents before installing Goose.");
+            update({
+              gooseInstall: { installing: true, report: null, error: null },
+            });
+            try {
+              const report = await installGoose();
+              update({
+                gooseInstall: { installing: false, report, error: null },
+              });
+              return report;
+            } catch {
+              update({
+                gooseInstall: {
+                  installing: false,
+                  report: null,
+                  error:
+                    "Couldn’t install Goose. Try again or check the desktop app.",
+                },
+              });
+              throw new Error("Could not install Goose.");
+            } finally {
+              installNeedsRefresh = true;
+              await refreshAfterInstall();
+            }
+          },
         }
       : {}),
     ...(host?.prepareCreate && host.commitCreate

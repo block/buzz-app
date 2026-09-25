@@ -39,7 +39,8 @@ export function policyRelay({
   // Fixture targets distinguish the two explicit production globals from channels.
   const routeOf = (filter) =>
     filter["#h"]?.[0] ??
-    (filter.kinds.length === 1 && filter.kinds[0] === 0
+    (filter.kinds.length === 3 &&
+    [0, 10100, 30177].every((kind) => filter.kinds.includes(kind))
       ? "profiles"
       : filter.kinds.includes(44100)
         ? "membership"

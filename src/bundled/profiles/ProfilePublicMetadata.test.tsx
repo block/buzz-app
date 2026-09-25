@@ -44,11 +44,12 @@ function setup(
     ...initial,
   ];
   let live!: LiveCallbacks;
-  let fail = false;
+  let fail: boolean | "all" = false;
   const query = vi.fn(async (filters) => {
     if (
-      fail &&
-      filters.some((f: { kinds?: number[] }) => f.kinds?.includes(10100))
+      fail === "all" ||
+      (fail &&
+        filters.some((f: { kinds?: number[] }) => f.kinds?.includes(10100)))
     )
       throw new Error("unavailable");
     return events.filter((event) =>
@@ -94,7 +95,7 @@ function setup(
     owner,
     query,
     tree,
-    fail: (value: boolean) => {
+    fail: (value: boolean | "all") => {
       fail = value;
     },
     emit: async (event: (typeof events)[number]) => {
@@ -221,7 +222,9 @@ it("exposes read recovery without treating failure as absent metadata", async ()
   h.fail(true);
   try {
     render(h.tree(person.pubkey));
-    await screen.findByRole("alert");
+    await screen.findByRole("button", { name: "Retry profile" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Agent" })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Copy Agent type" }),
     ).not.toBeInTheDocument();
@@ -337,6 +340,146 @@ it("applies a verified owner policy live, reserves malformed updates and follows
       screen.getByRole("button", { name: "Copy Capabilities" }),
     ).toHaveTextContent("code, search");
   } finally {
+    cleanup();
+    h.owner.dispose();
+  }
+});
+
+for (const runtime of [
+  "__proto__",
+  "constructor",
+  "toString",
+  "unknown-runtime",
+]) {
+  it(`displays and copies the unknown runtime ${runtime} as a raw string`, async () => {
+    const h = setup([metadata({ agent_type: runtime })]);
+    const user = userEvent.setup();
+    const clipboard = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue();
+    try {
+      render(h.tree(person.pubkey));
+      const row = await screen.findByRole("button", {
+        name: "Copy Agent type",
+      });
+      expect(row).toHaveTextContent(runtime);
+      await user.click(row);
+      expect(clipboard).toHaveBeenCalledWith(runtime);
+      await screen.findByText("Copied agent type");
+    } finally {
+      cleanup();
+      h.owner.dispose();
+    }
+  });
+}
+
+it("uses one recovery control when profile and public metadata reads fail", async () => {
+  const h = setup();
+  h.fail("all");
+  try {
+    render(h.tree(human.pubkey));
+    await screen.findByRole("alert");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(
+      screen.getAllByRole("button", { name: "Retry profile" }),
+    ).toHaveLength(1);
+    h.fail(false);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Retry profile" }));
+    await screen.findByRole("heading", { name: "Human" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Retry profile" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    cleanup();
+    h.owner.dispose();
+  }
+});
+
+it("keeps completed copy feedback after metadata replacement and profile navigation", async () => {
+  const h = setup();
+  const user = userEvent.setup();
+  vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  try {
+    const mounted = render(h.tree(person.pubkey));
+    await user.click(
+      await screen.findByRole("button", { name: "Copy Capabilities" }),
+    );
+    await screen.findByText("Copied capabilities");
+    await h.emit(metadata({ agent_type: "aider", capabilities: [] }, 4));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Copy Capabilities" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("Copied capabilities")).toBeVisible();
+    mounted.rerender(h.tree(human.pubkey));
+    await screen.findByRole("heading", { name: "Human" });
+    expect(screen.getByText("Copied capabilities")).toBeVisible();
+  } finally {
+    cleanup();
+    h.owner.dispose();
+  }
+});
+
+it("never presents legacy fields while the initial managed profile settles", async () => {
+  const digest = new Uint8Array(
+    createHash("sha256").update(`nostr:agent-auth:${person.pubkey}:`).digest(),
+  );
+  const owned = signed(person, {
+    kind: 0,
+    content: JSON.stringify({ name: "Agent", is_agent: true }),
+    created_at: 10,
+    tags: [
+      [
+        "auth",
+        human.pubkey,
+        "",
+        bytesToHex(schnorr.sign(digest, human.secret)),
+      ],
+    ],
+  });
+  const policy = signed(human, {
+    kind: 30177,
+    content: JSON.stringify({
+      name: "Agent",
+      parallelism: 4,
+      respond_to: "owner-only",
+    }),
+    tags: [["d", person.pubkey]],
+    created_at: 11,
+  });
+  const h = setup([
+    owned,
+    policy,
+    metadata({ agent_type: "goose", capabilities: ["legacy-only"] }),
+  ]);
+  const seen: string[] = [];
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) seen.push(node.textContent ?? "");
+      if (record.type === "characterData")
+        seen.push(record.target.textContent ?? "");
+    }
+  });
+  observer.observe(document.body, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+  });
+  try {
+    render(h.tree(person.pubkey));
+    await screen.findByRole("region", { name: "Agent identity" });
+    const row = await screen.findByRole("button", { name: "Copy Agent type" });
+    expect(row).toHaveTextContent("agent");
+    expect(seen.join(" ")).not.toContain("legacy-only");
+    expect(seen.join(" ")).not.toContain("Goose");
+  } finally {
+    observer.disconnect();
     cleanup();
     h.owner.dispose();
   }

@@ -318,6 +318,10 @@ without reporting user dismissal. Gate notices from hidden Settings sections
 explicitly; portals do not inherit a hidden ancestor. Keep form errors and
 blocked-page recovery inline.
 
+Use `useToastNotification` for completed-action feedback that must outlive its
+source row (such as copying profile metadata); the host stack owns its finite
+expiry. Keep source-owned recovery on ToastNotice.
+
 Use a finite timeout for transient feedback. Recovery defaults to no expiry and
 no dismissal unless the source supplies onDismiss; preserve all recovery actions.
 The bounded, scrollable stack keeps older actions available without covering the

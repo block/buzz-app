@@ -5,8 +5,7 @@ import type {
   RelaySession,
 } from "../../features/relay/session";
 import { CheckIcon, CopyIcon } from "../../shared/design-system/icons";
-import { ToastNotice } from "../../shared/design-system/ui/Toast";
-import { Button } from "../../shared/design-system/ui/Button";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import styles from "./Profiles.module.css";
 
 const runtimeLabels: Record<string, string> = {
@@ -25,6 +24,7 @@ export function usePublicAgentMetadata(
   session: RelaySession,
   pubkey: string,
   owner: string | undefined,
+  ownerSettled: boolean,
 ) {
   const [attempt, retry] = useState(0);
   const [unavailable, setUnavailable] = useState(false);
@@ -67,7 +67,7 @@ export function usePublicAgentMetadata(
     if (snapshot.status === "idle") void view?.refresh();
   }, [snapshot.status, view]);
   const metadata =
-    owner && snapshot.status !== "ready"
+    !ownerSettled || (owner && snapshot.status !== "ready")
       ? undefined
       : publicAgentMetadata(snapshot.events, pubkey, owner);
   return {
@@ -88,14 +88,6 @@ export function ProfilePublicMetadata({
   const capabilities = metadata?.capabilities.join(", ");
   return (
     <>
-      {source.failed && (
-        <div>
-          <p role="alert">Could not load this profile.</p>
-          <Button size="compact" onClick={source.retry}>
-            Retry profile
-          </Button>
-        </div>
-      )}
       {nip05 && (
         <ProfileCopyField
           key={`nip05:${nip05}`}
@@ -109,7 +101,11 @@ export function ProfilePublicMetadata({
           key={`type:${metadata.agentType}`}
           label="Agent type"
           value={metadata.agentType}
-          display={runtimeLabels[metadata.agentType] ?? metadata.agentType}
+          display={
+            Object.hasOwn(runtimeLabels, metadata.agentType)
+              ? (runtimeLabels[metadata.agentType] ?? metadata.agentType)
+              : metadata.agentType
+          }
         />
       )}
       {!!capabilities && (
@@ -134,7 +130,7 @@ function ProfileCopyField({
   display?: string;
   unverified?: boolean;
 }) {
-  const [feedback, setFeedback] = useState("");
+  const notify = useToastNotification();
   const [copied, setCopied] = useState(false);
   const generation = useRef(0);
   useEffect(
@@ -159,18 +155,17 @@ function ProfileCopyField({
         onClick={() => {
           const current = ++generation.current;
           setCopied(false);
-          setFeedback("");
           void Promise.resolve()
             .then(() => navigator.clipboard.writeText(value))
             .then(
               () => {
                 if (current !== generation.current) return;
                 setCopied(true);
-                setFeedback(`Copied ${label.toLowerCase()}`);
+                notify(`Copied ${label.toLowerCase()}`, "success");
               },
               () => {
                 if (current === generation.current)
-                  setFeedback(`Couldn't copy ${label.toLowerCase()}.`);
+                  notify(`Couldn't copy ${label.toLowerCase()}.`, "error");
               },
             );
         }}
@@ -192,13 +187,6 @@ function ProfileCopyField({
           {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
         </span>
       </button>
-      {feedback && (
-        <ToastNotice
-          title={feedback}
-          tone={feedback.startsWith("Copied") ? "success" : "error"}
-          timeout={4000}
-        />
-      )}
     </div>
   );
 }

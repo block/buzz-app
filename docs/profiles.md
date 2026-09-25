@@ -125,13 +125,19 @@ id on timestamp ties), including removal/malformed replacements. Base's sparse
 legacy defaults apply. If the existing NIP-OA verifier establishes an owner, an
 exact owner-authored kind-30177 coordinate takes precedence: valid managed content
 shows type `agent` with no legacy capabilities; malformed winning policy suppresses
-legacy fallback. Policy reads must settle before displaying that projection.
+legacy fallback. Owner verification and policy reads must settle before displaying
+that projection, including when the pane first opens.
 This is public presentation, not custody, runtime configuration or permission.
 
 The existing live profile route includes kinds 10100/30177; the panel adds no socket,
 polling loop or independent cache. Views refresh on reconnect/purge and dispose on
 profile/session replacement. The owner view acquires capacity before optional public
-enrichment; failed reads/view admission expose Retry profile. Ordinary human
+enrichment; failed reads/view admission share one Retry profile control with the
+profile directory. Optional enrichment failure preserves the loaded profile without
+a whole-profile error. Completed copy toasts belong to the host stack and survive
+row replacement/navigation; late clipboard completions from retired rows are ignored.
+Runtime/actions/Activity/Instances retain their position before the public fields.
+Ordinary human
 profiles without agent metadata have no agent fields. A self-authored kind 10100
 supplies agent display metadata, not management authority.
 

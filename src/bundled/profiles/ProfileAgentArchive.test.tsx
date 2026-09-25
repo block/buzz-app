@@ -453,9 +453,11 @@ it("a failed native delete after confirmed relay effects reports it and stays op
     "Synthetic native refusal",
   );
   await confirmDelete(userEvent.setup());
-  expect(
-    await screen.findByText("Could not confirm the agent operation."),
-  ).toBeVisible();
+  for (const alert of await screen.findAllByText(
+    "Synthetic native refusal Could not confirm the operation. Check current status and saved settings before retrying; the operation will not be repeated automatically. Your edits are retained.",
+  )) {
+    expect(alert).toBeVisible();
+  }
   expect(fixture.published.map((event) => event.kind)).toEqual([9001, 9035]);
   expect(fixture.close).not.toHaveBeenCalled();
   // The record is intact, so Delete stays available to retry.

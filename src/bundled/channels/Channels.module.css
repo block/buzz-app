@@ -33,140 +33,301 @@
   flex-direction: column;
 }
 .sidebar {
+  /* Figma specifies true Semibold for unread rows, rather than the legacy 500 alias. */
+  --type-weight-semibold: 600;
+  --size-row: var(--space-6);
+  --radius-row: 10px;
+  --affordance-selected: var(--affordance-subtle);
+  --affordance-panel-hover: var(--affordance-navigation-quiet);
   --sidebar-padding: var(--space-2);
-  --channel-row-radius: calc(var(--radius-panel) - var(--sidebar-padding));
-  padding: var(--sidebar-padding);
-  color: var(--text-standard);
+  --sidebar-padding-end: var(--sidebar-padding);
+  --channel-row-radius: var(--radius-control);
+  padding-inline: var(--sidebar-padding) var(--sidebar-padding-end);
+}
+.sidebarBrand {
+  height: var(--space-6);
+  display: flex;
+  align-items: flex-start;
+  padding-block-start: var(--space-1);
+  padding-inline-start: var(--space-1h);
+}
+.sidebarBrandMark {
+  width: var(--space-5);
+  height: calc(var(--space-5) * 0.75);
+  background: currentColor;
+  mask: url("/buzz-mark.svg") center / contain no-repeat;
+  transform: translateX(1px);
+}
+.destinations {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  margin-bottom: var(--space-3);
+}
+/* Scope compact navigation to this sidebar; top-bar destinations keep their sizing. */
+.sidebar [data-variant="row"] {
+  --space-row-gap: calc(var(--space-1) + var(--space-half));
+  color: var(--text-navigation);
+  min-height: calc(var(--space-6) + var(--space-1));
+  height: calc(var(--space-6) + var(--space-1));
+  padding: var(--space-half) calc(var(--space-1) + var(--space-half))
+    var(--space-half) var(--space-2);
+  border-radius: var(--radius-row);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--type-weight-normal);
+}
+.sidebar [data-variant="row"]:hover:not([data-selected], [data-disabled]) {
+  background: var(--affordance-panel-hover);
+}
+@media (hover: hover) and (pointer: fine) {
+  .sidebar [data-icon-variant]:hover:not([data-disabled]) {
+    background: var(--affordance-panel-hover);
+  }
+}
+.sidebar
+  [data-icon-variant]:is(:active, [aria-expanded="true"]):not([data-disabled]) {
+  background: var(--affordance-panel-hover);
+}
+.sidebar [data-variant="row"][data-inset] {
+  padding-inline-start: calc(var(--space-2) + var(--space-6));
+}
+/* Unavailable destinations must not advertise an enabled hover action. */
+.sidebar [data-variant="row"][data-disabled] {
+  color: var(--text-unavailable);
+  cursor: default;
+  background: transparent;
+}
+.sidebarIcon > :is(svg, img) {
+  max-width: 100%;
+  max-height: 100%;
+}
+.sidebar [data-variant="row"] > :is(svg, img) {
+  flex-shrink: 0;
+}
+.sidebarIcon {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+}
+.placeholder {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  color: var(--text-subtle);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
 .channelListFrame {
   position: relative;
-  min-height: 0;
+  width: calc(100% + 4px);
+  min-width: 0;
+  min-height: calc(var(--space-6) + var(--space-5) + var(--space-1) + 1px);
   flex: 1;
+  overflow: hidden;
+  border-radius: var(--radius-row);
+}
+/* WebKit ignores margins on scrollbar track pseudo-elements. Mask only the
+   scrollbar column so its visible start is inset without moving scroll content. */
+.channelListFrame::after {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 12px;
+  background: var(--surface-panel);
+  content: "";
+  pointer-events: none;
 }
 .channelList {
+  width: calc(100% + 2px);
   height: 100%;
-  margin-inline-end: calc(-1 * var(--sidebar-padding));
+  min-width: 0;
+  box-sizing: border-box;
   overflow-y: auto;
-  padding-inline-end: var(--sidebar-padding);
-  scrollbar-color: color-mix(in srgb, var(--text-standard) 20%, transparent)
-    transparent;
+  padding-block: var(--sidebar-padding);
+  --channel-row-fill-end: 5px;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.channelList:is(:hover, :focus-within) {
+  scrollbar-color: color-mix(in srgb, var(--border-standard) 90%, transparent)
+    transparent;
 }
 .channelList::-webkit-scrollbar {
-  width: 8px;
-}
-.channelList::-webkit-scrollbar-track {
-  background: transparent;
+  width: 5px;
 }
 .channelList::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
+  border-block: 0;
+  border-inline: 2px 0;
+  border-style: solid;
+  border-color: transparent;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text-standard) 20%, transparent);
+  background: transparent;
+  background-clip: padding-box;
+  transition: background-color 90ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.channelList:is(:hover, :focus-within)::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--border-standard) 90%, transparent);
   background-clip: padding-box;
 }
 .channelListContent {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: var(--space-half);
+  padding-block-end: var(--sidebar-padding);
 }
 /* The cue floats over scrolled rows, so it needs the panel surface beneath
-   it: the outline control is transparent by design and would otherwise
-   show the channel names it covers. `display: grid` keeps the wrapper flush
-   with the control so no sliver of fill shows around the pill. */
+   it. `display: grid` keeps the wrapper flush with the control so no sliver
+   of fill shows around the pill. */
 .unreadEdge {
   position: absolute;
   left: 50%;
   display: grid;
   transform: translateX(-50%);
+  z-index: 3;
+  isolation: isolate;
   width: max-content;
-  max-width: calc(100% - 8px);
-  border-radius: var(--radius-pill);
-  background: var(--surface-panel);
+  max-width: calc(100% - var(--space-2));
+  border-radius: var(--radius-control);
+  background: var(--affordance-prominent);
   box-shadow: var(--shadow-sm);
 }
+
+.unreadEdge [data-buzz-ui] {
+  border-radius: var(--radius-control);
+  background: var(--affordance-prominent);
+  color: var(--text-inverse);
+  padding-inline: var(--space-1h) calc(var(--space-2) + var(--space-half));
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+}
+.unreadEdge [class~="buzz-button-label"] {
+  gap: var(--space-1h);
+}
 .unreadEdge[data-edge="above"] {
-  top: 4px;
+  top: var(--space-5);
 }
 .unreadEdge[data-edge="below"] {
   bottom: 4px;
 }
 .channelSection {
+  position: relative;
   flex-shrink: 0;
 }
 .channelSection + .channelSection {
-  margin-top: var(--space-3);
+  margin-top: var(--space-4);
 }
-.channelSection > summary {
+.sectionHeader {
+  position: relative;
+}
+.sectionHeader > :where(details) > summary {
   display: flex;
-  width: 100%;
-  min-width: 0;
-  min-height: var(--size-row);
   align-items: center;
-  gap: var(--space-row-gap);
-  overflow: hidden;
-  border-radius: calc(var(--radius-panel) - var(--sidebar-padding));
-  padding: var(--space-1) var(--space-control-inset);
-  background: transparent;
-  color: var(--text-standard);
-  font: inherit;
-  text-align: left;
+  gap: var(--space-1);
+  min-height: calc(var(--space-6) + var(--space-1));
+  padding: var(--space-half) calc((2 * var(--space-6)) + var(--space-2))
+    var(--space-half) var(--space-2);
+  color: var(--text-unavailable);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--type-weight-normal);
   cursor: pointer;
   list-style: none;
-  transition:
-    color var(--duration-state) var(--easing-state),
-    background-color var(--duration-state) var(--easing-state);
+  border-radius: var(--radius-control);
 }
-.sidebar [data-buzz-ui][data-variant="row"] {
-  border-radius: calc(var(--radius-panel) - var(--sidebar-padding));
-}
-.channelSection > summary::-webkit-details-marker {
+.channelSection summary::-webkit-details-marker {
   display: none;
 }
-.channelSection > summary:hover {
-  background: var(--affordance-subtle);
-}
-html[data-keyboard-navigation] .channelSection > summary:focus-visible {
+.channelSection summary:focus-visible {
   outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
-.sectionChevron {
-  flex-shrink: 0;
-  color: var(--text-subtle);
-  transition: transform 120ms ease;
-}
-.channelSection[open] .sectionChevron {
-  transform: rotate(90deg);
-}
-.sectionTitle {
-  min-width: 0;
-  flex: 1;
+.sectionLabel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sectionAction {
-  display: inline-flex;
-  flex-shrink: 0;
-  margin-block: calc(-1 * var(--space-1));
-  margin-inline-end: calc(-1 * var(--space-control-inset));
-  opacity: 0;
-  pointer-events: none;
+.sectionLabel [data-sidebar-group-icon] {
+  margin-inline-end: var(--space-1);
 }
-.channelSection > summary:hover .sectionAction,
-html[data-keyboard-navigation]
-  .channelSection
-  > summary:focus-within
-  .sectionAction {
+.sectionChevron {
+  display: inline-grid;
+  width: var(--space-6);
+  height: var(--space-6);
+  flex: 0 0 var(--space-6);
+  place-items: center;
+  color: var(--text-unavailable);
+  transition: transform 160ms ease-out;
+}
+.sectionHeader details:not([open]) .sectionChevron {
+  transform: rotate(-90deg);
+  opacity: 1;
+}
+.sectionActions {
+  position: absolute;
+  z-index: 1;
+  top: var(--space-half);
+  right: 4px;
+  display: flex;
+  align-items: center;
+  color: var(--text-unavailable);
+  opacity: 0;
+  pointer-events: auto;
+}
+.sectionActions [data-icon-variant] {
+  color: inherit;
+}
+.untitledSection {
+  padding-block-start: var(--space-1);
+}
+.untitledSection .sectionActions {
+  top: 0;
+  opacity: 1;
+  pointer-events: auto;
+}
+.untitledSectionContent {
+  padding-inline-end: calc(var(--space-8) + var(--space-1));
+}
+.channelSection:has(
+    summary:hover,
+    summary:focus-visible,
+    .sectionActions:hover,
+    .sectionActions:focus-within,
+    [data-popup-open]
+  )
+  .sectionActions,
+.channelSection:has(
+    summary:hover,
+    summary:focus-visible,
+    .sectionActions:hover,
+    .sectionActions:focus-within,
+    [data-popup-open]
+  )
+  .sectionChevron {
   opacity: 1;
   pointer-events: auto;
 }
 @media (hover: none) {
-  .sectionAction {
+  .sectionAction,
+  .sectionActions,
+  .sectionChevron {
     opacity: 1;
     pointer-events: auto;
+  }
+  .channelList {
+    scrollbar-color: color-mix(in srgb, var(--border-standard) 90%, transparent)
+      transparent;
   }
 }
 .preferenceNotice {
@@ -549,7 +710,25 @@ html[data-keyboard-navigation]
   overflow: hidden;
 }
 
+.indicatorStack {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+}
+
+.indicatorLayer,
 .working {
+  grid-area: 1 / 1;
+}
+
+.indicatorLayer {
+  display: grid;
+  place-items: center;
+}
+
+.working {
+  display: block;
+  z-index: 1;
   width: 6px;
   height: 6px;
   flex-shrink: 0;
@@ -558,10 +737,19 @@ html[data-keyboard-navigation]
 }
 
 /* Match the adjacent small avatars without creating image/profile demand. */
+.dmAvatar {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  place-items: center;
+}
+
 .dmCount {
   display: grid;
-  min-width: 1.5rem;
-  height: 1.5rem;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
   padding-inline: var(--space-half);
   flex-shrink: 0;
   place-items: center;

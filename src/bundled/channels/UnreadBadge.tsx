@@ -76,6 +76,7 @@ export function UnreadBadge({
         <span
           className={styles.priorityDot}
           data-channel-priority=""
+          data-indicator-layer="unread"
           aria-hidden="true"
         />
       )}

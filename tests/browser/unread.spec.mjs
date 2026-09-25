@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 
@@ -158,10 +159,7 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
   expect(event.content).not.toContain(ids[0]);
   expect(blob.contexts.alpha).toBeUndefined();
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await composer(page).waitFor();
   await settle(page);
   expect((await journal(page)).slot).toBe(stored.slot);
@@ -204,10 +202,7 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   ).toBeVisible();
   app.relay.holdContent(); // Reload must use verified disk evidence, not wait for network repair.
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await composer(page).waitFor();
   await expect(
     alpha(page).getByRole("img", {

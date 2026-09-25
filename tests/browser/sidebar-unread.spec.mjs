@@ -21,6 +21,17 @@ const cue = (page, edge) =>
   sidebar(page).locator(`button[data-edge="${edge}"]`);
 const row = (page, id) =>
   list(page).locator(`button[data-channel-id="${id.toLowerCase()}"]`);
+const removeDm = async (page, id) => {
+  const dm = row(page, id);
+  await dm.click({ button: "right" });
+  const menu = page.getByRole("menu", { name: /Actions for / });
+  const remove = menu.getByRole("menuitem", {
+    name: "Remove from Messages",
+    exact: true,
+  });
+  await expect(remove).toBeVisible();
+  await remove.click();
+};
 const scroll = (page, top) =>
   list(page).evaluate((el, top) => {
     el.scrollTop = top;
@@ -69,27 +80,11 @@ test("DM hide control removes a row and a new message restores it", async ({
   const container = dm.locator("xpath=ancestor::*[@data-channel-sidebar-row]");
   await container.screenshot({ path: info.outputPath("dm-row-default.png") });
   await dm.hover();
-  const hide = container.getByRole("button", { name: /Remove .* from DMs/ });
-  await expect(hide).toBeVisible();
-  await expect
-    .poll(() =>
-      hide.evaluate((button) => getComputedStyle(button.parentElement).opacity),
-    )
-    .toBe("1");
   await container.screenshot({ path: info.outputPath("dm-row-hover.png") });
   const after = await badgePosition();
   expect(after.x).toBeCloseTo(before.x, 0);
   expect(after.y).toBeCloseTo(before.y, 0);
-  const primary = await dm.evaluate((button) => getComputedStyle(button).color);
-  const secondary = await hide.evaluate(
-    (button) => getComputedStyle(button).color,
-  );
-  expect(secondary).not.toBe(primary);
-  await hide.hover();
-  await expect
-    .poll(() => hide.evaluate((button) => getComputedStyle(button).color))
-    .toBe(primary);
-  await hide.click();
+  await removeDm(page, "dm-030");
   await expect(dm).toHaveCount(0);
   await expect(list(page).locator("button[data-channel-id]:focus")).toHaveCount(
     1,
@@ -101,7 +96,7 @@ test("DM hide control removes a row and a new message restores it", async ({
   app.append("primary", "dm-030", "A new live DM", true, false);
   await expect(dm).toBeVisible();
   await dm.hover();
-  await hide.click();
+  await removeDm(page, "dm-030");
   await expect(dm).toHaveCount(0);
   app.append("primary", "dm-030", "A DM missed while closed", false, false);
   await page.reload();
@@ -187,6 +182,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
     app.relay.releaseEose("alpha");
   }
   const ordinary = row(page, "alpha");
+  await expect(ordinary).toHaveAttribute("aria-current", "page");
   const ordinaryState = ordinary.locator("[data-channel-unread]");
   const directed = row(page, "dm-090").locator("[data-channel-priority]");
   await expect(ordinaryState).toHaveAttribute("data-priority", "false");
@@ -197,7 +193,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect(ordinary.locator("[data-channel-priority]")).toHaveCount(0);
   await expect(ordinary.getByText("Alpha", { exact: true })).toHaveCSS(
     "font-weight",
-    "500",
+    "600",
   );
   await expect(directed).toBeVisible();
   await expect(directed).toHaveCSS("width", "6px");
@@ -246,6 +242,8 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await cue(page, "above").press("Enter");
   await expect.poll(() => inView(page, "dm-030")).toBe(true);
   await expect(row(page, "dm-030")).toBeFocused();
+  await expect(row(page, "dm-030")).not.toHaveAttribute("aria-current");
+  // The edge cue reveals and focuses without changing the selected conversation.
   await expect(list(page).locator('[aria-current="page"]')).toHaveAttribute(
     "data-channel-id",
     "alpha",
@@ -291,16 +289,10 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect.poll(() => inView(page, "dm-030")).toBe(true);
   await expect(row(page, "dm-030")).toBeFocused();
   if (info.project.name === "chromium") {
-    await page.keyboard.press("Tab");
-    const remove = row(page, "dm-030")
-      .locator("xpath=ancestor::*[@data-channel-sidebar-row]")
-      .getByRole("button", { name: /Remove .* from DMs/ });
-    await expect(remove).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(row(page, "dm-031")).toBeFocused();
-    await page.keyboard.press("Shift+Tab");
-    await expect(remove).toBeFocused();
-    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Shift+F10");
+    const menu = page.getByRole("menu", { name: /Actions for / });
+    await expect(menu).toBeFocused();
+    await page.keyboard.press("Escape");
     await expect(row(page, "dm-030")).toBeFocused();
   }
   await page.keyboard.press("Enter");
@@ -314,10 +306,17 @@ test("resizing, collapsed groups and new unread evidence update only the display
   await open(page, app);
   await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
   await expect(cue(page, "below")).toBeVisible();
-  // DMs are hidden behind a visible section summary: not below the scroll fold.
-  await list(page).locator("summary").filter({ hasText: /^DMs$/ }).click();
-  await expect(cue(page, "below")).toHaveCount(0);
-  await list(page).locator("summary").filter({ hasText: /^DMs$/ }).click();
+  // Messages are hidden behind a visible section summary: not below the scroll fold.
+  await list(page)
+    .locator("summary")
+    .filter({ hasText: /^Channels$/ })
+    .click();
+  // Channels are collapsed, but unread DMs remain eligible and keep the cue.
+  await expect(cue(page, "below")).toBeVisible();
+  await list(page)
+    .locator("summary")
+    .filter({ hasText: /^Channels$/ })
+    .click();
   await cue(page, "below").click();
   await expect.poll(() => inView(page, "dm-030")).toBe(true);
   // Collapse the preceding group without scrolling it into view first.
@@ -332,6 +331,28 @@ test("resizing, collapsed groups and new unread evidence update only the display
     "open",
     "",
   );
+  const controlledContent = await list(page)
+    .locator("details")
+    .first()
+    .locator("summary")
+    .getAttribute("aria-controls");
+  await expect(page.locator(`[id="${controlledContent}"]`)).not.toHaveAttribute(
+    "inert",
+  );
+  await expect(row(page, "Beta")).toBeFocused();
+  await expect(row(page, "Beta")).toBeEnabled();
+  const channelsSummary = list(page)
+    .locator("summary")
+    .filter({ hasText: /^Channels$/ });
+  await channelsSummary.focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    list(page).getByRole("button", { name: "More actions for Channels" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  // Disabled header actions are skipped; traversal still reaches rows only
+  // after the available header controls.
+  await expect(row(page, "Alpha")).toBeFocused();
   // A tall viewport makes every row visible; shrinking restores the bottom cue.
   await scroll(page, 0);
   await page.setViewportSize({ width: 1440, height: 6000 });

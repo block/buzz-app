@@ -82,7 +82,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
             return matches;
           }),
         ).toBe(true);
-        const scroller = surface.locator(":scope > div");
+        const scroller = surface.locator(".overflow-auto");
         const documentTop = await page.evaluate(
           () => document.scrollingElement.scrollTop,
         );

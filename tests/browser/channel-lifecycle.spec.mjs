@@ -1,10 +1,8 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 async function openLifecycle(page, app) {
   await page.goto(app.origin);
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alpha", exact: true })
@@ -133,10 +131,7 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeFocused();
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
-  await page
-    .getByRole("button", { name: "Projects", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Projects");
   await row.click({ button: "right" });
   await menu
     .getByRole("menuitem", { name: "Archive channel", exact: true })
@@ -307,10 +302,7 @@ for (const action of ["archive", "hide"]) {
       app,
     }) => {
       await page.goto(app.origin);
-      await page
-        .getByRole("button", { name: "Messages", exact: true })
-        .first()
-        .click();
+      await openPage(page, "Messages");
       const sidebar = page.getByRole("navigation", {
         name: "Subscribed channels",
       });

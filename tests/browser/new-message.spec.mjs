@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test as base, expect } from "@playwright/test";
 import { preview } from "vite";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
@@ -268,18 +269,20 @@ const test = base.extend({
     }
   },
 });
-async function open(page, app) {
-  await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
-  const header = page.locator("summary", { hasText: "DMs" });
-  await header.hover();
-  await header
+async function startNewMessage(page) {
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  const messages = sidebar.locator('[data-sidebar-section="dms"] summary');
+  await messages.hover();
+  await sidebar
     .getByRole("button", { name: "New message", exact: true })
     .click();
-  await expect(header.locator("..")).toHaveAttribute("open", "");
+  await expect(messages.locator("..")).toHaveAttribute("open", "");
+}
+
+async function open(page, app) {
+  await page.goto(app.origin);
+  await openPage(page, "Projects");
+  await startNewMessage(page);
 }
 
 test("empty compose, keyboard selection, pagination, removal effects, retry, then confirmed normal timeline", async ({
@@ -393,19 +396,9 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
       (filter) => filter.kinds?.includes(0) && filter.page && !filter.search,
     ).length;
   const beforeReopen = directoryReads();
-  await page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
-  await page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
-  const dmHeader = page.locator("summary", { hasText: "DMs" });
-  await dmHeader.hover();
-  await dmHeader
-    .getByRole("button", { name: "New message", exact: true })
-    .click();
+  await openPage(page, "Projects");
+  await openPage(page, "Messages");
+  await startNewMessage(page);
   await expect(page.getByRole("option")).toHaveCount(34);
   expect(await page.getByRole("option").allTextContents()).toEqual(
     loadedPeople,
@@ -627,8 +620,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect(message).toBeVisible();
   await expect(sidebarDm).toHaveAttribute("aria-current", "page");
   // Resolving an existing DM keeps its row visible while the next send is held.
-  await page.getByText("DMs", { exact: true }).hover();
-  await page.getByRole("button", { name: "New message", exact: true }).click();
+  await startNewMessage(page);
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
   // Composing is a separate route, not the previously selected conversation.
   await expect(sidebarDm).toBeVisible();
@@ -658,10 +650,7 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
 }) => {
   app.seedChannel("22222222-2222-4222-8222-222222222222", "Hello from Avery");
   await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await openPage(page, "Messages");
   const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
   const general = sidebar.locator(
     '[data-channel-id="22222222-2222-4222-8222-222222222222"]',
@@ -691,9 +680,10 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   expect(app.commands).toHaveLength(1);
   expect(app.commands[0].kind).toBe(41010);
   // A locally hidden DM reappears when the profile opens it again.
-  await sidebarDm.hover();
-  await sidebar
-    .getByRole("button", { name: "Remove Avery Chen from DMs" })
+  await sidebarDm.click({ button: "right" });
+  await page
+    .getByRole("menu", { name: "Actions for Avery Chen" })
+    .getByRole("menuitem", { name: "Remove from Messages", exact: true })
     .click();
   await expect(sidebarDm).toHaveCount(0);
   await page.reload();

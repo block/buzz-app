@@ -1,8 +1,8 @@
 import { expect } from "@playwright/test";
+import { openPage } from "./navigation.mjs";
 const rowSelector = "[data-message-id]";
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
-const button = (page, name) => page.getByRole("button", { name, exact: true });
 const composer = (page, name) =>
   page.getByRole("textbox", { name: `Message #${name}`, exact: true });
 
@@ -143,7 +143,7 @@ export async function end(page) {
 }
 export async function open(page, app) {
   await page.goto(app.origin);
-  await button(page, "Messages").first().click();
+  await openPage(page, "Messages");
   await composer(page, "Alpha").waitFor();
   await expect(history(page).locator(rowSelector).first()).toBeVisible();
   await settle(page);

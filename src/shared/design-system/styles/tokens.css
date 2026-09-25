@@ -285,6 +285,9 @@
      Keep these current. A step whose comment disagrees with its
      use is worse than no comment, because it reads as a decision
      someone made. `pnpm census` lists the real readers. */
+  --neutral-navigation-text: #404040; /* Tailwind neutral-700. */
+  --neutral-navigation-unread: #262626; /* Tailwind neutral-800. */
+  --neutral-navigation-quiet: #f7f7f7; /* Designer-requested gentle sidenav states. */
   --neutral-1: #ffffff; /* bg-panel, bg-float, bg-chrome-selected */
   /* The first real compact control established this stop. Project Orbit's
      search field reads as #f5f5f6 over its panel. Its one blue-channel step
@@ -381,6 +384,7 @@
      are deliberately tighter at the bottom. A documented divergence, not drift:
      if these ever want to be palette steps, the palette's gray ramp is what
      should change. */
+  --neutral-navigation-quiet: #232323;
   --neutral-1: #000000;
   --neutral-2: #101010;
   --neutral-3: #1a1a1a;
@@ -489,6 +493,8 @@
   --surface-popover: var(--neutral-1);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
+  --text-navigation: var(--neutral-navigation-text);
+  --text-navigation-unread: var(--neutral-navigation-unread);
   --text-standard: var(--neutral-12);
   --text-subtle: var(--neutral-10);
   --text-metadata: var(--neutral-9);
@@ -515,6 +521,7 @@
   --affordance-subtle: var(--neutral-2);
   --affordance-subtle-hover: var(--neutral-quiet-hover);
   --affordance-subtle-pressed: var(--neutral-4);
+  --affordance-navigation-quiet: var(--neutral-navigation-quiet);
   --affordance-panel-hover: var(--neutral-2);
   --affordance-floating-hover: var(--neutral-3);
   --affordance-selected: var(--neutral-3);
@@ -538,6 +545,8 @@
   --surface-popover: var(--neutral-5);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
+  --text-navigation: var(--neutral-11);
+  --text-navigation-unread: var(--neutral-12);
   --text-standard: var(--neutral-12);
   --text-subtle: var(--neutral-11);
   --text-metadata: var(--neutral-10);
@@ -737,6 +746,8 @@
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
   --text-color-link: var(--text-link);
+  --text-color-navigation: var(--text-navigation);
+  --text-color-navigation-unread: var(--text-navigation-unread);
   --color-affordance-link-hover: var(--affordance-link-hover);
   --color-surface-base: var(--surface-base);
   --color-surface-panel: var(--surface-panel);
@@ -763,6 +774,7 @@
   --color-affordance-subtle: var(--affordance-subtle);
   --color-affordance-subtle-hover: var(--affordance-subtle-hover);
   --color-affordance-subtle-pressed: var(--affordance-subtle-pressed);
+  --color-affordance-navigation-quiet: var(--affordance-navigation-quiet);
   --color-affordance-panel-hover: var(--affordance-panel-hover);
   --color-affordance-floating-hover: var(--affordance-floating-hover);
   --color-affordance-selected: var(--affordance-selected);

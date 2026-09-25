@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -114,7 +115,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.keyboard.press("Escape");
   await page.unroute("**/sidebar-mute");
   // The persistent sidebar keeps retry UI and actions usable outside Messages.
-  await page.getByRole("button", { name: "Projects", exact: true }).click();
+  await openPage(page, "Projects");
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
@@ -162,10 +163,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     .toBe(true);
   await readStateSettled(page);
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await beta.click({ button: "right" });
   await expect(
     menu.getByRole("menuitem", { name: "Unmute", exact: true }),
@@ -203,10 +201,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await Promise.all([preferences.ready, reads.ready]);
   try {
     await page.reload();
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Messages");
     await Promise.all([preferences.started, reads.started]);
     await expect(localMark).toBeVisible();
     await expect(beta).toContainText("Beta");
@@ -220,7 +215,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     preferences.release();
     await expect(
       sidebar
-        .locator("details")
+        .locator("[data-sidebar-section]")
         .filter({ has: page.locator("summary", { hasText: "Work" }) })
         .locator('[data-channel-id="beta"]'),
     ).toBeVisible();
@@ -264,10 +259,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     });
   await readStateSettled(page);
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await beta.click({ button: "right" });
   await expect(
     menu.getByRole("menuitem", { name: "Mute", exact: true }),

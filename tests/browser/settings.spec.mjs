@@ -84,31 +84,31 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await button(page, "Profile").click();
   await expect(button(page, "Profile")).toHaveAttribute("aria-current", "page");
 
-  // Narrow Settings has the full content width, but the same navigation remains
-  // reachable by disclosure and keyboard. Desktop keeps it permanently visible.
+  // Narrow Settings keeps its own navigation reachable without replacing the
+  // persistent app sidebar or moving focus out of the selected settings section.
   const pages = page.getByRole("navigation", { name: "Pages" });
-  await expect(pages).toBeHidden();
+  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  await expect(pages).toHaveCount(0);
   const showNavigation = button(page, "Show navigation");
   await expect(showNavigation).toHaveAttribute("aria-expanded", "false");
   await showNavigation.click();
-  await expect(pages).toBeVisible();
-  const messages = pages.getByRole("button", { name: "Messages", exact: true });
-  await messages.focus();
+  await expect(sidebar).toBeVisible();
+  const inbox = sidebar.getByRole("button", { name: "Inbox", exact: true });
+  await inbox.focus();
   await page.keyboard.press("Escape");
-  await expect(pages).toBeHidden();
+  await expect(sidebar).toBeHidden();
   await expect(showNavigation).toBeFocused();
   await page.setViewportSize({ width: 1280, height: 900 });
-  await expect(pages).toBeVisible();
+  await expect(sidebar).toBeVisible();
   await expect(showNavigation).toBeHidden();
   await page.setViewportSize({ width: 480, height: 400 });
-  await expect(pages).toBeHidden();
+  await expect(sidebar).toBeHidden();
   await showNavigation.click();
-  await messages.click();
-  await expect(page.getByRole("main")).toBeFocused();
+  await inbox.click();
   await expect(
     page.getByRole("region", { name: "Channels", exact: true }),
   ).toBeVisible();
-  await expect(pages).toBeVisible();
+  await expect(sidebar).toBeVisible();
 });
 
 test("avatar Settings access dismisses cleanly and exposes Profile and Plugins", async ({
@@ -413,10 +413,8 @@ test("Settings loads and publishes the selected community profile", async ({
   ).toBeFocused();
   await expect(name).toHaveValue("Fixture Reader");
   await name.fill("Discard when leaving Settings");
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
+  await button(page, "Inbox").click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();

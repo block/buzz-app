@@ -33,7 +33,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   expect(activity).toEqual([]);
   async function openSort() {
     await trigger.click();
-    await expect(channels).toHaveAttribute("open", "");
+    await expect(channels.locator("details")).toHaveAttribute("open", "");
     await page
       .getByRole("menu", { name: "More actions for Channels", exact: true })
       .getByRole("menuitem", { name: "Sort", exact: true })
@@ -97,14 +97,10 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   await page.unroute("**/sidebar-sort");
   // Error ownership is session-scoped, not coupled to the dismissed menu/page.
   await page
-    .getByRole("button", { name: "Projects", exact: true })
+    .getByRole("button", { name: "Agents", exact: true })
     .first()
     .click();
   await expect(sidebar).toBeVisible();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
   await expect(error).toBeVisible();
   async function confirmedSort(action) {
     const response = page.waitForResponse("**/sidebar-sort");
@@ -223,10 +219,6 @@ test("section sort applies immediately, rolls back on failure, and persists retr
     "section:work": "recent",
   });
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
   await expect.poll(order).toEqual(alphaOrder);
   await cedar.click({ button: "right" });
   await expect(
@@ -395,10 +387,6 @@ test.describe("cold sidebar presentation", () => {
     });
     try {
       await page.goto(app.origin);
-      await page
-        .getByRole("button", { name: "Messages", exact: true })
-        .first()
-        .click();
       await decoding;
       await expect(sidebar.getByRole("status")).toHaveText(
         "Loading your sidebar…",
@@ -454,10 +442,6 @@ test.describe("personal-group sorting", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
     const sidebar = page.getByRole("navigation", {
       name: "Subscribed channels",
     });
@@ -525,10 +509,6 @@ test.describe("sorting with lifecycle visibility", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
     const sidebar = page.getByRole("navigation", {
       name: "Subscribed channels",
     });

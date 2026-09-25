@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Contribution } from "../plugins/contributions";
@@ -105,36 +106,50 @@ it("keeps grouped cards available without a selected community", () => {
   expect(screen.queryByRole("button", { name: "Personal groups" })).toBeNull();
 });
 
-it("gives contributed cards their own community sections and retires removed cards", () => {
+it("gives contributed cards their own community sections and retires removed cards", async () => {
   const { cards, set } = registry([
     card("hosted", "Hosted communities", "Communities"),
     card("groups", "Personal groups"),
   ]);
-  render(<Settings {...host} cards={cards} />);
+  const complete = vi.fn(() => true);
+  const onSection = vi.fn();
+  render(
+    <Settings
+      {...host}
+      cards={cards}
+      navigation={
+        {
+          target: {
+            version: 1,
+            kind: "settings",
+            section: "example/hosted",
+          },
+          complete,
+        } as never
+      }
+      onSection={onSection}
+    />,
+  );
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
   expect(nav).toHaveTextContent("Primary");
   expect(nav).toHaveTextContent("Communities");
-  expect(screen.queryByText("Hosted communities body")).toBeNull();
-
-  fireEvent.click(screen.getByRole("button", { name: "Hosted communities" }));
-  expect(screen.getByText("Hosted communities body")).toBeVisible();
+  expect(await screen.findByText("Hosted communities body")).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Hosted communities" }),
   ).toHaveAttribute("aria-current", "page");
   expect(screen.queryByText("Personal groups body")).toBeNull();
+  expect(complete).toHaveBeenLastCalledWith({ status: "opened" });
 
-  fireEvent.click(screen.getByRole("button", { name: "Personal groups" }));
-  expect(screen.getByText("Personal groups body")).toBeVisible();
-  expect(screen.queryByText("Hosted communities body")).toBeNull();
-
-  fireEvent.click(screen.getByRole("button", { name: "Hosted communities" }));
   act(() => set([card("groups", "Personal groups")]));
+  await waitFor(() => expect(onSection).toHaveBeenLastCalledWith("profile"));
   expect(screen.queryByText("Hosted communities body")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
   expect(nav).not.toHaveTextContent("Hosted communities");
   expect(screen.getByRole("button", { name: "Profile" })).toHaveAttribute(
     "aria-current",
     "page",
   );
+  expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
 });
 
 it("keeps same-id community cards from different plugins distinct", () => {

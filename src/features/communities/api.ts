@@ -1,6 +1,5 @@
 import { connectBrokerTransport } from "../relay/transport";
 import type { PersonalProfile } from "./service";
-import { PROFILE_ABOUT_MAX_LENGTH } from "./service";
 export type CommunityInfo = {
   name?: string;
   icon?: string;
@@ -57,10 +56,7 @@ export async function inspectProfile(id: string) {
   const profile: PersonalProfile = {
     name: String(existing.display_name ?? existing.name ?? ""),
     picture: typeof existing.picture === "string" ? existing.picture : "",
-    about:
-      typeof existing.about === "string"
-        ? existing.about.slice(0, PROFILE_ABOUT_MAX_LENGTH)
-        : "",
+    about: typeof existing.about === "string" ? existing.about : "",
   };
   return { existing, profile, exists: !!event };
 }

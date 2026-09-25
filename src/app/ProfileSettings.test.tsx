@@ -275,6 +275,40 @@ it("edits and trims the profile description with a visible limit", async () => {
   expect(screen.getByText("Profile updated")).toBeVisible();
 });
 
+it("preserves an over-limit remote description and blocks unrelated saves", async () => {
+  const service = communities();
+  const about = "a".repeat(800);
+  vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { name: "Remote", about },
+    profile: { name: "Remote", picture: "", about },
+  });
+  const publish = vi.spyOn(communityApi, "publishProfile").mockResolvedValue();
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={service}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+
+  const description = await screen.findByLabelText(
+    "Profile description (optional)",
+  );
+  expect(description).toHaveValue(about);
+  expect(
+    screen.getByText(
+      "Shorten the description to 500 characters before saving.",
+    ),
+  ).toBeVisible();
+  const name = screen.getByLabelText("Display name");
+  await user.clear(name);
+  await user.type(name, "Renamed");
+  expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+  expect(publish).not.toHaveBeenCalled();
+});
+
 it("rejects profile image URLs with embedded credentials", async () => {
   const service = communities();
   const user = userEvent.setup();

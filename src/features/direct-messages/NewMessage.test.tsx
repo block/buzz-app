@@ -600,9 +600,8 @@ it("keeps loaded pages when clearing search or returning to New message, scoped 
   expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
     loaded,
   );
-  expect(t.directMessages.people).toHaveBeenCalledTimes(requests);
-  fireEvent.scroll(screen.getByRole("listbox"));
   await screen.findByRole("option", { name: "Person 3" });
+  expect(t.directMessages.people).toHaveBeenCalledTimes(requests + 1);
   expect(t.directMessages.people).toHaveBeenLastCalledWith(
     "",
     3,

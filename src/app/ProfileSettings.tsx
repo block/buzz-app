@@ -1,10 +1,18 @@
+import { Header } from "../shared/design-system/ui/Header";
 import { Avatar } from "../shared/design-system/ui/Avatar";
 import { Button } from "../shared/design-system/ui/Button";
 import { Input } from "../shared/design-system/ui/Input";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { avatarSource } from "../shared/avatar-source";
 import { npubEncode } from "nostr-tools/nip19";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import styles from "./ProfileSettings.module.css";
 import type {
   Communities,
@@ -41,6 +49,24 @@ export function ProfileSettings({
     communities.subscribe,
     communities.snapshot,
   );
+  const pendingFocus = useRef<HTMLInputElement | null>(null);
+  const actionsRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    // Capture focus before the conditional actions leave the DOM.
+    return () => {
+      if (node.contains(document.activeElement))
+        pendingFocus.current =
+          node.closest("form")?.querySelector<HTMLInputElement>("input") ??
+          null;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    // The form fields may still be disabled during ref cleanup. Wait until
+    // React has committed their enabled state; unmounting runs no handoff.
+    const target = pendingFocus.current;
+    pendingFocus.current = null;
+    if (target?.isConnected) target.focus();
+  });
   const [loaded, setLoaded] = useState<LoadedProfile | null>(null);
   const [loadStatus, setLoadStatus] = useState<
     "idle" | "loading" | "ready" | "error"
@@ -108,15 +134,16 @@ export function ProfileSettings({
   }
   return (
     <section aria-labelledby="profile-settings-title">
-      <h2 id="profile-settings-title" className="mt-0 mb-6 text-label">
-        Profile
-      </h2>
-      <div>
-        <p className="mt-0 text-body-sm text-muted">
-          {community
+      <Header
+        id="profile-settings-title"
+        title="Profile"
+        subtitle={
+          community
             ? "Set your profile details for this community. Any existing community profiles won’t be changed."
-            : "Set your profile details. Any existing community profiles won’t be changed."}
-        </p>
+            : "Set your profile details. Any existing community profiles won’t be changed."
+        }
+      />
+      <div>
         {client.status !== "ready" ? (
           <p role="status">
             {client.status === "loading"
@@ -223,26 +250,34 @@ export function ProfileSettings({
                   {error}
                 </p>
               )}
-              <div className="mt-6 flex flex-wrap items-center gap-3">
-                <Button
-                  type="submit"
-                  disabled={saving || !hasChanges || !canSaveProfile(profile)}
-                  variant="primary"
+              {hasChanges && (
+                <div
+                  ref={actionsRef}
+                  className="mt-6 flex flex-wrap items-center justify-end gap-3"
                 >
-                  {saving ? "Saving…" : "Save profile"}
-                </Button>
-                <Button
-                  type="button"
-                  disabled={saving || !hasChanges}
-                  onClick={() => {
-                    setDraft(null);
-                    setSaved(false);
-                    setError("");
-                  }}
-                >
-                  Cancel
-                </Button>
-              </div>
+                  <Button
+                    size="sm"
+                    type="button"
+                    disabled={saving}
+                    onClick={() => {
+                      setDraft(null);
+                      setSaved(false);
+                      setError("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    type="submit"
+                    loading={saving}
+                    disabled={!canSaveProfile(profile)}
+                    variant="primary"
+                  >
+                    Save
+                  </Button>
+                </div>
+              )}
               {saved && (
                 <ToastNotice
                   title="Profile updated"

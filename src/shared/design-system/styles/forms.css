@@ -40,6 +40,14 @@
     background: var(--surface-inset);
     color: var(--text-standard);
   }
+  .buzz-input[data-size="sm"] {
+    @apply text-body-sm;
+    min-height: var(--size-control-sm);
+    padding-block: max(
+      var(--space-1),
+      calc((var(--size-control-sm) - 1lh - 2px) / 2)
+    );
+  }
   .buzz-textarea {
     min-height: 6rem;
     padding: var(--space-control-inset);

@@ -349,14 +349,22 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
 test("Settings loads and publishes the selected community profile", async ({
   page,
   app,
+  browserName,
 }) => {
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
   const writes = [];
   const profiles = [];
+  let pendingProfile;
   await page.route("**/api/relay/primary/profile", async (route) => {
     profiles.push(route.request().postDataJSON());
-    await route.fulfill({
-      json: { accepted: true, event_id: "ab".repeat(32) },
+    const response = await new Promise((resolve) => {
+      pendingProfile = resolve;
     });
+    pendingProfile = undefined;
+    await route.fulfill(response);
   });
   page.on("request", (request) => {
     if (/\/api\/relay\/.*\/(profile|sign|publish)$/.test(request.url()))
@@ -374,7 +382,8 @@ test("Settings loads and publishes the selected community profile", async ({
     name: "Picture URL (optional)",
     exact: true,
   });
-  const save = button(page, "Save profile");
+  const save = button(page, "Save");
+  await expect(save).toHaveCount(0);
   await expect(name).toHaveValue("Fixture Reader");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(button(page, "Edit profile")).toHaveCount(0);
@@ -384,7 +393,15 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(name).toBeHidden();
   await button(page, "Profile").click();
   await expect(name).toHaveValue("Do not save");
-  await button(page, "Cancel").click();
+  await button(page, "Cancel").focus();
+  await page.keyboard.press("Enter");
+  await expect(name).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(
+    page.getByRole("textbox", { name: "Profile description (optional)" }),
+  ).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(picture).toBeFocused();
   await expect(name).toHaveValue("Fixture Reader");
   await name.fill("Discard when leaving Settings");
   await page
@@ -406,7 +423,43 @@ test("Settings loads and publishes the selected community profile", async ({
   await picture.fill("");
   await expect(save).toBeEnabled();
   await name.fill("  Updated community profile  ");
-  await save.click();
+  await save.focus();
+  await page.keyboard.press("Enter");
+  try {
+    await expect.poll(() => profiles.length).toBe(1);
+    await expect(save).toHaveAttribute("aria-busy", "true");
+    await expect(save).toBeFocused();
+    await expect(name).toBeDisabled();
+    await expect(button(page, "Cancel")).toBeDisabled();
+    // Loading blocks repeated submission without dropping keyboard focus.
+    await page.keyboard.press("Enter");
+  } finally {
+    pendingProfile?.({
+      json: { accepted: false, message: "Publication unavailable" },
+    });
+  }
+  await expect(page.getByRole("alert")).toContainText(
+    "Publication unavailable",
+  );
+  await expect(save).toBeFocused();
+  await expect(save).toBeEnabled();
+  await page.keyboard.press("Enter");
+  try {
+    await expect.poll(() => profiles.length).toBe(2);
+    await expect(save).toHaveAttribute("aria-busy", "true");
+    await expect(save).toBeFocused();
+  } finally {
+    pendingProfile?.({ json: { accepted: true, event_id: "ab".repeat(32) } });
+  }
+  await expect(name).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(
+    page.getByRole("textbox", { name: "Profile description (optional)" }),
+  ).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(picture).toBeFocused();
+  await expect(name).toHaveValue("Updated community profile");
+  await expect(save).toHaveCount(0);
   await expect(
     page.getByRole("dialog", { name: "Profile updated" }),
   ).toBeVisible();
@@ -425,7 +478,7 @@ test("Settings loads and publishes the selected community profile", async ({
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
-    page.getByRole("menu", { name: "Updated local profile" }),
+    page.getByRole("menu", { name: "Updated community profile" }),
   ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   // The fixture acknowledges publication but deliberately keeps its immutable
@@ -435,14 +488,15 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(page.getByRole("tooltip")).toHaveText(
     "Updated community profile",
   );
-  expect(writes.filter((url) => url.endsWith("/profile"))).toHaveLength(1);
-  expect(profiles).toEqual([
-    expect.objectContaining({
-      name: "Updated community profile",
-      picture: "",
-      existing: expect.objectContaining({ name: "Fixture Reader" }),
-    }),
-  ]);
+  expect(writes.filter((url) => url.endsWith("/profile"))).toHaveLength(2);
+  for (const profile of profiles)
+    expect(profile).toEqual(
+      expect.objectContaining({
+        name: "Updated community profile",
+        picture: "",
+        existing: expect.objectContaining({ name: "Fixture Reader" }),
+      }),
+    );
 });
 
 test("discarding community setup leaves the published profile unchanged", async ({

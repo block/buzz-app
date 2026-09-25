@@ -1,8 +1,9 @@
+import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Field } from "../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { Button } from "../shared/design-system/ui/Button";
-import { useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 import {
   MonitorIcon,
   MoonIcon,
@@ -18,15 +19,20 @@ export function AppearanceSettings({
   appearance: Appearance;
   active?: boolean;
 }) {
+  const increaseButton = useRef<HTMLButtonElement>(null);
+  const resetRef = useCallback((node: HTMLButtonElement | null) => {
+    if (!node) return;
+    return () => {
+      if (document.activeElement === node) increaseButton.current?.focus();
+    };
+  }, []);
   const { preference, error, fontScale, fontError } = useSyncExternalStore(
     appearance.subscribe,
     appearance.snapshot,
   );
   return (
     <section aria-labelledby="appearance-settings-title">
-      <h2 id="appearance-settings-title" className="mt-0 mb-6 text-label">
-        Appearance
-      </h2>
+      <Header id="appearance-settings-title" title="Appearance" />
       <div>
         <Field label="Color mode">
           <RadioGroup
@@ -55,8 +61,8 @@ export function AppearanceSettings({
             ))}
           </RadioGroup>
         </Field>
-        <fieldset className="mt-6 min-w-0 border-0 p-0">
-          <legend className="mb-2 text-label-sm">Text size</legend>
+        <fieldset className="m-0 mt-6 min-w-0 border-0 p-0">
+          <legend className="mb-2 p-0 text-label-sm">Text size</legend>
           <div className="flex flex-wrap items-center gap-3">
             <Button
               type="button"
@@ -73,19 +79,23 @@ export function AppearanceSettings({
             <Button
               type="button"
               size="sm"
+              ref={increaseButton}
               aria-label="Increase text size"
               disabled={fontScale >= 2}
               onClick={() => appearance.setFontScale(fontScale + 0.1)}
             >
               +
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => appearance.setFontScale(1)}
-            >
-              Reset text size
-            </Button>
+            {fontScale !== 1 && (
+              <Button
+                size="sm"
+                type="button"
+                ref={resetRef}
+                onClick={() => appearance.setFontScale(1)}
+              >
+                Reset text size
+              </Button>
+            )}
           </div>
         </fieldset>
         {active && fontError && (

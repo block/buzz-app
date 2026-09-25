@@ -142,8 +142,10 @@ test("zoom keys resize real message/composer text, not window or spacing, and pe
   await expect(page.getByRole("status", { name: "Text size" })).toHaveText(
     "80%",
   );
-  await button(page, "Reset text size").click();
+  await button(page, "Reset text size").focus();
+  await page.keyboard.press("Enter");
   await scale(page, 1);
+  await expect(button(page, "Increase text size")).toBeFocused();
 });
 
 test("independent plugin consumes injected shortcuts; disable/re-enable and editor guards work", async ({

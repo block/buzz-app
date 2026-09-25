@@ -1,3 +1,6 @@
+import { getLogger } from "../src/features/developer/logging.ts";
+import { filterSummary, httpLabel } from "../src/features/developer/traffic.ts";
+
 import { isWorkflowDefinitionBatch } from "../src/features/workflows/queries.ts";
 import { validStatusTemplate } from "./user-status.mjs";
 import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
@@ -619,6 +622,7 @@ export function relayBrokerPlugin({
   return {
     name: "buzz-relay-broker",
     async configureServer(server) {
+      const log = getLogger("relay-broker");
       const key = identity();
       const viewer = getPublicKey(key);
       const upstream = createUpstream();
@@ -704,8 +708,8 @@ export function relayBrokerPlugin({
 
         void upstream.close();
       });
-      server.config.logger.info(
-        `[relay-broker] signing as ${viewer.slice(0, 8)}… for explicitly selected communities (lazy, scoped connections)`,
+      log.info(
+        `signing as ${viewer.slice(0, 8)}… for explicitly selected communities (lazy, scoped connections)`,
       );
       server.middlewares.use(async (req, res, next) => {
         if (
@@ -716,10 +720,10 @@ export function relayBrokerPlugin({
         const startedAt = Date.now();
         const route = new URL(req.url, "http://localhost").pathname;
         res.on("finish", () => {
-          if (route === "/api/relay/media") return;
-          server.config.logger.info(
-            `[relay-broker] ${req.method} ${route} -> ${res.statusCode} (${Date.now() - startedAt}ms)`,
-          );
+          const line = `${req.method} ${httpLabel(route)} → ${res.statusCode} (${Date.now() - startedAt}ms)`;
+          if (res.statusCode >= 500) log.error(line);
+          else if (res.statusCode >= 400) log.warn(line);
+          else log.debug(line);
         });
         const origin = `http://${req.headers.host ?? ""}`;
         // Same-origin browser access only; trusted plugins/local processes are not sandboxed.
@@ -731,8 +735,8 @@ export function relayBrokerPlugin({
           (req.headers["sec-fetch-site"] &&
             req.headers["sec-fetch-site"] !== "same-origin")
         ) {
-          server.config.logger.info(
-            `[relay-broker] rejected ${req.method} ${route}: origin=${req.headers.origin ?? "none"} sec-fetch-site=${req.headers["sec-fetch-site"] ?? "none"}`,
+          log.warn(
+            `Rejected ${req.method} ${httpLabel(route)}: origin rejected`,
           );
           return json(res, 403, { error: "Origin rejected" });
         }
@@ -2328,9 +2332,10 @@ export function relayBrokerPlugin({
             }
           }
           if (route === "/api/relay/query")
-            server.config.logger.info(
-              `[relay-broker] query ${req.headers["x-buzz-read-priority"] === "background" ? "background" : "foreground"} ${JSON.stringify(filters).slice(0, 240)}`,
-            );
+            if (log.level >= 5)
+              log.trace(
+                `query ${req.headers["x-buzz-read-priority"] === "background" ? "background" : "foreground"} ${filterSummary(filters)}`,
+              );
           const gifSearchPath = gifs ? await getGifSearchPath(relay) : null;
           if (gifs && !gifSearchPath)
             return json(res, 404, { error: "GIF search is unavailable" });
@@ -2540,9 +2545,7 @@ export function relayBrokerPlugin({
               error: "Query concurrency limit",
               sent: false,
             });
-          server.config.logger.error(
-            `[relay-broker] ${error instanceof Error ? error.message : String(error)}`,
-          );
+          log.error(`Request failed: ${req.method} ${httpLabel(url.pathname)}`);
           if (res.headersSent) return;
           // The relay was never reached, so nothing was delivered: the client may
           // treat this as a definite failure rather than an unknown outcome.

@@ -35,6 +35,7 @@ const nonIconDependencies = new Set([
   "@xterm/addon-fit",
   "@xterm/xterm",
   "blurhash",
+  "consola", // Runtime logging, not an icon catalog.
   "dockview-react",
   "emoji-mart",
   "flexlayout-react",

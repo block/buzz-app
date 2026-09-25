@@ -1,3 +1,4 @@
+import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
@@ -2413,5 +2414,42 @@ test("private feedback crosses the real broker and session without a readback or
     owner?.dispose();
     live?.dispose();
     await h.close();
+  }
+});
+
+test("broker HTTP summaries respect live levels and trace excludes private filters", async () => {
+  const logger = getLogger("relay-broker");
+  const reporters = [...logger.options.reporters];
+  const lines = [];
+  logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+  const h = await harness(success);
+  try {
+    setLogLevel("trace");
+    expect(
+      (
+        await h.post("query", [
+          {
+            kinds: [0],
+            limit: 1,
+            authors: ["a".repeat(64)],
+            search: "private search",
+          },
+        ])
+      ).status,
+    ).toBe(200);
+    expect(lines.some((line) => line.includes("POST /relay/query → 200"))).toBe(
+      true,
+    );
+    expect(lines.some((line) => line.includes('"authors":1'))).toBe(true);
+    expect(lines.join(" ")).not.toContain("private search");
+    expect(lines.join(" ")).not.toContain("a".repeat(64));
+    lines.length = 0;
+    setLogLevel("info");
+    expect((await h.post("query", filters)).status).toBe(200);
+    expect(lines).toHaveLength(0);
+  } finally {
+    await h.close();
+    logger.setReporters(reporters);
+    setLogLevel("info");
   }
 });

@@ -31,6 +31,12 @@ export default defineConfig(async ({ command, mode }) => {
       "BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL to name the community to open.",
     );
   const plugins: PluginOption[] = [react()];
+  if (command === "serve")
+    plugins.push(
+      (await import("./dev/developer-settings.ts")).developerSettingsPlugin(
+        process.cwd(),
+      ),
+    );
   if (live)
     plugins.push(
       (await import("./dev/relay-broker.mjs")).relayBrokerPlugin({

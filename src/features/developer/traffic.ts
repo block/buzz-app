@@ -1,0 +1,97 @@
+import { getLogger } from "./logging.ts";
+
+/** Traffic logs are allowlists, never truncated payload dumps. */
+export function relayLabel(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "unknown-relay";
+  }
+}
+export function httpLabel(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  const scoped = parts[1] === "relay" && parts.length >= 4;
+  let relay = "";
+  if (scoped) {
+    try {
+      relay = `${relayLabel(decodeURIComponent(parts[2] ?? ""))} `;
+    } catch {
+      relay = "unknown-relay ";
+    }
+  }
+  const action = parts[scoped ? 3 : 2] ?? "";
+  return `${relay}/${parts[1] === "builderlab" ? "builderlab" : "relay"}/${/^[a-z-]{1,64}$/.test(action) ? action : "unknown"}`;
+}
+export function filterSummary(filters: unknown): string {
+  if (!Array.isArray(filters)) return "invalid filters";
+  return (
+    JSON.stringify(
+      filters.slice(0, 4).map((filter) => {
+        if (!filter || typeof filter !== "object") return {};
+        const numbers = (value: unknown): unknown =>
+          Array.isArray(value)
+            ? value.filter((item) => Number.isSafeInteger(item)).slice(0, 24)
+            : undefined;
+        return {
+          kinds: numbers(filter.kinds),
+          limit: Number.isSafeInteger(filter.limit) ? filter.limit : undefined,
+          since: Number.isSafeInteger(filter.since) ? filter.since : undefined,
+          until: Number.isSafeInteger(filter.until) ? filter.until : undefined,
+          authors: Array.isArray(filter.authors)
+            ? filter.authors.length
+            : undefined,
+          ids: Array.isArray(filter.ids) ? filter.ids.length : undefined,
+          channels: Array.isArray(filter["#h"])
+            ? filter["#h"].length
+            : undefined,
+        };
+      }),
+    ) + (filters.length > 4 ? ` (+${filters.length - 4} filters)` : "")
+  );
+}
+const log = getLogger("relay-ws");
+const frameTypes = new Set([
+  "AUTH",
+  "REQ",
+  "EVENT",
+  "OK",
+  "EOSE",
+  "CLOSE",
+  "CLOSED",
+  "NOTICE",
+  "COUNT",
+]);
+const shortId = (value: unknown) =>
+  typeof value === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(value)
+    ? value.slice(0, 12)
+    : "?";
+export function logSocketFrame(
+  peer: string,
+  direction: "→" | "←",
+  raw: unknown,
+  frame?: unknown,
+) {
+  if (log.level < 4) return;
+  const size =
+    typeof raw === "string"
+      ? new TextEncoder().encode(raw).byteLength
+      : raw instanceof ArrayBuffer
+        ? raw.byteLength
+        : ArrayBuffer.isView(raw)
+          ? raw.byteLength
+          : undefined;
+  const data = Array.isArray(frame) ? frame : [];
+  const type = frameTypes.has(data[0]) ? data[0] : "UNKNOWN";
+  let detail = "";
+  if (["REQ", "CLOSE", "CLOSED", "EOSE", "COUNT"].includes(type))
+    detail = ` sub=${shortId(data[1])}`;
+  if (type === "OK")
+    detail = ` id=${shortId(data[1])} accepted=${data[2] === true}`;
+  if (type === "EVENT") {
+    const event = direction === "←" ? data[2] : data[1];
+    detail = `${direction === "←" ? ` sub=${shortId(data[1])}` : ""} id=${shortId(event?.id)} kind=${Number.isSafeInteger(event?.kind) ? event.kind : "?"}`;
+  }
+  log.debug(`${peer} ${direction} ${type}${detail} (${size ?? "?"} B)`);
+  if (log.level >= 5 && type === "REQ")
+    log.trace(`${peer} filters ${filterSummary(data.slice(2))}`);
+}

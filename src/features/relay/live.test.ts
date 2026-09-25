@@ -1,3 +1,4 @@
+import { getLogger, setLogLevel } from "../developer/logging";
 import { assert, afterEach, expect, it, vi } from "vitest";
 import {
   createLiveAdmission,
@@ -1239,5 +1240,44 @@ it("receives public agent metadata on the existing profile route without another
     }
   } finally {
     h.owner.dispose();
+  }
+});
+
+it("logs every real transport frame without payloads and applies level changes to an open socket", async () => {
+  vi.useFakeTimers();
+  const logger = getLogger("relay-ws");
+  const reporters = [...logger.options.reporters];
+  const lines: string[] = [];
+  logger.setReporters([{ log: (value) => lines.push(value.args.join(" ")) }]);
+  setLogLevel("debug");
+  const h = setup(["a"]);
+  try {
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    expect(lines.some((line) => line.includes("← AUTH"))).toBe(true);
+    expect(lines.some((line) => line.includes("→ AUTH"))).toBe(true);
+    expect(lines.some((line) => line.includes("→ REQ"))).toBe(true);
+    const request = h.first.requests().find((r) => r[2]["#h"]?.[0] === "a");
+    assert.exists(request);
+    const incoming = message(keypair(), "a", "secret message", 1700000000);
+    lines.length = 0;
+    for (let i = 0; i < 20; i++)
+      await h.first.receive(["EVENT", request[1], incoming]);
+    expect(lines).toHaveLength(20);
+    expect(
+      lines.every(
+        (line) => line.includes("← EVENT") && line.includes("kind=9"),
+      ),
+    ).toBe(true);
+    expect(lines.join(" ")).not.toContain("secret message");
+    expect(h.callbacks.receive).toHaveBeenCalledTimes(20);
+    setLogLevel("info");
+    await h.first.receive(["EVENT", request[1], incoming]);
+    expect(lines).toHaveLength(20);
+    expect(h.callbacks.receive).toHaveBeenCalledTimes(21);
+  } finally {
+    h.owner.dispose();
+    logger.setReporters(reporters);
+    setLogLevel("info");
   }
 });

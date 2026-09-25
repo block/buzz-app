@@ -271,7 +271,7 @@ it("installs once, then re-detects Goose as Ready after the install settles", as
     finish = resolve;
   });
   const installGoose = vi.fn(() => pending);
-  const { fixture } = setupHarnesses("ready", {
+  const { fixture, control } = setupHarnesses("ready", {
     installSupported: true,
     installGoose,
   });
@@ -283,6 +283,16 @@ it("installs once, then re-detects Goose as Ready after the install settles", as
   expect(
     fixture.calls.filter((call) => call.action === "snapshot"),
   ).toHaveLength(1);
+  cleanup();
+  render(<AgentSettings control={control} />, { wrapper: ToastProvider });
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Installing Goose",
+  );
+  await waitFor(() =>
+    expect(
+      fixture.calls.filter((call) => call.action === "snapshot"),
+    ).toHaveLength(2),
+  );
   const goose = fixture.data.harnessOptions?.[1];
   if (!goose) throw new Error("Missing Goose fixture");
   goose.available = true;
@@ -304,23 +314,38 @@ it("installs once, then re-detects Goose as Ready after the install settles", as
   expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
   expect(
     fixture.calls.filter((call) => call.action === "snapshot"),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
+  cleanup();
+  render(<AgentSettings control={control} />, { wrapper: ToastProvider });
+  expect(
+    await screen.findByText("Goose installed. Restarted 2 waiting agents."),
+  ).toBeVisible();
 });
 
 it("keeps Install available and shows the recorded output on failure", async () => {
   const user = userEvent.setup();
-  setupHarnesses("ready", {
+  let fail!: (report: GooseInstallReport) => void;
+  const pending = new Promise<GooseInstallReport>((resolve) => {
+    fail = resolve;
+  });
+  const { control } = setupHarnesses("ready", {
     installSupported: true,
-    installGoose: vi.fn(async () => ({
-      ready: false,
-      restarted: 0,
-      restartFailures: 0,
-      logPath: "/fixture/goose-install.log",
-      output: "curl failed to fetch the installer",
-      error: "Goose installer failed. See the install log.",
-    })),
+    installGoose: vi.fn(() => pending),
   });
   await user.click(await screen.findByRole("button", { name: "Install" }));
+  cleanup();
+  render(<AgentSettings control={control} />, { wrapper: ToastProvider });
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Installing Goose",
+  );
+  fail({
+    ready: false,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/goose-install.log",
+    output: "curl failed to fetch the installer",
+    error: "Goose installer failed. See the install log.",
+  });
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Goose installer failed",
   );
@@ -328,4 +353,11 @@ it("keeps Install available and shows the recorded output on failure", async () 
   expect(screen.getByText("curl failed to fetch the installer")).toBeVisible();
   expect(screen.getByText("/fixture/goose-install.log")).toBeVisible();
   expect(screen.getByRole("button", { name: "Install" })).toBeEnabled();
+  cleanup();
+  render(<AgentSettings control={control} />, { wrapper: ToastProvider });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Goose installer failed",
+  );
+  await user.click(screen.getByText("Goose install log"));
+  expect(screen.getByText("curl failed to fetch the installer")).toBeVisible();
 });

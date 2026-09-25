@@ -905,3 +905,43 @@ for (const boundary of ["dispose", "newer write"] as const) {
     control.dispose();
   });
 }
+it("keeps Stop available while Goose installs and refreshes once it settles", async () => {
+  const fixture = controlFixture();
+  const install = deferred<{
+    ready: boolean;
+    restarted: number;
+    restartFailures: number;
+    logPath: string;
+    output: string;
+    error: string | null;
+  }>();
+  fixture.host.installGoose = () => install.promise;
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const installing = control.installGoose?.();
+  expect(control.snapshot().gooseInstall?.installing).toBe(true);
+  expect(control.snapshot().busy).toBe(false);
+  expect(canStopAgent(control.snapshot(), "fixture-agent")).toBe(true);
+  await control.action("fixture-agent", "stop");
+  expect(fixture.calls).toContainEqual(
+    expect.objectContaining({ action: "stop" }),
+  );
+  expect(control.snapshot().gooseInstall?.installing).toBe(true);
+  await expect(control.installGoose?.()).rejects.toThrow("in progress");
+  const reads = fixture.calls.filter((c) => c.action === "snapshot").length;
+  install.resolve({
+    ready: true,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/goose-install.log",
+    output: "",
+    error: null,
+  });
+  await installing;
+  expect(control.snapshot().gooseInstall?.report?.ready).toBe(true);
+  expect(fixture.calls.filter((c) => c.action === "snapshot")).toHaveLength(
+    reads + 1,
+  );
+  expect(control.snapshot().data?.agents[0]?.enabled).toBe(false);
+  control.dispose();
+});

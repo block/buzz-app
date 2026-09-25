@@ -32,6 +32,8 @@ export function useMentionChoices(
   channelId: string,
   invite: boolean | undefined,
   query: string,
+  /** One chooser opening; see useMentionDirectory. */
+  lifetime: string,
   open = true,
 ) {
   const roster = useContext(DraftMentionRoster);
@@ -53,6 +55,7 @@ export function useMentionChoices(
     channel,
     query,
     open && !roster && !invite,
+    lifetime,
   );
   const archives = useMentionArchives(session, open);
   const resolve = useIdentityNames(session.names);

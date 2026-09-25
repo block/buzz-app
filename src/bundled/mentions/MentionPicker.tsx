@@ -9,7 +9,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AtIcon } from "../../shared/design-system/icons/index";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMentionChoices } from "./use-mention-choices";
 import type { RelaySession } from "../../features/relay/session";
 import "../../shared/design-system/styles/scrollbars.css";
@@ -39,11 +39,13 @@ export function MentionPicker({
   const controls = useRef<HTMLFieldSetElement>(null);
   const accepted = useRef(false);
   const searchInput = useRef<HTMLElement>(null);
+  const lifetime = `picker:${useId()}`;
   const model = useMentionChoices(
     session,
     channelId,
     inviteAgents,
     search,
+    lifetime,
     open && !disabled,
   );
   const {

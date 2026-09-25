@@ -28,17 +28,36 @@ function remember(session: RelaySession, query: string, page: Page) {
   if (queries.size > CACHE_LIMIT)
     queries.delete(queries.keys().next().value ?? "");
 }
+// The last settled page per chooser lifetime. Inline completion remounts its
+// provider on every keystroke, so a component-local copy would be lost.
+const settled = new WeakMap<RelaySession, Map<string, Page>>();
+const LIFETIME_LIMIT = 20;
+function settle(session: RelaySession, lifetime: string, page: Page) {
+  let lifetimes = settled.get(session);
+  if (!lifetimes) {
+    lifetimes = new Map();
+    settled.set(session, lifetimes);
+  }
+  if (lifetimes.get(lifetime) === page) return;
+  lifetimes.delete(lifetime);
+  lifetimes.set(lifetime, page);
+  if (lifetimes.size > LIFETIME_LIMIT)
+    lifetimes.delete(lifetimes.keys().next().value ?? "");
+}
 
 /**
  * Directory pages belong to this menu and community, not the global profile
  * cache. While a new query waits or loads, the last settled page stays visible
  * so callers can keep its still-matching people instead of blanking the list.
+ * `lifetime` names one chooser opening (one picker, or one inline `@` token)
+ * and must outlive provider remounts within it.
  */
 export function useMentionDirectory(
   session: RelaySession,
   channel: ChannelSummary | undefined,
   query: string,
   enabled: boolean,
+  lifetime: string,
 ) {
   const active =
     enabled &&
@@ -52,7 +71,6 @@ export function useMentionDirectory(
     attempt: number;
     error?: string;
   }>();
-  const [last, setLast] = useState<{ session: RelaySession; page: Page }>();
   const hit = active ? cached(session, query) : undefined;
   useEffect(() => {
     if (!active || cached(session, query)) return;
@@ -79,8 +97,7 @@ export function useMentionDirectory(
       controller.abort();
     };
   }, [session, query, active, attempt]);
-  if (hit && (last?.session !== session || last.page !== hit))
-    setLast({ session, page: hit });
+  if (hit) settle(session, lifetime, hit);
   const error =
     active &&
     !hit &&
@@ -89,7 +106,7 @@ export function useMentionDirectory(
     state.attempt === attempt
       ? state.error
       : undefined;
-  const shown = hit ?? (last?.session === session ? last.page : undefined);
+  const shown = hit ?? settled.get(session)?.get(lifetime);
   const retry = useCallback(() => {
     pages.get(session)?.delete(query);
     setAttempt((value) => value + 1);

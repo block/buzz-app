@@ -16,6 +16,15 @@ import { controlFixture } from "../../features/agents/control-testing";
 import type { RelaySession } from "../../features/relay/session";
 import { MentionPicker } from "./MentionPicker";
 import { MentionCompletion } from "./MentionCompletion";
+import { ComposerCompletions } from "../../features/conversation/ComposerCompletions";
+import type {
+  ComposerCompletion,
+  ComposerObservation,
+} from "../../features/conversation/contracts";
+import type { CompletionEditor } from "../../features/conversation/useCompletionEditor";
+import type { ComposerInputElement } from "../../features/messages/composer-dom";
+import type { Contribution } from "../../plugins/contributions";
+import { mentionQuery } from "./mention-query";
 import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
 import type { CompletionResult } from "../../features/conversation/contracts";
@@ -1699,4 +1708,102 @@ it("does not complete public keys in either menu", async () => {
   await user.type(screen.getByRole("searchbox"), key);
   expect(screen.queryByRole("button", { name: `Bad Janet ${key}` })).toBeNull();
   test.library.dispose();
+});
+
+it("keeps still-matching directory people across the inline host's per-keystroke remount", async () => {
+  // jsdom has no layout; the host positions its popup with these.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  const t = setup();
+  const larry = { pubkey: "f".repeat(64), name: "Larry Outside" };
+  const lara = { pubkey: "e".repeat(64), name: "Lara" };
+  const resolvers = new Map<
+    string,
+    (value: { people: (typeof larry)[]; hasMore: boolean }) => void
+  >();
+  const people = vi.fn(
+    (query: string) =>
+      new Promise<{ people: (typeof larry)[]; hasMore: boolean }>((resolve) =>
+        resolvers.set(query, resolve),
+      ),
+  );
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  } as unknown as RelaySession;
+  // The real mention provider behind the real host, which keys each provider
+  // mount by observation revision and query.
+  const provider: Contribution<ComposerCompletion> = {
+    id: "typeahead",
+    key: "buzz.mentions/typeahead",
+    pluginId: "buzz.mentions",
+    revision: "1",
+    title: "Mention",
+    match: ({ text, start }) => mentionQuery(text, start),
+    component: MentionCompletion,
+  };
+  const providers = [provider];
+  const registry = { snapshot: () => providers, subscribe: () => () => {} };
+  // The host reads only its attributes and position; valid() is stubbed.
+  const input = document.createElement(
+    "div",
+  ) as unknown as ComposerInputElement;
+  document.body.append(input);
+  const editor = (observation: ComposerObservation) =>
+    ({
+      observation,
+      valid: () => true,
+      observe: () => {},
+      invalidate: () => {},
+      keys: { current: undefined },
+      composing: { current: false },
+    }) as unknown as CompletionEditor;
+  const host = (revision: number, text: string) => (
+    <ComposerCompletions
+      registry={registry}
+      editor={editor({ revision, text, start: text.length, end: text.length })}
+      input={{ current: input }}
+      replace={() => true}
+      session={session}
+      scope="test"
+      channelId="parent"
+    />
+  );
+  const options = () =>
+    screen.queryAllByRole("option").map((option) => option.textContent);
+  const view = render(host(1, "@La"));
+  await waitFor(() =>
+    expect(people).toHaveBeenCalledWith("La", 1, expect.anything()),
+  );
+  await act(async () =>
+    resolvers.get("La")?.({ people: [lara, larry], hasMore: false }),
+  );
+  await waitFor(() =>
+    expect(options()).toEqual([
+      expect.stringContaining("Lara"),
+      expect.stringContaining("Larry Outside"),
+    ]),
+  );
+  // Each keystroke remounts the provider. The still-matching person stays
+  // while the new search waits and loads; the non-matching one leaves.
+  view.rerender(host(2, "@Lar"));
+  view.rerender(host(3, "@Larr"));
+  expect(options()).toEqual([expect.stringContaining("Larry Outside")]);
+  expect(screen.getByRole("status")).toHaveTextContent("Searching community…");
+  await waitFor(() =>
+    expect(people).toHaveBeenCalledWith("Larr", 1, expect.anything()),
+  );
+  expect(options()).toEqual([expect.stringContaining("Larry Outside")]);
+  // A different `@` token is a new chooser lifetime and starts clean.
+  view.rerender(host(4, "@Larr @Bo"));
+  expect(options()).toEqual([]);
+  input.remove();
+  vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });

@@ -170,7 +170,8 @@ not freeze a premature empty result. Local sources (members and agent choices)
 establish the list; the community directory never gates it. Directory people
 append below the rows already shown, so a late page never moves a visible row.
 While a new query waits or loads, still-matching people from the last settled
-page stay visible and the chooser shows "Searching community…". Uncached queries
+page of the same chooser stay visible (one picker, or one inline `@` token; inline
+completion remounts per keystroke, so the page is kept per session outside it) and the chooser shows "Searching community…". Uncached queries
 reach the network only after a 200 ms typing pause. Settled first pages are cached
 per session and query (100 queries); errors are not cached, and Retry reads the
 current query again. Identity naming uses eligible candidates plus the

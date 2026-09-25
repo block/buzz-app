@@ -10,16 +10,21 @@ import { matchesMentionQuery } from "./mention-query";
 const demands = new WeakMap<RelaySession, Set<string>>();
 export function MentionCompletion({
   session,
+  scope,
   channelId,
+  threadRootId,
   inviteAgents,
   query,
   publish,
 }: ComposerCompletionProps) {
+  // The host remounts this provider on every keystroke. One `@` token in one
+  // composer is the chooser lifetime that keeps the last directory page.
   const model = useMentionChoices(
     session,
     channelId,
     inviteAgents,
     query.query,
+    JSON.stringify(["inline", scope, channelId, threadRootId, query.start]),
   );
   const {
     profiles,

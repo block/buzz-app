@@ -79,6 +79,32 @@ const host = {
   },
 } as unknown as Parameters<typeof Settings>[0];
 
+it("keeps grouped cards available without a selected community", () => {
+  const { cards } = registry([
+    card("hosted", "Hosted communities", "Communities"),
+    card("groups", "Personal groups"),
+  ]);
+  const noCommunityState = { ...communityState, selected: null };
+  render(
+    <Settings
+      {...host}
+      communities={
+        {
+          subscribe: () => () => {},
+          snapshot: () => noCommunityState,
+        } as unknown as Parameters<typeof Settings>[0]["communities"]
+      }
+      cards={cards}
+    />,
+  );
+  const nav = screen.getByRole("navigation", { name: "Settings sections" });
+  expect(nav).toHaveTextContent("Communities");
+  expect(
+    screen.getByRole("button", { name: "Hosted communities" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Personal groups" })).toBeNull();
+});
+
 it("gives contributed cards their own community sections and retires removed cards", () => {
   const { cards, set } = registry([
     card("hosted", "Hosted communities", "Communities"),
@@ -87,6 +113,7 @@ it("gives contributed cards their own community sections and retires removed car
   render(<Settings {...host} cards={cards} />);
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
   expect(nav).toHaveTextContent("Primary");
+  expect(nav).toHaveTextContent("Communities");
   expect(screen.queryByText("Hosted communities body")).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "Hosted communities" }));

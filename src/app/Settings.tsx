@@ -80,29 +80,50 @@ export function Settings({
   const selectedCommunity = client.memberships.find(
     (membership) => membership.id === client.selected,
   );
+  const communityCards = useMemo(
+    () => contributed.filter((card) => !card.group),
+    [contributed],
+  );
+  const contributedGroups = useMemo(
+    () =>
+      [...new Set(contributed.flatMap((card) => card.group ?? []))].map(
+        (label) => ({
+          label,
+          cards: contributed.filter((card) => card.group === label),
+        }),
+      ),
+    [contributed],
+  );
   const communitySections: readonly Section[] = useMemo(
     () =>
       selectedCommunity
         ? [
             { id: "profile", label: "Profile", icon: UserIcon },
-            ...contributed.map((card) => ({
+            ...communityCards.map((card) => ({
               id: `community-${card.id}`,
               label: card.title,
               icon: ChatCircleIcon,
             })),
           ]
         : [],
-    [contributed, selectedCommunity],
+    [communityCards, selectedCommunity],
   );
   const visibleSections = useMemo(
     () => [
       ...communitySections,
+      ...contributedGroups.flatMap((group) =>
+        group.cards.map((card) => ({
+          id: card.key,
+          label: card.title,
+          icon: ChatCircleIcon,
+        })),
+      ),
       ...appSections,
       ...(developerMode
         ? [{ id: "developer", label: "Developer", icon: WrenchIcon }]
         : []),
     ],
-    [communitySections],
+    [communitySections, contributedGroups],
   );
   const defaultSection = selectedCommunity ? "profile" : "appearance";
   const [selected, setSelected] = useState(defaultSection);
@@ -158,6 +179,24 @@ export function Settings({
                   ))}
                 </NavigationSection>
               )}
+              {contributedGroups.map((group) => (
+                <NavigationSection key={group.label} label={group.label}>
+                  {group.cards.map((card) => (
+                    <NavigationItem
+                      label={card.title}
+                      selected={selected === card.key}
+                      type="button"
+                      key={card.key}
+                      aria-current={selected === card.key ? "page" : undefined}
+                      onClick={(event) => {
+                        event.currentTarget.focus();
+                        if (onSection) onSection(card.key);
+                        else setSelected(card.key);
+                      }}
+                    />
+                  ))}
+                </NavigationSection>
+              ))}
               <NavigationSection label="App">
                 {appSections.map(({ id, label, icon: Icon }) => (
                   <NavigationItem
@@ -216,7 +255,7 @@ export function Settings({
             <div hidden={selected !== "agents"}>
               <AgentSettings active={selected === "agents"} />
             </div>
-            {contributed.map((card) => {
+            {communityCards.map((card) => {
               const section = `community-${card.id}`;
               return (
                 <div key={card.key} hidden={selected !== section}>
@@ -231,6 +270,23 @@ export function Settings({
                 </div>
               );
             })}
+            {contributedGroups.flatMap((group) =>
+              group.cards.map(
+                (card) =>
+                  selected === card.key && (
+                    <OwnedContribution
+                      key={card.key}
+                      entry={card}
+                      registry={cards}
+                    >
+                      {(entry, active) => {
+                        const Card = entry.component;
+                        return <Card active={active} />;
+                      }}
+                    </OwnedContribution>
+                  ),
+              ),
+            )}
             <div hidden={selected !== "profile"}>
               <ProfileSettings
                 communities={communities}

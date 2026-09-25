@@ -89,8 +89,10 @@ export function useAppNavigation(services: AppServices) {
       "agents",
       "notifications",
     ].includes(target.section);
-    const contributed = settingsCards.some(
-      (card) => `community-${card.id}` === target.section,
+    const contributed = settingsCards.some((card) =>
+      card.group
+        ? card.key === target.section
+        : `community-${card.id}` === target.section,
     );
     if (
       !builtIn &&

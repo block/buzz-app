@@ -214,6 +214,14 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     name: "Personal groups",
     exact: true,
   });
+  const hostedCommunities = sections.getByRole("button", {
+    name: "Hosted communities",
+    exact: true,
+  });
+  const invites = sections.getByRole("button", {
+    name: "Invites",
+    exact: true,
+  });
   const plugins = sections.getByRole("button", {
     name: "Plugins",
     exact: true,
@@ -258,6 +266,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await profile.focus();
     await tab();
     await expect(personalGroups).toBeFocused();
+    await tab();
+    await expect(hostedCommunities).toBeFocused();
+    await tab();
+    await expect(invites).toBeFocused();
     await tab();
     await expect(
       sections.getByRole("button", { name: "Appearance", exact: true }),
@@ -308,6 +320,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await tab();
     await expect(personalGroups).toBeFocused();
     await tab();
+    await expect(hostedCommunities).toBeFocused();
+    await tab();
+    await expect(invites).toBeFocused();
+    await tab();
     await expect(
       sections.getByRole("button", { name: "Appearance", exact: true }),
     ).toBeFocused();
@@ -323,14 +339,6 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(agents).toBeFocused();
     await tab();
     await expect(plugins).toBeFocused();
-    await tab();
-    await expect(
-      sections.getByRole("button", { name: "Hosted communities", exact: true }),
-    ).toBeFocused();
-    await tab();
-    await expect(
-      sections.getByRole("button", { name: "Invites", exact: true }),
-    ).toBeFocused();
     await tab();
     await expect(
       page.getByRole("textbox", { name: "Display name", exact: true }),

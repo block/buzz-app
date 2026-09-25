@@ -22,26 +22,23 @@ const pendingSnapshot: EventViewSnapshot = Object.freeze({
 });
 
 /** Verified NIP-OA owner of the winning signed kind 0, or none. Agent hints
- * decide whether to mount this view; they never establish ownership. */
-export function useVerifiedAgentOwner(
-  session: RelaySession,
-  pubkey: string | undefined,
-): string | undefined {
-  return useAgentOwnerEvidence(session, pubkey).owner;
-}
-
-/** Private admission must inspect readiness as well as signed-head ownership.
+ * decide whether to mount this view; they never establish ownership.
+ * Private admission must inspect readiness as well as signed-head ownership.
  * Public identity attribution may still display its retained signed evidence. */
 export function useAgentOwnerEvidence(
   session: RelaySession,
   pubkey: string | undefined,
+  attempt = 0,
 ): {
   status: "loading" | "ready" | "error" | "unavailable";
   owner: string | undefined;
+  failed: boolean;
+  settled: boolean;
 } {
   // A session-owned view: live events, reconnect refresh and purge, no polling.
-  // Capacity or a closed session leaves no view; reopening the profile retries.
+  // Capacity or a closed session leaves no view; profile recovery retries.
   const [view, setView] = useState<ProfileView | null>();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt retries view admission.
   useEffect(() => {
     if (!pubkey) {
       setView(null);
@@ -56,7 +53,7 @@ export function useAgentOwnerEvidence(
     }
     setView(owned);
     return owned.dispose;
-  }, [session, pubkey]);
+  }, [session, pubkey, attempt]);
   const events = useSyncExternalStore(
     view?.subscribe ?? noSubscribe,
     view?.snapshot ?? pendingView,
@@ -95,10 +92,8 @@ export function useAgentOwnerEvidence(
   useEffect(() => {
     if (events.status === "idle") void view?.refresh();
   }, [view, events.status]);
-  const owner =
-    verified && latest && verified.id === latest.id
-      ? verified.owner
-      : undefined;
+  const settled = !!(verified && latest && verified.id === latest.id);
+  const owner = settled ? verified?.owner : undefined;
   // Only an already admitted result from this observation may survive a
   // background read. New heads, purges and failed reads must establish it anew.
   const [admitted, setAdmitted] = useState<{
@@ -139,7 +134,15 @@ export function useAgentOwnerEvidence(
             (latest && verified?.id !== latest.id)
           ? "loading"
           : "ready";
-  return { status, owner };
+  return {
+    status,
+    owner,
+    failed: !!pubkey && (view === null || events.status === "error"),
+    // An absent event is conclusive only after its read completed. Failure or
+    // exhausted capacity must not unlock unverified legacy fallback.
+    settled:
+      !pubkey || settled || (!!view && !latest && events.status === "ready"),
+  };
 }
 
 export function ProfileAgentIdentity({

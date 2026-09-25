@@ -110,8 +110,36 @@ absent:
   not trusted; reopening the profile retries. The existing `isAgent` shape
   check, avatar shape and local library never supply an owner.
 
-Agent type and capabilities are not shown: buzz-app has no reader or contract
-for their source (old Buzz kind 10100). This row has no controls.
+Public metadata follows base Buzz's profile order: **Public key**, **Managed by**,
+**NIP-05**, **Agent type**, **Capabilities**. The existing npub copy control keeps
+its exact value and feedback. The other public fields are whole-row copy buttons,
+with hover/keyboard indicators, a 1.5-second success check and base Buzz's copy
+feedback. Runtime names use the base labels (Goose, Claude Code, Codex, Aider),
+while copying the raw agent type; capabilities display/copy comma-separated values.
+NIP-05 remains self-declared: the row matches base Buzz without a verification
+claim or badge. Display/copy never performs DNS verification.
+
+The typed `features/agents/public-metadata` projection consumes signature-verified
+session views scoped to the exact kind-10100 author. The newest event wins (lower
+id on timestamp ties), including removal/malformed replacements. Base's sparse
+legacy defaults apply. If the existing NIP-OA verifier establishes an owner, an
+exact owner-authored kind-30177 coordinate takes precedence: valid managed content
+shows type `agent` with no legacy capabilities; malformed winning policy suppresses
+legacy fallback. Owner verification and policy reads must settle before displaying
+that projection, including when the pane first opens.
+This is public presentation, not custody, runtime configuration or permission.
+
+The existing live profile route includes kinds 10100/30177; the panel adds no socket,
+polling loop or independent cache. Views refresh on reconnect/purge and dispose on
+profile/session replacement. The owner view acquires capacity before optional public
+enrichment; failed reads/view admission share one Retry profile control with the
+profile directory. Optional enrichment failure preserves the loaded profile without
+a whole-profile error. Completed copy toasts belong to the host stack and survive
+row replacement/navigation; late clipboard completions from retired rows are ignored.
+Runtime/actions/Activity/Instances retain their position before the public fields.
+Ordinary human
+profiles without agent metadata have no agent fields. A self-authored kind 10100
+supplies agent display metadata, not management authority.
 
 ## Boundaries
 

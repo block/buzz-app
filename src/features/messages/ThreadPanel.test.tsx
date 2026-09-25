@@ -110,7 +110,11 @@ function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
     node,
     ...elements(node.props.children as ReactNode),
     ...(node.type === ReplyBranch
-      ? elements(node.props.message as ReactNode)
+      ? elements(
+          typeof node.props.message === "function"
+            ? node.props.message(null)
+            : (node.props.message as ReactNode),
+        )
       : []),
     ...(node.type === PanelHeader
       ? elements(node.props.actions as ReactNode)

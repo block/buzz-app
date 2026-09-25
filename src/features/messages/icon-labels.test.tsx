@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { MediaAttachment } from "./MediaAttachment";
 import { ImageReviewStage } from "./ImageReviewStage";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 class TestClipboardItem {
   constructor(readonly items: Record<string, Promise<Blob>>) {}
@@ -16,13 +23,15 @@ const proxyImageSource =
 function renderProxyImageStage() {
   const url = "https://example.test/a.png";
   render(
-    <ImageReviewStage
-      attachments={[{ url, kind: "image" }]}
-      selectedUrl={url}
-      media={() => proxyImageSource}
-      select={() => {}}
-      onOpenLink={() => false}
-    />,
+    <ToastProvider>
+      <ImageReviewStage
+        attachments={[{ url, kind: "image" }]}
+        selectedUrl={url}
+        media={() => proxyImageSource}
+        select={() => {}}
+        onOpenLink={() => false}
+      />
+    </ToastProvider>,
   );
 }
 
@@ -56,6 +65,7 @@ function markPreviewLoaded() {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -101,15 +111,24 @@ it("shows a disabled copy button for proxy images when image clipboard is unsupp
   );
 });
 
-it("copies proxy images and shows a success notice", async () => {
+it("copies proxy images and shows a success toast", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
   const write = stubImageCopySupport();
   renderProxyImageStage();
   markPreviewLoaded();
 
   fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+  await act(async () => {});
 
   expect(write).toHaveBeenCalledTimes(1);
-  expect(await screen.findByRole("status")).toHaveTextContent("Image copied");
+  expect(
+    screen.getByRole("dialog", { name: "Image copied" }),
+  ).toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(4000));
+  expect(
+    screen.queryByRole("dialog", { name: "Image copied" }),
+  ).not.toBeInTheDocument();
 });
 
 it("prevents duplicate image copy writes until the first settles", async () => {
@@ -134,20 +153,30 @@ it("prevents duplicate image copy writes until the first settles", async () => {
   } finally {
     finish();
   }
-  await screen.findByRole("status");
+  expect(
+    await screen.findByRole("dialog", { name: "Image copied" }),
+  ).toBeInTheDocument();
   expect(button).not.toBeDisabled();
 });
 
-it("reports image copy failures", async () => {
+it("reports image copy failures in an error toast", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
   stubImageCopySupport(vi.fn(async () => Promise.reject(new Error("denied"))));
   renderProxyImageStage();
   markPreviewLoaded();
 
   fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+  await act(async () => {});
 
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Couldn't copy image",
-  );
+  const toast = screen.getByRole("dialog", {
+    name: "Couldn't copy image",
+  });
+  expect(toast).toHaveAttribute("data-type", "error");
+  await act(() => vi.advanceTimersByTimeAsync(6000));
+  expect(
+    screen.queryByRole("dialog", { name: "Couldn't copy image" }),
+  ).not.toBeInTheDocument();
 });
 
 it("opens external images through the host opener without download semantics", () => {

@@ -1,5 +1,6 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowSquareOutIcon,
@@ -49,7 +50,7 @@ export function ImageReviewStage({
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const [copying, setCopying] = useState(false);
-  const [notice, setNotice] = useState<{ text: string; error: boolean }>();
+  const [copyNotice, setCopyNotice] = useState<"success" | "error">();
   const copyBusy = useRef(false);
   const selectedIndex = Math.max(
     0,
@@ -92,19 +93,19 @@ export function ImageReviewStage({
     if (!item) return;
     setZoom(MIN_ZOOM);
     setOffset({ x: 0, y: 0 });
-    setNotice(undefined);
+    setCopyNotice(undefined);
     select(item.url);
   };
   const copyImage = async () => {
     if (copyBusy.current || !image.current) return;
     copyBusy.current = true;
     setCopying(true);
-    setNotice(undefined);
+    setCopyNotice(undefined);
     try {
       await copyImageToClipboard(image.current);
-      setNotice({ text: "Image copied", error: false });
+      setCopyNotice("success");
     } catch {
-      setNotice({ text: "Couldn't copy image", error: true });
+      setCopyNotice("error");
     } finally {
       copyBusy.current = false;
       setCopying(false);
@@ -127,7 +128,6 @@ export function ImageReviewStage({
     <div
       ref={stage}
       className={`${styles.imageReviewStage} ${pannable ? styles.imageReviewPannable : ""} ${dragging ? styles.imageReviewDragging : ""}`}
-      aria-describedby={notice ? "image-review-copy-notice" : undefined}
       onPointerDown={(event) => {
         if (!pannable) return;
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -274,16 +274,13 @@ export function ImageReviewStage({
             icon={<ArrowSquareOutIcon size={17} />}
           />
         )}
-        {notice && (
-          <p
-            id="image-review-copy-notice"
-            className={styles.messageActionNotice}
-            role={notice.error ? "alert" : "status"}
-          >
-            {notice.text}
-          </p>
-        )}
       </div>
+      {copyNotice === "success" && (
+        <ToastNotice title="Image copied" tone="success" timeout={4000} />
+      )}
+      {copyNotice === "error" && (
+        <ToastNotice title="Couldn't copy image" tone="error" timeout={6000} />
+      )}
     </div>
   );
 }

@@ -632,8 +632,15 @@ function ChannelWorkspace({
   useEffect(() => {
     if (mediaReview && !showingMediaReview) setMediaReview(undefined);
   }, [mediaReview, showingMediaReview]);
+  // Timeline rows are memoized; their callbacks read the shown destination at
+  // call time so a new navigation request does not rerender every row.
+  const destination = useRef({ current, navigation });
+  useLayoutEffect(() => {
+    destination.current = { current, navigation };
+  }, [current, navigation]);
   const openMediaReview = useCallback(
     (messageId: string, attachment: Attachment, initialTime: number) => {
+      const { current, navigation } = destination.current;
       if (!current) return;
       setSettings(undefined);
       mediaReviewTrigger.current =
@@ -650,7 +657,7 @@ function ChannelWorkspace({
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },
-    [current, navigation],
+    [],
   );
   useEffect(() => {
     if (
@@ -700,6 +707,7 @@ function ChannelWorkspace({
   }, [currentId, showingThread?.navigation]);
   const openLink = useCallback(
     (url: string) => {
+      const { current, navigation } = destination.current;
       const connection = relay.snapshot();
       if (
         !mounted.current ||
@@ -747,18 +755,7 @@ function ChannelWorkspace({
       }
       return false;
     },
-    [
-      panels,
-      current,
-      open,
-      relay,
-      queries,
-      navigation,
-      select,
-      navigator,
-      viewer,
-      scope,
-    ],
+    [panels, open, relay, queries, select, navigator, viewer, scope],
   );
   const panelActive = () => {
     const connection = relay.snapshot();

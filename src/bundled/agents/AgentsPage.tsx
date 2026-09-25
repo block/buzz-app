@@ -1,5 +1,9 @@
 import { useIdentityNames } from "../../features/identity-names/react";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import type { PageProps } from "../../features/pages/service";
+import type { OpenTarget } from "../../features/navigation/targets";
+import type { OpenResult } from "../../features/navigation/controller";
+import { editAgentRoute } from "./edit-route";
 import type {
   AgentControl,
   AgentControlState,
@@ -18,12 +22,40 @@ import { ManagedAgentActions } from "./ManagedAgentActions";
 export function AgentsPage({
   relay,
   control,
-}: {
+  navigation,
+  open,
+}: PageProps & {
   relay: RelayData;
   control?: AgentControl;
+  open?: (
+    target: OpenTarget,
+    options?: { replace?: boolean },
+  ) => Promise<OpenResult>;
 }) {
   const connection = useRelayConnection(relay);
   const resolveName = useIdentityNames(connection.session.names);
+  const request = useMemo(
+    () => navigation?.forSession(relay, connection),
+    [navigation, relay, connection],
+  );
+  const target = request?.target;
+  const editTarget =
+    target?.kind === "page" && target.route
+      ? editAgentRoute(target.route.params)
+      : null;
+  useEffect(() => {
+    if (!request || request.signal.aborted) return;
+    // The routed edit destination must not acknowledge an unrelated page.
+    if (target?.kind !== "page") return;
+    if (!editTarget && !target.route) request.complete({ status: "opened" });
+    else if (!editTarget)
+      request.complete({ status: "failed", reason: "unavailable" });
+    else if (
+      !control ||
+      (connection.status !== "ready" && connection.status !== "connecting")
+    )
+      request.complete({ status: "failed", reason: "unavailable" });
+  }, [request, target, editTarget, control, connection.status]);
   let importDestination = "";
   if (
     connection.viewer &&
@@ -62,6 +94,25 @@ export function AgentsPage({
             {control ? (
               <AgentControlPanel
                 control={control}
+                editTarget={editTarget}
+                {...(editTarget && request && connection.status === "ready"
+                  ? { editRequest: request }
+                  : {})}
+                onCloseTarget={() => {
+                  if (target?.kind === "page" && open)
+                    void open(
+                      {
+                        version: 1,
+                        kind: "page",
+                        pluginId: target.pluginId,
+                        pageId: target.pageId,
+                        ...(target.scope !== undefined
+                          ? { scope: target.scope }
+                          : {}),
+                      },
+                      { replace: true },
+                    );
+                }}
                 resolveName={resolveName}
                 importDestination={importDestination}
                 createOwner={

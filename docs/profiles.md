@@ -13,8 +13,10 @@ custody is app-wide: the viewer is not an owner check, so any account in this
 app on the same relay sees the same local record. It
 shows process status (still "relay readiness unverified", not a listening badge),
 saved harness/provider/model/workspace (labelled as saved settings, since
-environment overrides may change what is launched), collapsible instructions,
-saved-vs-running revision drift and diagnostics. Environment keys and
+environment overrides may change what is launched), saved-vs-running revision
+drift and diagnostics. Instructions are no longer displayed in the read-only
+summary; the verified owner opens the existing native editor in place with
+**Agent instructions**, without leaving the profile. Environment keys and
 arguments are not shown. Opening the Info tab requests a status read; concurrent
 requests coalesce. This summary adds no polling and observes the profile actions'
 existing refresh. A failed read keeps the last evidence.
@@ -22,8 +24,9 @@ The host error, runtime-unavailable reason, unconfirmed-status notice and Retry
 are shown once, by the profile actions. Browser/unavailable hosts, loading/error
 without evidence, unknown keys and records saved for another community render
 nothing, leaving the public identity. Community switches re-filter immediately.
-Start/Stop/Restart are the separate profile actions above; harness logs stay on
-Agents.
+Start/Stop/Restart are the separate profile actions above. The owner-only
+**Agent instructions** ingress in Info requires a unique native record; harness
+logs stay on Agents.
 
 ## Owner runtime tab
 
@@ -276,7 +279,10 @@ unambiguous native match; an instance view selects that record by ID.
 Archive labels come from `session.archives`, keyed by identity, rather than native
 process status. Archived rows use the same explicit target and remain navigable.
 The existing public profile tabs and actions are reused, not replaced by an Agents
-page or a second editor. Browser fixtures exercise live/archived selection,
+page or a second editor. The owner-only ingress requires a verified NIP-OA
+owner and a ready, unique native match in this community; the versioned
+agent-identity route opens the existing editor, never a guessed sibling.
+Browser fixtures exercise live/archived selection,
 tabs, back, keyboard close/focus and deletion through the real plugin/Channels
 host in Chromium and WebKit. React tests cover exact actions, failed-read recovery,
 non-owner denial and scope changes with synthetic native data.
@@ -336,8 +342,9 @@ Retired relay
 presentations cannot dispatch commands. The separate runtime child owns badges
 and runtime detail; actions do not infer relay readiness.
 
-Info adds no edit ingress; the owner Runtime tab reuses the Agents editor
-dialog rather than a route or second editor. Mounted React regression tests exercise exact dispatch, pending/failure/
+Info adds an owner-gated route to the Agents editor for a unique native match;
+the owner Runtime tab also reuses the editor dialog. Mounted React regression
+tests exercise exact dispatch, pending/failure/
 recovery and profile/community lifecycle through the real controller projection
 with a synthetic native host. Live process/credential handover and rendered native
 acceptance remain attended checks, not established by these tests.

@@ -1304,14 +1304,32 @@ export function createRelaySession(
             },
           })
         : undefined,
-    // Community media is readable through ordinary media policy, not operator ACLs.
-    // Do not expose feedback uploads until the relay offers private feedback storage.
-    feedbackUpload: undefined as
-      | {
-          origin: string;
-          upload(file: File, signal: AbortSignal): Promise<UploadedAttachment>;
-        }
-      | undefined,
+    // Feedback text is private to the operator inbox; uploaded files retain
+    // ordinary community-media access, matching Desktop's attachment path.
+    feedbackUpload:
+      uploadAttachment &&
+      writes?.outbox.supports(PRODUCT_FEEDBACK_KIND) &&
+      transport?.scope
+        ? Object.freeze({
+            origin: transport.scope,
+            async upload(
+              file: File,
+              signal: AbortSignal,
+            ): Promise<UploadedAttachment> {
+              const combined = AbortSignal.any([
+                signal,
+                lifetime.signal,
+                uploadLifetime.signal,
+              ]);
+              combined.throwIfAborted();
+              if (closed) throw new UploadError("denied");
+              const result = await uploadAttachment(file, combined);
+              combined.throwIfAborted();
+              if (closed) throw new UploadError("denied");
+              return result;
+            },
+          })
+        : undefined,
     messages: createMessages(
       writes?.outbox,
       transport?.viewer,

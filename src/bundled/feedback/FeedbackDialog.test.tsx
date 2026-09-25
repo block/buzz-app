@@ -370,7 +370,11 @@ it("does not offer attachments when the session has no private upload capability
   expect(
     screen.queryByRole("checkbox", { name: "Attach diagnostics" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByText(/Attachments are unavailable/)).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      /Images and optional diagnostics use ordinary media storage/,
+    ),
+  ).toBeInTheDocument();
   expect(h.upload).not.toHaveBeenCalled();
 });
 

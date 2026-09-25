@@ -302,7 +302,7 @@ function FeedbackForConnection({
         else onOpenChange(next);
       }}
       title="Send feedback"
-      description="Feedback text goes to this Buzz deployment's private operator inbox, not a channel. Attachments are unavailable until operator-private media storage is supported."
+      description="Feedback text goes to this Buzz deployment's feedback inbox, not a channel. Images and optional diagnostics use ordinary media storage, not inbox-only access; people allowed to read media on this deployment may access them if they have the link. Images upload when selected; diagnostics upload when you send. Removing an attachment or closing this form does not delete uploaded files."
       actions={
         <>
           <Button onClick={close}>Close</Button>

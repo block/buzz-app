@@ -155,9 +155,15 @@ it.each(["rejected", "unknown"])(
   },
 );
 
-it("does not expose ordinary community media as private feedback uploads", () => {
-  const uploadAttachment = vi.fn();
-  const owner = createRelaySession({
+it("offers ordinary media feedback uploads only for a scoped writable session", async () => {
+  const uploadAttachment = vi.fn(async () => ({
+    name: "feedback.png",
+    url: `https://relay.test/media/${"a".repeat(64)}.png`,
+    type: "image/png",
+    size: 64,
+    sha256: "a".repeat(64),
+  }));
+  const transport = {
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
     scope: "https://relay.test",
@@ -170,8 +176,30 @@ it("does not expose ordinary community media as private feedback uploads", () =>
         signed(viewer, template),
       publish: async () => {},
     },
-  });
+  };
+  const owner = createRelaySession(transport);
   owners.push(owner);
-  expect(owner.session.feedbackUpload).toBeUndefined();
-  expect(uploadAttachment).not.toHaveBeenCalled();
+  const capability = owner.session.feedbackUpload;
+  expect(capability?.origin).toBe(transport.scope);
+  if (!capability) throw new Error("Feedback upload unavailable");
+  const file = new File(["image"], "feedback.png", { type: "image/png" });
+  const controller = new AbortController();
+  await expect(
+    capability.upload(file, controller.signal),
+  ).resolves.toMatchObject({
+    type: "image/png",
+  });
+  expect(uploadAttachment).toHaveBeenCalledWith(file, expect.any(AbortSignal));
+  const { scope: _scope, ...withoutScope } = transport;
+  const unscoped = createRelaySession(withoutScope);
+  const readOnly = createRelaySession({
+    ...transport,
+    writer: { ...transport.writer, kinds: [9] },
+  });
+  owners.push(unscoped, readOnly);
+  expect(unscoped.session.feedbackUpload).toBeUndefined();
+  expect(readOnly.session.feedbackUpload).toBeUndefined();
+  owner.dispose();
+  await expect(capability.upload(file, controller.signal)).rejects.toThrow();
+  expect(uploadAttachment).toHaveBeenCalledTimes(1);
 });

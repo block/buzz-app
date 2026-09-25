@@ -79,9 +79,12 @@ test("host shortcuts coexist with an open completion menu and preserve its draft
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await openPage(page, "Messages");
   await expect(input).toHaveJSProperty("value", ":smile");
-  // Draft persistence restores text, not selection: a remounted textarea may
-  // focus at offset zero. Move to the query before expecting its suggestions.
-  await input.press(modifier === "Meta" ? "Meta+ArrowRight" : "End");
+  // Draft persistence restores text, not selection. Establish the query caret
+  // through the editor API; native End can race focus/selection reconciliation.
+  await input.focus();
+  await input.evaluate((el) =>
+    el.setSelectionRange(el.value.length, el.value.length),
+  );
   await expect(input).toBeFocused();
   await expect
     .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))

@@ -43,15 +43,15 @@ impl RuntimeBundle {
         if record["backend"]["type"]
             .as_str()
             .is_some_and(|s| s != "local")
-            || record["team_id"].as_str().is_some_and(|s| !s.is_empty())
-            || record["persona_team_dir"]
-                .as_str()
-                .is_some_and(|s| !s.is_empty())
             || harness.provider == "relay-mesh"
             || !record["relay_mesh"].is_null()
         {
-            return Err("This imported agent requires a remote/team/mesh integration not supported by the local controller".into());
+            return Err("This imported agent requires a remote/mesh integration not supported by the local controller".into());
         }
+        if agent.needs_team_import() {
+            return Err("Import this agent's team instructions from old Buzz under Agents → Import or repair from old Buzz → Repair team import before starting".into());
+        }
+        let team_instructions = crate::import::team_text(&agent.imported["teamInstructions"])?;
         let respond_to = agent.respond_to(defaults.owner_only)?;
         if agent.auth_tag.is_none() {
             return Err("This identity has no saved owner attestation; native owner binding is required before starting".into());
@@ -115,6 +115,7 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_AGENT_COMMAND", worker)
             .env("BUZZ_ACP_AGENT_ARGS", args.join(","))
             .env("BUZZ_ACP_SYSTEM_PROMPT", &agent.system_prompt)
+            .env("BUZZ_ACP_TEAM_INSTRUCTIONS", team_instructions)
             .env("BUZZ_ACP_DISPLAY_NAME", &agent.name)
             .env("BUZZ_ACP_LAZY_POOL", "true")
             .env("BUZZ_ACP_IDLE_POOL_SLEEP", "900")

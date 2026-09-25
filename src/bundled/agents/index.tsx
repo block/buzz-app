@@ -1,7 +1,13 @@
 import type { PluginModule } from "../../plugins/api";
 import { AgentsPage } from "./AgentsPage";
 import { editAgentRoute } from "./edit-route";
-export const inject = ["pages", "relay", "agentControl", "navigation"];
+export const inject = [
+  "pages",
+  "panels",
+  "relay",
+  "agentControl",
+  "navigation",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
   const control = ctx.agentControl;
@@ -9,16 +15,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "agents",
     title: "Agents",
     layout: "workspace",
+    companion: true,
     handlesNavigation: true,
     route: {
       version: 1,
       validate: (params) => editAgentRoute(params) !== null,
     },
-    component: (props) => (
+    component: (props = {}) => (
       <AgentsPage
         {...props}
         relay={relay}
         control={control}
+        panels={ctx.panels}
         open={ctx.navigation.open}
       />
     ),

@@ -275,6 +275,18 @@ test("upper waits for end's held final movement before capturing the reading anc
     });
   });
   const input = page.mouse.wheel.bind(page.mouse);
+  const poll = expect.poll;
+  const waitingForCompletion = Promise.withResolvers();
+  expect.poll = (callback, options) =>
+    poll(async () => {
+      const value = await callback();
+      if (
+        options?.message === "timeline wheel gesture completes" &&
+        (await page.evaluate(() => window.heldEnd))
+      )
+        waitingForCompletion.resolve();
+      return value;
+    }, options);
   let first = true;
   page.mouse.wheel = (x, y) => {
     const distance = first ? y - 2 : y;
@@ -284,6 +296,9 @@ test("upper waits for end's held final movement before capturing the reading anc
   const outcome = upper(page);
   try {
     await expect.poll(() => page.evaluate(() => window.heldEnd)).toBe(true);
+    // Observe the helper's wait, not just the browser's held event: otherwise
+    // this negative check can beat upper's continuation even without the barrier.
+    await waitingForCompletion.promise;
     await settle(page);
     expect(
       await page.evaluate(() => window.upwardGestures),
@@ -302,7 +317,11 @@ test("upper waits for end's held final movement before capturing the reading anc
     expect(await page.evaluate(() => window.upwardGestures)).toBe(1);
   } finally {
     await page.evaluate(() => window.releaseEnd());
-    await outcome;
-    page.mouse.wheel = input;
+    try {
+      await outcome;
+    } finally {
+      expect.poll = poll;
+      page.mouse.wheel = input;
+    }
   }
 });

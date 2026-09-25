@@ -355,6 +355,7 @@ function FeedbackForConnection({
                 key={id}
                 variant={category === id ? "prominent" : "subtle"}
                 aria-pressed={category === id}
+                disabled={busy}
                 onClick={() => setCategory(category === id ? null : id)}
               >
                 {label}
@@ -367,6 +368,7 @@ function FeedbackForConnection({
           <Textarea
             id="feedback-message"
             value={message}
+            disabled={busy}
             onChange={(event) => setMessage(event.target.value)}
             placeholder="Tell us what went wrong, or share general feedback."
           />

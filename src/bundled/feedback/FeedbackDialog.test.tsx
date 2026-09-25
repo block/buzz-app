@@ -549,6 +549,53 @@ it("cancels opted-in diagnostics upload on close without sending", async () => {
   view.unmount();
 });
 
+it("locks the captured draft while diagnostics upload before sending", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    h.upload.mockImplementationOnce(() => {
+      resolve();
+      return new Promise((done) => {
+        release = () =>
+          done(
+            uploaded(
+              "feedback-diagnostics.txt",
+              "application/octet-stream",
+              "bin",
+            ),
+          );
+      });
+    });
+  });
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  const textbox = screen.getByRole("textbox", { name: "Your feedback" });
+  await user.click(screen.getByRole("button", { name: "Bug" }));
+  await user.type(textbox, "Original");
+  await user.click(
+    screen.getByRole("checkbox", { name: "Attach diagnostics" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  try {
+    await started;
+    expect(textbox).toBeDisabled();
+    for (const name of ["Bug", "Praise", "Needs work"])
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    expect(h.send).not.toHaveBeenCalled();
+  } finally {
+    release();
+  }
+  await waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
+  expect(h.send.mock.calls[0]?.[0]).toMatchObject(
+    feedbackEvent(
+      "Original",
+      "bug",
+      [uploaded("feedback-diagnostics.txt", "application/octet-stream", "bin")],
+      "https://relay.test",
+    ),
+  );
+});
+
 it("uploads diagnostics only on explicit opt-in and sends a text-file descriptor", async () => {
   const user = userEvent.setup();
   const h = fixture();

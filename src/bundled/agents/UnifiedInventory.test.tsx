@@ -94,6 +94,7 @@ function setup(
       edit={() => {}}
       importedId={null}
       onUseHere={() => {}}
+      onImport={() => {}}
     />
   );
   const mounted = render(view());

@@ -390,8 +390,10 @@ for (const previouslyStopped of [false, true]) {
       );
       await expect(page.getByRole("alert")).toContainText("Could not confirm");
       await expect(
-        panel.getByText("Showing the last host snapshot", { exact: false }),
-      ).toContainText("unconfirmed");
+        panel.getByText("Showing the last known agent status", {
+          exact: false,
+        }),
+      ).toContainText("Refresh to check which agents are running");
       if (!previouslyStopped) {
         await expect(
           editor.getByText("Enabled · manual-start only", {

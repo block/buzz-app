@@ -1,3 +1,4 @@
+import { profileDefault } from "./profile-default";
 import { useEffect, useRef, useState } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -151,7 +152,7 @@ export function CommunityDialog({
                 ? { icon: info.icon }
                 : {}),
             },
-            profile,
+            profileDefault(profile, communities.snapshot().profile, id),
           );
           onJoined?.(id);
         }

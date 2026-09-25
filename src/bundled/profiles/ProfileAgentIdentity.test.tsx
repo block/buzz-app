@@ -210,11 +210,13 @@ it("adds no agent section or owner reads for a profile without an agent hint", a
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
   const reads = query.mock.calls.flatMap(([filters]) => filters);
-  expect(reads).toHaveLength(2);
+  expect(reads).toHaveLength(3);
   expect(reads).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
       expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
+      // Public metadata added on main probes the identity, not an alleged owner.
+      expect.objectContaining({ authors: [person.pubkey], kinds: [10100] }),
     ]),
   );
 });

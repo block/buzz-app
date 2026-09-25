@@ -42,7 +42,9 @@ remote side effect and is not undone if later profile setup fails or is cancelle
 Profile editing preserves existing fields that this editor does not expose.
 After a confirmed Settings save, the profile also becomes the device-local
 default used in Personal space and new-community setup; other existing community
-profiles are not changed. The top-right button and menu show the selected
+profiles are not changed. Community-hosted media is not copied into that default:
+its previous picture is kept, while public URLs and explicit removal still update
+it. First-join seeding follows the same rule. The top-right button and menu show the selected
 community's name and avatar through its existing profile/media session. Pending
 or unavailable community profiles show an identity fallback, not another
 community's avatar. Personal space uses the local default. Merely loading a

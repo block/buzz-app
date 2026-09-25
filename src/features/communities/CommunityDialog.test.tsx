@@ -154,3 +154,42 @@ it("names exact relay claim refusals and keeps other failures generic", async ()
     expect(await screen.findByRole("alert")).toHaveTextContent(shown);
   }
 });
+
+it("keeps a community upload out of first-join local defaults without changing the published profile", async () => {
+  api.inspectProfile.mockResolvedValueOnce({
+    exists: true,
+    existing: { name: "Fixture" },
+    profile: {
+      name: "Fixture",
+      picture: "https://relay.example/media/avatar.png",
+      about: "",
+    },
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info") return Response.json({ name: "Fixture" });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const communities = {
+    snapshot: () => ({ status: "ready", profile: { name: "", picture: "" } }),
+    joined: vi.fn(),
+  } as unknown as Communities;
+  render(
+    <CommunityDialog communities={communities} mode="join" close={() => {}} />,
+  );
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("Relay URL"), "wss://relay.example");
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Open community" }),
+  );
+  expect(api.publishProfile).not.toHaveBeenCalled();
+  expect(communities.joined).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "https://relay.example" }),
+    { name: "Fixture", picture: "", about: "" },
+  );
+});

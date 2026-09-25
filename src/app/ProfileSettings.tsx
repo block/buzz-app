@@ -1,3 +1,4 @@
+import { profileDefault } from "../features/communities/profile-default";
 import { AvatarEditor } from "../features/profiles/AvatarEditor";
 import { Button } from "../shared/design-system/ui/Button";
 import { Input } from "../shared/design-system/ui/Input";
@@ -217,9 +218,8 @@ export function ProfileSettings({
                         next,
                         latest.existing,
                       );
-                      if (!mounted.current) return;
+                      // Once dispatched, finish on this session even if Settings closes.
                       const confirmed = await inspect(community.id);
-                      if (!mounted.current) return;
                       if (
                         !confirmed.exists ||
                         !profilesEqual(confirmed.profile, next)
@@ -230,7 +230,13 @@ export function ProfileSettings({
                       setLoaded(confirmed);
                     }
                     if (isCurrentProfileSave(communities, saveGeneration))
-                      communities.saveProfile(next);
+                      communities.saveProfile(
+                        profileDefault(
+                          next,
+                          communities.snapshot().profile,
+                          community?.id,
+                        ),
+                      );
                     setDraft(null);
                     setSaved(true);
                   } catch (reason) {

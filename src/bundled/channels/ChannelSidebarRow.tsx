@@ -53,6 +53,7 @@ export function ChannelSidebarRow({
   icon,
   badge,
   childContent,
+  dmVisualSpacing = false,
   wrapSelect,
   selected,
   sessions,
@@ -69,6 +70,7 @@ export function ChannelSidebarRow({
   icon: ReactNode;
   badge?: ReactNode;
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
+  dmVisualSpacing?: boolean;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
   selected?: string | undefined;
   sessions: readonly ChannelSummary[];
@@ -100,7 +102,12 @@ export function ChannelSidebarRow({
         hasChildren ? (
           <span className={styles.iconSpace} aria-hidden="true" />
         ) : (
-          <span className={styles.iconSpace}>{icon}</span>
+          <span
+            className={styles.iconSpace}
+            data-dm-visual={dmVisualSpacing || undefined}
+          >
+            {icon}
+          </span>
         )
       }
       trailing={badge && <span className={styles.badges}>{badge}</span>}

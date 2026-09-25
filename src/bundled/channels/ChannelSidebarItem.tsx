@@ -60,6 +60,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   return (
     <ChannelSidebarRow
       channel={channel}
+      dmVisualSpacing={channel.channelType === "dm"}
       icon={
         channel.channelType === "dm" && channel.participants?.length === 1 ? (
           <span className={styles.dmAvatar} data-dm-identity="">

@@ -60,6 +60,9 @@
   margin-inline: calc(-1 * (var(--space-1) / 4))
     calc(var(--space-half) + (var(--space-1) / 4));
 }
+.iconSpace[data-dm-visual] {
+  margin-inline-end: var(--space-half);
+}
 .badges {
   display: inline-flex;
   align-items: center;

@@ -1,6 +1,7 @@
 import "../../src/shared/styles/globals.css";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { AgentSettings } from "../../src/app/AgentSettings";
+import { createAgentControl } from "../../src/features/agents/control";
 import { StrictMode, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
@@ -27,6 +28,7 @@ const viewer = keypair(),
   relay = keypair(),
   first = keypair(),
   second = keypair();
+const browserControl = createAgentControl(null);
 let members = [viewer.pubkey, first.pubkey, second.pubkey];
 let time = 1700000000;
 const publications: RelayEvent[] = [];
@@ -310,7 +312,7 @@ function Fixture() {
         />
       </div>
       {new URLSearchParams(location.search).has("settings") && (
-        <AgentSettings />
+        <AgentSettings control={browserControl} />
       )}
     </main>
   );

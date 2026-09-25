@@ -26,7 +26,7 @@ export function ComposerAttachments({
   remove(id: string): void;
   retry(id: string): void;
 }) {
-  const poof = useAttachmentPoof();
+  const poof = useAttachmentPoof(items.length > 0);
   return (
     <>
       {poof.overlay}

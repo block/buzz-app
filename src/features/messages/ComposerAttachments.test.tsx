@@ -206,9 +206,23 @@ it("keeps one puff after the final attachment is removed and cleans up its timer
   vi.useFakeTimers();
   const play = vi.fn().mockResolvedValue(undefined);
   const pause = vi.fn();
+  const audioCreated = vi.fn();
+  const imageCreated = vi.fn();
+  vi.stubGlobal(
+    "Image",
+    class {
+      constructor() {
+        imageCreated();
+      }
+      src = "";
+    },
+  );
   vi.stubGlobal(
     "Audio",
     class {
+      constructor() {
+        audioCreated();
+      }
       play = play;
       pause = pause;
       preload = "";
@@ -228,8 +242,13 @@ it("keeps one puff after the final attachment is removed and cleans up its timer
     retry: vi.fn(),
     media: () => undefined,
   };
-  const view = render(<ComposerAttachments {...props} items={[item]} />);
+  const view = render(<ComposerAttachments {...props} items={[]} />);
   try {
+    expect(audioCreated).not.toHaveBeenCalled();
+    expect(imageCreated).not.toHaveBeenCalled();
+    view.rerender(<ComposerAttachments {...props} items={[item]} />);
+    expect(audioCreated).toHaveBeenCalledTimes(1);
+    expect(imageCreated).toHaveBeenCalledTimes(5);
     const button = screen.getByRole("button", { name: "Remove remove.txt" });
     fireEvent.pointerDown(button);
     expect(play).not.toHaveBeenCalled();
@@ -238,12 +257,15 @@ it("keeps one puff after the final attachment is removed and cleans up its timer
     expect(play).toHaveBeenCalledTimes(1);
     view.rerender(<ComposerAttachments {...props} items={[]} />);
     expect(screen.queryByRole("region", { name: "Attachments" })).toBeNull();
+    expect(pause).not.toHaveBeenCalled();
     expect(
       document.querySelectorAll("[data-attachment-poof] img"),
     ).toHaveLength(5);
     act(() => vi.advanceTimersByTime(430));
     expect(document.querySelector("[data-attachment-poof]")).toBeNull();
     view.rerender(<ComposerAttachments {...props} items={[item]} />);
+    expect(audioCreated).toHaveBeenCalledTimes(1);
+    expect(imageCreated).toHaveBeenCalledTimes(5);
     fireEvent.click(screen.getByRole("button", { name: "Remove remove.txt" }));
     expect(document.querySelector("[data-attachment-poof]")).not.toBeNull();
     view.unmount();

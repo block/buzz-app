@@ -8,13 +8,16 @@ const asset = (name: string) =>
 type Burst = { id: number; x: number; y: number; size: number };
 
 // Owned by the attachment list, so removing its last item cannot erase the puff.
-export function useAttachmentPoof() {
+export function useAttachmentPoof(hasAttachments: boolean) {
   const [bursts, setBursts] = useState<Burst[]>([]);
   const nextId = useRef(0);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const audio = useRef<HTMLAudioElement | null>(null);
+  const prepared = useRef(false);
 
   useEffect(() => {
+    if (!hasAttachments || prepared.current) return;
+    prepared.current = true;
     for (const frame of frames) new Image().src = asset(`poof${frame}@3x.png`);
     try {
       audio.current = new Audio(asset("plop.m4a"));
@@ -23,12 +26,17 @@ export function useAttachmentPoof() {
     } catch {
       // Sound is optional; removal must work without audio support.
     }
+  }, [hasAttachments]);
+
+  // Retain media through the last removal; only unmount ends its playback.
+  useEffect(() => {
     const pending = timers.current;
     return () => {
       for (const timer of pending) clearTimeout(timer);
       pending.clear();
       audio.current?.pause();
       audio.current = null;
+      prepared.current = false;
     };
   }, []);
 

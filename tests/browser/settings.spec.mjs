@@ -30,27 +30,49 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "2");
   const bounds = await frame.boundingBox();
   const scroller = frame.locator(":scope > div");
+  const wheel = async (deltaY) => {
+    // A changed scrollTop is only the start of WebKit's animated wheel input.
+    // Arm the completion observer before input, then measure the settled row.
+    const completion = await scroller.evaluateHandle((element) => {
+      const state = { done: false };
+      element.addEventListener(
+        "scrollend",
+        () => {
+          state.done = true;
+        },
+        { once: true },
+      );
+      return state;
+    });
+    try {
+      await page.mouse.wheel(0, deltaY);
+      await expect
+        .poll(() => completion.evaluate((state) => state.done))
+        .toBe(true);
+    } finally {
+      await completion.dispose();
+    }
+  };
   await page.mouse.move(
     bounds.x + bounds.width / 2,
     bounds.y + bounds.height / 2,
   );
   // Real wheel input must reveal a complete row inside the clipped solid frame.
   // Merely finding a control in the DOM, or scrolling it into a thin strip, fails.
-  for (let gesture = 0; gesture < 12; gesture++) {
+  const visibleTop = Math.max(bounds.y, 0);
+  const visibleBottom = Math.min(bounds.y + bounds.height, 400);
+  for (let gesture = 0; gesture < 30; gesture++) {
     const target = await row.boundingBox();
     if (
-      target.y >= bounds.y &&
-      target.y + target.height <= bounds.y + bounds.height
+      target.y >= visibleTop + 8 &&
+      target.y + target.height <= visibleBottom - 8
     )
       break;
-    const before = await scroller.evaluate((element) => element.scrollTop);
-    await page.mouse.wheel(
-      0,
-      bounds.height * (target.y < bounds.y ? -0.4 : 0.4),
-    );
-    await expect
-      .poll(() => scroller.evaluate((element) => element.scrollTop))
-      .not.toBe(before);
+    const distance =
+      target.y < visibleTop + 8
+        ? target.y - visibleTop - 8
+        : target.y + target.height - visibleBottom + 8;
+    await wheel(Math.sign(distance) * Math.max(Math.abs(distance), 24));
   }
   await expect(row).toBeInViewport({ ratio: 1 });
   await expect(toggle).toBeInViewport({ ratio: 1 });
@@ -280,6 +302,14 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await tab();
     await expect(
       sections.getByRole("button", { name: "Notifications", exact: true }),
+    ).toBeFocused();
+    await tab();
+    await expect(
+      sections.getByRole("button", { name: "Hosted communities", exact: true }),
+    ).toBeFocused();
+    await tab();
+    await expect(
+      sections.getByRole("button", { name: "Invites", exact: true }),
     ).toBeFocused();
     await tab();
     await expect(

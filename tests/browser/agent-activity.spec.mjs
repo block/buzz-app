@@ -335,7 +335,8 @@ for (const mode of ["light", "dark"]) {
   });
 }
 
-test("profile activity opens the exact agent and originating channel before its first frame", async ({
+const it = test.extend({ readState: true });
+it("profile activity opens the exact agent and originating channel before its first frame", async ({
   page,
   app,
 }, testInfo) => {
@@ -374,8 +375,8 @@ test("profile activity opens the exact agent and originating channel before its 
     .locator(`[data-message-id="${message.id}"]`)
     .getByRole("button", { name: /profile/ });
   await avatar.waitFor();
-  // Exercise the real read publication before opening the profile, rather than
-  // allowing its normal dwell/debounce to race this journey's teardown.
+  // Reading the live message can outlast the normal publication debounce while
+  // the profile is open. Exercise that boundary instead of racing teardown.
   await page
     .getByRole("region", { name: "Channel message history", exact: true })
     .focus();

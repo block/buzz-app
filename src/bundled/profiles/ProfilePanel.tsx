@@ -3,6 +3,7 @@ import { ProfileMemories } from "./ProfileMemories";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
+import { ProfileAgentRuntime } from "./ProfileAgentRuntime";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
@@ -291,6 +292,13 @@ function ProfileDetails({
                 )}
                 {profile?.about && (
                   <p className={styles.about}>{profile.about}</p>
+                )}
+                {control && scope && (
+                  <ProfileAgentRuntime
+                    control={control}
+                    scope={scope}
+                    pubkey={pubkey}
+                  />
                 )}
                 {children}
                 {agentPubkeys.has(pubkey) && (

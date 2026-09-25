@@ -150,6 +150,17 @@ impl Store {
         agent.enabled = enabled;
         self.write(&doc)
     }
+    /// A launch preference, not a harness setting: the revision is unchanged.
+    pub(crate) fn start_on_app_launch(&mut self, id: &str, value: bool) -> Result<()> {
+        let mut doc = self.read()?;
+        let agent = doc
+            .agents
+            .iter_mut()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        agent.start_on_app_launch = Some(value);
+        self.write(&doc)
+    }
     pub(crate) fn profile_published(&mut self, id: &str, revision: u64) -> Result<()> {
         let mut doc = self.read()?;
         let agent = doc
@@ -212,4 +223,4 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

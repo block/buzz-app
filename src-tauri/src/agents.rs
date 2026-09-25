@@ -292,7 +292,7 @@ impl AgentHost {
     }
     pub(crate) async fn restore(&self) {
         let ids = self
-            .with(|host| host.controller.enabled_ids())
+            .with(|host| host.controller.launch_ids())
             .unwrap_or_default();
         for id in ids {
             let _ = start(self.clone(), id, Action::Start, true, None).await;
@@ -388,6 +388,18 @@ pub(crate) async fn agent_control_save(
     .await
 }
 #[tauri::command]
+pub(crate) async fn agent_control_start_on_app_launch(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    enabled: bool,
+) -> Result<Snapshot, String> {
+    run(state.inner().clone(), move |host| {
+        host.controller.set_start_on_app_launch(&id, enabled)?;
+        host.snapshot()
+    })
+    .await
+}
+#[tauri::command]
 pub(crate) async fn agent_control_action(
     state: tauri::State<'_, AgentHost>,
     id: String,
@@ -409,7 +421,7 @@ async fn start(
 ) -> Result<Snapshot, String> {
     let prepared = owner.with(|host| {
         host.starts.remove(&id);
-        if restore && !host.controller.enabled_ids()?.contains(&id) {
+        if restore && !host.controller.launch_ids()?.contains(&id) {
             return Err("Agent disabled before restore".into());
         }
         let request = match host.controller.credential_request(&id) {

@@ -22,6 +22,7 @@ pub(crate) fn fixture() -> Agent {
         environment: BTreeMap::from([("TEST_TOKEN".into(), "secret-env-value".into())]),
         revision: 1,
         enabled: false,
+        start_on_app_launch: None,
         credential_id: "test-credential".into(),
         auth_tag: Some("private-attestation".into()),
         imported: json!({"futureSetting": {"opaque": "preserve-me"}}),
@@ -143,6 +144,24 @@ fn durable_enablement_is_not_a_config_revision() {
     let store = Store::open(dir.path().to_owned()).unwrap();
     assert!(!store.agents().unwrap()[0].enabled);
     assert_eq!(store.agents().unwrap()[0].revision, 1);
+}
+#[test]
+fn launch_preference_persists_without_a_config_revision_and_overrides_enablement() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    assert!(!store.agents().unwrap()[0].starts_on_launch());
+    store.enabled(&a.id, true).unwrap();
+    assert!(store.agents().unwrap()[0].starts_on_launch());
+    store.start_on_app_launch(&a.id, false).unwrap();
+    assert!(store.start_on_app_launch("missing", true).is_err());
+    drop(store);
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    let saved = &store.agents().unwrap()[0];
+    assert_eq!(saved.start_on_app_launch, Some(false));
+    assert!(saved.enabled && !saved.starts_on_launch());
+    assert_eq!(saved.revision, 1);
 }
 #[test]
 fn identity_and_transport_validation_rejects_duplicates_and_argument_loss() {

@@ -22,8 +22,22 @@ The host error, runtime-unavailable reason, unconfirmed-status notice and Retry
 are shown once, by the profile actions. Browser/unavailable hosts, loading/error
 without evidence, unknown keys and records saved for another community render
 nothing, leaving the public identity. Community switches re-filter immediately.
-Start/Stop/Restart are the separate profile actions above; Edit, harness logs and
-memory stay on Agents or need separate contracts.
+Start/Stop/Restart are the separate profile actions above; harness logs stay on
+Agents.
+
+## Owner runtime tab
+
+**Runtime** appears only when the viewer is the verified NIP-OA owner and the
+active community has exactly one native record for the profile key. It follows
+Buzz desktop's Runtime tab and copy: a Restart required notice with the native
+redacted saved-versus-running diff, Activity (status and the Start on launch
+switch), Agent configuration (runtime command, who can send instructions, ACP
+and MCP commands, imported provider backend), Model settings with Edit opening
+the existing Agents editor, MCP servers and Advanced (workspace, environment
+variable names and Databricks settings). Environment values, arguments and
+credentials are never shown. The switch persists through the host; failures keep
+the confirmed value and expose Retry status. Losing ownership or the native record
+returns to Info.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
 The Info tab's “Latest activity” card shows up to three recently updated assistant
@@ -255,9 +269,8 @@ Retired relay
 presentations cannot dispatch commands. The separate runtime child owns badges
 and runtime detail; actions do not infer relay readiness.
 
-Edit ingress is deferred: Agents currently registers no specific editor route;
-its editor selection is page-local state. No invented route or second editor is
-added. Mounted React regression tests exercise exact dispatch, pending/failure/
+Info adds no edit ingress; the owner Runtime tab reuses the Agents editor
+dialog rather than a route or second editor. Mounted React regression tests exercise exact dispatch, pending/failure/
 recovery and profile/community lifecycle through the real controller projection
 with a synthetic native host. Live process/credential handover and rendered native
 acceptance remain attended checks, not established by these tests.

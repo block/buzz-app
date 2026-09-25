@@ -341,6 +341,7 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
         environment: env,
         revision: 1,
         enabled: false,
+        start_on_app_launch: None,
         credential_id: id,
         auth_tag: record
             .get("auth_tag")

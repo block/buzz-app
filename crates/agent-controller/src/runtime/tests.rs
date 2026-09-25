@@ -38,6 +38,7 @@ fn agent(workspace: &Path) -> Agent {
         environment: BTreeMap::from([("PROVIDER_TEST_SETTING".into(), "explicit-value".into())]),
         revision: 1,
         enabled: false,
+        start_on_app_launch: None,
         credential_id: "test".into(),
         auth_tag: Some(crate::secret::test_attestation(PUB)),
         imported: json!({"record":{"respond_to":"owner-only","parallelism":2,"effort_level":"high"}}),
@@ -160,12 +161,19 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     let saved = controller.save(&a.id, 1, edit).unwrap();
     assert_eq!(saved.agents[0].revision, 2);
     assert_eq!(saved.agents[0].running_revision, Some(1));
+    let fields: Vec<_> = saved.agents[0]
+        .restart_diff
+        .iter()
+        .map(|e| e.field.as_str())
+        .collect();
+    assert_eq!(fields, ["name", "system_prompt"]);
     assert_eq!(
         fs::read_to_string(dir.path().join("starts")).unwrap(),
         first
     );
     let restarted = controller.action(&a.id, Action::Restart).unwrap();
     assert_eq!(restarted.agents[0].running_revision, Some(2));
+    assert!(restarted.agents[0].restart_diff.is_empty());
     let deadline = Instant::now() + Duration::from_secs(5);
     while !fs::read_to_string(dir.path().join("starts"))
         .unwrap()
@@ -190,6 +198,21 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     );
     let restored = controller.restore().unwrap();
     assert!(!restored.agents[0].enabled);
+    assert!(controller.running.is_empty());
+    let preferred = controller.set_start_on_app_launch(&a.id, true).unwrap();
+    assert!(preferred.agents[0].start_on_app_launch);
+    assert!(controller.running.is_empty());
+    let restored = controller.restore().unwrap();
+    assert!(
+        matches!(restored.agents[0].status, ProcessStatus::Running),
+        "{:?}",
+        restored.agents[0].error
+    );
+    controller.shutdown().unwrap();
+    controller.set_start_on_app_launch(&a.id, false).unwrap();
+    assert!(controller.store.agents().unwrap()[0].enabled);
+    assert!(controller.launch_ids().unwrap().is_empty());
+    controller.restore().unwrap();
     assert!(controller.running.is_empty());
 }
 #[test]

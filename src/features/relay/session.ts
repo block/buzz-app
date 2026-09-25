@@ -52,7 +52,7 @@ import { createUserStatuses } from "./user-status";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
-import { UploadError } from "./attachments";
+import { UploadError, type UploadedAttachment } from "./attachments";
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import type { ReadTransport } from "./transport";
 import type { LiveSnapshot, LiveSubscription } from "./live";
@@ -1302,6 +1302,28 @@ export function createRelaySession(
               combined.throwIfAborted();
               if (!channels.canParticipate(channelId))
                 throw new UploadError("denied");
+              return result;
+            },
+          })
+        : undefined,
+    // Feedback text is private to the operator inbox; uploaded files retain
+    // ordinary community-media access, matching Desktop's attachment path.
+    feedbackUpload:
+      uploadAttachment &&
+      writes?.outbox.supports(PRODUCT_FEEDBACK_KIND) &&
+      transport?.scope
+        ? Object.freeze({
+            origin: transport.scope,
+            async upload(
+              file: File,
+              signal: AbortSignal,
+            ): Promise<UploadedAttachment> {
+              const combined = AbortSignal.any([signal, lifetime.signal]);
+              combined.throwIfAborted();
+              if (closed) throw new UploadError("denied");
+              const result = await uploadAttachment(file, combined);
+              combined.throwIfAborted();
+              if (closed) throw new UploadError("denied");
               return result;
             },
           })

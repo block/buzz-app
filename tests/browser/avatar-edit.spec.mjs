@@ -97,7 +97,6 @@ test("shared human and agent avatar upload, scoped save, publication retry and n
     )
     .toBe(true);
   await page.evaluate(() => window.agentControlFixture.failProfile(false));
-  await page.getByRole("button", { name: "Retry status", exact: true }).click();
   await page
     .getByRole("button", { name: "Retry profile publication", exact: true })
     .click();

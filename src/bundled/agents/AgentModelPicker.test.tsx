@@ -233,9 +233,12 @@ it("shows Goose authentication errors while keeping manual model entry available
       screen.getByRole("button", { name: "Browse models" }),
     );
     expect(await screen.findByText(/Goose needs authentication/)).toBeVisible();
-    await userEvent.keyboard("{Escape}");
-    expect(screen.getByRole("button", { name: "Retry models" })).toBeVisible();
     const input = screen.getByRole("combobox", { name: "Model" });
+    await waitFor(() => expect(input).not.toHaveAttribute("aria-busy"));
+    await userEvent.keyboard("{Escape}");
+    expect(
+      await screen.findByRole("button", { name: "Retry models" }),
+    ).toBeVisible();
     await userEvent.clear(input);
     await userEvent.type(input, "custom-model");
     expect(input).toHaveValue("custom-model");

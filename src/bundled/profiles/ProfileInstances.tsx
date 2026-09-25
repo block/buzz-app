@@ -50,8 +50,9 @@ export function ProfileInstances({
     : [];
   const hasInstances = !!communityOrigin && matches.length > 0;
   useEffect(() => {
-    if (hasInstances) void session.archives.ensure();
-  }, [session, hasInstances]);
+    if (hasInstances && archives.status === "idle")
+      void session.archives.ensure();
+  }, [session, hasInstances, archives.status]);
   useEffect(() => {
     if (communityOrigin && knownAgent && state.status === "idle")
       void control.refresh();

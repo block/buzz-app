@@ -43,21 +43,39 @@ function fixture() {
   } as unknown as AgentControl;
   const open = vi.fn(() => true);
   const context = { open, canOpen: () => true, channelId: "channel" };
-  const archiveSnapshot = { status: "ready", archived: [] };
+  let archiveSnapshot = { status: "idle", archived: [] as string[] };
+  const archiveListeners = new Set<() => void>();
   const ensureArchives = vi.fn(async () => {});
   const session = {
     archives: {
-      subscribe: () => () => {},
+      subscribe(listener: () => void) {
+        archiveListeners.add(listener);
+        return () => archiveListeners.delete(listener);
+      },
       snapshot: () => archiveSnapshot,
       ensure: ensureArchives,
     },
   } as unknown as RelaySession;
+  const updateArchives = (status: string, archived: string[] = []) =>
+    act(() => {
+      archiveSnapshot = { status, archived };
+      for (const listener of archiveListeners) listener();
+    });
   const update = (next: AgentControlState) =>
     act(() => {
       state = next;
       for (const listener of listeners) listener();
     });
-  return { control, context, session, open, update, refresh, ensureArchives };
+  return {
+    control,
+    context,
+    session,
+    open,
+    update,
+    updateArchives,
+    refresh,
+    ensureArchives,
+  };
 }
 afterEach(cleanup);
 
@@ -109,6 +127,45 @@ it("uses native exact identity and community, never library display links", () =
   expect(
     screen.queryByRole("region", { name: "Linked agent instances" }),
   ).toBeNull();
+});
+
+it("re-demands archives after a mounted snapshot resets without changing native matches", () => {
+  const f = fixture();
+  const native = {
+    status: "ready",
+    data: {
+      agents: [
+        instance("matched", person, "wss://relay.example.test"),
+      ] as NonNullable<AgentControlState["data"]>["agents"],
+      runtimeAvailable: true,
+    },
+    busy: false,
+    error: null,
+  } as const satisfies AgentControlState;
+  f.update(native);
+  f.updateArchives("ready", [person]);
+  render(
+    <ProfileInstances
+      control={f.control}
+      context={f.context}
+      session={f.session}
+      pubkey={person}
+      viewer={viewer}
+      scope={`https://relay.example.test:${viewer}`}
+      communityOrigin="https://relay.example.test"
+      knownAgent={true}
+    />,
+  );
+  expect(screen.getByText("matched Archived")).toBeTruthy();
+  expect(f.ensureArchives).not.toHaveBeenCalled();
+
+  f.updateArchives("idle");
+  expect(f.ensureArchives).toHaveBeenCalledOnce();
+  expect(screen.getByText("matched")).toBeTruthy();
+  f.updateArchives("loading");
+  f.updateArchives("ready", [person]);
+  expect(screen.getByText("matched Archived")).toBeTruthy();
+  expect(f.ensureArchives).toHaveBeenCalledOnce();
 });
 
 it("omits instances without a valid community", () => {

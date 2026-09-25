@@ -47,6 +47,21 @@ identities are excluded. Each remaining row says **Not imported** and has its ow
 Import options. Import focuses the imported card and says **Imported, not started**.
 It does not start a listener, invite an agent or change the old library.
 
+Local team-linked imports snapshot the deployment team's instructions from the
+chosen library's `agents/teams.json`, alongside the resolved persona prompt.
+The existing ACP team-instructions input receives that snapshot; later edits in
+old Buzz are not synchronized. As in old Buzz, a deleted team or a directory-only
+legacy binding without a deployment team ID contributes no team instructions.
+Remote backends and relay mesh remain unsupported.
+
+Older imports missing this snapshot show **Import or repair from old Buzz**.
+Choose their original source library and destination, then **Repair team import**.
+This adds only the missing team instructions and advances the saved revision;
+it preserves the identity, credentials, prompt, model, environment and enabled
+intent, and never starts/restarts an agent. Source changes or changed saved
+settings reject the repair. No Keychain read is needed for repair. Before Start,
+perform the same attended old-Buzz handover as for a fresh import.
+
 To use an agent, open a channel and select it from **@ mentions**. Both mention
 menus include the selected community’s people directory alongside channel members
 and managed agents. Directory reads are bounded; narrow the search for more people.
@@ -456,7 +471,7 @@ is macOS-only. Custom harnesses require an absolute executable and are not
 certified by bundled Buzz Agent tests. Unsupported settings stay editable but
 Start refuses them. OAuth files are owner-only, not Keychain-encrypted. A failed
 import can leave create-only app custody for retry but no enabled/configured agent.
-No remote/team/mesh runtime or conditional attestation is added. Synthetic checks
+No remote/mesh runtime, live team synchronization or conditional attestation is added. Synthetic checks
 do not establish actual Keychain ACLs, production TLS/inference, live replies,
 forced native quit, signed packaging or other-platform behavior.
 

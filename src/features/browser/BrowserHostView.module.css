@@ -1,0 +1,62 @@
+.browser {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-panel);
+  color: var(--text-standard);
+}
+
+.toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-standard);
+}
+
+.status {
+  max-width: 30%;
+  overflow: hidden;
+  color: var(--text-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error {
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-standard);
+  color: var(--text-danger);
+  overflow-wrap: anywhere;
+}
+
+.toolbar form {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar input {
+  flex: 1;
+  min-width: 0;
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 420px) {
+  .toolbar {
+    gap: var(--space-half);
+    padding-inline: var(--space-1);
+  }
+}

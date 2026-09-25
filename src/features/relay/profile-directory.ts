@@ -12,6 +12,8 @@ export interface ProfileQueries {
   subscribe(listener: () => void): () => void;
   /** Fetch missing profiles; optional enrichment can yield to conversation reads. */
   ensure(ids: readonly string[], priority?: Priority): Promise<void>;
+  /** The winning signed kind 0 retained for one identity, for provenance checks. */
+  event?(pubkey: string): RelayEvent | undefined;
 }
 
 /** One bounded source of signed profile events. Display values are derived from it. */
@@ -36,9 +38,10 @@ export function createProfileDirectory(
       events.set(event.pubkey, event);
       changed = true;
     }
-    if (changed) publish();
+    if (changed) publish(true);
   }
-  function publish() {
+  /** Notifies on display changes, and on winning-event changes for `event()` readers. */
+  function publish(headChanged = false) {
     const next = foldProfiles([
       ...events.keys().flatMap((id) => {
         const event = events.peek(id);
@@ -55,17 +58,18 @@ export function createProfileDirectory(
         old?.name === value.name &&
         old?.picture === value.picture &&
         old?.about === value.about &&
+        old?.nip05 === value.nip05 &&
         old?.isAgent === value.isAgent &&
         old?.ownerPubkey === value.ownerPubkey
       )
         next.set(id, old);
     }
     if (
-      next.size === snapshot.size &&
-      [...next].every(([id, value]) => snapshot.get(id) === value)
+      next.size !== snapshot.size ||
+      [...next].some(([id, value]) => snapshot.get(id) !== value)
     )
-      return;
-    snapshot = next;
+      snapshot = next;
+    else if (!headChanged) return;
     for (const listener of listeners) notify(listener);
   }
   async function ensure(
@@ -116,6 +120,7 @@ export function createProfileDirectory(
       };
     },
     ensure,
+    event: (pubkey: string) => events.peek(pubkey),
   });
   let localProfiles = "";
   const unsubscribeLocal = local?.subscribe(() => {

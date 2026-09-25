@@ -118,7 +118,7 @@ test("playground distinguishes same-name people and agents in the real composer"
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
       await page
-        .getByRole("region", { name: "Mention a member or agent" })
+        .getByRole("dialog", { name: "Mention a member or agent" })
         .getByRole("button", { name: `${label} ${key}`, exact: true })
         .click();
       labels.push(`@${label}`);

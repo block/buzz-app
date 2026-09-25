@@ -13,6 +13,7 @@ export function ProfileInstances({
   communityOrigin,
   viewer,
   knownAgent,
+  errorHandledByActions = false,
 }: {
   control: AgentControl;
   navigation: Navigation | undefined;
@@ -21,6 +22,8 @@ export function ProfileInstances({
   communityOrigin: string | undefined;
   viewer: string | undefined;
   knownAgent: boolean;
+  /** The composed Info actions surface owns controller failure and recovery. */
+  errorHandledByActions?: boolean;
 }) {
   const state = useSyncExternalStore(
     control.subscribe,
@@ -32,12 +35,19 @@ export function ProfileInstances({
       void control.refresh();
   }, [control, communityOrigin, knownAgent, state.status]);
   if (!communityOrigin || state.status === "unavailable") return null;
-  const instances =
-    scope && state.status === "ready"
-      ? sameCommunityAgents(state.data?.agents ?? [], scope).filter(
-          (agent) => agent.pubkey === pubkey,
-        )
-      : [];
+  const matches = scope
+    ? sameCommunityAgents(state.data?.agents ?? [], scope).filter(
+        (agent) => agent.pubkey === pubkey,
+      )
+    : [];
+  // Actions own errors only with unknown inventory or one exact native match.
+  if (
+    state.status === "error" &&
+    errorHandledByActions &&
+    (!state.data || matches.length === 1)
+  )
+    return null;
+  const instances = state.status === "ready" ? matches : [];
   if (!knownAgent && !instances.length) return null;
   return (
     <section
@@ -49,7 +59,11 @@ export function ProfileInstances({
         <p role="status">Loading managed agents…</p>
       ) : state.status === "error" ? (
         <div>
-          <p role="alert">Could not refresh managed agents.</p>
+          <p role="alert">
+            {errorHandledByActions
+              ? "Managed agent status is unconfirmed."
+              : "Could not refresh managed agents."}
+          </p>
           <Button size="compact" onClick={() => void control.refresh()}>
             Retry agents
           </Button>

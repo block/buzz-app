@@ -2,11 +2,17 @@ import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
 import { createServer } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { ReadableStream } from "node:stream/web";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
-import { finalizeEvent, getPublicKey, verifyEvent } from "nostr-tools";
+import {
+  finalizeEvent,
+  getPublicKey,
+  verifyEvent,
+  nip44,
+  generateSecretKey,
+} from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
@@ -1222,6 +1228,46 @@ test.each(["sign", "publish"])(
   },
 );
 
+test("member addition works without channel creation, while role elevation remains rejected", async () => {
+  const h = await harness(success);
+  let traffic;
+  let owner;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    traffic = await openBrokerSocket(transport);
+    expect(transport.writer.kinds).toContain(9000);
+    expect(transport.writer.kinds).not.toContain(9007);
+    owner = createOutbox(transport.viewer, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    const tags = [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["p", "a".repeat(64)],
+    ];
+    const id = owner.outbox.send({ kind: 9000, content: "", tags });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === id)?.delivery,
+      ).toBe("accepted"),
+    );
+    expect(h.publications).toHaveLength(1);
+    for (const role of ["owner", "admin", "member"]) {
+      const denied = await h.post("sign", {
+        kind: 9000,
+        content: "",
+        created_at: 1700000000,
+        tags: [...tags, ["role", role]],
+      });
+      expect(denied.status).toBe(400);
+    }
+  } finally {
+    owner?.dispose();
+    traffic?.dispose();
+    await h.close();
+  }
+});
+
 test("edit capability signs and publishes canonical replacements, rejecting malformed edits locally", async () => {
   const h = await harness(success);
   try {
@@ -1386,6 +1432,554 @@ test.each([
     expect(response.status).toBe(502);
     expect(await response.json()).not.toHaveProperty("channelId");
   } finally {
+    await h.close();
+  }
+});
+
+test("status signing and publication preserve scoped replacements and explicit clears", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    for (const input of [
+      {
+        content: "Working remotely",
+        tags: [
+          ["d", "general"],
+          ["emoji", ":party:"],
+          ["expiration", "1700086400"],
+        ],
+      },
+      { content: "", tags: [["d", "general"]] },
+    ]) {
+      const response = await h.post("sign", {
+        kind: 30315,
+        created_at: 1700000000,
+        ...input,
+      });
+      expect(response.status).toBe(200);
+      const event = await response.json();
+      expect(verifyEvent(event)).toBe(true);
+      expect(event).toMatchObject({ kind: 30315, ...input });
+      expect((await h.post("channel-lifecycle-sign", event)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-publish", event)).status).toBe(
+        400,
+      );
+      expect((await h.post("publish", event)).status).toBe(200);
+      expect(h.publications.at(-1)).toEqual(JSON.parse(JSON.stringify(event)));
+    }
+    for (const tags of [
+      [["d", "music"]],
+      [
+        ["d", "general"],
+        ["h", "private"],
+      ],
+    ]) {
+      expect(
+        (
+          await h.post("sign", {
+            kind: 30315,
+            created_at: 1700000000,
+            content: "x",
+            tags,
+          })
+        ).status,
+      ).toBe(400);
+    }
+    const future = {
+      kind: 30315,
+      created_at: Math.floor(Date.now() / 1000) + 3600,
+      content: "Future",
+      tags: [["d", "general"]],
+    };
+    expect((await h.post("sign", future)).status).toBe(400);
+    const secret = new Uint8Array(32);
+    secret[31] = 7;
+    expect(
+      (await h.post("publish", finalizeEvent(future, secret))).status,
+    ).toBe(400);
+    expect(h.publications).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test("memory reads use captured relay and owner, not submitted identity/filter authority, through HTTP host and transport", async () => {
+  const owner = new Uint8Array(32);
+  owner[31] = 7;
+  const viewer = getPublicKey(owner),
+    agent = generateSecretKey(),
+    author = getPublicKey(agent);
+  const key = nip44.v2.utils.getConversationKey(agent, viewer);
+  const memory = finalizeEvent(
+    {
+      kind: 30174,
+      created_at: 1,
+      tags: [
+        ["p", viewer],
+        [
+          "d",
+          createHmac("sha256", key)
+            .update("agent-memory/v1/d-tag\0mem/test")
+            .digest("hex"),
+        ],
+      ],
+      content: nip44.v2.encrypt(
+        JSON.stringify({ slug: "mem/test", value: "private" }),
+        key,
+      ),
+    },
+    agent,
+  );
+  let forbidden = false;
+  const h = await harness((call) => {
+    expect(call.url).toBe(`${fixtureRelayUrl}/query`);
+    expect(call.body).toEqual([
+      { kinds: [30174], authors: [author], "#p": [viewer], limit: 256 },
+    ]);
+    expect(call.auth.pubkey).toBe(viewer);
+    return forbidden
+      ? new Response("denied", { status: 403 })
+      : Response.json([memory]);
+  });
+  try {
+    const transport = await connectBrokerTransport(
+      h.base,
+      undefined,
+      fixtureRelayUrl,
+    );
+    expect(transport.readAgentMemories).toBeDefined();
+    const listing = await transport.readAgentMemories(
+      author,
+      new AbortController().signal,
+    );
+    expect(listing).toEqual({
+      entries: [
+        { slug: "mem/test", body: "private", eventId: memory.id, createdAt: 1 },
+      ],
+      partial: false,
+    });
+    const scoped = `${encodeURIComponent(fixtureRelayUrl)}/agent-memories`;
+    for (const body of [
+      { agent: viewer },
+      { agent: author, owner: viewer },
+      { agent: author, kinds: [9] },
+    ]) {
+      expect((await h.post(scoped, body)).status).toBe(400);
+    }
+    expect((await h.post("agent-memories", { agent: author })).status).toBe(
+      400,
+    );
+    expect(h.calls).toHaveLength(1);
+    forbidden = true;
+    await expect(
+      transport.readAgentMemories(author, new AbortController().signal),
+    ).rejects.toMatchObject({ name: "MemoryDenied" });
+    expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+// Owner/admin community commands: community-bound, bounded before upstream I/O.
+async function communityAdmin(respond) {
+  const h = await harness(respond);
+  const registered = await fetch(`${h.base}/api/relay/register`, {
+    method: "POST",
+    headers: { Origin: h.base },
+    body: JSON.stringify({ url: fixtureRelayUrl }),
+  });
+  const { id } = await registered.json();
+  return {
+    h,
+    post: (route, body) => h.post(`${encodeURIComponent(id)}/${route}`, body),
+  };
+}
+
+test("invite claim forwards relay-shaped codes and names exact refusals", async () => {
+  let refusal;
+  const { h, post } = await communityAdmin((call) =>
+    !call.url.endsWith("/api/invites/claim")
+      ? new Response(null, { status: 404 })
+      : refusal
+        ? Response.json({ error: refusal }, { status: 403 })
+        : Response.json({ status: "joined" }),
+  );
+  try {
+    for (const code of ["v2.mvQwZTr9C31MUkGj_-", "eyJjIjoxfQ.bWFj"]) {
+      const response = await post("claim", { code });
+      expect(response.status).toBe(200);
+      expect(h.calls.at(-1)).toMatchObject({
+        url: `${fixtureRelayUrl}/api/invites/claim`,
+        body: { code },
+      });
+    }
+    const calls = h.calls.length;
+    for (const code of ["", "a b", "a/b", "x".repeat(257)])
+      expect((await post("claim", { code })).status).toBe(400);
+    expect(h.calls).toHaveLength(calls);
+    for (const error of [
+      "invite_exhausted",
+      "invite_expired",
+      "invite_invalid",
+      "database said: secret detail",
+    ]) {
+      refusal = error;
+      const response = await post("claim", { code: "v2.abc" });
+      expect(response.status).toBe(403);
+      expect((await response.json()).error).toBe(
+        error.startsWith("invite_") ? error : "Relay request failed (403)",
+      );
+    }
+  } finally {
+    await h.close();
+  }
+});
+
+test("invite mint forwards only bounded ttl/max_uses and returns the relay invite", async () => {
+  const minted = {
+    code: "abc",
+    expires_at: 1700003600,
+    max_uses: 1,
+    uses_remaining: 1,
+    url: "https://primary.example/invite/abc",
+  };
+  const { h, post } = await communityAdmin((call) =>
+    call.url.endsWith("/api/invites")
+      ? Response.json(minted)
+      : new Response(null, { status: 404 }),
+  );
+  try {
+    const response = await post("invite", {
+      ttl_secs: 3600,
+      max_uses: 1,
+      extra: "dropped",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(minted);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]).toMatchObject({
+      url: `${fixtureRelayUrl}/api/invites`,
+      body: { ttl_secs: 3600, max_uses: 1 },
+    });
+    expect(h.calls[0].auth.tags).toContainEqual([
+      "u",
+      `${fixtureRelayUrl}/api/invites`,
+    ]);
+    const unlimited = await post("invite", { ttl_secs: 2592000 });
+    expect(unlimited.status).toBe(200);
+    expect(h.calls[1].body).toEqual({ ttl_secs: 2592000, max_uses: null });
+
+    for (const body of [
+      {},
+      { ttl_secs: 59 },
+      { ttl_secs: 2592001 },
+      { ttl_secs: 3600.5 },
+      { ttl_secs: "3600" },
+      { ttl_secs: 3600, max_uses: 0 },
+      { ttl_secs: 3600, max_uses: 10001 },
+      { ttl_secs: 3600, max_uses: "1" },
+      null,
+    ])
+      expect((await post("invite", body)).status).toBe(400);
+    // Unscoped requests have no community to administer.
+    expect((await h.post("invite", { ttl_secs: 3600 })).status).toBe(400);
+    expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test("member changes sign exact NIP-43 admin kinds and reject malformed changes locally", async () => {
+  const { h, post } = await communityAdmin((call) =>
+    Response.json({ accepted: true, event_id: call.body.id, message: "" }),
+  );
+  const target = "a".repeat(64);
+  try {
+    for (const [change, kind, tags] of [
+      [
+        { action: "add", pubkey: target, role: "member" },
+        9030,
+        [
+          ["p", target],
+          ["role", "member"],
+        ],
+      ],
+      [
+        { action: "add", pubkey: target, role: "admin" },
+        9030,
+        [
+          ["p", target],
+          ["role", "admin"],
+        ],
+      ],
+      [{ action: "remove", pubkey: target }, 9031, [["p", target]]],
+      [
+        { action: "role", pubkey: target, role: "admin" },
+        9032,
+        [
+          ["p", target],
+          ["role", "admin"],
+        ],
+      ],
+    ]) {
+      const response = await post("member", change);
+      expect(response.status).toBe(200);
+      const sent = h.calls.at(-1);
+      expect(sent.url).toBe(`${fixtureRelayUrl}/events`);
+      expect(verifyEvent(sent.body)).toBe(true);
+      expect(sent.body).toMatchObject({
+        kind,
+        tags,
+        content: "",
+        pubkey: h.event.pubkey,
+        created_at: Math.floor(Date.now() / 1000),
+      });
+      expect(await response.json()).toMatchObject({
+        accepted: true,
+        event_id: sent.body.id,
+      });
+    }
+    for (const change of [
+      { action: "role", pubkey: target, role: "owner" },
+      { action: "add", pubkey: target },
+      { action: "remove", pubkey: target, role: "member" },
+      { action: "ban", pubkey: target },
+      { action: "toString", pubkey: target, role: "member" },
+      { action: "add", pubkey: "A".repeat(64), role: "member" },
+      { action: "add", pubkey: "a".repeat(63), role: "member" },
+      { kind: 9030, tags: [["p", target]] },
+    ])
+      expect((await post("member", change)).status).toBe(400);
+    expect(
+      (await h.post("member", { action: "remove", pubkey: target })).status,
+    ).toBe(400);
+    expect(h.calls).toHaveLength(4);
+  } finally {
+    await h.close();
+  }
+});
+
+test("member change receipts must match the signed command", async () => {
+  const { h, post } = await communityAdmin(() =>
+    Response.json({ accepted: true, event_id: "wrong" }),
+  );
+  try {
+    const response = await post("member", {
+      action: "remove",
+      pubkey: "a".repeat(64),
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: "Member change could not be confirmed",
+    });
+  } finally {
+    await h.close();
+  }
+});
+
+test.each([
+  [400, "invalid: cannot remove yourself", "invalid: cannot remove yourself"],
+  [
+    400,
+    "invalid: cannot remove the relay owner",
+    "invalid: cannot remove the relay owner",
+  ],
+  [
+    400,
+    `invalid: member not found: ${"a".repeat(64)}`,
+    `invalid: member not found: ${"a".repeat(64)}`,
+  ],
+  [
+    400,
+    "invalid: actor not authorized: must be admin or owner",
+    "invalid: actor not authorized: must be admin or owner",
+  ],
+  [
+    403,
+    "blocked: you are banned from this community",
+    "blocked: you are banned from this community",
+  ],
+  [
+    403,
+    "only relay owners and admins can create invites",
+    "only relay owners and admins can create invites",
+  ],
+  [
+    400,
+    "ttl_secs must be between 60 and 2592000",
+    "ttl_secs must be between 60 and 2592000",
+  ],
+  [
+    400,
+    "invalid: database error: connection reset <script>",
+    "Relay request failed (400)",
+  ],
+  [
+    400,
+    "invalid: event timestamp out of range: created_at=1",
+    "Relay request failed (400)",
+  ],
+  [500, "error: database error: secret", "Relay request failed (500)"],
+])(
+  "admin refusal %i %j is surfaced only when whitelisted",
+  async (status, error, shown) => {
+    const { h, post } = await communityAdmin(() =>
+      Response.json({ error }, { status }),
+    );
+    try {
+      for (const [route, body] of [
+        ["member", { action: "remove", pubkey: "a".repeat(64) }],
+        ["invite", { ttl_secs: 3600 }],
+      ]) {
+        const response = await post(route, body);
+        expect(response.status).toBe(status);
+        expect((await response.json()).error).toBe(shown);
+      }
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test("admin refusals are read through the bounded error reader", async () => {
+  let pulled = 0;
+  const { h, post } = await communityAdmin(
+    () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            pulled++;
+            // Would be 4 MiB if fully consumed; the valid-looking prefix must not survive.
+            if (pulled > 1024) return controller.close();
+            controller.enqueue(
+              new TextEncoder().encode(
+                pulled === 1
+                  ? '{"error":"invalid: cannot remove yourself","pad":"'
+                  : "x".repeat(4096),
+              ),
+            );
+          },
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ),
+  );
+  try {
+    for (const [route, body] of [
+      ["member", { action: "remove", pubkey: "a".repeat(64) }],
+      ["invite", { ttl_secs: 3600 }],
+    ]) {
+      pulled = 0;
+      const response = await post(route, body);
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("Relay request failed (400)");
+      expect(pulled).toBeLessThan(8);
+    }
+  } finally {
+    await h.close();
+  }
+});
+
+test("relay quota on admin routes stays a quota failure, not a refusal", async () => {
+  const { h, post } = await communityAdmin(() =>
+    Response.json(
+      { error: "rate-limited: quota exceeded; retry in 5s" },
+      { status: 429 },
+    ),
+  );
+  try {
+    const response = await post("invite", { ttl_secs: 3600 });
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({
+      error: "rate-limited: quota exceeded; retry in 5s",
+      quota: "api",
+    });
+    // The shared lane is paused: the next admin request is not sent upstream.
+    const paused = await post("invite", { ttl_secs: 3600 });
+    expect(paused.status).toBe(429);
+    expect(await paused.json()).toMatchObject({ paused: true, sent: false });
+    expect(h.calls).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("lifecycle uses dedicated shape-limited host routes, never the message writer", async () => {
+  const h = await harness((call) =>
+    Response.json(
+      call.url.endsWith("/events")
+        ? { accepted: true, event_id: call.body.id }
+        : [],
+    ),
+  );
+  let live;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    expect(transport.writer.kinds).not.toContain(9008);
+    const id = "11111111-1111-4111-8111-111111111111";
+    const template = {
+      kind: 9008,
+      tags: [["h", id]],
+      content: "",
+      created_at: 1700000000,
+    };
+    expect((await h.post("sign", template)).status).toBe(400);
+    const invalid = [
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["name", "rename"],
+        ],
+      },
+      {
+        ...template,
+        kind: 9022,
+        tags: [
+          ["h", id],
+          ["p", transport.viewer],
+        ],
+      },
+      { ...template, content: "extra" },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["h", id],
+        ],
+      },
+    ];
+    for (const event of invalid) {
+      expect((await h.post("channel-lifecycle-sign", event)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-publish", event)).status).toBe(
+        400,
+      );
+    }
+    const signal = new AbortController().signal;
+    const signed = await transport.channelLifecycle.sign(template, signal);
+    expect(verifyEvent(signed)).toBe(true);
+    expect(signed).toMatchObject(template);
+    expect((await h.post("publish", signed)).status).toBe(400);
+    await expect(
+      transport.channelLifecycle.publish(signed, signal),
+    ).rejects.toBeInstanceOf(PublishRejected);
+    expect(h.publications).toHaveLength(0);
+    live = await openBrokerSocket(transport);
+    await transport.channelLifecycle.publish(signed, signal);
+    expect(h.publications).toHaveLength(1);
+    const foreignKey = new Uint8Array(32).fill(5);
+    const foreign = finalizeEvent(
+      { ...template, tags: template.tags.map((tag) => [...tag]) },
+      foreignKey,
+    );
+    expect((await h.post("channel-lifecycle-publish", foreign)).status).toBe(
+      400,
+    );
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    live?.dispose();
     await h.close();
   }
 });

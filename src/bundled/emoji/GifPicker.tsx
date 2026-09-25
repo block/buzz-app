@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
 import { fetchKlipyGifs, type KlipyGif } from "../../features/relay/gifs";
+import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Emoji.module.css";
 
 const LOADING_TILES = [
@@ -32,52 +33,8 @@ export function GifPicker({
   const [error, setError] = useState<string>();
   const [attempt, retry] = useState(0);
   const input = useRef<HTMLInputElement>(null);
-  const results = useRef<HTMLDivElement>(null);
-  const scrollbar = useRef<HTMLDivElement>(null);
-  const scrollbarThumb = useRef<HTMLDivElement>(null);
-
   useLayoutEffect(() => {
     input.current?.focus();
-  }, []);
-  useLayoutEffect(() => {
-    const scroll = results.current;
-    const track = scrollbar.current;
-    const thumb = scrollbarThumb.current;
-    if (!scroll || !track || !thumb) return;
-    const update = () => {
-      const picker = scroll.parentElement?.getBoundingClientRect();
-      const bounds = scroll.getBoundingClientRect();
-      if (!picker) return;
-      const trackHeight = Math.max(0, scroll.clientHeight - 16);
-      const overflow = scroll.scrollHeight - scroll.clientHeight;
-      track.hidden = overflow <= 0;
-      track.style.top = `${bounds.top - picker.top + 8}px`;
-      track.style.height = `${trackHeight}px`;
-      if (overflow <= 0) return;
-      const thumbHeight = Math.max(
-        32,
-        trackHeight * (scroll.clientHeight / scroll.scrollHeight),
-      );
-      const offset =
-        (scroll.scrollTop / overflow) * Math.max(0, trackHeight - thumbHeight);
-      thumb.style.height = `${thumbHeight}px`;
-      thumb.style.transform = `translateY(${offset}px)`;
-    };
-    const resize = new ResizeObserver(update);
-    resize.observe(scroll);
-    if (scroll.firstElementChild) resize.observe(scroll.firstElementChild);
-    const mutations = new MutationObserver(() => {
-      if (scroll.firstElementChild) resize.observe(scroll.firstElementChild);
-      update();
-    });
-    mutations.observe(scroll, { childList: true });
-    scroll.addEventListener("scroll", update, { passive: true });
-    update();
-    return () => {
-      resize.disconnect();
-      mutations.disconnect();
-      scroll.removeEventListener("scroll", update);
-    };
   }, []);
   useEffect(() => {
     const timeout = window.setTimeout(
@@ -105,6 +62,7 @@ export function GifPicker({
     <div className={styles.gifPicker}>
       <div className={styles.gifSearch}>
         <SearchField
+          variant="capsule"
           inputRef={input}
           label="Search GIFs"
           placeholder="Search GIFs"
@@ -121,7 +79,7 @@ export function GifPicker({
           }}
         />
       </div>
-      <div ref={results} className={styles.gifResults}>
+      <div className={`${styles.gifResults} buzz-thin-scrollbar`}>
         {!gifs && !error ? (
           <div
             className={styles.gifLoading}
@@ -162,14 +120,6 @@ export function GifPicker({
         ) : (
           <div className={styles.gifEmpty}>No GIFs found.</div>
         )}
-      </div>
-      <div
-        ref={scrollbar}
-        className={styles.gifScrollbarTrack}
-        data-testid="gif-scrollbar-track"
-        aria-hidden="true"
-      >
-        <div ref={scrollbarThumb} className={styles.gifScrollbarThumb} />
       </div>
       <div className={styles.gifAttribution}>Powered by KLIPY</div>
     </div>

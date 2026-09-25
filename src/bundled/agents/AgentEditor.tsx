@@ -6,6 +6,7 @@ import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   canStopAgent,
+  agentLaunchBlock,
   type AgentControl,
   type AgentControlState,
   type AgentView,
@@ -37,14 +38,13 @@ export function AgentEditor({
   const [draft, setDraft] = useState<AgentDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const current = draft ?? agentDraft(agent, state.data?.databricksDefaults);
+  const current = draft ?? agentDraft(agent);
   const dirty = draft !== null;
   const stale = current.revision !== agent.revision;
   const blocked = state.busy || state.status !== "ready";
   const canClose =
     !state.busy || !!(state.pendingLaunch || state.pendingCredentialWrite);
-  const transitioning =
-    agent.status === "starting" || agent.status === "stopping";
+  const launchBlocked = !!agentLaunchBlock(state, agent) || dirty;
   const unapplied =
     agent.runningRevision !== null && agent.runningRevision !== agent.revision;
   const change = (patch: Partial<AgentDraft>) => {
@@ -160,12 +160,7 @@ export function AgentEditor({
                           <div className="flex flex-wrap gap-2">
                             {agent.status !== "running" && (
                               <Button
-                                disabled={
-                                  blocked ||
-                                  transitioning ||
-                                  dirty ||
-                                  !state.data?.runtimeAvailable
-                                }
+                                disabled={launchBlocked}
                                 onClick={() => act("start")}
                               >
                                 Start
@@ -178,12 +173,7 @@ export function AgentEditor({
                               Stop
                             </Button>
                             <Button
-                              disabled={
-                                blocked ||
-                                transitioning ||
-                                dirty ||
-                                !state.data?.runtimeAvailable
-                              }
+                              disabled={launchBlocked}
                               onClick={() => act("restart")}
                             >
                               {unapplied ? "Restart to apply" : "Restart"}

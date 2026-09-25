@@ -105,32 +105,10 @@
   min-width: 0;
   max-width: min(240px, 45vw);
 }
-.agentTrigger .agentAvatar,
-.agentOption .agentAvatar {
+.agentTrigger .agentAvatar {
   width: 24px;
   height: 24px;
 }
-.agentPositioner {
-  z-index: var(--layer-popover);
-}
-.agentPositioner .agentMenu {
-  position: relative;
-  max-width: min(340px, var(--available-width));
-  max-height: min(360px, var(--available-height));
-  font-size: var(--text-body-sm);
-  outline: none;
-}
-.agentOption {
-  outline: none;
-}
-.agentOption[data-highlighted] {
-  background: var(--completion-highlight);
-}
-.agentCheck {
-  margin-left: auto;
-  padding-left: var(--space-2);
-}
-
 .agentName {
   overflow: hidden;
   text-overflow: ellipsis;

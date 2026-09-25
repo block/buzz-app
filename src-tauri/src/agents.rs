@@ -17,8 +17,9 @@ pub(crate) struct Snapshot {
     import_available: bool,
     create_available: bool,
     default_workspace: String,
-    harness_options: &'static [HarnessOption],
+    harness_options: Vec<HarnessOption>,
     databricks_defaults: crate::agent_models::Defaults,
+    agent_defaults: buzz_agent_controller::BuildDefaults,
 }
 impl Snapshot {
     fn from(data: ControlSnapshot, import_available: bool, workspace: &std::path::Path) -> Self {
@@ -27,17 +28,21 @@ impl Snapshot {
             import_available,
             create_available: import_available,
             default_workspace: workspace.to_string_lossy().into_owned(),
-            harness_options: HARNESS_OPTIONS,
+            harness_options: harness_options(),
             databricks_defaults: crate::agent_models::defaults(),
+            agent_defaults: buzz_agent_controller::build_defaults(),
         }
     }
 }
-// Editing suggestions only. No discovery, auth, installation claim or default rewrite.
-// IDs/labels verified against buzz's catalog and buzz-agent's provider parser.
+// Editing suggestions only. Goose availability means an executable was found,
+// not that its provider credentials or ACP session are ready.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct HarnessOption {
-    command: &'static str,
+    command: String,
     label: &'static str,
+    available: bool,
+    default_args: &'static [&'static str],
     providers: &'static [ProviderOption],
 }
 #[derive(Serialize)]
@@ -45,14 +50,131 @@ struct ProviderOption {
     value: &'static str,
     label: &'static str,
 }
-const HARNESS_OPTIONS: &[HarnessOption] = &[HarnessOption {
-    command: "buzz-agent",
-    label: "Buzz Agent",
-    providers: &[ProviderOption {
+// Common IDs checked against Goose's provider registry (crates/goose/src/providers/init.rs)
+// and declarative provider definitions. Custom IDs remain editable.
+const GOOSE_PROVIDERS: &[ProviderOption] = &[
+    ProviderOption {
+        value: "anthropic",
+        label: "Anthropic",
+    },
+    ProviderOption {
+        value: "openai",
+        label: "OpenAI",
+    },
+    ProviderOption {
+        value: "openrouter",
+        label: "OpenRouter",
+    },
+    ProviderOption {
+        value: "google",
+        label: "Google Gemini",
+    },
+    ProviderOption {
+        value: "github_copilot",
+        label: "GitHub Copilot",
+    },
+    ProviderOption {
+        value: "databricks",
+        label: "Databricks",
+    },
+    ProviderOption {
         value: "databricks_v2",
         label: "Databricks v2",
-    }],
-}];
+    },
+    ProviderOption {
+        value: "ollama",
+        label: "Ollama",
+    },
+    ProviderOption {
+        value: "groq",
+        label: "Groq",
+    },
+    ProviderOption {
+        value: "mistral",
+        label: "Mistral AI",
+    },
+    ProviderOption {
+        value: "together",
+        label: "Together AI",
+    },
+    ProviderOption {
+        value: "perplexity",
+        label: "Perplexity",
+    },
+    ProviderOption {
+        value: "cerebras",
+        label: "Cerebras",
+    },
+    ProviderOption {
+        value: "custom_deepseek",
+        label: "DeepSeek",
+    },
+];
+
+fn harness_options() -> Vec<HarnessOption> {
+    let goose = installed_goose();
+    let pi = buzz_agent_controller::installed("buzz-pi-acp");
+    let pi_available = pi.is_some()
+        && buzz_agent_controller::installed("pi").is_some()
+        && buzz_agent_controller::installed("node").is_some();
+    vec![
+        HarnessOption {
+            command: "buzz-agent".into(),
+            label: "Buzz Agent",
+            available: true,
+            default_args: &[],
+            providers: &[ProviderOption {
+                value: "databricks_v2",
+                label: "Databricks v2",
+            }],
+        },
+        HarnessOption {
+            command: goose.as_ref().map_or_else(
+                || "goose".into(),
+                |path| path.to_string_lossy().into_owned(),
+            ),
+            label: "Goose",
+            available: goose.is_some(),
+            default_args: &["acp"],
+            providers: GOOSE_PROVIDERS,
+        },
+        HarnessOption {
+            command: pi.map_or_else(
+                || "buzz-pi-acp".into(),
+                |p| p.to_string_lossy().into_owned(),
+            ),
+            label: "Pi",
+            available: pi_available,
+            default_args: &[],
+            providers: &[
+                ProviderOption {
+                    value: "anthropic",
+                    label: "Anthropic",
+                },
+                ProviderOption {
+                    value: "openai",
+                    label: "OpenAI",
+                },
+                ProviderOption {
+                    value: "openai-codex",
+                    label: "OpenAI Codex",
+                },
+                ProviderOption {
+                    value: "google",
+                    label: "Google",
+                },
+                ProviderOption {
+                    value: "openrouter",
+                    label: "OpenRouter",
+                },
+            ],
+        },
+    ]
+}
+
+fn installed_goose() -> Option<PathBuf> {
+    buzz_agent_controller::installed("goose")
+}
 
 struct Host {
     controller: Controller,
@@ -199,6 +321,30 @@ impl AgentHost {
         self.with(|host| match (id, revision) {
             (Some(id), Some(revision)) => host.controller.model_context(id, revision, edit),
             (None, None) => Controller::draft_model_context(edit),
+            _ => Err("Invalid agent model context".into()),
+        })
+    }
+    pub(crate) fn goose_model_context(
+        &self,
+        id: Option<&str>,
+        revision: Option<u64>,
+        edit: AgentEdit,
+    ) -> Result<buzz_agent_controller::GooseModelContext, String> {
+        self.with(|host| match (id, revision) {
+            (Some(id), Some(revision)) => host.controller.goose_model_context(id, revision, edit),
+            (None, None) => Controller::draft_goose_model_context(edit),
+            _ => Err("Invalid agent model context".into()),
+        })
+    }
+    pub(crate) fn pi_model_context(
+        &self,
+        id: Option<&str>,
+        revision: Option<u64>,
+        edit: AgentEdit,
+    ) -> Result<buzz_agent_controller::pi::PiContext, String> {
+        self.with(|host| match (id, revision) {
+            (Some(id), Some(revision)) => host.controller.pi_model_context(id, revision, edit),
+            (None, None) => Controller::draft_pi_model_context(edit),
             _ => Err("Invalid agent model context".into()),
         })
     }

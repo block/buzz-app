@@ -1,6 +1,7 @@
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
+import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { Button } from "../shared/design-system/ui/Button";
 import { Switch } from "../shared/design-system/ui/Switch";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -77,8 +78,20 @@ export function Settings({
   onSection?: (section: string) => void;
 }) {
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
-  const [selected, setSelected] =
-    useState<(typeof sections)[number]["id"]>("profile");
+  const messageCards = contributed.filter((card) => !card.group);
+  const groups = [
+    ...new Set(contributed.flatMap((card) => card.group ?? [])),
+  ].map((label) => ({
+    label,
+    cards: contributed.filter((card) => card.group === label),
+  }));
+  const [chosen, setSelected] = useState("profile");
+  // A grouped card's section is its contribution key; it closes with its plugin.
+  const selected =
+    sections.some((section) => section.id === chosen) ||
+    contributed.some((card) => card.group && card.key === chosen)
+      ? chosen
+      : "profile";
   const requestedSection =
     navigation?.target.kind === "settings"
       ? (navigation.target.section ?? "profile")
@@ -86,10 +99,15 @@ export function Settings({
   useEffect(() => {
     if (
       requestedSection &&
-      sections.some((section) => section.id === requestedSection)
+      (sections.some((section) => section.id === requestedSection) ||
+        contributed.some((card) => card.group && card.key === requestedSection))
     )
-      setSelected(requestedSection as typeof selected);
-  }, [requestedSection]);
+      setSelected(requestedSection);
+  }, [requestedSection, contributed]);
+  const choose = (id: string) => {
+    if (onSection) onSection(id);
+    else setSelected(id);
+  };
   useEffect(() => {
     if (requestedSection === selected)
       navigation?.complete({ status: "opened" });
@@ -118,10 +136,26 @@ export function Settings({
                   aria-current={selected === id ? "page" : undefined}
                   onClick={(event) => {
                     event.currentTarget.focus();
-                    if (onSection) onSection(id);
-                    else setSelected(id);
+                    choose(id);
                   }}
                 />
+              ))}
+              {groups.map((group) => (
+                <NavigationSection key={group.label} label={group.label}>
+                  {group.cards.map((card) => (
+                    <NavigationItem
+                      label={card.title}
+                      selected={selected === card.key}
+                      type="button"
+                      key={card.key}
+                      aria-current={selected === card.key ? "page" : undefined}
+                      onClick={(event) => {
+                        event.currentTarget.focus();
+                        choose(card.key);
+                      }}
+                    />
+                  ))}
+                </NavigationSection>
               ))}
             </nav>
           </aside>
@@ -148,7 +182,7 @@ export function Settings({
             <div hidden={selected !== "messages"}>
               <MessageSettings active={selected === "messages"} />
               {selected === "messages" &&
-                contributed.map((card) => (
+                messageCards.map((card) => (
                   <OwnedContribution
                     key={card.key}
                     entry={card}
@@ -161,6 +195,22 @@ export function Settings({
                   </OwnedContribution>
                 ))}
             </div>
+            {contributed.map(
+              (card) =>
+                card.group &&
+                selected === card.key && (
+                  <OwnedContribution
+                    key={card.key}
+                    entry={card}
+                    registry={cards}
+                  >
+                    {(entry, active) => {
+                      const Card = entry.component;
+                      return <Card active={active} />;
+                    }}
+                  </OwnedContribution>
+                ),
+            )}
             <div hidden={selected !== "profile"}>
               <ProfileSettings communities={communities} />
             </div>

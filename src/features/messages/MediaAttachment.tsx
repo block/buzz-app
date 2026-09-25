@@ -216,6 +216,7 @@ export function MediaAttachment({
     <>
       <div
         className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
+        data-playing={playing ? "true" : undefined}
         style={previewStyle}
       >
         {visiblePreview && !started && (

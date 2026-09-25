@@ -29,3 +29,42 @@
   height: 12px;
   border: 0;
 }
+
+.profileHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  min-width: 15rem;
+  max-width: min(20rem, calc(100vw - 3rem));
+}
+.profileAvatar {
+  position: relative;
+  display: flex;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: 0 0 2.75rem;
+}
+.profileDetails {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+}
+.profileDetails > p {
+  max-width: 100%;
+}
+.availability {
+  color: var(--text-success);
+}
+.availability[data-status="away"] {
+  color: var(--text-warning);
+}
+.availability[data-status="offline"] {
+  color: var(--text-subtle);
+}
+.statusCard {
+  --user-status-emoji-offset: -2px;
+  margin: var(--space-2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+}

@@ -1,4 +1,9 @@
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+} from "../../shared/design-system/ui/Popover";
 import { availableMentionAgents } from "../../features/agents/mention-choices";
 import { mentionChoices } from "./mention-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
@@ -13,13 +18,13 @@ import { AtIcon } from "../../shared/design-system/icons/index";
 import {
   useContext,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Mentions.module.css";
 
 import type { ComposerToolProps } from "../../features/conversation/contracts";
@@ -46,7 +51,8 @@ export function MentionPicker({
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
-  const id = useId();
+  const accepted = useRef(false);
+  const searchInput = useRef<HTMLElement>(null);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -110,145 +116,203 @@ export function MentionPicker({
       ),
     );
   return (
-    <fieldset
-      disabled={disabled}
-      className={styles.pickerControls}
-      aria-label="Mention controls"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && open) {
-          event.preventDefault();
-          event.stopPropagation();
-          setOpen(false);
-          trigger.current?.focus();
+    <PopoverRoot
+      open={open && !disabled}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) {
+          accepted.current = false;
+          if (!draftRoster) session.channels.ensureList();
         }
       }}
     >
-      <IconButton
+      <fieldset
         disabled={disabled}
-        size="toolbar"
-        ref={trigger}
-        type="button"
-        aria-label="Mention a member"
-        title="Mention a member"
-        aria-expanded={open}
-        aria-controls={id}
-        onClick={() => {
-          setOpen(!open);
-          if (!draftRoster) session.channels.ensureList();
-        }}
-        icon={<AtIcon size={20} aria-hidden="true" />}
-      />
-      {open && (
-        <section
-          id={id}
-          className={styles.mentionPopover}
-          aria-label="Mention a member or agent"
-        >
-          <SearchField
-            label={
-              draftRoster
-                ? "Search recipients"
-                : inviteAgents
-                  ? "Search members and agents"
-                  : "Search members and your agents"
-            }
-            value={search}
-            onValueChange={setSearch}
-            disabled={disabled}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.preventDefault();
-            }}
-          />
-          {!draftRoster && (
-            <p>
-              {inviteAgents
-                ? parentAdmission
-                  ? "Agents you mention join this session and its parent channel when you send, with access to their history."
-                  : "Agents you mention join this session when you send, with access to its history."
-                : "Your agents are added to this channel when you send."}
-            </p>
-          )}
-          {agents.status === "loading" && <p role="status">Loading agents…</p>}
-          {(agents.status === "error" || !!agents.error) && (
-            <Button
+        className={styles.pickerControls}
+        aria-label="Mention controls"
+      >
+        <PopoverTrigger
+          disabled={disabled}
+          render={
+            <IconButton
+              disabled={disabled}
+              size="toolbar"
+              ref={trigger}
               type="button"
-              onClick={() => void session.agentChoices.refresh()}
-            >
-              Retry agent list
-            </Button>
-          )}
-          {error && <p role="status">{error}</p>}
-          {!draftRoster && list.error && (
-            <p role="alert">Could not refresh channel membership.</p>
-          )}
-          {!draftRoster &&
-            (!inviteAgents || !!channel) &&
-            !channel?.members && (
+              aria-label="Mention a member"
+              title="Mention a member"
+              icon={<AtIcon size={20} aria-hidden="true" />}
+            />
+          }
+        />
+        <PopoverPopup
+          side="top"
+          padding="none"
+          initialFocus={searchInput}
+          style={{
+            width: 380,
+            maxHeight: "min(360px, var(--available-height))",
+            overflow: "hidden",
+            display: "flex",
+          }}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            const fromSearch = event.target === searchInput.current;
+            if (event.key === "Enter" && fromSearch) event.preventDefault();
+            if (
+              event.altKey ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.shiftKey
+            )
+              return;
+            if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
+            const rows = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                "[data-mention-choice]:not(:disabled)",
+              ),
+            );
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              if (
+                !fromSearch &&
+                !rows.includes(event.target as HTMLButtonElement)
+              )
+                return;
+              event.preventDefault();
+              event.stopPropagation();
+              const current = rows.indexOf(
+                document.activeElement as HTMLButtonElement,
+              );
+              const next =
+                current < 0
+                  ? event.key === "ArrowDown"
+                    ? 0
+                    : rows.length - 1
+                  : (current +
+                      (event.key === "ArrowDown" ? 1 : -1) +
+                      rows.length) %
+                    rows.length;
+              rows[next]?.focus();
+            } else if (event.key === "Enter" && fromSearch) {
+              event.stopPropagation();
+              rows[0]?.click();
+            }
+          }}
+          aria-label="Mention a member or agent"
+          finalFocus={() => (accepted.current ? false : trigger.current)}
+        >
+          <div className={styles.mentionContent}>
+            <SearchField
+              variant="capsule"
+              inputRef={searchInput}
+              label={
+                draftRoster
+                  ? "Search recipients"
+                  : inviteAgents
+                    ? "Search members and agents"
+                    : "Search members and your agents"
+              }
+              value={search}
+              onValueChange={setSearch}
+              disabled={disabled}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.preventDefault();
+              }}
+            />
+            {!draftRoster && inviteAgents && (
+              <p>
+                {parentAdmission
+                  ? "Agents you mention join this session and its parent channel when you send, with access to their history."
+                  : "Agents you mention join this session when you send, with access to its history."}
+              </p>
+            )}
+            {agents.status === "loading" && (
+              <p role="status">Loading agents…</p>
+            )}
+            {(agents.status === "error" || !!agents.error) && (
+              <Button
+                type="button"
+                onClick={() => void session.agentChoices.refresh()}
+              >
+                Retry agent list
+              </Button>
+            )}
+            {error && <p role="status">{error}</p>}
+            {!draftRoster && list.error && (
+              <p role="alert">Could not refresh channel membership.</p>
+            )}
+            {!draftRoster && (!inviteAgents || !!channel) && !members && (
               <p role="status">Channel membership unavailable.</p>
             )}
-          {!draftRoster && (
-            <Button
-              disabled={disabled}
-              type="button"
-              onClick={() => session.channels.refreshList?.()}
-            >
-              Refresh members
-            </Button>
-          )}
-          <div className={styles.mentionChoices}>
-            {candidates.slice(0, 100).map(({ recipient, label }) => (
-              <NavigationItem
+            {!draftRoster && (
+              <Button
+                disabled={disabled}
                 type="button"
-                key={recipient.pubkey}
-                aria-label={`${label} ${recipient.pubkey}`}
-                disabled={disabled || !!channel?.archived}
-                onClick={() => {
-                  if (select(recipient)) setOpen(false);
-                }}
-                label={
-                  <span className="flex flex-col whitespace-normal">
-                    <span>{label}</span>
-                    {!members?.includes(recipient.pubkey) && (
-                      <small className="text-caption text-subtle">
-                        {inviteAgents
-                          ? parentAdmission
-                            ? "Adds to session and parent channel when you send"
-                            : "Adds to session when you send"
-                          : "Adds to channel when you send"}
-                      </small>
-                    )}
-                  </span>
-                }
-                title={recipient.pubkey}
-                trailing={<code>{recipient.pubkey.slice(0, 12)}</code>}
-                icon={
-                  <Avatar
-                    alt=""
-                    fallback={label}
-                    src={session.media(
-                      profiles.get(recipient.pubkey)?.picture ?? "",
-                      "small",
-                    )}
-                    size="default"
-                    shape={
-                      agentPubkeys.has(recipient.pubkey) ||
-                      !members?.includes(recipient.pubkey)
-                        ? "squircle"
-                        : "circle"
+                onClick={() => session.channels.refreshList?.()}
+              >
+                Refresh members
+              </Button>
+            )}
+            <div className={`${styles.mentionChoices} buzz-thin-scrollbar`}>
+              {candidates.slice(0, 100).map(({ recipient, label }) => (
+                <NavigationItem
+                  variant="option"
+                  data-mention-choice=""
+                  type="button"
+                  key={recipient.pubkey}
+                  aria-label={`${label} ${recipient.pubkey}`}
+                  disabled={disabled || !!channel?.archived}
+                  onClick={() => {
+                    if (select(recipient)) {
+                      accepted.current = true;
+                      setOpen(false);
                     }
-                  />
-                }
-              />
-            ))}
-            {candidates.length > 100 && (
-              <p>Narrow your search to see more members.</p>
-            )}
-            {members && !candidates.length && (
-              <p>No matching channel members.</p>
-            )}
+                  }}
+                  label={
+                    <span className="flex flex-col whitespace-normal">
+                      <span>{label}</span>
+                      {!members?.includes(recipient.pubkey) && (
+                        <small className="text-caption text-subtle">
+                          {inviteAgents
+                            ? parentAdmission
+                              ? "Adds to session and parent channel when you send"
+                              : "Adds to session when you send"
+                            : "Adds to channel when you send"}
+                        </small>
+                      )}
+                    </span>
+                  }
+                  title={recipient.pubkey}
+                  trailing={<code>{recipient.pubkey.slice(0, 12)}</code>}
+                  icon={
+                    <Avatar
+                      alt=""
+                      fallback={label}
+                      src={session.media(
+                        profiles.get(recipient.pubkey)?.picture ?? "",
+                        "small",
+                      )}
+                      size="large"
+                      shape={
+                        agentPubkeys.has(recipient.pubkey) ||
+                        !members?.includes(recipient.pubkey)
+                          ? "squircle"
+                          : "circle"
+                      }
+                    />
+                  }
+                />
+              ))}
+              {candidates.length > 100 && (
+                <p>Narrow your search to see more members.</p>
+              )}
+              {members && !candidates.length && (
+                <p>No matching channel members.</p>
+              )}
+            </div>
           </div>
-        </section>
-      )}
-    </fieldset>
+        </PopoverPopup>
+      </fieldset>
+    </PopoverRoot>
   );
 }

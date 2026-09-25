@@ -3,23 +3,20 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   CaretDownIcon,
   CaretRightIcon,
-  DotsThreeVerticalIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
-import { useId, useRef, type ReactElement, type ReactNode } from "react";
-import { Menu } from "@base-ui/react/menu";
+import { useId, type ReactElement, type ReactNode } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import completion from "../../features/conversation/Completions.module.css";
 import styles from "./ChannelSidebarRow.module.css";
 
 export function ChannelSidebarRow({
   channel,
   icon,
+  nameAccessory,
   badge,
   childContent,
   wrapSelect,
   selected,
-  sessionsEnabled,
   sessions,
   draft,
   draftSelected,
@@ -32,11 +29,11 @@ export function ChannelSidebarRow({
 }: {
   channel: ChannelSummary;
   icon: ReactNode;
+  nameAccessory?: ReactNode;
   badge?: ReactNode;
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
   selected?: string | undefined;
-  sessionsEnabled: boolean;
   sessions: readonly ChannelSummary[];
   draft: boolean;
   draftSelected: boolean;
@@ -47,15 +44,9 @@ export function ChannelSidebarRow({
   onNewSession: (id: string) => void;
   onHideDm?: (id: string) => void;
 }) {
-  const starting = useRef(false);
   const childrenId = useId();
   const hasChildren = draft || sessions.length > 0;
   const Chevron = collapsed ? CaretRightIcon : CaretDownIcon;
-  const canParent =
-    sessionsEnabled &&
-    channel.channelType !== "dm" &&
-    channel.channelType !== "session" &&
-    !channel.archived;
   const selectButton = (
     <NavigationItem
       type="button"
@@ -67,7 +58,12 @@ export function ChannelSidebarRow({
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
       selected={selected === channel.id && !draftSelected}
-      label={<span className={styles.label}>{channel.name}</span>}
+      label={
+        <span className={styles.nameContent}>
+          <span className={styles.label}>{channel.name}</span>
+          {nameAccessory}
+        </span>
+      }
       icon={
         hasChildren ? (
           <span className={styles.iconSpace} aria-hidden="true" />
@@ -112,59 +108,6 @@ export function ChannelSidebarRow({
         <div className={styles.select}>
           {wrapSelect ? wrapSelect(selectButton) : selectButton}
         </div>
-        {canParent && (
-          <Menu.Root
-            onOpenChange={(open) => {
-              if (open) starting.current = false;
-            }}
-          >
-            <span className={styles.more}>
-              <Menu.Trigger
-                render={
-                  <IconButton
-                    size="compact"
-                    shape="round"
-                    aria-label={`More options for ${channel.name}`}
-                    icon={<DotsThreeVerticalIcon size={15} />}
-                  />
-                }
-                aria-label={`More options for ${channel.name}`}
-              />
-            </span>
-            <Menu.Portal>
-              <Menu.Positioner
-                side="bottom"
-                align="end"
-                sideOffset={4}
-                className={styles.positioner}
-              >
-                <Menu.Popup
-                  className={`${completion.popup} ${styles.menu}`}
-                  data-compact=""
-                  finalFocus={() =>
-                    starting.current
-                      ? (document
-                          .getElementById("new-session-prompt")
-                          ?.querySelector<HTMLElement>('[role="textbox"]') ??
-                        false)
-                      : true
-                  }
-                  aria-label={`${channel.name} options`}
-                >
-                  <Menu.Item
-                    className={`${completion.option} ${styles.menuItem}`}
-                    onClick={() => {
-                      starting.current = true;
-                      onNewSession(channel.id);
-                    }}
-                  >
-                    New session
-                  </Menu.Item>
-                </Menu.Popup>
-              </Menu.Positioner>
-            </Menu.Portal>
-          </Menu.Root>
-        )}
         {channel.channelType === "dm" && onHideDm && (
           <span className={`${styles.more} ${styles.remove}`}>
             <IconButton

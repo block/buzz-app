@@ -1,3 +1,4 @@
+import "../styles/search-field.css";
 import { Field } from "./Field";
 import { InputGroup } from "./InputGroup";
 import { Input } from "@base-ui/react/input";
@@ -11,11 +12,13 @@ export function SearchField({
   label = "Search",
   placeholder = "Search",
   inputRef,
+  variant = "default",
   description,
   error,
   ...inputProps
 }: {
   inputRef?: Ref<HTMLElement>;
+  variant?: "default" | "capsule";
   description?: ReactNode;
   error?: ReactNode;
   value: string;
@@ -27,6 +30,36 @@ export function SearchField({
   "value" | "onValueChange" | "className" | "ref" | "render" | "type"
 >) {
   const localRef = useRef<HTMLElement | null>(null);
+  const clear = value ? (
+    <IconButton
+      data-search-clear={variant === "capsule" ? "" : undefined}
+      aria-label={`Clear ${label.toLowerCase()}`}
+      icon={<XIcon size={16} aria-hidden="true" />}
+      size="sm"
+      disabled={inputProps.disabled || inputProps.readOnly}
+      onClick={() => {
+        onValueChange("");
+        localRef.current?.focus();
+      }}
+    />
+  ) : null;
+  const input = (
+    <Input
+      {...inputProps}
+      data-buzz-ui=""
+      className={variant === "capsule" ? undefined : "buzz-input"}
+      ref={(node) => {
+        localRef.current = node;
+        if (typeof inputRef === "function") return inputRef(node);
+        if (inputRef) inputRef.current = node;
+      }}
+      type="search"
+      value={value}
+      onValueChange={onValueChange}
+      placeholder={placeholder}
+    />
+  );
+  const icon = <MagnifyingGlassIcon size={16} aria-hidden="true" />;
   return (
     <Field
       label={label}
@@ -34,38 +67,17 @@ export function SearchField({
       description={description}
       error={error}
     >
-      <InputGroup
-        leading={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
-        trailing={
-          value ? (
-            <IconButton
-              aria-label={`Clear ${label.toLowerCase()}`}
-              icon={<XIcon size={16} aria-hidden="true" />}
-              size="sm"
-              disabled={inputProps.disabled || inputProps.readOnly}
-              onClick={() => {
-                onValueChange("");
-                localRef.current?.focus();
-              }}
-            />
-          ) : null
-        }
-      >
-        <Input
-          {...inputProps}
-          data-buzz-ui=""
-          className="buzz-input"
-          ref={(node) => {
-            localRef.current = node;
-            if (typeof inputRef === "function") return inputRef(node);
-            if (inputRef) inputRef.current = node;
-          }}
-          type="search"
-          value={value}
-          onValueChange={onValueChange}
-          placeholder={placeholder}
-        />
-      </InputGroup>
+      {variant === "capsule" ? (
+        <div data-buzz-ui="" className="search-field">
+          {icon}
+          {input}
+          {clear}
+        </div>
+      ) : (
+        <InputGroup leading={icon} trailing={clear}>
+          {input}
+        </InputGroup>
+      )}
     </Field>
   );
 }

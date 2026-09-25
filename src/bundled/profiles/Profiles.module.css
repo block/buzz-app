@@ -36,6 +36,13 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.status {
+  overflow-wrap: anywhere;
+}
+.identifier {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
 .publicKey {
   display: flex;
   flex-direction: column;
@@ -44,6 +51,7 @@
 }
 .keyHeading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
@@ -107,4 +115,74 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.activityPreview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-card);
+  background: var(--surface-inset);
+}
+.activityItems {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.activityText {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.memoryEntry {
+  overflow-wrap: anywhere;
+}
+.memoryEntry summary {
+  cursor: pointer;
+}
+.memoryBody {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+.agentIdentity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.agentIdentity h3 {
+  margin: 0;
+  color: var(--text-subtle);
+}
+.runtime {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.runtime h3,
+.runtime dl,
+.runtime dd {
+  margin: 0;
+}
+.runtime dl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.runtime dd,
+.runtime pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }

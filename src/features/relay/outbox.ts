@@ -670,7 +670,7 @@ export function createOutbox(
         tags: [
           ...input.tags.map((tag) => [...tag]),
           ["client-id", crypto.randomUUID()],
-          ...(channelId ? [["ms", String(ms)]] : []),
+          ...(channelId ? [["ms", String(ms % 1000)]] : []),
         ],
       };
       const event = Object.freeze({

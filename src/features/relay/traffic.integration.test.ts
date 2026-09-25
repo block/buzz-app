@@ -713,7 +713,7 @@ it.each([false, true])(
       ...(nested ? [["e", root.id, "", "root"]] : []),
       ["e", parentId, "", "reply"],
       ["client-id", expect.any(String)],
-      ["ms", String(thread.snapshot().replies[0]?.createdAtMs)],
+      ["ms", String((thread.snapshot().replies[0]?.createdAtMs ?? 0) % 1000)],
     ]);
     expect(event.created_at).toBe(thread.snapshot().replies[0]?.createdAt);
     const publication = h.publications.shift();

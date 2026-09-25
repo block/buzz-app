@@ -6,13 +6,11 @@ const MAX_LEAD_MS = 5000;
  * rollback) the chain restarts at the clock. Well inside the relay's ±900s. */
 const MAX_OWN_LEAD_MS = 60_000;
 
-/** Sub-second send order: a valid `ms` tag within the signed second, else the second itself. */
+/** Sub-second send order: `ms` is a canonical 0–999 offset within the signed second. */
 export function eventMs(event: Pick<EventData, "created_at" | "tags">) {
   const value = event.tags.find(([name]) => name === "ms")?.[1];
-  const ms = value && /^\d{1,16}$/.test(value) ? Number(value) : Number.NaN;
-  return Number.isSafeInteger(ms) && Math.floor(ms / 1000) === event.created_at
-    ? ms
-    : event.created_at * 1000;
+  const offset = value && /^(0|[1-9]\d{0,2})$/.test(value) ? Number(value) : 0;
+  return event.created_at * 1000 + offset;
 }
 
 /** The one rendered message order: effective ms ascending, then event id ascending. */

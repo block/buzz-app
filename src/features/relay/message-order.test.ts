@@ -28,10 +28,10 @@ const reply = (root: EventData, content: string, second: number, ms?: string) =>
 const ids = (rows: readonly { id: string }[]) => rows.map((row) => row.id);
 
 it("orders by a valid ms tag, falls back to seconds, and breaks equal ms by ascending id", () => {
-  const late = tagged("late", 100, "100900");
-  const early = tagged("early", 100, "100100");
+  const late = tagged("late", 100, "900");
+  const early = tagged("early", 100, "100");
   const untagged = message(alice, "c", "untagged", 100);
-  const outside = tagged("outside its second", 100, "101500");
+  const outside = tagged("outside its second", 100, "1000");
   const malformed = tagged("malformed", 100, "100.5e3");
   expect(eventMs(late)).toBe(100_900);
   expect(eventMs(untagged)).toBe(100_000);
@@ -42,8 +42,8 @@ it("orders by a valid ms tag, falls back to seconds, and breaks equal ms by asce
   expect(ids(rows)).toEqual([untagged.id, early.id, late.id]);
 
   const [first, second] = [
-    tagged("x", 100, "100500"),
-    tagged("y", 100, "100500"),
+    tagged("x", 100, "500"),
+    tagged("y", 100, "500"),
   ].sort((a, b) => a.id.localeCompare(b.id));
   assert.exists(first);
   assert.exists(second);
@@ -65,14 +65,45 @@ it("orders by a valid ms tag, falls back to seconds, and breaks equal ms by asce
   ]);
 });
 
+it("reconstructs every subsecond value and keeps different seconds ordered", () => {
+  for (let offset = 0; offset < 1000; offset++) {
+    expect(eventMs({ created_at: 100, tags: [["ms", String(offset)]] })).toBe(
+      100_000 + offset,
+    );
+  }
+  const last = tagged("last", 100, "999");
+  const next = tagged("next", 101, "0");
+  expect(ids(foldMessages("c", relay.pubkey, [next, last]))).toEqual([
+    last.id,
+    next.id,
+  ]);
+});
+
+it.each([
+  "",
+  "-1",
+  "1000",
+  "100900",
+  "1.5",
+  "1e2",
+  "+1",
+  " 1",
+  "1 ",
+  "01",
+  "000",
+  "NaN",
+])("ignores invalid or pre-release epoch ms tag %j", (value) => {
+  expect(eventMs({ created_at: 100, tags: [["ms", value]] })).toBe(100_000);
+});
+
 it("renders channel and thread orderings identically", () => {
   const root = message(alice, "c", "root", 10);
   const replies = [
-    reply(root, "c", 20, "20900"),
+    reply(root, "c", 20, "900"),
     reply(root, "a", 20),
-    reply(root, "b", 20, "20100"),
-    reply(root, "d", 20, "20100"),
-    reply(root, "e", 20, "21999"),
+    reply(root, "b", 20, "100"),
+    reply(root, "d", 20, "100"),
+    reply(root, "e", 20, "1000"),
   ];
   const events = [root, ...replies];
   const channel = new MessageProjection(
@@ -158,69 +189,77 @@ it("keeps a near-cap burst in send order through relay replacement", async () =>
   expect(ids(projection.reconcile(relayed, []))).toEqual(sent);
 });
 
-it("renders three same-second sends in send order and never moves them on replacement", async () => {
-  const now = 2_100_000_000_000;
-  const clock = vi.spyOn(Date, "now").mockReturnValue(now);
-  const channel = "burst";
-  const messageClock = new MessageClock();
-  messageClock.observe(channel, now + 700); // Another author's newer message.
-  const sign = vi.fn(async (event) => signed(viewer, event));
-  const owner = createOutbox(
-    viewer.pubkey,
-    { sign, publish: async () => {} },
-    { load: () => [], save: () => {} },
-    { clock: messageClock },
-  );
-  owners.push(owner);
-  await owner.ready;
-  const sent = ["yeah", "nice", "love it"].map((content) =>
-    owner.outbox.send({ kind: 9, content, tags: [["h", channel]] }),
-  );
-  const local = owner.outbox.snapshot();
-  expect(local.map((item) => item.event.id)).toEqual(sent);
-  expect(local.map((item) => item.event.tags.at(-1))).toEqual([
-    ["ms", String(now + 701)],
-    ["ms", String(now + 702)],
-    ["ms", String(now + 703)],
-  ]);
-  expect(local.map((item) => item.event.created_at)).toEqual([
-    Math.floor(now / 1000),
-    Math.floor(now / 1000),
-    Math.floor(now / 1000),
-  ]);
+it.each([700, 998])(
+  "keeps sends ordered through relay replacement starting after offset %i",
+  async (offset) => {
+    const now = 2_100_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    const channel = "burst";
+    const messageClock = new MessageClock();
+    messageClock.observe(channel, now + offset); // Another author's newer message.
+    const sign = vi.fn(async (event) => signed(viewer, event));
+    const owner = createOutbox(
+      viewer.pubkey,
+      { sign, publish: async () => {} },
+      { load: () => [], save: () => {} },
+      { clock: messageClock },
+    );
+    owners.push(owner);
+    await owner.ready;
+    const sent = ["yeah", "nice", "love it"].map((content) =>
+      owner.outbox.send({ kind: 9, content, tags: [["h", channel]] }),
+    );
+    const local = owner.outbox.snapshot();
+    expect(local.map((item) => item.event.id)).toEqual(sent);
+    expect(local.map((item) => item.event.tags.at(-1))).toEqual([
+      ["ms", String((offset + 1) % 1000)],
+      ["ms", String((offset + 2) % 1000)],
+      ["ms", String((offset + 3) % 1000)],
+    ]);
+    expect(local.map((item) => item.event.created_at)).toEqual([
+      Math.floor((now + offset + 1) / 1000),
+      Math.floor((now + offset + 2) / 1000),
+      Math.floor((now + offset + 3) / 1000),
+    ]);
 
-  const projection = new MessageProjection(
-    channel,
-    relay.pubkey,
-    createRelayProfiler(),
-    () => false,
-    messageClock,
-  );
-  const optimistic = projection.reconcile(
-    local.map((item) => item.event),
-    local,
-  );
-  expect(ids(optimistic)).toEqual(sent);
+    const projection = new MessageProjection(
+      channel,
+      relay.pubkey,
+      createRelayProfiler(),
+      () => false,
+      messageClock,
+    );
+    const optimistic = projection.reconcile(
+      local.map((item) => item.event),
+      local,
+    );
+    expect(ids(optimistic)).toEqual(sent);
+    expect(optimistic.map((row) => row.createdAtMs)).toEqual([
+      now + offset + 1,
+      now + offset + 2,
+      now + offset + 3,
+    ]);
 
-  await vi.waitFor(() => expect(sign).toHaveBeenCalledTimes(3));
-  const relayed = await Promise.all(
-    sign.mock.results.map((result) => result.value),
-  );
-  // The relay copy of the middle message replaces its optimistic row first.
-  const [one, , three] = local;
-  assert.exists(one);
-  assert.exists(three);
-  const replaced = projection.reconcile(
-    [one.event, relayed[1], three.event],
-    [one, three],
-  );
-  expect(ids(replaced)).toEqual(sent);
-  expect(replaced.map((row) => row.createdAtMs)).toEqual(
-    optimistic.map((row) => row.createdAtMs),
-  );
-  expect(ids(projection.reconcile(relayed, []))).toEqual(sent);
-  clock.mockRestore();
-});
+    await vi.waitFor(() => expect(sign).toHaveBeenCalledTimes(3));
+    const relayed = await Promise.all(
+      sign.mock.results.map((result) => result.value),
+    );
+    // The relay copy of the middle message replaces its optimistic row first.
+    const [one, , three] = local;
+    assert.exists(one);
+    assert.exists(three);
+    const replaced = projection.reconcile(
+      [one.event, relayed[1], three.event],
+      [one, three],
+    );
+    expect(ids(replaced)).toEqual(sent);
+    expect(replaced.map((row) => row.createdAtMs)).toEqual(
+      optimistic.map((row) => row.createdAtMs),
+    );
+    expect(ids(projection.reconcile(relayed, []))).toEqual(sent);
+    clock.mockRestore();
+  },
+);
 
 it("gives each relay session its own send clock for the same channel id", async () => {
   const now = 2_300_000_000_000;
@@ -261,11 +300,7 @@ it("gives each relay session its own send clock for the same channel id", async 
   const burst = ["one", "two", "three"].map((text) =>
     a.messages.send("c", text, []),
   );
-  expect(burst.map((id) => msOf(a, id))).toEqual([
-    String(now),
-    String(now + 1),
-    String(now + 2),
-  ]);
+  expect(burst.map((id) => msOf(a, id))).toEqual(["0", "1", "2"]);
   // Community B's channel "c" is unrelated evidence; A's burst must not lead it.
-  expect(msOf(b, b.messages.send("c", "hello", []))).toBe(String(now));
+  expect(msOf(b, b.messages.send("c", "hello", []))).toBe("0");
 });

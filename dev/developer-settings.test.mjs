@@ -8,9 +8,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
+import { createServer as createViteServer } from "vite";
 import { afterEach, expect, it, vi } from "vitest";
 import { developerSettingsPlugin } from "./developer-settings.ts";
-import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
+import {
+  developerSettings,
+  getLogger,
+  logLevel,
+  setLogLevel,
+} from "../src/features/developer/logging.ts";
 const roots = [];
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -132,5 +138,49 @@ it("keeps the active level when persistence fails and recovers from corrupt sett
     expect(h.send).not.toHaveBeenCalled();
   } finally {
     await h.close();
+  }
+});
+it("treats an absent settings API as unavailable without Vite's HTML fallback", async () => {
+  const root = directory();
+  writeFileSync(
+    join(root, "index.html"),
+    "<!doctype html><title>Fallback</title>",
+  );
+  const server = await createViteServer({
+    root,
+    configFile: false,
+    envDir: false,
+    optimizeDeps: { noDiscovery: true },
+    logLevel: "silent",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  let fetcher;
+  try {
+    await server.listen();
+    const base = `http://127.0.0.1:${server.httpServer.address().port}`;
+    const request = globalThis.fetch;
+    // Establish that this real server would serve HTML for an untyped request.
+    const fallback = await request(`${base}/api/dev/settings`);
+    expect(fallback.status).toBe(200);
+    expect(fallback.headers.get("content-type")).toContain("text/html");
+    await fallback.text();
+    const statuses = [];
+    // Resolve the browser-relative URL only; preserve the production request.
+    fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (url, init) => {
+        const response = await request(new URL(url, base), init);
+        statuses.push(response.status);
+        return response;
+      });
+    setLogLevel("debug");
+    await expect(developerSettings()).rejects.toThrow(
+      "Development settings are unavailable",
+    );
+    expect(statuses).toEqual([404]);
+    expect(logLevel()).toBe("debug");
+  } finally {
+    fetcher?.mockRestore();
+    await server.close();
   }
 });

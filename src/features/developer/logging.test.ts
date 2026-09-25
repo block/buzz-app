@@ -41,14 +41,26 @@ it("updates existing/future tags and never coalesces the firehose", () => {
 it("applies only valid saved responses and leaves the previous level on failure", async () => {
   const fetcher = vi
     .fn()
-    .mockResolvedValue(Response.json({ logLevel: "trace" }));
+    .mockImplementation(async () => Response.json({ logLevel: "trace" }));
   vi.stubGlobal("fetch", fetcher);
   await developerSettings("trace");
   expect(fetcher).toHaveBeenCalledWith(
     "/api/dev/settings",
-    expect.objectContaining({ method: "POST", body: '{"logLevel":"trace"}' }),
+    expect.objectContaining({
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: '{"logLevel":"trace"}',
+    }),
   );
   expect(logLevel()).toBe("trace");
+  await developerSettings();
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/dev/settings",
+    expect.objectContaining({ headers: { Accept: "application/json" } }),
+  );
   fetcher.mockResolvedValue(Response.json({ logLevel: "invalid" }));
   await expect(developerSettings()).rejects.toThrow("Invalid");
   fetcher.mockResolvedValue(new Response("", { status: 500 }));

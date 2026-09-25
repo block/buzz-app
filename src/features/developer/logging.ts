@@ -49,10 +49,14 @@ export function getLogger(tag: string) {
 export async function developerSettings(next?: LogLevel): Promise<LogLevel> {
   const response = await fetch(DEVELOPER_SETTINGS_PATH, {
     cache: "no-store",
+    // Missing APIs must return 404, not Vite's HTML fallback (and its warmup).
+    headers: {
+      Accept: "application/json",
+      ...(next ? { "Content-Type": "application/json" } : {}),
+    },
     ...(next
       ? {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ logLevel: next }),
         }
       : {}),

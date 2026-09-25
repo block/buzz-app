@@ -52,7 +52,7 @@ for (const [path, name] of [
   ["./AppearanceSettings", "AppearanceSettings"],
   ["./ShortcutSettings", "ShortcutSettings"],
   ["./ProfileSettings", "ProfileSettings"],
-  ["./MessageSettings", "MessageSettings"],
+  ["./AgentSettings", "AgentSettings"],
   ["./DeveloperSettings", "DeveloperSettings"],
 ] as const)
   vi.doMock(path, () => ({ [name]: () => null }));
@@ -64,19 +64,29 @@ const pluginState = {
   error: null,
   refreshError: null,
 };
+const communityState = {
+  status: "ready",
+  viewer: "ab".repeat(32),
+  profile: { name: "Buzz User", picture: "" },
+  memberships: [{ id: "primary", name: "Primary" }],
+  selected: "primary",
+};
 const host = {
   plugins: { subscribe: () => () => {}, snapshot: () => pluginState },
-  communities: {},
+  communities: {
+    subscribe: () => () => {},
+    snapshot: () => communityState,
+  },
 } as unknown as Parameters<typeof Settings>[0];
 
-it("gives grouped cards their own section and keeps others in Messages", () => {
+it("gives contributed cards their own community sections and retires removed cards", () => {
   const { cards, set } = registry([
     card("hosted", "Hosted communities", "Communities"),
     card("groups", "Personal groups"),
   ]);
   render(<Settings {...host} cards={cards} />);
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
-  expect(nav).toHaveTextContent("Communities");
+  expect(nav).toHaveTextContent("Primary");
   expect(screen.queryByText("Hosted communities body")).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "Hosted communities" }));
@@ -86,14 +96,14 @@ it("gives grouped cards their own section and keeps others in Messages", () => {
   ).toHaveAttribute("aria-current", "page");
   expect(screen.queryByText("Personal groups body")).toBeNull();
 
-  fireEvent.click(screen.getByRole("button", { name: "Messages" }));
+  fireEvent.click(screen.getByRole("button", { name: "Personal groups" }));
   expect(screen.getByText("Personal groups body")).toBeVisible();
   expect(screen.queryByText("Hosted communities body")).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "Hosted communities" }));
   act(() => set([card("groups", "Personal groups")]));
   expect(screen.queryByText("Hosted communities body")).toBeNull();
-  expect(nav).not.toHaveTextContent("Communities");
+  expect(nav).not.toHaveTextContent("Hosted communities");
   expect(screen.getByRole("button", { name: "Profile" })).toHaveAttribute(
     "aria-current",
     "page",

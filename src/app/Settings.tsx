@@ -116,7 +116,9 @@ export function Settings({
       visibleSections.some((section) => section.id === requestedSection)
     )
       setSelected(requestedSection);
-  }, [requestedSection, visibleSections]);
+    else if (!visibleSections.some((section) => section.id === selected))
+      setSelected(defaultSection);
+  }, [defaultSection, requestedSection, selected, visibleSections]);
   useEffect(() => {
     if (requestedSection === selected)
       navigation?.complete({ status: "opened" });

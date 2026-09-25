@@ -187,6 +187,9 @@ containment on non-Unix platforms.
 - Start on launch is a separate persisted preference set with
   `agent_control_start_on_app_launch`. It is not a config revision and never
   starts or stops the running process; a restore it triggers is an ordinary Start.
+  Created and imported agents save it off; only legacy records without one follow
+  enabled intent. A launch restore queued behind another agent's credential
+  prompt skips any agent explicitly started or stopped since the app opened.
 - While a process is alive, `restartDiff` itemizes saved settings that differ from
   the settings it was started with. The native side compares raw values and sends
   only redacted entries: prompt character counts, masked arguments and environment

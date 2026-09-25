@@ -71,7 +71,7 @@ export function ProfileRuntime({
         setNotice({
           tone: "success",
           title: updated.startOnAppLaunch
-            ? `Will start ${updated.name} automatically.`
+            ? `Will start ${updated.name} automatically when the desktop app opens.`
             : `${updated.name} will stay manual-start only.`,
         });
       },
@@ -89,10 +89,7 @@ export function ProfileRuntime({
     ["MCP command", agent.mcpCommand],
     ["Backend", agent.backend],
   ].filter((row): row is [string, string] => !!row[1]);
-  const model = [
-    ["Model", agent.harness.model],
-    ["Provider", agent.harness.provider],
-  ].filter(([, value]) => value);
+  const editBlocked = state.busy || state.status !== "ready";
   const advanced = [
     ["Workspace", agent.workspace],
     // Names only: environment values stay native.
@@ -145,22 +142,28 @@ export function ProfileRuntime({
       )}
       <section aria-label="Model settings" className={styles.runtime}>
         <h3 className="text-body">Model settings</h3>
-        <Rows rows={model} />
-        <div>
-          <Button
-            size="compact"
-            disabled={state.busy || state.status !== "ready"}
-            onClick={() => setEditing(true)}
-          >
-            Edit
-          </Button>
-        </div>
-      </section>
-      <section aria-label="MCP servers" className={styles.runtime}>
-        <h3 className="text-body">MCP servers</h3>
-        <p className="text-body-sm text-subtle">
-          No custom servers configured.
-        </p>
+        <dl>
+          {(
+            [
+              ["Model", agent.launchModel],
+              ["Provider", agent.launchProvider],
+            ] as const
+          ).map(([label, value]) => (
+            <div key={label}>
+              <dt className="text-body-sm text-subtle">{label}</dt>
+              <dd className="font-mono text-mono">{value ?? "—"}</dd>
+              <Button
+                size="compact"
+                aria-label={`Edit ${label}`}
+                title={`Edit ${label}`}
+                disabled={editBlocked}
+                onClick={() => setEditing(true)}
+              >
+                Edit
+              </Button>
+            </div>
+          ))}
+        </dl>
       </section>
       {!!advanced.length && (
         <section aria-label="Advanced" className={styles.runtime}>

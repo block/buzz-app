@@ -88,7 +88,12 @@ async function mount({
 }
 
 it("shows the verified owner saved configuration and persists start on launch", async () => {
-  const { fixture, user } = await mount();
+  const fixture = controlFixture();
+  // A blank saved model launches the build default; an override replaces the provider.
+  fixture.agent.harness.model = "";
+  fixture.agent.launchModel = "build-model";
+  fixture.agent.launchProvider = "override-provider";
+  const { user } = await mount({ fixture });
   await user.click(await screen.findByRole("tab", { name: "Runtime" }));
   const configuration = screen.getByRole("region", {
     name: "Agent configuration",
@@ -102,9 +107,10 @@ it("shows the verified owner saved configuration and persists start on launch", 
     expect(within(configuration).getByText(text)).toBeVisible();
   expect(within(configuration).queryByText("Backend")).toBeNull();
   const model = screen.getByRole("region", { name: "Model settings" });
-  expect(within(model).getByText("fixture-model")).toBeVisible();
-  expect(within(model).getByText("fixture-provider")).toBeVisible();
-  expect(screen.getByText("No custom servers configured.")).toBeVisible();
+  expect(within(model).getByText("build-model")).toBeVisible();
+  expect(within(model).getByText("override-provider")).toBeVisible();
+  expect(within(model).queryByText("fixture-provider")).toBeNull();
+  expect(screen.queryByRole("region", { name: "MCP servers" })).toBeNull();
   const advanced = screen.getByRole("region", { name: "Advanced" });
   expect(within(advanced).getByText("EXAMPLE_TOKEN")).toBeVisible();
   expect(screen.queryByRole("region", { name: "Restart required" })).toBeNull();
@@ -121,13 +127,24 @@ it("shows the verified owner saved configuration and persists start on launch", 
     payload: { id: "fixture-agent", enabled: false },
   });
   expect(fixture.agent.startOnAppLaunch).toBe(false);
+  // The reused editor reports the launch preference, not execution intent.
+  await user.click(within(model).getByRole("button", { name: "Edit Model" }));
+  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  await user.click(within(dialog).getByRole("button", { name: "Runtime" }));
+  expect(within(dialog).getByText("Enabled · manual-start only")).toBeVisible();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Close editor" }),
+  );
   await user.click(toggle);
   expect(
-    await screen.findByText("Will start Fixture agent automatically."),
+    await screen.findByText(
+      "Will start Fixture agent automatically when the desktop app opens.",
+    ),
   ).toBeVisible();
   expect(toggle).toBeChecked();
-
-  await user.click(within(model).getByRole("button", { name: "Edit" }));
+  await user.click(
+    within(model).getByRole("button", { name: "Edit Provider" }),
+  );
   expect(screen.getByRole("dialog", { name: "Edit agent" })).toBeVisible();
 });
 

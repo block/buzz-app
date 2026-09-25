@@ -41,6 +41,10 @@ pub struct AgentView {
     pub backend: Option<String>,
     pub acp_command: Option<String>,
     pub mcp_command: Option<String>,
+    /// Model/provider the next start passes to the worker: saved selectors,
+    /// build defaults, then the worker's selector environment overrides.
+    pub launch_model: Option<String>,
+    pub launch_provider: Option<String>,
     /// Redacted saved-versus-running differences while the process is alive.
     pub restart_diff: Vec<crate::restart::RestartDiffEntry>,
 }
@@ -109,6 +113,9 @@ pub(crate) struct Agent {
 }
 impl Agent {
     pub fn view(&self) -> AgentView {
+        let defaults = crate::build_defaults();
+        let resolved = defaults.resolve(&self.harness, &self.environment);
+        let launch = crate::defaults::selectors(&resolved, &self.environment);
         AgentView {
             id: self.id.clone(),
             pubkey: self.pubkey.clone(),
@@ -132,16 +139,19 @@ impl Agent {
             diagnostics: Vec::new(),
             profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true)),
             start_on_app_launch: self.starts_on_launch(),
-            respond_to: self
-                .respond_to(crate::build_defaults().owner_only)
-                .ok()
-                .map(str::to_owned),
+            respond_to: self.respond_to(defaults.owner_only).ok().map(str::to_owned),
             backend: (self.imported["record"]["backend"]["type"] == "provider")
                 .then(|| self.imported["record"]["backend"]["id"].as_str())
                 .flatten()
                 .map(str::to_owned),
             acp_command: None,
             mcp_command: None,
+            launch_model: launch.model.map(str::to_owned),
+            // Unmapped workers (Pi) take the saved provider directly.
+            launch_provider: launch
+                .provider
+                .or_else(|| (!resolved.provider.is_empty()).then_some(resolved.provider.as_str()))
+                .map(str::to_owned),
             restart_diff: Vec::new(),
         }
     }

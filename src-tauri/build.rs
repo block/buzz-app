@@ -30,6 +30,7 @@ fn main() {
             "agent_control_creation_profile",
             "agent_control_snapshot",
             "agent_control_save",
+            "agent_control_start_on_app_launch",
             "agent_control_action",
             "agent_control_import_preview",
             "agent_control_import_commit",

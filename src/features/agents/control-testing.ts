@@ -27,6 +27,8 @@ export function controlFixture() {
     backend: null,
     acpCommand: "/fixture/bin/buzz-acp",
     mcpCommand: "/fixture/bin/buzz-dev-mcp",
+    launchModel: "fixture-model",
+    launchProvider: "fixture-provider",
     restartDiff: [],
   };
   const data: ControlSnapshot = {

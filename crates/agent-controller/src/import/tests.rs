@@ -98,6 +98,8 @@ fn preview_is_keyless_commit_resolves_preserves_and_never_enables_or_mutates_sou
     let saved = &store.agents().unwrap()[0];
     assert_eq!(saved.pubkey, PUB);
     assert!(!saved.enabled);
+    // Source `start_on_app_launch: true` does not auto-start an imported record.
+    assert_eq!(saved.start_on_app_launch, Some(false));
     assert_eq!(saved.system_prompt, "definition-prompt");
     assert_eq!(saved.harness.model, "definition-model");
     assert_eq!(saved.harness.provider, "global-provider");

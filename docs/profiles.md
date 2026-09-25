@@ -32,12 +32,16 @@ active community has exactly one native record for the profile key. It follows
 Buzz desktop's Runtime tab and copy: a Restart required notice with the native
 redacted saved-versus-running diff, Activity (status and the Start on launch
 switch), Agent configuration (runtime command, who can send instructions, ACP
-and MCP commands, imported provider backend), Model settings with Edit opening
-the existing Agents editor, MCP servers and Advanced (workspace, environment
-variable names and Databricks settings). Environment values, arguments and
-credentials are never shown. The switch persists through the host; failures keep
-the confirmed value and expose Retry status. Losing ownership or the native record
-returns to Info.
+and MCP commands, imported provider backend), Model settings and Advanced
+(workspace, environment variable names and Databricks settings). Model and
+Provider show what the next start passes to the worker: saved selectors, build
+defaults, then that worker's model/provider environment overrides; Edit Model and
+Edit Provider open the existing Agents editor. Other environment values,
+arguments and credentials are not shown. Runtime config-file settings (MCP
+servers, mode, token limits) are not read. The switch persists through the host;
+failures keep the confirmed value and expose Retry status. Losing ownership or the
+native record returns to Info. The owner check is presentation only: these fields
+come from the same app-wide snapshot as Local agent.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
 The Info tab's “Latest activity” card shows up to three recently updated assistant

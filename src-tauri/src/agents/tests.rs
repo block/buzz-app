@@ -265,6 +265,36 @@ fn real_ipc_preview_source_no_import_and_shutdown_fence() {
     );
 }
 #[test]
+fn queued_restore_skips_agent_stopped_after_launch() {
+    let (dir, host, _app, view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    saved["agents"][0]["startOnAppLaunch"] = json!(true);
+    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    // Restore captured this id, then the user stopped it before its turn.
+    let queued = host.with(|h| h.controller.launch_ids()).unwrap();
+    assert_eq!(queued, vec![id.clone()]);
+    let stopped = invoke(
+        &view,
+        "agent_control_action",
+        json!({"id":id,"action":"stop"}),
+    )
+    .unwrap();
+    assert_eq!(stopped["agents"][0]["startOnAppLaunch"], true);
+    let restored =
+        tauri::async_runtime::block_on(start(host.clone(), id, Action::Start, true, None));
+    assert_eq!(
+        restored.err().as_deref(),
+        Some("Agent disabled before restore")
+    );
+    let after = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+    assert_eq!(after["agents"][0]["enabled"], false);
+    // Fenced before credential/runtime checks: nothing was attempted or recorded.
+    assert!(after["agents"][0]["error"].is_null());
+}
+
+#[test]
 fn malformed_store_does_not_prevent_native_host_construction() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("agents.json"), "RAW_SECRET_INVALID").unwrap();
@@ -394,6 +424,12 @@ async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() 
             let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             saved["agents"][0]["enabled"] = json!(true);
             std::fs::write(path, serde_json::to_vec(&saved).unwrap()).unwrap();
+            // A fresh launch has no explicit actions yet.
+            host.with(|h| {
+                h.acted.clear();
+                Ok(())
+            })
+            .unwrap();
         }
         let owner = host.clone();
         let agent_id = id.clone();

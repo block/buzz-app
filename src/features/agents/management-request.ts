@@ -1,30 +1,19 @@
 export const AGENT_MANAGEMENT_REQUEST = "agent_management_request" as const;
 
-export type AgentManagementRequest =
-  | Readonly<{
-      type: typeof AGENT_MANAGEMENT_REQUEST;
-      action: "create";
-      requestId: string;
-      request: Readonly<{
-        channelId: string;
-        displayName: string;
-        systemPrompt: string;
-      }>;
-    }>
-  | Readonly<{
-      type: typeof AGENT_MANAGEMENT_REQUEST;
-      action: "update";
-      requestId: string;
-      request: Readonly<{
-        channelId: string;
-        agentName: string;
-        displayName?: string;
-        systemPrompt?: string;
-        runtime?: string;
-        provider?: string;
-        model?: string;
-      }>;
-    }>;
+export type AgentManagementRequest = Readonly<{
+  type: typeof AGENT_MANAGEMENT_REQUEST;
+  action: "update";
+  requestId: string;
+  request: Readonly<{
+    channelId: string;
+    agentName: string;
+    displayName?: string;
+    systemPrompt?: string;
+    runtime?: string;
+    provider?: string;
+    model?: string;
+  }>;
+}>;
 
 const text = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0;
@@ -48,25 +37,6 @@ export function parseAgentManagementRequest(
     !text(payload.requestId)
   )
     return null;
-  if (payload.action === "create") {
-    if (
-      !only(request, ["channelId", "displayName", "systemPrompt"]) ||
-      !text(request.channelId) ||
-      !text(request.displayName) ||
-      !text(request.systemPrompt)
-    )
-      return null;
-    return {
-      type: AGENT_MANAGEMENT_REQUEST,
-      action: "create",
-      requestId: payload.requestId,
-      request: {
-        channelId: request.channelId,
-        displayName: request.displayName,
-        systemPrompt: request.systemPrompt,
-      },
-    };
-  }
   if (
     payload.action !== "update" ||
     !only(request, [

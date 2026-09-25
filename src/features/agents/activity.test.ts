@@ -428,6 +428,17 @@ it("rejects unknown and secret-shaped agent-management fields", () => {
   expect(
     parseAgentManagementRequest({
       ...request,
+      action: "create",
+      request: {
+        channelId: request.request.channelId,
+        displayName: "New agent",
+        systemPrompt: "Help.",
+      },
+    }),
+  ).toBeNull();
+  expect(
+    parseAgentManagementRequest({
+      ...request,
       request: { ...request.request, apiKey: "never" },
     }),
   ).toBeNull();

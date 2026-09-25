@@ -1,11 +1,11 @@
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import type { RelayData } from "../relay/service";
-import { agentDraft, type AgentDraft } from "../../bundled/agents/agent-edit";
-import { AgentEditor } from "../../bundled/agents/AgentEditor";
-import type { AgentControl, AgentView } from "./control";
-import type { ChannelList } from "../relay/contracts";
-import type { AgentManagementRequest } from "./management-request";
+import type { RelayData } from "../../features/relay/service";
+import { agentDraft, type AgentDraft } from "./agent-edit";
+import { AgentEditor } from "./AgentEditor";
+import type { AgentControl, AgentView } from "../../features/agents/control";
+import type { ChannelList } from "../../features/relay/contracts";
+import type { AgentManagementRequest } from "../../features/agents/management-request";
 
 export type PendingManagementRequest = {
   agent: string;
@@ -13,7 +13,7 @@ export type PendingManagementRequest = {
 };
 const MANAGEMENT_QUEUE_LIMIT = 200;
 
-export function AgentManagementNotice({
+export function AgentUpdateReview({
   relay,
   control,
 }: {
@@ -39,7 +39,7 @@ export function AgentManagementNotice({
   const request = requests[0] ?? null;
   useEffect(() => {
     if (connection.status !== "ready") return;
-    const release = connection.session.agentActivity.activate();
+    const release = connection.session.agentManagement.activate();
     const unsubscribe = connection.session.agentManagement.subscribe(
       (agent, value) => {
         setRequests((pending) =>
@@ -61,7 +61,7 @@ export function AgentManagementNotice({
     if (request) void control.refresh();
   }, [control, request]);
   const matches = useMemo(() => {
-    if (request?.value.action !== "update") return [];
+    if (!request) return [];
     const target = request.value.request.agentName.trim().toLocaleLowerCase();
     return (controlState.data?.agents ?? []).filter(
       (agent) => agent.name.trim().toLocaleLowerCase() === target,
@@ -69,15 +69,6 @@ export function AgentManagementNotice({
   }, [controlState.data?.agents, request]);
   if (!request || channelList.status !== "ready") return null;
   const dismiss = () => setRequests((pending) => pending.slice(1));
-  if (request.value.action === "create") {
-    return (
-      <ToastNotice
-        title="Agent requested a new agent"
-        description="Creation drafts are not supported in buzz-app yet."
-        onDismiss={dismiss}
-      />
-    );
-  }
   const agent = matches.length === 1 ? matches[0] : undefined;
   if (!agent) {
     return (
@@ -125,7 +116,7 @@ export function managementRequesterAuthorized(
 
 export function requestedDraft(
   agent: AgentView,
-  request: Extract<AgentManagementRequest, { action: "update" }>,
+  request: AgentManagementRequest,
 ): AgentDraft {
   const current = agentDraft(agent);
   const changes = request.request;

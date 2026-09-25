@@ -1,11 +1,11 @@
 import { expect, it } from "vitest";
-import { controlFixture } from "./control-testing";
+import { controlFixture } from "../../features/agents/control-testing";
 import {
   enqueueManagementRequest,
   managementRequesterAuthorized,
   type PendingManagementRequest,
   requestedDraft,
-} from "./AgentManagementNotice";
+} from "./AgentUpdateReview";
 
 it("prefills only requested update fields over current saved settings", () => {
   const { agent } = controlFixture();

@@ -72,6 +72,7 @@ export function createAgentActivity(
 ) {
   let closed = false,
     leases = 0,
+    managementLeases = 0,
     generation = 0,
     epoch = 0;
   let status: Snapshot["status"] = available ? "disabled" : "unavailable";
@@ -168,7 +169,7 @@ export function createAgentActivity(
   function restart() {
     generation++;
     reset();
-    if (available && !closed && leases) {
+    if (available && !closed && leases + managementLeases > 0) {
       status = "connecting";
       observe(generation);
     } else status = closed || !available ? "unavailable" : "disabled";
@@ -221,6 +222,19 @@ export function createAgentActivity(
   }
   return {
     management: Object.freeze({
+      activate() {
+        if (closed || !available) return () => {};
+        if (++managementLeases === 1 && leases === 0) restart();
+        let released = false;
+        return () => {
+          if (released || closed) return;
+          released = true;
+          if (--managementLeases === 0 && leases === 0) {
+            observe(null);
+            restart();
+          }
+        };
+      },
       subscribe(
         listener: (agent: string, request: AgentManagementRequest) => void,
       ) {
@@ -263,7 +277,13 @@ export function createAgentActivity(
       },
     }),
     receive(input: ObserverFrame, current: number) {
-      if (closed || !available || !leases || current !== generation) return;
+      if (
+        closed ||
+        !available ||
+        leases + managementLeases === 0 ||
+        current !== generation
+      )
+        return;
       let frame: ObserverFrame, raw: unknown;
       try {
         frame = observerFrame(input);
@@ -302,7 +322,10 @@ export function createAgentActivity(
         }
         return;
       }
-      for (const item of items) fold(frame.agent, item);
+      for (const item of items) {
+        if (leases > 0) fold(frame.agent, item);
+      }
+      if (leases === 0) return;
       const record = Object.freeze({
         ...frame,
         receivedAt: Date.now(),
@@ -409,6 +432,7 @@ export function createAgentActivity(
       if (closed) return;
       closed = true;
       leases = 0;
+      managementLeases = 0;
       observe(null);
       clearInterval(timer);
       restart();

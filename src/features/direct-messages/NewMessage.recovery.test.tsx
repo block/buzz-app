@@ -148,6 +148,7 @@ function setup(
       <NewMessage
         session={owner.session}
         scope={scope}
+        onOpened={vi.fn()}
         onStarted={onStarted}
         extensions={extensions}
       />,

@@ -8,13 +8,14 @@ import {
   ArrowsClockwiseIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { WorkflowEditor } from "./WorkflowEditor";
+import { DEFAULT_FORM_STATE, formStateToYaml } from "./workflowFormTypes";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Select } from "../../shared/design-system/ui/Select";
+import { WorkflowChannelPicker } from "./WorkflowChannelPicker";
 import { WorkflowChannel } from "./WorkflowChannel";
 import { WorkflowWebhookSecrets } from "./WorkflowWebhookSecrets";
-import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowLanding } from "./WorkflowLanding";
 import "./workflows.css";
 
@@ -73,15 +74,14 @@ export function WorkflowCommunity({
   const [selectedDefinition, setSelectedDefinition] = useState<
     WorkflowDefinition | "new" | undefined
   >();
-  const [draftAtRisk, setDraftAtRisk] = useState(false);
-  const [pendingChannel, setPendingChannel] = useState<string | null>(null);
+  const [initialAction, setInitialAction] = useState<
+    "run" | "delete" | undefined
+  >();
   const [refreshRequest, setRefreshRequest] = useState(0);
+  const [saveReadback, setSaveReadback] =
+    useState<Pick<WorkflowDefinition, "channelId" | "revision">>();
   const [createOpen, setCreateOpen] = useState(false);
-  const [createChannel, setCreateChannel] = useState("");
   const channel = channels.channels.find((item) => item.id === selected);
-  const createTarget = channels.channels.find(
-    (item) => item.id === createChannel,
-  );
   useEffect(() => {
     if (
       !selected ||
@@ -92,8 +92,6 @@ export function WorkflowCommunity({
       return;
     setSelected("");
     setSelectedDefinition(undefined);
-    setDraftAtRisk(false);
-    setPendingChannel(null);
   }, [channel, channels.coverage, channels.status, selected]);
   if (!capability) {
     return (
@@ -107,30 +105,23 @@ export function WorkflowCommunity({
   const openChannel = (
     next: string,
     definition?: WorkflowDefinition | "new",
+    action?: "run" | "delete",
   ) => {
+    setInitialAction(action);
     setSelectedDefinition(definition);
     setSelected(next);
   };
   const changeChannel = (next: string) => {
     if (next === selected) return;
-    if (draftAtRisk) setPendingChannel(next);
-    else openChannel(next);
+    openChannel(next);
   };
-  const beginCreate = () => {
-    const first = channels.channels[0];
-    if (!first) return;
-    if (channels.channels.length === 1) openChannel(first.id, "new");
-    else {
-      setCreateChannel(first.id);
-      setCreateOpen(true);
-    }
-  };
+  const beginCreate = () => setCreateOpen(true);
 
   return (
     <>
       <WorkflowPageHeader
         action={
-          channel ? (
+          channel && selectedDefinition === undefined ? (
             <Button onClick={() => changeChannel("")} variant="ghost">
               <ArrowLeftIcon size={16} aria-hidden="true" />
               All workflows
@@ -155,7 +146,7 @@ export function WorkflowCommunity({
           </Button>
         </div>
       )}
-      {channels.channels.length > 0 && (
+      {channels.channels.length > 0 && selectedDefinition === undefined && (
         <div className="workflow-page-filter">
           <Select
             label="Channel"
@@ -184,18 +175,20 @@ export function WorkflowCommunity({
       {channels.coverage === "partial" && (
         <p className="text-secondary">The channel list is partial.</p>
       )}
-      {pendingChannel !== null && (
-        <ConfirmAction
-          title="Change channel?"
-          description="Unsaved draft changes will be discarded. Submitted operations remain with their original channel; switching does not cancel or repeat them."
-          action="Change channel"
-          onCancel={() => setPendingChannel(null)}
-          onConfirm={() => {
-            openChannel(pendingChannel);
-            setPendingChannel(null);
-          }}
-        />
-      )}
+      {(!channel || selectedDefinition !== undefined) &&
+        channels.channels.length > 0 && (
+          <WorkflowLanding
+            capability={capability}
+            channels={channels.channels}
+            onCreate={beginCreate}
+            onOpen={(definition, nextChannel, action) =>
+              openChannel(nextChannel.id, definition, action)
+            }
+            refreshRequest={refreshRequest}
+            saveReadback={saveReadback}
+            viewer={viewer}
+          />
+        )}
       {channel ? (
         <WorkflowChannel
           key={`${channel.id}:${
@@ -207,63 +200,37 @@ export function WorkflowCommunity({
           channelId={channel.id}
           channelName={channel.name}
           initialSelection={selectedDefinition}
+          initialAction={initialAction}
+          onSaveReadback={setSaveReadback}
           viewer={viewer}
-          onDraftRiskChange={setDraftAtRisk}
           {...(selectedDefinition === undefined
             ? {}
             : { onClose: () => openChannel("") })}
         />
-      ) : channels.channels.length > 0 ? (
-        <WorkflowLanding
-          capability={capability}
-          channels={channels.channels}
-          onCreate={beginCreate}
-          onOpen={(definition, nextChannel) =>
-            openChannel(nextChannel.id, definition)
-          }
-          refreshRequest={refreshRequest}
-          viewer={viewer}
-        />
       ) : null}
       <WorkflowWebhookSecrets capability={capability} />
-      <Dialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        title="Create workflow"
-        description="Choose the channel where this workflow will run."
-        actions={
-          <>
-            <Button onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button
-              disabled={!createTarget}
-              onClick={() => {
-                if (!createTarget) return;
+      {createOpen && (
+        <WorkflowEditor
+          create
+          chooseChannel
+          yaml={formStateToYaml({
+            ...DEFAULT_FORM_STATE,
+            name: "Untitled workflow",
+          })}
+          onChange={() => {}}
+          onSave={() => {}}
+          onCancel={() => setCreateOpen(false)}
+          scope={
+            <WorkflowChannelPicker
+              channels={channels.channels}
+              onSelect={(id) => {
                 setCreateOpen(false);
-                openChannel(createTarget.id, "new");
+                openChannel(id, "new");
               }}
-              variant="prominent"
-            >
-              Continue
-            </Button>
-          </>
-        }
-      >
-        <Select
-          label="Channel"
-          value={createChannel}
-          variant="field"
-          groups={[
-            {
-              label: "Community channels",
-              options: channels.channels.map((item) => ({
-                value: item.id,
-                label: item.name,
-              })),
-            },
-          ]}
-          onValueChange={setCreateChannel}
+            />
+          }
         />
-      </Dialog>
+      )}
     </>
   );
 }

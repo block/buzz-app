@@ -1,5 +1,11 @@
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type {
   WorkflowCapability,
@@ -10,6 +16,7 @@ import type {
 } from "../../features/workflows/types";
 import {
   ArrowRightIcon,
+  DotsThreeIcon,
   CalendarIcon,
   ChatCircleIcon,
   GitPullRequestIcon,
@@ -20,6 +27,13 @@ import {
   WebhooksLogoIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { ConfirmAction } from "./ConfirmAction";
 import { getWorkflowActivationWarning } from "./workflowActivationWarning";
@@ -86,7 +100,10 @@ function useLandingDefinitions(
   refreshRequest: number,
   retryRequest: number,
   operationRefreshKey: string,
+  saveReadback: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined,
 ) {
+  // Mount already reads current definitions; only consume subsequent notifications.
+  const observedReadback = useRef(saveReadback);
   const store = useMemo(() => {
     let snapshots: Readonly<Record<string, DefinitionsSnapshot>> = {};
     let paused = false;
@@ -323,6 +340,21 @@ function useLandingDefinitions(
         true,
       );
   }, [operationRefreshKey, store]);
+  useEffect(() => {
+    // The receipt-triggered read may finish before the saved head is visible.
+    // Verified editor readback must also invalidate the landing’s copied result.
+    if (observedReadback.current === saveReadback) return;
+    observedReadback.current = saveReadback;
+    if (
+      saveReadback &&
+      !store
+        .snapshot()
+        .snapshots[saveReadback.channelId]?.data.items.some(
+          (definition) => definition.revision === saveReadback.revision,
+        )
+    )
+      store.refresh([saveReadback.channelId], true);
+  }, [saveReadback, store]);
   return useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
 }
 
@@ -348,7 +380,11 @@ function WorkflowCard({
   operations: readonly WorkflowOperation[];
   viewer: string;
   onError: (message: string | null) => void;
-  onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
+  onOpen: (
+    definition: WorkflowDefinition,
+    channel: ChannelSummary,
+    action?: "run" | "delete",
+  ) => void;
 }) {
   const [confirmEnable, setConfirmEnable] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
@@ -451,6 +487,45 @@ function WorkflowCard({
                   else toggle(next);
                 }}
               />
+              <MenuRoot>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      aria-label={`Actions for ${name}`}
+                      size="sm"
+                      icon={<DotsThreeIcon size={20} aria-hidden="true" />}
+                    />
+                  }
+                />
+                <MenuPopup size="compact">
+                  <MenuItem onClick={() => onOpen(definition, channel)}>
+                    {readonly ? "View workflow" : "Edit workflow"}
+                  </MenuItem>
+                  <MenuItem
+                    disabled={
+                      readonly ||
+                      locked ||
+                      awaitingReadback ||
+                      !capability.availability.trigger
+                    }
+                    onClick={() => onOpen(definition, channel, "run")}
+                  >
+                    Run now
+                  </MenuItem>
+                  <MenuItem
+                    tone="danger"
+                    disabled={
+                      readonly ||
+                      locked ||
+                      awaitingReadback ||
+                      !capability.availability.delete
+                    }
+                    onClick={() => onOpen(definition, channel, "delete")}
+                  >
+                    Delete workflow
+                  </MenuItem>
+                </MenuPopup>
+              </MenuRoot>
             </div>
           </div>
           <h2 className="workflow-card-description text-body-lg">
@@ -460,9 +535,7 @@ function WorkflowCard({
             <div className="workflow-card-identity">
               <strong className="text-standard">#{channel.name}</strong>
               <span>{name}</span>
-              <span>
-                {enabled ? "Configured enabled" : "Configured disabled"}
-              </span>
+
               {readonly && <span>Read-only</span>}
             </div>
             <time
@@ -506,7 +579,11 @@ function WorkflowChannelCards({
   operations: readonly WorkflowOperation[];
   snapshot: DefinitionsSnapshot | undefined;
   viewer: string;
-  onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
+  onOpen: (
+    definition: WorkflowDefinition,
+    channel: ChannelSummary,
+    action?: "run" | "delete",
+  ) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
 
@@ -552,6 +629,7 @@ export function WorkflowLanding({
   capability,
   channels,
   refreshRequest,
+  saveReadback,
   viewer,
   onCreate,
   onOpen,
@@ -559,9 +637,14 @@ export function WorkflowLanding({
   capability: WorkflowCapability;
   channels: readonly ChannelSummary[];
   refreshRequest: number;
+  saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
   viewer: string;
   onCreate: () => void;
-  onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
+  onOpen: (
+    definition: WorkflowDefinition,
+    channel: ChannelSummary,
+    action?: "run" | "delete",
+  ) => void;
 }) {
   const operations = useSyncExternalStore(
     capability.operations.subscribe,
@@ -586,6 +669,7 @@ export function WorkflowLanding({
     refreshRequest,
     retryRequest,
     operationRefreshKey,
+    saveReadback,
   );
   return (
     <>

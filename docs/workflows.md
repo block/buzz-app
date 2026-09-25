@@ -9,8 +9,27 @@ See the [capability contract](../src/features/workflows/types.ts).
 ## Scope
 
 - Channel-scoped saved configurations; new drafts start disabled.
+- Cards open a modal editor over the workflow list. Create begins with channel
+  selection in that editor; the empty draft's primary action adds its first step.
+  Form mode uses a selectable flow and contextual inspector, with insertion
+  menus and removal. On narrow screens the inspector is a nested side dialog.
+  Escape closes a menu, then inspector, then editor with a dirty-draft warning.
+  Trigger and step-action choices use labelled field selectors. Pencil name
+  editing commits on Enter/blur and reverts on Escape; invalid names remain
+  explained outside edit mode. Settings and
+  run history are disclosed separately; operation recovery stays visible.
 - Form editing for message/reaction/diff/schedule/webhook triggers and Send
-  Message/Delay actions. Schedules offer repeat presets, weekday and
+  Message/Delay/Call Webhook actions. Basic conditions cover text, author,
+  reaction and message-ID comparisons; unrepresentable expressions stay Advanced.
+  Basic literal whitespace is preserved; expressions that cannot rebuild
+  losslessly stay Advanced. Incomplete Basic rows block saving and lossy view
+  switches until corrected or explicitly removed, and participate in leave/unload
+  warnings even when their YAML is unchanged. Step conditions and timeouts live
+  under Run controls.
+  Webhook URLs may contain relay-expanded templates; headers and request bodies
+  are configuration visible to channel members, not a secret store. The relay
+  owns destination safety and channel-owner/admin authorization.
+  Schedules offer repeat presets, weekday and
   day-of-month pickers, a UTC run time and a five-field cron editor. Numeric
   weekdays follow the relay: Sunday=1 through Saturday=7; existing numeric
   cron fields are not renumbered. Six- and
@@ -65,7 +84,9 @@ Metadata renames/reordering do not restart discovery; new memberships add only
 their missing reads. One stable status replaces
 per-channel loading placeholders, and loaded cards remain visible during refresh.
 Refresh deliberately rereads the current roster; save outcomes request readback
-only for their affected channels. Read failures/interruption stop the queued scan
+only for their affected channels. Verified editor readback also refreshes that
+channel on the landing, including when the receipt arrived before the saved
+head became visible. Read failures/interruption stop the queued scan
 and expose one paused status and Retry without erasing already loaded configurations
 or inventing errors for unread channels. Retry resumes only failed/interrupted and
 unread channels; membership additions join that paused queue, not restart it.
@@ -88,8 +109,9 @@ fixed upstream paths and bounded history/receipt bodies.
 
 Offline regressions cover the editor, exact-save recovery, uncertain commands,
 session isolation, broker authorization and history. The real-session browser
-journey covers navigating to the landing, exact readback before a held receipt,
-and subsequent masked secret delivery in Chromium and WebKit. Component tests
+journeys cover navigating to the landing, exact readback both before and after
+the receipt, masked secret delivery, and automatic landing-card refresh in
+Chromium and WebKit. Component tests
 cover sequential secrets, interruption, and purge after the dialog takes a value.
 This is not live acceptance:
 create → edit → run → inspect against an unchanged backend and packaged-native

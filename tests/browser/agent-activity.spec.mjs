@@ -17,7 +17,9 @@ const channelActivity = (page) =>
   });
 const agentEntry = (page, agent) =>
   channelActivity(page).getByRole("button", {
-    name: new RegExp(`^View activity for .+ ${agent.slice(0, 12)}$`),
+    name: new RegExp(
+      `^View activity for .+ ${agent.slice(0, 12)}(?:, Presence: (?:online|away|offline))?$`,
+    ),
   });
 const activityPanel = (page) =>
   page.getByRole("region", { name: "Agent activity", exact: true });
@@ -73,6 +75,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   const firstEntry = agentEntry(page, first);
   const secondEntry = agentEntry(page, second);
   await expect(firstEntry).toBeVisible();
+  await expect(firstEntry).toHaveAccessibleName(/, Presence: online$/);
   await expect(firstEntry).toContainText("working");
   await expect(secondEntry).toBeVisible();
   await expect(region).toHaveCSS("border-top-width", "0px");

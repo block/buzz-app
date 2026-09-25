@@ -34,7 +34,7 @@ const row: ChannelMessage = {
 it("badges agent and human bylines with known presence", () => {
   const agentRow = { ...row, authorId: "a".repeat(64) };
   const subscribe = vi.fn(() => () => {});
-  const status = vi.fn(() => "online" as const);
+  const status = vi.fn<() => "online" | "unknown">(() => "online");
   const channels = { channels: [], status: "ready" };
   const session = {
     presence: { subscribe, status, limited: () => false },
@@ -89,8 +89,14 @@ it("badges agent and human bylines with known presence", () => {
   );
   expect(
     screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
-  ).toHaveAttribute("aria-description", "Presence: online");
+  ).toHaveAccessibleDescription("Presence: online");
   mounted.unmount();
+  status.mockReturnValue("unknown");
+  const unknown = renderDom(<MessageRow {...props} canOpenLink={() => true} />);
+  expect(
+    screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
+  ).not.toHaveAccessibleDescription();
+  unknown.unmount();
   subscribe.mockClear();
   renderDom(<MessageRow {...props} />);
   expect(subscribe).toHaveBeenCalledWith(

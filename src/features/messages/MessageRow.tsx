@@ -6,6 +6,7 @@ import { usePresenceStatus } from "../presence/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
+  useId,
   useRef,
   useCallback,
   useSyncExternalStore,
@@ -133,6 +134,7 @@ export const MessageRow = memo(function MessageRow({
       ? "squircle"
       : "circle";
   const presence = usePresenceStatus(session?.presence, row.authorId);
+  const presenceId = useId();
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
@@ -206,22 +208,27 @@ export const MessageRow = memo(function MessageRow({
             size="default"
             shape="round"
             aria-label={`View ${name} profile`}
-            aria-description={
-              presence === "unknown" ? undefined : `Presence: ${presence}`
-            }
+            aria-describedby={presence === "unknown" ? undefined : presenceId}
             onClick={(event) => {
               event.currentTarget.focus();
               onOpenLink(target);
             }}
             icon={
-              <Avatar
-                src={picture}
-                alt=""
-                fallback={name}
-                size="fill"
-                shape={avatarShape}
-                statusBadge={presence === "unknown" ? undefined : presence}
-              />
+              <>
+                <Avatar
+                  src={picture}
+                  alt=""
+                  fallback={name}
+                  size="fill"
+                  shape={avatarShape}
+                  statusBadge={presence === "unknown" ? undefined : presence}
+                />
+                {presence !== "unknown" && (
+                  <span className="sr-only" id={presenceId}>
+                    Presence: {presence}
+                  </span>
+                )}
+              </>
             }
           />
         ) : (

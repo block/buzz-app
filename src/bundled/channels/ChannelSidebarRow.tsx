@@ -47,6 +47,7 @@ export function ChannelSidebarRow({
   onHideDm?: (id: string) => void;
 }) {
   const childrenId = useId();
+  const presenceId = `${childrenId}-presence`;
   const hasChildren = draft || sessions.length > 0;
   const Chevron = collapsed ? CaretRightIcon : CaretDownIcon;
   const selectButton = (
@@ -56,7 +57,7 @@ export function ChannelSidebarRow({
       aria-current={
         selected === channel.id && !draftSelected ? "page" : undefined
       }
-      aria-description={presenceDescription}
+      aria-describedby={presenceDescription ? presenceId : undefined}
       onPointerEnter={() => onPrepare(channel.id)}
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
@@ -110,6 +111,11 @@ export function ChannelSidebarRow({
         )}
         <div className={styles.select}>
           {wrapSelect ? wrapSelect(selectButton) : selectButton}
+          {presenceDescription && (
+            <span className="sr-only" id={presenceId}>
+              {presenceDescription}
+            </span>
+          )}
         </div>
         {channel.channelType === "dm" && onHideDm && (
           <span className={`${styles.more} ${styles.remove}`}>

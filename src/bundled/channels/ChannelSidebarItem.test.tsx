@@ -171,7 +171,8 @@ it("badges one-to-one DM avatars with live presence and sanitizes their media", 
     "data-status",
     "away",
   );
-  expect(row).toHaveAttribute("aria-description", "Presence: away");
+  expect(row).toHaveAccessibleName("Alice");
+  expect(row).toHaveAccessibleDescription("Presence: away");
   view.rerender(
     <ChannelSidebarItem
       {...props}
@@ -222,7 +223,7 @@ it("badges one-to-one DM avatars with live presence and sanitizes their media", 
       />,
     );
     expect(row.querySelector(".buzz-avatar")).toBeNull();
-    expect(row).not.toHaveAttribute("aria-description");
+    expect(row).not.toHaveAccessibleDescription();
     expect(row).toHaveAccessibleName("Alice");
     if (participants.length) {
       expect(

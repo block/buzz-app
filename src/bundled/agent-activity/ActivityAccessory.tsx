@@ -151,10 +151,7 @@ function ActivityEntry({
   return (
     <Tooltip content={tooltip}>
       <NavigationItem
-        aria-label={`View activity for ${name} ${agent.slice(0, 12)}`}
-        aria-description={
-          presence === "unknown" ? undefined : `Presence: ${presence}`
-        }
+        aria-label={`View activity for ${name} ${agent.slice(0, 12)}${presence === "unknown" ? "" : `, Presence: ${presence}`}`}
         onClick={() => open(target)}
         icon={
           <Avatar

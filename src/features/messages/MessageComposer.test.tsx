@@ -28,11 +28,13 @@ import type { AgentLibrarySnapshot } from "../agents/library";
 import { createAgentChoices } from "../agents/choices";
 import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
+import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import type { OutgoingEvent } from "../relay/outbox";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
+import type { RelayEvent } from "../relay/events";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { readView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
@@ -41,6 +43,8 @@ import type { ComposerInputElement } from "./composer-dom";
 import { setRememberAgentsPreference } from "./mention-preferences";
 
 composerDOMFixture();
+
+const owners: ReturnType<typeof createRelaySession>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
@@ -58,6 +62,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  for (const owner of owners.splice(0)) owner.dispose();
   vi.unstubAllGlobals();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
@@ -509,6 +514,410 @@ it.each(["disabled", "readOnly"] as const)(
     expect(h.messages.send).not.toHaveBeenCalled();
   },
 );
+
+function uploadDescriptor(name = "notes.txt") {
+  return {
+    name,
+    url: `https://relay.example.test/media/${"a".repeat(64)}.txt`,
+    type: "text/plain",
+    size: 5,
+    sha256: "a".repeat(64),
+  };
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+function attachmentFile(name = "notes.txt", bytes = "notes") {
+  return new File([bytes], name, { type: "text/plain" });
+}
+function attachByPaste(target: HTMLElement, file = attachmentFile()) {
+  fireEvent.paste(target, {
+    clipboardData: { items: [{ kind: "file", getAsFile: () => file }] },
+  });
+}
+function attachByDrop(target: HTMLElement, file = attachmentFile()) {
+  const transfer = {
+    types: ["Files"],
+    files: [file],
+    dropEffect: "uninitialized",
+  };
+  const over = new Event("dragover", { bubbles: true, cancelable: true });
+  Object.defineProperty(over, "dataTransfer", { value: transfer });
+  fireEvent(target, over);
+  const drop = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(drop, "dataTransfer", { value: transfer });
+  fireEvent(target, drop);
+}
+
+async function mountUploadComposer(
+  options: {
+    threadRootId?: string;
+    publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
+  } = {},
+) {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const viewer = keypair(),
+    relay = keypair();
+  const uploadCalls: {
+    file: File;
+    signal: AbortSignal;
+    result: ReturnType<typeof deferred<ReturnType<typeof uploadDescriptor>>>;
+  }[] = [];
+  const sign = vi.fn(async (template: EventTemplate) =>
+    signed(viewer, template),
+  );
+  const publish = vi.fn(
+    options.publish ??
+      (async (_event: RelayEvent, _signal?: AbortSignal) => {}),
+  );
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      scope: "https://relay.example.test",
+      media: (url) => url,
+      uploadAttachment(file, signal) {
+        const result = deferred<ReturnType<typeof uploadDescriptor>>();
+        uploadCalls.push({ file, signal, result });
+        return result.promise;
+      },
+      async query(filters) {
+        return filters.flatMap((filter) =>
+          filter.kinds?.includes(39002)
+            ? [roster(relay, "channel", [viewer.pubkey], 1700000000)]
+            : filter.kinds?.includes(39000)
+              ? [metadata(relay, "channel", "General", 1700000000)]
+              : [],
+        );
+      },
+      writer: { kinds: [9], sign, publish },
+    },
+    { outboxStorage: { load: () => [], save() {} } },
+  );
+  await act(() =>
+    owner.session.read([
+      { kinds: [39002], "#d": ["channel"], limit: 1 },
+      { kinds: [39000], "#d": ["channel"], limit: 1 },
+    ]),
+  );
+  const scope = `https://relay.example.test:${viewer.pubkey}`;
+  const view = render(
+    <MessageComposer
+      session={owner.session}
+      scope={scope}
+      channelId="channel"
+      channelName="General"
+      {...(options.threadRootId ? { threadRootId: options.threadRootId } : {})}
+    />,
+    { reactStrictMode: true },
+  );
+  const input = () => within(view.container).getByRole("textbox");
+  const form = () => within(view.container).getByRole("form");
+  const send = () =>
+    within(view.container).getByRole("button", { name: "Send message" });
+  owners.push(owner);
+  return { ...view, owner, input, form, send, uploadCalls, sign, publish };
+}
+
+it("keeps picker, paste and drop attachments local until Send starts upload and publish", async () => {
+  const h = await mountUploadComposer();
+  const picker =
+    h.container.querySelector<HTMLInputElement>('input[type="file"]');
+  if (!picker) throw new Error("Missing attachment picker");
+  const picked = attachmentFile("picker.txt");
+  Object.defineProperty(picker, "files", {
+    value: [picked],
+    configurable: true,
+  });
+  fireEvent.change(picker);
+  attachByPaste(h.input(), attachmentFile("pasted.txt"));
+  attachByDrop(h.form(), attachmentFile("dropped.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(3),
+  );
+  expect(h.uploadCalls).toHaveLength(0);
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+
+  fireEvent.click(h.send());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.uploadCalls[0]?.file.name).toBe("picker.txt");
+  expect(screen.queryByText("Adding agent to this channel…")).toBeNull();
+  expect(screen.getByText("Uploading attachments…")).toHaveAttribute(
+    "role",
+    "status",
+  );
+  expect(h.send()).toBeDisabled();
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("picker.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(async () => {
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("pasted.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  await act(async () => {
+    h.uploadCalls[2]?.result.resolve(uploadDescriptor("dropped.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.sign).toHaveBeenCalledTimes(1);
+  expect(h.publish.mock.calls[0]?.[0].content).toContain(
+    "[picker.txt](<https://relay.example.test/media/",
+  );
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[pasted.txt](<");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[dropped.txt](<");
+});
+
+it("clears the send upload error banner after removing failed attachments", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("metadata.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
+  );
+  await userEvent.type(h.input(), "caption");
+
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.reject(new UploadError("metadata"));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("alert").map((node) => node.textContent),
+    ).toEqual([UPLOAD_FAILURES.metadata, UPLOAD_FAILURES.metadata]),
+  );
+
+  await userEvent.click(
+    screen.getByRole("button", { name: "Remove metadata.txt" }),
+  );
+
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(within(h.form()).queryByText("metadata.txt")).not.toBeInTheDocument();
+});
+
+it("keeps a remaining upload failure banner when removing one of two failed files", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("one.txt"));
+  attachByPaste(h.input(), attachmentFile("two.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
+  );
+
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.reject(new Error("first failed"));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("alert").map((node) => node.textContent),
+    ).toEqual(["first failed", "first failed"]),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(async () => {
+    h.uploadCalls[1]?.result.reject(new Error("first failed again"));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("alert").map((node) => node.textContent),
+    ).toEqual(["first failed again", "first failed again"]),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  await act(async () => {
+    h.uploadCalls[2]?.result.resolve(uploadDescriptor("one.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(4));
+  await act(async () => {
+    h.uploadCalls[3]?.result.reject(new Error("second failed"));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("alert").map((node) => node.textContent),
+    ).toEqual(["second failed", "second failed"]),
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Remove one.txt" }));
+
+  expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
+    "second failed",
+    "second failed",
+  ]);
+  expect(within(h.form()).queryByText("one.txt")).not.toBeInTheDocument();
+  expect(within(h.form()).getByText("two.txt")).toBeVisible();
+});
+
+it("retains successful attachment uploads after a later file fails and retries only failed bytes", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("ready.txt"));
+  attachByPaste(h.input(), attachmentFile("retry.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
+  );
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("ready.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(async () => {
+    h.uploadCalls[1]?.result.reject(new Error("relay down"));
+  });
+  await screen.findAllByRole("alert");
+  expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
+    "relay down",
+    "relay down",
+  ]);
+  expect(h.input()).toHaveValue("caption");
+  expect(h.publish).not.toHaveBeenCalled();
+
+  await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(within(h.form()).getByText(/Queued/)).toBeVisible();
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  expect(h.uploadCalls[2]?.file.name).toBe("retry.txt");
+  await act(async () => {
+    h.uploadCalls[2]?.result.resolve(uploadDescriptor("retry.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("caption");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[ready.txt](<");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[retry.txt](<");
+});
+
+it("recovers disabled mid-upload attachments and retries without re-uploading ready files", async () => {
+  const h = await mountUploadComposer();
+  const scope = `https://relay.example.test:${h.owner.session.viewer}`;
+  attachByPaste(h.input(), attachmentFile("ready.txt"));
+  attachByPaste(h.input(), attachmentFile("paused.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
+  );
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("ready.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  expect(h.uploadCalls[1]?.file.name).toBe("paused.txt");
+
+  try {
+    h.rerender(
+      <MessageComposer
+        session={h.owner.session}
+        scope={scope}
+        channelId="channel"
+        channelName="General"
+        disabled
+      />,
+    );
+    expect(h.uploadCalls[1]?.signal.aborted).toBe(true);
+    await waitFor(() =>
+      expect(
+        screen.getByText("Upload paused. Retry to continue."),
+      ).toBeVisible(),
+    );
+    expect(screen.getByText(/Upload failed/)).toBeVisible();
+    expect(screen.getByRole("button", { name: /Retry/ })).toBeDisabled();
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.sign).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      h.uploadCalls[1]?.result.resolve(uploadDescriptor("paused.txt"));
+    });
+  }
+
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={scope}
+      channelId="channel"
+      channelName="General"
+    />,
+  );
+  const retry = await screen.findByRole("button", { name: /Retry/ });
+  expect(retry).toBeEnabled();
+  await userEvent.click(retry);
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  expect(h.uploadCalls[2]?.file.name).toBe("paused.txt");
+  await act(async () => {
+    h.uploadCalls[2]?.result.resolve(uploadDescriptor("paused.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.sign).toHaveBeenCalledTimes(1);
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("caption");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[ready.txt](<");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[paused.txt](<");
+});
+
+it("cancels an in-flight attachment send when the composer destination changes", async () => {
+  const h = await mountUploadComposer({ threadRootId: "b".repeat(64) });
+  attachByPaste(h.input(), attachmentFile());
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={`https://relay.example.test:${h.owner.session.viewer}`}
+      channelId="channel"
+      channelName="General"
+      threadRootId={"c".repeat(64)}
+    />,
+  );
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("retries publish-unknown attachment sends with the same signed event and no re-upload", async () => {
+  let attempts = 0;
+  const h = await mountUploadComposer({
+    publish: async () => {
+      attempts++;
+      if (attempts === 1) throw new Error("lost acknowledgement");
+    },
+  });
+  attachByPaste(h.input(), attachmentFile());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() =>
+    expect(h.owner.session.outbox?.snapshot()[0]?.delivery).toBe("unknown"),
+  );
+  const firstEvent = h.publish.mock.calls[0]?.[0];
+  if (!firstEvent) throw new Error("Missing first publish");
+  h.owner.session.messages.retry(firstEvent.id);
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+  expect(h.publish.mock.calls[1]?.[0]).toEqual(firstEvent);
+  expect(h.sign).toHaveBeenCalledTimes(1);
+  expect(h.uploadCalls).toHaveLength(1);
+});
 
 it("sends channel messages and thread replies through real form and keyboard events", async () => {
   const h = mount();
@@ -1209,6 +1618,7 @@ for (const threadRootId of [undefined, "f".repeat(64)])
           ["role", "bot"],
         ],
       });
+      expect(screen.getByText("Adding agent to this channel…")).toBeVisible();
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(h.messages.reply).not.toHaveBeenCalled();
       await act(async () => {

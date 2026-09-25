@@ -30,15 +30,15 @@ test("Up edits in the existing composer and restores native focus, draft history
       mimeType: "text/plain",
       buffer: Buffer.from("Report"),
     });
-    await expect(page.getByText(/Ready$/)).toBeVisible();
+    await expect(page.getByText(/Queued$/)).toBeVisible();
     await input.fill("Original caption");
     await input.press("Enter");
-    await expect
-      .poll(() => page.evaluate(() => window.composerFixture.pending()))
-      .toEqual([]);
     await expect(
       page.getByRole("link", { name: "Download report.txt", exact: true }),
     ).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => window.composerFixture.pending()))
+      .toEqual([]);
     await input.fill("Unsent draft");
     await input.fill("");
     const originalNode = await input.elementHandle();

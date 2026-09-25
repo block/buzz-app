@@ -1,5 +1,39 @@
 import { useCallback, useSyncExternalStore } from "react";
-import type { Presence } from "./presence";
+import type { Presence, PresenceStatus } from "./presence";
+
+const unknown = "unknown:false";
+function usePresenceState(
+  presence: Presence | undefined,
+  pubkey: string | undefined,
+  profile = false,
+) {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      presence && pubkey
+        ? presence.subscribe(pubkey, listener, profile)
+        : () => {},
+    [presence, pubkey, profile],
+  );
+  const snapshot = useCallback(
+    () =>
+      presence && pubkey
+        ? `${presence.status(pubkey)}:${presence.limited(pubkey)}`
+        : unknown,
+    [presence, pubkey],
+  );
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+
+export function usePresenceStatus(
+  presence: Presence | undefined,
+  pubkey: string | undefined,
+  profile = false,
+): PresenceStatus {
+  return usePresenceState(presence, pubkey, profile).split(
+    ":",
+  )[0] as PresenceStatus;
+}
+
 /** Text and distinct symbols keep presence readable without color perception. */
 export function PresenceIndicator({
   presence,
@@ -10,14 +44,7 @@ export function PresenceIndicator({
   pubkey: string;
   profile?: boolean;
 }) {
-  const subscribe = useCallback(
-    (listener: () => void) => presence.subscribe(pubkey, listener, profile),
-    [presence, pubkey, profile],
-  );
-  const state = useSyncExternalStore(
-    subscribe,
-    () => `${presence.status(pubkey)}:${presence.limited(pubkey)}`,
-  );
+  const state = usePresenceState(presence, pubkey, profile);
   const status = state.split(":")[0] as ReturnType<Presence["status"]>;
   // Missing or stale evidence is not proof that someone is offline.
   if (status === "unknown") return null;

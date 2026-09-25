@@ -153,3 +153,26 @@ test("broker permits bounded replacement edits with exactly one canonical target
   ])
     assert.equal(validMessageTemplate(invalid), false);
 });
+
+test("workflow list batches alone may exceed four filters, with 128 unique channels at most", () => {
+  const batch = Array.from({ length: 128 }, (_, i) => ({
+    kinds: [30620],
+    "#h": [`00000000-0000-4000-8000-${String(i).padStart(12, "0")}`],
+    limit: 100,
+  }));
+  assert.equal(validFilters(batch), true);
+  for (const invalid of [
+    [...batch, batch[0]],
+    batch.map((f) => ({ ...f, kinds: [9] })),
+    batch.map((f) => ({ ...f, limit: 500 })),
+    batch.map((f) => ({ ...f, search: "anything" })),
+    batch.map((f) => ({ ...f, "#h": ["invalid"] })),
+    Array(5).fill(batch[0]),
+    batch.map((f) => ({
+      ...f,
+      "#h": [...f["#h"], "00000000-0000-4000-8000-000000000999"],
+    })),
+    [...batch.slice(0, 5), null],
+  ])
+    assert.equal(validFilters(invalid), false);
+});

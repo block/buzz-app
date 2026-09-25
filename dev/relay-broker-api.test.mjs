@@ -685,6 +685,11 @@ test("an upstream video stream error closes only that response, not the broker",
       .catch(() => {});
     const session = await fetch(`${h.base}/api/relay/session`);
     expect(session.status).toBe(200);
+    // The HTTP base lets the workflows page display `/hooks/{workflow_id}` addresses.
+    expect(await session.json()).toMatchObject({
+      relayUrl: fixtureRelayUrl,
+      relayHttpUrl: fixtureRelayUrl,
+    });
   } finally {
     await h.close();
   }

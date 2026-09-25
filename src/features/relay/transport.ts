@@ -104,6 +104,8 @@ export interface ReadTransport {
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
   /** Stable community endpoint identity for durable session partitioning. */
   readonly scope?: string;
+  /** Relay HTTP base for display only, such as a workflow's webhook address. */
+  readonly relayHttpUrl?: string;
   /** Optional host-owned write capability, exposed to plugins only through the outbox. */
   readonly writer?: RelayWriter;
   /** The signed-in viewer whose channel roster is authoritative. */
@@ -145,6 +147,22 @@ export function mediaUrl(
 export interface Signer {
   getPublicKey(): Promise<string>;
   signEvent(event: EventTemplate): Promise<VerifiedEvent>;
+}
+
+/** The host's explicit HTTP base wins; otherwise translate the ws(s) relay URL's scheme. */
+export function relayHttpBase(
+  explicit: unknown,
+  relayUrl: unknown,
+): string | undefined {
+  const candidate =
+    typeof explicit === "string"
+      ? explicit
+      : typeof relayUrl === "string"
+        ? relayUrl.replace(/^ws(s?):\/\//i, "http$1://")
+        : undefined;
+  return candidate && /^https?:\/\/[^\s/?#@]+\/?$/i.test(candidate)
+    ? candidate.replace(/\/$/, "")
+    : undefined;
 }
 
 async function parseEvents(
@@ -260,6 +278,7 @@ export async function connectBrokerTransport(
     directMessages?: boolean;
     channelLifecycle?: boolean;
     relayUrl?: string;
+    relayHttpUrl?: string;
     live?: boolean;
     presence?: boolean;
     sidebarPreferences?: boolean;
@@ -286,6 +305,7 @@ export async function connectBrokerTransport(
       "Relay broker session is malformed",
     );
   let traffic: LiveSubscription | undefined;
+  const relayHttpUrl = relayHttpBase(session.relayHttpUrl, session.relayUrl);
   const publicationHeaders = () => ({
     "Content-Type": "application/json",
     // Matched development frontend/host: publication requires the existing owner.
@@ -347,6 +367,7 @@ export async function connectBrokerTransport(
         }
       : {}),
     ...(session.relayUrl ? { scope: session.relayUrl } : {}),
+    ...(relayHttpUrl ? { relayHttpUrl } : {}),
     ...(session.directMessages === true
       ? {
           async openDirectMessage(
@@ -806,6 +827,7 @@ export async function connectSignedTransport(
       };
     },
     scope: httpOrigin,
+    relayHttpUrl: httpOrigin,
     viewer,
     relayAuthor,
     media: (url, size) => mediaUrl(url, undefined, httpOrigin, size),

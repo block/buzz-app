@@ -1,3 +1,4 @@
+import { isWorkflowDefinitionBatch } from "../src/features/workflows/queries.ts";
 import { validStatusTemplate } from "./user-status.mjs";
 import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
 import { memoryResponseText } from "../src/features/agents/memory.ts";
@@ -404,7 +405,7 @@ export function validFilters(filters) {
   return (
     Array.isArray(filters) &&
     filters.length >= 1 &&
-    filters.length <= MAX_FILTERS &&
+    (filters.length <= MAX_FILTERS || isWorkflowDefinitionBatch(filters)) &&
     filters.every(
       (filter) =>
         filter &&
@@ -1050,6 +1051,8 @@ export function relayBrokerPlugin({
               viewer,
               ...(await getAuthority(relay)),
               relayUrl: relay,
+              // Display base for relay HTTP routes such as /hooks/{workflow_id}.
+              relayHttpUrl: relay,
               directMessages: true,
               writeKinds: [
                 30315,

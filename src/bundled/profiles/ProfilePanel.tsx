@@ -9,7 +9,7 @@ import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
 import { ProfileAgentRuntime } from "./ProfileAgentRuntime";
-import { ProfileRuntime, useRuntimeAgent } from "./ProfileRuntime";
+import { ProfileRuntime, useRuntimeAgents } from "./ProfileRuntime";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
@@ -166,8 +166,12 @@ function ProfileDetails({
   );
   const isOwner = knownAgent && !!viewer && verifiedOwner === viewer;
   // Private local configuration needs both native custody and verified ownership.
-  const runtimeAgent = useRuntimeAgent(control, scope, pubkey);
-  const canViewRuntime = isOwner && !!runtimeAgent;
+  const {
+    count: runtimeCount,
+    agent: runtimeAgent,
+    pending: runtimePending,
+  } = useRuntimeAgents(control, scope, pubkey, instanceId);
+  const canViewRuntime = isOwner && runtimeCount > 0;
   const selectedTab =
     (tab === "memories" && !isOwner) || (tab === "runtime" && !canViewRuntime)
       ? "info"
@@ -244,6 +248,21 @@ function ProfileDetails({
       if (!controller.signal.aborted) setOpeningMessage(false);
     }
   }
+  const instances = control ? (
+    <ProfileInstances
+      errorHandledByHost={!!runtimeAgent}
+      control={control}
+      pubkey={pubkey}
+      context={context}
+      session={session}
+      canOpenPrivate
+      selectedId={instanceId}
+      scope={scope}
+      communityOrigin={communityOrigin}
+      viewer={viewer}
+      knownAgent={knownAgent}
+    />
+  ) : null;
   return (
     <section
       ref={region}
@@ -324,21 +343,24 @@ function ProfileDetails({
                   pubkey={pubkey}
                   context={context}
                 />
-                {control && (
-                  <ProfileInstances
-                    errorHandledByActions
-                    control={control}
-                    pubkey={pubkey}
-                    context={context}
-                    session={session}
-                    canOpenPrivate={verifiedOwner === viewer && !!viewer}
-                    selectedId={instanceId}
-                    scope={scope}
-                    communityOrigin={communityOrigin}
-                    viewer={viewer}
-                    knownAgent={knownAgent}
-                  />
-                )}
+                {control &&
+                  (!knownAgent || ownership.settled) &&
+                  !runtimePending &&
+                  !canViewRuntime && (
+                    <ProfileInstances
+                      errorHandledByHost
+                      control={control}
+                      pubkey={pubkey}
+                      context={context}
+                      session={session}
+                      canOpenPrivate={verifiedOwner === viewer && !!viewer}
+                      selectedId={instanceId}
+                      scope={scope}
+                      communityOrigin={communityOrigin}
+                      viewer={viewer}
+                      knownAgent={knownAgent}
+                    />
+                  )}
                 <div className={styles.publicKey}>
                   <div className={styles.keyHeading}>
                     <h3 className="text-body">Public key</h3>
@@ -408,14 +430,18 @@ function ProfileDetails({
             ) : selected === "runtime" &&
               canViewRuntime &&
               control &&
-              runtimeAgent &&
               verifiedOwner ? (
-              <ProfileRuntime
-                control={control}
-                agent={runtimeAgent}
-                session={session}
-                owner={verifiedOwner}
-              />
+              runtimeAgent ? (
+                <ProfileRuntime
+                  control={control}
+                  agent={runtimeAgent}
+                  session={session}
+                  owner={verifiedOwner}
+                  instances={instances}
+                />
+              ) : (
+                <div className={styles.runtimeTab}>{instances}</div>
+              )
             ) : selected === "memories" && isOwner ? (
               <ProfileMemories session={session} pubkey={pubkey} />
             ) : (

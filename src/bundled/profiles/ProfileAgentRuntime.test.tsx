@@ -279,10 +279,8 @@ it("requests a read on each Info open, coalescing re-entry while one is pending"
     await act(async () => {});
   };
   await vi.waitFor(() => expect(reads).toHaveLength(1));
-  // Both sections requested a refresh; the held read is shared.
-  expect(
-    screen.getByRole("region", { name: "Linked agent instances" }),
-  ).toHaveTextContent("Loading managed agents…");
+  // ProfileAgentRuntime owns this read; inventory waits before deciding its tab.
+  expect(screen.queryByRole("region", { name: "Instances" })).toBeNull();
   await reenter();
   expect(reads).toHaveLength(1);
   await settle(0, data);

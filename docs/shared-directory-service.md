@@ -27,6 +27,31 @@ directory writes, multiple simultaneous providers and changes to Nostr naming
 are out of scope. This PR is
 documentation only; all API names and implementation work below are proposed.
 
+```mermaid
+flowchart TB
+  source["Organization directory"]
+
+  subgraph provider["Replaceable provider"]
+    providerData["Configuration and authentication<br/>Fetching and in-memory cache"]
+    service["directoryV1<br/>Lookup, search, status and refresh<br/>Change subscriptions"]
+    service -->|reads cache and refreshes| providerData
+  end
+  providerData -->|fetches from| source
+
+  subgraph reviewPlugin["Pull-request review plugin"]
+    core["GitHub queues and saved VIPs<br/>GitHub names and manual entry"]
+    enrichment["Optional child scope<br/>Directory names and person search"]
+    core -.->|optional enrichment| enrichment
+  end
+  enrichment -.->|optional dependency| service
+  consumers["Other plugins"] -->|required or optional dependency| service
+```
+
+The service belongs to the active provider plugin. Replacing that plugin preserves
+the API used by consumers. Disabling it stops the optional child scope; GitHub
+queues, saved VIPs and manual entry remain available. Required consumers follow
+the existing activation wait and timeout described below.
+
 ## Existing support [sketch]
 
 - [Plugin runtime](../src/plugins/runtime.ts) forwards `module.inject` to Cordis.

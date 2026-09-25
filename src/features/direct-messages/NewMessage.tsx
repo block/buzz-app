@@ -104,18 +104,20 @@ function recovered(operations: readonly OutgoingEvent[], viewer?: string) {
   };
 }
 
-/** Empty conversation until its first message is confirmed by the regular outbox. */
+/** Recipient-first conversation that can open directly or send through the durable outbox. */
 export function NewMessage({
   session,
   scope,
   extensions,
   onPreparing,
+  onOpened,
   onStarted,
 }: {
   session: RelaySession;
   scope: string;
   extensions?: ConversationExtensions | undefined;
   onPreparing?(pubkeys: readonly string[]): void;
+  onOpened(channelId: string): void;
   onStarted(channelId: string, messageId: string): void;
 }) {
   const [recipients, setRecipients] = useState(() =>
@@ -130,7 +132,7 @@ export function NewMessage({
   const [restoredDraft, setRestoredDraft] = useState<MentionDraft>();
   const [draftRevision, setDraftRevision] = useState(0);
   const retiring = useRef<string | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"opening" | "sending" | undefined>();
   const [error, setError] = useState("");
   const [draftChannel] = useState(() => crypto.randomUUID());
   const attempt = useRef<AbortController | null>(null);
@@ -149,7 +151,7 @@ export function NewMessage({
   }
   const failed =
     pending && session.directMessages.delivery(pending.id) === "failed";
-  const locked = !ready || busy || (!!pending && !failed);
+  const locked = !ready || !!busy || (!!pending && !failed);
   useLayoutEffect(() => {
     const confirmed = pending && session.directMessages.delivery(pending.id);
     if (pending) {
@@ -233,6 +235,38 @@ export function NewMessage({
     writeView(scope, "direct-message:recipients", people.map(recipientView));
     setError("");
   }
+  async function open() {
+    if (
+      attempt.current ||
+      !ready ||
+      !recipients.length ||
+      !session.directMessages.available
+    )
+      return;
+    const controller = new AbortController();
+    attempt.current = controller;
+    setBusy("opening");
+    setError("");
+    try {
+      validateAgents();
+      const pubkeys = recipients.map((person) => person.pubkey);
+      onPreparing?.(pubkeys);
+      const id = await session.directMessages.open(pubkeys, controller.signal);
+      controller.signal.throwIfAborted();
+      clearView(scope, "direct-message:recipients");
+      onOpened(id);
+    } catch (reason) {
+      if (!controller.signal.aborted)
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not open the conversation. Try again.",
+        );
+    } finally {
+      if (!controller.signal.aborted) setBusy(undefined);
+      if (attempt.current === controller) attempt.current = null;
+    }
+  }
   async function send(draft: MentionDraft) {
     if (
       attempt.current ||
@@ -244,7 +278,7 @@ export function NewMessage({
       return;
     const controller = new AbortController();
     attempt.current = controller;
-    setBusy(true);
+    setBusy("sending");
     setError("");
     const key = keyFor(recipients);
     let current: Pending | undefined = pending;
@@ -321,7 +355,7 @@ export function NewMessage({
             : "Could not send your message. Try again.",
         );
     } finally {
-      if (!controller.signal.aborted) setBusy(false);
+      if (!controller.signal.aborted) setBusy(undefined);
       if (attempt.current === controller) attempt.current = null;
     }
   }
@@ -335,7 +369,20 @@ export function NewMessage({
       />
       <div className={styles.blank} data-new-message-body="" />
       <div className={styles.feedback}>
-        {busy && <p role="status">Sending message…</p>}
+        {recipients.length > 0 && !pending && (
+          <Button
+            type="button"
+            disabled={locked || !session.directMessages.available}
+            onClick={() => void open()}
+          >
+            Open conversation
+          </Button>
+        )}
+        {busy && (
+          <p role="status">
+            {busy === "opening" ? "Opening conversation…" : "Sending message…"}
+          </p>
+        )}
         {!session.directMessages.available && (
           <p role="status">
             Starting direct messages is unavailable on this connection.
@@ -355,7 +402,7 @@ export function NewMessage({
             {pending && !failed && (
               <Button
                 type="button"
-                disabled={busy}
+                disabled={!!busy}
                 onClick={() => pending && void send(pending.draft)}
               >
                 Retry send
@@ -381,7 +428,7 @@ export function NewMessage({
             locked,
             disabled:
               !ready ||
-              busy ||
+              !!busy ||
               !recipients.length ||
               !session.directMessages.available,
             submit: (draft) => void send(draft),

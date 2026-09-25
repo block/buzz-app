@@ -480,6 +480,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   });
   expect(app.reads.filter((filter) => filter.search).length).toBe(searchReads);
   app.showPeople();
+  await input.press("ArrowDown");
   await input.press("Enter");
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("");
@@ -696,11 +697,15 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
     .getByRole("menuitem", { name: "Remove from Messages", exact: true })
     .click();
   await expect(sidebarDm).toHaveCount(0);
+  await page.reload();
+  await expect(sidebarDm).toHaveCount(0);
   await openProfileMessage();
   await expect(sidebarDm).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Message #Avery Chen" }),
   ).toBeVisible();
+  await page.reload();
+  await expect(sidebarDm).toBeVisible();
   expect(app.commands).toHaveLength(2);
   expect(app.errors).toEqual([]);
 });

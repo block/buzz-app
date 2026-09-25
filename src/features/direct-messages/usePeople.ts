@@ -32,7 +32,11 @@ function empty(session: RelaySession, query: string): PeopleState {
 }
 function matching(people: Recipient[], query: string) {
   const needle = normalize(query.trim());
-  return people.filter((person) => normalize(person.name).includes(needle));
+  return people.filter(
+    (person) =>
+      normalize(person.name).includes(needle) ||
+      (/^[0-9a-f]{64}$/.test(needle) && person.pubkey === needle),
+  );
 }
 export function usePeople(session: RelaySession, query: string) {
   const cache = useMemo(() => {

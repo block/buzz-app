@@ -128,7 +128,21 @@ function Timeline({
     [window.rows, profiles, resolveName],
   );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
-  const focusedIndex = rows.findIndex((row) => row.id === focusedMessageId);
+  const [pinnedIds, setPinnedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const keepRowMounted = useCallback((id: string) => {
+    setPinnedIds((ids) => new Set(ids).add(id));
+    return () =>
+      setPinnedIds((ids) => {
+        const next = new Set(ids);
+        next.delete(id);
+        return next;
+      });
+  }, []);
+  const keptIndices = rows.flatMap((row, index) =>
+    row.id === focusedMessageId || pinnedIds.has(row.id) ? [index] : [],
+  );
   const scroller = useRef<HTMLElement>(null);
   const handle = useRef<VirtualizerHandle>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -475,8 +489,8 @@ function Timeline({
           scrollRef={scroller}
           shift={prepend}
           bufferSize={1600}
-          // Reflow must not evict the focused control and drop keyboard focus.
-          keepMounted={focusedIndex < 0 ? [] : [focusedIndex]}
+          // Reflow must not evict the focused control or a row's open report.
+          keepMounted={keptIndices}
           as="ol"
           item="li"
           startMargin={EDGE_HEIGHT}
@@ -520,6 +534,7 @@ function Timeline({
                 onOpenThread={onOpenThread}
                 {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
                 retry={queries.outbox?.retry}
+                keepMounted={keepRowMounted}
                 day={day}
               />
             );

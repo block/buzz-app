@@ -834,6 +834,10 @@ function ChannelWorkspace({
               scope={scope}
               extensions={extensions}
               onPreparing={(pubkeys) => handoff?.prepareDm(pubkeys)}
+              onOpened={(channelId) => {
+                handoff?.clearPreparingDm();
+                select(channelId);
+              }}
               onStarted={(channelId, id) => {
                 handoff?.clearPreparingDm();
                 setSent({ channelId, id });

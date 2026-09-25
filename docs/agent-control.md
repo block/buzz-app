@@ -164,8 +164,8 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
   and copyable commands (Node.js required); one-click Pi install comes later:
 
   ```sh
-  npm install -g @mariozechner/pi-coding-agent
-  npm install -g buzz-pi-acp
+  npm install -g @earendil-works/pi-coding-agent
+  npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#86b201e'
   ```
 
 **Check again** re-detects installed Harnesses without reopening Buzz. Status

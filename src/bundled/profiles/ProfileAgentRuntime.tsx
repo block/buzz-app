@@ -75,7 +75,7 @@ export function ProfileAgentRuntime({
       {owned && uniqueAgent?.id === agent.id && state.status === "ready" && (
         <Button
           size="compact"
-          variant="ghost"
+          variant="subtle"
           aria-haspopup="dialog"
           disabled={state.busy}
           onClick={() => setEditing(true)}

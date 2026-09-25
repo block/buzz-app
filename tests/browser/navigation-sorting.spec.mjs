@@ -512,3 +512,100 @@ test.describe("personal-group sorting", () => {
     expect(app.report.unexpected).toEqual([]);
   });
 });
+
+// Browser integration: confirmed lifecycle removal must use the same sorted
+// projection, and reload must compose saved sorting with relay DM visibility.
+test.describe("sorting with lifecycle visibility", () => {
+  test.use({
+    channelLifecycle: true,
+    initialSidebarSort: { channels: "recent", dms: "recent" },
+  });
+  test("archive and DM hide preserve Recent ordering through reload", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await page
+      .getByRole("button", { name: "Messages", exact: true })
+      .first()
+      .click();
+    const sidebar = page.getByRole("navigation", {
+      name: "Subscribed channels",
+    });
+    const channels = sidebar.locator('[data-sidebar-section="channels"]');
+    const ids = () =>
+      channels
+        .locator("[data-channel-id]")
+        .evaluateAll((rows) => rows.map((row) => row.dataset.channelId));
+    const archivedId = "11111111-1111-4111-8111-111111111111";
+    const hiddenId = "22222222-2222-4222-8222-222222222222";
+    await expect.poll(ids).toEqual(["willow", "maple", "cedar", archivedId]);
+    const channel = channels.locator(`[data-channel-id="${archivedId}"]`);
+    await channel.click();
+    await expect(
+      page.getByRole("textbox", {
+        name: "Message #Lifecycle channel",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await channel.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Archive channel", exact: true })
+      .click();
+    const archive = page.getByRole("dialog", {
+      name: "Archive channel: Lifecycle channel",
+    });
+    await archive
+      .getByRole("button", { name: "Archive channel", exact: true })
+      .click();
+    await expect(archive).toHaveCount(0);
+    await expect.poll(ids).toEqual(["willow", "maple", "cedar"]);
+    await expect(
+      page.getByRole("textbox", {
+        name: "Message #Alpha",
+        exact: true,
+      }),
+    ).toBeVisible();
+
+    const dm = sidebar.locator(`[data-channel-id="${hiddenId}"]`);
+    await dm.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Hide conversation", exact: true })
+      .click();
+    const hide = page.getByRole("dialog");
+    await hide
+      .getByRole("button", { name: "Hide conversation", exact: true })
+      .click();
+    await expect(hide).toHaveCount(0);
+    await expect(dm).toHaveCount(0);
+    await expect.poll(ids).toEqual(["willow", "maple", "cedar"]);
+    await page.reload();
+    await expect.poll(ids).toEqual(["willow", "maple", "cedar"]);
+    // Opening Sort proves saved preference decoding and sidebar startup settled.
+    await channels
+      .getByRole("button", { name: "More actions for Channels" })
+      .click();
+    await page
+      .getByRole("menu", { name: "More actions for Channels", exact: true })
+      .getByRole("menuitem", { name: "Sort", exact: true })
+      .focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(
+      page.getByRole("menuitemradio", { name: "Recent" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await expect
+      .poll(
+        () =>
+          app.report.queries.filter(({ filter }) =>
+            filter.kinds?.includes(30622),
+          ).length,
+      )
+      .toBeGreaterThan(1);
+    await expect(dm).toHaveCount(0);
+    expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual(
+      [9002, 41012],
+    );
+    expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+    expect(app.report.unexpected).toEqual([]);
+  });
+});

@@ -53,6 +53,8 @@ import { CheckIcon as PhosphorCheckIcon } from "@phosphor-icons/react/dist/csr/C
 export const CheckIcon = defineIcon("phosphor", PhosphorCheckIcon);
 import { CopyIcon as PhosphorCopyIcon } from "@phosphor-icons/react/dist/csr/Copy";
 export const CopyIcon = defineIcon("phosphor", PhosphorCopyIcon);
+import { CrownIcon as PhosphorCrownIcon } from "@phosphor-icons/react/dist/csr/Crown";
+export const CrownIcon = defineIcon("phosphor", PhosphorCrownIcon);
 import { DotsThreeIcon as PhosphorDotsThreeIcon } from "@phosphor-icons/react/dist/csr/DotsThree";
 export const DotsThreeIcon = defineIcon("phosphor", PhosphorDotsThreeIcon);
 import { DotsThreeVerticalIcon as PhosphorDotsThreeVerticalIcon } from "@phosphor-icons/react/dist/csr/DotsThreeVertical";
@@ -71,6 +73,8 @@ export const EnvelopeOpenIcon = defineIcon(
   "phosphor",
   PhosphorEnvelopeOpenIcon,
 );
+import { EyeSlashIcon as PhosphorEyeSlashIcon } from "@phosphor-icons/react/dist/csr/EyeSlash";
+export const EyeSlashIcon = defineIcon("phosphor", PhosphorEyeSlashIcon);
 import { FigmaLogoIcon as PhosphorFigmaLogoIcon } from "@phosphor-icons/react/dist/csr/FigmaLogo";
 export const FigmaLogoIcon = defineIcon("phosphor", PhosphorFigmaLogoIcon);
 import { PaperclipIcon as PhosphorPaperclipIcon } from "@phosphor-icons/react/dist/csr/Paperclip";
@@ -155,6 +159,8 @@ import { QuestionIcon as PhosphorQuestionIcon } from "@phosphor-icons/react/dist
 export const QuestionIcon = defineIcon("phosphor", PhosphorQuestionIcon);
 import { RobotIcon as PhosphorRobotIcon } from "@phosphor-icons/react/dist/csr/Robot";
 export const RobotIcon = defineIcon("phosphor", PhosphorRobotIcon);
+import { ShieldIcon as PhosphorShieldIcon } from "@phosphor-icons/react/dist/csr/Shield";
+export const ShieldIcon = defineIcon("phosphor", PhosphorShieldIcon);
 import { SidebarIcon as PhosphorSidebarIcon } from "@phosphor-icons/react/dist/csr/Sidebar";
 export const SidebarIcon = defineIcon("phosphor", PhosphorSidebarIcon);
 import { SlackLogoIcon as PhosphorSlackLogoIcon } from "@phosphor-icons/react/dist/csr/SlackLogo";
@@ -179,6 +185,8 @@ export const TerminalWindowIcon = defineIcon(
   "phosphor",
   PhosphorTerminalWindowIcon,
 );
+import { TrashIcon as PhosphorTrashIcon } from "@phosphor-icons/react/dist/csr/Trash";
+export const TrashIcon = defineIcon("phosphor", PhosphorTrashIcon);
 import { UserIcon as PhosphorUserIcon } from "@phosphor-icons/react/dist/csr/User";
 export const UserIcon = defineIcon("phosphor", PhosphorUserIcon);
 import { UsersIcon as PhosphorUsersIcon } from "@phosphor-icons/react/dist/csr/Users";

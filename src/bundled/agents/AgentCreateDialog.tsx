@@ -31,11 +31,8 @@ export function AgentCreateDialog({
     command: "buzz-agent",
     args: "[]",
     model: "",
-    provider: "databricks_v2",
+    provider: state.data?.agentDefaults?.provider ? "" : "databricks_v2",
     environment: {},
-    ...(state.data?.databricksDefaults
-      ? { databricks: { ...state.data.databricksDefaults } }
-      : {}),
   }));
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<AgentView | null>(null);

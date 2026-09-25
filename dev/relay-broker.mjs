@@ -8,6 +8,7 @@ import { prepareMedia } from "./media-preparation.mjs";
 import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
+import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import {
   prepareChannelKit,
   decodeChannelKit,
@@ -16,6 +17,12 @@ import {
 } from "./channel-kit.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validChannelCommand } from "./session-commands.mjs";
+import {
+  adminReason,
+  claimReason,
+  inviteRequest,
+  memberCommand,
+} from "./community-admin.mjs";
 import {
   directMessageEvent,
   directMessageReceipt,
@@ -1053,6 +1060,7 @@ export function relayBrokerPlugin({
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
+              channelLifecycle: true,
               workflowReads: true,
               projectGit: true,
               attachmentUploads: true,
@@ -1513,6 +1521,8 @@ export function relayBrokerPlugin({
               "/api/relay/presence-snapshot",
               "/api/relay/channel-activity",
               "/api/relay/sign",
+              "/api/relay/channel-lifecycle-sign",
+              "/api/relay/channel-lifecycle-publish",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
               "/api/relay/channel-kit-prepare",
@@ -1522,6 +1532,8 @@ export function relayBrokerPlugin({
               "/api/relay/authorize-agent",
               "/api/relay/claim",
               "/api/relay/accept-policy",
+              "/api/relay/invite",
+              "/api/relay/member",
               "/api/relay/gifs",
               "/api/relay/workflow-runs",
               "/api/relay/project-git",
@@ -1662,7 +1674,24 @@ export function relayBrokerPlugin({
           }
           const claim = route === "/api/relay/claim";
           const policy = route === "/api/relay/accept-policy";
+          const invite = route === "/api/relay/invite";
+          const member = route === "/api/relay/member";
           const gifs = route === "/api/relay/gifs";
+          // Only these routes may surface an exact, allowed relay refusal.
+          const refusal =
+            invite || member ? adminReason : claim ? claimReason : undefined;
+          if (invite || member) {
+            // Community-bound only; the relay remains the authority for roles.
+            if (!scoped)
+              return json(res, 400, { error: "Select a community first" });
+            try {
+              filters = invite
+                ? inviteRequest(filters)
+                : finalizeEvent(memberCommand(filters), key);
+            } catch (error) {
+              return json(res, 400, { error: error.message, sent: false });
+            }
+          }
           if (gifs) {
             if (
               typeof filters?.query !== "string" ||
@@ -1708,7 +1737,8 @@ export function relayBrokerPlugin({
           if (claim || policy) {
             if (
               typeof filters?.code !== "string" ||
-              !/^[a-zA-Z0-9_-]{1,256}$/.test(filters.code)
+              // Relay codes are base64url segments joined by "." (v1 `payload.mac`, v2 `v2.secret`).
+              !/^[a-zA-Z0-9._-]{1,256}$/.test(filters.code)
             )
               return json(res, 400, { error: "Invalid invite code" });
             filters = policy
@@ -1754,10 +1784,26 @@ export function relayBrokerPlugin({
               sent: false,
             });
           const timings = [];
-          const signing = route === "/api/relay/sign";
-          const publishing = route === "/api/relay/publish";
+          const lifecycle =
+            route === "/api/relay/channel-lifecycle-sign" ||
+            route === "/api/relay/channel-lifecycle-publish";
+          const signing =
+            route === "/api/relay/sign" ||
+            route === "/api/relay/channel-lifecycle-sign";
+          const publishing =
+            route === "/api/relay/publish" ||
+            route === "/api/relay/channel-lifecycle-publish";
           if (signing || publishing) {
-            if ([9000, 9007].includes(filters?.kind)) {
+            if (lifecycle) {
+              try {
+                validateLifecycleTemplate(filters);
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid channel lifecycle command",
+                  sent: false,
+                });
+              }
+            } else if ([9000, 9007].includes(filters?.kind)) {
               const enrollment = validAgentEnrollment(filters);
               const authority = await getAuthority(relay);
               if (
@@ -1836,6 +1882,8 @@ export function relayBrokerPlugin({
             !directMessage &&
             !claim &&
             !policy &&
+            !invite &&
+            !member &&
             !gifs &&
             !workflowPath &&
             !readPublishing &&
@@ -1881,13 +1929,15 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile || directMessage
+              : profile || directMessage || member
                 ? "/events"
                 : claim
                   ? "/api/invites/claim"
                   : policy
                     ? "/api/invites/accept-policy"
-                    : "/query");
+                    : invite
+                      ? "/api/invites"
+                      : "/query");
           const method = workflowPath ? "GET" : "POST";
           const lane = admissions(relay, viewer).api;
           let releasePresence;
@@ -1978,6 +2028,7 @@ export function relayBrokerPlugin({
                       req.headers["x-buzz-read-priority"] === "background")
                     ? "background"
                     : "foreground",
+                  refusal,
                 );
             const text = memory
               ? await memoryResponseText(response)
@@ -2004,12 +2055,14 @@ export function relayBrokerPlugin({
             stats.queries++;
             if (!response.ok) {
               stats.errors++;
-              let failure;
+              let failure, body;
               try {
-                failure = apiFailure(response.status, JSON.parse(text));
-              } catch {
-                failure = apiFailure(response.status, undefined);
-              }
+                body = JSON.parse(text);
+              } catch {}
+              failure = apiFailure(response.status, body);
+              // Admission already bounded the body and kept only an allowed refusal.
+              const reason = refusal?.(body);
+              if (reason) failure = { ...failure, error: reason };
               if (presence && failure.quota === "api")
                 lane.pause(failure.retryAfterMs);
               return json(res, response.status, failure);
@@ -2040,14 +2093,16 @@ export function relayBrokerPlugin({
                 });
               }
             }
-            if (profile) {
+            if (profile || member) {
               const receipt = JSON.parse(text);
               if (
                 receipt.event_id !== filters.id ||
                 typeof receipt.accepted !== "boolean"
               )
                 return json(res, 502, {
-                  error: "Profile publication could not be confirmed",
+                  error: member
+                    ? "Member change could not be confirmed"
+                    : "Profile publication could not be confirmed",
                 });
             }
             res.writeHead(200, {

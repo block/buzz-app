@@ -17,6 +17,15 @@ import { communityDestination, relayOrigin } from "./destination";
 import { registerBrokerCommunity } from "../relay/transport";
 import styles from "./Communities.module.css";
 
+// Exact relay claim refusal codes, forwarded unchanged by the broker.
+const CLAIM_REFUSALS = {
+  invite_expired:
+    "This invite has expired. Ask a community admin for a new one.",
+  invite_exhausted:
+    "This invite has no uses left. Ask a community admin for a new one.",
+  invite_invalid: "This invite code is not valid for this community.",
+};
+
 export function CommunityDialog({
   communities,
   mode,
@@ -103,7 +112,14 @@ export function CommunityDialog({
             id,
             "claim",
             { code: code.trim(), policy_receipt: receipt },
-          );
+          ).catch((reason: unknown) => {
+            const known =
+              reason instanceof Error &&
+              Object.hasOwn(CLAIM_REFUSALS, reason.message)
+                ? CLAIM_REFUSALS[reason.message as keyof typeof CLAIM_REFUSALS]
+                : undefined;
+            throw known ? new Error(known) : reason;
+          });
           if (!["joined", "already_member"].includes(claim.status))
             throw new Error("Membership was not confirmed");
         }

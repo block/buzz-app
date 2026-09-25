@@ -46,16 +46,22 @@ identities are excluded. Each remaining row says **Not imported** and has its ow
 Import options. Import focuses the imported card and says **Imported, not started**.
 It does not start a listener, invite an agent or change the old library.
 
-To use an agent, open a channel and select it from **@ mentions**. The chooser
-includes this app's managed agents in that same community. A nonmember is labeled
-**Adds to channel when you send**. Selection alone does nothing; Send adds the agent
-through the existing outbox, verifies membership, then sends the message. Failed or
-unconfirmed additions keep the draft and expose the error; Send retries the same
-pending enrollment. A definitively failed addition older than 15 minutes directs
-the person to remove its labeled **Add agent** item from Outbox before sending
-again; an unknown outcome is never silently replaced. Channel and thread composers
-share this behavior. DMs and
-other-community agents are excluded. No Agents-page channel picker is needed.
+To use an agent, open a channel and select it from **@ mentions**. Both mention
+menus include the selected community’s people directory alongside channel members
+and managed agents. Directory reads are bounded; narrow the search for more people.
+A nonmember is labeled **Not in channel · Choose whether to add when you send**.
+Selection alone does nothing. Send asks, as block/buzz desktop does: **Invite**
+or **Do nothing**. Without add permission, the only action is **Send anyway**.
+Invite uses the existing durable member-add operation and confirms membership
+before addressed delivery. It does not start an agent before the outgoing message.
+Do nothing and Send anyway send nonmembers as reference mentions, without granting
+access or notifying them; channel-member mentions remain addressed. Close or
+Escape keeps the draft.
+Failed additions keep the draft and allow retry of the same pending operation.
+A definitively failed addition older than 15 minutes must be dismissed in Outbox
+before a new add; unknown outcomes are never silently replaced. Channel, thread,
+and forum-channel composers share this behavior. DM participants and session
+admission rules are unchanged.
 
 A confirmed outgoing channel or thread mention now starts an exact imported local
 agent (public key + community), without a separate Start click. Import itself
@@ -217,14 +223,22 @@ containment on non-Unix platforms.
   Goose providers plus a custom ID. A missing CLI leaves Goose disabled until
   installation and desktop restart. Switching into or out of Goose supplies ACP
   arguments and clears the previous provider/model; selecting a Goose provider clears the
-  previous model. For Goose with Databricks v2, an explicit Browse asks Goose ACP
-  for its live supported-model list and searches it in the existing picker. The
+  previous model. For Goose, an explicit Browse asks Goose ACP for the selected
+  provider's supported-model list and searches it in the existing picker. The
   exact returned ID is saved; an unlisted ID remains possible but is flagged
-  after discovery. Saved write-only `GOOSE_PROVIDER` overrides keep Browse
-  reachable; native checks the effective provider before asking Goose. Goose
-  has no separate Refresh action because its catalog lookup can start OAuth.
-  Other Goose providers retain manual model entry. Existing Goose credentials
-  are reused; providers without local setup need `goose configure` before Start. Executable detection
+  after discovery. The picker shows at most ten matches while filtering the full
+  list. Saved write-only `GOOSE_PROVIDER` overrides remain native; native uses
+  the effective provider before asking Goose. Goose has no separate Refresh
+  action because its catalog lookup can start OAuth. Known API-key providers
+  show a masked key field beside Provider. Its write-only environment patch is
+  used for both model lookup and agent launch; a blank field uses Goose's
+  existing credentials. The key field follows a draft `GOOSE_PROVIDER` override.
+  When a saved override's value is hidden, Buzz asks the user to replace or
+  remove it in Advanced → Environment before showing a provider-specific key
+  field. These per-agent keys are stored in the app's local
+  `agents.json` settings file and its backup with restricted filesystem
+  permissions, not in Goose's keyring. Listing errors prompt the user to enter credentials or retry;
+  manual model entry remains available. Executable detection
   is not a sign-in or ACP readiness check. Custom command/provider values remain
   editable, including absolute paths. Buzz Agent retains on-demand Databricks
   model browsing. A Goose catalog entry does not establish caller EXECUTE permission

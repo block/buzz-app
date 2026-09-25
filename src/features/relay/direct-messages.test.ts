@@ -184,6 +184,30 @@ it("reads paginated verified profiles, excludes the viewer, and cancels with the
   }
 });
 
+it("reads an exact public-key profile without widening directory search", async () => {
+  const t = setup();
+  try {
+    const result = await t.dm.people(
+      t.other.pubkey,
+      1,
+      new AbortController().signal,
+    );
+    expect(result.people).toEqual([
+      expect.objectContaining({ pubkey: t.other.pubkey, name: "Other" }),
+    ]);
+    expect(t.query.mock.calls.at(-1)?.[0]).toEqual([
+      {
+        kinds: [0],
+        authors: [t.other.pubkey],
+        limit: 30,
+        page: 1,
+      },
+    ]);
+  } finally {
+    t.owner.dispose();
+  }
+});
+
 it.each(["", "C"])(
   "keeps large-profile pages within the read budget without skipping matches: %s",
   async (query) => {

@@ -1109,3 +1109,15 @@ it("retains latest raw edit source through attachment projection and row sharing
     ),
   ).toBe(next);
 });
+
+it("keeps signed reference identities separate from addressed recipients", () => {
+  const event = message(alice, channel, "@Bob", 10, [
+    ["mention", bob.pubkey],
+    ["mention", bob.pubkey],
+    ["mention", relay.pubkey, "agent-address"],
+    ["mention", "invalid"],
+  ]);
+  const [row] = foldMessages(channel, relay.pubkey, [event]);
+  expect(row?.mentions).toEqual([]);
+  expect(row?.mentionReferences).toEqual([bob.pubkey]);
+});

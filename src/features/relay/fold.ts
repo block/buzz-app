@@ -306,6 +306,18 @@ export function foldMessages(
         projected.content !== content.trimEnd()
           ? { attachmentContentRemoved: true as const }
           : {}),
+        mentionReferences: Object.freeze([
+          ...new Set(
+            event.tags.flatMap((tag) =>
+              tag.length === 2 &&
+              tag[0] === "mention" &&
+              tag[1] &&
+              HEX64.test(tag[1])
+                ? [tag[1]]
+                : [],
+            ),
+          ),
+        ]),
         mentions: Object.freeze([
           ...new Set(
             event.tags.flatMap(([name, value]) =>

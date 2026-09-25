@@ -125,7 +125,14 @@ function SelectedMessage({
   useEffect(() => {
     if (target)
       void session.profiles
-        .ensure([target.authorId, ...target.mentions], "background")
+        .ensure(
+          [
+            target.authorId,
+            ...target.mentions,
+            ...(target.mentionReferences ?? []),
+          ],
+          "background",
+        )
         .catch(() => {});
   }, [session, target]);
   return (

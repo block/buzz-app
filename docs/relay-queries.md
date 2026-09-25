@@ -377,6 +377,13 @@ owned by the viewer and a transport that supports kind 40003. The dev broker
 advertises edits and validates one canonical target reference before signing or
 publishing. Generic plugins can use `outbox.send` directly.
 
+`session.messages.report(messageId, type, note?)` is the one exception: the relay
+queues NIP-56 reports (kind 1984) for moderators and never stores or echoes them,
+so the session signs and publishes directly and resolves on the relay's accepted
+receipt, as Buzz desktop does. Nothing is persisted or restored; a rejection or
+10-second timeout rejects the call and the dialog keeps its input for retry. The
+method is undefined unless the writer supports kind 1984.
+
 In an empty composer, unmodified Up arrow opens the latest eligible own message
 from that channel or thread in the same editor. Enter/the send arrow saves;
 Escape or × cancels. Edits retain raw attachment Markdown and leave original

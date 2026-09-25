@@ -223,14 +223,22 @@ containment on non-Unix platforms.
   Goose providers plus a custom ID. A missing CLI leaves Goose disabled until
   installation and desktop restart. Switching into or out of Goose supplies ACP
   arguments and clears the previous provider/model; selecting a Goose provider clears the
-  previous model. For Goose with Databricks v2, an explicit Browse asks Goose ACP
-  for its live supported-model list and searches it in the existing picker. The
+  previous model. For Goose, an explicit Browse asks Goose ACP for the selected
+  provider's supported-model list and searches it in the existing picker. The
   exact returned ID is saved; an unlisted ID remains possible but is flagged
-  after discovery. Saved write-only `GOOSE_PROVIDER` overrides keep Browse
-  reachable; native checks the effective provider before asking Goose. Goose
-  has no separate Refresh action because its catalog lookup can start OAuth.
-  Other Goose providers retain manual model entry. Existing Goose credentials
-  are reused; providers without local setup need `goose configure` before Start. Executable detection
+  after discovery. The picker shows at most ten matches while filtering the full
+  list. Saved write-only `GOOSE_PROVIDER` overrides remain native; native uses
+  the effective provider before asking Goose. Goose has no separate Refresh
+  action because its catalog lookup can start OAuth. Known API-key providers
+  show a masked key field beside Provider. Its write-only environment patch is
+  used for both model lookup and agent launch; a blank field uses Goose's
+  existing credentials. The key field follows a draft `GOOSE_PROVIDER` override.
+  When a saved override's value is hidden, Buzz asks the user to replace or
+  remove it in Advanced → Environment before showing a provider-specific key
+  field. These per-agent keys are stored in the app's local
+  `agents.json` settings file and its backup with restricted filesystem
+  permissions, not in Goose's keyring. Listing errors prompt the user to enter credentials or retry;
+  manual model entry remains available. Executable detection
   is not a sign-in or ACP readiness check. Custom command/provider values remain
   editable, including absolute paths. Buzz Agent retains on-demand Databricks
   model browsing. A Goose catalog entry does not establish caller EXECUTE permission
@@ -327,8 +335,10 @@ to the same immutable source revision as the native library. The build script us
 and stages binaries plus revision/target/SHA256 manifest in
 `src-tauri/resources/agent-runtime`. Native build copies them to
 `target/debug/agent-runtime`. Generated binaries/manifest are not committed.
-Startup verifies the exact tool set, target, revision and file hashes; required
-launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
+Startup verifies the exact tool set, target, revision and file hashes. Packaged
+macOS apps may accept signing-induced hash changes only when the runtime belongs
+to the running app and its resource seal verifies under Block's Developer ID.
+The final hashes are retained in memory; required launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
 download. The manifest detects corrupt/mixed resources, not a same-user attacker
 who can replace the app and manifest. Inputs are immutable, not a promise of
 bit-identical machine-independent binaries. This build is not a signed installer.

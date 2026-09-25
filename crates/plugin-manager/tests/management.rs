@@ -521,6 +521,19 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
 }
 
 #[test]
+fn feedback_is_in_native_catalog() {
+    let (root, manager, _source) = fixture();
+    assert!(bundled_manifests().iter().any(|m| m.id == "buzz.feedback"));
+    assert!(manager
+        .catalog()
+        .unwrap()
+        .plugins
+        .iter()
+        .any(|p| p.manifest.id == "buzz.feedback" && p.enabled));
+    drop(root);
+}
+
+#[test]
 fn channels_is_required_even_with_saved_disabled_settings() {
     let (root, manager, _source) = fixture();
     manager.change("disable", "buzz.github").unwrap();

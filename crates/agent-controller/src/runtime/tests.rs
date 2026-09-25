@@ -1175,13 +1175,19 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
     };
     let context = Controller::draft_goose_model_context(edit(None)).unwrap();
     assert_eq!(context.command, goose);
+    assert_eq!(context.provider_id, "databricks_v2");
     assert!(context.model_overridden);
     assert_eq!(
         context.environment["DATABRICKS_HOST"],
         "https://workspace.example"
     );
     assert!(!context.environment.contains_key("GOOSE_PROVIDER"));
-    assert!(Controller::draft_goose_model_context(edit(Some("openai"))).is_err());
+    assert_eq!(
+        Controller::draft_goose_model_context(edit(Some("openai")))
+            .unwrap()
+            .provider_id,
+        "openai"
+    );
 }
 
 #[test]

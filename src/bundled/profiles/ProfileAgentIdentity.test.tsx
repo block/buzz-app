@@ -212,12 +212,15 @@ it("adds no agent section or owner reads for a profile without an agent hint", a
   const profileReads = query.mock.calls
     .flatMap(([filters]) => filters)
     .filter((filter) =>
-      filter.kinds?.some((kind) => kind === 0 || kind === 30315),
+      filter.kinds?.some(
+        (kind) => kind === 0 || kind === 10100 || kind === 30315,
+      ),
     );
-  expect(profileReads).toHaveLength(2);
+  expect(profileReads).toHaveLength(3);
   expect(profileReads).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
+      expect.objectContaining({ authors: [person.pubkey], kinds: [10100] }),
       expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
     ]),
   );

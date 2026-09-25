@@ -28,6 +28,23 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const { createServices } = await vite.ssrLoadModule("/src/app/services.ts");
     services = createServices();
     assert.deepEqual(services.pages.snapshot(), []);
+    await vi.waitFor(() =>
+      assert.equal(
+        services.accountActions.snapshot()[0]?.key,
+        "buzz.feedback/send",
+      ),
+    );
+    const firstFeedback = services.accountActions.snapshot()[0];
+    await services.plugins.change("disable", "buzz.feedback");
+    assert.deepEqual(services.accountActions.snapshot(), []);
+    await services.plugins.change("enable", "buzz.feedback");
+    await vi.waitFor(() =>
+      assert.equal(
+        services.accountActions.snapshot()[0]?.key,
+        "buzz.feedback/send",
+      ),
+    );
+    assert.notEqual(services.accountActions.snapshot()[0], firstFeedback);
     await settle();
     assert.equal(services.pages.snapshot().length, 5);
     assert.deepEqual(services.channelTemplates.snapshot(), []);

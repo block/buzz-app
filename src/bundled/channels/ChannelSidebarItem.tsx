@@ -12,6 +12,7 @@ import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
+import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
 import { UnreadBadge } from "./UnreadBadge";
 import styles from "./Channels.module.css";
@@ -133,25 +134,30 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         )
       }
       badge={
-        <span className={styles.indicatorStack} data-channel-indicators="">
-          <span className={styles.indicatorLayer}>
-            <UnreadBadge
-              session={session}
-              channelId={channel.id}
-              dm={channel.channelType === "dm"}
-            />
-          </span>
-          {working && (
-            <span
-              className={styles.working}
-              data-channel-working=""
-              data-indicator-layer="working"
-              role="img"
-              aria-label="Agent working"
-              title="Agent working in this channel"
-            />
+        <>
+          {channel.channelType === "dm" && (
+            <DmTypingBadge session={session} channelId={channel.id} />
           )}
-        </span>
+          <span className={styles.indicatorStack} data-channel-indicators="">
+            <span className={styles.indicatorLayer}>
+              <UnreadBadge
+                session={session}
+                channelId={channel.id}
+                dm={channel.channelType === "dm"}
+              />
+            </span>
+            {working && (
+              <span
+                className={styles.working}
+                data-channel-working=""
+                data-indicator-layer="working"
+                role="img"
+                aria-label="Agent working"
+                title="Agent working in this channel"
+              />
+            )}
+          </span>
+        </>
       }
       wrapSelect={(trigger) => {
         const activity = (

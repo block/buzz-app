@@ -562,7 +562,11 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect(mentions.getByRole("button")).toHaveCount(1);
   await averyMention.click();
   await expect(composer).toHaveText("@Avery Chen ");
-  await composer.fill("");
+  // Clear the rich token through the editor's keyboard selection command, not
+  // fill()'s synthetic DOM range, before exercising the completion path.
+  await composer.press("ControlOrMeta+a");
+  await composer.press("Backspace");
+  await expect(composer).toHaveText("");
   await composer.pressSequentially("@Av");
   const suggestions = page.getByRole("listbox", {
     name: "Mention suggestions",

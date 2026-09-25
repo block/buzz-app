@@ -221,7 +221,10 @@
 .channelSection + .channelSection {
   margin-top: var(--space-4);
 }
-.channelSection > :where(details) > summary {
+.sectionHeader {
+  position: relative;
+}
+.sectionHeader > :where(details) > summary {
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -258,7 +261,7 @@
   color: var(--text-unavailable);
   transition: transform 160ms ease-out;
 }
-.channelSection details:not([open]) .sectionChevron {
+.sectionHeader details:not([open]) .sectionChevron {
   transform: rotate(-90deg);
   opacity: 1;
 }
@@ -698,7 +701,25 @@
   overflow: hidden;
 }
 
+.indicatorStack {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+}
+
+.indicatorLayer,
 .working {
+  grid-area: 1 / 1;
+}
+
+.indicatorLayer {
+  display: grid;
+  place-items: center;
+}
+
+.working {
+  display: block;
+  z-index: 1;
   width: 6px;
   height: 6px;
   flex-shrink: 0;

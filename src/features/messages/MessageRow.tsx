@@ -4,9 +4,11 @@ import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { usePresenceStatus } from "../presence/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
+  useId,
   useRef,
   useCallback,
   useSyncExternalStore,
@@ -137,6 +139,8 @@ export const MessageRow = memo(function MessageRow({
     row.agentEnvelope || agentPubkeys?.has(row.authorId)
       ? "squircle"
       : "circle";
+  const presence = usePresenceStatus(session?.presence, row.authorId);
+  const presenceId = useId();
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
@@ -214,27 +218,43 @@ export const MessageRow = memo(function MessageRow({
             size={layout === "timeline" ? "default" : "sm"}
             shape="round"
             aria-label={`View ${name} profile`}
+            aria-describedby={presence === "unknown" ? undefined : presenceId}
             onClick={(event) => {
               event.currentTarget.focus();
               onOpenLink(target);
             }}
             icon={
-              <Avatar
-                src={picture}
-                alt=""
-                fallback={name}
-                size="fill"
-                shape={avatarShape}
-              />
+              <>
+                <Avatar
+                  src={picture}
+                  alt=""
+                  fallback={name}
+                  size="fill"
+                  shape={avatarShape}
+                  statusBadge={presence === "unknown" ? undefined : presence}
+                />
+                {presence !== "unknown" && (
+                  <span className="sr-only" id={presenceId}>
+                    Presence: {presence}
+                  </span>
+                )}
+              </>
             }
           />
         ) : (
           <Avatar
             src={picture}
-            alt=""
+            alt={
+              presence === "unknown"
+                ? ""
+                : avatarShape === "squircle"
+                  ? "Agent"
+                  : `${name} avatar`
+            }
             fallback={name}
             size={layout === "timeline" ? "large" : "default"}
             shape={avatarShape}
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         )}
         <div className={styles.messageBody}>

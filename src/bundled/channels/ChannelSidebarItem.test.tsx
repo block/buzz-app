@@ -12,6 +12,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { UnreadSnapshot } from "../../features/relay/unread";
+import type { PresenceStatus } from "../../features/presence/presence";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
 import { ContextMenuRoot } from "../../shared/design-system/ui/Menu";
 
@@ -234,14 +235,16 @@ it("keeps live unread updates and uses replacement session callbacks across row 
   expect(onSelect).toHaveBeenCalledTimes(1);
 });
 
-it("renders one-to-one DM avatars from supplied profiles only, through the media sanitizer", () => {
+it("badges one-to-one DM avatars with live presence and sanitizes their media", () => {
+  let status: PresenceStatus = "unknown";
+  const presenceListeners = new Set<() => void>();
   const session = {
     ...owner().session,
     media: vi.fn((url: string) =>
       url.startsWith("https://") ? `/media?url=${url}` : undefined,
     ),
   };
-  // Any new row-owned profile/presence subscription fails this test.
+  // Profile data is supplied by the page; presence is owned by the connected row.
   Object.defineProperties(session, {
     profiles: {
       get: () => {
@@ -249,8 +252,13 @@ it("renders one-to-one DM avatars from supplied profiles only, through the media
       },
     },
     presence: {
-      get: () => {
-        throw new Error("Unexpected presence acquisition");
+      value: {
+        status: () => status,
+        limited: () => false,
+        subscribe: (_pubkey: string, listener: () => void) => {
+          presenceListeners.add(listener);
+          return () => presenceListeners.delete(listener);
+        },
       },
     },
   });
@@ -276,6 +284,19 @@ it("renders one-to-one DM avatars from supplied profiles only, through the media
   const view = render(<ChannelSidebarItem {...props} />);
   const row = screen.getByRole("button", { name: /^Alice$/ });
   expect(row.querySelector(".buzz-avatar")).toHaveTextContent("A");
+  expect(row.querySelector(".buzz-avatar-status")).not.toHaveAttribute(
+    "data-status",
+  );
+  act(() => {
+    status = "away";
+    for (const listener of presenceListeners) listener();
+  });
+  expect(row.querySelector(".buzz-avatar-status")).toHaveAttribute(
+    "data-status",
+    "away",
+  );
+  expect(row).toHaveAccessibleName("Alice");
+  expect(row).toHaveAccessibleDescription("Presence: away");
   view.rerender(
     <ChannelSidebarItem
       {...props}
@@ -326,6 +347,7 @@ it("renders one-to-one DM avatars from supplied profiles only, through the media
       />,
     );
     expect(row.querySelector(".buzz-avatar")).toBeNull();
+    expect(row).not.toHaveAccessibleDescription();
     expect(row).toHaveAccessibleName("Alice");
     if (participants.length) {
       expect(

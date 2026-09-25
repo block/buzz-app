@@ -356,7 +356,9 @@ function ReadySidebar({
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const createChannelTrigger = useRef<HTMLButtonElement>(null);
   const startingSession = useRef(false);
-  const removedDmFocus = useRef<HTMLElement | undefined>(undefined);
+  const removedDmFocus = useRef<
+    { channelId: string; target: HTMLElement } | undefined
+  >(undefined);
   const [initialGroup, setInitialGroup] = useState("");
   const [kitError, setKitError] = useState("");
   const pendingChannelCreation = useSyncExternalStore(
@@ -608,13 +610,16 @@ function ReadySidebar({
               ) ?? []),
             ];
             const index = rows.indexOf(trigger as HTMLButtonElement);
-            removedDmFocus.current =
-              rows[index + 1] ??
-              rows[index - 1] ??
-              sidebar.list.current?.querySelector<HTMLElement>(
-                "details > summary",
-              ) ??
-              undefined;
+            const survivingSummary = [
+              ...(sidebar.list.current?.querySelectorAll<HTMLElement>(
+                "[data-sidebar-section] details > summary",
+              ) ?? []),
+            ].find((summary) => !section?.contains(summary));
+            const target =
+              rows[index + 1] ?? rows[index - 1] ?? survivingSummary;
+            removedDmFocus.current = target
+              ? { channelId: channel.id, target }
+              : undefined;
             hiddenDms.hide(channel.id);
           }}
         >
@@ -897,8 +902,8 @@ function ReadySidebar({
                           aria-label={`Actions for ${channel.name}`}
                           anchor={menuOpen ? rowMenu.anchor : undefined}
                           finalFocus={() =>
-                            removedDmFocus.current
-                              ? removedDmFocus.current
+                            removedDmFocus.current?.channelId === channel.id
+                              ? removedDmFocus.current.target
                               : startingSession.current
                                 ? (document
                                     .getElementById("new-session-prompt")

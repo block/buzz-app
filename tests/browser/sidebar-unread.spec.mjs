@@ -330,14 +330,19 @@ test("resizing, collapsed groups and new unread evidence update only the display
     list(page).locator("details").first().locator("[inert]"),
   ).toHaveCount(0);
   await expect(row(page, "Beta")).toBeFocused();
+  await expect(row(page, "Beta")).toBeEnabled();
+  const channelsSummary = list(page)
+    .locator("summary")
+    .filter({ hasText: /^Channels$/ });
+  await channelsSummary.focus();
   await page.keyboard.press("Tab");
-  // The integrated sidebar inserts the Direct messages summary/actions after
-  // Channels, so native tab order reaches that visible header before Alpha.
   await expect(
-    list(page)
-      .locator("summary")
-      .filter({ hasText: /^Direct messages$/ }),
+    list(page).getByRole("button", { name: "More actions for Channels" }),
   ).toBeFocused();
+  await page.keyboard.press("Tab");
+  // Disabled header actions are skipped; traversal still reaches rows only
+  // after the available header controls.
+  await expect(row(page, "Alpha")).toBeFocused();
   // A tall viewport makes every row visible; shrinking restores the bottom cue.
   await scroll(page, 0);
   await page.setViewportSize({ width: 1440, height: 6000 });

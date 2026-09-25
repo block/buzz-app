@@ -80,102 +80,104 @@ export function SidebarSection({
     );
   return (
     <div className={styles.channelSection} data-sidebar-section={sectionKey}>
-      <details open={open}>
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: summary has native keyboard activation. */}
-        <summary
-          aria-label={title}
-          aria-controls={id}
-          onClick={(event) => {
-            event.preventDefault();
-            onToggle(!open);
-          }}
-        >
-          <span className={styles.sectionLabel}>
-            {icon && session && (
-              <SidebarSectionIcon icon={icon} session={session} />
-            )}
-            {title}
-          </span>
-          <span className={`${styles.sidebarIcon} ${styles.sectionChevron}`}>
-            <CaretDownIcon weight="bold" size={15} />
-          </span>
-        </summary>
-      </details>
-      <div className={styles.sectionActions}>
-        <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
-          <MenuTrigger
-            render={(props) => (
-              <IconButton
-                {...props}
-                size="compact"
-                aria-label={`More actions for ${title}`}
-                icon={<DotsThreeIcon weight="bold" size={15} />}
-              />
-            )}
-          />
-          <MenuPopup align="end" aria-label={`More actions for ${title}`}>
-            {sort && (
-              <MenuSubmenu>
-                <MenuSubmenuTrigger>
-                  <MenuIcon>
-                    <ArrowsDownUpIcon size={14} />
-                  </MenuIcon>
-                  Sort
-                </MenuSubmenuTrigger>
-                <MenuSubmenuPopup
-                  aria-label={`Sort ${title}`}
-                  finalFocus={false}
-                >
-                  <MenuRadioGroup
-                    value={sort.value}
-                    onValueChange={(mode) => {
-                      sort.change(mode as "alpha" | "recent");
-                      setMenuOpen(false);
-                    }}
+      <div className={styles.sectionHeader}>
+        <details open={open}>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: summary has native keyboard activation. */}
+          <summary
+            aria-label={title}
+            aria-controls={id}
+            onClick={(event) => {
+              event.preventDefault();
+              onToggle(!open);
+            }}
+          >
+            <span className={styles.sectionLabel}>
+              {icon && session && (
+                <SidebarSectionIcon icon={icon} session={session} />
+              )}
+              {title}
+            </span>
+            <span className={`${styles.sidebarIcon} ${styles.sectionChevron}`}>
+              <CaretDownIcon weight="bold" size={15} />
+            </span>
+          </summary>
+        </details>
+        <div className={styles.sectionActions}>
+          <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+            <MenuTrigger
+              render={(props) => (
+                <IconButton
+                  {...props}
+                  size="compact"
+                  aria-label={`More actions for ${title}`}
+                  icon={<DotsThreeIcon weight="bold" size={15} />}
+                />
+              )}
+            />
+            <MenuPopup align="end" aria-label={`More actions for ${title}`}>
+              {sort && (
+                <MenuSubmenu>
+                  <MenuSubmenuTrigger>
+                    <MenuIcon>
+                      <ArrowsDownUpIcon size={14} />
+                    </MenuIcon>
+                    Sort
+                  </MenuSubmenuTrigger>
+                  <MenuSubmenuPopup
+                    aria-label={`Sort ${title}`}
+                    finalFocus={false}
                   >
-                    <MenuRadioItem closeOnClick={false} value="recent">
-                      Recent
-                    </MenuRadioItem>
-                    <MenuRadioItem closeOnClick={false} value="alpha">
-                      A–Z
-                    </MenuRadioItem>
-                  </MenuRadioGroup>
-                </MenuSubmenuPopup>
-              </MenuSubmenu>
-            )}
-            <MenuItem
-              onClick={() => {
-                onToggle(!open);
-                setMenuOpen(false);
-              }}
-            >
-              {open ? "Collapse section" : "Expand section"}
-            </MenuItem>
-          </MenuPopup>
-        </MenuRoot>
-        {newMessage && (
-          <IconButton
-            size="compact"
-            aria-label="New message"
-            title="New message"
-            onClick={newMessage}
-            icon={<PlusIcon weight="bold" size={15} />}
-          />
-        )}
-        {createChannel && (
-          <IconButton
-            size="compact"
-            aria-label="Create channel"
-            title={
-              createChannel.available
-                ? "Create channel"
-                : "Channel creation unavailable"
-            }
-            disabled={!createChannel.available}
-            onClick={(event) => createChannel.open(event.currentTarget)}
-            icon={<PlusIcon weight="bold" size={15} />}
-          />
-        )}
+                    <MenuRadioGroup
+                      value={sort.value}
+                      onValueChange={(mode) => {
+                        sort.change(mode as "alpha" | "recent");
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <MenuRadioItem closeOnClick={false} value="recent">
+                        Recent
+                      </MenuRadioItem>
+                      <MenuRadioItem closeOnClick={false} value="alpha">
+                        A–Z
+                      </MenuRadioItem>
+                    </MenuRadioGroup>
+                  </MenuSubmenuPopup>
+                </MenuSubmenu>
+              )}
+              <MenuItem
+                onClick={() => {
+                  onToggle(!open);
+                  setMenuOpen(false);
+                }}
+              >
+                {open ? "Collapse section" : "Expand section"}
+              </MenuItem>
+            </MenuPopup>
+          </MenuRoot>
+          {newMessage && (
+            <IconButton
+              size="compact"
+              aria-label="New message"
+              title="New message"
+              onClick={newMessage}
+              icon={<PlusIcon weight="bold" size={15} />}
+            />
+          )}
+          {createChannel && (
+            <IconButton
+              size="compact"
+              aria-label="Create channel"
+              title={
+                createChannel.available
+                  ? "Create channel"
+                  : "Channel creation unavailable"
+              }
+              disabled={!createChannel.available}
+              onClick={(event) => createChannel.open(event.currentTarget)}
+              icon={<PlusIcon weight="bold" size={15} />}
+            />
+          )}
+        </div>
       </div>
       <div
         id={id}

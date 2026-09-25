@@ -322,11 +322,12 @@ the complete suite still runs with `pnpm test` / `just scan`:
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
 - **Browser journeys:** six runners (Chromium and WebKit, three file-level shards
   per engine), each with two workers. They start alongside measurements on separate
-  runners; `CI required` still requires both lanes. Each runner builds the native
-  plugin-manager fixture in a separately logged setup step before starting
-  Playwright. Its Rust cache is optional: a cache miss still builds the fixture,
-  outside the browser subprocess timeout. No measurement is repeated on shards,
-  and no retry hides a failure. Functional jobs also run when measurements fail:
+  runners; `CI required` still requires both lanes. Each runner provisions only
+  its selected engine and discovers its tests before native setup. Shards selecting
+  a journey tagged `@native-fixture` build the native plugin-manager fixture in a
+  separately logged setup step before execution. Its Rust cache is optional: a
+  cache miss still builds the fixture, outside the browser subprocess timeout.
+  No measurement is repeated on shards, and no retry hides a failure. Functional jobs also run when measurements fail:
   this spends more runner minutes for faster, independent feedback.
 - **CI required:** fails unless every automatic Linux lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status

@@ -112,7 +112,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:
-          browsers: "true"
+          browsers: "chromium webkit"
       # Preserve Chromium -> WebKit measurement dependencies; never shard or
       # overlap the two measurement projects on this runner.
       - name: Serial Chromium and WebKit measurements
@@ -147,15 +147,29 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:
-          browsers: "true"
-      # This journey uses a real native plugin-manager bridge. Provision it
-      # before Playwright starts: a cold Rust install/build is test setup, not
-      # browser behavior, and must not consume the journey's subprocess budget.
+          browsers: ${{ matrix.engine }}
+      - name: Discover browser setup
+        id: browser-setup
+        run: |
+          pnpm --silent test:browser:ci --project ${{ matrix.engine }} --no-deps --shard=${{ matrix.shard }}/3 --list --reporter=json > "$RUNNER_TEMP/browser-selection.json"
+          node scripts/ci-browser-setup.mjs "$RUNNER_TEMP/browser-selection.json" >> "$GITHUB_OUTPUT"
+      # Non-native shards can save the shared Hermit cache before Rust is present.
+      # Keep the selected native toolchain independently cached.
+      - name: Cache native fixture toolchain
+        if: steps.browser-setup.outputs.native-fixture == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/hermit/pkg/rust-*
+          key: hermit-browser-fixture-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/**') }}
+      # Only selected native journeys need Rust. A cache miss still builds before
+      # Playwright starts, outside the journey's subprocess timeout.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        if: steps.browser-setup.outputs.native-fixture == 'true'
         with:
           key: browser-fixture
           save-if: ${{ github.event_name == 'push' }}
       - name: Build native browser fixture
+        if: steps.browser-setup.outputs.native-fixture == 'true'
         timeout-minutes: 8
         run: cargo build --locked -p buzzodz-plugins --example fixture-bridge
       # CI required enforces measurement success. --no-deps avoids repeating

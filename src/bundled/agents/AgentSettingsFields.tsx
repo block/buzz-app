@@ -41,6 +41,23 @@ export function AgentSettingsFields({
     provider === "databricks_v2" ||
     (providerOverride === undefined &&
       environmentKeys.includes("GOOSE_PROVIDER"));
+  const buzzProvider =
+    draft.environment.BUZZ_AGENT_PROVIDER ??
+    (draft.provider || state.data?.agentDefaults?.provider);
+  // Saved environment values are write-only. Do not promise a build default
+  // when an untouched override could select a different provider or model.
+  const modelDefaultKnown =
+    (draft.environment.BUZZ_AGENT_PROVIDER !== undefined ||
+      !environmentKeys.includes("BUZZ_AGENT_PROVIDER")) &&
+    ["BUZZ_AGENT_MODEL", "DATABRICKS_MODEL"].every(
+      (key) =>
+        draft.environment[key] === null ||
+        (draft.environment[key] === undefined &&
+          !environmentKeys.includes(key)),
+    );
+  const databricks = ["databricks_v2", "databricks-v2", "databricks"].includes(
+    buzzProvider ?? "",
+  );
   return (
     <div className="min-w-0">
       <div className="min-w-0 space-y-section-gap">
@@ -69,6 +86,9 @@ export function AgentSettingsFields({
             disabled={disabled}
             draft={draft}
             options={state.data?.harnessOptions ?? []}
+            defaultProvider={
+              goose ? undefined : state.data?.agentDefaults?.provider
+            }
             piProviders={piProviders}
             onChange={onChange}
           />
@@ -96,6 +116,11 @@ export function AgentSettingsFields({
               savedRevision={savedRevision}
               control={control}
               defaults={state.data?.databricksDefaults}
+              defaultModel={
+                !goose && databricks && modelDefaultKnown
+                  ? state.data?.agentDefaults?.model
+                  : undefined
+              }
               draft={draft}
               onChange={onChange}
             />
@@ -109,6 +134,12 @@ export function AgentSettingsFields({
           )}
         </fieldset>
       </div>
+      {state.data?.agentDefaults?.ownerOnly && (
+        <p className="text-body-sm text-secondary">
+          This build allows instructions only from the owner and verified
+          same-owner agents.
+        </p>
+      )}
       <div className="-mx-2">
         <Accordion
           variant="form"

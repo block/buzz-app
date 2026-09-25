@@ -291,3 +291,22 @@ test("tooltip preserves existing descriptions while open and after dismissal", a
   expect(button).toHaveAccessibleDescription("Existing help. More context.");
   expect(button).toHaveAccessibleName("Described action");
 });
+
+test("stable dialog height is opt-in and can return to content sizing", () => {
+  const renderDialog = (height?: "content" | "stable") => (
+    <Dialog
+      open
+      onOpenChange={() => {}}
+      title="Search"
+      {...(height ? { height } : {})}
+    >
+      Results
+    </Dialog>
+  );
+  const { rerender } = render(renderDialog());
+  expect(screen.getByRole("dialog")).toHaveAttribute("data-height", "content");
+  rerender(renderDialog("stable"));
+  expect(screen.getByRole("dialog")).toHaveAttribute("data-height", "stable");
+  rerender(renderDialog());
+  expect(screen.getByRole("dialog")).toHaveAttribute("data-height", "content");
+});

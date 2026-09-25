@@ -33,10 +33,21 @@ test("channel context menu opens and resumes a session draft without a row menu 
   ).toHaveCount(0);
   await beta.click({ button: "right" });
   await expect(start).toBeVisible();
-  await expect(menu.getByRole("menuitem")).toHaveCount(1);
+  // Session entry remains usable even when the independent lifecycle host is absent.
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "New session",
+    "Channel actions unavailable on this connection",
+  ]);
+  await expect(
+    menu.getByRole("menuitem", {
+      name: "Channel actions unavailable on this connection",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await expect(menu.getByRole("separator")).toHaveCount(1);
   await expect(alpha).toHaveAttribute("aria-current", "page");
-  // CSS geometry needs a real layout engine. A lone item uses the shared full-
-  // round token in both themes, independent of available viewport width.
+  // CSS geometry needs a real layout engine. The session item retains the shared
+  // full-round token in both themes, independent of viewport width or sibling actions.
   for (const mode of ["light", "dark"]) {
     await page.evaluate((value) => {
       document.documentElement.dataset.colorMode = value;
@@ -137,6 +148,7 @@ test.describe("menu placement lifetime", () => {
           sections: [{ id: "work", name: "Work", order: 0 }],
           assignments: { beta: "work" },
           starred: stars,
+          muted: [],
         },
       });
     });

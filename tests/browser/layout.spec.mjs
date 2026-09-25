@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { anchor, settle, upper, expectAnchor } from "./timeline.mjs";
+import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 // Resize tests must not enter the fixture’s deliberately held paging path.
@@ -134,7 +134,7 @@ scroll(
     await settle(page);
     const initialOffset = await history.evaluate((el) => el.scrollTop);
     await history.hover();
-    await page.mouse.wheel(0, -300);
+    await wheel(page, -300);
     await expect
       .poll(() => history.evaluate((el) => el.scrollTop))
       .toBeLessThan(initialOffset - 100);
@@ -635,15 +635,25 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
     viewport.x + viewport.width / 2,
     viewport.y + viewport.height / 2,
   );
-  for (let gesture = 0; gesture < 4; gesture++) {
+  const visibleTop = Math.max(viewport.y, 0);
+  const visibleBottom = Math.min(viewport.y + viewport.height, 400);
+  for (let gesture = 0; gesture < 30; gesture++) {
     const toggle = await box(enabled);
     if (
-      toggle.y >= viewport.y &&
-      toggle.y + toggle.height <= viewport.y + viewport.height
+      toggle.y >= visibleTop + 8 &&
+      toggle.y + toggle.height <= visibleBottom - 8
     )
       break;
+    const distance =
+      toggle.y < visibleTop + 8
+        ? toggle.y - visibleTop - 8
+        : toggle.y + toggle.height - visibleBottom + 8;
     const before = await settingsPage.evaluate((el) => el.scrollTop);
-    await page.mouse.wheel(0, viewport.height * 0.75);
+    await wheel(
+      page,
+      Math.sign(distance) * Math.max(Math.abs(distance), 24),
+      settingsPage,
+    );
     await expect
       .poll(() => settingsPage.evaluate((el) => el.scrollTop), {
         message: "Settings wheel input makes progress toward the plugin toggle",
@@ -714,7 +724,7 @@ readingTest(
       gesture++
     ) {
       const before = await history.evaluate((el) => el.scrollTop);
-      await page.mouse.wheel(0, -300);
+      await wheel(page, -300);
       await expect
         .poll(() => history.evaluate((el) => el.scrollTop))
         .toBeLessThan(before);

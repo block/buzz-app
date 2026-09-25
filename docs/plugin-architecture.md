@@ -114,7 +114,9 @@ agent execution remain future shared capabilities.
 ### Optional channel templates and Settings cards
 
 `ctx.settingsCards.register({ id, title, component })` contributes a card under
-Settings → Messages, not a new route. Cards receive `active()` and use ordinary
+Settings → Messages, not a new route. Adding `group` instead gives the card its own
+Settings destination under that labelled navigation group; its section id is the
+contribution key (`plugin/card`) and disappears with the plugin. Cards receive `active()` and use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
 exact registration identity and mounted lifetime revoke callbacks on removal.
 
@@ -122,6 +124,16 @@ Templates & teams (`buzz.channel-templates`) is bundled **off by default** in bo
 browser and desktop catalogs. Explicit saved overrides win. Enable it under
 Settings → Plugins, then manage recipes under Settings → Messages. The host sidebar owns
 personal groups and the existing + creation buttons, independently of this plugin.
+
+Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
+under Settings → Communities. It manages Block-hosted relays through a Builderlab
+account: browser sign-in, binding the local Buzz identity (a locally signed kind
+24243 challenge), and create/archive/unarchive/transfer. Joining stays in the
+existing Add a community dialog; the card only copies the new relay address. Its
+`/api/builderlab/*` routes live in the development broker (`dev/builderlab.mjs`),
+which keeps the session credential and signing key in Node. Packaged builds ship no
+broker, so this plugin cannot sign in or manage communities there until a native
+backend exists.
 
 `ctx.channelTemplates.register({ id, title, editor, groupDefault, saveAs })` supplies
 one optional composition provider. With zero or multiple active providers, no

@@ -213,7 +213,11 @@ test("independent packed author consumer and native-installed contribution survi
     await expect(draft).toHaveJSProperty("value", "bONETWOe");
     await expect(draft).toBeFocused();
     expect(await draft.evaluate((el) => el.selectionStart)).toBe(7);
-    await draft.fill("");
+    // Clear through the editor's keyboard contract. WebKit's fill("") can lose
+    // its DOM selection after plugin insertion and delete only the next character.
+    await draft.press("ControlOrMeta+A");
+    await draft.press("Backspace");
+    await expect(draft).toHaveJSProperty("value", "");
     await page
       .getByRole("button", { name: "Insert mixed", exact: true })
       .click();

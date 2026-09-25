@@ -35,6 +35,7 @@ const expected = {
   sections: groups.sections,
   assignments: { general: "work" },
   starred: ["general"],
+  muted: [],
 };
 
 it("reads legacy preferences through the production session, transport, and bounded broker decoder without publishing", async () => {
@@ -68,6 +69,12 @@ it("reads legacy preferences through the production session, transport, and boun
         kinds: [30078],
         authors: [viewer.pubkey],
         "#d": ["channel-stars"],
+        limit: 1,
+      },
+      {
+        kinds: [30078],
+        authors: [viewer.pubkey],
+        "#d": ["channel-mutes"],
         limit: 1,
       },
     ]);
@@ -215,6 +222,7 @@ it("reads legacy preferences through the production session, transport, and boun
       sections: [],
       assignments: {},
       starred: [],
+      muted: [],
     });
     upstream.mockImplementationOnce(async () =>
       Response.json({ error: "unavailable" }, { status: 503 }),

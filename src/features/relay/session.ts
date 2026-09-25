@@ -17,6 +17,7 @@ import { createAgentMemories } from "../agents/memory";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
 import { sessionMetadata } from "../sessions/metadata";
+import { createChannelLifecycle } from "./channel-lifecycle";
 import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation } from "../workflows/protocol";
 import {
@@ -316,6 +317,7 @@ export function createRelaySession(
     try {
       accessEpoch++;
       cancelUploads();
+      lifecycle.cancel();
       typing.clear();
       // Filters cannot tell us ownership of broad/ID/reference reads. Infrequent
       // authoritative access loss cancels them all, not merely explicit #h reads.
@@ -570,6 +572,16 @@ export function createRelaySession(
     bound.throwIfAborted();
     // NIP-34/NIP-MP metadata is global; channel tags are associations, not ACLs.
     return events;
+  });
+  const lifecycle = createChannelLifecycle({
+    reader: transport ? requests.reader : undefined,
+    writer: transport?.channelLifecycle,
+    viewer: transport?.viewer ?? "",
+    relayAuthor: transport?.relayAuthor ?? "",
+    canAccess: (id) => !closed && canAccess(id),
+    acceptDiscovery: (events) => channels.acceptDiscovery(events),
+    removed: (id) =>
+      channels.denyChannel(id, new Error("Channel is no longer available")),
   });
   const workflows = createWorkflows({
     reader: transport ? verified : undefined,
@@ -843,6 +855,20 @@ export function createRelaySession(
     },
     !!transport?.decodeSidebarPreferences,
     notify,
+    (() => {
+      const write = transport?.writeSidebarMute;
+      return write
+        ? (intent, signal) =>
+            write(
+              intent,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
   );
   const workSessions = createWorkSessions(
     writes?.outbox,
@@ -1282,6 +1308,7 @@ export function createRelaySession(
           },
         }
       : undefined,
+    channelLifecycle: lifecycle.capability,
     agentActivity: activity.queries,
     agentMemories: memories.capability,
     archives: archives.queries,
@@ -1781,6 +1808,7 @@ export function createRelaySession(
         typing.clear();
         sidebarPreferences.clear();
         channelKit.clear();
+        lifecycle.clear();
         // New windows must not yield to or receive errors from retired owners.
         catchups.clear();
         catchupQueue.clear();
@@ -1807,6 +1835,7 @@ export function createRelaySession(
       memories.dispose();
       presence.dispose();
       sidebarPreferences.dispose();
+      lifecycle.dispose();
       stopInterests();
       stopWarmPreferences();
       traffic?.dispose();

@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::{agent_id, HarnessEdit};
+use crate::process::Process;
 use crate::Secret;
 use serde_json::json;
 use std::fs;
@@ -58,7 +59,7 @@ fn bundle(directory: &Path) -> RuntimeBundle {
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
 trap 'exit 0' TERM INT
-while :; do /bin/sleep 0.1; done
+while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 0.1; done
 "#).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
@@ -193,13 +194,185 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
 }
 #[test]
 #[cfg(unix)]
+fn failed_temp_cleanup_reports_error_and_allows_explicit_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let key = Secret::parse(KEY, PUB).unwrap();
+    for action in [Action::Stop, Action::Restart] {
+        assert!(matches!(
+            controller.action(&a.id, Action::Start).unwrap().agents[0].status,
+            ProcessStatus::Running
+        ));
+        let temp = controller.running[&a.id]
+            .temporary
+            .as_ref()
+            .unwrap()
+            .clone();
+        let moved = temp.with_extension("moved");
+        fs::rename(&temp, &moved).unwrap();
+        fs::write(&temp, b"block directory removal").unwrap();
+        let stopped = if matches!(action, Action::Restart) {
+            controller
+                .action_with_key(&a.id, action, 1, &key, None)
+                .unwrap()
+        } else {
+            controller.action(&a.id, action).unwrap()
+        };
+        let error = "Agent stopped, but its private runtime directory could not be removed";
+        assert!(matches!(stopped.agents[0].status, ProcessStatus::Failed));
+        assert_eq!(stopped.agents[0].error.as_deref(), Some(error));
+        assert_eq!(
+            controller.snapshot().unwrap().agents[0].error.as_deref(),
+            Some(error)
+        );
+        assert!(controller.running.is_empty());
+        fs::remove_file(temp).unwrap();
+        let retry = controller.action(&a.id, Action::Start).unwrap();
+        assert!(matches!(retry.agents[0].status, ProcessStatus::Running));
+        controller.action(&a.id, Action::Stop).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn listener_self_exit_with_failed_cleanup_retires_entry_and_reports_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then_some(())
+    });
+    let temp = controller.running[&a.id]
+        .temporary
+        .as_ref()
+        .unwrap()
+        .clone();
+    let moved = temp.with_extension("moved");
+    fs::rename(&temp, &moved).unwrap();
+    fs::write(&temp, b"block directory removal").unwrap();
+    controller.record_error(&a.id, "credential read failed".into());
+    fs::write(dir.path().join("config/exit-listener"), b"").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let snapshot = controller.snapshot().unwrap();
+        if controller.running.is_empty() {
+            assert_eq!(
+                snapshot.agents[0].error.as_deref(),
+                Some("Agent stopped, but its private runtime directory could not be removed")
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "listener did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    fs::remove_file(temp).unwrap();
+    fs::remove_dir_all(moved).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn listener_exit_replaces_stale_credential_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then_some(())
+    });
+    controller.record_error(&a.id, "credential read failed".into());
+    fs::write(dir.path().join("config/exit-listener"), b"").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let snapshot = controller.snapshot().unwrap();
+        if controller.running.is_empty() {
+            assert_eq!(
+                snapshot.agents[0].error.as_deref(),
+                Some("Agent listener exited; restart to retry")
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "listener did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn stop_reports_cleanup_before_durable_disable_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let mut store = Store::open(config.clone()).unwrap();
+    let a = agent(dir.path());
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    let temp = controller.running[&a.id]
+        .temporary
+        .as_ref()
+        .unwrap()
+        .clone();
+    let moved = temp.with_extension("moved");
+    fs::rename(&temp, &moved).unwrap();
+    fs::write(&temp, b"block directory removal").unwrap();
+    fs::write(config.join("agents.json"), b"{malformed").unwrap();
+    assert!(
+        matches!(controller.action(&a.id, Action::Stop), Err(ref error) if error == "Agent stopped, but its private runtime directory could not be removed")
+    );
+    assert!(controller.running.is_empty());
+    assert_eq!(
+        controller.errors[&a.id],
+        "Agent stopped, but its private runtime directory could not be removed"
+    );
+    fs::remove_file(temp).unwrap();
+    fs::remove_dir_all(moved).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
 fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
     let a = agent(dir.path());
     let runtime = bundle(tools.path());
     let command = runtime
-        .command(&a, &Secret::parse(KEY, PUB).unwrap())
+        .command_with_defaults(
+            &a,
+            &Secret::parse(KEY, PUB).unwrap(),
+            &crate::BuildDefaults::default(),
+        )
         .unwrap();
     let env: BTreeMap<_, _> = command
         .get_envs()
@@ -387,7 +560,11 @@ fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
             a.environment
                 .insert(model_key.into(), "fixture-model".into());
             let command = runtime
-                .command(&a, &Secret::parse(KEY, PUB).unwrap())
+                .command_with_defaults(
+                    &a,
+                    &Secret::parse(KEY, PUB).unwrap(),
+                    &crate::BuildDefaults::default(),
+                )
                 .unwrap();
             let env: BTreeMap<_, _> = command
                 .get_envs()
@@ -417,7 +594,11 @@ fn blank_selectors_without_overrides_leave_harness_defaults_intact() {
     a.harness.provider.clear();
     a.harness.model.clear();
     let command = runtime
-        .command(&a, &Secret::parse(KEY, PUB).unwrap())
+        .command_with_defaults(
+            &a,
+            &Secret::parse(KEY, PUB).unwrap(),
+            &crate::BuildDefaults::default(),
+        )
         .unwrap();
     let env: BTreeMap<_, _> = command.get_envs().collect();
     for key in ["BUZZ_AGENT_PROVIDER", "BUZZ_AGENT_MODEL", "BUZZ_ACP_MODEL"] {
@@ -480,7 +661,7 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
     assert!(env[5].starts_with(tools.path().to_str().unwrap()));
     let run = &controller.running[&a.id];
     assert_eq!(run.databricks_host.as_deref(), Some("https://example.com"));
-    let temp = run.temporary.as_ref().unwrap().path().to_owned();
+    let temp = run.temporary.as_ref().unwrap().to_owned();
     assert!(temp.starts_with(config.join("runs")));
     assert_eq!(env[4], temp.to_str().unwrap());
     let cache = config.join("buzz-agent/oauth/databricks");
@@ -619,7 +800,6 @@ fn actual_bundled_acp_lazy_listener_start_restart_stop_and_quit_cleanup() {
         .temporary
         .as_ref()
         .unwrap()
-        .path()
         .to_owned();
     assert!(temp.exists());
     controller.action(&a.id, Action::Stop).unwrap();
@@ -630,7 +810,6 @@ fn actual_bundled_acp_lazy_listener_start_restart_stop_and_quit_cleanup() {
         .temporary
         .as_ref()
         .unwrap()
-        .path()
         .to_owned();
     controller.shutdown().unwrap();
     assert!(!temp.exists());
@@ -672,6 +851,130 @@ fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
     });
     assert_eq!(output.lines().nth(18), Some(""));
     controller.action(&a.id, Action::Stop).unwrap();
+}
+
+fn deployment_defaults() -> crate::BuildDefaults {
+    crate::BuildDefaults {
+        host: "https://build.example.com".into(),
+        filter: "team-*".into(),
+        model: "build-model".into(),
+        provider: "databricks_v2".into(),
+        owner_only: true,
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let bundle = bundle(dir.path());
+    let mut agent = agent(dir.path());
+    agent.harness.provider.clear();
+    agent.harness.model.clear();
+    agent.imported["record"]["respond_to"] = json!("anyone");
+    let before = serde_json::to_value(&agent).unwrap();
+    let defaults = deployment_defaults();
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let command = bundle
+        .command_with_defaults(&agent, &key, &defaults)
+        .unwrap();
+    let env: BTreeMap<_, _> = command
+        .get_envs()
+        .map(|(k, v)| (k.to_str().unwrap(), v.and_then(|v| v.to_str())))
+        .collect();
+    assert_eq!(env["BUZZ_AGENT_PROVIDER"], Some("databricks_v2"));
+    assert_eq!(env["BUZZ_AGENT_MODEL"], Some("build-model"));
+    assert_eq!(env["BUZZ_ACP_MODEL"], Some("build-model"));
+    assert_eq!(env["BUZZ_ACP_RESPOND_TO"], Some("owner-only"));
+    assert_eq!(env["BUZZ_ACP_ALLOWED_RESPOND_TO"], Some("owner-only"));
+    assert_eq!(
+        env.get("BUZZ_ACP_RESPOND_TO_ALLOWLIST").copied().flatten(),
+        None
+    );
+    let settings = databricks_with_defaults(&agent, &defaults)
+        .unwrap()
+        .unwrap();
+    let context =
+        model_context_with_defaults(&agent.harness, &agent.environment, &defaults).unwrap();
+    assert_eq!(context.host.as_deref(), Some(settings.host.as_str()));
+    assert_eq!(context.filter.as_deref(), Some(settings.filter.as_str()));
+    assert_eq!(settings.host, defaults.host);
+    assert_eq!(serde_json::to_value(&agent).unwrap(), before);
+    // Default-on is a presence capability; unmarked builds retain imported policy.
+    let public = crate::BuildDefaults::default();
+    let command = bundle.command_with_defaults(&agent, &key, &public).unwrap();
+    assert!(command
+        .get_envs()
+        .any(|(k, v)| k == "BUZZ_ACP_RESPOND_TO" && v == Some(std::ffi::OsStr::new("anyone"))));
+}
+
+#[test]
+fn saved_selectors_and_environment_override_build_floor_including_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = agent(dir.path());
+    let defaults = deployment_defaults();
+    agent.harness.provider = "databricks_v2".into();
+    agent.harness.databricks = Some(crate::connection::DatabricksSettings {
+        host: "https://saved.example.com".into(),
+        filter: "".into(),
+    });
+    let harness = defaults.resolve(&agent.harness, &agent.environment);
+    assert_eq!(harness.model, "test-model");
+    assert_eq!(
+        databricks_with_defaults(&agent, &defaults)
+            .unwrap()
+            .unwrap()
+            .host,
+        "https://saved.example.com"
+    );
+    agent.environment.insert(
+        "DATABRICKS_HOST".into(),
+        "https://override.example.com".into(),
+    );
+    let context =
+        model_context_with_defaults(&agent.harness, &agent.environment, &defaults).unwrap();
+    assert_eq!(
+        context.host.as_deref(),
+        Some("https://override.example.com")
+    );
+    assert_eq!(context.filter.as_deref(), Some(""));
+    agent
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "".into());
+    assert!(defaults
+        .resolve(&agent.harness, &agent.environment)
+        .model
+        .is_empty());
+    agent
+        .environment
+        .insert("DATABRICKS_HOST".into(), "".into());
+    assert!(databricks_with_defaults(&agent, &defaults).is_err());
+    agent
+        .environment
+        .insert("BUZZ_AGENT_PROVIDER".into(), "".into());
+    assert!(databricks_with_defaults(&agent, &defaults)
+        .unwrap()
+        .is_none());
+    assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+    agent.environment.remove("BUZZ_AGENT_PROVIDER");
+    agent
+        .environment
+        .insert("DATABRICKS_TOKEN".into(), "SYNTHETIC".into());
+    assert!(databricks_with_defaults(&agent, &defaults).is_err());
+    assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+}
+
+#[test]
+fn external_harnesses_never_receive_buzz_agent_build_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = agent(dir.path());
+    agent.harness.command = "/usr/local/bin/goose".into();
+    agent.harness.provider.clear();
+    agent.harness.model.clear();
+    let harness = deployment_defaults().resolve(&agent.harness, &agent.environment);
+    assert!(harness.provider.is_empty());
+    assert!(harness.model.is_empty());
+    assert!(harness.databricks.is_none());
 }
 
 #[test]
@@ -717,6 +1020,42 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
 }
 
 #[test]
+fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    for provider in ["databricks_v2", "databricks-v2", "databricks"] {
+        for source in ["saved", "environment", "build"] {
+            let mut agent = agent(dir.path());
+            let mut defaults = deployment_defaults();
+            agent.harness.provider.clear();
+            match source {
+                "saved" => agent.harness.provider = provider.into(),
+                "environment" => {
+                    agent
+                        .environment
+                        .insert("BUZZ_AGENT_PROVIDER".into(), provider.into());
+                }
+                _ => defaults.provider = provider.into(),
+            }
+            let context =
+                model_context_with_defaults(&agent.harness, &agent.environment, &defaults);
+            assert_eq!(
+                context.is_ok(),
+                provider != "databricks",
+                "{source}: {provider}"
+            );
+            // Legacy manual selection still resolves the same OAuth workspace for Start.
+            assert_eq!(
+                databricks_with_defaults(&agent, &defaults)
+                    .unwrap()
+                    .unwrap()
+                    .host,
+                defaults.host
+            );
+        }
+    }
+}
+
+#[test]
 #[cfg(unix)]
 fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
     use std::os::unix::fs::PermissionsExt;
@@ -730,6 +1069,7 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
     fs::write(&extension, "export default function() {};").unwrap();
     let mut a = agent(dir.path());
     a.harness.command = adapter.display().to_string();
+    a.imported["record"]["respond_to"] = json!("anyone");
     a.harness.provider = "custom".into();
     a.harness.model = "namespace/exact.id".into();
     a.harness.args = vec![
@@ -752,12 +1092,24 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
     let store = Store::open(root).unwrap();
     let saved = store.agents().unwrap().remove(0);
     let key = Secret::parse(KEY, PUB).unwrap();
-    let command = runtime.command(&saved, &key).unwrap();
+    let command = runtime
+        .command_with_defaults(&saved, &key, &deployment_defaults())
+        .unwrap();
     let env: BTreeMap<_, _> = command
         .get_envs()
-        .map(|(k, v)| (k.to_str().unwrap(), v.unwrap().to_str().unwrap()))
+        .filter_map(|(k, v)| v.map(|v| (k.to_str().unwrap(), v.to_str().unwrap())))
         .collect();
     assert_eq!(env["BUZZ_ACP_MODEL"], "custom/namespace/exact.id");
+    assert_eq!(env["BUZZ_ACP_RESPOND_TO"], "owner-only");
+    assert_eq!(env["BUZZ_ACP_ALLOWED_RESPOND_TO"], "owner-only");
+    for key in [
+        "BUZZ_AGENT_PROVIDER",
+        "BUZZ_AGENT_MODEL",
+        "DATABRICKS_HOST",
+        "DATABRICKS_MODEL_FILTER",
+    ] {
+        assert!(!env.contains_key(key));
+    }
     assert_eq!(
         env["BUZZ_ACP_AGENT_ARGS"],
         format!(
@@ -851,8 +1203,9 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
         .bundle
         .as_ref()
         .unwrap()
-        .command(&configured, &key)
+        .command_with_defaults(&configured, &key, &deployment_defaults())
         .unwrap();
+    assert!(launch.get_envs().all(|(key, _)| key != "BUZZ_ACP_MODEL"));
     assert_eq!(
         launch
             .get_envs()

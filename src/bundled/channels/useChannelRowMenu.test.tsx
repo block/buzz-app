@@ -27,6 +27,7 @@ const sections = (
     sections: groups,
     assignments: placement === "group:work" ? { alpha: "work" } : {},
     starred: placement === "starred" ? ["alpha"] : [],
+    muted: [],
   });
 const initial = {
   sections: sections("group:work"),

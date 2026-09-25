@@ -9,6 +9,7 @@ import { isGoose, type AgentDraft } from "./agent-edit";
 export function AgentHarnessEditor({
   draft,
   options,
+  defaultProvider,
   piProviders = [],
   onChange,
   disabled = false,
@@ -17,6 +18,7 @@ export function AgentHarnessEditor({
   piProviders?: string[];
   options: NonNullable<ControlSnapshot["harnessOptions"]>;
   disabled?: boolean;
+  defaultProvider?: string | undefined;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const executable = draft.command.replaceAll("\\", "/").split("/").at(-1);
@@ -84,7 +86,13 @@ export function AgentHarnessEditor({
         inputLabel="Custom provider"
         value={draft.provider}
         options={[
-          { value: "", label: "Not set" },
+          {
+            value: "",
+            label:
+              draft.command === "buzz-agent" && defaultProvider
+                ? `Build default (${defaultProvider})`
+                : "Not set",
+          },
           ...(harness?.providers ?? []),
           ...(harness?.label === "Pi"
             ? piProviders

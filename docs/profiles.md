@@ -5,6 +5,25 @@ public identity, human or agent. It uses the current session's shared profile
 directory. Agents retains agent-specific configuration and its page-local editor. Profiles
 can dispatch existing local Start/Stop/Restart commands for an exact managed
 identity in the active community; profile metadata and library hints grant no authority.
+
+**Local agent** is a read-only summary from the app-owned native `AgentControl`
+snapshot. It appears only for a record with the exact profile key whose relay
+origin matches the active community scope (`sameCommunityAgents`). Native
+custody is app-wide: the viewer is not an owner check, so any account in this
+app on the same relay sees the same local record. It
+shows process status (still "relay readiness unverified", not a listening badge),
+saved harness/provider/model/workspace (labelled as saved settings, since
+environment overrides may change what is launched), collapsible instructions,
+saved-vs-running revision drift and diagnostics. Environment keys and
+arguments are not shown. Opening the Info tab requests a status read; concurrent
+requests coalesce. This summary adds no polling and observes the profile actions'
+existing refresh. A failed read keeps the last evidence.
+The host error, runtime-unavailable reason, unconfirmed-status notice and Retry
+are shown once, by the profile actions. Browser/unavailable hosts, loading/error
+without evidence, unknown keys and records saved for another community render
+nothing, leaving the public identity. Community switches re-filter immediately.
+Start/Stop/Restart are the separate profile actions above; Edit, harness logs and
+memory stay on Agents or need separate contracts.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
 The Info tab's “Latest activity” card shows up to three recently updated assistant

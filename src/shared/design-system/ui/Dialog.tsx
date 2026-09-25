@@ -12,6 +12,8 @@ export type DialogProps = {
   children: ReactNode;
   actions?: ReactNode;
   closeLabel?: string;
+  /** Reserve viewport-capped space for changing content; scroll only the body. */
+  height?: "content" | "stable";
   /** Expanded reading surfaces retain the same modal/focus behavior. */
   size?: "default" | "expanded";
   /** Keep frequent surfaces such as search palettes immediate. */
@@ -34,6 +36,7 @@ export function Dialog({
   size = "default",
   preventClose = false,
   motion = "default",
+  height = "content",
   initialFocus,
   finalFocus,
 }: DialogProps) {
@@ -62,6 +65,7 @@ export function Dialog({
         <BaseDialog.Popup
           data-buzz-ui=""
           className="buzz-dialog gap-0"
+          data-height={height}
           data-size={size}
           data-motion={transition}
           aria-modal="true"

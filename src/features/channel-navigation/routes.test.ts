@@ -1,7 +1,9 @@
 import { expect, it } from "vitest";
 import { isChannelRoute, newSessionParent } from "./routes";
 
-it("accepts existing new-message and explicit parent-only new-session routes", () => {
+it("accepts empty destinations, new-message and explicit parent-only new-session routes", () => {
+  expect(isChannelRoute("empty")).toBe(true);
+  expect(newSessionParent("empty")).toBeUndefined();
   expect(isChannelRoute("new-message")).toBe(true);
   const params = { kind: "new-session", parentId: "parent" };
   expect(isChannelRoute(params)).toBe(true);

@@ -17,5 +17,9 @@ export function newSessionParent(
 }
 
 export function isChannelRoute(params: JsonValue) {
-  return params === "new-message" || newSessionParent(params) !== undefined;
+  return (
+    params === "new-message" ||
+    params === "empty" ||
+    newSessionParent(params) !== undefined
+  );
 }

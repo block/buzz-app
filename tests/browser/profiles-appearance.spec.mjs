@@ -117,17 +117,22 @@ for (const mode of ["light", "dark"]) {
       expect(await key.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
         false,
       );
-      // A narrow page scrolls its tab strip, not the profile's content column.
+      // The human profile has no Memories tab; keyboard navigation stays
+      // confined to the available tabs, including at narrow widths.
       const tabs = region.getByRole("tablist", { name: "Profile sections" });
       const infoTab = tabs.getByRole("tab", { name: "Info", exact: true });
-      const memories = tabs.getByRole("tab", { name: "Memories", exact: true });
+      const channels = tabs.getByRole("tab", {
+        name: "Channels",
+        exact: true,
+      });
+      await expect(tabs.getByRole("tab", { name: "Memories" })).toHaveCount(0);
       await infoTab.focus();
       await infoTab.press("End");
-      await expect(memories).toBeFocused();
-      await expect(memories).toBeInViewport({ ratio: 1 });
-      await memories.press("Enter");
-      await expect(memories).toHaveAttribute("aria-selected", "true");
-      await memories.press("Home");
+      await expect(channels).toBeFocused();
+      await expect(channels).toBeInViewport({ ratio: 1 });
+      await channels.press("Enter");
+      await expect(channels).toHaveAttribute("aria-selected", "true");
+      await channels.press("Home");
       await infoTab.press("Enter");
       await expect(infoTab).toHaveAttribute("aria-selected", "true");
       await copy.scrollIntoViewIfNeeded();

@@ -2,12 +2,16 @@ import {
   Component,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
+import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
+import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { personalGroups } from "../channel-templates/setup";
 import type { TemplateProviders } from "../channel-templates/provider";
 import type { RelayData } from "../relay/service";
@@ -20,16 +24,22 @@ import { Button } from "../../shared/design-system/ui/Button";
 import {
   ContextMenuRoot,
   MenuItem,
+  MenuIcon,
   MenuPopup,
+  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
+  BellIcon,
+  BellSlashIcon,
   CaretRightIcon,
   PlusIcon,
 } from "../../shared/design-system/icons/index";
+import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
+import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
 import { SidebarSectionIcon } from "../../bundled/channels/SidebarSectionIcon";
@@ -137,6 +147,13 @@ function ReadySidebar({
 }) {
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const mute = useOptimisticMute(queries.sidebarPreferences.setMute);
+  const rowMenuGeneration = useRef(0);
+  const [readWrite, setReadWrite] = useState<{
+    pending: boolean;
+    error?: string;
+  }>();
+  const [rowFocus, setRowFocus] = useState<string>();
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
@@ -144,6 +161,21 @@ function ReadySidebar({
   const personal = personalGroups(kitState.entries)?.record.value;
   const groups = personal?.type === "groups" ? personal : undefined;
   const hiddenDms = useHiddenDms(scope, queries, list);
+  const lifecycle = queries.channelLifecycle;
+  const dmVisibility = useSyncExternalStore(
+    lifecycle.subscribe,
+    lifecycle.snapshot,
+    lifecycle.snapshot,
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a completed roster refresh also refreshes per-viewer visibility.
+  useEffect(() => {
+    if (list.status === "ready") void lifecycle.refreshVisibility();
+  }, [lifecycle, list.asOf, list.status]);
+  const [lifecycleDialog, setLifecycleDialog] = useState<{
+    channel: ChannelSummary;
+    action: ChannelLifecycleAction;
+  }>();
+  const lifecycleFocus = useRef<string | undefined>(undefined);
   const sidebar = useSidebarView(
     scope,
     list.status === "ready" && preferences.status !== "loading",
@@ -236,6 +268,35 @@ function ReadySidebar({
       mounted.current = false;
     };
   }, []);
+  const chooseLifecycle = (
+    channel: ChannelSummary,
+    action: ChannelLifecycleAction,
+  ) => {
+    // Let the existing context menu restore focus before opening confirmation.
+    requestAnimationFrame(() => {
+      if (mounted.current) setLifecycleDialog({ channel, action });
+    });
+  };
+  useLayoutEffect(() => {
+    if (!lifecycleFocus.current || lifecycleDialog) return;
+    const id = lifecycleFocus.current;
+    lifecycleFocus.current = undefined;
+    const rows = [
+      ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
+        "[data-channel-id]",
+      ) ?? []),
+    ];
+    const row =
+      rows.find(
+        (row) => row.dataset.channelId === id && row.getClientRects().length,
+      ) ?? rows.find((row) => row.getClientRects().length);
+    (
+      row ??
+      sidebar.list.current
+        ?.closest("aside")
+        ?.querySelector<HTMLButtonElement>("button")
+    )?.focus({ preventScroll: true });
+  }, [lifecycleDialog, sidebar.list]);
   const select = useCallback(
     (id: string) => {
       if (!viewer || relay.snapshot().session !== queries) return;
@@ -315,9 +376,10 @@ function ReadySidebar({
           })),
           assignments: groups.assignments,
           starred: preferences.data?.starred ?? [],
+          muted: preferences.data?.muted ?? [],
         }
       : preferences.data,
-    hiddenDms.hiddenIds,
+    new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
   );
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
@@ -341,22 +403,142 @@ function ReadySidebar({
         </MenuItem>,
       );
     }
+    const muteable =
+      queries.sidebarPreferences.muteWritable && !!preferences.data;
+    const readable = queries.unread.sync().capability === "frontier-sync";
+    if (actions.length && (muteable || readable))
+      actions.push(<MenuSeparator key="attention-separator" />);
+    if (muteable) {
+      const intent = mute.intents.get(channel.id);
+      const muted = intent?.pending
+        ? intent.muted
+        : (preferences.data?.muted.includes(channel.id) ?? false);
+      actions.push(
+        <MenuItem
+          key="mute"
+          closeOnClick={false}
+          disabled={readWrite?.pending ?? false}
+          onClick={() => changeMute(channel.id, channel.name, !muted)}
+        >
+          <MenuIcon>
+            {muted ? <BellIcon size={14} /> : <BellSlashIcon size={14} />}
+          </MenuIcon>
+          {muted ? "Unmute" : "Mute"}
+        </MenuItem>,
+      );
+    }
+    if (readable)
+      actions.push(
+        <ChannelReadMenuItem
+          key="read"
+          unread={queries.unread}
+          channelId={channel.id}
+          pending={readWrite?.pending ?? false}
+          run={(action) => runReadAction(channel.id, action)}
+        />,
+      );
+    if (channel.channelType !== "session" && !channel.archived) {
+      actions.push(
+        <ChannelLifecycleMenu
+          key="lifecycle"
+          separator={actions.length > 0}
+          channelId={channel.id}
+          lifecycle={lifecycle}
+          disabled={!!lifecycleDialog}
+          choose={(action) => chooseLifecycle(channel, action)}
+        />,
+      );
+    }
     return actions;
   };
   const {
     rowMenu,
     open: openMenu,
-    close: closeRowMenu,
+    close: closeMenu,
   } = useChannelRowMenu(sections, rowActions);
   const openRowMenu = useCallback(
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
       startingSession.current = false;
+      rowMenuGeneration.current++;
+      setReadWrite(undefined);
       openMenu(channel, sectionKey, anchor);
     },
     [openMenu],
   );
+  const closeRowMenu = useCallback(() => {
+    rowMenuGeneration.current++;
+    setReadWrite(undefined);
+    closeMenu();
+  }, [closeMenu]);
+  useLayoutEffect(() => {
+    if (!rowFocus) return;
+    sidebar.list.current
+      ?.querySelector<HTMLButtonElement>(
+        `[data-channel-id="${CSS.escape(rowFocus)}"]`,
+      )
+      ?.focus({ preventScroll: true });
+    setRowFocus(undefined);
+  }, [rowFocus, sidebar.list]);
+  const runReadAction = async (
+    channelId: string,
+    action: () => Promise<unknown>,
+  ) => {
+    const generation = rowMenuGeneration.current;
+    setReadWrite({ pending: true });
+    try {
+      await action();
+      if (!mounted.current || generation !== rowMenuGeneration.current) return;
+      // Startup can move the row; resolve its current owner after the commit.
+      setRowFocus(channelId);
+      closeRowMenu();
+    } catch (error) {
+      if (!mounted.current || generation !== rowMenuGeneration.current) return;
+      setReadWrite({
+        pending: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  const changeMute = (channelId: string, name: string, muted: boolean) => {
+    mute.change(channelId, name, muted);
+    setRowFocus(channelId);
+    closeRowMenu();
+  };
   return (
     <>
+      {lifecycleDialog && (
+        <ChannelLifecycleDialog
+          channelId={lifecycleDialog.channel.id}
+          channelName={lifecycleDialog.channel.name}
+          action={lifecycleDialog.action}
+          lifecycle={lifecycle}
+          close={() => {
+            lifecycleFocus.current = lifecycleDialog.channel.id;
+            setLifecycleDialog(undefined);
+          }}
+          completed={() => {
+            const id = lifecycleDialog.channel.id;
+            lifecycleFocus.current = id;
+            setLifecycleDialog(undefined);
+            if (current?.id === id) {
+              const next = sections
+                .flatMap((section) => section.rows)
+                .find((channel) => channel.id !== id);
+              if (next) select(next.id);
+              else {
+                writeView(scope, "selected-channel", undefined);
+                void navigator.open({
+                  version: 1,
+                  kind: "page",
+                  pluginId: "buzz.channels",
+                  pageId: "channels",
+                  route: { version: 1, params: "empty" },
+                });
+              }
+            }
+          }}
+        />
+      )}
       <div className="shell-sidebar" style={{ width: sidebar.width }}>
         <Panel as="aside" aria-label="Channel sidebar">
           <div className={styles.sidebar}>
@@ -408,6 +590,14 @@ function ReadySidebar({
                     </Button>
                   </>
                 )}
+              </div>
+            )}
+            {dmVisibility.status === "error" && (
+              <div role="alert">
+                Hidden conversations could not be refreshed.{" "}
+                <Button onClick={() => void lifecycle.refreshVisibility()}>
+                  Retry hidden conversations
+                </Button>
               </div>
             )}
             <SidebarUnread listRef={sidebar.list}>
@@ -577,6 +767,10 @@ function ReadySidebar({
                             }
                           >
                             {actions}
+                            {readWrite?.pending && <p role="status">Saving…</p>}
+                            {readWrite?.error && (
+                              <p role="alert">{readWrite.error}</p>
+                            )}
                           </MenuPopup>
                         </ContextMenuRoot>
                       );
@@ -596,9 +790,39 @@ function ReadySidebar({
                 <p className={styles.empty}>No channels yet.</p>
               )}
             </SidebarUnread>
+            {[...mute.intents.values()]
+              .filter((intent) => !intent.pending)
+              .map((intent) => (
+                <ToastNotice
+                  key={intent.channelId}
+                  title={`Couldn’t ${intent.muted ? "mute" : "unmute"} ${intent.name}`}
+                  description={intent.error ?? "Please try again."}
+                  tone="warning"
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() =>
+                      changeMute(intent.channelId, intent.name, intent.muted)
+                    }
+                  >
+                    Retry
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      mute.dismiss(intent.channelId);
+                      setRowFocus(intent.channelId);
+                    }}
+                  >
+                    Dismiss
+                  </Button>
+                </ToastNotice>
+              ))}
             {preferences.status === "error" ? (
               <ToastNotice
-                title="Saved groups and stars couldn’t refresh"
+                title="Saved sidebar preferences couldn’t refresh"
                 description="Your conversations are still available."
                 tone="warning"
               >

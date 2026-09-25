@@ -1,3 +1,4 @@
+import { wheel } from "./timeline.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -36,37 +37,24 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   );
   // Real wheel input must reveal a complete row inside the clipped solid frame.
   // Merely finding a control in the DOM, or scrolling it into a thin strip, fails.
-  for (let gesture = 0; gesture < 12; gesture++) {
+  const visibleTop = Math.max(bounds.y, 0);
+  const visibleBottom = Math.min(bounds.y + bounds.height, 400);
+  for (let gesture = 0; gesture < 30; gesture++) {
     const target = await row.boundingBox();
     if (
-      target.y >= bounds.y &&
-      target.y + target.height <= bounds.y + bounds.height
+      target.y >= visibleTop + 8 &&
+      target.y + target.height <= visibleBottom - 8
     )
       break;
-    // A changed scrollTop only proves that scrolling started. In WebKit the
-    // remaining wheel motion can otherwise clip the row after the assertions.
-    const settled = await scroller.evaluateHandle((element) => {
-      const state = { done: false };
-      element.addEventListener(
-        "scrollend",
-        () => {
-          state.done = true;
-        },
-        { once: true },
-      );
-      return state;
-    });
-    try {
-      await page.mouse.wheel(
-        0,
-        bounds.height * (target.y < bounds.y ? -0.4 : 0.4),
-      );
-      await expect
-        .poll(() => settled.evaluate((state) => state.done))
-        .toBe(true);
-    } finally {
-      await settled.dispose();
-    }
+    const distance =
+      target.y < visibleTop + 8
+        ? target.y - visibleTop - 8
+        : target.y + target.height - visibleBottom + 8;
+    await wheel(
+      page,
+      Math.sign(distance) * Math.max(Math.abs(distance), 24),
+      scroller,
+    );
   }
   await expect(row).toBeInViewport({ ratio: 1 });
   await expect(toggle).toBeInViewport({ ratio: 1 });
@@ -296,6 +284,14 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await tab();
     await expect(
       sections.getByRole("button", { name: "Notifications", exact: true }),
+    ).toBeFocused();
+    await tab();
+    await expect(
+      sections.getByRole("button", { name: "Hosted communities", exact: true }),
+    ).toBeFocused();
+    await tab();
+    await expect(
+      sections.getByRole("button", { name: "Invites", exact: true }),
     ).toBeFocused();
     await tab();
     await expect(

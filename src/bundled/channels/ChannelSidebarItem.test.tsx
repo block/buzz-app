@@ -13,7 +13,6 @@ import type { RelaySession } from "../../features/relay/session";
 import type { UnreadSnapshot } from "../../features/relay/unread";
 import type { PresenceStatus } from "../../features/presence/presence";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
-import { ContextMenuRoot } from "../../shared/design-system/ui/Menu";
 
 afterEach(cleanup);
 
@@ -245,25 +244,23 @@ it.each(["ContextMenu", "F10"])(
       channelType: "stream" as const,
     };
     render(
-      <ContextMenuRoot>
-        <ChannelSidebarItem
-          channel={channel}
-          session={owner().session}
-          working={false}
-          selected={undefined}
-          collapsed={false}
-          onToggle={onToggle}
-          draft={false}
-          draftSelected={false}
-          sessions={[{ id: "child", name: "Plan", channelType: "session" }]}
-          onSelect={onSelect}
-          onNewSession={vi.fn()}
-          onOpenThread={vi.fn()}
-          menuEnabled
-          sectionKey="group:work"
-          onOpenMenu={onOpenMenu}
-        />
-      </ContextMenuRoot>,
+      <ChannelSidebarItem
+        channel={channel}
+        session={owner().session}
+        working={false}
+        selected={undefined}
+        collapsed={false}
+        onToggle={onToggle}
+        draft={false}
+        draftSelected={false}
+        sessions={[{ id: "child", name: "Plan", channelType: "session" }]}
+        onSelect={onSelect}
+        onNewSession={vi.fn()}
+        onOpenThread={vi.fn()}
+        menuEnabled
+        sectionKey="group:work"
+        onOpenMenu={onOpenMenu}
+      />,
     );
     const parent = screen.getByRole("button", { name: "Alpha" });
     fireEvent.keyDown(parent, { key, shiftKey: key === "F10" });

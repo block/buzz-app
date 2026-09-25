@@ -105,11 +105,6 @@
   .buzz-dialog-body {
     min-width: 0;
   }
-  .buzz-dialog[data-size="expanded"] .buzz-dialog-body {
-    min-height: 0;
-    flex: 1;
-    overflow: auto;
-  }
 
   .buzz-dialog-content {
     padding-block: var(--dialog-padding);
@@ -119,6 +114,27 @@
     flex-wrap: wrap;
     justify-content: end;
     gap: var(--space-3);
+  }
+  /* Opt in for searches and switching views, not content-sized forms. */
+  :where(.buzz-dialog[data-height="stable"]) {
+    height: min(36rem, calc(100dvh - 2 * var(--space-6)));
+  }
+  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-header,
+  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-actions {
+    flex-shrink: 0;
+  }
+  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    /* Preserve inset row backgrounds and focus rings inside the scrollport. */
+    margin-inline: calc(-1 * var(--dialog-padding));
+    padding-inline: var(--dialog-padding);
+  }
+  .buzz-dialog[data-size="expanded"] .buzz-dialog-body {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
   }
   .buzz-tooltip-positioner {
     z-index: var(--layer-tooltip);

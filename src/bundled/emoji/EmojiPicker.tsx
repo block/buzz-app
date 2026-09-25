@@ -288,9 +288,9 @@ export function EmojiPicker({
         anchor={
           reaction
             ? externalTrigger?.ref
-            : () => controls.current?.offsetParent ?? null
+            : () => controls.current?.closest("form") ?? trigger.current
         }
-        sideOffset={reaction ? 6 : 8}
+        sideOffset={reaction ? 6 : 4}
         collisionPadding={16}
         // Each media panel focuses its search after its asynchronous content mounts.
         initialFocus={false}
@@ -304,12 +304,10 @@ export function EmojiPicker({
           ),
           overflow: "hidden",
         }}
-        finalFocus={() =>
+        finalFocus={
           externalTrigger
-            ? externalTrigger.finalFocus()
-            : accepted.current && !reaction
-              ? false
-              : trigger.current
+            ? externalTrigger.finalFocus
+            : !accepted.current || !!reaction
         }
       >
         {picker}

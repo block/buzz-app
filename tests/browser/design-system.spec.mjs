@@ -81,10 +81,14 @@ test("shared tokens reach app controls without history or chip overrides", async
 
   for (const mode of ["Light", "Dark"]) {
     await page.getByRole("radio", { name: mode, exact: true }).check();
+    await expect(page.locator("body")).toHaveCSS("scrollbar-width", "thin");
+    await expect(page.locator("body")).toHaveCSS(
+      "scrollbar-color",
+      "rgb(128, 128, 128) rgba(0, 0, 0, 0)",
+    );
     const override = await page.addStyleTag({
       content: `:root, :root[data-color-mode] {
         --affordance-subtle: rgb(12, 34, 56);
-        --affordance-accent: rgb(11, 22, 33);
         --text-standard: rgb(10, 20, 30);
         --text-label: 19px;
         --space-6: 29px;
@@ -109,7 +113,7 @@ test("shared tokens reach app controls without history or chip overrides", async
       }
       await expect(page.locator("#probe-chip")).toHaveCSS(
         "background-color",
-        "rgb(11, 22, 33)",
+        "rgb(12, 34, 56)",
       );
       for (const name of ["buzz-popover-popup", "popup"]) {
         const surface = page.locator(`#probe-${name}`);

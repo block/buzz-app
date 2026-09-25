@@ -500,6 +500,7 @@
   --text-link: var(--blue-12);
   --affordance-link-hover: var(--blue-4);
   --border-standard: var(--neutral-3);
+  --scrollbar-thumb: var(--neutral-8);
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
   --border-danger: var(--red-9);
@@ -545,6 +546,7 @@
   --text-link: var(--blue-12);
   --affordance-link-hover: var(--blue-4);
   --border-standard: var(--neutral-4);
+  --scrollbar-thumb: var(--neutral-9);
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
   --border-danger: var(--red-9);

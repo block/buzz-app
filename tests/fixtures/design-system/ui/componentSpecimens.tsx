@@ -62,6 +62,7 @@ import { FullPageSurface } from "../../../../src/shared/design-system/ui/FullPag
 import { PreviewCard } from "../../../../src/shared/design-system/ui/PreviewCard";
 import type { ChipAddress } from "../../../../src/shared/design-system/chips/address";
 import { chipFaces } from "../../../../src/shared/design-system/chips/faceResolver";
+import { ComposerSpecimen } from "./ComposerSpecimen";
 
 const DESTINATIONS = [
   { value: "home", label: "Home" },
@@ -235,7 +236,6 @@ function AvatarSpecimen() {
           <IconButton
             aria-label="View Morgan profile"
             size="large"
-            shape="round"
             icon={
               <Avatar src={avatarUrl} alt="" fallback="Morgan" size="fill" />
             }
@@ -243,7 +243,6 @@ function AvatarSpecimen() {
           <IconButton
             aria-label="View Alex profile"
             size="large"
-            shape="round"
             icon={<Avatar alt="" fallback="Alex" size="fill" />}
           />
         </div>
@@ -522,6 +521,21 @@ function NavigationItemSpecimen() {
             trailing={<span className="text-body-sm">3</span>}
             selected={selected === "desktop-new"}
             onClick={() => setSelected("desktop-new")}
+          />
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup label="Picker option — even padding and immediate hover feedback">
+        <div className="component-navigation-section-demo">
+          <NavigationItem
+            variant="option"
+            label="Alex"
+            icon={<Avatar fallback="Alex" alt="" size="default" />}
+          />
+          <NavigationItem
+            variant="option"
+            label="Unavailable"
+            disabled
+            icon={<Avatar fallback="Unavailable" alt="" size="default" />}
           />
         </div>
       </SpecimenGroup>
@@ -960,6 +974,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   ),
   "panel-header": PanelHeaderSpecimen,
   "search-field": SearchExamples,
+  composer: ComposerSpecimen,
   "navigation-section": NavigationSectionSpecimen,
   "navigation-item": NavigationItemSpecimen,
 };

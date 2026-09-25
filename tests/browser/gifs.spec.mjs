@@ -217,7 +217,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     return color;
   });
   await expect(composer).toHaveCSS("border-top-color", composerBorder);
-  await expect(composer).toHaveCSS("box-shadow", "none");
+  await expect(composer).not.toHaveCSS("box-shadow", "none");
   await expect(search).toHaveAttribute("spellcheck", "false");
   await expect(search).toHaveAttribute("autocorrect", "off");
   await expect(search).toHaveAttribute("autocapitalize", "off");
@@ -231,6 +231,12 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveCSS("color", "rgb(0, 0, 0)");
   await expect(search).toHaveCSS("font-family", /Inter Variable/);
   const gifSearchPosition = await searchFrame.boundingBox();
+  const tabListBox = await picker.getByRole("tablist").boundingBox();
+  expect(gifSearchPosition.x).toBeCloseTo(tabListBox.x, 1);
+  expect(gifSearchPosition.y - tabListBox.y - tabListBox.height).toBeCloseTo(
+    16,
+    1,
+  );
   expect(gifSearchPosition.width).toBeGreaterThan(0);
   expect(gifSearchPosition.x).toBeGreaterThanOrEqual(
     (await picker.boundingBox()).x,

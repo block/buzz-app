@@ -82,10 +82,58 @@ test("built viewer loads every specimen and foundation without app connections",
     }
   }
   await expect(
-    nav.getByRole("link", { name: /Composer|Conversation|Agent work/ }),
+    nav.getByRole("link", { name: /Conversation|Agent work/ }),
   ).toHaveCount(0);
   expect(failures).toEqual([]);
   expect(sockets).toEqual([]);
+});
+
+test("composer documents interactive, pending, failure and narrow states", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/composer`);
+  const interactive = page.getByRole("form", { name: "Interactive message" });
+  const input = interactive.getByRole("textbox", {
+    name: "Interactive message",
+  });
+  const send = interactive.getByRole("button", { name: "Send message" });
+
+  await expect(send).toBeDisabled();
+  await input.fill("Ready to review");
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect(input).toHaveValue("");
+  await expect(interactive.getByRole("status")).toHaveText(
+    "Message sent in this local preview.",
+  );
+
+  const sending = page.getByRole("form", { name: "Sending message" });
+  await expect(sending).toHaveAttribute("aria-busy", "true");
+  await expect(
+    sending.getByRole("button", { name: "Sending message" }),
+  ).toBeDisabled();
+
+  const failed = page.getByRole("form", { name: "Message with error" });
+  await expect(failed.getByRole("alert")).toContainText(
+    "Custom emoji could not be prepared.",
+  );
+  await failed.getByRole("button", { name: "Retry" }).click();
+  await expect(failed.getByRole("alert")).toHaveCount(0);
+  await expect(failed.getByRole("status")).toHaveText(
+    "Message preparation recovered.",
+  );
+
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expect(
+      page.getByRole("form", { name: "Narrow message" }),
+    ).toBeVisible();
+  }
 });
 
 test("icon inventory is routed, complete, decorative, and responsive", async ({

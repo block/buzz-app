@@ -57,6 +57,7 @@ beforeEach(() => {
   vi.stubGlobal(
     "Audio",
     class {
+      pause = vi.fn();
       play() {
         return Promise.resolve();
       }
@@ -225,6 +226,7 @@ it("locks recipient edits until outbox hydration finishes, then accepts them", a
   vi.stubGlobal(
     "Audio",
     class {
+      pause = vi.fn();
       play = play;
     },
   );

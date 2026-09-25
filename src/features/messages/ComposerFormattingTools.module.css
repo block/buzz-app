@@ -2,10 +2,9 @@
   display: flex;
   flex: 1;
   min-width: 0;
-  min-height: 40px;
+  min-height: var(--size-control-sm);
   align-items: center;
   gap: var(--space-1);
-  padding-block: var(--space-1);
 }
 .ingress,
 .expanded,

@@ -31,9 +31,8 @@ import { formatBinding, isApplePlatform } from "../shortcuts/format";
 import { composerFormats, type ComposerFormat } from "./composer-dom";
 import styles from "./ComposerFormattingTools.module.css";
 
-// Match old Buzz's MessageComposerToolbar: simultaneous pop-layout groups,
-// 400/28 spring, and a 150ms delay for the close control and formatting options.
-const spring = { type: "spring", stiffness: 400, damping: 28 } as const;
+// A short ease-out gives immediate feedback without an entrance delay.
+const reveal = { duration: 0.14, ease: [0.23, 1, 0.32, 1] } as const;
 const options = [
   ["Bold", TextBIcon],
   ["Italic", TextItalicIcon],
@@ -78,6 +77,8 @@ export function ComposerFormattingTools({
 }) {
   const [open, setOpen] = useState(false);
   const reduceMotion = useReducedMotion();
+  const [keyboardToggle, setKeyboardToggle] = useState(false);
+  const instant = reduceMotion || keyboardToggle;
   const openToggle = useRef<HTMLButtonElement>(null);
   const closedToggle = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
@@ -89,17 +90,16 @@ export function ComposerFormattingTools({
   }, [open]);
   const change = (next: boolean, keyboard: boolean) => {
     restoreFocus.current = keyboard;
+    setKeyboardToggle(keyboard);
     setOpen(next);
   };
-  const transition = reduceMotion ? { duration: 0 } : spring;
-  const delayed = reduceMotion ? { duration: 0 } : { ...spring, delay: 0.15 };
-  const faded = { opacity: 0, scale: reduceMotion ? 1 : 0.95 };
+  const transition = instant ? { duration: 0 } : reveal;
+  const faded = { opacity: 0, scale: instant ? 1 : 0.95 };
   const formatToggle = (
     <IconButton
-      ref={open ? openToggle : closedToggle}
+      ref={closedToggle}
       size="sm"
-      shape="control"
-      variant={open ? "tint" : "ghost"}
+      variant="ghost"
       aria-label="Toggle formatting"
       aria-pressed={open}
       title="Formatting"
@@ -122,24 +122,16 @@ export function ComposerFormattingTools({
             transition={transition}
           >
             <motion.div
-              className={styles.fixed}
-              initial={reduceMotion ? false : { x: 8, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: reduceMotion ? 0 : 8, opacity: 0 }}
-              transition={transition}
-            >
-              {formatToggle}
-            </motion.div>
-            <motion.div
               className={styles.close}
-              initial={reduceMotion ? false : faded}
+              initial={instant ? false : faded}
               animate={{ opacity: 1, scale: 1 }}
               exit={faded}
-              transition={delayed}
+              transition={transition}
             >
               <IconButton
+                ref={openToggle}
                 size="sm"
-                shape="control"
+                variant="subtle"
                 aria-label="Close formatting"
                 title="Close formatting"
                 disabled={disabled}
@@ -151,10 +143,10 @@ export function ComposerFormattingTools({
             </motion.div>
             <motion.div
               className={styles.scroll}
-              initial={reduceMotion ? false : faded}
+              initial={instant ? false : faded}
               animate={{ opacity: 1, scale: 1 }}
               exit={faded}
-              transition={delayed}
+              transition={transition}
             >
               <fieldset
                 className={styles.options}
@@ -175,8 +167,7 @@ export function ComposerFormattingTools({
                   return (
                     <IconButton
                       key={label}
-                      size="xs"
-                      shape="control"
+                      size="sm"
                       aria-label={label}
                       title={
                         binding
@@ -190,7 +181,7 @@ export function ComposerFormattingTools({
                           ? `${apple ? "Meta" : "Control"}+${"alt" in binding && binding.alt ? "Alt+" : ""}${binding.shift ? "Shift+" : ""}${binding.key}`
                           : undefined
                       }
-                      variant={active ? "tint" : "ghost"}
+                      variant={active ? "subtle" : "ghost"}
                       onClick={
                         format
                           ? () => toggleFormat(format.mark)
@@ -211,17 +202,17 @@ export function ComposerFormattingTools({
           <ToolGroup
             key="ingress"
             className={styles.ingress}
-            initial={reduceMotion ? false : { opacity: 0, x: -12 }}
+            initial={instant ? false : { opacity: 0, x: -12 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: reduceMotion ? 0 : -12 }}
+            exit={{ opacity: 0, x: instant ? 0 : -12 }}
             transition={transition}
           >
             {children}
             <motion.div
               className={styles.fixed}
-              initial={reduceMotion ? false : { x: -8, opacity: 0 }}
+              initial={instant ? false : { x: -8, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
-              exit={{ x: reduceMotion ? 0 : -8, opacity: 0 }}
+              exit={{ x: instant ? 0 : -8, opacity: 0 }}
               transition={transition}
             >
               {formatToggle}

@@ -4,7 +4,7 @@
    * sitting in a line of text. Shared by the composer and the conversation, so
    * the same reference looks identical whether it is being written or read.
    *
-   * The design gives every kind one treatment: an accent tint behind primary
+   * The design gives every kind one treatment: a neutral fill behind primary
    * text. Kinds are told apart by their trigger character and, where the label
    * alone is ambiguous, a leading icon — not by colour. That is deliberate:
    * five colours for five kinds would spend the whole palette on a distinction
@@ -17,10 +17,7 @@
     border: 0;
     border-radius: var(--radius-chip);
     padding-inline: var(--space-chip-inset);
-    background: var(--affordance-accent);
-    /* Primary text, not accent text. The tint is doing the colour work, so the
-       label stays the same weight as the sentence it sits in — a chip marks a
-       reference, it does not shout. */
+    background: var(--affordance-subtle);
     color: var(--text-standard);
     font: inherit;
     /* Hugs the text it sits in rather than stretching the line. */
@@ -41,7 +38,7 @@
   button.inline-chip:hover,
   html[data-keyboard-navigation] button.inline-chip:focus-visible,
   button.inline-chip[data-popup-open] {
-    background: var(--affordance-accent-hover);
+    background: var(--affordance-subtle-hover);
   }
 
   html[data-keyboard-navigation] .inline-chip:focus-visible {

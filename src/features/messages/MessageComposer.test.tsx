@@ -708,6 +708,7 @@ it.each([undefined, "root"])(
     await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
     h.unmount();
     h = mount(options);
+    expect(h.input()).toHaveValue("Please help @Honey @Honey ");
     expect(
       within(h.input()).getAllByRole("img", {
         name: /^Person Honey, public key ending/,
@@ -987,6 +988,9 @@ it.each([0, 7])(
 it("replacing an inline mention with ordinary prose removes notification intent", async () => {
   const h = mount();
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  expect(
+    screen.getByRole("region", { name: "Explicit mentions" }),
+  ).toBeVisible();
   h.fill("no recipient now");
   h.submit();
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);

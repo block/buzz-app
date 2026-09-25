@@ -1,7 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
 
 const open = async (page) => {
-  await page.goto("/tests/fixtures/mentions.html");
+  await page.goto("/tests/fixtures/mentions.html?test-controls");
   return page.getByRole("textbox", { name: "Message #General" });
 };
 const expectAvatarShape = async (target, shape) => {
@@ -113,6 +113,22 @@ for (const mode of ["light", "dark"]) {
       });
       const options = popup.getByRole("option");
       await expect(options.nth(1)).toBeVisible();
+      if (kind === "mention") {
+        await expect(popup).toHaveCSS("border-radius", "24px");
+        await expect(popup).toHaveCSS("padding", "12px");
+        await expect(popup).toHaveCSS("width", "380px");
+        await expect(options.first()).toHaveCSS("padding", "8px");
+        const composer = page.getByRole("form", {
+          name: "Send a message to General",
+        });
+        await expect
+          .poll(async () => {
+            const anchor = await composer.boundingBox();
+            const menu = await popup.boundingBox();
+            return anchor.y - menu.y - menu.height;
+          })
+          .toBe(4);
+      }
       await expect(options.first()).toHaveAttribute("aria-selected", "true");
       await input.press("ArrowDown");
       const selected = options.nth(1);

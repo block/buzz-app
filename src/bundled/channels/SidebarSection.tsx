@@ -1,18 +1,29 @@
-import { useId, type ReactNode } from "react";
-import { Menu } from "@base-ui/react/menu";
+import { useId, useState, type ReactNode } from "react";
 import {
+  MenuIcon,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRoot,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
+import {
+  ArrowsDownUpIcon,
   CaretDownIcon,
   DotsThreeIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { RelaySession } from "../../features/relay/session";
-import completion from "../../features/conversation/Completions.module.css";
 import { SidebarSectionIcon } from "./SidebarSectionIcon";
-import row from "./ChannelSidebarRow.module.css";
 import styles from "./Channels.module.css";
 
 export function SidebarSection({
+  sectionKey,
   title,
   hideTitle = false,
   icon,
@@ -21,8 +32,10 @@ export function SidebarSection({
   onToggle,
   createChannel,
   newMessage,
+  sort,
   children,
 }: {
+  sectionKey: string;
   title: string;
   hideTitle?: boolean;
   icon?: string | undefined;
@@ -33,9 +46,16 @@ export function SidebarSection({
     | { available: boolean; open: (trigger: HTMLButtonElement) => void }
     | undefined;
   newMessage?: (() => void) | undefined;
+  sort?:
+    | {
+        value: "alpha" | "recent";
+        change: (mode: "alpha" | "recent") => void;
+      }
+    | undefined;
   children: ReactNode;
 }) {
   const id = useId();
+  const [menuOpen, setMenuOpen] = useState(false);
   if (hideTitle)
     return (
       <div className={`${styles.channelSection} ${styles.untitledSection}`}>
@@ -59,7 +79,7 @@ export function SidebarSection({
       </div>
     );
   return (
-    <div className={styles.channelSection} data-sidebar-section="">
+    <div className={styles.channelSection} data-sidebar-section={sectionKey}>
       <details open={open}>
         {/* biome-ignore lint/a11y/noStaticElementInteractions: summary has native keyboard activation. */}
         <summary
@@ -82,38 +102,57 @@ export function SidebarSection({
         </summary>
       </details>
       <div className={styles.sectionActions}>
-        <Menu.Root>
-          <Menu.Trigger
-            render={
+        <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+          <MenuTrigger
+            render={(props) => (
               <IconButton
+                {...props}
                 size="compact"
-                aria-label={`More options for ${title}`}
+                aria-label={`More actions for ${title}`}
                 icon={<DotsThreeIcon weight="bold" size={15} />}
               />
-            }
+            )}
           />
-          <Menu.Portal>
-            <Menu.Positioner
-              side="bottom"
-              align="end"
-              sideOffset={4}
-              className={row.positioner}
-            >
-              <Menu.Popup
-                className={`${completion.popup} ${row.menu}`}
-                data-compact=""
-                aria-label={`${title} options`}
-              >
-                <Menu.Item
-                  className={`${completion.option} ${row.menuItem}`}
-                  onClick={() => onToggle(!open)}
+          <MenuPopup align="end" aria-label={`More actions for ${title}`}>
+            {sort && (
+              <MenuSubmenu>
+                <MenuSubmenuTrigger>
+                  <MenuIcon>
+                    <ArrowsDownUpIcon size={14} />
+                  </MenuIcon>
+                  Sort
+                </MenuSubmenuTrigger>
+                <MenuSubmenuPopup
+                  aria-label={`Sort ${title}`}
+                  finalFocus={false}
                 >
-                  {open ? "Collapse section" : "Expand section"}
-                </Menu.Item>
-              </Menu.Popup>
-            </Menu.Positioner>
-          </Menu.Portal>
-        </Menu.Root>
+                  <MenuRadioGroup
+                    value={sort.value}
+                    onValueChange={(mode) => {
+                      sort.change(mode as "alpha" | "recent");
+                      setMenuOpen(false);
+                    }}
+                  >
+                    <MenuRadioItem closeOnClick={false} value="recent">
+                      Recent
+                    </MenuRadioItem>
+                    <MenuRadioItem closeOnClick={false} value="alpha">
+                      A–Z
+                    </MenuRadioItem>
+                  </MenuRadioGroup>
+                </MenuSubmenuPopup>
+              </MenuSubmenu>
+            )}
+            <MenuItem
+              onClick={() => {
+                onToggle(!open);
+                setMenuOpen(false);
+              }}
+            >
+              {open ? "Collapse section" : "Expand section"}
+            </MenuItem>
+          </MenuPopup>
+        </MenuRoot>
         {newMessage && (
           <IconButton
             size="compact"

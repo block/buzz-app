@@ -19,6 +19,30 @@ test("native code corrections preserve explicit mode but clearing the span exits
   page,
 }) => {
   const input = await composer(page);
+  const toggle = page.getByRole("button", {
+    name: "Toggle formatting",
+    exact: true,
+  });
+  const close = page.getByRole("button", {
+    name: "Close formatting",
+    exact: true,
+  });
+  await expect(toggle).toHaveCount(0);
+  // Real rendered sizes must match the close control, not compact attachment actions.
+  for (const button of [
+    close,
+    page.getByRole("button", { name: "Bold", exact: true }),
+  ]) {
+    await expect(button).toHaveCSS("width", "32px");
+    await expect(button).toHaveCSS("height", "32px");
+    await expect(button.locator("svg")).toHaveCSS("width", "16px");
+  }
+  await close.press("Enter");
+  await expect(toggle).toBeFocused();
+  await toggle.press("Enter");
+  await expect(close).toBeFocused();
+  await expect(toggle).toHaveCount(0);
+
   await page.getByRole("button", { name: "Code", exact: true }).click();
   await page.keyboard.type("abc");
   await page.keyboard.press("Backspace");

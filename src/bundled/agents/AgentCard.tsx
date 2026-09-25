@@ -1,10 +1,11 @@
-import { useRef, type ReactNode } from "react";
+import { Fragment, useRef, type ReactNode } from "react";
 import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
   MenuItem,
   MenuNote,
+  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import {
@@ -26,6 +27,8 @@ export function AgentCard({
   session,
   editable = [],
   onEdit,
+  onDuplicate,
+  onDelete,
   children,
   identityLabel = (identity) => identity.name,
 }: {
@@ -37,6 +40,8 @@ export function AgentCard({
   session?: RelaySession;
   editable?: AgentView[];
   onEdit?: ((agent: AgentView, avatar?: string) => void) | undefined;
+  onDuplicate?: ((agent: AgentView) => void) | undefined;
+  onDelete?: ((agent: AgentView) => void) | undefined;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const source = avatarSource(avatar);
@@ -66,32 +71,61 @@ export function AgentCard({
             <MenuPopup align="end" size="wide">
               {editable.length ? (
                 editable.map((agent) => (
-                  <MenuItem
-                    key={agent.id}
-                    onClick={() => {
-                      // The menu item unmounts; return from the dialog to the card.
-                      trigger.current?.focus();
-                      onEdit(agent, picture);
-                    }}
-                  >
-                    {editable.length === 1 ? (
-                      "Edit"
-                    ) : (
-                      <ChoiceRow
-                        label={`Edit ${identityLabel(agent)}`}
-                        description={
-                          <>
-                            <span className="block break-all text-body-sm text-secondary">
-                              {agent.relayUrl}
-                            </span>
-                            <span className="block break-all text-mono-sm text-secondary">
-                              {agent.pubkey}
-                            </span>
-                          </>
-                        }
-                      />
+                  <Fragment key={agent.id}>
+                    <MenuItem
+                      onClick={() => {
+                        // The menu item unmounts; return from the dialog to the card.
+                        trigger.current?.focus();
+                        onEdit(agent, picture);
+                      }}
+                    >
+                      {editable.length === 1 ? (
+                        "Edit"
+                      ) : (
+                        <ChoiceRow
+                          label={`Edit ${identityLabel(agent)}`}
+                          description={
+                            <>
+                              <span className="block break-all text-body-sm text-secondary">
+                                {agent.relayUrl}
+                              </span>
+                              <span className="block break-all text-mono-sm text-secondary">
+                                {agent.pubkey}
+                              </span>
+                            </>
+                          }
+                        />
+                      )}
+                    </MenuItem>
+                    {onDuplicate && (
+                      <MenuItem
+                        onClick={() => {
+                          trigger.current?.focus();
+                          onDuplicate(agent);
+                        }}
+                      >
+                        {editable.length === 1
+                          ? "Duplicate"
+                          : `Duplicate ${identityLabel(agent)}`}
+                      </MenuItem>
                     )}
-                  </MenuItem>
+                    {onDelete && (
+                      <>
+                        <MenuSeparator />
+                        <MenuItem
+                          tone="danger"
+                          onClick={() => {
+                            trigger.current?.focus();
+                            onDelete(agent);
+                          }}
+                        >
+                          {editable.length === 1
+                            ? "Delete"
+                            : `Delete ${identityLabel(agent)}`}
+                        </MenuItem>
+                      </>
+                    )}
+                  </Fragment>
                 ))
               ) : (
                 <>

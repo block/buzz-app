@@ -45,6 +45,7 @@ import { SidebarSection } from "../../bundled/channels/SidebarSection";
 import { useChannelLabels } from "../../bundled/channels/useChannelLabels";
 import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
+import { useSidebarStartup } from "../../bundled/channels/useSidebarStartup";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import {
   sidebarSections,
@@ -247,6 +248,11 @@ function ReadySidebar({
 }) {
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const startup = useSidebarStartup(queries, list, preferences);
+  const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
+  useEffect(() => {
+    if (list.activityStatus !== "error") setActivityErrorDismissed(false);
+  }, [list.activityStatus]);
   const mute = useOptimisticMute(queries.sidebarPreferences.setMute);
   const rowMenuGeneration = useRef(0);
   const [readWrite, setReadWrite] = useState<{
@@ -278,7 +284,9 @@ function ReadySidebar({
   const lifecycleFocus = useRef<string | undefined>(undefined);
   const sidebar = useSidebarView(
     scope,
-    list.status === "ready" && preferences.status !== "loading",
+    startup.ready &&
+      list.status === "ready" &&
+      preferences.status !== "loading",
   );
   const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
@@ -414,74 +422,109 @@ function ReadySidebar({
     },
     [navigator, relay, queries, scope, viewer],
   );
-  const startSession = (parentId: string) => {
-    const parent = channels.find((channel) => channel.id === parentId);
-    if (
-      !viewer ||
-      relay.snapshot().session !== queries ||
-      !sessionsEnabled ||
-      !parent ||
-      parent.readOnly ||
-      parent.archived ||
-      parent.channelType === "dm" ||
-      parent.channelType === "session"
-    )
-      return;
-    handoff?.updateDraftParents((previous) =>
-      previous.includes(parentId) ? previous : [...previous, parentId],
-    );
-    sidebar.toggle(`session-children:${parentId}`, true);
-    void navigator.open({
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
-      route: { version: 1, params: { kind: "new-session", parentId } },
-      scope: { viewer, communityOrigin: scope.slice(0, -(viewer.length + 1)) },
-    });
-  };
-  const openActivityThread = (channelId: string, rootId: string) => {
-    if (!viewer || relay.snapshot().session !== queries) return;
-    if (handoff)
-      handoff.activityThread.current = {
+  const startSession = useCallback(
+    (parentId: string) => {
+      const parent = channels.find((channel) => channel.id === parentId);
+      if (
+        !viewer ||
+        relay.snapshot().session !== queries ||
+        !sessionsEnabled ||
+        !parent ||
+        parent.readOnly ||
+        parent.archived ||
+        parent.channelType === "dm" ||
+        parent.channelType === "session"
+      )
+        return;
+      handoff?.updateDraftParents((previous) =>
+        previous.includes(parentId) ? previous : [...previous, parentId],
+      );
+      sidebar.toggle(`session-children:${parentId}`, true);
+      void navigator.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        route: { version: 1, params: { kind: "new-session", parentId } },
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+    },
+    [
+      channels,
+      viewer,
+      relay,
+      queries,
+      sessionsEnabled,
+      handoff,
+      sidebar.toggle,
+      navigator,
+      scope,
+    ],
+  );
+  const openActivityThread = useCallback(
+    (channelId: string, rootId: string) => {
+      if (!viewer || relay.snapshot().session !== queries) return;
+      if (handoff)
+        handoff.activityThread.current = {
+          channelId,
+          rootId,
+          trigger:
+            sidebar.list.current?.querySelector<HTMLElement>(
+              `[data-channel-id="${CSS.escape(channelId)}"]`,
+            ) ?? null,
+        };
+      void navigator.open({
+        version: 1,
+        kind: "conversation",
         channelId,
-        rootId,
-        trigger:
-          sidebar.list.current?.querySelector<HTMLElement>(
-            `[data-channel-id="${CSS.escape(channelId)}"]`,
-          ) ?? null,
-      };
-    void navigator.open({
-      version: 1,
-      kind: "conversation",
-      channelId,
-      messageId: rootId,
-      threadRootId: rootId,
-      scope: { viewer, communityOrigin: scope.slice(0, -(viewer.length + 1)) },
-    });
-  };
+        messageId: rootId,
+        threadRootId: rootId,
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+    },
+    [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
+  );
   const createChannel = async (input: CreateChannelInput) => {
     const id = await queries.channelCreation.create(input);
     if (!mounted.current || relay.snapshot().session !== queries) return;
     select(id);
     sidebar.toggle("channels", true);
   };
-  const sections = sidebarSections(
-    sidebarChannels,
-    groups
-      ? {
-          sections: groups.groups.map((group, order) => ({
-            id: group.id,
-            name: group.name,
-            order,
-          })),
-          assignments: groups.assignments,
-          starred: preferences.data?.starred ?? [],
-          muted: preferences.data?.muted ?? [],
-        }
-      : preferences.data,
-    new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
-  );
+  const displayedPreferences = groups
+    ? {
+        ...preferences.data,
+        sections: groups.groups.map((group, order) => ({
+          id: group.id,
+          name: group.name,
+          order,
+        })),
+        assignments: groups.assignments,
+        starred: preferences.data?.starred ?? [],
+        muted: preferences.data?.muted ?? [],
+      }
+    : preferences.data;
+  const sections = startup.ready
+    ? sidebarSections(
+        sidebarChannels,
+        displayedPreferences,
+        new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
+      )
+    : [];
+  const setSectionSort = (key: string, mode: "alpha" | "recent") => {
+    void preferences
+      .setSort(
+        key.startsWith("group:") ? `section:${key.slice(6)}` : key,
+        mode,
+        displayedPreferences?.sections.map((section) => section.id) ?? [],
+      )
+      .catch(() => {});
+  };
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
   const rowActions = (channel: ChannelSummary) => {
@@ -741,6 +784,7 @@ function ReadySidebar({
               {sections.map((section) => (
                 <SidebarSection
                   key={section.key}
+                  sectionKey={section.key}
                   title={section.title}
                   icon={section.icon}
                   session={queries}
@@ -780,6 +824,19 @@ function ReadySidebar({
                               },
                               route: { version: 1, params: "new-message" },
                             });
+                        }
+                      : undefined
+                  }
+                  sort={
+                    preferences.sortWritable
+                      ? {
+                          value:
+                            preferences.data?.sort?.[
+                              section.key.startsWith("group:")
+                                ? `section:${section.key.slice(6)}`
+                                : section.key
+                            ] ?? "alpha",
+                          change: (mode) => setSectionSort(section.key, mode),
                         }
                       : undefined
                   }
@@ -872,10 +929,47 @@ function ReadySidebar({
                   {list.error}
                 </p>
               )}
-              {list.status === "ready" && !channels.length && (
+              {!startup.ready && (
+                <p className={styles.empty} role="status">
+                  Loading your sidebar…
+                </p>
+              )}
+              {startup.ready && list.status === "ready" && !channels.length && (
                 <p className={styles.empty}>No channels yet.</p>
               )}
             </SidebarUnread>
+            {startup.updating && (
+              <p className={styles.preferenceNotice} role="status">
+                Updating sidebar details…
+              </p>
+            )}
+            {preferences.sortErrors?.map(({ group, mode, error }) => (
+              <div key={group} className={styles.preferenceNotice} role="alert">
+                <p>
+                  Couldn’t save the sort order for{" "}
+                  {sections.find(
+                    ({ key }) =>
+                      key ===
+                      (group.startsWith("section:")
+                        ? `group:${group.slice(8)}`
+                        : group),
+                  )?.title ?? "this section"}
+                  . {error}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSectionSort(group, mode)}
+                >
+                  Retry sort
+                </button>
+                <button
+                  type="button"
+                  onClick={() => preferences.dismissSortError(group)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            ))}
             {[...mute.intents.values()]
               .filter((intent) => !intent.pending)
               .map((intent) => (
@@ -906,7 +1000,7 @@ function ReadySidebar({
                   </Button>
                 </ToastNotice>
               ))}
-            {preferences.status === "error" ? (
+            {startup.ready && preferences.status === "error" ? (
               <ToastNotice
                 title="Saved sidebar preferences couldn’t refresh"
                 description="Your conversations are still available."
@@ -916,13 +1010,27 @@ function ReadySidebar({
                   Retry
                 </Button>
               </ToastNotice>
-            ) : preferences.status !== "ready" ? (
-              <p className={styles.preferenceNotice}>
-                {preferences.status === "loading"
-                  ? "Loading saved groups and stars…"
-                  : "Saved groups and stars aren’t supported by this host yet."}
+            ) : startup.ready && preferences.status === "unsupported" ? (
+              <p className={styles.preferenceNotice} role="status">
+                Saved groups and stars aren’t supported by this host yet.
               </p>
             ) : null}
+            {list.activityStatus === "error" && !activityErrorDismissed && (
+              <ToastNotice
+                title="Couldn’t refresh recent activity"
+                description="Sections sorted by Recent may be out of date."
+                tone="warning"
+                onDismiss={() => setActivityErrorDismissed(true)}
+              >
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => queries.channels.refreshList?.()}
+                >
+                  Retry
+                </Button>
+              </ToastNotice>
+            )}
           </div>
         </Panel>
         <CreateChannelDialog

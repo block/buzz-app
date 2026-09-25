@@ -51,6 +51,7 @@ export function MentionPicker({
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
+  const controls = useRef<HTMLFieldSetElement>(null);
   const accepted = useRef(false);
   const searchInput = useRef<HTMLElement>(null);
   const list = useSyncExternalStore(
@@ -127,6 +128,7 @@ export function MentionPicker({
       }}
     >
       <fieldset
+        ref={controls}
         disabled={disabled}
         className={styles.pickerControls}
         aria-label="Mention controls"
@@ -147,6 +149,8 @@ export function MentionPicker({
         />
         <PopoverPopup
           side="top"
+          sideOffset={4}
+          anchor={() => controls.current?.closest("form") ?? trigger.current}
           padding="none"
           initialFocus={searchInput}
           style={{
@@ -199,7 +203,7 @@ export function MentionPicker({
             }
           }}
           aria-label="Mention a member or agent"
-          finalFocus={() => (accepted.current ? false : trigger.current)}
+          finalFocus={!accepted.current}
         >
           <div className={styles.mentionContent}>
             <SearchField

@@ -112,6 +112,31 @@ export type ComponentDefinition = {
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
   {
+    slug: "calendar",
+    name: "Calendar",
+    purpose: "Choose a date using a month grid.",
+    behavior:
+      "React DayPicker owns calendar arithmetic and keyboard navigation; Buzz owns styling and Phosphor navigation icons.",
+    variants: ["single date", "selected", "today", "disabled dates"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Calendar.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
+    slug: "field-button",
+    name: "FieldButton",
+    purpose: "Open a picker with the same shape and inset as a text field.",
+    behavior: "Base UI Button composes with menu and popover triggers.",
+    variants: ["default", "disabled", "expanded"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/FieldButton.tsx",
+    baseUi: [BASE_UI_PARTS.button],
+    composes: [],
+  },
+  {
     slug: "toast",
     name: "Toast",
     purpose:
@@ -299,7 +324,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "button",
     name: "Button",
     purpose:
-      "A labelled action with shared emphasis, loading and destructive states.",
+      "A capsule-shaped labelled action with shared emphasis, loading and destructive states.",
     behavior: "Base UI Button",
     variants: [
       "prominent",
@@ -309,7 +334,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "outline",
       "inverted",
       "link",
-      "size: sm | md | lg",
+      "size: xs | sm | md | lg",
       "loading",
     ],
     status: "proposed",
@@ -335,7 +360,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "tint",
       "chrome",
       "shape: round (default) | control",
-      "size: sm (32px) | md (40px) | lg (52px)",
+      "size: xs (20px, 12px icon) | sm (32px) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
     ],
     status: "proposed",
@@ -467,6 +492,30 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     source: "shared/design-system/ui/SearchField.tsx",
     baseUi: [BASE_UI_PARTS.input],
     composes: ["field", "icon-button"],
+  },
+  {
+    slug: "composer",
+    name: "Composer",
+    purpose:
+      "The message drafting frame: editable content, contextual information, tools, send state and delivery feedback.",
+    behavior:
+      "Native form and textarea semantics; product capabilities supply rich editing and tool behavior",
+    variants: [
+      "empty",
+      "draft",
+      "multiline",
+      "context",
+      "sending",
+      "error",
+      "disabled",
+      "narrow",
+    ],
+    status: "proposed",
+    collection: "components",
+    owner: "desktop-new Messages",
+    source: "shared/design-system/ui/Composer.tsx",
+    baseUi: [],
+    composes: ["icon-button"],
   },
   {
     slug: "navigation-section",

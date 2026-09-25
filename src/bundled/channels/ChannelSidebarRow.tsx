@@ -51,6 +51,7 @@ function FadingLabel({
 export function ChannelSidebarRow({
   channel,
   icon,
+  nameAccessory,
   badge,
   childContent,
   dmVisualSpacing = false,
@@ -68,6 +69,7 @@ export function ChannelSidebarRow({
 }: {
   channel: ChannelSummary;
   icon: ReactNode;
+  nameAccessory?: ReactNode;
   badge?: ReactNode;
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
   dmVisualSpacing?: boolean;
@@ -97,7 +99,12 @@ export function ChannelSidebarRow({
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
       selected={selected === channel.id && !draftSelected}
-      label={<FadingLabel className={styles.label}>{channel.name}</FadingLabel>}
+      label={
+        <span className={styles.nameContent}>
+          <FadingLabel className={styles.label}>{channel.name}</FadingLabel>
+          {nameAccessory}
+        </span>
+      }
       icon={
         hasChildren ? (
           <span className={styles.iconSpace} aria-hidden="true" />

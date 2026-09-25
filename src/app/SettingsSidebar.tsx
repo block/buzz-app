@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { ArrowLeftIcon } from "../shared/design-system/icons";
@@ -27,6 +27,13 @@ export function SettingsSidebar({
   onSection: (section: string) => void;
 }) {
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
+  const selectedAvailable =
+    settingsSections.some((section) => section.id === selected) ||
+    contributed.some((card) => card.group && card.key === selected);
+  const effectiveSelected = selectedAvailable ? selected : "profile";
+  useEffect(() => {
+    if (!selectedAvailable && selected !== "profile") onSection("profile");
+  }, [onSection, selected, selectedAvailable]);
   const contributedGroups = [
     ...new Set(contributed.flatMap((card) => card.group ?? [])),
   ].map((label) => ({
@@ -68,7 +75,7 @@ export function SettingsSidebar({
                         key={id}
                         label={label}
                         icon={<Icon aria-hidden="true" size={18} />}
-                        selected={selected === id}
+                        selected={effectiveSelected === id}
                         onClick={() => onSection(id)}
                       />
                     ))}
@@ -92,7 +99,7 @@ export function SettingsSidebar({
                     <NavigationItem
                       key={card.key}
                       label={card.title}
-                      selected={selected === card.key}
+                      selected={effectiveSelected === card.key}
                       onClick={() => onSection(card.key)}
                     />
                   ))}

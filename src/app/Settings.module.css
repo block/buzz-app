@@ -6,6 +6,10 @@
   container-type: inline-size;
   overflow: hidden;
 }
+.root > [data-buzz-surface] {
+  height: 100%;
+  overflow-y: auto;
+}
 .layout {
   display: grid;
   grid-template-columns: var(--size-navigator) minmax(0, 1fr);

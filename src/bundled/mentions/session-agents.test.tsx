@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
@@ -27,7 +34,7 @@ import type { Outbox } from "../../features/relay/outbox";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
 afterEach(cleanup);
-function setup(parent: boolean | null = true) {
+function setup(parent: boolean | null = true, archived = false) {
   const key = "b".repeat(64),
     member = "a".repeat(64);
   const library = createAgentLibrary(async () => ({
@@ -44,6 +51,7 @@ function setup(parent: boolean | null = true) {
               id: "parent",
               channelType: parent ? "stream" : "session",
               members: [member],
+              archived,
             },
           ],
   };
@@ -72,7 +80,7 @@ function setup(parent: boolean | null = true) {
     }),
     media: () => undefined,
   } as unknown as RelaySession;
-  return { session, library, key };
+  return { session, library, key, member, profiles };
 }
 it("uses the same alphabetical and prefix ordering for typed and button mentions", async () => {
   const test = setup();
@@ -172,6 +180,145 @@ it("offers outside agents in the session mention picker while ordinary channel p
     name: "Outside agent",
   });
   view.unmount();
+  test.library.dispose();
+});
+it("focuses search on open and supports clear, Escape, and outside dismissal", async () => {
+  const test = setup(),
+    user = userEvent.setup();
+  const view = render(
+    <>
+      <button type="button">Outside picker</button>
+      <MentionPicker
+        scope="scope"
+        session={test.session}
+        channelId="parent"
+        disabled={false}
+        select={() => true}
+      />
+    </>,
+  );
+  const trigger = screen.getByRole("button", { name: "Mention a member" });
+  await user.click(trigger);
+  const search = screen.getByRole("searchbox", {
+    name: "Search members and your agents",
+  });
+  expect(search).toHaveFocus();
+  await user.type(search, "no matching name");
+  expect(screen.getByText("No matching channel members.")).toBeVisible();
+  await user.click(
+    screen.getByRole("button", {
+      name: "Clear search members and your agents",
+    }),
+  );
+  expect(search).toHaveFocus();
+  expect(search).toHaveValue("");
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(screen.getByRole("searchbox")).toHaveFocus());
+  const outside = screen.getByRole("button", { name: "Outside picker" });
+  await user.click(outside);
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  expect(outside).toHaveFocus();
+  view.unmount();
+  test.library.dispose();
+});
+it("navigates namesakes with arrows and selects the focused exact identity with Enter", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    select = vi.fn(() => true);
+  test.profiles.set(test.member, { name: "Outside agent" });
+  render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      select={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const first = await screen.findByRole("button", {
+    name: `Outside agent ${test.member}`,
+  });
+  const last = await screen.findByRole("button", {
+    name: `Outside agent ${test.key}`,
+  });
+  await user.keyboard("{ArrowDown}");
+  expect(first).toHaveFocus();
+  await user.keyboard("{ArrowUp}");
+  expect(last).toHaveFocus();
+  await user.keyboard("{ArrowDown}");
+  expect(first).toHaveFocus();
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(select).toHaveBeenCalledExactlyOnceWith({
+    pubkey: test.key,
+    name: "Outside agent",
+  });
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  test.library.dispose();
+});
+
+it("selects filtered results from search, ignores IME Enter, and keeps rejected selections open", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    select = vi.fn(() => false);
+  render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      select={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const search = screen.getByRole("searchbox");
+  expect(
+    screen.queryByText("Your agents are added to this channel when you send."),
+  ).not.toBeInTheDocument();
+  await user.type(search, "missing");
+  await user.keyboard("{ArrowDown}{ArrowUp}{Enter}");
+  expect(search).toHaveFocus();
+  expect(select).not.toHaveBeenCalled();
+  await user.clear(search);
+  await user.type(search, test.member);
+  fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+  expect(fireEvent.keyDown(search, { key: "Enter", shiftKey: true })).toBe(
+    false,
+  );
+  expect(select).not.toHaveBeenCalled();
+  await user.keyboard("{Enter}");
+  expect(select).toHaveBeenCalledExactlyOnceWith({
+    pubkey: test.member,
+    name: "Member",
+  });
+  expect(search).toHaveFocus();
+  select.mockReturnValue(true);
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  test.library.dispose();
+});
+
+it("does not keyboard-select disabled members", async () => {
+  const test = setup(true, true),
+    user = userEvent.setup(),
+    select = vi.fn(() => true);
+  render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      select={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.keyboard("{ArrowDown}{ArrowUp}{Enter}");
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+  expect(select).not.toHaveBeenCalled();
   test.library.dispose();
 });
 it.each([true, false])(

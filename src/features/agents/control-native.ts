@@ -14,9 +14,13 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     commitCreate: (requestId, edit, auth) =>
       invoke("agent_control_create_commit", { requestId, edit, auth }),
     publishProfile: (id) => invoke("agent_control_creation_profile", { id }),
+    setStartOnAppLaunch: (id, enabled) =>
+      invoke("agent_control_start_on_app_launch", { id, enabled }),
     snapshot: () => invoke("agent_control_snapshot"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),
+    delete: (id, expectedRevision) =>
+      invoke("agent_control_delete", { id, expectedRevision }),
     action: (id, action, replayFloor) =>
       invoke("agent_control_action", {
         id,

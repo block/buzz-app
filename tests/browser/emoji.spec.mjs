@@ -344,7 +344,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(toneMenu).toBeVisible();
     await expect(toneMenu).toHaveCSS("z-index", "100");
     // Mart's opening transform temporarily lifts the menu above its final edge.
-    // Measure the settled menu: its 42px bottom offset meets the 42px nav flush,
+    // Measure the settled menu: its control-size offset meets the nav flush,
     // which is non-overlapping but does not leave a strictly positive gap.
     await expect(toneMenu).toHaveCSS("transform", "none");
     await expect(toneMenu).toHaveCSS("opacity", "1");
@@ -481,6 +481,12 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       "fill",
       "rgb(102, 102, 102)",
     );
+    const clearBox = await emojiClear.boundingBox();
+    const fieldBox = await search.boundingBox();
+    expect(clearBox.y + clearBox.height / 2).toBeCloseTo(
+      fieldBox.y + fieldBox.height / 2,
+      1,
+    );
     // Mart recreates the clear control when search empties, and on picker remount.
     await search.fill("");
     await expect(emojiClear).toHaveCount(0);
@@ -528,7 +534,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     await expect(page.locator("em-emoji-picker #root")).toHaveCSS(
       "width",
-      "240px",
+      // 300px pane minus 32px composer margins and both surface borders.
+      // The popup uses the composer width, including its toolbar padding.
+      "264px",
     );
     await expect(search).toHaveValue("party");
     await expect(page.locator("em-emoji-picker nav")).toHaveCount(0);

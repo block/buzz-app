@@ -264,13 +264,14 @@
 }
 .sectionActions {
   position: absolute;
+  z-index: 1;
   top: var(--space-half);
   right: 4px;
   display: flex;
   align-items: center;
   color: var(--text-unavailable);
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
 }
 .sectionActions [data-icon-variant] {
   color: inherit;
@@ -407,13 +408,19 @@
   gap: var(--space-1);
   margin-left: var(--space-panel-gap);
 }
+/* Settings replaces the primary surface without collapsing its retained layout. */
+.panelStack > :is(:has(> .settingsPanel), .retainedPanel[inert]) {
+  grid-area: 1 / 1;
+}
 .retainedPanel {
   display: grid;
   min-height: 0;
   min-width: 0;
 }
-.retainedPanel[hidden] {
-  display: none;
+.retainedPanel[inert] {
+  visibility: hidden;
+  /* Revealed spoilers override visibility; opacity suppresses the whole subtree. */
+  opacity: 0;
 }
 .companion {
   display: grid;
@@ -722,4 +729,9 @@
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
+}
+
+.sectionSortAction {
+  flex-shrink: 0;
+  margin-block: calc(-1 * var(--space-1));
 }

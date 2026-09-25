@@ -1,3 +1,5 @@
+@import "./composer.css" layer(components);
+
 @layer components {
   .buzz-button {
     position: relative;
@@ -35,6 +37,17 @@
   .buzz-button-spinner {
     position: absolute;
     animation: buzz-button-spin 1s linear infinite;
+  }
+  /* Compact capsules sit beneath identity labels without adding a full row. */
+  .buzz-button[data-size="xs"] {
+    @apply text-caption;
+    min-height: var(--space-6);
+    padding: var(--space-1) var(--space-3);
+  }
+  .buzz-button[data-size="xs"] .buzz-button-label > svg,
+  .buzz-button[data-size="xs"] .buzz-button-spinner {
+    width: var(--space-4);
+    height: var(--space-4);
   }
   .buzz-button[data-size="sm"] {
     @apply text-label-sm;
@@ -147,10 +160,15 @@
     width: var(--size-control-sm);
     height: var(--size-control-sm);
   }
-  /* Dense composer formatting options retain the original 28px layout. */
+  /* Compact icon actions: 20px control with 12px artwork. */
   .buzz-button[data-icon-variant][data-icon-size="xs"] {
-    width: calc(var(--size-control-sm) - var(--space-1));
-    height: calc(var(--size-control-sm) - var(--space-1));
+    width: var(--space-5);
+    height: var(--space-5);
+    min-height: var(--space-5);
+  }
+  .buzz-button[data-icon-size="xs"] .buzz-button-label svg {
+    width: var(--space-3);
+    height: var(--space-3);
   }
   .buzz-button[data-icon-variant][data-size="lg"] {
     width: var(--size-control-lg);

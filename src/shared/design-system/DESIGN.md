@@ -170,6 +170,10 @@ only when a rectangular control shape is explicitly needed. Disabled ghost icons
 remain unfilled; their muted foreground communicates unavailability without
 adding a container to an otherwise empty toolbar.
 
+Composer picker surfaces use the 24px `--radius-panel` role and the shared
+popup motion below. Filtering does not stagger results. Search fields follow
+the shared form treatment below.
+
 Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
@@ -264,11 +268,19 @@ show these contracts and their compositions.
 
 ## Compositions
 
+Composer pickers reuse PopoverPopup and anchor above the whole composer with a
+4px gap, preserving the shared popup behavior and material.
+
 Dialog composes a Base UI modal with a shared title, optional description, body,
 close button and actions. Pending operations set preventClose so Escape and the
 close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
+Editors can supply `headerActions` beside Close and `leadingActions` before the
+trailing footer actions. `onEscape` may return true to consume Escape for an
+inline layer (such as an inspector) before dismissing the dialog. Nested modal
+layers still use Dialog so Base UI owns their focus trap and dismissal order;
+`placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.
 Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.
@@ -314,7 +326,8 @@ remain above the stack. Content updates do not restart expiry; timeout changes d
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead. NavigationItem
-forwards normal button events, refs and data attributes so unread observation,
+offers an `option` variant for picker rows with even 8px padding and immediate
+hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
 
 ## Menu row corners
@@ -410,6 +423,11 @@ The values documented above define this system, including the 12px xsmall role.
 - **Every dark value in this system is authored rather than observed.** The design exploration it came from is light-only. Treat anything that looks wrong in dark as a finding.
 
 ## Density and rhythm
+
+- **Scrollbars share one native treatment.** Use `scrollbar-width: thin` and
+  `scrollbar-color: var(--scrollbar-thumb) transparent`. The thumb is gray in
+  both modes. Load the shared scrollbar recipe into vendor shadow roots too;
+  let the browser own scrolling and scrollbar visibility.
 
 - **Dense data renders as rows with dividers, edge to edge.** Wrapping every list item in its own card is the most common way a functional surface becomes a marketing page.
 - **Content that separates itself needs no divider, and no container.** A divider is for uniform rows where the eye needs a line to track along. When each entry already carries a visible difference — a colour swatch, a type specimen, an avatar — the content is the separator, and adding a rule or a card on top is redundant structure. Space alone is enough.

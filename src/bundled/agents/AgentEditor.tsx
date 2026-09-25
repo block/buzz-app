@@ -151,10 +151,14 @@ export function AgentEditor({
                             </p>
                             <p className="text-body-sm text-subtle">
                               {agent.enabled
-                                ? state.data?.runtimeAvailable
-                                  ? "Enabled · starts with buzz-app"
-                                  : "Enabled intent saved · execution unavailable"
-                                : "Stopped · a later sent mention can start this agent"}
+                                ? !state.data?.runtimeAvailable
+                                  ? "Enabled intent saved · execution unavailable"
+                                  : agent.startOnAppLaunch
+                                    ? "Enabled · starts with buzz-app"
+                                    : "Enabled · manual-start only"
+                                : agent.startOnAppLaunch
+                                  ? "Stopped · starts with buzz-app"
+                                  : "Stopped · a later sent mention can start this agent"}
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-2">

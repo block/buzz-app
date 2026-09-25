@@ -1,3 +1,4 @@
+import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import { memo } from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { ContextMenuTrigger } from "../../shared/design-system/ui/Menu";
@@ -89,6 +90,17 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
           </span>
         ) : (
           <Icon size={16} />
+        )
+      }
+      nameAccessory={
+        channel.channelType === "dm" &&
+        channel.participants?.length === 1 && (
+          <UserStatusDisplay
+            session={session}
+            userId={channel.participants[0] ?? ""}
+            compact
+            focusable={false}
+          />
         )
       }
       badge={

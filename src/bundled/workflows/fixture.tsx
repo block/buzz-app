@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
 import "@fontsource-variable/inter/wght.css";
 import "@fontsource/jetbrains-mono/400.css";
@@ -8,6 +8,7 @@ import "./workflows.css";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Button } from "../../shared/design-system/ui/Button";
 import { WorkflowChannel } from "./WorkflowChannel";
+import { WorkflowWebhookSecrets } from "./WorkflowWebhookSecrets";
 import {
   createWorkflowFixture,
   fixtureChannel,
@@ -19,6 +20,10 @@ Object.assign(window, { workflowFixture: fixture });
 function Fixture() {
   useKeyboardFocusVisibility();
   const [mounted, setMounted] = useState(true);
+  // The modal editor hides the toolbar, so journeys unmount through this.
+  useEffect(() => {
+    Object.assign(fixture, { unmount: () => setMounted(false) });
+  }, []);
   return (
     <main data-buzz-ui="" className="text-body" style={{ padding: 24 }}>
       <p>Offline fixture — no relay or signing identity.</p>
@@ -28,6 +33,13 @@ function Fixture() {
         </Button>
         <Button onClick={() => fixture.finish("succeeded", false)}>
           Complete concurrent head
+        </Button>
+        <Button
+          onClick={() =>
+            fixture.finish("succeeded", true, "fixture-webhook-secret-2f6c")
+          }
+        >
+          Complete save with webhook secret
         </Button>
         <Button onClick={() => fixture.finish("rejected")}>
           Reject operation
@@ -51,12 +63,15 @@ function Fixture() {
       <Panel>
         <div className="workflows-page">
           {mounted && (
-            <WorkflowChannel
-              capability={fixture.capability}
-              channelId={fixtureChannel}
-              channelName="Fixture channel"
-              viewer={fixtureViewer}
-            />
+            <>
+              <WorkflowWebhookSecrets capability={fixture.capability} />
+              <WorkflowChannel
+                capability={fixture.capability}
+                channelId={fixtureChannel}
+                channelName="Fixture channel"
+                viewer={fixtureViewer}
+              />
+            </>
           )}
         </div>
       </Panel>

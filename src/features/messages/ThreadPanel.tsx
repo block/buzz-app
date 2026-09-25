@@ -1,8 +1,14 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { ReplySummary } from "./ReplySummary";
+import { ReplyBranch } from "./ReplyBranch";
+import { replyTree } from "./reply-tree";
+import { useChannelIdentityNames } from "../identity-names/react";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -207,6 +213,42 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
+  const tree = useMemo(
+    () => replyTree(snapshot.replies, snapshot.root?.id),
+    [snapshot.replies, snapshot.root?.id],
+  );
+  const branchReplies = useMemo(() => {
+    const branches = new Map<string, ChannelMessage[]>();
+    for (const reply of snapshot.replies) {
+      for (const ancestor of tree.ancestors(reply.id)) {
+        const replies = branches.get(ancestor) ?? [];
+        replies.push(reply);
+        branches.set(ancestor, replies);
+      }
+    }
+    return branches;
+  }, [tree, snapshot.replies]);
+  const subscribeUnread = useCallback(
+    (listener: () => void) =>
+      session.unread.subscribe(
+        { kind: "thread", channelId, rootId: snapshot.root?.id ?? messageId },
+        listener,
+      ),
+    [session.unread, channelId, snapshot.root?.id, messageId],
+  );
+  const unreadSnapshot = useCallback(
+    () =>
+      session.unread.snapshot({
+        kind: "thread",
+        channelId,
+        rootId: snapshot.root?.id ?? messageId,
+      }),
+    [session.unread, channelId, snapshot.root?.id, messageId],
+  );
+  useSyncExternalStore(subscribeUnread, unreadSnapshot, unreadSnapshot);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [replyParent, setReplyParent] = useState<string>();
+  const resolveName = useChannelIdentityNames(session, channelId);
   const rows = useMemo(
     () =>
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
@@ -238,15 +280,69 @@ function ThreadMessages({
       ].find((row) => row.dataset.messageId === messageId),
     [messageId],
   );
+  // A late ancestor reparents the exact row. Transfer only focus owned at detach,
+  // within this commit/layout expansion; a later user expansion must not restore it.
+  const selectedBranchRef = useMemo(() => {
+    let restore = false;
+    return (branch: HTMLLIElement | null) => {
+      if (!branch) return;
+      const row = branch.querySelector<HTMLElement>("[data-message-id]");
+      if (
+        restore &&
+        row &&
+        !navigation?.signal.aborted &&
+        !branch.closest("[inert]") &&
+        document.activeElement === document.body
+      ) {
+        row.tabIndex = -1;
+        row.focus({ preventScroll: true });
+      }
+      restore = false;
+      return () => {
+        restore =
+          row?.dataset.messageId === messageId &&
+          document.activeElement === row;
+        // Ancestor expansion happens synchronously in a layout effect. Do not
+        // retain focus intent after this update (collapse, deletion, or unmount).
+        queueMicrotask(() => {
+          restore = false;
+        });
+      };
+    };
+  }, [messageId, navigation?.signal]);
+  const selectedOffset = useCallback(() => {
+    const row = selectedRow();
+    const container = scroller.current;
+    return row && container
+      ? row.getBoundingClientRect().top -
+          container.getBoundingClientRect().top +
+          container.scrollTop
+      : undefined;
+  }, [selectedRow]);
   const completeTarget = useCallback(() => {
     // Exact lookup can finish before context. Preserve this row's reading
     // position through prepended history without refocusing it after opening.
-    targetAnchor.current = selectedRow()?.offsetTop;
+    targetAnchor.current = selectedOffset();
     navigation?.complete({ status: "opened" });
-  }, [navigation, selectedRow]);
+  }, [navigation, selectedOffset]);
   const prepareTarget = useCallback(() => {
     follow.current = false;
   }, []);
+  const revealedAncestors = useRef(new Set<string>());
+  // Exact targets may precede their ancestors in bounded history. Reveal every
+  // available ancestor as it arrives; missing parents remain visible at the top.
+  useLayoutEffect(() => {
+    if (navigation?.signal.aborted) return;
+    const ancestors = tree
+      .ancestors(messageId)
+      .filter((id) => !revealedAncestors.current.has(id));
+    for (const id of ancestors) revealedAncestors.current.add(id);
+    if (ancestors.length)
+      setExpanded((current) => {
+        if (ancestors.every((id) => current.has(id))) return current;
+        return new Set([...current, ...ancestors]);
+      });
+  }, [tree, messageId, navigation]);
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
@@ -272,7 +368,14 @@ function ThreadMessages({
   useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
-  const focusReply = useCallback(() => setReplyFocus((value) => value + 1), []);
+  const focusReply = useCallback(() => {
+    setReplyParent(undefined);
+    setReplyFocus((value) => value + 1);
+  }, []);
+  const targetReply = useCallback((id: string) => {
+    setReplyParent((current) => (current === id ? undefined : id));
+    setReplyFocus((value) => value + 1);
+  }, []);
   useEffect(() => {
     if (replyRequest) focusReply();
   }, [replyRequest, focusReply]);
@@ -330,10 +433,10 @@ function ThreadMessages({
     )
       return;
     if (targetAnchor.current !== undefined) {
-      const row = selectedRow();
-      if (row) {
-        element.scrollTop += row.offsetTop - targetAnchor.current;
-        targetAnchor.current = row.offsetTop;
+      const offset = selectedOffset();
+      if (offset !== undefined) {
+        element.scrollTop += offset - targetAnchor.current;
+        targetAnchor.current = offset;
         follow.current = false;
       }
       if (snapshot.status !== "loading" && !snapshot.canLoadMore)
@@ -354,14 +457,127 @@ function ThreadMessages({
     navigation,
     rootTarget,
     revealed,
-    selectedRow,
+    selectedOffset,
   ]);
+  // An own send can land in the middle of a branch, not at the list bottom.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
+  useLayoutEffect(() => {
+    if (!sent) return;
+    const row = [
+      ...(scroller.current?.querySelectorAll<HTMLElement>(
+        "[data-message-id]",
+      ) ?? []),
+    ].find((element) => element.dataset.messageId === sent);
+    if (row) {
+      row.scrollIntoView({ block: "nearest" });
+      setSent(undefined);
+    }
+  }, [sent, snapshot.replies, expanded]);
   const keepReadingPosition = () => {
     targetAnchor.current = undefined;
     if (positioned.current) return;
     positioned.current = true;
     follow.current = false;
   };
+  let previousReply: ChannelMessage | undefined = snapshot.root;
+  function renderReplies(parent: string | undefined, depth = 0): ReactNode {
+    return (tree.children.get(parent) ?? []).map((row) => {
+      const children = tree.children.get(row.id);
+      const continuation =
+        previousReply?.authorId === row.authorId &&
+        row.createdAt >= previousReply.createdAt &&
+        row.createdAt - previousReply.createdAt <= 10 * 60 &&
+        !row.membership;
+      previousReply =
+        children?.length && !expanded.has(row.id) ? undefined : row;
+      const descendants = branchReplies.get(row.id) ?? [];
+      const unreadCount = descendants.filter(
+        (reply) => session.unread.attention(channelId, reply.id).unread,
+      ).length;
+      const unreadLabel = unreadCount
+        ? `${unreadCount} new in available replies`
+        : undefined;
+      const message = (branchControl?: ReactNode) => (
+        <MessageRow
+          branchControl={branchControl}
+          extensions={extensions}
+          session={session}
+          scope={scope}
+          onReply={snapshot.root ? targetReply : undefined}
+          row={row}
+          profile={profiles.get(row.authorId)}
+          participantProfiles={profiles}
+          agentPubkeys={agentPubkeys}
+          media={session.media}
+          onOpenLink={onOpenLink}
+          canOpenLink={canOpenLink}
+          day={false}
+          layout={continuation ? "continuation" : "thread"}
+          retry={session.messages.retry}
+          {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
+          {...(onOpenMediaReview && rootId
+            ? { onOpenMediaReview: openRootMedia }
+            : {})}
+        />
+      );
+      return (
+        <li
+          key={row.id}
+          ref={row.id === messageId ? selectedBranchRef : undefined}
+          className={styles.replyItem}
+          data-layout={continuation ? "continuation" : "thread"}
+        >
+          {!parent && row.replyParentId && row.replyParentId !== rootId && (
+            <p className={styles.threadNote}>
+              Earlier reply unavailable in loaded history.
+            </p>
+          )}
+
+          <ReplyBranch
+            message={message}
+            collapsible={!!children?.length}
+            layout={continuation ? "continuation" : "thread"}
+            label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+            summary={
+              <ReplySummary
+                count={descendants.length}
+                participants={[
+                  ...new Set(descendants.map((reply) => reply.authorId)),
+                ]}
+                profiles={profiles}
+                agentPubkeys={agentPubkeys}
+                resolveName={resolveName}
+                media={session.media}
+                unreadLabel={unreadLabel}
+                unreadCount={unreadCount}
+              />
+            }
+            depth={depth}
+            open={expanded.has(row.id)}
+            onOpenChange={(open) => {
+              follow.current = false;
+              targetAnchor.current = undefined;
+              setExpanded((current) => {
+                const next = new Set(current);
+                if (open) next.add(row.id);
+                else {
+                  next.delete(row.id);
+                  for (const id of current)
+                    if (tree.ancestors(id).includes(row.id)) next.delete(id);
+                }
+                return next;
+              });
+            }}
+          >
+            {expanded.has(row.id) && (
+              <ol>{renderReplies(row.id, depth + 1)}</ol>
+            )}
+          </ReplyBranch>
+        </li>
+      );
+    });
+  }
+  const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
   return (
     <>
       <section
@@ -409,6 +625,7 @@ function ThreadMessages({
               onOpenLink={onOpenLink}
               canOpenLink={canOpenLink}
               day={false}
+              layout="thread"
               retry={session.messages.retry}
               mediaMode="thread"
               {...(mediaSeek
@@ -434,40 +651,10 @@ function ThreadMessages({
               </span>
             )}
           </>
-        ) : (
-          snapshot.status !== "loading" && (
-            <p className={styles.empty}>Original message unavailable.</p>
-          )
-        )}
-        <div className={styles.threadDivider}>
-          {snapshot.replies.length}{" "}
-          {snapshot.replies.length === 1 ? "reply shown" : "replies shown"}
-        </div>
-        <ol>
-          {snapshot.replies.map((row) => (
-            <li key={row.id}>
-              <MessageRow
-                extensions={extensions}
-                session={session}
-                scope={scope}
-                onReply={snapshot.root ? focusReply : undefined}
-                row={row}
-                profile={profiles.get(row.authorId)}
-                participantProfiles={profiles}
-                agentPubkeys={agentPubkeys}
-                media={session.media}
-                onOpenLink={onOpenLink}
-                canOpenLink={canOpenLink}
-                day={false}
-                retry={session.messages.retry}
-                {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
-                {...(onOpenMediaReview && rootId
-                  ? { onOpenMediaReview: openRootMedia }
-                  : {})}
-              />
-            </li>
-          ))}
-        </ol>
+        ) : snapshot.status !== "loading" ? (
+          <p className={styles.empty}>Original message unavailable.</p>
+        ) : null}
+        <ol>{renderReplies(undefined)}</ol>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>
@@ -496,7 +683,43 @@ function ThreadMessages({
           scope={scope}
           channelId={channelId}
           channelName={channelName}
+          placeholder={`Reply in thread to ${resolveName(snapshot.root.authorId, profiles.get(snapshot.root.authorId)?.name ?? formatPublicKey(snapshot.root.authorId) ?? "Unknown author")}`}
           threadRootId={snapshot.root.id}
+          replyParentId={replyParent}
+          disabled={!!replyParent && !selectedParent}
+          replyContext={
+            replyParent && !selectedParent ? (
+              <div className={styles.replyContext}>
+                <span>Reply target is no longer available.</span>
+                <Button size="sm" onClick={focusReply}>
+                  Cancel reply target
+                </Button>
+              </div>
+            ) : (
+              selectedParent && (
+                <div className={styles.replyContext}>
+                  <div>
+                    <span>
+                      Replying to{" "}
+                      {resolveName(
+                        selectedParent.authorId,
+                        profiles.get(selectedParent.authorId)?.name ??
+                          formatPublicKey(selectedParent.authorId) ??
+                          "Unknown author",
+                      )}
+                    </span>
+                    <p>{selectedParent.content}</p>
+                  </div>
+                  <IconButton
+                    size="sm"
+                    aria-label="Cancel reply target"
+                    onClick={focusReply}
+                    icon={<XIcon size={16} aria-hidden="true" />}
+                  />
+                </div>
+              )
+            )
+          }
           editMessages={rows}
           focusRequest={replyFocus}
           onOpenLink={onOpenLink}
@@ -508,7 +731,17 @@ function ThreadMessages({
           onSend={(id) => {
             targetAnchor.current = undefined;
             positioned.current = true;
-            follow.current = true;
+            follow.current = !selectedParent;
+            if (selectedParent)
+              setExpanded(
+                (current) =>
+                  new Set([
+                    ...current,
+                    selectedParent.id,
+                    ...tree.ancestors(selectedParent.id),
+                  ]),
+              );
+            setReplyParent(undefined);
             setSent(id);
           }}
         />

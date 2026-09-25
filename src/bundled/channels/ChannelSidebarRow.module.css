@@ -69,6 +69,13 @@
   translate: -12px -1px;
   gap: var(--space-2);
 }
+.nameContent {
+  --user-status-emoji-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
 .label,
 .childLabel {
   display: block;

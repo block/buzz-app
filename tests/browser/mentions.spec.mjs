@@ -14,6 +14,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
+    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     envFile: false,
     plugins: [react()],
     logLevel: "error",
@@ -24,12 +25,33 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
   try {
     await server.listen();
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?test-controls`,
     );
+    await expect(page.getByRole("textbox")).toBeVisible();
     const keys = await page.evaluate(() => ({
       first: window.mentionFixture.first,
       second: window.mentionFixture.second,
     }));
+    // Real layout is required: the popup follows the whole composer, including
+    // multiple lines of text, rather than the trigger's toolbar position.
+    const expectComposerAnchor = async (popup) => {
+      await expect(popup).toHaveClass(/buzz-popover/);
+      expect(
+        await popup.evaluate((element) => element.closest("form") === null),
+      ).toBe(true);
+      await expect(popup).toHaveCSS("border-radius", "24px");
+      await expect
+        .poll(() =>
+          popup.evaluate((element) => {
+            const composer = document.querySelector("form");
+            return (
+              composer.getBoundingClientRect().top -
+              element.getBoundingClientRect().bottom
+            );
+          }),
+        )
+        .toBe(4);
+    };
     const choose = async (key) => {
       await page
         .getByRole("button", { name: "Mention a member", exact: true })
@@ -37,11 +59,13 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       const picker = page.getByRole("dialog", {
         name: "Mention a member or agent",
       });
+      const search = picker.getByRole("searchbox");
+      await search.fill(key);
       await expect(
         picker.getByRole("button", { name: new RegExp(key) }),
       ).toBeVisible();
-      const search = picker.getByRole("searchbox");
       await expect(search).toBeFocused();
+      await expectComposerAnchor(picker);
       await expect(picker).toHaveCSS("width", "380px");
       expect((await picker.boundingBox()).height).toBeLessThanOrEqual(360);
       await search.fill("");
@@ -63,6 +87,8 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       await page.keyboard.press("ArrowDown");
       await expect(choice).toBeFocused();
       await choice.press("Enter");
+      await expect(picker).toHaveCount(0);
+      await expect(page.getByRole("textbox")).toBeFocused();
     };
     const order = () =>
       page
@@ -71,6 +97,87 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
           buttons.map((button) => button.getAttribute("aria-label")),
         );
     await expect.poll(order).toEqual(["Mention a member", "Insert emoji"]);
+    // Browser-only contract: native shadow search and React search share their
+    // shape, typography, clear target and alignment in both appearance modes.
+    const searchAppearance = async (field) => {
+      // Main animates field focus; compare settled appearance, not an arbitrary frame.
+      await field.evaluate(async (element) => {
+        await Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .map((animation) => animation.finished),
+        );
+      });
+      return field.evaluate((element) => {
+        const nativeInput = element.querySelector("input");
+        // Both the React and vendor search use the shared field boundary.
+        const style = getComputedStyle(
+          element.matches(".search-field") ? element : nativeInput,
+        );
+        const input = getComputedStyle(nativeInput);
+        const clear = element.querySelector("button");
+        return {
+          height: style.height,
+          radius: style.borderRadius,
+          background: style.backgroundColor,
+          border: style.border,
+          color: input.color,
+          font: input.font,
+          clear: clear && {
+            width: getComputedStyle(clear).width,
+            height: getComputedStyle(clear).height,
+            radius: getComputedStyle(clear).borderRadius,
+            color: getComputedStyle(clear).color,
+          },
+        };
+      });
+    };
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      await page
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .click();
+      const mention = page.getByRole("dialog", {
+        name: "Mention a member or agent",
+      });
+      const row = mention.getByRole("button", {
+        name: `Honey ${keys.first}`,
+        exact: true,
+      });
+      await expect(row).toHaveCSS("padding", "8px");
+      await row.hover();
+      await expect(row).toHaveCSS(
+        "background-color",
+        mode === "light" ? "rgb(232, 232, 232)" : "rgb(89, 89, 89)",
+      );
+      await mention.getByRole("searchbox").fill("");
+      const empty = await searchAppearance(mention.locator(".search-field"));
+      await mention.getByRole("searchbox").fill("Honey");
+      const filled = await searchAppearance(mention.locator(".search-field"));
+      await page
+        .getByRole("button", { name: "Insert emoji", exact: true })
+        .click();
+      const emojiField = page.locator("em-emoji-picker .search");
+      await expect(emojiField.getByRole("searchbox")).toBeFocused();
+      expect(await searchAppearance(emojiField)).toEqual(empty);
+      const emojiSearch = emojiField.getByRole("searchbox");
+      await emojiSearch.fill("face");
+      await expect(
+        emojiField.getByRole("button", { name: "Clear", exact: true }),
+      ).toBeVisible();
+      expect(await searchAppearance(emojiField)).toEqual(filled);
+      await emojiField
+        .getByRole("button", { name: "Clear", exact: true })
+        .click();
+      await expect(emojiSearch).toHaveValue("");
+      await expect(emojiSearch).toBeFocused();
+      await emojiSearch.press("Escape");
+    }
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "light";
+    });
     const input = page.getByRole("textbox", { name: "Message #General" });
     await choose(keys.first);
     await expect(input.locator(".inline-chip")).toHaveText("@Honey");
@@ -129,6 +236,9 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       "data-theme",
       "dark",
     );
+    await expectComposerAnchor(
+      page.getByRole("dialog", { name: "Emoji picker" }),
+    );
     await search.fill("grinning");
     await page.getByRole("button", { name: "😀", exact: true }).click();
     await expect(input).toHaveJSProperty("value", "@Honey @Honey 😀");
@@ -174,7 +284,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(emojiTool).toBeFocused();
     const chipRoles = await chip.evaluate((element) => {
       const probe = document.createElement("span");
-      probe.style.backgroundColor = "var(--affordance-accent)";
+      probe.style.backgroundColor = "var(--affordance-subtle)";
       probe.style.color = "var(--text-standard)";
       element.append(probe);
       const style = getComputedStyle(probe);
@@ -362,6 +472,7 @@ test("selected mentions inside code remain visible through draft restore and cha
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
+    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     envFile: false,
     plugins: [react()],
     logLevel: "error",
@@ -370,8 +481,9 @@ test("selected mentions inside code remain visible through draft restore and cha
   try {
     await server.listen();
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?test-controls`,
     );
+    await expect(page.getByRole("textbox")).toBeVisible();
     const keys = await page.evaluate(() => [
       window.mentionFixture.first,
       window.mentionFixture.second,

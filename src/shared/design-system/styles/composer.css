@@ -1,0 +1,104 @@
+.buzz-composer {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-4) calc(var(--space-5) / 2) calc(var(--space-5) / 2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-xs);
+  background: var(--surface-panel);
+  color: var(--text-standard);
+}
+
+.buzz-composer:focus-within {
+  border-color: var(--border-focus);
+  box-shadow:
+    var(--shadow-xs),
+    0 0 0 1px var(--border-focus);
+}
+
+.buzz-composer[data-disabled] {
+  color: var(--text-unavailable);
+}
+
+.buzz-composer[data-error] {
+  border-color: var(--border-danger);
+}
+
+.buzz-composer-input {
+  @apply text-body;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 1.5rem;
+  max-height: 12rem;
+  resize: vertical;
+  overflow: auto;
+  margin: 0;
+  padding: 0 calc(var(--space-5) / 2);
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-standard);
+  font-family: var(--font-sans);
+}
+
+.buzz-composer-input:focus {
+  outline: 0;
+}
+
+.buzz-composer-input::placeholder {
+  color: var(--text-subtle);
+  opacity: 1;
+}
+
+.buzz-composer-input:disabled {
+  cursor: not-allowed;
+  color: var(--text-unavailable);
+}
+
+.buzz-composer-actions,
+.buzz-composer-tools,
+.buzz-composer-context {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.buzz-composer-actions {
+  gap: var(--space-2);
+}
+
+.buzz-composer-tools {
+  flex: 1;
+  flex-wrap: wrap;
+  gap: var(--space-half);
+}
+
+.buzz-composer-context {
+  @apply text-body-sm;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) calc(var(--space-5) / 2);
+  border-radius: var(--radius-row);
+  background: var(--affordance-subtle);
+  color: var(--text-secondary);
+}
+
+.buzz-composer-status,
+.buzz-composer-error {
+  @apply text-caption;
+  padding-inline: calc(var(--space-5) / 2);
+}
+
+.buzz-composer-status {
+  color: var(--text-subtle);
+}
+
+.buzz-composer-error {
+  color: var(--text-danger);
+}

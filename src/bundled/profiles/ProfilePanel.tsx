@@ -1,9 +1,11 @@
+import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import { ProfileAgentActions } from "./ProfileAgentActions";
 import { ProfileMemories } from "./ProfileMemories";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
 import { ProfileAgentRuntime } from "./ProfileAgentRuntime";
+import { ProfileRuntime, useRuntimeAgent } from "./ProfileRuntime";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
@@ -28,7 +30,10 @@ import { selectProfiles } from "../../features/relay/profile-selection";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
+import {
+  ProfileAgentIdentity,
+  useVerifiedAgentOwner,
+} from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
 
 export function ProfilePanel({
@@ -37,10 +42,12 @@ export function ProfilePanel({
   context,
   navigation,
   control,
+  instanceId,
 }: PanelProps & {
   relay: RelayData;
   navigation?: Navigation;
   control?: AgentControl;
+  instanceId?: string | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const pubkey = profileKey(target);
@@ -49,9 +56,10 @@ export function ProfilePanel({
     return <p>Connect to a community to view this profile.</p>;
   return (
     <ProfileDetails
-      key={`${connection.scope}:${connection.generation}:${pubkey}`}
+      key={`${connection.scope}:${connection.generation}:${pubkey}:${instanceId ?? ""}`}
       session={connection.session}
       pubkey={pubkey}
+      instanceId={instanceId}
       context={context}
       navigation={navigation}
       control={control}
@@ -59,7 +67,12 @@ export function ProfilePanel({
       viewer={connection.viewer}
     >
       {control && (
-        <ProfileAgentActions control={control} relay={relay} pubkey={pubkey} />
+        <ProfileAgentActions
+          control={control}
+          relay={relay}
+          pubkey={pubkey}
+          instanceId={instanceId}
+        />
       )}
     </ProfileDetails>
   );
@@ -73,7 +86,9 @@ function ProfileDetails({
   control,
   scope,
   viewer,
+  instanceId,
 }: {
+  instanceId?: string | undefined;
   children?: ReactNode;
   session: RelaySession;
   pubkey: string;
@@ -98,15 +113,13 @@ function ProfileDetails({
   );
   const [attempt, retry] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
-  const [tab, setTab] = useState<"info" | "channels" | "memories">("info");
+  const [tab, setTab] = useState<"info" | "runtime" | "channels" | "memories">(
+    "info",
+  );
   const region = useRef<HTMLElement>(null);
   const messageAttempt = useRef<AbortController>(undefined);
   const [openingMessage, setOpeningMessage] = useState(false);
   const [messageError, setMessageError] = useState("");
-  const [userStatus, setUserStatus] = useState<{
-    text: string;
-    emoji: string;
-  }>();
   useEffect(() => {
     region.current?.focus();
     // Target, viewer and community changes remount this view (see key above).
@@ -129,30 +142,28 @@ function ProfileDetails({
       active = false;
     };
   }, [session, pubkey, attempt]);
-  // One snapshot of the self-published NIP-38 status; not live-updated.
-  useEffect(() => {
-    const controller = new AbortController();
-    void session
-      .read(
-        [{ kinds: [30315], authors: [pubkey], "#d": ["general"], limit: 1 }],
-        { signal: controller.signal },
-      )
-      .then(
-        (events) => {
-          if (controller.signal.aborted) return;
-          const latest = events
-            .filter((event) => event.pubkey === pubkey && event.kind === 30315)
-            .sort((a, b) => b.created_at - a.created_at)[0];
-          const emoji =
-            latest?.tags.find(([name]) => name === "emoji")?.[1] ?? "";
-          const text = latest?.content.trim() ?? "";
-          setUserStatus(text || emoji ? { text, emoji } : undefined);
-        },
-        () => {},
-      );
-    return () => controller.abort();
-  }, [session, pubkey]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const knownAgent = agentPubkeys.has(pubkey);
+  const verifiedOwner = useVerifiedAgentOwner(
+    session,
+    knownAgent ? pubkey : undefined,
+  );
+  const isOwner = knownAgent && !!viewer && verifiedOwner === viewer;
+  // Private local configuration needs both native custody and verified ownership.
+  const runtimeAgent = useRuntimeAgent(control, scope, pubkey);
+  const canViewRuntime = isOwner && !!runtimeAgent;
+  const selectedTab =
+    (tab === "memories" && !isOwner) || (tab === "runtime" && !canViewRuntime)
+      ? "info"
+      : tab;
+  useEffect(() => {
+    if (!isOwner)
+      setTab((current) => (current === "memories" ? "info" : current));
+  }, [isOwner]);
+  useEffect(() => {
+    if (!canViewRuntime)
+      setTab((current) => (current === "runtime" ? "info" : current));
+  }, [canViewRuntime]);
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
     try {
@@ -240,12 +251,17 @@ function ProfileDetails({
         <h2 className="text-heading">{name}</h2>
       </div>
       <Tabs
-        value={tab}
+        value={selectedTab}
         onValueChange={setTab}
         items={[
           { value: "info", label: "Info" },
+          ...(canViewRuntime
+            ? [{ value: "runtime" as const, label: "Runtime" }]
+            : []),
           { value: "channels", label: "Channels" },
-          { value: "memories", label: "Memories" },
+          ...(isOwner
+            ? [{ value: "memories" as const, label: "Memories" }]
+            : []),
         ]}
         label="Profile sections"
         variant="panel"
@@ -258,13 +274,7 @@ function ProfileDetails({
                   pubkey={pubkey}
                   profile
                 />
-                {userStatus && (
-                  <p className={styles.status}>
-                    {userStatus.emoji && <span>{userStatus.emoji}</span>}
-                    {userStatus.emoji && userStatus.text && " "}
-                    {userStatus.text && <span>{userStatus.text}</span>}
-                  </p>
-                )}
+                <UserStatusDisplay session={session} userId={pubkey} />
                 {profile?.nip05 && (
                   <p className={styles.identifier}>
                     <span>NIP-05 (unverified)</span>{" "}
@@ -291,13 +301,14 @@ function ProfileDetails({
                     control={control}
                     scope={scope}
                     pubkey={pubkey}
+                    instanceId={instanceId}
                   />
                 )}
                 {children}
-                {agentPubkeys.has(pubkey) && (
+                {knownAgent && verifiedOwner && (
                   <ProfileAgentIdentity
                     session={session}
-                    pubkey={pubkey}
+                    owner={verifiedOwner}
                     viewer={viewer}
                     context={context}
                   />
@@ -312,7 +323,10 @@ function ProfileDetails({
                     errorHandledByActions
                     control={control}
                     pubkey={pubkey}
-                    navigation={navigation}
+                    context={context}
+                    session={session}
+                    canOpenPrivate={verifiedOwner === viewer && !!viewer}
+                    selectedId={instanceId}
                     scope={scope}
                     communityOrigin={communityOrigin}
                     viewer={viewer}
@@ -367,7 +381,18 @@ function ProfileDetails({
                     </>
                   ))}
               </>
-            ) : selected === "memories" ? (
+            ) : selected === "runtime" &&
+              canViewRuntime &&
+              control &&
+              runtimeAgent &&
+              verifiedOwner ? (
+              <ProfileRuntime
+                control={control}
+                agent={runtimeAgent}
+                session={session}
+                owner={verifiedOwner}
+              />
+            ) : selected === "memories" && isOwner ? (
               <ProfileMemories session={session} pubkey={pubkey} />
             ) : (
               <ProfileChannels

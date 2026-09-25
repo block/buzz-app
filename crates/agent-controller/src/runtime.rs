@@ -52,14 +52,7 @@ impl RuntimeBundle {
         {
             return Err("This imported agent requires a remote/team/mesh integration not supported by the local controller".into());
         }
-        let respond_to = if defaults.owner_only {
-            "owner-only"
-        } else {
-            record["respond_to"].as_str().unwrap_or("owner-only")
-        };
-        if !matches!(respond_to, "owner-only" | "allowlist" | "anyone") {
-            return Err("Invalid imported response policy".into());
-        }
+        let respond_to = agent.respond_to(defaults.owner_only)?;
         if agent.auth_tag.is_none() {
             return Err("This identity has no saved owner attestation; native owner binding is required before starting".into());
         }
@@ -136,37 +129,17 @@ impl RuntimeBundle {
                 .env("BUZZ_ACP_ALLOWED_RESPOND_TO", "owner-only")
                 .env_remove("BUZZ_ACP_RESPOND_TO_ALLOWLIST");
         }
-        let worker_name = Path::new(&harness.command)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        // Explicit per-agent environment overrides selectors, matching the editor's
-        // Environment overrides contract. A blank selector must not erase it.
-        let mapping = match worker_name {
-            "buzz-agent" => Some(("BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER")),
-            "goose" => Some(("GOOSE_MODEL", "GOOSE_PROVIDER")),
-            "buzz-pi-acp" => None,
-            _ if !harness.provider.is_empty() => return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into()),
-            _ => None,
-        };
-        let mut model = (!harness.model.is_empty()).then_some(harness.model.as_str());
-        if let Some((model_key, provider_key)) = mapping {
-            model = agent
-                .environment
-                .get(model_key)
-                .map(String::as_str)
-                .or(model);
-            let provider = agent
-                .environment
-                .get(provider_key)
-                .map(String::as_str)
-                .or_else(|| (!harness.provider.is_empty()).then_some(harness.provider.as_str()));
+        let selected = crate::defaults::selectors(&harness, &agent.environment);
+        let model = selected.model;
+        if let Some((model_key, provider_key)) = selected.keys {
             if let Some(value) = model {
                 command.env(model_key, value);
             }
-            if let Some(value) = provider {
+            if let Some(value) = selected.provider {
                 command.env(provider_key, value);
             }
+        } else if pi.is_none() && !harness.provider.is_empty() {
+            return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into());
         }
         if let Some(value) = model {
             let value = if pi.is_some() && !agent.harness.provider.is_empty() {
@@ -303,6 +276,8 @@ struct Running {
     #[cfg(not(unix))]
     process: Process,
     revision: u64,
+    /// Native-only: holds environment values and is never serialized.
+    spawned: serde_json::Value,
     databricks_host: Option<String>,
     #[cfg(all(test, unix))]
     temporary: Option<PathBuf>,
@@ -353,15 +328,29 @@ impl Controller {
         }
     }
     pub fn snapshot(&mut self) -> Result<ControlSnapshot> {
-        let mut snapshot = self.store.snapshot()?;
-        snapshot.runtime_available = self.bundle.is_ok();
-        snapshot.runtime_message = self.bundle.as_ref().err().cloned();
-        for agent in &mut snapshot.agents {
+        let saved = self.store.agents()?;
+        let command = |name| {
+            let path = self.bundle.as_ref().ok()?.executable(name).ok()?;
+            Some(path.to_string_lossy().into_owned())
+        };
+        let (acp_command, mcp_command) = (command("buzz-acp"), command("buzz-dev-mcp"));
+        let mut snapshot = ControlSnapshot {
+            agents: saved.iter().map(Agent::view).collect(),
+            runtime_available: self.bundle.is_ok(),
+            runtime_message: self.bundle.as_ref().err().cloned(),
+        };
+        for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
+            agent.acp_command.clone_from(&acp_command);
+            agent.mcp_command.clone_from(&mcp_command);
             if let Some(run) = self.running.get_mut(&agent.id) {
                 match run.process.alive() {
                     Ok(true) => {
                         agent.status = ProcessStatus::Running;
                         agent.running_revision = Some(run.revision);
+                        agent.restart_diff = crate::restart::diff(
+                            &run.spawned,
+                            &crate::restart::spawn_config(saved),
+                        );
                     }
                     Ok(false) => {
                         self.running.remove(&agent.id);
@@ -468,6 +457,27 @@ impl Controller {
         self.store.save(id, revision, edit)?;
         self.snapshot()
     }
+    pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err("Agent settings changed. Reload before deleting".into());
+        }
+        // Stop must be confirmed before removing custody or durable settings.
+        self.stop(id)?;
+        self.store.enabled(id, false)?;
+        // A failed settings write leaves the card available for an explicit retry.
+        // Credential deletion is idempotent, so that retry can finish cleanup.
+        self.credentials
+            .delete(&agent.credential_id, &agent.pubkey)?;
+        self.store.remove(id, revision)?;
+        self.errors.remove(id);
+        self.snapshot()
+    }
     pub fn action(&mut self, id: &str, action: Action) -> Result<ControlSnapshot> {
         // Start/restart still require a saved identity; Stop must not depend on it.
         if !matches!(action, Action::Stop) && !self.store.agents()?.iter().any(|a| a.id == id) {
@@ -503,9 +513,24 @@ impl Controller {
         }
         self.snapshot()
     }
+    /// Persists the launch preference only; the running process is unchanged.
+    pub fn set_start_on_app_launch(&mut self, id: &str, value: bool) -> Result<ControlSnapshot> {
+        self.store.start_on_app_launch(id, value)?;
+        self.snapshot()
+    }
     pub fn restore(&mut self) -> Result<ControlSnapshot> {
-        for a in self.store.agents()?.into_iter().filter(|a| a.enabled) {
-            if let Err(error) = self.start(&a.id) {
+        for a in self
+            .store
+            .agents()?
+            .into_iter()
+            .filter(Agent::starts_on_launch)
+        {
+            // Like the host restore, a launch preference is a Start: it enables.
+            if let Err(error) = self
+                .store
+                .enabled(&a.id, true)
+                .and_then(|_| self.start(&a.id))
+            {
                 self.errors.insert(a.id, error);
             }
         }
@@ -553,12 +578,12 @@ impl Controller {
     pub fn record_error(&mut self, id: &str, error: String) {
         self.errors.insert(id.into(), error);
     }
-    pub fn enabled_ids(&self) -> Result<Vec<String>> {
+    pub fn launch_ids(&self) -> Result<Vec<String>> {
         Ok(self
             .store
             .agents()?
             .into_iter()
-            .filter(|a| a.enabled)
+            .filter(Agent::starts_on_launch)
             .map(|a| a.id)
             .collect())
     }
@@ -640,6 +665,7 @@ impl Controller {
             Running {
                 process,
                 revision: agent.revision,
+                spawned: crate::restart::spawn_config(&agent),
                 databricks_host: settings.map(|s| s.host),
                 #[cfg(all(test, unix))]
                 temporary: Some(temporary),

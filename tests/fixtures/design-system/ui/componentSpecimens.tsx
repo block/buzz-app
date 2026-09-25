@@ -1,3 +1,12 @@
+import { Calendar } from "../../../../src/shared/design-system/ui/Calendar";
+import { FieldButton } from "../../../../src/shared/design-system/ui/FieldButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+} from "../../../../src/shared/design-system/ui/Menu";
 import {
   MenuSpecimen,
   PopoverSpecimen,
@@ -53,6 +62,7 @@ import { FullPageSurface } from "../../../../src/shared/design-system/ui/FullPag
 import { PreviewCard } from "../../../../src/shared/design-system/ui/PreviewCard";
 import type { ChipAddress } from "../../../../src/shared/design-system/chips/address";
 import { chipFaces } from "../../../../src/shared/design-system/chips/faceResolver";
+import { ComposerSpecimen } from "./ComposerSpecimen";
 
 const DESTINATIONS = [
   { value: "home", label: "Home" },
@@ -61,6 +71,31 @@ const DESTINATIONS = [
 ] as const;
 
 type Destination = (typeof DESTINATIONS)[number]["value"];
+
+function CalendarSpecimen() {
+  const [date, setDate] = useState(new Date());
+  return <Calendar mode="single" required selected={date} onSelect={setDate} />;
+}
+
+function FieldButtonSpecimen() {
+  const [duration, setDuration] = useState("Today");
+  return (
+    <MenuRoot>
+      <MenuTrigger render={<FieldButton aria-label="Duration" />}>
+        {duration}
+      </MenuTrigger>
+      <MenuPopup>
+        <MenuRadioGroup value={duration} onValueChange={setDuration}>
+          {["Today", "This week", "Custom"].map((item) => (
+            <MenuRadioItem key={item} value={item}>
+              {item}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuPopup>
+    </MenuRoot>
+  );
+}
 
 function SpecimenFrame({
   children,
@@ -201,7 +236,6 @@ function AvatarSpecimen() {
           <IconButton
             aria-label="View Morgan profile"
             size="large"
-            shape="round"
             icon={
               <Avatar src={avatarUrl} alt="" fallback="Morgan" size="fill" />
             }
@@ -209,7 +243,6 @@ function AvatarSpecimen() {
           <IconButton
             aria-label="View Alex profile"
             size="large"
-            shape="round"
             icon={<Avatar alt="" fallback="Alex" size="fill" />}
           />
         </div>
@@ -488,6 +521,21 @@ function NavigationItemSpecimen() {
             trailing={<span className="text-body-sm">3</span>}
             selected={selected === "desktop-new"}
             onClick={() => setSelected("desktop-new")}
+          />
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup label="Picker option — even padding and immediate hover feedback">
+        <div className="component-navigation-section-demo">
+          <NavigationItem
+            variant="option"
+            label="Alex"
+            icon={<Avatar fallback="Alex" alt="" size="default" />}
+          />
+          <NavigationItem
+            variant="option"
+            label="Unavailable"
+            disabled
+            icon={<Avatar fallback="Unavailable" alt="" size="default" />}
           />
         </div>
       </SpecimenGroup>
@@ -841,6 +889,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       </Field>
     </SpecimenFrame>
   ),
+  calendar: CalendarSpecimen,
+  "field-button": FieldButtonSpecimen,
   input: InputExamples,
   textarea: TextareaExamples,
   "radio-group": RadioGroupSpecimen,
@@ -924,6 +974,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   ),
   "panel-header": PanelHeaderSpecimen,
   "search-field": SearchExamples,
+  composer: ComposerSpecimen,
   "navigation-section": NavigationSectionSpecimen,
   "navigation-item": NavigationItemSpecimen,
 };

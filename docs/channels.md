@@ -70,8 +70,8 @@ connection generation. This resets their session-owned state on switching or
 reconnecting, not unrelated page drafts;
 drafts, channel selection and reading geometry retain their stable scope keys.
 
-Saved sidebar groups, ordering, assignments, stars and mutes live in the session's
-`sidebarPreferences` snapshot, not in the mounted Messages page. `ensure()` shares
+Saved sidebar groups, ordering, assignments, stars, mutes and sorting live in the
+session's `sidebarPreferences` snapshot, not in the mounted Messages page. `ensure()` shares
 one initial read; `refresh()` explicitly reloads/retries while retaining the last
 good snapshot through loading/errors. Page exits neither restart nor cancel that
 read. Cache clearing and session disposal cancel it and discard decoded data;
@@ -89,7 +89,8 @@ survive. Invalid, unreadable, or over-budget heads fail closed; only a successfu
 can seed a record. Same-host writes serialize per relay. This is confirmed
 whole-record replacement, not atomic cross-device merging or a durable outbox;
 simultaneous writers on different hosts can still race. Failure requires explicit
-retry. No group/star mutation, sorting, or alternate menu implementation is included.
+retry. No group/star mutation or alternate menu implementation is included;
+[section sorting](#sidebar-sort-persistence) uses its separate preference coordinate.
 
 Rows expose mute/read actions through right-click/long-press, Shift+F10, or the
 Context Menu key. They extend the persistent sidebar’s existing menu after
@@ -145,6 +146,30 @@ Preparing-DM suppression captures the pre-open roster and exact member set, hidi
 only newly prepared DMs until confirmation; leaving New message or replacing the
 session clears that handoff. Timeline readers and reading leases stay in visible
 conversation content and unmount when leaving Messages.
+
+## Sidebar sort persistence
+
+Each sidebar section can independently select **A–Z** (the default) or **Recent**.
+The development broker saves these choices in the desktop-compatible encrypted
+kind-30078 `channel-sort` record: `{ version: 1, groups: { ... } }`. A–Z removes
+that group's override. Saving preserves unrelated fields and choices present in
+the record read before publication.
+
+Persistence is **whole-record last-write-wins**, not conflict-safe per-section
+merging. Two devices can read the same record and save different sections; the
+winning replacement can silently erase the other device's choice even when both
+saves report success. The broker's mutation queue serializes its own writes only.
+Read-back checks the requested section at that moment; it cannot detect an unseen
+choice overwritten in another section or guarantee preservation against later
+writes. “Independent” describes selecting a mode per section, not simultaneous
+cross-device save guarantees. Retaining the shared record preserves compatibility
+with existing desktop writers; per-section conflict resolution would require a
+coordinated persistence change.
+
+`dev/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
+through the real mutation helper: another section saves and confirms between a
+read and publication, then the stale whole-record replacement wins and also
+confirms. This is contract coverage, not a concurrency fix.
 
 ## Starting a direct message
 
@@ -377,17 +402,23 @@ The thread and a linked object panel share that slot; a companion can remain bel
 Close or Escape returns focus to the reply button when it is still mounted. Changing
 channel/community or disabling Channels disposes the owned thread view.
 
-The footer reuses `MessageComposer` and sends direct replies to the resolved root
-through `session.messages.reply`. Channel and thread drafts are separate and survive
-reconnection; failed replies remain inline with the shared retry action. Read-only
-connections keep the existing composer capability notice; missing/revoked roots do
-not expose a composer. Exact navigation can retain and focus a selected reply
-beyond the traversal range; it does not extend that range or promise complete history.
+The footer reuses `MessageComposer` and defaults to a direct reply to the resolved
+root through `session.messages.reply`. Reply on a child selects that message as the
+parent without changing the root-keyed draft; canceling the target returns to the
+root. Channel and thread drafts are separate and survive reconnection; failed
+replies remain inline with the shared retry action and retain their signed ancestry.
+Read-only connections keep the existing composer capability notice; missing/revoked
+roots do not expose a composer. Exact navigation can retain and focus a selected
+reply beyond the traversal range; it does not extend that range or promise complete history.
 
-Replies use ascending timestamp/event-ID order, including nested replies. Retry
-appears only after a failed read; there is no routine Refresh control. Names are
-optional shared background enrichment. The panel describes **replies shown**, not
-complete history.
+Replies form nested lists, with ascending timestamp/event-ID order among siblings.
+Branches start collapsed, expand one level at a time, and forget descendant expansion
+when collapsed. Labeled controls remain available when visual indentation is capped
+in narrow panels. Exact links reveal available ancestors; a reply whose parent is
+outside loaded history remains visible with a notice. Sessions remain inline.
+Retry appears only after a failed read; there is no routine Refresh control. Names
+are optional shared background enrichment. The panel describes **replies loaded**,
+not visible rows or complete history.
 The relay can filter rows after its limit, and summaries/EOSE are not proof of
 exhaustion. See [the thread owner and bounds](relay-queries.md#thread-views).
 

@@ -100,6 +100,9 @@ impl Store {
         Ok(doc)
     }
     fn write(&self, doc: &Document) -> Result<()> {
+        self.write_with_backup(doc, true)
+    }
+    fn write_with_backup(&self, doc: &Document, backup: bool) -> Result<()> {
         validate(doc)?;
         let bytes =
             serde_json::to_vec_pretty(doc).map_err(|_| "Could not encode agent settings")?;
@@ -108,10 +111,18 @@ impl Store {
         }
         // Validate/read first: never replace a newly corrupted file on a later save.
         let old = self.read()?;
-        if self.path().exists() {
+        if backup && self.path().exists() {
             let backup =
                 serde_json::to_vec_pretty(&old).map_err(|_| "Could not back up agent settings")?;
             atomic_write(&self.root.join("agents.previous.json"), &backup)?;
+        } else if !backup {
+            // A successful delete must not leave the removed settings in the
+            // previous-version file. Clear it before replacing the live file.
+            match fs::remove_file(self.root.join("agents.previous.json")) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err("Could not clear previous agent settings".into()),
+            }
         }
         atomic_write(&self.path(), &bytes)
     }
@@ -140,6 +151,19 @@ impl Store {
         agent.apply(edit)?;
         self.write(&doc)
     }
+    pub(crate) fn remove(&mut self, id: &str, revision: u64) -> Result<()> {
+        let mut doc = self.read()?;
+        let index = doc
+            .agents
+            .iter()
+            .position(|agent| agent.id == id)
+            .ok_or("Agent no longer exists")?;
+        if doc.agents[index].revision != revision {
+            return Err("Agent settings changed. Reload before deleting".into());
+        }
+        doc.agents.remove(index);
+        self.write_with_backup(&doc, false)
+    }
     pub(crate) fn enabled(&mut self, id: &str, enabled: bool) -> Result<()> {
         let mut doc = self.read()?;
         let agent = doc
@@ -148,6 +172,17 @@ impl Store {
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
         agent.enabled = enabled;
+        self.write(&doc)
+    }
+    /// A launch preference, not a harness setting: the revision is unchanged.
+    pub(crate) fn start_on_app_launch(&mut self, id: &str, value: bool) -> Result<()> {
+        let mut doc = self.read()?;
+        let agent = doc
+            .agents
+            .iter_mut()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        agent.start_on_app_launch = Some(value);
         self.write(&doc)
     }
     pub(crate) fn profile_published(&mut self, id: &str, revision: u64) -> Result<()> {
@@ -212,4 +247,4 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

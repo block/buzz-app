@@ -70,7 +70,7 @@ export function AgentsPage({
                       : undefined
                   }
                 >
-                  {(state, edit, importedId, label) =>
+                  {(state, edit, duplicate, remove, importedId, label) =>
                     state.status === "unavailable" ? (
                       library
                     ) : (
@@ -79,6 +79,8 @@ export function AgentsPage({
                         state={state}
                         label={label}
                         edit={edit}
+                        duplicate={duplicate}
+                        remove={remove}
                         importedId={importedId}
                         control={control}
                         connection={connection}
@@ -105,6 +107,8 @@ export function AgentsPage({
 function ManagedAgents({
   state,
   edit,
+  duplicate,
+  remove,
   importedId,
   control,
   connection,
@@ -113,6 +117,8 @@ function ManagedAgents({
   label(agent: AgentView): string;
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
+  duplicate(agent: AgentView): void;
+  remove(agent: AgentView): void;
   importedId: string | null;
   control: AgentControl;
   connection: RelaySnapshot;
@@ -155,6 +161,8 @@ function ManagedAgents({
               session={connection.session}
               editable={[agent]}
               onEdit={edit}
+              onDuplicate={duplicate}
+              onDelete={control.delete ? remove : undefined}
             >
               <ManagedAgentActions
                 agent={agent}

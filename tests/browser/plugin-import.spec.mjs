@@ -417,7 +417,9 @@ test("checked-in local examples activate and work independently", async ({
     .getByRole("button", { name: "Notes playground", exact: true })
     .click();
   await page.getByLabel("Scratch note").fill("Hello plugin");
-  await expect(page.getByRole("status")).toHaveText("12 characters");
+  await expect(page.getByRole("main").getByRole("status")).toHaveText(
+    "12 characters",
+  );
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();

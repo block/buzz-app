@@ -9,20 +9,29 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { SidebarSection } from "./SidebarSection";
 
 afterEach(cleanup);
-function Section() {
+function Section({
+  sort,
+}: {
+  sort?: {
+    value: "alpha" | "recent";
+    change: (value: "alpha" | "recent") => void;
+  };
+} = {}) {
   const [open, setOpen] = useState(true);
   const [revision, setRevision] = useState(0);
   return (
     <>
       <SidebarSection
+        sectionKey="channels"
         title="Channels"
         open={open}
         onToggle={setOpen}
         newMessage={() => {}}
+        sort={sort}
       >
         <button type="button">General</button>
       </SidebarSection>
@@ -37,7 +46,7 @@ it("keeps section actions independent of disclosure and supports menu keyboard d
   render(<Section />);
   expect(screen.getByRole("button", { name: "General" })).toBeVisible();
   const trigger = screen.getByRole("button", {
-    name: "More options for Channels",
+    name: "More actions for Channels",
   });
   await user.click(trigger);
   await user.click(
@@ -56,6 +65,29 @@ it("keeps section actions independent of disclosure and supports menu keyboard d
   await user.click(screen.getByLabelText("Channels"));
   expect(screen.getByRole("button", { name: "General" })).toBeVisible();
 });
+it("keeps one controlled actions menu, closes it after sorting, and restores trigger focus", async () => {
+  const user = userEvent.setup();
+  const change = vi.fn();
+  render(<Section sort={{ value: "alpha", change }} />);
+  const trigger = screen.getByRole("button", {
+    name: "More actions for Channels",
+  });
+  expect(screen.queryByRole("button", { name: "Sort Channels" })).toBeNull();
+  await user.click(trigger);
+  const actions = await screen.findByRole("menu", {
+    name: "More actions for Channels",
+  });
+  expect(actions).toHaveTextContent("Sort");
+  expect(actions).toHaveTextContent("Collapse section");
+  await user.keyboard("{ArrowDown}{ArrowRight}");
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Recent" }),
+  );
+  expect(change).toHaveBeenCalledWith("recent");
+  await waitFor(() => expect(actions).not.toBeInTheDocument());
+  expect(trigger).toHaveFocus();
+});
+
 it("orders header actions before section rows for keyboard navigation", async () => {
   const user = userEvent.setup();
   render(<Section />);
@@ -63,7 +95,7 @@ it("orders header actions before section rows for keyboard navigation", async ()
   summary.focus();
   await user.tab();
   expect(
-    screen.getByRole("button", { name: "More options for Channels" }),
+    screen.getByRole("button", { name: "More actions for Channels" }),
   ).toHaveFocus();
   await user.tab();
   expect(screen.getByRole("button", { name: "New message" })).toHaveFocus();

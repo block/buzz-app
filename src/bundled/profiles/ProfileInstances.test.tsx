@@ -11,7 +11,8 @@ import type {
   AgentControl,
   AgentControlState,
 } from "../../features/agents/control";
-import type { Navigation } from "../../features/navigation/controller";
+import type { RelaySession } from "../../features/relay/session";
+import { instanceTarget } from "../../features/profiles/instance-target";
 import { ProfileInstances } from "./ProfileInstances";
 
 const person = "a".repeat(64);
@@ -40,14 +41,41 @@ function fixture() {
     },
     refresh,
   } as unknown as AgentControl;
-  const open = vi.fn(async () => ({ status: "opened" as const }));
-  const navigation = { open } as unknown as Navigation;
+  const open = vi.fn(() => true);
+  const context = { open, canOpen: () => true, channelId: "channel" };
+  let archiveSnapshot = { status: "idle", archived: [] as string[] };
+  const archiveListeners = new Set<() => void>();
+  const ensureArchives = vi.fn(async () => {});
+  const session = {
+    archives: {
+      subscribe(listener: () => void) {
+        archiveListeners.add(listener);
+        return () => archiveListeners.delete(listener);
+      },
+      snapshot: () => archiveSnapshot,
+      ensure: ensureArchives,
+    },
+  } as unknown as RelaySession;
+  const updateArchives = (status: string, archived: string[] = []) =>
+    act(() => {
+      archiveSnapshot = { status, archived };
+      for (const listener of archiveListeners) listener();
+    });
   const update = (next: AgentControlState) =>
     act(() => {
       state = next;
       for (const listener of listeners) listener();
     });
-  return { control, navigation, open, update, refresh };
+  return {
+    control,
+    context,
+    session,
+    open,
+    update,
+    updateArchives,
+    refresh,
+    ensureArchives,
+  };
 }
 afterEach(cleanup);
 
@@ -56,7 +84,9 @@ it("uses native exact identity and community, never library display links", () =
   render(
     <ProfileInstances
       control={f.control}
-      navigation={f.navigation}
+      context={f.context}
+      session={f.session}
+      canOpenPrivate
       pubkey={person}
       viewer={viewer}
       scope={`https://relay.example.test:${viewer}`}
@@ -82,19 +112,60 @@ it("uses native exact identity and community, never library display links", () =
     error: null,
   });
   expect(screen.getByText("matched")).toBeTruthy();
+  expect(f.ensureArchives).toHaveBeenCalledOnce();
   expect(screen.queryByText(/wrong-key|wrong-relay|stopped/)).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "View in Agents" }));
-  expect(f.open).toHaveBeenCalledWith({
-    version: 1,
-    kind: "page",
-    pluginId: "buzz.agents",
-    pageId: "agents",
-    scope: { viewer, communityOrigin: "https://relay.example.test" },
-  });
+  fireEvent.click(screen.getByRole("button", { name: "matched" }));
+  expect(f.open).toHaveBeenCalledWith(
+    instanceTarget({
+      id: "matched",
+      pubkey: person,
+      viewer,
+      communityOrigin: "https://relay.example.test",
+    }),
+  );
   f.update({ status: "unavailable", data: null, busy: false, error: null });
   expect(
     screen.queryByRole("region", { name: "Linked agent instances" }),
   ).toBeNull();
+});
+
+it("re-demands archives after a mounted snapshot resets without changing native matches", () => {
+  const f = fixture();
+  const native = {
+    status: "ready",
+    data: {
+      agents: [
+        instance("matched", person, "wss://relay.example.test"),
+      ] as NonNullable<AgentControlState["data"]>["agents"],
+      runtimeAvailable: true,
+    },
+    busy: false,
+    error: null,
+  } as const satisfies AgentControlState;
+  f.update(native);
+  f.updateArchives("ready", [person]);
+  render(
+    <ProfileInstances
+      control={f.control}
+      context={f.context}
+      session={f.session}
+      pubkey={person}
+      viewer={viewer}
+      scope={`https://relay.example.test:${viewer}`}
+      communityOrigin="https://relay.example.test"
+      knownAgent={true}
+    />,
+  );
+  expect(screen.getByText("matched Archived")).toBeTruthy();
+  expect(f.ensureArchives).not.toHaveBeenCalled();
+
+  f.updateArchives("idle");
+  expect(f.ensureArchives).toHaveBeenCalledOnce();
+  expect(screen.getByText("matched")).toBeTruthy();
+  f.updateArchives("loading");
+  f.updateArchives("ready", [person]);
+  expect(screen.getByText("matched Archived")).toBeTruthy();
+  expect(f.ensureArchives).toHaveBeenCalledOnce();
 });
 
 it("omits instances without a valid community", () => {
@@ -103,7 +174,9 @@ it("omits instances without a valid community", () => {
   render(
     <ProfileInstances
       control={f.control}
-      navigation={f.navigation}
+      context={f.context}
+      session={f.session}
+      canOpenPrivate
       pubkey={person}
       viewer={viewer}
       scope="unknown"
@@ -115,6 +188,7 @@ it("omits instances without a valid community", () => {
     screen.queryByRole("region", { name: "Linked agent instances" }),
   ).toBeNull();
   expect(f.refresh).not.toHaveBeenCalled();
+  expect(f.ensureArchives).not.toHaveBeenCalled();
   expect(f.open).not.toHaveBeenCalled();
 });
 
@@ -124,7 +198,9 @@ it("retries failed native discovery in a valid community without presenting stal
   render(
     <ProfileInstances
       control={f.control}
-      navigation={f.navigation}
+      context={f.context}
+      session={f.session}
+      canOpenPrivate
       pubkey={person}
       viewer={viewer}
       scope={`https://relay.example.test:${viewer}`}
@@ -143,7 +219,9 @@ it("does not refresh or display instances for a human without a native match", (
   const { rerender } = render(
     <ProfileInstances
       control={f.control}
-      navigation={f.navigation}
+      context={f.context}
+      session={f.session}
+      canOpenPrivate
       pubkey={person}
       viewer={viewer}
       scope={`https://relay.example.test:${viewer}`}
@@ -152,6 +230,7 @@ it("does not refresh or display instances for a human without a native match", (
     />,
   );
   expect(f.refresh).not.toHaveBeenCalled();
+  expect(f.ensureArchives).not.toHaveBeenCalled();
   f.update({
     status: "ready",
     data: {
@@ -166,7 +245,9 @@ it("does not refresh or display instances for a human without a native match", (
   rerender(
     <ProfileInstances
       control={f.control}
-      navigation={f.navigation}
+      context={f.context}
+      session={f.session}
+      canOpenPrivate
       pubkey={person}
       viewer={viewer}
       scope={`https://relay.example.test:${viewer}`}

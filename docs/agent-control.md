@@ -17,8 +17,12 @@ quit other Foundation copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
 
 Open **Agents → My agents** for imported identities, their destination community,
-process evidence and visible **Start / Stop**. **Edit** remains secondary in the
-card’s three-dot menu. Same-key identities at different destinations have separate
+process evidence and visible **Start / Stop**. **Edit**, **Duplicate**, and
+**Delete** are in the card’s three-dot menu. Duplicate seeds Create with editable
+settings and a fresh identity; write-only environment values require re-entry.
+Delete stops the local process and removes this app's settings and Keychain key
+after confirmation. It does not archive the relay identity or erase messages.
+Same-key identities at different destinations have separate
 cards; actions use native ID/revision, never the display name. Managed controls
 remain available when the old library is disconnected, unavailable or archived.
 
@@ -141,7 +145,8 @@ flag exclusions and the supported deployment boundary.
 
 Native startup opens `app_data_dir/agent-controller`, never the old library as a
 destination. One serialized controller lives for the app lifetime. It restores
-saved enabled intent with app-owned credential custody and verified resources.
+agents whose start-on-launch preference is on (legacy records without one follow
+saved enabled intent) with app-owned credential custody and verified resources.
 Page/plugin/community disposal drops observations, not processes. Quit fences
 pending starts and stops owned processes while retaining enabled intent. A pending
 OS credential dialog does not hold the controller: Stop, Disconnect and Quit
@@ -183,6 +188,16 @@ containment on non-Unix platforms.
 - Start enables host-owned execution; Stop disables automatic resume and stops active
   work. A later deliberate outgoing mention can enable execution again. Native confirmation, not React optimism, determines displayed state.
   App Quit stops owned processes but retains enabled intent for the next launch.
+- Start on launch is a separate persisted preference set with
+  `agent_control_start_on_app_launch`. It is not a config revision and never
+  starts or stops the running process; a restore it triggers is an ordinary Start.
+  Created and imported agents save it off; only legacy records without one follow
+  enabled intent. A launch restore queued behind another agent's credential
+  prompt skips any agent explicitly started or stopped since the app opened.
+- While a process is alive, `restartDiff` itemizes saved settings that differ from
+  the settings it was started with. The native side compares raw values and sends
+  only redacted entries: prompt character counts, masked arguments and environment
+  values, and environment keys as added/removed.
 - `running` is **process-alive evidence only**, labeled “Process running · relay
   readiness unverified.” It is not a Listening/Working badge or proof a mention
   can be received. Native wake/readiness acceptance is separate.
@@ -222,6 +237,9 @@ containment on non-Unix platforms.
   Saved `BUZZ_AGENT_MODEL`/`BUZZ_AGENT_PROVIDER` (buzz-agent) and
   `GOOSE_MODEL`/`GOOSE_PROVIDER` (Goose) overrides win over Model/Provider
   selectors; blank selectors do not erase them. ACP uses the same effective model.
+  Snapshots name the deciding key (`launchModelEnv`/`launchProviderEnv`,
+  including `DATABRICKS_MODEL` or a hidden provider behind a blank buzz-agent
+  model) and omit the resolved value.
 - Import previews only the chosen installed/development library and requires an
   explicit secure **Destination community** origin. Old Buzz ignores saved relay
   pins at runtime; blank, stale or malformed saved pins do not route or hide

@@ -50,6 +50,7 @@ export function decodeSidebarPreferences(events, secret) {
       decoded.get("channel-sections"),
       decoded.get("channel-stars"),
       decoded.get("channel-mutes"),
+      decoded.get("channel-sort"),
     );
   } finally {
     key.fill(0);

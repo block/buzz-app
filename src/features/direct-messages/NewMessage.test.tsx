@@ -39,6 +39,7 @@ beforeEach(() => {
   vi.stubGlobal(
     "Audio",
     class {
+      pause = vi.fn();
       volume = 1;
       play = play;
     },

@@ -22,8 +22,27 @@ The host error, runtime-unavailable reason, unconfirmed-status notice and Retry
 are shown once, by the profile actions. Browser/unavailable hosts, loading/error
 without evidence, unknown keys and records saved for another community render
 nothing, leaving the public identity. Community switches re-filter immediately.
-Start/Stop/Restart are the separate profile actions above; Edit, harness logs and
-memory stay on Agents or need separate contracts.
+Start/Stop/Restart are the separate profile actions above; harness logs stay on
+Agents.
+
+## Owner runtime tab
+
+**Runtime** appears only when the viewer is the verified NIP-OA owner and the
+active community has exactly one native record for the profile key. It follows
+Buzz desktop's Runtime tab and copy: a Restart required notice with the native
+redacted saved-versus-running diff, Activity (status and the Start on launch
+switch), Agent configuration (runtime command, who can send instructions, ACP
+and MCP commands, imported provider backend), Model settings and Advanced
+(workspace, environment variable names and Databricks settings). Model and
+Provider show what the next start passes to the worker from saved selectors or
+build defaults. When a saved environment override decides one, it shows "Set by
+environment (KEY)" and never the value; Edit Model and Edit Provider open the
+existing Agents editor. Environment values, arguments and credentials are not
+shown. Runtime config-file settings (MCP
+servers, mode, token limits) are not read. The switch persists through the host;
+failures keep the confirmed value and expose Retry status. Losing ownership or the
+native record returns to Info. The owner check is presentation only: these fields
+come from the same app-wide snapshot as Local agent.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
 The Info tab's “Latest activity” card shows up to three recently updated assistant
@@ -132,10 +151,10 @@ a known agent qualifies only while this community's ready native control manages
 it, rechecked on click. It opens (or reopens) the one-to-one DM through the session's direct-message operation and
 navigates to the relay-confirmed channel in the scope captured at click time. A
 confirmed open also clears that DM's local sidebar hide. The person's
-self-published NIP-38 `general` status (kind 30315, emoji tag plus text) is read
-once when the profile opens; it is not live-updated, ignores NIP-40 expiry, and
-renders custom `:shortcode:` emoji as plain text. Setting your own status is not
-supported. Shared design-system
+self-published NIP-38 `general` status (kind 30315, emoji tag plus text) uses the
+session's shared live status owner, including expiration and clear events.
+Custom `:shortcode:` emoji use the community emoji catalog with a text fallback.
+Set or clear your own status from the top-right profile menu. Shared design-system
 Avatar and Button use the host-loaded styles directly. The profile content marks its
 `data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet
 owns layout, not component overrides. No new theme owner, second global reset or
@@ -206,8 +225,42 @@ normalized `relayUrl` for the active community. The subsection is absent without
 native control or a valid community scope. Agent identity hints gate loading and
 visibility, never ownership; exact native matches alone supply instance rows. The
 section stays hidden for a non-agent without a match. It never derives ownership
-from the old Buzz library, self-declared profile markers, or names. The Agents
-page route opens management, not a per-instance page.
+from the old Buzz library, self-declared profile markers, or names.
+
+Each owner-accessible row opens the existing Profile panel with a typed
+`buzz:agent-instance:` target containing native ID, identity public key, viewer
+and canonical community origin. The target is selection, not authorization:
+private instance detail additionally requires the current signed profile's
+verified owner to equal the viewer, successful ownership observation, and an exact
+native record matching ID, public key and community. A background refresh of the
+same already-admitted signed head preserves the mounted detail, tab and focus;
+errors revoke that admission. A new winning head cannot borrow the previous
+head's authority while verification is pending. Initial/pending new-head ownership
+shows **Loading…**; a failed ownership read, deletion or changed viewer/community shows
+**Unavailable**, never a sibling's settings. **Retry** refreshes native
+control and ownership evidence. **Back to profile** opens the ordinary identity;
+the Channels host still owns panel replacement, close and focus restoration.
+Native read/operation errors retain exact-instance detail and the existing actions'
+stale-snapshot notice, Retry status and recovery Stop while ownership remains
+established. Tabs retain the exact instance. Ordinary identity runtime/actions require one
+unambiguous native match; an instance view selects that record by ID.
+
+Archive labels come from `session.archives`, keyed by identity, rather than native
+process status. Archived rows use the same explicit target and remain navigable.
+The existing public profile tabs and actions are reused, not replaced by an Agents
+page or a second editor. Browser fixtures exercise live/archived selection,
+tabs, back, keyboard close/focus and deletion through the real plugin/Channels
+host in Chromium and WebKit. React tests cover exact actions, failed-read recovery,
+non-owner denial and scope changes with synthetic native data.
+
+Behavior/copy reference: base Buzz `UserProfilePanel.tsx` explicitly retains the
+requested instance public key and opens its runtime tab; its
+`ProfileInstancesSection.tsx` keeps archived rows clickable and supplies
+**Archived** / **Current**. `UserProfilePanelHeaderContent.tsx` supplies
+**Back to profile**; `managedAgentRuntimeStatus.ts` supplies **Unavailable**.
+These files live under `desktop/src/features/profile/ui` and
+`desktop/src/features/agents` in `block/buzz`. Buzz-app's native records also
+need an ID because several records can share one identity.
 
 The Info tab keeps the public key and linked instances. The Channels tab offers
 **Add to channel** only for an exact native-managed identity in this community
@@ -255,9 +308,8 @@ Retired relay
 presentations cannot dispatch commands. The separate runtime child owns badges
 and runtime detail; actions do not infer relay readiness.
 
-Edit ingress is deferred: Agents currently registers no specific editor route;
-its editor selection is page-local state. No invented route or second editor is
-added. Mounted React regression tests exercise exact dispatch, pending/failure/
+Info adds no edit ingress; the owner Runtime tab reuses the Agents editor
+dialog rather than a route or second editor. Mounted React regression tests exercise exact dispatch, pending/failure/
 recovery and profile/community lifecycle through the real controller projection
 with a synthetic native host. Live process/credential handover and rendered native
 acceptance remain attended checks, not established by these tests.

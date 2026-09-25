@@ -208,15 +208,21 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     deepest = panel.locator(`[data-message-id="${event.id}"]`);
     await expect(deepest).toBeInViewport();
   }
-  // These desktop viewports produce 542/432/310px thread panels; 390 exercises full-width mobile.
-  for (const width of [1492, 1280, 1024, 390]) {
+  // Include phone widths with the persistent sidebar still visible.
+  for (const width of [1492, 1280, 1024, 524, 522, 480, 390]) {
     await page.setViewportSize({ width, height: 950 });
     await deepest.scrollIntoViewIfNeeded();
     const geometry = await panel.evaluate((element) => {
       const history = element.querySelector('[aria-label="Thread messages"]');
       const rail = [
-        ...element.querySelectorAll('button[aria-label="Hide replies"]'),
-      ].find((node) => getComputedStyle(node).position === "absolute");
+        ...element.querySelectorAll(
+          'button[aria-label="Hide replies"], button[aria-label="Hide thread replies"]',
+        ),
+      ].find(
+        (node) =>
+          getComputedStyle(node).position === "absolute" &&
+          node.getClientRects().length,
+      );
       return {
         width: history.clientWidth,
         scroll: history.scrollWidth,
@@ -255,7 +261,7 @@ test("nested replies send, collapse, and reveal through links at readable panel 
         theme,
       );
       await expect(
-        panel.getByRole("button", { name: "Hide replies", exact: true }).last(),
+        panel.getByRole("button", { name: /^Hide (thread )?replies$/ }).last(),
       ).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await panel.screenshot({
         path: test.info().outputPath(`nested-${width}-${theme}.png`),
@@ -405,6 +411,12 @@ test.describe("touch branch controls", () => {
       exact: true,
     });
     await expect(collapse).toHaveText("Hide replies");
+    const history = panel.getByRole("region", { name: "Thread messages" });
+    const geometry = await history.evaluate((node) => ({
+      width: node.clientWidth,
+      scroll: node.scrollWidth,
+    }));
+    expect(geometry.scroll).toBeLessThanOrEqual(geometry.width + 1);
     const branch = collapse.locator("../..");
     const spine = await branch.evaluate((node) => ({
       stub: getComputedStyle(node.firstElementChild, "::after").display,
@@ -434,7 +446,7 @@ test.describe("touch branch controls", () => {
 });
 
 // Real pointer hit testing and focus cannot be verified in jsdom.
-for (const width of [1492, 1280, 1024])
+for (const width of [1492, 1280, 1024, 390])
   test(`crowded capped branches own distinct collapse controls at ${width}`, async ({
     page,
     app,
@@ -577,7 +589,7 @@ for (const width of [1492, 1280, 1024])
         panel
           .locator(`[data-message-id="${id}"]`)
           .getByRole("group", { name: "Message actions" }),
-      ).toHaveCSS("opacity", "0");
+      ).toHaveCSS("opacity", width < 640 ? "1" : "0");
     }
     await panel.screenshot({
       path: test.info().outputPath(`crowded-${width}.png`),

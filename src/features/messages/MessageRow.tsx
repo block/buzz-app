@@ -290,7 +290,9 @@ export const MessageRow = memo(function MessageRow({
               overflowItems={overflowItems}
             />
           )}
-          <div className={layout === "continuation" ? "sr-only" : styles.byline}>
+          <div
+            className={layout === "continuation" ? "sr-only" : styles.byline}
+          >
             <span className={styles.author}>
               <strong>{name}</strong>
               {session && (

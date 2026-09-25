@@ -160,7 +160,7 @@ function FeedbackForConnection({
       !pending ||
       (pending.delivery !== "failed" && pending.delivery !== "unknown") ||
       !window.confirm(
-        "Discard this saved feedback locally? It may already have been delivered. Discarding will not undo delivery or delete uploaded attachments.",
+        "Discard this saved feedback locally? It may already have been delivered; discarding will not undo delivery.",
       )
     )
       return;

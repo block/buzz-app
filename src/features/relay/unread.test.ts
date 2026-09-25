@@ -11,6 +11,8 @@ import type { RelayEvent } from "./events";
 import type { ThreadActivitySnapshot } from "./unread";
 import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
+// @ts-expect-error Node-only host module
+import { createLocalSigningDelegate } from "../../../dev/signing-delegate.mjs";
 import type { ReadStateSigning } from "./read-state-host";
 import {
   keypair,
@@ -87,7 +89,11 @@ function setup(
       decodeReadState(events, viewer.secret),
     ),
     sign: vi.fn(async (intent: ReadStateSigning) =>
-      signReadState(intent, viewer.secret),
+      signReadState(
+        intent,
+        viewer.secret,
+        createLocalSigningDelegate(viewer.secret),
+      ),
     ),
     publish: vi.fn(async () => {}),
   };
@@ -2090,6 +2096,7 @@ it("thread bottom catch-up clears only its thread and preserves local and remote
       },
     },
     h.viewer.secret,
+    createLocalSigningDelegate(h.viewer.secret),
   );
   h.emit([marker]);
   await flush();
@@ -2679,6 +2686,7 @@ it("a channel mark merged from another device drops the local marks it covers", 
       blob: { v: 1, client_id: "peer", contexts: { room: 30 } },
     },
     h.viewer.secret,
+    createLocalSigningDelegate(h.viewer.secret),
   );
   h.emit([marker]);
   await flush();

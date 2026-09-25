@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import {
   finalizeEvent,
   generateSecretKey,
@@ -62,6 +63,8 @@ async function setup({ cachedAssignment = true } = {}) {
     mutateSidebarAssignment(
       intent,
       secret,
+      createLocalSigningDelegate(secret),
+      signal,
       async () => {
         signal.throwIfAborted();
         return [heads.get("channel-sections")];
@@ -73,6 +76,8 @@ async function setup({ cachedAssignment = true } = {}) {
     const result = await mutateSidebarStar(
       intent,
       secret,
+      createLocalSigningDelegate(secret),
+      signal,
       async () => {
         signal.throwIfAborted();
         return [heads.get("channel-stars")];

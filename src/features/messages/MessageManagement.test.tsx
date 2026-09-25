@@ -38,6 +38,8 @@ import {
 import type { ReadStateSigning } from "../relay/read-state-host";
 // @ts-expect-error Exercise the production codec with disposable identities.
 import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+// @ts-expect-error Node-only signing adapter for this disposable identity.
+import { createLocalSigningDelegate } from "../../../dev/signing-delegate.mjs";
 import type { RelayEvent } from "../relay/events";
 
 composerDOMFixture();
@@ -107,7 +109,11 @@ async function fixture(
               decode: async (events: readonly RelayEvent[]) =>
                 decodeReadState(events, viewer.secret),
               sign: async (intent: ReadStateSigning) =>
-                signReadState(intent, viewer.secret),
+                signReadState(
+                  intent,
+                  viewer.secret,
+                  createLocalSigningDelegate(viewer.secret),
+                ),
               publish: async () => {},
             },
           }

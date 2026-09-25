@@ -10,28 +10,38 @@ import {
   signReadState,
   validReadStateEvent,
 } from "./read-state.mjs";
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 const secret = generateSecretKey();
+const signer = createLocalSigningDelegate(secret);
 const blob = { v: 1, client_id: "fixture", contexts: { room: 12 } };
 const intent = { slot: "a".repeat(32), createdAt: 100, blob };
 describe("host-only read-state codec", () => {
-  it("encrypts/signs only the own read-state coordinate and roundtrips without exposing a key", () => {
-    const event = signReadState(intent, secret, 100);
+  it("encrypts/signs only the own read-state coordinate and roundtrips without exposing a key", async () => {
+    const event = await signReadState(intent, secret, signer, undefined, 100);
     expect(event.kind).toBe(30078);
     expect(event.content).not.toContain("room");
     expect(decodeReadState([event], secret)).toEqual([
       { eventId: event.id, blob },
     ]);
   });
-  it("rejects foreign authors, unrelated coordinates, changed signed bytes and invalid timestamps", () => {
-    const event = signReadState(intent, secret, 100);
+  it("rejects foreign authors, unrelated coordinates, changed signed bytes and invalid timestamps", async () => {
+    const event = await signReadState(intent, secret, signer, undefined, 100);
     expect(() => decodeReadState([event], generateSecretKey())).toThrow();
     expect(() =>
       validReadStateEvent({ ...event, content: "changed" }, secret),
     ).toThrow();
-    expect(() =>
-      signReadState({ ...intent, slot: "other" }, secret, 100),
-    ).toThrow();
-    expect(() => signReadState(intent, secret, 200)).toThrow();
+    await expect(
+      signReadState(
+        { ...intent, slot: "other" },
+        secret,
+        signer,
+        undefined,
+        100,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      signReadState(intent, secret, signer, undefined, 200),
+    ).rejects.toThrow();
     const unrelated = finalizeEvent(
       {
         kind: 30078,
@@ -65,8 +75,8 @@ describe("host-only read-state codec", () => {
     }
     key.fill(0);
   });
-  it("keeps explicit receive-event and aggregate bounds while publication validation stays smaller", () => {
-    const small = signReadState(intent, secret, 100);
+  it("keeps explicit receive-event and aggregate bounds while publication validation stays smaller", async () => {
+    const small = await signReadState(intent, secret, signer, undefined, 100);
     const base = { ...small, tags: [...small.tags, ["padding", ""]] };
     const remaining = 96 * 1024 - Buffer.byteLength(JSON.stringify(base));
     const padded = (length) =>
@@ -92,11 +102,11 @@ describe("host-only read-state codec", () => {
       decodeReadState([{ ...event, content: "changed" }], secret),
     ).toThrow();
   });
-  it("bounds work before decrypting/signing", () => {
+  it("bounds work before decrypting/signing", async () => {
     expect(() => decodeReadState(Array(17).fill({}), secret)).toThrow(
       "capacity",
     );
-    expect(() =>
+    await expect(
       signReadState(
         {
           ...intent,
@@ -111,8 +121,10 @@ describe("host-only read-state codec", () => {
           },
         },
         secret,
+        signer,
+        undefined,
         100,
       ),
-    ).toThrow("capacity");
+    ).rejects.toThrow("capacity");
   });
 });

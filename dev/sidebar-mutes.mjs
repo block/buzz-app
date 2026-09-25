@@ -1,5 +1,5 @@
 import { editSidebarToggle } from "../src/features/relay/sidebar-edits.ts";
-import { finalizeEvent, getPublicKey, nip44 } from "nostr-tools";
+import { getPublicKey, nip44 } from "nostr-tools";
 import { decodeSidebarPreferences } from "./sidebar-preferences.mjs";
 
 const COORDINATE = "channel-mutes";
@@ -18,7 +18,14 @@ export function assertSidebarMuteIntent(intent) {
 }
 
 /** One explicit mute intent against a fresh signed head; keep unmute tombstones. */
-export function prepareSidebarMute(events, intent, secret, now = Date.now()) {
+export async function prepareSidebarMute(
+  events,
+  intent,
+  secret,
+  signer,
+  signal,
+  now = Date.now(),
+) {
   assertSidebarMuteIntent(intent);
   // The shared bounded decoder verifies signature, own author, schema and budgets.
   decodeSidebarPreferences(events, secret);
@@ -47,7 +54,7 @@ export function prepareSidebarMute(events, intent, secret, now = Date.now()) {
       now,
     );
     if (mutes === current) return { mutes };
-    const event = finalizeEvent(
+    const event = await signer.signEvent(
       {
         kind: 30078,
         content: nip44.v2.encrypt(JSON.stringify(mutes), key),
@@ -60,8 +67,9 @@ export function prepareSidebarMute(events, intent, secret, now = Date.now()) {
           ["t", COORDINATE],
         ],
       },
-      secret,
+      signal,
     );
+    signal?.throwIfAborted();
     // Refuse over-budget changes rather than silently trimming other channels.
     decodeSidebarPreferences([event], secret);
     return { mutes, event };
@@ -70,12 +78,33 @@ export function prepareSidebarMute(events, intent, secret, now = Date.now()) {
   }
 }
 
-export async function mutateSidebarMute(intent, secret, readHead, publish) {
+export async function mutateSidebarMute(
+  intent,
+  secret,
+  signer,
+  signal,
+  readHead,
+  publish,
+) {
   assertSidebarMuteIntent(intent);
-  const draft = prepareSidebarMute(await readHead(), intent, secret);
+  const draft = await prepareSidebarMute(
+    await readHead(),
+    intent,
+    secret,
+    signer,
+    signal,
+  );
+  signal?.throwIfAborted();
   if (!draft.event) return draft.mutes;
   await publish(draft.event);
-  const confirmation = prepareSidebarMute(await readHead(), intent, secret);
+  const confirmation = await prepareSidebarMute(
+    await readHead(),
+    intent,
+    secret,
+    signer,
+    signal,
+  );
+  signal?.throwIfAborted();
   if (confirmation.event)
     throw new Error(
       "Sidebar mutes changed on another device; reload and try again",

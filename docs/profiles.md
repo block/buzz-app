@@ -213,8 +213,11 @@ Each owner-accessible row opens the existing Profile panel with a typed
 and canonical community origin. The target is selection, not authorization:
 private instance detail additionally requires the current signed profile's
 verified owner to equal the viewer, successful ownership observation, and an exact
-native record matching ID, public key and community. Pending ownership shows
-**Loading…**; a failed ownership read, deletion or changed viewer/community shows
+native record matching ID, public key and community. A background refresh of the
+same already-admitted signed head preserves the mounted detail, tab and focus;
+errors revoke that admission. A new winning head cannot borrow the previous
+head's authority while verification is pending. Initial/pending new-head ownership
+shows **Loading…**; a failed ownership read, deletion or changed viewer/community shows
 **Unavailable**, never a sibling's settings. **Retry** refreshes native
 control and ownership evidence. **Back to profile** opens the ordinary identity;
 the Channels host still owns panel replacement, close and focus restoration.

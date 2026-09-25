@@ -99,13 +99,43 @@ export function useAgentOwnerEvidence(
     verified && latest && verified.id === latest.id
       ? verified.owner
       : undefined;
+  // Only an already admitted result from this observation may survive a
+  // background read. New heads, purges and failed reads must establish it anew.
+  const [admitted, setAdmitted] = useState<{
+    view: ProfileView;
+    id: string;
+  }>();
+  useEffect(() => {
+    setAdmitted((previous) => {
+      if (
+        events.status === "ready" &&
+        view &&
+        latest &&
+        latest.id === verified?.id
+      ) {
+        return previous?.view === view && previous.id === latest.id
+          ? previous
+          : { view, id: latest.id };
+      }
+      return events.status === "loading" &&
+        previous?.view === view &&
+        previous?.id === latest?.id
+        ? previous
+        : undefined;
+    });
+  }, [events.status, view, latest, verified]);
+  const refreshingAdmittedHead =
+    !!admitted &&
+    events.status === "loading" &&
+    admitted?.view === view &&
+    admitted?.id === latest?.id;
   const status =
     view === null
       ? "unavailable"
       : events.status === "error"
         ? "error"
         : !view ||
-            events.status !== "ready" ||
+            (events.status !== "ready" && !refreshingAdmittedHead) ||
             (latest && verified?.id !== latest.id)
           ? "loading"
           : "ready";

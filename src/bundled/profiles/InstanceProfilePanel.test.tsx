@@ -18,6 +18,7 @@ import { createRelaySession } from "../../features/relay/session";
 import type { LiveCallbacks } from "../../features/relay/live";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { keypair, signed } from "../../features/relay/testing";
+import { attestedOwner } from "../../features/agents/owner-attestation";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import {
@@ -27,6 +28,12 @@ import {
 import { profileTarget } from "../../features/profiles/target";
 import { InstanceProfilePanel } from "./InstanceProfilePanel";
 import { ProfilePanel } from "./ProfilePanel";
+vi.mock("../../features/agents/owner-attestation", async (original) => {
+  const actual =
+    await original<typeof import("../../features/agents/owner-attestation")>();
+  return { attestedOwner: vi.fn(actual.attestedOwner) };
+});
+const verify = vi.mocked(attestedOwner);
 const viewer = keypair(),
   identity = keypair(),
   stranger = keypair();
@@ -34,6 +41,7 @@ const origin = "https://buzz.block.builderlab.xyz";
 const disposables: { dispose(): void }[] = [];
 afterEach(() => {
   cleanup();
+  verify.mockReset();
   for (const owner of disposables.splice(0)) owner.dispose();
 });
 function fixture({
@@ -66,11 +74,12 @@ function fixture({
   let callbacks: LiveCallbacks | undefined;
   let failOwner = false;
   let releaseOwner = () => {};
-  const ownerGate = holdOwner
+  let ownerGate = holdOwner
     ? new Promise<void>((resolve) => {
         releaseOwner = resolve;
       })
     : Promise.resolve();
+  let ownerReadStarted = () => {};
   const sessionOwner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: viewer.pubkey,
@@ -81,6 +90,7 @@ function fixture({
     media: () => undefined,
     query: async (filters) => {
       if (!filters.some((f) => f.kinds?.includes(0))) return [];
+      ownerReadStarted();
       await ownerGate;
       if (failOwner) throw new Error("Fixture ownership unavailable");
       return [head];
@@ -202,6 +212,28 @@ function fixture({
     target,
     sessionOwner,
     releaseOwner,
+    holdOwnerRead() {
+      const started = new Promise<void>((resolve) => {
+        ownerReadStarted = resolve;
+      });
+      ownerGate = new Promise<void>((resolve) => {
+        releaseOwner = resolve;
+      });
+      return { started, release: () => releaseOwner() };
+    },
+    beginOwnershipRefresh() {
+      return Promise.all(ownershipViews.map((view) => view.refresh()));
+    },
+    async updateSameOwner() {
+      const next = signed(identity, {
+        kind: 0,
+        content: JSON.stringify({ name: "Updated identity", is_agent: true }),
+        tags: head.tags,
+        created_at: head.created_at + 1,
+      });
+      await act(async () => callbacks?.receive([next]));
+      return next;
+    },
     failOwner(value: boolean) {
       failOwner = value;
     },
@@ -390,4 +422,76 @@ it("retains selected details and recovery Stop after a rejected action", async (
     action: "stop",
     payload: { id: "second" },
   });
+});
+
+it("keeps the selected tab, detail node and focus during a held same-head refresh", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  // Finish initial roster access reconciliation before measuring the refresh.
+  await act(async () => {
+    await f.sessionOwner.session.channels.refreshList?.();
+  });
+  await screen.findByText("/second");
+  const detail = screen.getByRole("region", { name: "Profile details" });
+  const tab = screen.getByRole("tab", { name: "Channels" });
+  await user.click(tab);
+  const held = f.holdOwnerRead();
+  let refresh: Promise<unknown> | undefined;
+  try {
+    await act(async () => {
+      refresh = f.beginOwnershipRefresh();
+      await held.started;
+    });
+    expect(screen.getByRole("region", { name: "Profile details" })).toBe(
+      detail,
+    );
+    expect(tab).toHaveAttribute("aria-selected", "true");
+    expect(tab).toHaveFocus();
+    expect(screen.queryByText("Loading…")).toBeNull();
+  } finally {
+    await act(async () => {
+      held.release();
+      await refresh;
+    });
+  }
+  expect(screen.getByRole("region", { name: "Profile details" })).toBe(detail);
+  expect(tab).toHaveAttribute("aria-selected", "true");
+  expect(tab).toHaveFocus();
+});
+it("withholds private detail until a new same-owner head is verified", async () => {
+  const f = fixture();
+  await screen.findByText("/second");
+  const original = await vi.importActual<
+    typeof import("../../features/agents/owner-attestation")
+  >("../../features/agents/owner-attestation");
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  verify.mockImplementation(async (event) => {
+    await gate;
+    return original.attestedOwner(event);
+  });
+  try {
+    const next = await f.updateSameOwner();
+    await waitFor(() =>
+      expect(
+        verify.mock.calls.some(
+          ([event]) => event.created_at === next.created_at,
+        ),
+      ).toBe(true),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Loading…");
+    expect(
+      screen.queryByRole("region", { name: "Profile details" }),
+    ).toBeNull();
+    expect(screen.queryByText("/second")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+  } finally {
+    await act(async () => release());
+  }
+  expect(await screen.findByText("/second")).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Updated identity" }),
+  ).toBeVisible();
 });

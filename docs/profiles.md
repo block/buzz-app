@@ -132,10 +132,10 @@ a known agent qualifies only while this community's ready native control manages
 it, rechecked on click. It opens (or reopens) the one-to-one DM through the session's direct-message operation and
 navigates to the relay-confirmed channel in the scope captured at click time. A
 confirmed open also clears that DM's local sidebar hide. The person's
-self-published NIP-38 `general` status (kind 30315, emoji tag plus text) is read
-once when the profile opens; it is not live-updated, ignores NIP-40 expiry, and
-renders custom `:shortcode:` emoji as plain text. Setting your own status is not
-supported. Shared design-system
+self-published NIP-38 `general` status (kind 30315, emoji tag plus text) uses the
+session's shared live status owner, including expiration and clear events.
+Custom `:shortcode:` emoji use the community emoji catalog with a text fallback.
+Set or clear your own status from the top-right profile menu. Shared design-system
 Avatar and Button use the host-loaded styles directly. The profile content marks its
 `data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet
 owns layout, not component overrides. No new theme owner, second global reset or

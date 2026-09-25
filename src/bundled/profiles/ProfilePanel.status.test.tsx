@@ -75,7 +75,7 @@ it("shows the newest self-published general status with its emoji", async () => 
     render(f.panel(person));
     expect(await screen.findByText("In a meeting")).toBeTruthy();
     expect(document.querySelector(`.${styles.status}`)?.textContent).toBe(
-      "📅In a meeting",
+      "📅 In a meeting",
     );
     expect(screen.getByText("📅")).toBeTruthy();
     expect(screen.queryByText("Old")).toBeNull();

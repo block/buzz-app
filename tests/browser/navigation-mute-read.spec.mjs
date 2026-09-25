@@ -39,12 +39,18 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await beta.focus();
   await page.keyboard.press("Shift+F10");
   await expect(menu).toBeVisible();
+  // This fixture's legacy "beta" id cannot authorize lifecycle commands. Its
+  // failed permission group must not remove or disable the existing actions.
+  await expect(menu.getByRole("alert")).toHaveText(
+    "Channel actions unavailable",
+  );
   await expect(menu.getByRole("menuitem")).toHaveText([
     "New session",
     "Mute",
     "Mark as Read",
+    "Retry channel permissions",
   ]);
-  await expect(menu.getByRole("separator")).toHaveCount(1);
+  await expect(menu.getByRole("separator")).toHaveCount(2);
   for (const name of ["Mute", "Mark as Read"]) {
     await expect(
       menu
@@ -264,7 +270,8 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     menu.getByRole("menuitem", { name: "Mute", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  // Removing session entry must not disable sibling actions or leave a divider.
+  // Removing session entry preserves attention and lifecycle groups; only the
+  // separator between those remaining groups survives.
   const toggleSessions = async (enabled) => {
     await page
       .getByRole("button", { name: "Your profile", exact: true })
@@ -286,8 +293,9 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Mute",
     "Mark as Unread",
+    "Retry channel permissions",
   ]);
-  await expect(menu.getByRole("separator")).toHaveCount(0);
+  await expect(menu.getByRole("separator")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();

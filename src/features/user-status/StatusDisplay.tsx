@@ -22,6 +22,7 @@ export function StatusDisplay({
     return (
       <span className={styles.status}>
         <StatusEmoji value={status.emoji} session={session} />
+        {status.emoji && status.text && " "}
         <span className={styles.text}>{status.text}</span>
       </span>
     );

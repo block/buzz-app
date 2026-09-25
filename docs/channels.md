@@ -225,6 +225,62 @@ Focused coverage lives in `NewMessage.test.tsx`, `direct-messages.test.ts`,
 The browser journey uses the production app and broker with ephemeral identities
 and modeled upstream I/O; it does not send messages to a live community.
 
+## Channel lifecycle
+
+Lifecycle actions extend the persistent sidebar’s existing context popup after
+New session and the mute/read group. Lifecycle items use shared leading icons and
+a separator only when they resolve and earlier actions exist. Right-click
+and keyboard access reuse the existing row trigger; no ⋮ control or second popup
+is added. Session creation, attention actions and child-session navigation keep
+their existing owners; sessions do not receive lifecycle actions. This slice adds
+no Move/Star/grouping controls or shared-menu restyling.
+
+The row menu resolves fresh relay-authored metadata (`39000`), administrators
+(`39001`) and membership (`39002`) at exact channel coordinates before offering
+Archive/Delete/Leave or DM Hide. Archive requires a direct owner/admin role;
+Delete requires a direct owner role; the last owner cannot Leave. The menu omits
+Leave when it is forbidden, without an ownership-transfer explanation. Action
+labels have no trailing ellipsis; confirmation dialogs are unchanged. DMs offer Hide
+only. Delegated owner-agent authority and community-admin overrides are not
+inferred or supported by this slice; the relay remains the final authority.
+Membership accepts NIP-29 `p` tags with optional relay and role fields
+(`["p", pubkey, relay_hint?, role?]`), including the relay's four-field roster.
+These fields never substitute for the separate administrator record. Invalid
+member keys and duplicate entries still fail closed. Failed menu permission reads
+show "Channel actions unavailable" with retry, not raw protocol errors. Pending
+permission reads show neither a loading row nor a lifecycle separator; the
+separator appears with the resolved actions or unavailable/retry section, and is
+omitted when there are no lifecycle items. Actions appear only after verification.
+
+Each command has explicit confirmation; Delete additionally requires the channel
+name. The lifecycle owner rechecks authority before signing and again before
+publication, validates the returned command, and confirms relay-owned state before
+removing a row. Archive retains membership; confirmed Delete/Leave use the existing
+access-loss purge. Commands use narrow development-broker routes, never the message
+outbox or automatic replay. Hosts without this capability display an unavailable
+notice; native/direct-signer parity is deferred.
+
+Main’s DM × remains local removal, including restoration on new message evidence.
+The separate, confirmed Hide conversation action publishes `41012`, not Leave or Delete. The separate relay-authored `30622`
+visibility snapshot (`d=viewer`, `p=viewer`, hidden DM `h` tags) only filters sidebar
+rows; it does not deny access or prevent exact conversation navigation. Visibility
+refreshes with the channel roster, preserves the last good set on failure and
+rejects older snapshots. Live cross-device visibility updates and an in-app DM
+reopen/unhide flow are deferred; opening a DM through another supported client's
+`41010` flow and refreshing restores the row.
+
+A definitive rejection offers retry without optimistic removal. If publication or
+confirmation has an uncertain outcome, the dialog warns that the command may have
+taken effect, disables blind resubmission and asks the user to close and refresh
+channels. Cancellation/cache clear/session replacement fence late results but cannot
+retract a request already sent. Cancellation returns focus to the originating row;
+confirmed removal moves an active conversation to another available destination
+(or the neutral Messages page) with a visible sidebar-row focus fallback. Last-row
+completion uses the explicit version-1 Channels route `"empty"`, which bypasses
+saved/default conversation selection, including after reload. Retained archived or
+hidden membership cannot reopen itself through that destination; intentional exact
+navigation to a hidden DM remains supported.
+
 ## Performance and correctness carried from Astra
 
 The port retains the prepared-store implementation and its behavior tests:

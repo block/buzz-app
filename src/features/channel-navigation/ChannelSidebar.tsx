@@ -9,6 +9,9 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
+import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
+import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { personalGroups } from "../channel-templates/setup";
 import type { TemplateProviders } from "../channel-templates/provider";
 import type { RelayData } from "../relay/service";
@@ -158,6 +161,21 @@ function ReadySidebar({
   const personal = personalGroups(kitState.entries)?.record.value;
   const groups = personal?.type === "groups" ? personal : undefined;
   const hiddenDms = useHiddenDms(scope, queries, list);
+  const lifecycle = queries.channelLifecycle;
+  const dmVisibility = useSyncExternalStore(
+    lifecycle.subscribe,
+    lifecycle.snapshot,
+    lifecycle.snapshot,
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a completed roster refresh also refreshes per-viewer visibility.
+  useEffect(() => {
+    if (list.status === "ready") void lifecycle.refreshVisibility();
+  }, [lifecycle, list.asOf, list.status]);
+  const [lifecycleDialog, setLifecycleDialog] = useState<{
+    channel: ChannelSummary;
+    action: ChannelLifecycleAction;
+  }>();
+  const lifecycleFocus = useRef<string | undefined>(undefined);
   const sidebar = useSidebarView(
     scope,
     list.status === "ready" && preferences.status !== "loading",
@@ -250,6 +268,35 @@ function ReadySidebar({
       mounted.current = false;
     };
   }, []);
+  const chooseLifecycle = (
+    channel: ChannelSummary,
+    action: ChannelLifecycleAction,
+  ) => {
+    // Let the existing context menu restore focus before opening confirmation.
+    requestAnimationFrame(() => {
+      if (mounted.current) setLifecycleDialog({ channel, action });
+    });
+  };
+  useLayoutEffect(() => {
+    if (!lifecycleFocus.current || lifecycleDialog) return;
+    const id = lifecycleFocus.current;
+    lifecycleFocus.current = undefined;
+    const rows = [
+      ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
+        "[data-channel-id]",
+      ) ?? []),
+    ];
+    const row =
+      rows.find(
+        (row) => row.dataset.channelId === id && row.getClientRects().length,
+      ) ?? rows.find((row) => row.getClientRects().length);
+    (
+      row ??
+      sidebar.list.current
+        ?.closest("aside")
+        ?.querySelector<HTMLButtonElement>("button")
+    )?.focus({ preventScroll: true });
+  }, [lifecycleDialog, sidebar.list]);
   const select = useCallback(
     (id: string) => {
       if (!viewer || relay.snapshot().session !== queries) return;
@@ -332,7 +379,7 @@ function ReadySidebar({
           muted: preferences.data?.muted ?? [],
         }
       : preferences.data,
-    hiddenDms.hiddenIds,
+    new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
   );
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
@@ -390,6 +437,18 @@ function ReadySidebar({
           run={(action) => runReadAction(channel.id, action)}
         />,
       );
+    if (channel.channelType !== "session" && !channel.archived) {
+      actions.push(
+        <ChannelLifecycleMenu
+          key="lifecycle"
+          separator={actions.length > 0}
+          channelId={channel.id}
+          lifecycle={lifecycle}
+          disabled={!!lifecycleDialog}
+          choose={(action) => chooseLifecycle(channel, action)}
+        />,
+      );
+    }
     return actions;
   };
   const {
@@ -447,6 +506,39 @@ function ReadySidebar({
   };
   return (
     <>
+      {lifecycleDialog && (
+        <ChannelLifecycleDialog
+          channelId={lifecycleDialog.channel.id}
+          channelName={lifecycleDialog.channel.name}
+          action={lifecycleDialog.action}
+          lifecycle={lifecycle}
+          close={() => {
+            lifecycleFocus.current = lifecycleDialog.channel.id;
+            setLifecycleDialog(undefined);
+          }}
+          completed={() => {
+            const id = lifecycleDialog.channel.id;
+            lifecycleFocus.current = id;
+            setLifecycleDialog(undefined);
+            if (current?.id === id) {
+              const next = sections
+                .flatMap((section) => section.rows)
+                .find((channel) => channel.id !== id);
+              if (next) select(next.id);
+              else {
+                writeView(scope, "selected-channel", undefined);
+                void navigator.open({
+                  version: 1,
+                  kind: "page",
+                  pluginId: "buzz.channels",
+                  pageId: "channels",
+                  route: { version: 1, params: "empty" },
+                });
+              }
+            }
+          }}
+        />
+      )}
       <div className="shell-sidebar" style={{ width: sidebar.width }}>
         <Panel as="aside" aria-label="Channel sidebar">
           <div className={styles.sidebar}>
@@ -498,6 +590,14 @@ function ReadySidebar({
                     </Button>
                   </>
                 )}
+              </div>
+            )}
+            {dmVisibility.status === "error" && (
+              <div role="alert">
+                Hidden conversations could not be refreshed.{" "}
+                <Button onClick={() => void lifecycle.refreshVisibility()}>
+                  Retry hidden conversations
+                </Button>
               </div>
             )}
             <SidebarUnread listRef={sidebar.list}>

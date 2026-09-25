@@ -1457,6 +1457,10 @@ test("status signing and publication preserve scoped replacements and explicit c
       const event = await response.json();
       expect(verifyEvent(event)).toBe(true);
       expect(event).toMatchObject({ kind: 30315, ...input });
+      expect((await h.post("channel-lifecycle-sign", event)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-publish", event)).status).toBe(
+        400,
+      );
       expect((await h.post("publish", event)).status).toBe(200);
       expect(h.publications.at(-1)).toEqual(JSON.parse(JSON.stringify(event)));
     }
@@ -1892,6 +1896,85 @@ test("relay quota on admin routes stays a quota failure, not a refusal", async (
     expect(await paused.json()).toMatchObject({ paused: true, sent: false });
     expect(h.calls).toHaveLength(1);
   } finally {
+    await h.close();
+  }
+});
+
+test("lifecycle uses dedicated shape-limited host routes, never the message writer", async () => {
+  const h = await harness((call) =>
+    Response.json(
+      call.url.endsWith("/events")
+        ? { accepted: true, event_id: call.body.id }
+        : [],
+    ),
+  );
+  let live;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    expect(transport.writer.kinds).not.toContain(9008);
+    const id = "11111111-1111-4111-8111-111111111111";
+    const template = {
+      kind: 9008,
+      tags: [["h", id]],
+      content: "",
+      created_at: 1700000000,
+    };
+    expect((await h.post("sign", template)).status).toBe(400);
+    const invalid = [
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["name", "rename"],
+        ],
+      },
+      {
+        ...template,
+        kind: 9022,
+        tags: [
+          ["h", id],
+          ["p", transport.viewer],
+        ],
+      },
+      { ...template, content: "extra" },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["h", id],
+        ],
+      },
+    ];
+    for (const event of invalid) {
+      expect((await h.post("channel-lifecycle-sign", event)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-publish", event)).status).toBe(
+        400,
+      );
+    }
+    const signal = new AbortController().signal;
+    const signed = await transport.channelLifecycle.sign(template, signal);
+    expect(verifyEvent(signed)).toBe(true);
+    expect(signed).toMatchObject(template);
+    expect((await h.post("publish", signed)).status).toBe(400);
+    await expect(
+      transport.channelLifecycle.publish(signed, signal),
+    ).rejects.toBeInstanceOf(PublishRejected);
+    expect(h.publications).toHaveLength(0);
+    live = await openBrokerSocket(transport);
+    await transport.channelLifecycle.publish(signed, signal);
+    expect(h.publications).toHaveLength(1);
+    const foreignKey = new Uint8Array(32).fill(5);
+    const foreign = finalizeEvent(
+      { ...template, tags: template.tags.map((tag) => [...tag]) },
+      foreignKey,
+    );
+    expect((await h.post("channel-lifecycle-publish", foreign)).status).toBe(
+      400,
+    );
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    live?.dispose();
     await h.close();
   }
 });

@@ -109,24 +109,6 @@ pub(crate) fn seed(dir: &std::path::Path) -> String {
     id
 }
 #[test]
-fn goose_install_restart_does_not_reenable_an_agent_stopped_during_download() {
-    let (dir, host, _app, _view) = fixture();
-    let id = seed(dir.path());
-    let path = dir.path().join("store/agents.json");
-    let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    saved["agents"][0]["harness"]["command"] = json!("/missing/goose");
-    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
-    // Enabled but not started this session is not missing-CLI evidence.
-    assert!(host.waiting_for_goose().unwrap().is_empty());
-    host.with(|state| state.action(&id, Action::Stop)).unwrap();
-    let result =
-        tauri::async_runtime::block_on(start(host, id, Action::Restart, false, None, true));
-    assert_eq!(result.err().as_deref(), Some(NOT_WAITING_FOR_GOOSE));
-    let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    assert_eq!(saved["agents"][0]["enabled"], false);
-}
-
-#[test]
 fn production_acl_allows_delete_to_reach_native_credentials() {
     let (dir, _host, _app, view) = fixture();
     let id = seed(dir.path());
@@ -592,6 +574,85 @@ mod overlap {
             assert_eq!(agent(&after, id)["startOnAppLaunch"], true);
         }
         fresh.shutdown().unwrap();
+    }
+
+    // A genuinely eligible agent: its Start failed on the missing Goose CLI.
+    // Stop during the download must win over the install's late restart.
+    #[test]
+    fn goose_install_restart_does_not_reenable_an_agent_stopped_during_download() {
+        const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+        const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        struct Stored;
+        impl Credentials for Stored {
+            fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+                panic!("not a deletion")
+            }
+            fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
+                panic!("not an import")
+            }
+            fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
+                panic!("not a write")
+            }
+            fn read(&self, _: &str, pubkey: &str) -> Result<Option<Secret>, String> {
+                Secret::parse(KEY, pubkey).map(Some)
+            }
+        }
+        let (dir, host, _app, view) = fixture();
+        let id = seed(dir.path());
+        let path = dir.path().join("store/agents.json");
+        let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let id = id.replacen(&"ab".repeat(32), PUB, 1);
+        saved["agents"][0]["id"] = json!(id);
+        saved["agents"][0]["pubkey"] = json!(PUB);
+        saved["agents"][0]["credentialId"] = json!(id);
+        saved["agents"][0]["harness"]["command"] = json!(dir.path().join("missing/goose"));
+        saved["agents"][0]["harness"]["args"] = json!(["acp"]);
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let credentials: Arc<dyn Credentials> = Arc::new(Stored);
+        host.with(|h| {
+            h.controller = Controller::new(
+                Store::open(dir.path().join("replacement"))?,
+                credentials.clone(),
+                Err("placeholder".into()),
+                dir.path().join("ownership"),
+            );
+            h.controller = Controller::new(
+                Store::open(dir.path().join("store"))?,
+                credentials.clone(),
+                Ok(synthetic_bundle(&dir.path().join("tools"))),
+                dir.path().join("ownership"),
+            );
+            h.credentials = credentials;
+            h.legacy_check = || Ok(());
+            Ok(())
+        })
+        .unwrap();
+        let started = tauri::async_runtime::block_on(start(
+            host.clone(),
+            id.clone(),
+            Action::Start,
+            false,
+            None,
+            false,
+        ))
+        .unwrap();
+        assert_eq!(
+            started.data.agents[0].error.as_deref(),
+            Some("Required runtime executable is missing")
+        );
+        assert_eq!(host.waiting_for_goose().unwrap(), vec![id.clone()]);
+        invoke(
+            &view,
+            "agent_control_action",
+            json!({"id":id,"action":"stop"}),
+        )
+        .unwrap();
+        assert!(host.waiting_for_goose().unwrap().is_empty());
+        let result =
+            tauri::async_runtime::block_on(start(host, id, Action::Restart, false, None, true));
+        assert_eq!(result.err().as_deref(), Some(NOT_WAITING_FOR_GOOSE));
+        let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved["agents"][0]["enabled"], false);
     }
 }
 

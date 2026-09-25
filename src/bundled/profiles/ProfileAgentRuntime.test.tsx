@@ -167,8 +167,7 @@ it("summarizes only the exact key in the active community, and drops it when the
     screen.getByRole("region", { name: "Local agent actions" }),
   ).toHaveTextContent("Last start exited early.");
   expect(summary).not.toHaveTextContent("Process stopped");
-  await userEvent.click(within(summary).getByText("Instructions"));
-  expect(within(summary).getByText("Help with the project.")).toBeVisible();
+  expect(within(summary).queryByText("Instructions")).toBeNull();
   await userEvent.click(within(summary).getByText("Host diagnostics"));
   expect(
     within(summary).getByText(/spawned pid 42\s+listener exited/),

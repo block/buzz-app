@@ -15,6 +15,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import * as communityApi from "../../features/communities/api";
 import { AgentsPage } from "./AgentsPage";
+import type { PageNavigation } from "../../features/navigation/service";
+import type { OpenTarget } from "../../features/navigation/targets";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { createRelaySession } from "../../features/relay/session";
@@ -30,6 +32,11 @@ afterEach(() => {
 function setup(
   mode = "ready",
   configure?: (fixture: ReturnType<typeof controlFixture>) => void,
+  navigation?: PageNavigation,
+  open?: (
+    target: OpenTarget,
+    options?: { replace?: boolean },
+  ) => Promise<{ status: "opened" }>,
 ) {
   const f = controlFixture();
   configure?.(f);
@@ -76,7 +83,12 @@ function setup(
         }
       : owned.session;
   let snapshot: RelaySnapshot = {
-    status: mode === "disconnected" ? "disconnected" : "ready",
+    status:
+      mode === "disconnected"
+        ? "disconnected"
+        : mode === "connecting"
+          ? "connecting"
+          : "ready",
     scope:
       mode === "connected"
         ? `wss://relay.example.test:${"de".repeat(32)}`
@@ -104,13 +116,30 @@ function setup(
   });
   snapshot = { ...snapshot, session: { ...session, names } };
   disposals.push(() => names.dispose());
-  render(<AgentsPage relay={relay} control={control} />);
+  render(
+    <AgentsPage
+      relay={relay}
+      control={control}
+      navigation={navigation}
+      {...(open ? { open } : {})}
+    />,
+  );
   return {
     f,
     read,
     control,
     changeScope(scope: string, generation: number) {
       snapshot = { status: "ready", scope, generation, session };
+      for (const listener of listeners) listener();
+    },
+    connect() {
+      snapshot = {
+        status: "ready",
+        scope: `wss://relay.example.test:${"de".repeat(32)}`,
+        viewer: "de".repeat(32),
+        generation: snapshot.generation,
+        session: snapshot.session,
+      };
       for (const listener of listeners) listener();
     },
   };
@@ -1382,5 +1411,191 @@ it("keeps collisions across different cross-community aliases and edits the exac
         }),
       }),
     ),
+  );
+});
+
+function routed(pubkey: string) {
+  const complete = vi.fn(() => true);
+  const target: OpenTarget = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: {
+      viewer: "de".repeat(32),
+      communityOrigin: "https://relay.example.test",
+    },
+    route: { version: 1, params: { pubkey } },
+  };
+  const navigation = {
+    target,
+    signal: new AbortController().signal,
+    complete,
+    forSession() {
+      return this;
+    },
+  } as unknown as PageNavigation;
+  return { navigation, complete };
+}
+
+it("opens the exact native agent editor on the routed page and acknowledges its presentation", async () => {
+  const { navigation, complete } = routed("ab".repeat(32));
+  const { f } = setup("connected", undefined, navigation);
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  expect(within(dialog).getByLabelText("Agent instructions")).toBeVisible();
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({ status: "opened" }),
+  );
+  fireEvent.change(within(dialog).getByLabelText("Name"), {
+    target: { value: "Targeted" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(
+      f.calls.find((call) => call.action === "save")?.payload,
+    ).toMatchObject({ id: "fixture-agent" }),
+  );
+});
+
+it("rejects missing and ambiguous route targets instead of choosing a namesake", async () => {
+  const { navigation, complete } = routed("ab".repeat(32));
+  setup(
+    "connected",
+    (f) => f.data.agents.push({ ...structuredClone(f.agent), id: "duplicate" }),
+    navigation,
+  );
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({
+      status: "failed",
+      reason: "not-found",
+    }),
+  );
+  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+});
+
+it("rejects an edit route for a different community", async () => {
+  const { navigation, complete } = routed("ab".repeat(32));
+  setup(
+    "connected",
+    (f) => {
+      f.agent.relayUrl = "wss://other.example";
+    },
+    navigation,
+  );
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({
+      status: "failed",
+      reason: "not-found",
+    }),
+  );
+  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+});
+
+it("closes a routed editor back to the unrouted Agents page", async () => {
+  const { navigation } = routed("ab".repeat(32));
+  const open = vi.fn(
+    async (_target: OpenTarget, _options?: { replace?: boolean }) => ({
+      status: "opened" as const,
+    }),
+  );
+  setup("connected", undefined, navigation, open);
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  await userEvent
+    .setup()
+    .click(within(dialog).getByRole("button", { name: "Close editor" }));
+  expect(open).toHaveBeenCalledWith(
+    {
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.agents",
+      pageId: "agents",
+      scope: {
+        viewer: "de".repeat(32),
+        communityOrigin: "https://relay.example.test",
+      },
+    },
+    { replace: true },
+  );
+});
+
+it("retains a routed draft when the native save fails", async () => {
+  const { navigation } = routed("ab".repeat(32));
+  const { f } = setup(
+    "connected",
+    (fixture) => fixture.failSave(true),
+    navigation,
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  fireEvent.change(within(dialog).getByLabelText("Name"), {
+    target: { value: "Unsaved draft" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await within(dialog).findByText(/Your edits are retained/);
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Unsaved draft");
+  expect(f.calls.some((call) => call.action === "save")).toBe(true);
+});
+
+it("waits for a connecting relay before opening a routed editor", async () => {
+  const { navigation, complete } = routed("ab".repeat(32));
+  const page = setup("connecting", undefined, navigation);
+  expect(complete).not.toHaveBeenCalled();
+  await waitFor(() => expect(page.control.snapshot().status).toBe("ready"));
+  expect(complete).not.toHaveBeenCalled();
+  act(() => page.connect());
+  await screen.findByRole("dialog", { name: "Edit agent" });
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({ status: "opened" }),
+  );
+  expect(complete).not.toHaveBeenCalledWith({
+    status: "failed",
+    reason: "unavailable",
+  });
+});
+
+it("acknowledges the unrouted Agents page", async () => {
+  const { navigation, complete } = routed("ab".repeat(32));
+  const target = navigation.target as Extract<OpenTarget, { kind: "page" }>;
+  const unrouted = {
+    ...navigation,
+    target: { ...target, route: undefined },
+  } as unknown as PageNavigation;
+  setup("connected", undefined, unrouted);
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({ status: "opened" }),
+  );
+});
+
+it("clears an obsolete route before editing another card", async () => {
+  const { navigation } = routed("ab".repeat(32));
+  const open = vi.fn(
+    async (_target: OpenTarget, _options?: { replace?: boolean }) => ({
+      status: "opened" as const,
+    }),
+  );
+  setup(
+    "connected",
+    (f) => {
+      f.data.agents.splice(0, 1);
+    },
+    navigation,
+    open,
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull(),
+  );
+  const cards = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  const other = cards.find((card) =>
+    card.textContent?.includes("wss://second.example"),
+  );
+  if (!other) throw Error("Second destination missing");
+  fireEvent.click(
+    within(other).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  expect(open).toHaveBeenCalledWith(
+    expect.not.objectContaining({ route: expect.anything() }),
+    { replace: true },
   );
 });

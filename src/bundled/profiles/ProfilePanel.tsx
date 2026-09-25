@@ -315,6 +315,7 @@ function ProfileDetails({
                     scope={scope}
                     pubkey={pubkey}
                     instanceId={instanceId}
+                    owned={isOwner}
                   />
                 )}
                 {children}
@@ -335,7 +336,7 @@ function ProfileDetails({
                     scope={scope}
                     communityOrigin={communityOrigin}
                     viewer={viewer}
-                    knownAgent={agentPubkeys.has(pubkey)}
+                    knownAgent={knownAgent}
                   />
                 )}
                 <div className={styles.publicKey}>

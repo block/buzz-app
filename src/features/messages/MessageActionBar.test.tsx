@@ -109,13 +109,10 @@ it("keeps nested actions behind one trigger and restores it on Escape", async ()
     <MessageActionBar compact onReply={() => {}} copyText={() => "Hello"} />,
   );
   const trigger = screen.getByRole("button", { name: "Open reply actions" });
-  expect(
-    screen.queryByRole("button", { name: "Reply", exact: true }),
-  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
   await user.click(trigger);
   const reply = await screen.findByRole("button", {
     name: "Reply",
-    exact: true,
   });
   await waitFor(() => expect(document.activeElement).toBe(reply));
   // The focused action's shared tooltip dismisses before its enclosing popup.
@@ -140,9 +137,7 @@ it("nested Reply closes actions without taking focus back from the composer", as
     </>,
   );
   await user.click(screen.getByRole("button", { name: "Open reply actions" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Reply", exact: true }),
-  );
+  await user.click(await screen.findByRole("button", { name: "Reply" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(document.activeElement).toBe(screen.getByRole("textbox"));
 });

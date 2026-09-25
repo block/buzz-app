@@ -178,6 +178,14 @@ fn installed_goose() -> Option<PathBuf> {
     buzz_agent_controller::installed("goose")
 }
 
+struct LogChallenge {
+    id: String,
+    pubkey: String,
+    relay_url: String,
+    nonce: String,
+    issued: std::time::Instant,
+}
+
 struct Host {
     controller: Controller,
     imports: Imports,
@@ -190,6 +198,7 @@ struct Host {
     /// Agents with an explicit Start/Stop since open; queued restore skips them.
     acted: BTreeSet<String>,
     profiles: BTreeMap<String, Arc<tokio::sync::Mutex<()>>>,
+    log_challenges: BTreeMap<String, LogChallenge>,
     creating: Option<(String, Arc<NewAgent>)>,
     legacy_check: fn() -> Result<(), String>,
 }
@@ -219,6 +228,7 @@ impl Host {
             next_start: 0,
             acted: BTreeSet::new(),
             profiles: BTreeMap::new(),
+            log_challenges: BTreeMap::new(),
             creating: None,
             legacy_check: refuse_legacy,
         })
@@ -244,6 +254,55 @@ impl Host {
     fn shutdown(&mut self) -> Result<(), String> {
         self.closed = true; // Fence queued commands before shutdown starts.
         self.controller.shutdown()
+    }
+    fn log_challenge(
+        &mut self,
+        id: String,
+        pubkey: String,
+        relay_url: String,
+    ) -> Result<String, String> {
+        self.controller.log_target(&id, &pubkey, &relay_url)?;
+        let nonce = uuid::Uuid::new_v4().to_string();
+        self.log_challenges
+            .retain(|_, pending| pending.issued.elapsed() <= std::time::Duration::from_secs(20));
+        if self.log_challenges.len() >= 4 {
+            return Err("Too many pending log authorizations".into());
+        }
+        self.log_challenges.insert(
+            nonce.clone(),
+            LogChallenge {
+                id,
+                pubkey,
+                relay_url,
+                nonce: nonce.clone(),
+                issued: std::time::Instant::now(),
+            },
+        );
+        Ok(nonce)
+    }
+    fn read_log(
+        &mut self,
+        id: &str,
+        pubkey: &str,
+        relay_url: &str,
+        nonce: &str,
+        signature: &str,
+    ) -> Result<String, String> {
+        // Consume before comparison or I/O; even a failed proof cannot be replayed.
+        let challenge = self
+            .log_challenges
+            .remove(nonce)
+            .ok_or("Log authorization expired")?;
+        if challenge.issued.elapsed() > std::time::Duration::from_secs(20)
+            || challenge.id != id
+            || challenge.pubkey != pubkey
+            || challenge.relay_url != relay_url
+            || challenge.nonce != nonce
+        {
+            return Err("Log authorization expired".into());
+        }
+        self.controller
+            .read_log(id, pubkey, relay_url, nonce, signature)
     }
 }
 
@@ -396,6 +455,32 @@ async fn run<T: Send + 'static>(
     tauri::async_runtime::spawn_blocking(move || state.with(operation))
         .await
         .map_err(|_| "Native agent operation failed; refresh status before retrying")?
+}
+#[tauri::command]
+pub(crate) async fn agent_control_log_challenge(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    pubkey: String,
+    relay_url: String,
+) -> Result<String, String> {
+    run(state.inner().clone(), move |host| {
+        host.log_challenge(id, pubkey, relay_url)
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_read_log(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    pubkey: String,
+    relay_url: String,
+    nonce: String,
+    signature: String,
+) -> Result<String, String> {
+    run(state.inner().clone(), move |host| {
+        host.read_log(&id, &pubkey, &relay_url, &nonce, &signature)
+    })
+    .await
 }
 #[tauri::command]
 pub(crate) async fn agent_control_snapshot(

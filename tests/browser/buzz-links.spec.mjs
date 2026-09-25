@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -215,7 +216,7 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   await page
     .getByRole("switch", { name: "Enable Links", exact: true })
     .uncheck();
-  await button(page, "Messages").first().click();
+  await openPage(page, "Messages");
   await row.locator("a").first().click();
   const targetRow = page.locator(`[data-message-id="${target.id}"]`);
   await expect(targetRow).toBeFocused();

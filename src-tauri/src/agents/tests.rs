@@ -920,3 +920,155 @@ fn real_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
     .is_err());
     host.shutdown().unwrap();
 }
+
+// The log path must pass the generated desktop ACL, not the permissive mock context.
+fn log_acl_fixture() -> (
+    tempfile::TempDir,
+    AgentHost,
+    tauri::App<MockRuntime>,
+    tauri::WebviewWindow<MockRuntime>,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let host = AgentHost::open(Ok((
+        dir.path().join("store"),
+        dir.path().join("legacy"),
+        dir.path().join("workspace"),
+    )));
+    let app = mock_builder()
+        .manage(host.clone())
+        .manage(crate::agent_models::ModelHost::new(Ok(dir
+            .path()
+            .join("store"))))
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    (dir, host, app, view)
+}
+
+#[test]
+fn log_ipc_requires_fresh_exact_owner_proof_and_consumes_challenge() {
+    use secp256k1::{Keypair, Secp256k1, SecretKey};
+    use sha2::{Digest, Sha256};
+    let (dir, host, _app, view) = log_acl_fixture();
+    let key = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    let relay = "wss://relay.example";
+    let id = format!("{key}-{:x}", Sha256::digest(relay.as_bytes()));
+    let secp = Secp256k1::new();
+    let mut owner_bytes = [0; 32];
+    owner_bytes[31] = 2;
+    let owner = Keypair::from_secret_key(&secp, &SecretKey::from_byte_array(owner_bytes).unwrap());
+    let tag_digest = Sha256::digest(format!("nostr:agent-auth:{key}:"));
+    let tag = serde_json::to_string(&[
+        "auth",
+        &owner.x_only_public_key().0.to_string(),
+        "",
+        &secp
+            .sign_schnorr_no_aux_rand(&tag_digest, &owner)
+            .to_string(),
+    ])
+    .unwrap();
+    let row = |auth: Option<&str>| json!({"id":id,"pubkey":key,"relayUrl":relay,"name":"Fixture","systemPrompt":"","workspace":dir.path().to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"","provider":""},"environment":{},"revision":1,"enabled":false,"credentialId":"fixture","authTag":auth,"imported":{}});
+    let store = dir.path().join("store/agents.json");
+    std::fs::write(
+        &store,
+        serde_json::to_vec(&json!({"version":1,"agents":[row(None)]})).unwrap(),
+    )
+    .unwrap();
+    let target = json!({"id":id,"pubkey":key,"relayUrl":relay});
+    assert!(invoke(&view, "agent_control_log_challenge", target.clone()).is_err());
+    std::fs::write(
+        &store,
+        serde_json::to_vec(&json!({"version":1,"agents":[row(Some(&tag))]})).unwrap(),
+    )
+    .unwrap();
+    for bad in [
+        json!({"id":format!("{}-{}", "a".repeat(64), "b".repeat(64)),"pubkey":key,"relayUrl":relay}),
+        json!({"id":id,"pubkey":key,"relayUrl":"wss://elsewhere.example"}),
+    ] {
+        assert!(invoke(&view, "agent_control_log_challenge", bad).is_err());
+    }
+    let challenge = || {
+        invoke(&view, "agent_control_log_challenge", target.clone())
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let proof = |nonce: &str, id: &str, relay: &str, pair: &Keypair| {
+        let digest = Sha256::digest(format!(
+            "buzz-app:harness-log:v1:{id}:{key}:{relay}:{nonce}"
+        ));
+        secp.sign_schnorr_no_aux_rand(&digest, pair).to_string()
+    };
+    let read = |nonce: &str, sig: &str, id: &str, relay: &str| {
+        invoke(
+            &view,
+            "agent_control_read_log",
+            json!({"id":id,"pubkey":key,"relayUrl":relay,"nonce":nonce,"signature":sig}),
+        )
+    };
+    let nonce = challenge();
+    let signature = proof(&nonce, &id, relay, &owner);
+    assert_eq!(read(&nonce, &signature, &id, relay).unwrap(), "");
+    assert!(read(&nonce, &signature, &id, relay).is_err());
+    let nonce = challenge();
+    assert!(read(
+        &nonce,
+        &proof(&nonce, &id, relay, &owner),
+        &id,
+        "wss://elsewhere.example"
+    )
+    .is_err());
+    assert!(read(&nonce, &proof(&nonce, &id, relay, &owner), &id, relay).is_err());
+    let nonce = challenge();
+    assert!(read(
+        &nonce,
+        &proof(&nonce, &id, relay, &owner),
+        "wrong-id",
+        relay
+    )
+    .is_err());
+    let nonce = challenge();
+    let mut wrong_bytes = [0; 32];
+    wrong_bytes[31] = 1;
+    let wrong_owner =
+        Keypair::from_secret_key(&secp, &SecretKey::from_byte_array(wrong_bytes).unwrap());
+    assert!(read(&nonce, &proof(&nonce, &id, relay, &wrong_owner), &id, relay).is_err());
+    assert!(read(&nonce, &proof(&nonce, &id, relay, &owner), &id, relay).is_err());
+    let nonce = challenge();
+    host.with(|h| {
+        h.log_challenges.get_mut(&nonce).unwrap().issued -= std::time::Duration::from_secs(21);
+        Ok(())
+    })
+    .unwrap();
+    assert!(read(&nonce, &proof(&nonce, &id, relay, &owner), &id, relay).is_err());
+    assert!(read(&nonce, &proof(&nonce, &id, relay, &owner), &id, relay).is_err());
+    let nonce = challenge();
+    let second = challenge();
+    assert_ne!(nonce, second);
+    assert_eq!(
+        read(&second, &proof(&second, &id, relay, &owner), &id, relay).unwrap(),
+        ""
+    );
+    assert_eq!(
+        read(&nonce, &proof(&nonce, &id, relay, &owner), &id, relay).unwrap(),
+        ""
+    );
+    assert!(read(&second, &proof(&second, &id, relay, &owner), &id, relay).is_err());
+    assert!(read(&nonce, &proof(&nonce, &id, relay, &owner), &id, relay).is_err());
+    let pending: Vec<_> = (0..4).map(|_| challenge()).collect();
+    assert!(invoke(&view, "agent_control_log_challenge", target).is_err());
+    assert_eq!(
+        read(
+            &pending[0],
+            &proof(&pending[0], &id, relay, &owner),
+            &id,
+            relay
+        )
+        .unwrap(),
+        ""
+    );
+}

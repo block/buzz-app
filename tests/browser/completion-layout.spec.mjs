@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -6,10 +7,7 @@ test("completion menu stays reachable in the production channel layout", async (
   app,
 }, testInfo) => {
   await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages" })
-    .click();
+  await openPage(page, "Messages");
   const input = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -48,10 +46,7 @@ test("host shortcuts coexist with an open completion menu and preserve its draft
   app,
 }) => {
   await page.goto(app.origin);
-  const messages = page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true });
-  await messages.click();
+  await openPage(page, "Messages");
   const input = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -82,7 +77,7 @@ test("host shortcuts coexist with an open completion menu and preserve its draft
     page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("listbox")).toHaveCount(0);
-  await messages.click();
+  await openPage(page, "Messages");
   await expect(input).toHaveJSProperty("value", ":smile");
   // Draft persistence restores text, not selection: a remounted textarea may
   // focus at offset zero. Move to the query before expecting its suggestions.

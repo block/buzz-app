@@ -1,3 +1,4 @@
+import { openPage, pageChoices } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -52,7 +53,7 @@ test("real Settings keys respect dialogs and modifiers, focus main, and preserve
     page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("main")).toBeFocused();
-  await button(page, "Messages").first().click();
+  await openPage(page, "Messages");
   await expect(composer).toHaveJSProperty("value", "Keep my draft");
 });
 
@@ -123,7 +124,7 @@ test("zoom keys resize real message/composer text, not window or spacing, and pe
   expect(await page.evaluate(() => window.visualViewport.scale)).toBe(1);
   await page.reload();
   await scale(page, 1.1);
-  await button(page, "Messages").first().click();
+  await openPage(page, "Messages");
   await expect(composer).toHaveJSProperty("value", "Unsent zoom draft");
   await composer.focus();
   for (let i = 0; i < 15; i++) await page.keyboard.press(`${modifier}+=`);
@@ -185,7 +186,7 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
 }) => {
   await page.goto(app.origin);
   const modifier = await mod(page);
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   const count = page.getByRole("main").getByRole("status");
   await expect(count).toHaveText("Shortcut count: 0");
   await page.keyboard.press(`${modifier}+Shift+k`);
@@ -228,10 +229,20 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
   await button(page, "Plugins").click();
   const toggle = page.getByRole("switch", { name: "Enable Shortcut counter" });
   await toggle.click();
-  await expect(button(page, "Shortcut counter")).toHaveCount(0);
+  const choices = await pageChoices(page);
+  await expect(
+    choices.getByRole("option", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  await expect(
+    choices.getByRole("option", { name: "Shortcut counter", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),
+  ).toHaveCount(0);
   await page.keyboard.press(`${modifier}+Shift+k`);
   await toggle.click();
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   await expect(count).toHaveText("Shortcut count: 0");
   await page.keyboard.press(`${modifier}+Shift+k`);
   await expect(count).toHaveText("Shortcut count: 1");
@@ -243,7 +254,7 @@ test("a shadow-root modal blocks Settings and plugin bindings but allows text zo
 }) => {
   await page.goto(app.origin);
   const modifier = await mod(page);
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   await page.evaluate(() => {
     const host = document.createElement("div");
     host.id = "shadow-modal";
@@ -294,7 +305,7 @@ test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflic
   const spokenModifiers =
     modifier === "Meta" ? "Shift Command" : "Control Shift";
   const title = "Increment shortcut counter";
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   const count = page.getByRole("main").getByRole("status");
   await expect(count).toHaveText("Shortcut count: 0");
   await page.keyboard.press(`${modifier}+Shift+k`);
@@ -335,13 +346,13 @@ test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflic
   ).toBeAttached();
   await expect(button(row, `Reset shortcut for ${title}`)).toBeVisible();
   await expect(button(row, `Change shortcut for ${title}`)).toBeFocused();
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   await expect(count).toHaveText("Shortcut count: 1");
   await page.keyboard.press(`${modifier}+Shift+k`);
   await page.keyboard.press(`${modifier}+Shift+u`);
   await expect(count).toHaveText("Shortcut count: 2");
   await page.reload();
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   await expect(count).toHaveText("Shortcut count: 0");
   await page.keyboard.press(`${modifier}+Shift+u`);
   await expect(count).toHaveText("Shortcut count: 1");
@@ -352,7 +363,7 @@ test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflic
   await expect(
     page.getByRole("button", { name: "Reset all shortcuts", exact: true }),
   ).toBeDisabled();
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   await page.keyboard.press(`${modifier}+Shift+u`);
   await page.keyboard.press(`${modifier}+Shift+k`);
   await expect(count).toHaveText("Shortcut count: 2");

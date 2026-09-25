@@ -105,7 +105,15 @@ export interface AgentImportPreview {
   candidates: Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name">[];
   warnings: string[];
 }
+export type AgentLogTarget = Pick<AgentView, "id" | "pubkey" | "relayUrl"> & {
+  /** Scoped signer; never a caller-supplied identity or public key. */
+  authorize(
+    target: Pick<AgentView, "id" | "pubkey" | "relayUrl">,
+    nonce: string,
+  ): Promise<string>;
+};
 export interface AgentControlHost {
+  readLog?(target: AgentLogTarget): Promise<string>;
   models?: ModelHost;
   prepareCreate?(
     requestId: string,
@@ -149,6 +157,8 @@ export interface AgentControlState {
   error: string | null;
 }
 export interface AgentControl {
+  /** Sensitive local output. Native custody and exact community are rechecked per read. */
+  readLog?(target: AgentLogTarget): Promise<string>;
   models?: AgentModels;
   create?(
     requestId: string,
@@ -351,6 +361,18 @@ export function createAgentControl(
   };
   return {
     models,
+    ...(host?.readLog
+      ? {
+          readLog: async (target: AgentLogTarget) => {
+            if (disposed) throw new Error(agentControlUnavailable);
+            const readLog = host.readLog;
+            if (!readLog) throw new Error(agentControlUnavailable);
+            const content = await readLog(target);
+            if (disposed) throw new Error(agentControlUnavailable);
+            return content;
+          },
+        }
+      : {}),
     ...(host?.prepareCreate && host.commitCreate
       ? {
           create: async (

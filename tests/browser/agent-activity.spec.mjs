@@ -240,10 +240,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     .poll(() => app.relay.hasRoute("primary", "observer"))
     .toBe(false);
   expect(app.relay.sockets).toHaveLength(sockets);
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(region).toHaveCount(0);
 
@@ -253,10 +250,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await toggle.click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(agentEntry(page, first)).toBeVisible();
   await expect(agentEntry(page, second)).toHaveCount(0);
@@ -621,10 +615,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   await page
     .getByRole("switch", { name: "Enable Agent Activity", exact: true })
     .click();
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await page.locator('[data-channel-id="alpha"]').click();
   await avatar.click();
   await expect(profile).toBeVisible();
@@ -790,6 +781,10 @@ test.describe("thread activity", () => {
       .click();
     sendTyping();
     await expect(marker).toBeVisible();
+    const workingBox = await marker.boundingBox();
+    expect(workingBox).toEqual(
+      expect.objectContaining({ width: 6, height: 6 }),
+    );
     await expect(channelActivity(page)).toBeVisible();
     const channelBox = await channelActivity(page)
       .getByRole("button")

@@ -126,10 +126,11 @@ export const test = base.extend({
         forged ? userKey : relayKey,
         time,
       );
-    const peerKey =
+    const peerKeys =
       dmLabels || readState || exactMessages || actionProfile
-        ? key(5)
-        : undefined;
+        ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
+        : [];
+    const peerKey = peerKeys[0];
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
       secondary: "11234567-89ab-cdef-0123-456789abcdef",
@@ -160,19 +161,18 @@ export const test = base.extend({
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
         )
-      : peerKey
-        ? [getPublicKey(peerKey)]
-        : [];
+      : peerKeys.map(getPublicKey);
     const dmIds = largeSidebar
       ? Array.from(
           { length: 128 },
           (_, i) => `dm-${i.toString().padStart(3, "0")}`,
         )
       : dmLabels
-        ? ["dm-peer"]
+        ? ["dm-peer", "dm-group"]
         : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
+    const renamedChannels = new Map();
     const lifecycleRows = channelLifecycle
       ? [
           {
@@ -224,6 +224,7 @@ export const test = base.extend({
                         order: 1,
                         icon: ":unavailable_icon:",
                       },
+                      { id: "laptop", name: "Laptop", order: 2, icon: "👨‍💻" },
                     ]
                   : []),
               ],
@@ -688,9 +689,13 @@ export const test = base.extend({
                 "",
                 lifecycleRows.some((row) => row.id === id) ? "owner" : "member",
               ],
-              ...participants
-                .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
-                .map((pubkey) => ["p", pubkey, "", "member"]),
+              ...(dmLabels && id === "dm-peer"
+                ? [["p", participants[0], "", "member"]]
+                : dmLabels && id === "dm-group"
+                  ? participants.map((pubkey) => ["p", pubkey, "", "member"])
+                  : participants
+                      .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
+                      .map((pubkey) => ["p", pubkey, "", "member"])),
             ]),
           );
       if (filter.kinds?.includes(39000))
@@ -703,7 +708,8 @@ export const test = base.extend({
                 ["d", id],
                 [
                   "name",
-                  channelNames[id] ??
+                  renamedChannels.get(id) ??
+                    channelNames[id] ??
                     lifecycleRows.find((row) => row.id === id)?.name ??
                     (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id),
                 ],
@@ -826,16 +832,22 @@ export const test = base.extend({
                 key,
               ),
             ),
-          ...(peerKey && filter.authors?.includes(getPublicKey(peerKey))
-            ? [
-                sign(
-                  0,
-                  [],
-                  JSON.stringify({ display_name: "Alice Fixture" }),
-                  peerKey,
-                ),
-              ]
-            : []),
+          ...peerKeys
+            .filter((key) => filter.authors?.includes(getPublicKey(key)))
+            .map((key) =>
+              sign(
+                0,
+                [],
+                JSON.stringify({
+                  display_name: [
+                    "Alice Fixture",
+                    "Bob Fixture",
+                    "Carol Fixture",
+                  ][peerKeys.indexOf(key)],
+                }),
+                key,
+              ),
+            ),
         ];
       if (filter.search !== undefined)
         return [...histories.entries()]
@@ -1527,6 +1539,11 @@ export const test = base.extend({
         },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.
+        renameChannel(id, name) {
+          expect(rosterIds).toContain(id);
+          renamedChannels.set(id, name);
+          lifecycleTime++;
+        },
         hideChannel(id) {
           expect(rosterIds).toContain(id);
           hiddenChannels.add(id);

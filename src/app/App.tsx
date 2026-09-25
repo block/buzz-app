@@ -60,7 +60,7 @@ export function App({ services }: { services: AppServices }) {
     <ToastProvider>
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
-          sidebar={(pageNavigation) => (
+          sidebar={() => (
             <ChannelSidebar
               relay={services.relay}
               navigator={services.navigation}
@@ -69,9 +69,10 @@ export function App({ services }: { services: AppServices }) {
               sessionsEnabled={route.pages.some(
                 (page) => page.pluginId === "buzz.sessions",
               )}
-            >
-              <div className="shell-page-navigation-slot">{pageNavigation}</div>
-            </ChannelSidebar>
+              agentsEnabled={route.pages.some(
+                (page) => page.key === "buzz.agents/agents",
+              )}
+            />
           )}
           navigationControls={
             <NavigationControls navigation={services.navigation} />

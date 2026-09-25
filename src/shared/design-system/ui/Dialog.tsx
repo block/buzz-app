@@ -7,6 +7,9 @@ type PopupProps = ComponentProps<typeof BaseDialog.Popup>;
 export type DialogProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
+  onOpenChangeComplete?: ComponentProps<
+    typeof BaseDialog.Root
+  >["onOpenChangeComplete"];
   title: ReactNode;
   description?: ReactNode;
   children: ReactNode;
@@ -34,6 +37,7 @@ export type DialogProps = {
 export function Dialog({
   open,
   onOpenChange,
+  onOpenChangeComplete,
   title,
   description,
   children,
@@ -57,6 +61,7 @@ export function Dialog({
   return (
     <BaseDialog.Root
       open={open}
+      onOpenChangeComplete={onOpenChangeComplete}
       disablePointerDismissal={!dismissOnOutsideClick}
       onOpenChange={(next, details) => {
         if (!next && preventClose) {

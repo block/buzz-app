@@ -124,6 +124,7 @@ fn bundle(directory: &Path) -> RuntimeBundle {
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
 printf '%s' "$BUZZ_ACP_TEAM_INSTRUCTIONS" > team-instructions
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
+printf 'harness fixture output\n'
 trap 'exit 0' TERM INT
 while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 0.1; done
 "#).unwrap();
@@ -193,6 +194,107 @@ impl Drop for FixtureWorkerCleanup {
         }
     }
 }
+#[test]
+#[cfg(unix)]
+fn log_reads_require_exact_instance_and_verified_owner_and_survive_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let agent = agent(dir.path());
+    store.insert(vec![agent.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let nonce = "12345678-1234-1234-1234-123456789abc";
+    let sign = |id: &str, pubkey: &str, relay: &str, nonce: &str| {
+        use secp256k1::{Keypair, Secp256k1, SecretKey};
+        use sha2::{Digest, Sha256};
+        let secp = Secp256k1::new();
+        let mut bytes = [0; 32];
+        bytes[31] = 2; // owner key used by test_attestation
+        let pair = Keypair::from_secret_key(&secp, &SecretKey::from_byte_array(bytes).unwrap());
+        let digest = Sha256::digest(crate::logs::proof_message(id, pubkey, relay, nonce));
+        secp.sign_schnorr_no_aux_rand(&digest, &pair).to_string()
+    };
+    let signature = sign(&agent.id, PUB, &agent.relay_url, nonce);
+    let read = |controller: &Controller| {
+        controller.read_log(&agent.id, PUB, &agent.relay_url, nonce, &signature)
+    };
+    assert_eq!(read(&controller).unwrap(), "");
+    assert!(controller
+        .log_target(&agent.id, PUB, &agent.relay_url)
+        .is_ok());
+    assert!(controller
+        .log_target(&agent.id, PUB, "wss://another.example")
+        .is_err());
+    assert!(controller
+        .read_log(&agent.id, PUB, &agent.relay_url, nonce, &"f".repeat(128))
+        .is_err());
+    assert!(controller
+        .read_log(
+            &agent.id,
+            PUB,
+            &agent.relay_url,
+            "22345678-1234-1234-1234-123456789abc",
+            &signature
+        )
+        .is_err());
+    assert!(controller
+        .read_log(&agent.id, PUB, "wss://another.example", nonce, &signature)
+        .is_err());
+    assert!(controller
+        .read_log(
+            &agent.id,
+            &"f".repeat(64),
+            &agent.relay_url,
+            nonce,
+            &signature
+        )
+        .is_err());
+    let mut other = agent.clone();
+    other.relay_url = "wss://another.example".into();
+    other.id = agent_id(PUB, &other.relay_url);
+    controller.store.insert(vec![other.clone()]).unwrap();
+    assert!(controller
+        .read_log(&other.id, PUB, &other.relay_url, nonce, &signature)
+        .is_err());
+    let cross_community = sign(&agent.id, PUB, &other.relay_url, nonce);
+    assert!(controller
+        .read_log(&agent.id, PUB, &agent.relay_url, nonce, &cross_community)
+        .is_err());
+    // An otherwise well-formed proof from the agent key is not an owner proof.
+    use secp256k1::{Keypair, Secp256k1, SecretKey};
+    use sha2::{Digest, Sha256};
+    let secp = Secp256k1::new();
+    let mut wrong_bytes = [0; 32];
+    wrong_bytes[31] = 1;
+    let wrong_key =
+        Keypair::from_secret_key(&secp, &SecretKey::from_byte_array(wrong_bytes).unwrap());
+    let wrong_digest = Sha256::digest(crate::logs::proof_message(
+        &agent.id,
+        PUB,
+        &agent.relay_url,
+        nonce,
+    ));
+    let wrong_signature = secp
+        .sign_schnorr_no_aux_rand(&wrong_digest, &wrong_key)
+        .to_string();
+    assert!(controller
+        .read_log(&agent.id, PUB, &agent.relay_url, nonce, &wrong_signature)
+        .is_err());
+    controller.action(&agent.id, Action::Start).unwrap();
+    let log_path = crate::logs::path(dir.path().join("config").as_path(), &agent.id).unwrap();
+    wait_for_contents(&log_path, |text| (!text.is_empty()).then_some(()));
+    controller.action(&agent.id, Action::Stop).unwrap();
+    assert!(!read(&controller).unwrap().is_empty());
+    controller.action(&agent.id, Action::Start).unwrap();
+    controller.action(&agent.id, Action::Stop).unwrap();
+    assert!(!read(&controller).unwrap().is_empty());
+}
+
 #[test]
 #[cfg(unix)]
 fn actual_spawn_save_restart_stop_and_restore_contract() {

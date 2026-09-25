@@ -535,6 +535,27 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "--text-navigation",
+        variable: "--text-navigation",
+        pointsAt: "neutral-navigation-text light / neutral-11 dark",
+        use: "Default sidenav labels: neutral-700 and Regular, as specified by Cynthia.",
+        status: "proposed",
+      },
+      {
+        token: "--text-navigation-unread",
+        variable: "--text-navigation-unread",
+        pointsAt: "neutral-navigation-unread light / neutral-12 dark",
+        use: "Unread sidenav labels and notification numerals: neutral-800 and Semibold.",
+        status: "proposed",
+      },
+      {
+        token: "--affordance-navigation-quiet",
+        variable: "--affordance-navigation-quiet",
+        pointsAt: "neutral-navigation-quiet",
+        use: "Gentle hover and selected fill for the sidenav, requested by Cynthia; paired with standard row text in both themes.",
+        status: "proposed",
+      },
+      {
         token: "bg-affordance-panel-hover",
         variable: "--affordance-panel-hover",
         pointsAt: "neutral-2 light / neutral-4 dark",

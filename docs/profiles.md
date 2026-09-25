@@ -26,7 +26,7 @@ without evidence, unknown keys and records saved for another community render
 nothing, leaving the public identity. Community switches re-filter immediately.
 Start/Stop/Restart are the separate profile actions above. The owner-only
 **Agent instructions** ingress in Info requires a unique native record; harness
-logs stay on Agents.
+logs are in Runtime for the exact owned local agent.
 
 ## Owner runtime tab
 
@@ -50,6 +50,15 @@ servers, mode, token limits) are not read. The switch persists through the host;
 failures keep the confirmed value and expose Retry status. Losing ownership or the
 native record returns to Info. The owner check is presentation only: these fields
 come from the same app-wide snapshot as Local agent.
+Activity also offers a focused **Harness log** row for the exact local identity
+when the scoped development signer is available. It hides the profile body until
+Back, reads native private listener output through a one-use owner proof on each
+read, and polls every 30 seconds while mounted and visible. Native retention is
+bounded to 1 MiB; visible output is ANSI-stripped and clipped to the last 120
+lines/64 KiB. Changing community, losing ownership or the local record closes the
+view. Empty, loading, copy and generic error states do not expose native errors.
+A packaged app cannot obtain this development-broker proof and fails closed.
+
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
 The Info tab's “Latest activity” card shows up to three recently updated assistant

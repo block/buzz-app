@@ -128,14 +128,8 @@ export function AgentControlPanel({
       aria-label="Local agent controls"
       className="agent-controls flex min-w-0 flex-col gap-section-gap text-body text-primary"
     >
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-2">
-          <h1 className="m-0 text-title">Agents</h1>
-          <p className="m-0 text-body-sm text-secondary">
-            Manage your agents and bring them into a conversation.
-          </p>
-        </div>
-        {state.data && (
+      {state.data && (
+        <div className="flex justify-end">
           <Button
             variant="primary"
             aria-haspopup="dialog"
@@ -149,8 +143,8 @@ export function AgentControlPanel({
             <PlusIcon size={16} aria-hidden="true" />
             Add agent
           </Button>
-        )}
-      </header>
+        </div>
+      )}
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
       )}

@@ -34,6 +34,7 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"
+secp256k1 = { version = "0.31", features = ["std"] }
 tauri = { version = "2", features = ["test"] }
 
 [target.'cfg(unix)'.dependencies]

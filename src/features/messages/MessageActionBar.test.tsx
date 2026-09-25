@@ -102,3 +102,47 @@ it("prevents duplicate clipboard writes until the first settles", async () => {
   await screen.findByText("Link copied");
   expect(link.hasAttribute("disabled")).toBe(false);
 });
+
+it("keeps nested actions behind one trigger and restores it on Escape", async () => {
+  const user = userEvent.setup();
+  render(
+    <MessageActionBar compact onReply={() => {}} copyText={() => "Hello"} />,
+  );
+  const trigger = screen.getByRole("button", { name: "Open reply actions" });
+  expect(
+    screen.queryByRole("button", { name: "Reply", exact: true }),
+  ).toBeNull();
+  await user.click(trigger);
+  const reply = await screen.findByRole("button", {
+    name: "Reply",
+    exact: true,
+  });
+  await waitFor(() => expect(document.activeElement).toBe(reply));
+  // The focused action's shared tooltip dismisses before its enclosing popup.
+  await screen.findByRole("tooltip", { name: "Reply" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  expect(screen.getByRole("dialog", { name: "Reply actions" })).toBeTruthy();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+});
+it("nested Reply closes actions without taking focus back from the composer", async () => {
+  const user = userEvent.setup();
+  render(
+    <>
+      <input aria-label="Composer" />
+      <MessageActionBar
+        compact
+        copyText={() => "Hello"}
+        onReply={() => screen.getByRole("textbox").focus()}
+      />
+    </>,
+  );
+  await user.click(screen.getByRole("button", { name: "Open reply actions" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Reply", exact: true }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(document.activeElement).toBe(screen.getByRole("textbox"));
+});

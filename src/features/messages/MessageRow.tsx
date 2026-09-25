@@ -71,8 +71,8 @@ export type MessageRowProps = {
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
   onReply?: ((messageId: string) => void) | undefined;
+  compactActions?: boolean;
   quickControls?: ReactNode;
-  branchControl?: ReactNode;
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
   mediaMode?: "inline" | "thread";
@@ -104,7 +104,7 @@ export const MessageRow = memo(function MessageRow({
   onOpenThread,
   onReply,
   quickControls,
-  branchControl,
+  compactActions = false,
   overflowItems,
   participantProfiles,
   layout = "timeline",
@@ -325,7 +325,7 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.messageBody}>
           {!row.membership && (
             <MessageActionBar
-              branchControl={branchControl}
+              compact={compactActions}
               menuTriggerRef={menuTrigger}
               messageId={row.id}
               onReply={

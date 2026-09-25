@@ -7,8 +7,8 @@ import {
   render,
   screen,
   within,
-  waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createAgentLibrary } from "../agents/library";
 import type { ChannelMessage } from "../relay/contracts";
@@ -24,8 +24,12 @@ vi.mock("../relay/react", () => {
   return { useRowProfiles: () => profiles };
 });
 vi.mock("./MessageRow", () => ({
-  MessageRow: ({ row, onReply, layout }: MessageRowProps) => (
-    <article data-message-id={row.id} data-layout={layout}>
+  MessageRow: ({ row, onReply, layout, compactActions }: MessageRowProps) => (
+    <article
+      data-message-id={row.id}
+      data-layout={layout}
+      data-compact={compactActions || undefined}
+    >
       <span>{row.content}</span>
       <button type="button" onClick={() => onReply?.(row.id)}>
         Reply to {row.content}
@@ -132,28 +136,41 @@ function setup(messageId = "root") {
     },
   };
 }
-it("expands immediate children, collapses all descendant state, and supports the rail shortcut", async () => {
+it("expands one level by keyboard, focuses the first child, and never offers re-collapse", async () => {
   setup();
-  expect(screen.getByText("parent")).toBeVisible();
-  expect(screen.queryByText("child")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
-  expect(screen.getByText("child")).toBeVisible();
+  const user = userEvent.setup();
+  const expand = screen.getByRole("button", { name: "View 2 replies" });
+  expand.focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByText("child").closest("article")).toHaveFocus();
+  expect(expand).not.toBeInTheDocument();
   expect(screen.queryByText("grandchild")).not.toBeInTheDocument();
+  screen.getByRole("button", { name: "View 1 reply" }).focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByText("grandchild").closest("article")).toHaveFocus();
+  expect(
+    screen.queryByRole("button", { name: /Hide replies|Collapse/ }),
+  ).not.toBeInTheDocument();
+});
+it("retains expansion and parent identity through live zero-to-one child transitions", () => {
+  const h = setup();
+  h.update([row("parent", "root")]);
+  const parent = screen.getByText("parent").closest("article");
+  const reply = screen.getByRole("button", { name: "Reply to parent" });
+  reply.focus();
+  h.update([row("parent", "root"), row("child", "parent")]);
+  expect(reply).toHaveFocus();
+  expect(screen.queryByText("child")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
-  expect(screen.getByText("grandchild")).toBeVisible();
-  const rail = screen.getAllByRole("button", { name: "Hide replies" })[1];
-  expect(rail).toBeDefined();
-  if (!rail) throw new Error("Missing branch rail");
-  fireEvent.click(rail);
-  expect(screen.queryByText("child")).not.toBeInTheDocument();
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "View 2 replies" }),
-    ).toHaveFocus(),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
-  expect(screen.getByText("child")).toBeVisible();
-  expect(screen.queryByText("grandchild")).not.toBeInTheDocument();
+  reply.focus();
+  h.update([row("parent", "root")]);
+  h.update([row("parent", "root"), row("new", "parent")]);
+  expect(screen.getByText("parent").closest("article")).toBe(parent);
+  expect(reply).toHaveFocus();
+  expect(screen.getByText("new")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "View 1 reply" }),
+  ).not.toBeInTheDocument();
 });
 it("targets a child, cancels on repeated Reply, resets after send and reveals the own branch", () => {
   const h = setup();
@@ -224,7 +241,7 @@ it("groups the first same-author reply with the root but respects the time windo
     "thread",
   );
 });
-it("keeps ordinary replies flat and visible when nested branches close or new replies arrive", () => {
+it("keeps ordinary replies flat and visible when nested branches open or new replies arrive", () => {
   const h = setup();
   h.update([
     row("parent", "root"),
@@ -241,18 +258,14 @@ it("keeps ordinary replies flat and visible when nested branches close or new re
   expect(parent?.parentElement?.parentElement).toBe(history);
   fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
   expect(screen.getByText("child")).toBeVisible();
-  const collapse = screen.getAllByRole("button", { name: "Hide replies" })[0];
-  if (!collapse) throw new Error("Missing nested collapse control");
-  fireEvent.click(collapse);
   h.update([
     row("parent", "root"),
     row("child", "parent"),
     row("peer", "root"),
     row("new", "root"),
   ]);
-  for (const id of ["parent", "peer", "new"])
+  for (const id of ["parent", "peer", "new", "child"])
     expect(screen.getByText(id)).toBeVisible();
-  expect(screen.queryByText("child")).not.toBeInTheDocument();
   expect(screen.getByLabelText("Composer")).toBeVisible();
 });
 it("an own ordinary reply stays visible without opening a nested branch", () => {
@@ -281,7 +294,7 @@ it("does not offer collapse controls for an empty thread", () => {
 it("keeps same-author continuation layout through pending, failed, and accepted delivery", () => {
   const h = setup("child");
   for (const delivery of ["sending", "failed", "accepted"] as const) {
-    h.update([row("parent", "root"), { ...row("child", "parent"), delivery }]);
+    h.update([row("parent", "root"), { ...row("child", "root"), delivery }]);
     expect(screen.getByText("child").closest("article")).toHaveAttribute(
       "data-layout",
       "continuation",
@@ -289,7 +302,7 @@ it("keeps same-author continuation layout through pending, failed, and accepted 
   }
 });
 
-it("preserves ordinary reply identity, focus and nested collapse state through root loss and return", () => {
+it("preserves ordinary reply identity, focus and unopened nested state through root loss and return", () => {
   const h = setup();
   const parent = screen.getByText("parent").closest("article");
   const reply = screen.getByRole("button", { name: "Reply to parent" });
@@ -329,3 +342,69 @@ for (const startsWithChild of [false, true])
         screen.getByRole("button", { name: "View 1 reply" }),
       ).toBeVisible();
   });
+
+it("starts a nested branch with an author header even when the author matches its parent", () => {
+  setup();
+  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
+  expect(screen.getByText("child").closest("article")).toHaveAttribute(
+    "data-layout",
+    "thread",
+  );
+});
+
+it("groups same-parent siblings but restores the author after an expanded branch", () => {
+  const h = setup();
+  h.update([
+    row("parent", "root"),
+    row("child", "parent"),
+    row("sibling", "parent"),
+    row("peer", "root"),
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
+  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+    "data-layout",
+    "continuation",
+  );
+  expect(screen.getByText("child").closest("article")).toHaveAttribute(
+    "data-layout",
+    "thread",
+  );
+  expect(screen.getByText("sibling").closest("article")).toHaveAttribute(
+    "data-layout",
+    "continuation",
+  );
+  expect(screen.getByText("peer").closest("article")).toHaveAttribute(
+    "data-layout",
+    "thread",
+  );
+});
+
+it("returns focus to the parent when the newly revealed focused child is deleted", async () => {
+  const h = setup();
+  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
+  expect(screen.getByText("child").closest("article")).toHaveFocus();
+  await act(async () => h.update([row("parent", "root")]));
+  expect(screen.getByText("parent").closest("article")).toHaveFocus();
+});
+
+it("uses compact actions only for replies to replies, including unloaded parents", () => {
+  const h = setup("child");
+  expect(screen.getByText("root").closest("article")).not.toHaveAttribute(
+    "data-compact",
+  );
+  expect(screen.getByText("parent").closest("article")).not.toHaveAttribute(
+    "data-compact",
+  );
+  expect(screen.getByText("child").closest("article")).toHaveAttribute(
+    "data-compact",
+    "true",
+  );
+  h.update([row("orphan", "unloaded"), row("ordinary", "root")]);
+  expect(screen.getByText("orphan").closest("article")).toHaveAttribute(
+    "data-compact",
+    "true",
+  );
+  expect(screen.getByText("ordinary").closest("article")).not.toHaveAttribute(
+    "data-compact",
+  );
+});

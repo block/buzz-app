@@ -9,9 +9,22 @@ test.use({
   historyCounts: { alpha: 3, beta: 1 },
 });
 
+async function replyActions(page, row) {
+  const trigger = row.getByRole("button", {
+    name: "Open reply actions",
+    exact: true,
+  });
+  if (await trigger.count()) {
+    await trigger.click();
+    return page.getByRole("dialog", { name: "Reply actions", exact: true });
+  }
+  await row.hover();
+  return row;
+}
+
 // Browser-only boundary: real composer -> signing broker -> live nested row;
 // layout/focus at different panel widths, and routed reveal through collapsed DOM.
-test("nested replies send, collapse, and reveal through links at readable panel widths", async ({
+test("nested replies send, stay open, and reveal through links at readable panel widths", async ({
   page,
   app,
 }) => {
@@ -110,17 +123,19 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   ]);
   const nestedRow = panel.locator(`[data-message-id="${nested.id}"]`);
   await expect(nestedRow).toBeInViewport();
-  // Morgan's continuation treatment uses a left-hand timestamp, not an elbow.
+  // Nested ancestry has a quiet elbow even when the author continues.
   const connector = await nestedRow.evaluate(
     (node) => getComputedStyle(node.closest("li"), "::before").content,
   );
-  expect(connector).toBe("none");
+  expect(connector).toBe('""');
 
   await expect(
     panel.getByRole("button", { name: "Cancel reply target" }),
   ).toHaveCount(0);
-  await nestedRow.hover();
-  await nestedRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await (await replyActions(page, nestedRow))
+    .getByRole("button", { name: "Reply", exact: true })
+    .click();
+  await expect(editor).toBeFocused();
   // Main's Up-to-edit shares this composer; cancel must retain the nested target
   // and the native draft history, rather than sending the draft to the root.
   await editor.fill("Unsent nested draft");
@@ -160,11 +175,20 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     const pending = panel
       .locator("[data-message-id]")
       .filter({ hasText: "Grandchild browser reply" });
-    await expect(pending.locator('[data-layout="continuation"]')).toBeVisible();
+    await expect(pending.locator('[data-layout="thread"]')).toBeVisible();
     await expect.poll(() => grandchildRequested).toBe(true);
     await expect(
-      pending.getByRole("button", { name: "Reply", exact: true }),
+      (await replyActions(page, pending)).getByRole("button", {
+        name: "Reply",
+        exact: true,
+      }),
     ).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(
+      pending.getByRole("button", { name: "Open reply actions" }),
+    ).toBeFocused();
+    // Inspecting the pending row intentionally moved focus away from composing.
+    await editor.focus();
   } finally {
     releaseGrandchild();
   }
@@ -185,44 +209,23 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   const grandchildRow = panel.locator(`[data-message-id="${grandchild.id}"]`);
   await expect(grandchildRow).toBeInViewport();
   await expect(editor).toBeFocused();
-  // The same-author continuation clock is quiet until hover or keyboard focus.
-  const clock = grandchildRow.locator("time");
+  // Crossing into a nested branch repeats the author, even for own consecutive sends.
+  await expect(grandchildRow.locator('[data-layout="thread"]')).toBeVisible();
+  await expect(grandchildRow.locator("time")).toBeVisible();
   await editor.focus();
-  await editor.hover();
-  await expect(clock).toHaveCSS("opacity", "0");
-  await grandchildRow.hover();
-  await expect(clock).toHaveCSS("opacity", "1");
-  await clock.hover();
-  await expect(page.getByRole("tooltip")).toContainText(/\d{4}/);
-  await grandchildRow
-    .getByRole("button", { name: "Reply", exact: true })
-    .focus();
-  await editor.hover();
-  await expect(clock).toHaveCSS("opacity", "1");
-  await editor.focus();
-  await parent
-    .locator("../..")
-    .getByRole("button", { name: "Hide replies", exact: true })
-    .first()
-    .click();
-  await expect(nestedRow).toHaveCount(0);
-  await parent
-    .locator("../..")
-    .getByRole("button", { name: /^View 2 replies/ })
-    .click();
+  await expect(
+    panel.getByRole("button", { name: /Hide replies|Collapse this branch/ }),
+  ).toHaveCount(0);
   await expect(nestedRow).toBeVisible();
-  await expect(grandchildRow).toHaveCount(0);
-  await nestedRow
-    .locator("../..")
-    .getByRole("button", { name: /^View 1 reply/ })
-    .click();
   await expect(grandchildRow).toBeVisible();
 
   let deepest = grandchildRow;
   for (let depth = 0; depth < 6; depth++) {
     await editor.hover();
-    await deepest.hover();
-    await deepest.getByRole("button", { name: "Reply", exact: true }).click();
+    await (await replyActions(page, deepest))
+      .getByRole("button", { name: "Reply", exact: true })
+      .click();
+    await expect(editor).toBeFocused();
     const content = `Deep reply ${depth}`;
     await editor.fill(content);
     await editor.press("Enter");
@@ -243,40 +246,17 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     await deepest.scrollIntoViewIfNeeded();
     const geometry = await panel.evaluate((element) => {
       const history = element.querySelector('[aria-label="Thread messages"]');
-      const rail = [
-        ...element.querySelectorAll('button[aria-label="Hide replies"]'),
-      ].find(
-        (node) =>
-          getComputedStyle(node).position === "absolute" &&
-          node.getClientRects().length,
-      );
-      return {
-        width: history.clientWidth,
-        scroll: history.scrollWidth,
-        rail: rail?.getBoundingClientRect().width,
-      };
+      return { width: history.clientWidth, scroll: history.scrollWidth };
     });
     expect(geometry.scroll).toBeLessThanOrEqual(geometry.width + 1);
-    // At the narrowest cap all rails yield to per-row collapse controls.
-    if (geometry.rail !== undefined)
-      expect(geometry.rail).toBeGreaterThanOrEqual(24);
-    else
-      await expect(
-        parent.getByRole("button", { name: "Collapse this branch" }),
-      ).toBeVisible();
+    await expect(
+      panel.getByRole("button", { name: /Hide replies|Collapse this branch/ }),
+    ).toHaveCount(0);
     const deepestBox = await deepest.boundingBox();
     expect(deepestBox.width).toBeGreaterThan(140);
     const capped = deepest.locator(
       'xpath=ancestor::*[@data-depth and @data-open="true"][1]',
     );
-    await expect(capped.locator(":scope > div").nth(1)).toBeHidden();
-    const rail = capped.locator(
-      ":scope > [id] > button[aria-label='Hide replies']",
-    );
-    await expect(rail).toBeHidden();
-    await expect(
-      capped.getByRole("button", { name: "Collapse this branch" }).first(),
-    ).toBeVisible();
     const spine = await capped.evaluate((node) => {
       const message = node.firstElementChild;
       return {
@@ -293,30 +273,12 @@ test("nested replies send, collapse, and reveal through links at readable panel 
           document.documentElement.setAttribute("data-color-mode", mode),
         theme,
       );
-      await expect(
-        panel.locator('button[aria-label="Hide replies"]').last(),
-      ).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await panel.screenshot({
         path: test.info().outputPath(`nested-${width}-${theme}.png`),
       });
     }
   }
   await page.setViewportSize({ width: 1440, height: 950 });
-  const parentBranch = parent.locator("../..");
-  const collapseBranch = parentBranch
-    .getByRole("button", { name: "Hide replies", exact: true })
-    .first();
-  await collapseBranch.focus();
-  await collapseBranch.press("Enter");
-  await expect(parent).toBeVisible();
-  await expect(nestedRow).toHaveCount(0);
-  const reopenBranch = parentBranch.getByRole("button", {
-    name: /^View \d+ replies/,
-  });
-  await expect(reopenBranch).toBeFocused();
-  await reopenBranch.press("Enter");
-  await expect(nestedRow).toBeVisible();
-  await expect(grandchildRow).toHaveCount(0);
   await panel
     .getByRole("button", { name: "Close thread", exact: true })
     .click();
@@ -334,19 +296,14 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   await expect
     .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
     .toBe("opened");
-  // A later live update must not undo an explicit collapse after revealing a link.
-  await parent
-    .locator("../..")
-    .getByRole("button", { name: "Hide replies", exact: true })
-    .first()
-    .click();
+  // Opened branches remain open through live arrivals and ordinary sends.
   app.reply(root.id);
   await expect(
     panel.getByText("New peer reply", { exact: true }),
   ).toBeVisible();
-  await expect(grandchildRow).toHaveCount(0);
+  await expect(grandchildRow).toBeVisible();
   await expect(parent).toBeVisible();
-  // Sending to the thread must not reopen a separately collapsed nested branch.
+  // Sending to the thread must not disturb an opened nested branch.
   await editor.fill("Own ordinary thread reply");
   await editor.press("Enter");
   await expect(
@@ -361,8 +318,8 @@ test("nested replies send, collapse, and reveal through links at readable panel 
       ),
     )
     .toBe(true);
-  await expect(grandchildRow).toHaveCount(0);
-  await expect(nestedRow).toHaveCount(0);
+  await expect(grandchildRow).toBeVisible();
+  await expect(nestedRow).toBeVisible();
   await expect(parent).toBeVisible();
   const finalReply = app.report.publications.find(
     ({ event }) => event?.content === "Own ordinary thread reply",
@@ -419,7 +376,7 @@ test("an exact linked reply stays readable when its parent is outside loaded his
 
 test.describe("touch branch controls", () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
-  test("keeps a visible collapse label without hover", async ({
+  test("expands with a visible touch target and removes it once open", async ({
     page,
     app,
   }) => {
@@ -440,24 +397,58 @@ test.describe("touch branch controls", () => {
     const summary = panel.getByRole("button", { name: /^View 1 reply/ });
     await expect(summary).toContainText("(1 new)");
     await summary.tap();
-    const collapse = panel.getByRole("button", {
-      name: "Hide replies",
-      exact: true,
-    });
-    await expect(collapse).toHaveText("Hide replies");
+    await expect(summary).toHaveCount(0);
+    await expect(
+      panel.getByRole("button", { name: /Hide replies|Collapse this branch/ }),
+    ).toHaveCount(0);
     const history = panel.getByRole("region", { name: "Thread messages" });
     const geometry = await history.evaluate((node) => ({
       width: node.clientWidth,
       scroll: node.scrollWidth,
     }));
     expect(geometry.scroll).toBeLessThanOrEqual(geometry.width + 1);
-    const branch = collapse.locator("../..");
-    const spine = await branch.evaluate((node) => ({
-      stub: getComputedStyle(node.firstElementChild, "::after").display,
-      summary: getComputedStyle(node.children[1], "::before").display,
-    }));
-    expect(spine.stub).not.toBe("none");
-    expect(spine.summary).not.toBe("none");
+    const branch = panel.locator('[data-depth="0"][data-open="true"]').first();
+    const child = branch.locator(":scope > [id] [data-message-id]").first();
+    await expect(child).toBeFocused();
+    await expect(child).toBeVisible();
+    const actionTrigger = child.getByRole("button", {
+      name: "Open reply actions",
+    });
+    await actionTrigger.tap();
+    const actions = page.getByRole("dialog", {
+      name: "Reply actions",
+      exact: true,
+    });
+    await actions
+      .getByRole("button", { name: "Add reaction", exact: true })
+      .tap();
+    await expect(
+      page.getByRole("dialog", { name: "Emoji picker", exact: true }),
+    ).toBeVisible();
+    const emojiSearch = page.locator('em-emoji-picker input[type="search"]');
+    await expect(emojiSearch).toBeFocused();
+    await emojiSearch.press("Escape");
+    await expect(
+      page.getByRole("dialog", { name: "Emoji picker", exact: true }),
+    ).toHaveCount(0);
+    await expect(actions).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(actionTrigger).toBeFocused();
+    await actionTrigger.tap();
+    await actions.getByRole("button", { name: "More message actions" }).tap();
+    await expect(
+      page.getByRole("menuitem", { name: "Copy message", exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(actions).toBeVisible();
+    await actions.getByRole("button", { name: "Reply", exact: true }).tap();
+    await expect(
+      panel.getByRole("textbox", { name: "Reply to thread" }),
+    ).toBeFocused();
+    await expect(
+      panel.getByRole("button", { name: "Cancel reply target" }),
+    ).toBeVisible();
     await page.emulateMedia({ reducedMotion: "reduce" });
     const motion = await branch.locator(":scope > [id]").evaluate((node) => ({
       transition: getComputedStyle(node).transitionDuration,
@@ -465,24 +456,18 @@ test.describe("touch branch controls", () => {
     }));
     expect(motion).toEqual({ transition: "0s", animation: "0s" });
 
-    await collapse.tap();
-    await expect(summary).toBeVisible();
+    app.reply(root.id);
     await expect(
-      panel.getByRole("button", { name: "Hide thread replies", exact: true }),
-    ).toHaveCount(0);
-    await expect(
-      panel.getByText("Unread reply 0", { exact: true }),
+      panel.getByText("New peer reply", { exact: true }),
     ).toBeVisible();
-    await summary.tap();
-    await expect(collapse).toHaveText("Hide replies");
-    await collapse.tap();
-    await expect(summary).toBeVisible();
+    await expect(child).toBeVisible();
+    await expect(summary).toHaveCount(0);
   });
 });
 
 // Real pointer hit testing and focus cannot be verified in jsdom.
 for (const width of [1492, 1280, 1024, 390])
-  test(`crowded capped branches own distinct collapse controls at ${width}`, async ({
+  test(`crowded capped branches expand once with readable actions at ${width}`, async ({
     page,
     app,
   }) => {
@@ -503,6 +488,15 @@ for (const width of [1492, 1280, 1024, 390])
       ).id;
       ids.push(parent);
     }
+    const continuation = app.append(
+      "primary",
+      "alpha",
+      "Same-parent continuation",
+      false,
+      true,
+      root.id,
+      ids.at(-2),
+    );
     await open(page, app);
     await page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -522,64 +516,85 @@ for (const width of [1492, 1280, 1024, 390])
             .locator(":scope > div")
             .nth(1)
             .getByRole("button")
-            .click();
+            .press("Enter");
+        await expect(
+          panel.locator(`[data-message-id="${ids[ids.indexOf(id) + 1]}"]`),
+        ).toBeFocused();
       }
     };
     await page.setViewportSize({ width, height: 950 });
     await expandAll();
-    for (const id of ids.slice(0, -1)) {
+    // Retain the existing continuation-clock contract on a real same-parent
+    // sibling now that crossing a branch deliberately repeats the author.
+    const continuationRow = panel.locator(
+      `[data-message-id="${continuation.id}"]`,
+    );
+    await expect(
+      continuationRow.locator('[data-layout="continuation"]'),
+    ).toBeVisible();
+    const clock = continuationRow.locator("time");
+    await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
+    await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
+    await expect(clock).toHaveCSS("opacity", "0");
+    await continuationRow.hover();
+    await expect(clock).toHaveCSS("opacity", "1");
+    await clock.hover();
+    await expect(page.getByRole("tooltip")).toContainText(/\d{4}/);
+    await continuationRow
+      .getByRole("button", { name: "Open reply actions" })
+      .focus();
+    await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
+    await expect(clock).toHaveCSS("opacity", "1");
+    for (const id of [...ids.slice(0, -1), continuation.id]) {
       const branch = branchFor(id);
-      const rail = branch.locator(
-        ":scope > [id] > button[aria-label='Hide replies']",
-      );
-      const rowControl = branch
-        .locator(":scope > div")
-        .first()
-        .getByRole("button", { name: "Collapse this branch" });
-      const control = (await rail.isVisible()) ? rail : rowControl;
-      await control.scrollIntoViewIfNeeded();
-      if (control === rowControl) await control.focus();
-      await expect
-        .poll(() =>
-          control.evaluate((node) => {
-            const r = node.getBoundingClientRect();
-            const viewport = node
-              .closest('[aria-label="Thread messages"]')
-              .getBoundingClientRect();
-            const top = Math.max(r.top, viewport.top);
-            const bottom = Math.min(r.bottom, viewport.bottom);
-            if (bottom <= top) return false;
-            const hit = document.elementFromPoint(
-              r.x + r.width / 2,
-              (top + bottom) / 2,
-            );
-            return node === hit || node.contains(hit);
-          }),
-        )
-        .toBe(true);
       const row = panel.locator(`[data-message-id="${id}"]`);
       await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
       await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
       await row.scrollIntoViewIfNeeded();
+      // Put a row at the scrollport edge: actions must remain reachable there.
+      await row.evaluate((node) => {
+        const history = node.closest('[aria-label="Thread messages"]');
+        history.scrollTop +=
+          node.getBoundingClientRect().top -
+          history.getBoundingClientRect().top;
+      });
       const restingHeight = (await row.boundingBox()).height;
       await row.hover();
       expect((await row.boundingBox()).height).toBe(restingHeight);
-      const actions = row.getByRole("group", { name: "Message actions" });
+      const compact = row.getByRole("button", { name: "Open reply actions" });
+      const isNested = id !== ids[0];
+      await expect(compact).toHaveCount(isNested ? 1 : 0);
+      const actions = isNested
+        ? compact
+        : row.getByRole("group", { name: "Message actions" });
       await expect(actions).toHaveCSS("opacity", "1");
+      for (const button of isNested
+        ? [compact]
+        : await actions.getByRole("button").all()) {
+        await expect(button).toBeInViewport();
+        await button.click({ trial: true });
+      }
       // Test rendered text fragments, not a block whose empty area may overlap.
       // Hover actions must leave this row's own message and its neighbor readable.
       await expect
         .poll(() =>
           row.evaluate((node) => {
             const tray = node
-              .querySelector('[aria-label="Message actions"]')
+              .querySelector(
+                '[aria-label="Open reply actions"], [aria-label="Message actions"]',
+              )
               .getBoundingClientRect();
             const walker = document.createTreeWalker(
-              node,
+              node.closest('[aria-label="Thread messages"]'),
               NodeFilter.SHOW_TEXT,
             );
             for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-              if (!text.textContent.startsWith("Crowded reply")) continue;
+              if (
+                !/^(Crowded reply|Same-parent continuation)/.test(
+                  text.textContent,
+                )
+              )
+                continue;
               const range = document.createRange();
               range.selectNodeContents(text);
               for (const rect of range.getClientRects()) {
@@ -596,30 +611,31 @@ for (const width of [1492, 1280, 1024, 390])
           }),
         )
         .toBe(false);
-      await control.hover();
-      await expect
-        .poll(() =>
-          branch.evaluate((node) =>
-            getComputedStyle(node).getPropertyValue("--reply-guide").trim(),
-          ),
-        )
-        .toBe("gray");
-      const child = ids[ids.indexOf(id) + 1];
-      await control.click();
-      await expect(panel.locator(`[data-message-id="${id}"]`)).toBeVisible();
-      await expect(panel.locator(`[data-message-id="${child}"]`)).toHaveCount(
-        0,
-      );
-      const summary = branch.locator(":scope > div").nth(1).getByRole("button");
-      await expect(summary).toBeFocused();
-      await summary.press("Enter");
-      await expect(control).toBeFocused();
-      await expect(panel.locator(`[data-message-id="${child}"]`)).toBeVisible();
-      await expandAll();
+      if (isNested) {
+        await compact.click();
+        const popup = page.getByRole("dialog", {
+          name: "Reply actions",
+          exact: true,
+        });
+        await expect(
+          popup.getByRole("button", { name: "Reply", exact: true }),
+        ).toBeVisible();
+        for (const button of await popup.getByRole("button").all()) {
+          await expect(button).toBeInViewport();
+          await button.click({ trial: true });
+        }
+        await page.keyboard.press("Escape");
+        await expect(compact).toBeFocused();
+      }
+      await expect(
+        branch.getByRole("button", {
+          name: /Hide replies|Collapse this branch/,
+        }),
+      ).toHaveCount(0);
     }
     await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
     await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
-    for (const id of ids) {
+    for (const id of ids.slice(0, 1)) {
       await expect(
         panel
           .locator(`[data-message-id="${id}"]`)

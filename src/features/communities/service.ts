@@ -17,6 +17,8 @@ type Saved = {
 };
 export type ClientSnapshot = Saved & {
   status: "loading" | "ready" | "unavailable";
+  // A restored identity does not imply that this build has relay transport.
+  relayAvailable: boolean;
   viewer?: string;
   error?: string;
 };
@@ -31,10 +33,12 @@ export function createCommunities(
   identityNames?: IdentityNames,
   openRelay = "",
   agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
+  identityReady?: Promise<string>,
 ) {
   let state: ClientSnapshot = {
     ...empty(),
-    status: live ? "loading" : "unavailable",
+    status: live || identityReady ? "loading" : "unavailable",
+    relayAvailable: live,
   };
   // Retain temporarily unresolvable deployment aliases in storage, not active UI/sessions.
   const unresolvedMemberships: Membership[] = [];
@@ -86,6 +90,8 @@ export function createCommunities(
     emitRelay();
   };
   const acquire = (id: string) => {
+    // Native identity alone is not a broker: never pair it with the dev signer.
+    if (!live) return disconnected;
     let session = sessions.get(id);
     if (!session) {
       session = provideRelay(
@@ -116,11 +122,20 @@ export function createCommunities(
     clearCache: () => current().clearCache(),
   };
   ctx.provide("relay", relay);
-  if (live)
-    void fetch("/api/relay/identity", { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Local identity unavailable");
-        const { viewer } = await response.json();
+  const identity =
+    identityReady ??
+    (live
+      ? fetch("/api/relay/identity", { signal: controller.signal }).then(
+          async (response) => {
+            if (!response.ok) throw new Error("Local identity unavailable");
+            const { viewer } = await response.json();
+            return viewer as string;
+          },
+        )
+      : undefined);
+  if (identity)
+    void identity
+      .then((viewer) => {
         if (typeof viewer !== "string" || !/^[a-f0-9]{64}$/.test(viewer))
           throw new Error("Invalid local identity");
         if (disposed) return;

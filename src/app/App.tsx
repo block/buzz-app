@@ -1,4 +1,5 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
+import { IdentitySetup } from "../features/identity/IdentitySetup";
 import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -21,6 +22,16 @@ import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 
 export function App({ services }: { services: AppServices }) {
+  return services.identity ? (
+    <IdentitySetup identity={services.identity}>
+      <ConnectedApp services={services} />
+    </IdentitySetup>
+  ) : (
+    <ConnectedApp services={services} />
+  );
+}
+
+function ConnectedApp({ services }: { services: AppServices }) {
   const { plugins } = services;
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
   const route = useAppNavigation(services);
@@ -129,6 +140,7 @@ export function App({ services }: { services: AppServices }) {
               plugins={plugins}
               cards={services.settingsCards}
               communities={services.communities}
+              identity={services.identity}
               appearance={services.appearance}
               shortcuts={services.shortcuts}
               shortcutBindings={services.shortcutBindings}

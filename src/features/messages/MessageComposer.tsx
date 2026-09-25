@@ -92,6 +92,8 @@ export type MessageComposerProps = {
   replyContext?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
+  /** Focus once when this conversation mounts, not when overlays close. */
+  autoFocus?: boolean;
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
@@ -138,6 +140,7 @@ function Composer({
   replyContext,
   mediaTimeSeconds,
   clearMediaTime,
+  autoFocus = false,
   focusRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
@@ -202,6 +205,10 @@ function Composer({
   const valueRef = useRef(value);
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const focusOnMount = useRef(autoFocus && !disabled);
+  useEffect(() => {
+    if (focusOnMount.current) input.current?.focus();
+  }, []);
   const nonmembers = useNonmemberMentions(session, channelId, () =>
     input.current?.focus(),
   );

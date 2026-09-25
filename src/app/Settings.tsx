@@ -1,3 +1,4 @@
+import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
@@ -298,9 +299,15 @@ export function Settings({
             )}
             <div hidden={selected !== "plugins"}>
               <section aria-labelledby="plugin-settings-title">
-                <h2 id="plugin-settings-title" className="mt-0 mb-6 text-label">
-                  Plugins
-                </h2>
+                <Header
+                  id="plugin-settings-title"
+                  title="Plugins"
+                  subtitle={
+                    !plugins.imports
+                      ? "Open the desktop app to load plugins from a folder or Git repository."
+                      : undefined
+                  }
+                />
                 {catalog ? (
                   <PluginImport
                     plugins={plugins}
@@ -350,7 +357,7 @@ export function Settings({
                           : null);
                       return (
                         <article
-                          className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
+                          className="flex flex-wrap items-center justify-between gap-3 px-1 py-3"
                           key={id}
                         >
                           <div className="flex min-w-0 flex-1 items-center gap-3">

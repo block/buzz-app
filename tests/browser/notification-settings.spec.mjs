@@ -50,15 +50,20 @@ test("Notifications keeps settings separated and button labels contained at supp
           const controls = [...root.querySelectorAll('[role="switch"]')];
           let previous;
           for (const control of controls) {
-            const row = control.parentElement.getBoundingClientRect();
+            const row = control
+              .closest(".buzz-preference-row")
+              .getBoundingClientRect();
             const name = control.getAttribute("aria-label");
-            if (previous && row.top <= previous.bottom)
+            // Adjacent full-width rows share an edge; only intersecting bounds overlap.
+            if (previous && row.top < previous.bottom)
               failures.push(`${name}: settings share or overlap a row`);
             if (row.left < bounds.left || row.right > bounds.right)
               failures.push(`${name}: row overflows section`);
             const track = control.getBoundingClientRect();
             const label = document.createRange();
-            label.selectNodeContents(control.previousElementSibling);
+            label.selectNodeContents(
+              control.closest(".buzz-preference-row").querySelector("label"),
+            );
             for (const line of label.getClientRects()) {
               if (line.right > track.left || track.right > bounds.right)
                 failures.push(`${name}: label or switch overflows its row`);

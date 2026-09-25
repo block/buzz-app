@@ -1,3 +1,4 @@
+import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { Button } from "../shared/design-system/ui/Button";
@@ -35,15 +36,16 @@ export function NotificationSettings({
       className={styles.root}
       aria-labelledby="notification-settings-title"
     >
-      <h2 id="notification-settings-title" className="mt-0 mb-6 text-label">
-        Notifications
-      </h2>
-      <div className="grid gap-5">
-        <p className="text-body-sm text-muted">
-          {state.systemManaged
+      <Header
+        id="notification-settings-title"
+        title="Notifications"
+        subtitle={
+          state.systemManaged
             ? "Buzz sends alerts and badges for new activity in the selected community while it’s running. Manage app permissions and sounds in your system settings."
-            : "Buzz sends alerts and badges for new activity in the selected community while it’s running. Manage app permissions in your system settings."}
-        </p>
+            : "Buzz sends alerts and badges for new activity in the selected community while it’s running. Manage app permissions in your system settings."
+        }
+      />
+      <div className="grid gap-5">
         <div className={styles.preferenceList}>
           {state.categories.map(({ key, label }) => (
             <PreferenceRow
@@ -67,29 +69,47 @@ export function NotificationSettings({
             notifications.updatePreferences({ enabled })
           }
         />
-        {permissionStatus && (
-          <p role="status" className="text-body-sm text-muted">
-            {permissionStatus}
-          </p>
-        )}
-        {!state.systemManaged && !state.developmentPaused && (
-          <div className={styles.actions}>
-            {permission === "default" && (
-              <Button
-                type="button"
-                disabled={state.requesting}
-                onClick={() => void notifications.requestPermission()}
-              >
-                Allow notifications
-              </Button>
+        {(permissionStatus ||
+          (!state.systemManaged && !state.developmentPaused)) && (
+          <div
+            className={styles.permission}
+            data-warning={
+              state.developmentPaused ||
+              permission === "denied" ||
+              permission === "default" ||
+              permission === "unsupported" ||
+              undefined
+            }
+          >
+            {permissionStatus && (
+              <p role="status" className="text-body-sm">
+                {permissionStatus}
+              </p>
             )}
-            <Button
-              type="button"
-              disabled={state.requesting}
-              onClick={() => void notifications.refreshPermission()}
-            >
-              Check permission
-            </Button>
+            {!state.systemManaged && !state.developmentPaused && (
+              <div className={styles.actions}>
+                {permission === "default" && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="link"
+                    disabled={state.requesting}
+                    onClick={() => void notifications.requestPermission()}
+                  >
+                    Allow notifications
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="link"
+                  disabled={state.requesting}
+                  onClick={() => void notifications.refreshPermission()}
+                >
+                  Check permission
+                </Button>
+              </div>
+            )}
           </div>
         )}
         <div className={styles.nestedPreferences}>

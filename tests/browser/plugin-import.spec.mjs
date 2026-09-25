@@ -212,7 +212,15 @@ test("Settings text buttons contain enlarged labels without resizing icon button
         exact: true,
       });
       await appearance.getByRole("radio", { name: mode, exact: true }).check();
-      await expect(appearance.getByRole("button")).toHaveCount(3);
+      await expect(appearance.getByRole("button")).toHaveCount(
+        scale === 100 ? 2 : 3,
+      );
+      await expect(
+        appearance.getByRole("button", {
+          name: "Reset text size",
+          exact: true,
+        }),
+      ).toHaveCount(scale === 100 ? 0 : 1);
       await page.evaluate(() => document.fonts.ready);
       await checkButtons(appearance, scale);
       // Shared IconButton must not inherit the enlarged text button's minimum.

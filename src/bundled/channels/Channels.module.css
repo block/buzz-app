@@ -140,22 +140,6 @@ html[data-keyboard-navigation] .channelSection > summary:focus-visible {
 .channelSection[open] .sectionChevron {
   transform: rotate(90deg);
 }
-.sectionIcon {
-  --inline-emoji-size: 17px;
-  display: inline-flex;
-  width: 17px;
-  height: 17px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-}
-.sectionIcon img {
-  display: block;
-  width: 17px;
-  height: 17px;
-  object-fit: contain;
-}
 .sectionTitle {
   min-width: 0;
   flex: 1;

@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type {
   AgentControl,
   AgentView,
@@ -6,6 +12,7 @@ import type {
   RestartDiffEntry,
 } from "../../features/agents/control";
 import { useAgentControl } from "../../features/agents/control-react";
+import { exactProfileAgent } from "../../features/profiles/instance-target";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -20,22 +27,28 @@ import styles from "./Profiles.module.css";
 const AUTO_RESTART_OFF_BLURB =
   "Configuration changed since this agent started. Automatic restart is off for this agent — stop and respawn it to apply the changes.";
 
-/** The exact native record for this key in the active community, if unambiguous. */
-export function useRuntimeAgent(
+/** Matching native inventory and unambiguous configuration record in this community. */
+export function useRuntimeAgents(
   control: AgentControl | undefined,
   scope: string | undefined,
   pubkey: string,
-): AgentView | undefined {
+  instanceId?: string,
+): { count: number; agent: AgentView | undefined; pending: boolean } {
   const state = useSyncExternalStore(
     control?.subscribe ?? noSubscribe,
     control?.snapshot ?? noState,
     control?.snapshot ?? noState,
   );
-  if (!scope || !state?.data) return undefined;
+  const pending = state?.status === "idle" || state?.status === "loading";
+  if (!scope || !state?.data) return { count: 0, agent: undefined, pending };
   const matches = sameCommunityAgents(state.data.agents, scope).filter(
     (agent) => agent.pubkey === pubkey,
   );
-  return matches.length === 1 ? matches[0] : undefined;
+  return {
+    count: matches.length,
+    pending,
+    agent: exactProfileAgent(state.data.agents, scope, pubkey, instanceId),
+  };
 }
 const noSubscribe = () => () => {};
 const noState = () => null;
@@ -46,11 +59,13 @@ export function ProfileRuntime({
   agent,
   session,
   owner,
+  instances,
 }: {
   control: AgentControl;
   agent: AgentView;
   session: RelaySession;
   owner: string;
+  instances: ReactNode;
 }) {
   const state = useAgentControl(control);
   const [editing, setEditing] = useState(false);
@@ -167,6 +182,7 @@ export function ProfileRuntime({
           ))}
         </dl>
       </section>
+      {instances}
       {!!advanced.length && (
         <section aria-label="Advanced" className={styles.runtime}>
           <h3 className="text-body">Advanced</h3>

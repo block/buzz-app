@@ -132,7 +132,7 @@ async function editName(name = "Changed") {
   });
 }
 function save() {
-  fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
 }
 
 it("edits the existing selected community without another destination control and updates the local seed after confirmation", async () => {
@@ -172,7 +172,14 @@ it("switching during the pre-save read retires that save rather than publishing 
   const late = deferred<ReturnType<typeof original>>();
   vi.mocked(api.inspectProfile).mockReturnValueOnce(late.promise);
   save();
-  expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
+    "aria-busy",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   fixture.select(b);
   await screen.findByDisplayValue("Beta human");
   await act(async () => {
@@ -311,7 +318,7 @@ it("accepted but superseded publication retains the avatar draft for explicit re
     "Your profile change is not current. Your edits are retained; save again to retry.",
   );
   expect(screen.queryByText("Profile updated")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   save();
   await screen.findByText("Profile updated");
   expect(api.publishProfile).toHaveBeenLastCalledWith(
@@ -448,7 +455,7 @@ it.each(["http://images.example/avatar.png", "data:image/png;base64,AA=="])(
   async (picture) => {
     setup(a, "", picture);
     await editName();
-    expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Use an HTTPS image URL without credentials",
     );
@@ -458,7 +465,7 @@ it.each(["http://images.example/avatar.png", "data:image/png;base64,AA=="])(
     expect(input).toHaveAccessibleDescription(/Use an HTTPS image URL/);
     fireEvent.click(screen.getByRole("button", { name: "Remove avatar" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
     save();
     await screen.findByText("Profile updated");
     expect(api.publishProfile).toHaveBeenCalledWith(

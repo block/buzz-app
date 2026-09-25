@@ -35,6 +35,8 @@ function setup() {
     true,
     undefined,
     undefined,
+    undefined,
+    undefined,
     sort,
   );
   return { owner, preferences: owner.queries, pending, read, sort };

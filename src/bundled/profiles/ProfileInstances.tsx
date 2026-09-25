@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
+import styles from "./Profiles.module.css";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import type { AgentControl } from "../../features/agents/control";
 import type { PanelProps } from "../../features/panels/service";
@@ -18,7 +19,7 @@ export function ProfileInstances({
   communityOrigin,
   viewer,
   knownAgent,
-  errorHandledByActions = false,
+  errorHandledByHost = false,
 }: {
   control: AgentControl;
   context?: PanelProps["context"];
@@ -30,8 +31,8 @@ export function ProfileInstances({
   communityOrigin: string | undefined;
   viewer: string | undefined;
   knownAgent: boolean;
-  /** The composed Info actions surface owns controller failure and recovery. */
-  errorHandledByActions?: boolean;
+  /** Suppress duplicate failures when the host view provides recovery for this record. */
+  errorHandledByHost?: boolean;
 }) {
   const state = useSyncExternalStore(
     control.subscribe,
@@ -58,27 +59,24 @@ export function ProfileInstances({
       void control.refresh();
   }, [control, communityOrigin, knownAgent, state.status]);
   if (!communityOrigin || state.status === "unavailable") return null;
-  // Actions own errors only with unknown inventory or one exact native match.
+  // Suppress a duplicate only when the host can recover this exact record.
   if (
     state.status === "error" &&
-    errorHandledByActions &&
+    errorHandledByHost &&
     (!state.data || matches.length === 1 || !!selectedId)
   )
     return null;
   const instances = state.status === "ready" ? matches : [];
   if (!knownAgent && !instances.length) return null;
   return (
-    <section
-      aria-label="Linked agent instances"
-      className="flex flex-col gap-2"
-    >
-      <h3 className="m-0 text-heading">Linked agent instances</h3>
+    <section aria-label="Instances" className={styles.runtime}>
+      <h3 className="text-body">Instances</h3>
       {state.status === "loading" || state.status === "idle" ? (
         <p role="status">Loading managed agents…</p>
       ) : state.status === "error" ? (
         <div>
           <p role="alert">
-            {errorHandledByActions
+            {errorHandledByHost
               ? "Managed agent status is unconfirmed."
               : "Could not refresh managed agents."}
           </p>
@@ -89,43 +87,51 @@ export function ProfileInstances({
       ) : !instances.length ? (
         <p>No managed instance for this identity in this community.</p>
       ) : (
-        <ul className="m-0 list-none p-0">
-          {instances.map((agent) => {
-            const target =
-              viewer && communityOrigin
-                ? instanceTarget({
-                    id: agent.id,
-                    pubkey,
-                    viewer,
-                    communityOrigin,
-                  })
-                : undefined;
-            const archived =
-              archives.status === "ready" &&
-              archives.archived.includes(agent.pubkey);
-            return (
-              <li key={agent.id}>
-                {target && canOpenPrivate && context?.canOpen(target) ? (
-                  <Button
-                    size="compact"
-                    variant="ghost"
-                    aria-current={selectedId === agent.id ? "true" : undefined}
-                    onClick={() => context.open(target)}
-                  >
-                    {agent.name}
-                  </Button>
-                ) : (
-                  agent.name
-                )}
-                {archived
-                  ? " Archived"
-                  : selectedId === agent.id
-                    ? " Current"
-                    : ""}
-              </li>
-            );
-          })}
-        </ul>
+        <details className={styles.instancesDisclosure}>
+          <summary>
+            {instances.length}{" "}
+            {instances.length === 1 ? "instance" : "instances"}
+          </summary>
+          <ul className="m-0 list-none p-0">
+            {instances.map((agent) => {
+              const target =
+                viewer && communityOrigin
+                  ? instanceTarget({
+                      id: agent.id,
+                      pubkey,
+                      viewer,
+                      communityOrigin,
+                    })
+                  : undefined;
+              const archived =
+                archives.status === "ready" &&
+                archives.archived.includes(agent.pubkey);
+              return (
+                <li key={agent.id}>
+                  {target && canOpenPrivate && context?.canOpen(target) ? (
+                    <Button
+                      size="compact"
+                      variant="ghost"
+                      aria-current={
+                        selectedId === agent.id ? "true" : undefined
+                      }
+                      onClick={() => context.open(target)}
+                    >
+                      {agent.name}
+                    </Button>
+                  ) : (
+                    agent.name
+                  )}
+                  {archived
+                    ? " Archived"
+                    : selectedId === agent.id
+                      ? " Current"
+                      : ""}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
       )}
     </section>
   );

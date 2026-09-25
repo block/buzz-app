@@ -114,6 +114,7 @@ it("uses native exact identity and community, never library display links", () =
   expect(screen.getByText("matched")).toBeTruthy();
   expect(f.ensureArchives).toHaveBeenCalledOnce();
   expect(screen.queryByText(/wrong-key|wrong-relay|stopped/)).toBeNull();
+  fireEvent.click(screen.getByText("1 instance"));
   fireEvent.click(screen.getByRole("button", { name: "matched" }));
   expect(f.open).toHaveBeenCalledWith(
     instanceTarget({
@@ -124,9 +125,7 @@ it("uses native exact identity and community, never library display links", () =
     }),
   );
   f.update({ status: "unavailable", data: null, busy: false, error: null });
-  expect(
-    screen.queryByRole("region", { name: "Linked agent instances" }),
-  ).toBeNull();
+  expect(screen.queryByRole("region", { name: "Instances" })).toBeNull();
 });
 
 it("re-demands archives after a mounted snapshot resets without changing native matches", () => {
@@ -184,9 +183,7 @@ it("omits instances without a valid community", () => {
       knownAgent={true}
     />,
   );
-  expect(
-    screen.queryByRole("region", { name: "Linked agent instances" }),
-  ).toBeNull();
+  expect(screen.queryByRole("region", { name: "Instances" })).toBeNull();
   expect(f.refresh).not.toHaveBeenCalled();
   expect(f.ensureArchives).not.toHaveBeenCalled();
   expect(f.open).not.toHaveBeenCalled();
@@ -255,7 +252,5 @@ it("does not refresh or display instances for a human without a native match", (
       knownAgent={false}
     />,
   );
-  expect(
-    screen.queryByRole("region", { name: "Linked agent instances" }),
-  ).toBeNull();
+  expect(screen.queryByRole("region", { name: "Instances" })).toBeNull();
 });

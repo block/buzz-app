@@ -31,7 +31,11 @@ logs stay on Agents.
 ## Owner runtime tab
 
 **Runtime** appears only when the viewer is the verified NIP-OA owner and the
-active community has exactly one native record for the profile key. It follows
+active community has at least one native record for the profile key. It always
+shows **Instances**. Saved and running configuration requires an unambiguous
+record: the exact selected instance ID, or the only record for a bare profile.
+A bare multi-record profile shows the instance list without choosing a default;
+selecting one opens its configuration. It follows
 Buzz desktop's Runtime tab and copy: a Restart required notice with the native
 redacted saved-versus-running diff, Activity (status and the Start on launch
 switch), Agent configuration (runtime command, who can send instructions, ACP
@@ -296,7 +300,10 @@ These files live under `desktop/src/features/profile/ui` and
 `desktop/src/features/agents` in `block/buzz`. Buzz-app's native records also
 need an ID because several records can share one identity.
 
-The Info tab keeps the public key and linked instances. The Channels tab offers
+The Info tab keeps the public key. Linked-instance discovery stays on Info only
+when no Runtime tab is eligible. Verified owners with native records see
+**Instances** in Runtime, with a collapsed count (“1 instance” / “N instances”)
+opening exact native rows. The Channels tab offers
 **Add to channel** only for an exact native-managed identity in this community
 that is also a managed session choice. It offers loaded, classified stream/forum
 channels with a roster, excluding archived, hidden, read-only and already-member
@@ -311,13 +318,14 @@ before attempting again. Neither list is a cross-community/global directory.
 ## Owned local agent actions
 
 `ProfileAgentActions` observes the app-owned `AgentControl` injected into Profiles.
-It mounts only in Info, alongside the linked-instance child; changing tabs releases
+It mounts only in Info; changing tabs releases
 the actions view without cancelling an admitted app-owned command. Returning to
 Info observes current host evidence without restoring focus from the retired view.
-In this composition, actions own controller errors and Retry status; linked instances
-suppress their duplicate error surface only when actions can present recovery
-(unknown inventory or one exact match). Known unmatched/ambiguous identities keep
-a single linked-instance status warning and Retry agents. Standalone
+In this composition, actions own controller errors and Retry status on Info;
+Runtime configuration provides its own error and Retry status for an exact record.
+Linked instances suppress a duplicate only when the host view presents recovery
+(unknown inventory or one exact match on Info, an exact record on Runtime).
+Ambiguous identities keep a single linked-instance status warning and Retry agents. Standalone
 linked-instance views retain their own recovery. Initial-read Retry remains available
 when native ownership is unknown.
 It matches the exact public key and canonical active-community scope to one native

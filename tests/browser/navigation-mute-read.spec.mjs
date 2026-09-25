@@ -46,11 +46,12 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   );
   await expect(menu.getByRole("menuitem")).toHaveText([
     "New session",
+    "Move channel",
     "Mute",
     "Mark as Read",
     "Retry channel permissions",
   ]);
-  await expect(menu.getByRole("separator")).toHaveCount(2);
+  await expect(menu.getByRole("separator")).toHaveCount(3);
   for (const name of ["Mute", "Mark as Read"]) {
     await expect(
       menu
@@ -297,11 +298,12 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await toggleSessions(false);
   await beta.click({ button: "right" });
   await expect(menu.getByRole("menuitem")).toHaveText([
+    "Move channel",
     "Mute",
     "Mark as Unread",
     "Retry channel permissions",
   ]);
-  await expect(menu.getByRole("separator")).toHaveCount(1);
+  await expect(menu.getByRole("separator")).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();

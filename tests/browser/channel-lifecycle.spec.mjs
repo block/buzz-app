@@ -76,10 +76,11 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
     await seen;
     await expect(menu).toBeVisible();
     // Attention actions remain usable while lifecycle permissions are held;
-    // the only separator belongs to that existing group, not pending lifecycle.
-    await expect(menu.getByRole("separator")).toHaveCount(1);
+    // existing separators belong to Move and attention, not pending lifecycle.
+    await expect(menu.getByRole("separator")).toHaveCount(2);
     await expect(menu.getByRole("menuitem")).toHaveText([
       "New session",
+      "Move channel",
       "Mute",
       "Mark as Unread",
     ]);
@@ -90,9 +91,10 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await expect(
     menu.getByRole("menuitem", { name: "Archive channel", exact: true }),
   ).toBeVisible();
-  await expect(menu.getByRole("separator")).toHaveCount(2);
+  await expect(menu.getByRole("separator")).toHaveCount(3);
   await expect(menu.getByRole("menuitem")).toHaveText([
     "New session",
+    "Move channel",
     "Mute",
     "Mark as Unread",
     "Archive channel",

@@ -234,3 +234,17 @@ Close control stay visible. Theme changes reload sample state.
 
 This is a visual inventory, not live delivery or plugin validation. Composer,
 presence, unread tracking, and timeline pagination remain outside this first pass.
+
+## Content headers and settings fills
+
+Use `Header` for a settings page's title and introductory subtitle, and
+`InlineHeader` for groups inside that page. Both accept an optional eyebrow, icon,
+actions and heading level; the default levels are h2 and h3. Keep heading IDs on
+the title for labelled regions. `PanelHeader` still owns workspace chrome, and
+`DialogTitle`/`DialogDescription` retain dialog labelling semantics; do not replace
+those with a generic heading. The initial adoption covers Profile, Plugins,
+Appearance, Shortcuts and Notifications; other pages can adopt these when touched.
+
+Light-mode inset fields and quiet fills use neutral-2 (#f5f5f6). Panel hover uses
+that same stop; subtle-button hover sits between neutral-2 and neutral-3, while
+selected and pressed states retain stronger contrast. Dark-mode roles are unchanged.

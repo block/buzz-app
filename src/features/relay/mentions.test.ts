@@ -137,6 +137,7 @@ it.each([false, true])(
       ...(reply ? [["e", root, "", "reply"]] : []),
       ["p", honey.pubkey],
       ["p", namesake.pubkey],
+      ["ms", expect.stringMatching(/^(0|[1-9]\d{0,2})$/)],
     ]);
     expect(h.sign).toHaveBeenCalledTimes(1);
     // Actual publication acknowledgement is not execution completion.
@@ -162,7 +163,10 @@ it("typed names create no recipient tags; unconfirmed or forged membership canno
   await flush();
   expect(
     h.publish.mock.calls[0]?.[0].tags.filter(([tag]) => tag !== "client-id"),
-  ).toEqual([["h", "c"]]);
+  ).toEqual([
+    ["h", "c"],
+    ["ms", expect.stringMatching(/^(0|[1-9]\d{0,2})$/)],
+  ]);
 });
 it("publishes roster changes even when channel names/previews are unchanged and rejects a removed recipient", async () => {
   const h = setup();

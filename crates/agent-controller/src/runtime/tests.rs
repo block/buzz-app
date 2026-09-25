@@ -9,6 +9,9 @@ const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000
 const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 struct Memory;
 impl Credentials for Memory {
+    fn delete(&self, _: &str, _: &str) -> Result<()> {
+        Ok(())
+    }
     fn read_legacy(&self, _: crate::LegacySource, _: &str) -> Result<Secret> {
         panic!("Runtime must never import")
     }
@@ -44,6 +47,66 @@ fn agent(workspace: &Path) -> Agent {
         imported: json!({"record":{"respond_to":"owner-only","parallelism":2,"effort_level":"high"}}),
         extra: BTreeMap::new(),
     }
+}
+#[test]
+fn delete_refuses_stale_revision_and_removes_stopped_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("config");
+    let mut store = Store::open(root.clone()).unwrap();
+    let saved = agent(dir.path());
+    store.insert(vec![saved.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No fixture runtime".into()),
+        dir.path().join("ownership"),
+    );
+    assert!(controller.delete(&saved.id, saved.revision + 1).is_err());
+    assert_eq!(controller.snapshot().unwrap().agents.len(), 1);
+    assert!(controller
+        .delete(&saved.id, saved.revision)
+        .unwrap()
+        .agents
+        .is_empty());
+    drop(controller);
+    assert!(Store::open(root).unwrap().agents().unwrap().is_empty());
+}
+#[test]
+fn denied_credential_deletion_keeps_a_disabled_card_for_retry() {
+    struct Denied;
+    impl Credentials for Denied {
+        fn read_legacy(&self, _: crate::LegacySource, _: &str) -> Result<Secret> {
+            unreachable!()
+        }
+        fn read(&self, _: &str, _: &str) -> Result<Option<Secret>> {
+            unreachable!()
+        }
+        fn add(&self, _: &str, _: &Secret) -> Result<()> {
+            unreachable!()
+        }
+        fn delete(&self, _: &str, _: &str) -> Result<()> {
+            Err("Credential deletion denied".into())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let mut saved = agent(dir.path());
+    saved.enabled = true;
+    store.insert(vec![saved.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Denied),
+        Err("No fixture runtime".into()),
+        dir.path().join("ownership"),
+    );
+    assert!(controller
+        .delete(&saved.id, saved.revision)
+        .err()
+        .unwrap()
+        .contains("denied"));
+    let remaining = controller.store.agents().unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert!(!remaining[0].enabled);
 }
 #[cfg(unix)]
 fn bundle(directory: &Path) -> RuntimeBundle {
@@ -213,6 +276,10 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     assert!(controller.store.agents().unwrap()[0].enabled);
     assert!(controller.launch_ids().unwrap().is_empty());
     controller.restore().unwrap();
+    assert!(controller.running.is_empty());
+    controller.action(&a.id, Action::Start).unwrap();
+    assert_eq!(controller.running.len(), 1);
+    assert!(controller.delete(&a.id, 2).unwrap().agents.is_empty());
     assert!(controller.running.is_empty());
 }
 #[test]

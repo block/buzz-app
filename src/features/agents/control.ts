@@ -116,6 +116,7 @@ export interface AgentControlHost {
     expectedRevision: number,
     edit: AgentEdit,
   ): Promise<ControlSnapshot>;
+  delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   action(
     id: string,
     action: AgentAction,
@@ -152,6 +153,7 @@ export interface AgentControl {
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
   save: AgentControlHost["save"];
+  delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   action: AgentControlHost["action"];
   previewImport: AgentControlHost["previewImport"];
   commitImport: AgentControlHost["commitImport"];
@@ -339,6 +341,7 @@ export function createAgentControl(
       command === "stop" ? undefined : id,
     );
   };
+  const deleteAgent = host?.delete;
   return {
     models,
     ...(host?.prepareCreate && host.commitCreate
@@ -421,6 +424,12 @@ export function createAgentControl(
     refresh,
     save: (id, revision, edit) =>
       run((native) => native.save(id, revision, edit), ready),
+    ...(deleteAgent
+      ? {
+          delete: (id: string, revision: number) =>
+            run(() => deleteAgent(id, revision), ready),
+        }
+      : {}),
     action,
     dismissMentionError: () => update({ mentionError: null }),
     prepareMention(pubkeys, relayUrl, replayFloor, signal) {

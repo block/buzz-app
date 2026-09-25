@@ -18,6 +18,7 @@
     "allow-agent-control-snapshot",
     "allow-agent-control-save",
     "allow-agent-control-start-on-app-launch",
+    "allow-agent-control-delete",
     "allow-agent-control-action",
     "allow-agent-control-import-preview",
     "allow-agent-control-import-commit",

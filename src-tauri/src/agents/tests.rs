@@ -1,7 +1,7 @@
 use super::*;
 use buzz_agent_controller::Secret;
 use serde_json::{json, Value};
-use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime};
+use tauri::test::{get_ipc_response, mock_builder, MockRuntime};
 
 const RUNTIME_GATE: &str = "Synthetic runtime unavailable.";
 const IMPORT_GATE: &str = "Synthetic credential refusal.";
@@ -9,6 +9,9 @@ const IMPORT_GATE: &str = "Synthetic credential refusal.";
 // Test-only custody. Synthetic fixtures cannot reach PlatformCredentials.
 struct RejectingCredentials;
 impl Credentials for RejectingCredentials {
+    fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+        Err(IMPORT_GATE.into())
+    }
     fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
         Err(IMPORT_GATE.into())
     }
@@ -64,7 +67,7 @@ pub(crate) fn fixture_with_models(
         .manage(host.clone())
         .manage(model_host)
         .invoke_handler(crate::commands())
-        .build(mock_context(noop_assets()))
+        .build(crate::app_context())
         .unwrap();
     let view = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
@@ -103,6 +106,22 @@ pub(crate) fn seed(dir: &std::path::Path) -> String {
         "environment":{"SAMPLE_TOKEN":"DO_NOT_PROJECT"},"revision":1,"enabled":true,"credentialId":"missing-fixture-key", "authTag":null, "imported":{}
     }]})).unwrap()).unwrap();
     id
+}
+#[test]
+fn production_acl_allows_delete_to_reach_native_credentials() {
+    let (dir, _host, _app, view) = fixture();
+    let id = seed(dir.path());
+    let error = invoke(
+        &view,
+        "agent_control_delete",
+        json!({"id": id, "expectedRevision": 1}),
+    )
+    .unwrap_err();
+    assert_eq!(error, IMPORT_GATE);
+    let stored: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("store/agents.json")).unwrap())
+            .unwrap();
+    assert_eq!(stored["agents"][0]["enabled"], false);
 }
 #[test]
 fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
@@ -334,6 +353,9 @@ mod overlap {
         release: Mutex<BTreeMap<String, std::sync::mpsc::Receiver<()>>>,
     }
     impl Credentials for Gated {
+        fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+            panic!("not a deletion")
+        }
         fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
             panic!("not an import")
         }
@@ -652,6 +674,9 @@ async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() 
         release: Mutex<std::sync::mpsc::Receiver<()>>,
     }
     impl Credentials for Delayed {
+        fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+            panic!("not a delete")
+        }
         fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
             panic!("not an import")
         }
@@ -772,6 +797,10 @@ fn real_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
     #[derive(Default)]
     struct Memory(Mutex<BTreeMap<String, String>>, Mutex<Vec<LegacySource>>);
     impl Credentials for Memory {
+        fn delete(&self, id: &str, _: &str) -> Result<(), String> {
+            self.0.lock().unwrap().remove(id);
+            Ok(())
+        }
         fn read_legacy(&self, source: LegacySource, pubkey: &str) -> Result<Secret, String> {
             assert!(matches!(source, LegacySource::Development));
             self.1.lock().unwrap().push(source);

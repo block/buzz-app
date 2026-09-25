@@ -52,6 +52,7 @@ trait Keychain: Send + Sync {
         account: &str,
     ) -> std::result::Result<Zeroizing<Vec<u8>>, Failure>;
     fn add(&self, service: &str, account: &str, value: &[u8]) -> std::result::Result<(), Failure>;
+    fn delete(&self, service: &str, account: &str) -> std::result::Result<(), Failure>;
 }
 
 pub struct PlatformCredentials {
@@ -122,6 +123,16 @@ impl Credentials for PlatformCredentials {
         self.keychain
             .add(SERVICE, &account, value.as_bytes())
             .map_err(Failure::message)
+    }
+    fn delete(&self, id: &str, pubkey: &str) -> Result<()> {
+        let account = account(id)?;
+        if id.split_once('-').map(|(key, _)| key) != Some(pubkey) {
+            return Err("Credential identifier does not match the selected agent".into());
+        }
+        match self.keychain.delete(SERVICE, &account) {
+            Ok(()) | Err(Failure::Absent) => Ok(()),
+            Err(error) => Err(error.message()),
+        }
     }
 }
 

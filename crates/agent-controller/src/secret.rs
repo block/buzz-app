@@ -140,6 +140,8 @@ pub trait Credentials: Send + Sync {
     fn read_legacy(&self, source: crate::LegacySource, pubkey: &str) -> Result<Secret>;
     fn read(&self, id: &str, pubkey: &str) -> Result<Option<Secret>>;
     fn add(&self, id: &str, key: &Secret) -> Result<()>;
+    /// Remove only this app's exact saved key. Absence is successful for retry.
+    fn delete(&self, id: &str, pubkey: &str) -> Result<()>;
 }
 
 /// V1 starts only unrestricted, verified NIP-OA credentials. Conditional grants

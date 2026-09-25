@@ -17,8 +17,12 @@ quit other Foundation copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
 
 Open **Agents → My agents** for imported identities, their destination community,
-process evidence and visible **Start / Stop**. **Edit** remains secondary in the
-card’s three-dot menu. Same-key identities at different destinations have separate
+process evidence and visible **Start / Stop**. **Edit**, **Duplicate**, and
+**Delete** are in the card’s three-dot menu. Duplicate seeds Create with editable
+settings and a fresh identity; write-only environment values require re-entry.
+Delete stops the local process and removes this app's settings and Keychain key
+after confirmation. It does not archive the relay identity or erase messages.
+Same-key identities at different destinations have separate
 cards; actions use native ID/revision, never the display name. Managed controls
 remain available when the old library is disconnected, unavailable or archived.
 

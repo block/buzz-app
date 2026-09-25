@@ -404,6 +404,19 @@ pub(crate) async fn agent_control_start_on_app_launch(
     .await
 }
 #[tauri::command]
+pub(crate) async fn agent_control_delete(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    expected_revision: u64,
+) -> Result<Snapshot, String> {
+    run(state.inner().clone(), move |host| {
+        host.starts.remove(&id);
+        host.controller.delete(&id, expected_revision)?;
+        host.snapshot()
+    })
+    .await
+}
+#[tauri::command]
 pub(crate) async fn agent_control_action(
     state: tauri::State<'_, AgentHost>,
     id: String,

@@ -201,7 +201,8 @@ not cross-version capability negotiation.
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
 it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
-side panel, with add/check/uncheck, one optional assignee per item, automatic
+side panel, grouping items as To do, Doing and Done, with add, a per-item Doing
+toggle, check/uncheck, one optional assignee per item, automatic
 saving after each action, and explicit Refresh. It uses shared controls and theme
 tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
 
@@ -211,12 +212,18 @@ The source of truth is ordinary Markdown in one root level-two `Todos` section:
 ## Todos
 
 - [ ] Review the plan
+- [/] Build the preview
 - [x] Share the preview
 ```
 
+`[/]` marks Doing, the common Markdown convention for an in-progress task;
+ordinary Markdown renders it as plain text. Canvases without it keep their
+existing meaning: `[ ]` is To do and `[x]`/`[X]` is Done.
+
 Only top-level unordered checkbox items in that section are shown. Nested lists,
-quotes and fenced examples are not tasks in this view. Checkbox edits change one
-source byte; additions insert below the heading without rewriting other content.
+quotes and fenced examples are not tasks in this view. Doing and checkbox edits
+change one source byte; additions insert below the heading without rewriting other
+content.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
 the convenience UI, not the saved list: Channel settings → Canvas remains editable.
 

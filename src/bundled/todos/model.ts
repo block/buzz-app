@@ -2,10 +2,13 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { profileKey, profileTarget } from "../../features/profiles/target";
 
 export type Assignee = { pubkey: string; name: string };
+export type Status = "todo" | "doing" | "done";
+/** `[/]` is the common Markdown convention for an in-progress task. */
+const marks = { todo: " ", doing: "/", done: "x" } as const;
 export type Todo = {
   offset: number;
   label: string;
-  checked: boolean;
+  status: Status;
   end: number;
   assignee?: (Assignee & { start: number }) | undefined;
 };
@@ -38,7 +41,7 @@ export function readTodos(content: string) {
     for (const item of node.children) {
       const offset = item.position?.start.offset;
       if (offset === undefined) continue;
-      const match = /^([-+*][ \t]+\[)([ xX])\][ \t]+([^\r\n]+)/.exec(
+      const match = /^([-+*][ \t]+\[)([ xX/])\][ \t]+([^\r\n]+)/.exec(
         content.slice(offset),
       );
       if (!match?.[1] || !match[3]) continue;
@@ -81,7 +84,7 @@ export function readTodos(content: string) {
             assignee?.start ?? end,
           )
           .trim(),
-        checked: match[2] !== " ",
+        status: match[2] === " " ? "todo" : match[2] === "/" ? "doing" : "done",
         end,
         assignee,
       });
@@ -90,12 +93,10 @@ export function readTodos(content: string) {
   return { items, start };
 }
 
-export function toggleTodo(content: string, offset: number, checked: boolean) {
+export function setStatus(content: string, offset: number, status: Status) {
   if (!readTodos(content).items.some((item) => item.offset === offset))
     throw new Error("This todo changed. Reload the Canvas before editing it.");
-  return (
-    content.slice(0, offset) + (checked ? "x" : " ") + content.slice(offset + 1)
-  );
+  return content.slice(0, offset) + marks[status] + content.slice(offset + 1);
 }
 
 export function addTodo(content: string, label: string) {

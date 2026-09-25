@@ -1,0 +1,295 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { StrictMode, useState } from "react";
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  within,
+  waitFor,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
+import { createRelaySession } from "../../features/relay/session";
+import type { LiveCallbacks } from "../../features/relay/live";
+import type { RelayData, RelaySnapshot } from "../../features/relay/service";
+import { keypair, signed } from "../../features/relay/testing";
+import { createAgentControl } from "../../features/agents/control";
+import { controlFixture } from "../../features/agents/control-testing";
+import {
+  instanceTarget,
+  parseInstanceTarget,
+} from "../../features/profiles/instance-target";
+import { profileTarget } from "../../features/profiles/target";
+import { InstanceProfilePanel } from "./InstanceProfilePanel";
+import { ProfilePanel } from "./ProfilePanel";
+const viewer = keypair(),
+  identity = keypair(),
+  stranger = keypair();
+const origin = "https://buzz.block.builderlab.xyz";
+const disposables: { dispose(): void }[] = [];
+afterEach(() => {
+  cleanup();
+  for (const owner of disposables.splice(0)) owner.dispose();
+});
+function fixture({
+  owner = viewer,
+  archived = false,
+  initial = "second",
+} = {}) {
+  const head = signed(identity, {
+    kind: 0,
+    content: JSON.stringify({ name: "Identity", is_agent: true }),
+    tags: [
+      [
+        "auth",
+        owner.pubkey,
+        "",
+        bytesToHex(
+          schnorr.sign(
+            new Uint8Array(
+              createHash("sha256")
+                .update(`nostr:agent-auth:${identity.pubkey}:`)
+                .digest(),
+            ),
+            owner.secret,
+          ),
+        ),
+      ],
+    ],
+  });
+  let callbacks: LiveCallbacks | undefined;
+  const sessionOwner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: viewer.pubkey,
+    subscribe(next) {
+      callbacks = next;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+    media: () => undefined,
+    query: async (filters) =>
+      filters.some((f) => f.kinds?.includes(0)) ? [head] : [],
+  });
+  const archiveSnapshot = {
+    status: "ready" as const,
+    archived: archived ? [identity.pubkey] : [],
+  };
+  const session = {
+    ...sessionOwner.session,
+    archives: {
+      ...sessionOwner.session.archives,
+      snapshot: () => archiveSnapshot,
+    },
+  };
+  const native = controlFixture();
+  Object.assign(native.agent, {
+    id: "first",
+    pubkey: identity.pubkey,
+    relayUrl: "wss://buzz.block.builderlab.xyz/",
+    name: "First",
+    status: "stopped",
+    enabled: false,
+    runningRevision: null,
+    workspace: "/first",
+    systemPrompt: "First instructions",
+  });
+  native.data.agents.push({
+    ...structuredClone(native.agent),
+    id: "second",
+    name: "Second",
+    workspace: "/second",
+    systemPrompt: "Second instructions",
+  });
+  let failRead = false;
+  const control = createAgentControl({
+    ...native.host,
+    async snapshot() {
+      if (failRead) throw new Error("Fixture host unavailable");
+      return native.host.snapshot();
+    },
+    async action(id, action) {
+      native.calls.push({ action, payload: { id } });
+      const selected = native.data.agents.find((agent) => agent.id === id);
+      if (!selected) throw new Error("Missing fixture agent");
+      selected.enabled = action !== "stop";
+      selected.status = action === "stop" ? "stopped" : "running";
+      return structuredClone(native.data);
+    },
+  });
+  disposables.push(sessionOwner, control);
+  let snapshot: RelaySnapshot = {
+    status: "ready",
+    generation: 1,
+    viewer: viewer.pubkey,
+    scope: `${origin}:${viewer.pubkey}`,
+    session,
+  };
+  const listeners = new Set<() => void>();
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: (f) => {
+      listeners.add(f);
+      return () => {
+        listeners.delete(f);
+      };
+    },
+    retry() {},
+    disconnect() {},
+    clearCache: sessionOwner.clearCache,
+  };
+  const target = (id: string) =>
+    instanceTarget({
+      id,
+      pubkey: identity.pubkey,
+      viewer: viewer.pubkey,
+      communityOrigin: origin,
+    });
+  const opened = vi.fn();
+  function Host() {
+    const [current, select] = useState(
+      initial ? target(initial) : (profileTarget(identity.pubkey) ?? ""),
+    );
+    const context = {
+      channelId: "fixture",
+      canOpen: () => true,
+      open: (next: string) => {
+        opened(next);
+        select(next);
+        return true;
+      },
+    };
+    const props = { relay, control, context, target: current, close: () => {} };
+    const instance = parseInstanceTarget(current);
+    return instance ? (
+      <InstanceProfilePanel {...props} instance={instance} />
+    ) : (
+      <ProfilePanel {...props} />
+    );
+  }
+  render(
+    <StrictMode>
+      <Host />
+    </StrictMode>,
+  );
+  return {
+    native,
+    control,
+    opened,
+    target,
+    sessionOwner,
+    async revokeOwner() {
+      if (!callbacks) throw new Error("Fixture subscription not mounted");
+      const next = signed(identity, {
+        kind: 0,
+        content: head.content,
+        tags: [],
+        created_at: head.created_at + 1,
+      });
+      await act(async () => callbacks?.receive([next]));
+    },
+    failRead(value: boolean) {
+      failRead = value;
+    },
+    move: async () => {
+      await act(async () => {
+        snapshot = {
+          ...snapshot,
+          viewer: stranger.pubkey,
+          scope: `${origin}:${stranger.pubkey}`,
+          generation: 2,
+        };
+        for (const listener of listeners) listener();
+      });
+    },
+  };
+}
+it.each([false, true])(
+  "selects exact native details/actions, including archived=%s, and returns to the identity",
+  async (archived) => {
+    const f = fixture({ archived });
+    const user = userEvent.setup();
+    const runtime = await screen.findByRole("region", { name: "Local agent" });
+    expect(within(runtime).getByText("/second")).toBeVisible();
+    expect(within(runtime).queryByText("First instructions")).toBeNull();
+    expect(
+      await screen.findByRole("button", { name: "Second" }),
+    ).toHaveAttribute("aria-current", "true");
+    const rows = screen.getByRole("region", { name: "Linked agent instances" });
+    expect(within(rows).queryAllByText("Archived")).toHaveLength(
+      archived ? 2 : 0,
+    );
+    await user.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(f.native.agent.status).toBe("stopped"));
+    expect(f.native.data.agents[1]?.status).toBe("running");
+    await user.click(screen.getByRole("button", { name: "First" }));
+    expect(await screen.findByText("/first")).toBeVisible();
+    expect(screen.queryByText("/second")).toBeNull();
+    expect(f.opened).toHaveBeenLastCalledWith(f.target("first"));
+    await user.click(screen.getByRole("button", { name: "Back to profile" }));
+    expect(screen.getByRole("heading", { name: "Identity" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Local agent" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Second" }));
+    expect(await screen.findByText("/second")).toBeVisible();
+    await f.move();
+    expect(screen.getByRole("alert")).toHaveTextContent("Unavailable");
+    expect(screen.queryByText("/second")).toBeNull();
+  },
+);
+it("does not substitute the first sibling after deletion", async () => {
+  const f = fixture();
+  await screen.findByText("/second");
+  f.native.data.agents.splice(1);
+  await act(async () => {
+    await f.control.refresh();
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent("Unavailable");
+  expect(screen.queryByText("/first")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+});
+it("hides stale native detail after a failed read and retries the exact instance", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  await screen.findByText("/second");
+  f.failRead(true);
+  await act(async () => {
+    await f.control.refresh();
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent("Unavailable");
+  expect(screen.queryByText("/second")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+  f.failRead(false);
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("/second")).toBeVisible();
+  expect(screen.queryByText("/first")).toBeNull();
+});
+it("rejects a non-owner even with native custody and a forged target", async () => {
+  const f = fixture({ owner: stranger });
+  await act(async () => {
+    await f.sessionOwner.session.profiles.ensure([identity.pubkey]);
+    await f.control.refresh();
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent("Unavailable");
+  expect(screen.queryByText("/second")).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "Local agent actions" }),
+  ).toBeNull();
+});
+it("revokes mounted private details after an auth-only profile update", async () => {
+  const f = fixture();
+  await screen.findByText("/second");
+  await f.revokeOwner();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Unavailable");
+  expect(screen.queryByText("/second")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+});
+it("opens each row from the ordinary profile rather than generic Agents", async () => {
+  const f = fixture({ initial: "" });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Second" }));
+  expect(await screen.findByText("/second")).toBeVisible();
+  expect(f.opened).toHaveBeenCalledWith(f.target("second"));
+});

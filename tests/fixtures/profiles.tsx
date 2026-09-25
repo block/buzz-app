@@ -41,6 +41,13 @@ const viewer = keypair(),
   mic = keypair(),
   pinky = keypair(),
   missing = keypair();
+const instanceProbe = new URLSearchParams(location.search).has(
+  "agent-instances",
+);
+const fixtureOrigin = instanceProbe
+  ? "https://buzz.block.builderlab.xyz"
+  : "https://relay.example.test";
+const archivedProbe = new URLSearchParams(location.search).has("archived");
 const actionsProbe = new URLSearchParams(location.search).has("agent-actions");
 const root = message(viewer, "one", "Hello @Mic", 10, [["p", mic.pubkey]]);
 const unknown = message(missing, "one", "Unknown author", 11);
@@ -95,6 +102,7 @@ function session() {
   return createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: authority.pubkey,
+    archiveAuthority: authority.pubkey,
     subscribe(callbacks) {
       callbacks.state({ status: "connected", routes: [] });
       return { update() {}, retry() {}, dispose() {} };
@@ -125,6 +133,14 @@ function session() {
     },
     async query(filters) {
       return filters.flatMap((filter) => {
+        if (filter.kinds?.includes(13535))
+          return [
+            signed(authority, {
+              kind: 13535,
+              content: "",
+              tags: [["-"], ...(archivedProbe ? [["p", pinky.pubkey]] : [])],
+            }),
+          ];
         if (filter.kinds?.includes(39002))
           return [
             roster(authority, "one", [viewer.pubkey, mic.pubkey, pinky.pubkey]),
@@ -208,7 +224,7 @@ let owner = session();
 let snapshot: RelaySnapshot = {
   status: "ready",
   generation: 1,
-  scope: `https://relay.example.test:${viewer.pubkey}`,
+  scope: `${fixtureOrigin}:${viewer.pubkey}`,
   viewer: viewer.pubkey,
   session: owner.session,
 };
@@ -243,7 +259,23 @@ native.host.action = async (id, command) => {
     });
   return action(id, command);
 };
-const agentControl = createAgentControl(actionsProbe ? native.host : null);
+if (instanceProbe) {
+  Object.assign(native.agent, {
+    pubkey: pinky.pubkey,
+    relayUrl: "wss://buzz.block.builderlab.xyz/",
+    name: "First instance",
+    workspace: "/fixture/first",
+  });
+  native.data.agents.push({
+    ...structuredClone(native.agent),
+    id: "second",
+    name: "Second instance",
+    workspace: "/fixture/second",
+  });
+}
+const agentControl = createAgentControl(
+  actionsProbe || instanceProbe ? native.host : null,
+);
 context.provide("agentControl", agentControl);
 context.effect(() => () => agentControl.dispose());
 const contexts: PanelContext[] = [];
@@ -284,6 +316,12 @@ const providers = new TemplateProvidersService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    async deleteSecond() {
+      native.data.agents = native.data.agents.filter(
+        (agent) => agent.id !== "second",
+      );
+      await agentControl.refresh();
+    },
     commands: () => [...commands],
     launchPending: () => !!releaseLaunch,
     finishLaunch: () => {

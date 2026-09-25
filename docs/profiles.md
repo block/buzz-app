@@ -206,8 +206,36 @@ normalized `relayUrl` for the active community. The subsection is absent without
 native control or a valid community scope. Agent identity hints gate loading and
 visibility, never ownership; exact native matches alone supply instance rows. The
 section stays hidden for a non-agent without a match. It never derives ownership
-from the old Buzz library, self-declared profile markers, or names. The Agents
-page route opens management, not a per-instance page.
+from the old Buzz library, self-declared profile markers, or names.
+
+Each owner-accessible row opens the existing Profile panel with a typed
+`buzz:agent-instance:` target containing native ID, identity public key, viewer
+and canonical community origin. The target is selection, not authorization:
+private instance detail additionally requires the current signed profile's
+verified owner to equal the viewer and a ready native record matching ID, public
+key and community. Deletion, a failed host read or a changed viewer/community
+shows **Unavailable**, never a sibling's settings. **Retry** refreshes native
+control and ownership evidence. **Back to profile** opens the ordinary identity;
+the Channels host still owns panel replacement, close and focus restoration.
+Tabs retain the exact instance. Ordinary identity runtime/actions require one
+unambiguous native match; an instance view selects that record by ID.
+
+Archive labels come from `session.archives`, keyed by identity, rather than native
+process status. Archived rows use the same explicit target and remain navigable.
+The existing public profile tabs and actions are reused, not replaced by an Agents
+page or a second editor. Browser fixtures exercise live/archived selection,
+tabs, back, keyboard close/focus and deletion through the real plugin/Channels
+host in Chromium and WebKit. React tests cover exact actions, failed-read recovery,
+non-owner denial and scope changes with synthetic native data.
+
+Behavior/copy reference: base Buzz `UserProfilePanel.tsx` explicitly retains the
+requested instance public key and opens its runtime tab; its
+`ProfileInstancesSection.tsx` keeps archived rows clickable and supplies
+**Archived** / **Current**. `UserProfilePanelHeaderContent.tsx` supplies
+**Back to profile**; `managedAgentRuntimeStatus.ts` supplies **Unavailable**.
+These files live under `desktop/src/features/profile/ui` and
+`desktop/src/features/agents` in `block/buzz`. Buzz-app's native records also
+need an ID because several records can share one identity.
 
 The Info tab keeps the public key and linked instances. The Channels tab offers
 **Add to channel** only for an exact native-managed identity in this community

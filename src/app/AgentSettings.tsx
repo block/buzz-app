@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { AgentControl } from "../features/agents/control";
+import type {
+  AgentControl,
+  GooseInstallReport,
+} from "../features/agents/control";
 import {
   setRememberAgentsPreference,
   useRememberAgentsPreference,
@@ -37,6 +40,11 @@ export function AgentSettings({
   const preference = useRememberAgentsPreference();
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installResult, setInstallResult] = useState<GooseInstallReport | null>(
+    null,
+  );
+  const [installError, setInstallError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const copyAttempt = useRef(0);
   const state = useSyncExternalStore(control.subscribe, control.snapshot);
@@ -48,7 +56,25 @@ export function AgentSettings({
     options?.find((option) => option.label === name),
   );
   const available = harnesses.every((option) => !!option?.status);
+  const goose = harnesses[1];
   const pi = harnesses[2];
+  const installGoose = async () => {
+    if (!control.installGoose || installing) return;
+    setInstalling(true);
+    setInstallResult(null);
+    setInstallError("");
+    try {
+      setInstallResult(await control.installGoose());
+    } catch {
+      setInstallError(
+        "Couldn’t install Goose. Try again or check the desktop app.",
+      );
+    } finally {
+      // The control lane is no longer busy; this snapshot re-runs installed().
+      await control.refresh();
+      setInstalling(false);
+    }
+  };
   const change = (enabled: boolean) =>
     setError(setRememberAgentsPreference(enabled));
   const copy = async (name: string, command: string) => {
@@ -128,12 +154,55 @@ export function AgentSettings({
                   className="flex flex-wrap items-center justify-between gap-2 py-3 text-body-sm"
                 >
                   <span>{option?.label}</span>
-                  <span className="text-secondary">
-                    {option?.status ? labels[option.status] : "Unknown"}
+                  <span className="flex items-center gap-2">
+                    <span className="text-secondary">
+                      {option?.status ? labels[option.status] : "Unknown"}
+                    </span>
+                    {option?.label === "Goose" &&
+                      option.status === "cli-needed" &&
+                      option.installSupported &&
+                      control.installGoose && (
+                        <Button
+                          size="sm"
+                          type="button"
+                          loading={installing}
+                          disabled={state.busy || installing}
+                          onClick={() => void installGoose()}
+                        >
+                          Install
+                        </Button>
+                      )}
                   </span>
                 </li>
               ))}
             </ul>
+            {installing && <p role="status">Installing Goose…</p>}
+            {!installing &&
+              installResult?.ready &&
+              goose?.status === "ready" && (
+                <p role="status">
+                  Goose installed. Restarted {installResult.restarted} waiting
+                  agents.
+                  {installResult.restartFailures > 0 &&
+                    ` ${installResult.restartFailures} agents could not restart; check Agents.`}
+                </p>
+              )}
+            {!installing && (installResult?.error || installError) && (
+              <div role="alert" className="text-body-sm">
+                <p>{installResult?.error || installError}</p>
+                {installResult && (
+                  <details>
+                    <summary>Goose install log</summary>
+                    <p className="break-all">{installResult.logPath}</p>
+                    <pre
+                      className={`${styles.command} whitespace-pre-wrap break-all`}
+                    >
+                      {installResult.output || "No output was recorded."}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            )}
             {pi?.status !== "ready" && (
               <div className="space-y-3 text-body-sm">
                 <p className="m-0 text-secondary">

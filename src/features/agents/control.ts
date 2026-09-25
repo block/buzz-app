@@ -79,6 +79,8 @@ export interface ControlSnapshot {
     available?: boolean;
     /** Executable presence only; Pi also needs Node.js for its adapter. */
     status?: "ready" | "cli-needed" | "adapter-needed";
+    /** The native installer is available on macOS/Linux, not Windows. */
+    installSupported?: boolean;
     defaultArgs?: string[];
     providers: { value: string; label: string }[];
   }[];
@@ -114,9 +116,18 @@ export type AgentLogTarget = Pick<AgentView, "id" | "pubkey" | "relayUrl"> & {
     nonce: string,
   ): Promise<string>;
 };
+export interface GooseInstallReport {
+  ready: boolean;
+  restarted: number;
+  restartFailures: number;
+  logPath: string;
+  output: string;
+  error: string | null;
+}
 export interface AgentControlHost {
   readLog?(target: AgentLogTarget): Promise<string>;
   models?: ModelHost;
+  installGoose?(): Promise<GooseInstallReport>;
   prepareCreate?(
     requestId: string,
     destination: string,
@@ -162,6 +173,7 @@ export interface AgentControl {
   /** Sensitive local output. Native custody and exact community are rechecked per read. */
   readLog?(target: AgentLogTarget): Promise<string>;
   models?: AgentModels;
+  installGoose?(): Promise<GooseInstallReport>;
   create?(
     requestId: string,
     destination: string,
@@ -361,6 +373,8 @@ export function createAgentControl(
       command === "stop" ? undefined : id,
     );
   };
+  const deleteAgent = host?.delete;
+  const installGoose = host?.installGoose;
   return {
     models,
     ...(host?.readLog
@@ -373,6 +387,15 @@ export function createAgentControl(
             if (disposed) throw new Error(agentControlUnavailable);
             return content;
           },
+        }
+      : {}),
+    ...(installGoose
+      ? {
+          installGoose: () =>
+            run(
+              () => installGoose(),
+              () => {},
+            ),
         }
       : {}),
     ...(host?.prepareCreate && host.commitCreate

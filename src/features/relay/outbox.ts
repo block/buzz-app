@@ -3,7 +3,7 @@ import { yieldToHost } from "./yield";
 import { getEventHash, type EventTemplate } from "nostr-tools";
 import { eventDto, type EventData, type RelayEvent } from "./events";
 import type { RelayWriter } from "./transport";
-import { ByteLru, byteSize } from "./budget";
+import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 
 export type Delivery = "sending" | "accepted" | "unknown" | "failed" | "seen";
@@ -645,7 +645,7 @@ export function createOutbox(
         throw new Error("This relay connection cannot publish that event kind");
       if (
         (input.kind === 9 && !input.content.trim()) ||
-        byteSize(input) > 32 * 1024
+        byteSize(input) > OUTBOX_INPUT_MAX_BYTES
       )
         throw new Error("Message is empty or too large");
       if (snapshot.length >= MAX_PENDING)

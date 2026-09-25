@@ -11,6 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
 import { ProfileButton } from "./ProfileButton";
 
@@ -38,10 +39,16 @@ it("keeps the header cutout and menu status in sync with presence", () => {
       setPreference: () => {},
     },
   } as unknown as Communities;
+  const actions: readonly [] = [];
+  const accountActions = {
+    subscribe,
+    snapshot: () => actions,
+  } as unknown as AccountActionsService;
 
   render(
     <ProfileButton
       communities={communities}
+      accountActions={accountActions}
       settingsSelected={false}
       onSettings={() => {}}
     />,
@@ -88,6 +95,11 @@ it.each([false, true])(
     const connection = { status: "unavailable", session: undefined, scope: "" };
     const presence = { status: "online", preference: "auto", error: null };
     const subscribe = () => () => {};
+    const actions: readonly [] = [];
+    const accountActions = {
+      subscribe,
+      snapshot: () => actions,
+    } as unknown as AccountActionsService;
     const communities = {
       subscribe,
       snapshot: () => snapshot,
@@ -100,6 +112,7 @@ it.each([false, true])(
         <>
           <ProfileButton
             communities={communities}
+            accountActions={accountActions}
             settingsSelected={settings}
             onSettings={() => setSettings(true)}
           />
@@ -159,6 +172,11 @@ it("keeps the local default identity even when the community profile changes", a
   const snapshot = { profile: { name: "Local name", picture: "" }, viewer };
   const presence = { status: "online", preference: "auto", error: null };
   const subscribe = () => () => {};
+  const actions: readonly [] = [];
+  const accountActions = {
+    subscribe,
+    snapshot: () => actions,
+  } as unknown as AccountActionsService;
   const communities = {
     subscribe,
     snapshot: () => snapshot,
@@ -168,6 +186,7 @@ it("keeps the local default identity even when the community profile changes", a
   const view = render(
     <ProfileButton
       communities={communities}
+      accountActions={accountActions}
       settingsSelected={false}
       onSettings={() => {}}
     />,
@@ -228,6 +247,11 @@ it.each(["escape", "outside", "reopen"])(
     };
     const presence = { status: "online", preference: "auto", error: null };
     const subscribe = () => () => {};
+    const actions: readonly [] = [];
+    const accountActions = {
+      subscribe,
+      snapshot: () => actions,
+    } as unknown as AccountActionsService;
     const communities = {
       subscribe,
       snapshot: () => snapshot,
@@ -238,6 +262,7 @@ it.each(["escape", "outside", "reopen"])(
       <>
         <ProfileButton
           communities={communities}
+          accountActions={accountActions}
           settingsSelected={false}
           onSettings={() => {}}
         />
@@ -289,6 +314,11 @@ it.each(["online", "away", "offline"] as const)(
     const presence = { status, preference: "auto", error: null };
     const connection = { status: "unavailable", session: undefined, scope: "" };
     const subscribe = () => () => {};
+    const actions: readonly [] = [];
+    const accountActions = {
+      subscribe,
+      snapshot: () => actions,
+    } as unknown as AccountActionsService;
     const communities = {
       subscribe,
       snapshot: () => snapshot,
@@ -298,6 +328,7 @@ it.each(["online", "away", "offline"] as const)(
     render(
       <ProfileButton
         communities={communities}
+        accountActions={accountActions}
         settingsSelected={false}
         onSettings={() => {}}
       />,
@@ -318,3 +349,71 @@ it.each(["online", "away", "offline"] as const)(
     );
   },
 );
+
+it("opens a contributed account action and removes it when its registration retires", async () => {
+  const user = userEvent.setup();
+  const profile = { profile: { name: "Fixture", picture: "" }, viewer: null };
+  const presence = { status: "online", preference: "auto", error: null };
+  const subscribe = () => () => {};
+  const connection = { status: "unavailable", session: undefined, scope: "" };
+  const communities = {
+    subscribe,
+    snapshot: () => profile,
+    presence: { subscribe, snapshot: () => presence },
+    relay: { subscribe, snapshot: () => connection },
+  } as unknown as Communities;
+  function Action({
+    open,
+    onOpenChange,
+  }: {
+    open: boolean;
+    onOpenChange(open: boolean): void;
+  }) {
+    return open ? (
+      <div role="dialog" aria-label="Feedback">
+        <button type="button" onClick={() => onOpenChange(false)}>
+          Dismiss feedback
+        </button>
+      </div>
+    ) : null;
+  }
+  const entry = {
+    key: "buzz.feedback/send",
+    pluginId: "buzz.feedback",
+    title: "Send feedback",
+    component: Action,
+  };
+  let actions = [entry];
+  const listeners = new Set<() => void>();
+  const accountActions = {
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snapshot: () => actions,
+  } as unknown as AccountActionsService;
+  render(
+    <ProfileButton
+      communities={communities}
+      accountActions={accountActions}
+      settingsSelected={false}
+      onSettings={() => {}}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Your profile" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Send feedback" }),
+  );
+  expect(screen.getByRole("dialog", { name: "Feedback" })).toBeInTheDocument();
+  await act(async () => {
+    actions = [];
+    for (const listener of listeners) listener();
+  });
+  expect(
+    screen.queryByRole("dialog", { name: "Feedback" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Your profile" }));
+  expect(
+    screen.queryByRole("menuitem", { name: "Send feedback" }),
+  ).not.toBeInTheDocument();
+});

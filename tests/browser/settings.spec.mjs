@@ -135,6 +135,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     name: "Set a status",
     exact: true,
   });
+  const feedback = account.getByRole("menuitem", {
+    name: "Send feedback",
+    exact: true,
+  });
   const availability = account.getByRole("button", {
     name: "Availability: Online",
   });
@@ -184,6 +188,8 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(settings).toBeFocused();
     await page.keyboard.press("Home");
     await expect(statusEntry).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(feedback).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(settings).toBeFocused();
     await page.keyboard.press("Home");

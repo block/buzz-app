@@ -206,9 +206,10 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     exact: true,
   });
   await toggle.click();
-  await expect
-    .poll(() => app.relay.hasRoute("primary", "observer"))
-    .toBe(false);
+  // Owner-review requests share the observer transport but own independent
+  // demand. Disabling the optional activity UI clears its evidence without
+  // tearing down the app-level agent-update listener.
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   expect(app.relay.sockets).toHaveLength(sockets);
   await page
     .getByRole("navigation", { name: "Pages", exact: true })

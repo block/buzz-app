@@ -11,7 +11,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { MediaAttachment } from "./MediaAttachment";
 import { ImageReviewStage } from "./ImageReviewStage";
-import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 class TestClipboardItem {
   constructor(readonly items: Record<string, Promise<Blob>>) {}
@@ -23,15 +22,13 @@ const proxyImageSource =
 function renderProxyImageStage() {
   const url = "https://example.test/a.png";
   render(
-    <ToastProvider>
-      <ImageReviewStage
-        attachments={[{ url, kind: "image" }]}
-        selectedUrl={url}
-        media={() => proxyImageSource}
-        select={() => {}}
-        onOpenLink={() => false}
-      />
-    </ToastProvider>,
+    <ImageReviewStage
+      attachments={[{ url, kind: "image" }]}
+      selectedUrl={url}
+      media={() => proxyImageSource}
+      select={() => {}}
+      onOpenLink={() => false}
+    />,
   );
 }
 
@@ -111,9 +108,8 @@ it("shows a disabled copy button for proxy images when image clipboard is unsupp
   );
 });
 
-it("copies proxy images and shows a success toast", async () => {
+it("copies proxy images and shows a stage-scoped success notice", async () => {
   vi.useFakeTimers();
-  vi.spyOn(document, "hasFocus").mockReturnValue(true);
   const write = stubImageCopySupport();
   renderProxyImageStage();
   markPreviewLoaded();
@@ -122,13 +118,12 @@ it("copies proxy images and shows a success toast", async () => {
   await act(async () => {});
 
   expect(write).toHaveBeenCalledTimes(1);
-  expect(
-    screen.getByRole("dialog", { name: "Image copied" }),
-  ).toBeInTheDocument();
-  await act(() => vi.advanceTimersByTimeAsync(4000));
-  expect(
-    screen.queryByRole("dialog", { name: "Image copied" }),
-  ).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Image copied");
+  expect(screen.queryByRole("dialog", { name: "Image copied" })).toBeNull();
+  await act(() => vi.advanceTimersByTimeAsync(3999));
+  expect(screen.getByRole("status")).toHaveTextContent("Image copied");
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.queryByRole("status")).toBeNull();
 });
 
 it("prevents duplicate image copy writes until the first settles", async () => {
@@ -153,15 +148,12 @@ it("prevents duplicate image copy writes until the first settles", async () => {
   } finally {
     finish();
   }
-  expect(
-    await screen.findByRole("dialog", { name: "Image copied" }),
-  ).toBeInTheDocument();
+  expect(await screen.findByRole("status")).toHaveTextContent("Image copied");
   expect(button).not.toBeDisabled();
 });
 
-it("reports image copy failures in an error toast", async () => {
+it("reports image copy failures in a stage-scoped alert", async () => {
   vi.useFakeTimers();
-  vi.spyOn(document, "hasFocus").mockReturnValue(true);
   stubImageCopySupport(vi.fn(async () => Promise.reject(new Error("denied"))));
   renderProxyImageStage();
   markPreviewLoaded();
@@ -169,14 +161,68 @@ it("reports image copy failures in an error toast", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
   await act(async () => {});
 
-  const toast = screen.getByRole("dialog", {
-    name: "Couldn't copy image",
+  const notice = screen.getByRole("alert");
+  expect(notice).toHaveTextContent("Couldn't copy image");
+  expect(notice.className).toContain("imageReviewCopyNoticeError");
+  await act(() => vi.advanceTimersByTimeAsync(5999));
+  expect(screen.getByRole("alert")).toHaveTextContent("Couldn't copy image");
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("clears the image copy notice on a new copy attempt and image switch", async () => {
+  vi.useFakeTimers();
+  const write = stubImageCopySupport(vi.fn(async () => {}));
+  const select = vi.fn();
+  const first = "https://example.test/a.png";
+  const second = "https://example.test/b.png";
+  const { rerender } = render(
+    <ImageReviewStage
+      attachments={[
+        { url: first, kind: "image" },
+        { url: second, kind: "image" },
+      ]}
+      selectedUrl={first}
+      media={() => proxyImageSource}
+      select={select}
+      onOpenLink={() => false}
+    />,
+  );
+  markPreviewLoaded();
+
+  fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+  await act(async () => {});
+  expect(screen.getByRole("status")).toHaveTextContent("Image copied");
+
+  let finishSecond!: () => void;
+  write.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finishSecond = resolve;
+      }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+  expect(screen.queryByRole("status")).toBeNull();
+  await act(async () => {
+    finishSecond();
   });
-  expect(toast).toHaveAttribute("data-type", "error");
-  await act(() => vi.advanceTimersByTimeAsync(6000));
-  expect(
-    screen.queryByRole("dialog", { name: "Couldn't copy image" }),
-  ).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Image copied");
+
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(select).toHaveBeenCalledWith(second);
+  rerender(
+    <ImageReviewStage
+      attachments={[
+        { url: first, kind: "image" },
+        { url: second, kind: "image" },
+      ]}
+      selectedUrl={second}
+      media={() => proxyImageSource}
+      select={select}
+      onOpenLink={() => false}
+    />,
+  );
+  expect(screen.queryByRole("status")).toBeNull();
 });
 
 it("opens external images through the host opener without download semantics", () => {

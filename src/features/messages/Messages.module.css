@@ -841,6 +841,27 @@ button.mediaPreview {
   gap: var(--space-2);
   padding: var(--space-2);
 }
+.imageReviewCopyNotice {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: calc(var(--space-4) + var(--size-control-sm) + var(--space-3));
+  translate: -50% 0;
+  pointer-events: none;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-pill);
+  background: var(--surface-popover);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-standard);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  white-space: nowrap;
+}
+.imageReviewCopyNoticeError {
+  border-color: var(--border-danger);
+  color: var(--text-danger);
+}
 .imageReviewSwitcher,
 .imageReviewZoom {
   display: flex;
@@ -872,6 +893,9 @@ button.mediaPreview {
     grid-template-columns: auto 1fr auto;
     gap: var(--space-1);
     border-radius: var(--radius-control);
+  }
+  .imageReviewCopyNotice {
+    bottom: calc(var(--space-2) + var(--size-control-sm) + var(--space-3));
   }
   .imageReviewZoom {
     min-width: 0;

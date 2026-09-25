@@ -1,6 +1,5 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowSquareOutIcon,
@@ -52,6 +51,11 @@ export function ImageReviewStage({
   const [copying, setCopying] = useState(false);
   const [copyNotice, setCopyNotice] = useState<"success" | "error">();
   const copyBusy = useRef(false);
+  const copyNoticeTimer = useRef<number | undefined>(undefined);
+  const mounted = useRef(false);
+  const previousSelectedUrl = useRef(selectedUrl);
+  const selectedUrlRef = useRef(selectedUrl);
+  selectedUrlRef.current = selectedUrl;
   const selectedIndex = Math.max(
     0,
     attachments.findIndex((item) => item.url === selectedUrl),
@@ -62,6 +66,27 @@ export function ImageReviewStage({
   const externalSource = source ? safeOpenUrl(source) && !proxySource : false;
   const canCopyImage = supportsImageCopy();
   const pannable = zoom > MIN_ZOOM;
+  const clearCopyNoticeTimer = () => {
+    if (copyNoticeTimer.current === undefined) return;
+    window.clearTimeout(copyNoticeTimer.current);
+    copyNoticeTimer.current = undefined;
+  };
+  const clearCopyNotice = () => {
+    clearCopyNoticeTimer();
+    setCopyNotice(undefined);
+  };
+  const showCopyNotice = (notice: "success" | "error") => {
+    if (!mounted.current) return;
+    clearCopyNoticeTimer();
+    setCopyNotice(notice);
+    copyNoticeTimer.current = window.setTimeout(
+      () => {
+        copyNoticeTimer.current = undefined;
+        setCopyNotice(undefined);
+      },
+      notice === "success" ? 4000 : 6000,
+    );
+  };
 
   const panLimits = (nextZoom = zoom) => {
     const frame = stage.current?.getBoundingClientRect();
@@ -93,22 +118,23 @@ export function ImageReviewStage({
     if (!item) return;
     setZoom(MIN_ZOOM);
     setOffset({ x: 0, y: 0 });
-    setCopyNotice(undefined);
+    clearCopyNotice();
     select(item.url);
   };
   const copyImage = async () => {
     if (copyBusy.current || !image.current) return;
+    const copiedUrl = selectedUrl;
     copyBusy.current = true;
     setCopying(true);
-    setCopyNotice(undefined);
+    clearCopyNotice();
     try {
       await copyImageToClipboard(image.current);
-      setCopyNotice("success");
+      if (selectedUrlRef.current === copiedUrl) showCopyNotice("success");
     } catch {
-      setCopyNotice("error");
+      if (selectedUrlRef.current === copiedUrl) showCopyNotice("error");
     } finally {
       copyBusy.current = false;
-      setCopying(false);
+      if (mounted.current) setCopying(false);
     }
   };
 
@@ -117,6 +143,23 @@ export function ImageReviewStage({
     window.addEventListener("resize", reset);
     return () => window.removeEventListener("resize", reset);
   });
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (copyNoticeTimer.current !== undefined) {
+        window.clearTimeout(copyNoticeTimer.current);
+        copyNoticeTimer.current = undefined;
+      }
+    };
+  }, []);
+
+  if (previousSelectedUrl.current !== selectedUrl) {
+    previousSelectedUrl.current = selectedUrl;
+    clearCopyNoticeTimer();
+    if (copyNotice !== undefined) setCopyNotice(undefined);
+  }
 
   if (!selected || !source)
     return (
@@ -167,6 +210,14 @@ export function ImageReviewStage({
           transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
         }}
       />
+      {copyNotice && (
+        <div
+          className={`${styles.imageReviewCopyNotice} ${copyNotice === "error" ? styles.imageReviewCopyNoticeError : ""}`}
+          role={copyNotice === "error" ? "alert" : "status"}
+        >
+          {copyNotice === "success" ? "Image copied" : "Couldn't copy image"}
+        </div>
+      )}
       <div
         className={styles.imageReviewToolbar}
         onPointerDown={(event) => event.stopPropagation()}
@@ -275,12 +326,6 @@ export function ImageReviewStage({
           />
         )}
       </div>
-      {copyNotice === "success" && (
-        <ToastNotice title="Image copied" tone="success" timeout={4000} />
-      )}
-      {copyNotice === "error" && (
-        <ToastNotice title="Couldn't copy image" tone="error" timeout={6000} />
-      )}
     </div>
   );
 }

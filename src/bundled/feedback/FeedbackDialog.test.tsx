@@ -140,6 +140,11 @@ it("allows confirmed local discard after an unknown retry is rejected", async ()
     expect(confirm).toHaveBeenCalledWith(
       expect.stringContaining("may already have been delivered"),
     );
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "will not undo delivery or delete uploaded attachments",
+      ),
+    );
     view.unmount();
     render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
     await user.type(

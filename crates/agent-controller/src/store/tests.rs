@@ -82,6 +82,18 @@ fn snapshot_withholds_model_and_provider_environment_values() {
                 "databricks",
                 &[("DATABRICKS_MODEL", "synthetic-databricks-model")],
             ),
+            // An empty override is still an override.
+            agent("d4", "buzz-agent", "", &[("BUZZ_AGENT_PROVIDER", "")]),
+            // A hidden provider decides a blank model before the Databricks fallback.
+            agent(
+                "e5",
+                "buzz-agent",
+                "databricks",
+                &[
+                    ("BUZZ_AGENT_PROVIDER", "synthetic-combined-provider"),
+                    ("DATABRICKS_MODEL", "synthetic-combined-model"),
+                ],
+            ),
         ])
         .unwrap();
     let snapshot = store.snapshot().unwrap();
@@ -92,20 +104,37 @@ fn snapshot_withholds_model_and_provider_environment_values() {
         "synthetic-goose-model",
         "synthetic-goose-provider",
         "synthetic-databricks-model",
+        "synthetic-combined-provider",
+        "synthetic-combined-model",
     ] {
         assert!(!wire.contains(value), "projected {value}");
     }
-    let sources: Vec<_> = snapshot
-        .agents
-        .iter()
-        .map(|a| (a.launch_model_env, a.launch_provider_env))
-        .collect();
-    for source in [
-        (Some("BUZZ_AGENT_MODEL"), Some("BUZZ_AGENT_PROVIDER")),
-        (Some("GOOSE_MODEL"), Some("GOOSE_PROVIDER")),
-        (Some("DATABRICKS_MODEL"), None),
+    for (key, model, provider) in [
+        ("a1", Some("BUZZ_AGENT_MODEL"), Some("BUZZ_AGENT_PROVIDER")),
+        ("b2", Some("GOOSE_MODEL"), Some("GOOSE_PROVIDER")),
+        ("c3", Some("DATABRICKS_MODEL"), None),
+        (
+            "d4",
+            Some("BUZZ_AGENT_PROVIDER"),
+            Some("BUZZ_AGENT_PROVIDER"),
+        ),
+        (
+            "e5",
+            Some("BUZZ_AGENT_PROVIDER"),
+            Some("BUZZ_AGENT_PROVIDER"),
+        ),
     ] {
-        assert!(sources.contains(&source), "missing {source:?}");
+        let view = snapshot
+            .agents
+            .iter()
+            .find(|a| a.pubkey.starts_with(key))
+            .unwrap();
+        assert_eq!(
+            (view.launch_model_env, view.launch_provider_env),
+            (model, provider)
+        );
+        assert!(view.launch_model.is_none(), "{key} model value");
+        assert_eq!(view.launch_provider.is_none(), provider.is_some(), "{key}");
     }
 }
 #[test]

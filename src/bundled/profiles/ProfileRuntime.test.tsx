@@ -89,10 +89,11 @@ async function mount({
 
 it("shows the verified owner saved configuration and persists start on launch", async () => {
   const fixture = controlFixture();
-  // A blank saved model launches the build default; an environment override
-  // decides the provider and is named by key only.
+  // Native projection for a blank buzz-agent model with a provider override:
+  // the hidden provider decides both rows, named by key only.
   fixture.agent.harness.model = "";
-  fixture.agent.launchModel = "build-model";
+  fixture.agent.launchModel = null;
+  fixture.agent.launchModelEnv = "BUZZ_AGENT_PROVIDER";
   fixture.agent.launchProvider = null;
   fixture.agent.launchProviderEnv = "BUZZ_AGENT_PROVIDER";
   const { user } = await mount({ fixture });
@@ -109,10 +110,10 @@ it("shows the verified owner saved configuration and persists start on launch", 
     expect(within(configuration).getByText(text)).toBeVisible();
   expect(within(configuration).queryByText("Backend")).toBeNull();
   const model = screen.getByRole("region", { name: "Model settings" });
-  expect(within(model).getByText("build-model")).toBeVisible();
   expect(
-    within(model).getByText("Set by environment (BUZZ_AGENT_PROVIDER)"),
-  ).toBeVisible();
+    within(model).getAllByText("Set by environment (BUZZ_AGENT_PROVIDER)"),
+  ).toHaveLength(2);
+  expect(within(model).queryByText("fixture-model")).toBeNull();
   expect(within(model).queryByText("fixture-provider")).toBeNull();
   expect(screen.queryByRole("region", { name: "MCP servers" })).toBeNull();
   const advanced = screen.getByRole("region", { name: "Advanced" });

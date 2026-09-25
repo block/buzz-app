@@ -223,7 +223,11 @@ it("Check again re-reads the native snapshot without restarting the app", async 
 
 it("keeps the last statuses and offers Check again after a failed read", async () => {
   const user = userEvent.setup();
-  const { fixture } = setupHarnesses("ready");
+  const installGoose = vi.fn();
+  const { fixture } = setupHarnesses("ready", {
+    installSupported: true,
+    installGoose,
+  });
   expect(await screen.findByText("CLI needed")).toBeVisible();
   const original = fixture.host.snapshot.bind(fixture.host);
   fixture.host.snapshot = vi
@@ -232,11 +236,14 @@ it("keeps the last statuses and offers Check again after a failed read", async (
     .mockImplementation(original);
   await user.click(screen.getByRole("button", { name: "Check again" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("last check");
+  expect(screen.getByRole("button", { name: "Install" })).toBeDisabled();
+  expect(installGoose).not.toHaveBeenCalled();
   expect(
     within(screen.getByRole("list")).getAllByRole("listitem")[0],
   ).toHaveTextContent("Buzz AgentReady");
   await user.click(screen.getByRole("button", { name: "Check again" }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(screen.getByRole("button", { name: "Install" })).toBeEnabled();
 });
 
 it.each([

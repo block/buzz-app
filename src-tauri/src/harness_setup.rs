@@ -24,7 +24,13 @@ const INSTALL: &str = "curl -fsSL https://github.com/aaif-goose/goose/releases/d
 /// process group so normal Quit can stop it (Tauri exits without dropping futures).
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 #[derive(Default)]
-pub(crate) struct HarnessSetup(AtomicBool, std::sync::Mutex<(bool, Option<u32>)>);
+pub(crate) struct HarnessSetup(AtomicBool, std::sync::Mutex<InstallProcess>);
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+#[derive(Default)]
+struct InstallProcess {
+    shutting_down: bool,
+    group: Option<u32>,
+}
 #[cfg(not(any(target_os = "macos", target_os = "linux", test)))]
 #[derive(Default)]
 pub(crate) struct HarnessSetup;
@@ -51,7 +57,7 @@ impl HarnessSetup {
             .1
             .lock()
             .map_err(|_| "Goose install state is unavailable")?
-            .0
+            .shutting_down
         {
             return Err("Buzz is quitting".into());
         }
@@ -63,23 +69,30 @@ impl HarnessSetup {
             .1
             .lock()
             .map_err(|_| "Goose install state is unavailable")?;
-        if state.0 {
+        if state.shutting_down {
             kill_group(group);
             return Err("Buzz is quitting".into());
         }
-        state.1 = Some(group);
+        state.group = Some(group);
         Ok(())
     }
-    fn untrack(&self) {
+    fn untrack(&self, group: u32, kill: bool) {
         if let Ok(mut state) = self.1.lock() {
-            state.1 = None;
+            if state.group == Some(group) {
+                // Serialize clearing and signalling with shutdown: it must not
+                // signal the same (potentially reused) group a second time.
+                if kill {
+                    kill_group(group);
+                }
+                state.group = None;
+            }
         }
     }
     /// Normal-Quit cleanup: stop the active installer and fence later spawns.
     pub(crate) fn shutdown(&self) {
         if let Ok(mut state) = self.1.lock() {
-            state.0 = true;
-            if let Some(group) = state.1.take() {
+            state.shutting_down = true;
+            if let Some(group) = state.group.take() {
                 kill_group(group);
             }
         }
@@ -166,16 +179,23 @@ where
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-struct InstallerChild<'a>(tokio::process::Child, Option<u32>, &'a HarnessSetup);
+struct InstallerChild<'a> {
+    child: tokio::process::Child,
+    group: Option<u32>,
+    setup: &'a HarnessSetup,
+    reaped: bool,
+}
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl Drop for InstallerChild<'_> {
     fn drop(&mut self) {
-        // Child::id() is None once waited, so keep the group id from spawn.
-        if let Some(pid) = self.1 {
-            kill_group(pid);
+        if let Some(group) = self.group {
+            // A reaped leader's pgid may already have been reused. Bash waits
+            // for its curl|bash pipeline; only pending/cancelled work needs kill.
+            self.setup.untrack(group, !self.reaped);
         }
-        let _ = self.0.start_kill();
-        self.2.untrack();
+        if !self.reaped {
+            let _ = self.child.start_kill();
+        }
     }
 }
 
@@ -218,15 +238,20 @@ async fn upstream(setup: &HarnessSetup, log: File) -> Result<bool, String> {
     let child = command
         .spawn()
         .map_err(|_| "Could not start the Goose installer".to_owned())?;
-    let pid = child.id();
-    let mut child = InstallerChild(child, pid, setup);
-    setup.track(pid.ok_or("Could not start the Goose installer")?)?;
-    let result = tokio::time::timeout(std::time::Duration::from_secs(300), child.0.wait())
+    let group = child.id();
+    let mut child = InstallerChild {
+        child,
+        group,
+        setup,
+        reaped: false,
+    };
+    setup.track(group.ok_or("Could not start the Goose installer")?)?;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(300), child.child.wait())
         .await
         .map_err(|_| "Goose installer timed out after five minutes".to_owned())?
         .map(|status| status.success())
         .map_err(|_| "Goose installer could not finish".to_owned());
-    // Even when the parent exits early, the installer may have left helpers.
+    child.reaped = result.is_ok();
     drop(child);
     result
 }

@@ -149,7 +149,9 @@ export function AgentSettings({
                           size="sm"
                           type="button"
                           loading={installing}
-                          disabled={state.busy || installing}
+                          disabled={
+                            state.status !== "ready" || state.busy || installing
+                          }
                           onClick={() => {
                             void control.installGoose?.().catch(() => {});
                           }}

@@ -110,11 +110,13 @@ fn only_enabled_goose_waiting_for_a_missing_cli_restarts() {
 #[cfg(unix)]
 #[test]
 fn quit_kills_the_tracked_installer_group_and_fences_late_spawns() {
+    use std::io::BufRead as _;
     use std::os::unix::process::CommandExt;
     let spawn = || {
         std::process::Command::new("/bin/sh")
-            .args(["-c", "sleep 30 & wait"])
+            .args(["-c", "sleep 30 & printf 'ready\\n'; wait"])
             .process_group(0)
+            .stdout(Stdio::piped())
             .spawn()
             .unwrap()
     };
@@ -122,6 +124,11 @@ fn quit_kills_the_tracked_installer_group_and_fences_late_spawns() {
     let mut active = spawn();
     let guard = state.claim().unwrap();
     state.track(active.id()).unwrap();
+    let mut marker = String::new();
+    std::io::BufReader::new(active.stdout.take().unwrap())
+        .read_line(&mut marker)
+        .unwrap();
+    assert_eq!(marker, "ready\n", "the helper must exist before Quit");
     state.shutdown();
     // SIGKILL reached the group leader; its sleeping child shares the group.
     assert!(!active.wait().unwrap().success());
@@ -139,4 +146,19 @@ fn quit_kills_the_tracked_installer_group_and_fences_late_spawns() {
         Some("Buzz is quitting")
     );
     assert!(!late.wait().unwrap().success());
+}
+
+#[test]
+fn a_finished_install_clears_its_group_without_killing_it_again_on_quit() {
+    let state = HarnessSetup::default();
+    let guard = state.claim().unwrap();
+    // Above supported OS pid limits; even a failed assertion cannot signal a
+    // real process group from this test.
+    let absent_group = i32::MAX as u32;
+    state.track(absent_group).unwrap();
+    state.untrack(absent_group, false);
+    assert!(state.1.lock().unwrap().group.is_none());
+    state.shutdown();
+    drop(guard);
+    assert_eq!(state.claim().err().as_deref(), Some("Buzz is quitting"));
 }

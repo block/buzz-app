@@ -367,6 +367,14 @@ test.describe("GIF send roundtrip", () => {
       }),
     );
     await page.route("https://gif.fixture.invalid/**", fulfillGifImage);
+    const publishReceipts = [];
+    await page.route("**/api/relay/*/publish", async (route) => {
+      const event = route.request().postDataJSON();
+      const response = await route.fetch();
+      const receipt = await response.json();
+      publishReceipts.push({ event, receipt, status: response.status() });
+      await route.fulfill({ response, json: receipt });
+    });
 
     await page.goto(app.origin);
     await page
@@ -396,17 +404,41 @@ test.describe("GIF send roundtrip", () => {
 
     await draft.press("Enter");
 
+    const expectedContent =
+      "![Roundtrip Gif](https://gif.fixture.invalid/7.gif)";
+    const expectedEvent = () =>
+      app.report.publications.find(
+        ({ event }) =>
+          event.kind === 9 &&
+          event.content === expectedContent &&
+          event.tags.some(([name, value]) => name === "h" && value === "alpha"),
+      )?.event;
+    await expect.poll(() => expectedEvent()?.id).toBeTruthy();
+    const sentEvent = expectedEvent();
+    expect(sentEvent).toBeDefined();
+    const receiptForSentEvent = () =>
+      publishReceipts.find(
+        ({ event, receipt }) =>
+          event.id === sentEvent.id && receipt.event_id === sentEvent.id,
+      );
+    await expect.poll(() => receiptForSentEvent()?.receipt.accepted).toBe(true);
+    expect(receiptForSentEvent()?.status).toBe(200);
+
     const history = page.getByRole("region", {
       name: "Channel message history",
       exact: true,
     });
-    const attachment = history.getByRole("link", {
+    const sent = history.locator(`[data-message-id="${sentEvent.id}"]`);
+    await expect(sent).toBeVisible();
+    const attachment = sent.getByRole("link", {
       name: "Open image attachment",
       exact: true,
     });
     await expect(attachment).toBeVisible();
-    const sent = attachment.locator("xpath=ancestor::*[@data-message-id][1]");
-    await expect(sent).toBeVisible();
+    await expect(attachment).toHaveAttribute(
+      "href",
+      "https://gif.fixture.invalid/7.gif",
+    );
     await expect(sent.getByText("![Roundtrip Gif]")).toHaveCount(0);
     expect(app.report.unexpected).toEqual([]);
   });

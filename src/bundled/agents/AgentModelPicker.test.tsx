@@ -201,11 +201,13 @@ it("Pi discovers extension providers before start and selects the exact provider
     await user.click(screen.getByRole("button", { name: "Browse models" }));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(
-      screen.getByRole("button", { name: "Cancel model lookup", hidden: true }),
-    ).toBeVisible();
-    expect(
       await screen.findByRole("status", { name: "Model lookup" }),
     ).toHaveTextContent("Loading Pi models…");
+    // The open popup marks outside content aria-hidden on its own schedule,
+    // which removes the button's accessible name. Cancel stays visible.
+    expect(
+      screen.getByText("Cancel model lookup").closest("button"),
+    ).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
       "aria-busy",
       "true",

@@ -224,6 +224,7 @@ export const test = base.extend({
                         order: 1,
                         icon: ":unavailable_icon:",
                       },
+                      { id: "laptop", name: "Laptop", order: 2, icon: "👨‍💻" },
                     ]
                   : []),
               ],

@@ -66,6 +66,29 @@ test("group icons resolve custom media without overlapping labels, and the creat
     )
     .toBe(true);
   await expect(section.locator("summary [data-loading]")).toHaveCount(0);
+  for (const key of ["work", "laptop"]) {
+    const summary = page.locator(
+      `[data-sidebar-section="group:${key}"] summary`,
+    );
+    const layout = await summary.evaluate((element) => {
+      const icon = element.querySelector("[data-sidebar-group-icon]");
+      const title = document.createRange();
+      title.selectNodeContents(icon.nextSibling);
+      return {
+        gap:
+          title.getBoundingClientRect().left -
+          icon.getBoundingClientRect().right,
+        height: element.getBoundingClientRect().height,
+      };
+    });
+    expect(layout.gap).toBe(4);
+    expect(layout.height).toBe(28);
+  }
+  await page
+    .locator('[data-sidebar-section="group:laptop"] summary')
+    .screenshot({
+      path: testInfo.outputPath("group-emoji-spacing.png"),
+    });
   const row = section.locator('[data-channel-id="beta"]');
   await row.focus();
   await page.keyboard.press("Shift+F10");

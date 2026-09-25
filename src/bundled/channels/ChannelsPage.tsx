@@ -797,7 +797,7 @@ function ChannelWorkspace({
       : undefined;
   const drawerContext = useMemo(
     () =>
-      current && !current.readOnly && viewer
+      current && !current.readOnly && viewer && !placeholder
         ? {
             scope,
             viewer,
@@ -810,14 +810,13 @@ function ChannelWorkspace({
             ...(showingThread && { threadId: showingThread.messageId }),
           }
         : undefined,
-    [scope, viewer, current, showingThread],
+    [scope, viewer, current, showingThread, placeholder],
   );
   const drawer = useChannelPanels(panels, drawerContext, () =>
     setSettings(undefined),
   );
   const showingPanel =
     !composingMessage &&
-    !showingMediaReview &&
     (showingSettings || panel || showingThread || companion || drawer.side);
   return (
     <div className={`${styles.board} ${showingPanel ? styles.withPanel : ""}`}>
@@ -1036,7 +1035,7 @@ function ChannelWorkspace({
           close={() => setMediaReview(undefined)}
         />
       )}
-      {showingPanel && (
+      {showingPanel && !showingMediaReview && (
         <div className={styles.panelStack}>
           {showingSettings && (
             <ChannelSettingsPanel

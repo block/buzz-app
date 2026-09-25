@@ -497,24 +497,18 @@ for (const destination of [
           page.getByRole("heading", { name: "Settings", exact: true }),
         ).toBeVisible();
       } else {
-        await button(
+        await openPage(
           page,
           destination === "Back/Forward" ? "Projects" : destination,
-        )
-          .first()
-          .click();
+        );
       }
       await expect(sidebar).toBeVisible();
       expect(await node.evaluate((element) => element.isConnected)).toBe(true);
       await expect(
         page.getByRole("region", { name: "Channel message history" }),
       ).toHaveCount(0);
-      await button(
-        page,
-        destination === "Back/Forward" ? "Go back" : "Messages",
-      )
-        .first()
-        .click();
+      if (destination === "Back/Forward") await button(page, "Go back").click();
+      else await openPage(page, "Messages");
     };
     await group.locator("summary").click();
     await expect(group).not.toHaveAttribute("open");
@@ -677,7 +671,7 @@ test("rail loads relay-owned image icons for inactive communities without acquir
 });
 
 // Same-page navigation must update the remembered selection without a remount.
-test("Messages reselects the latest sidebar channel and keyboard page buttons focus main", async ({
+test("Messages reselects the latest sidebar channel and keyboard page search focuses main", async ({
   page,
   app,
 }) => {
@@ -688,13 +682,18 @@ test("Messages reselects the latest sidebar channel and keyboard page buttons fo
     exact: true,
   });
   await expect(composer).toBeVisible();
-  const messages = page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Messages", exact: true });
-  await messages.focus();
-  await messages.press("Enter");
+  await button(page, "Search Buzz").focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  const search = dialog.getByRole("combobox", { name: "Search Buzz" });
+  await expect(search).toBeFocused();
+  await search.pressSequentially("Messages");
+  await search.press("ArrowDown");
+  await expect(
+    dialog.getByRole("option", { name: "Messages", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await search.press("Enter");
   await expect(composer).toBeVisible();
-  await expect(messages).toHaveAttribute("aria-current", "page");
   await expect(page.locator('button[data-channel-id="beta"]')).toHaveAttribute(
     "aria-current",
     "page",

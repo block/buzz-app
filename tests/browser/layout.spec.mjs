@@ -1,4 +1,4 @@
-import { openPage } from "./navigation.mjs";
+import { openPage, pageChoices } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
 
@@ -24,6 +24,12 @@ async function expectNonPaging(page, app) {
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
+// Approved primary sidebar destinations; other pages open through header search.
+const destinationTitles = ["Inbox", "Bestie", "Agents"];
+const sidebarDestinations = (page, options = {}) =>
+  page
+    .getByRole("complementary", { name: "Channel sidebar", ...options })
+    .getByRole("button", { name: /^(Inbox|Bestie|Agents)$/, ...options });
 const box = async (locator) => {
   const bounds = await locator.boundingBox();
   expect(bounds).not.toBeNull();
@@ -74,35 +80,40 @@ async function shellFits(page, width) {
   const disclosure = button(page, "Show navigation");
   const collapsed = await disclosure.isVisible();
   if (collapsed) await disclosure.click();
-  const pages = await box(
-    page.getByRole("navigation", { name: "Pages", exact: true }),
-  );
+  const destinations = sidebarDestinations(page);
+  await expect(destinations).toHaveText(destinationTitles);
   const sidebar = await box(
     page.getByRole("complementary", { name: "Channel sidebar" }),
   );
-
-  expect(pages.x).toBeGreaterThanOrEqual(sidebar.x);
-  expect(pages.x + pages.width).toBeLessThanOrEqual(sidebar.x + sidebar.width);
+  const first = await box(destinations.first());
+  const last = await box(destinations.last());
+  for (const destination of [first, last]) {
+    expect(destination.x).toBeGreaterThanOrEqual(sidebar.x);
+    expect(destination.x + destination.width).toBeLessThanOrEqual(
+      sidebar.x + sidebar.width,
+    );
+  }
   const channels = page.getByRole("navigation", {
     name: "Subscribed channels",
   });
-  if (await channels.count()) {
-    const channelBox = await box(channels);
-    expect(pages.y + pages.height).toBeLessThanOrEqual(channelBox.y);
-    expect(channelBox.height).toBeGreaterThan(40);
+  const section = channels.locator("[data-sidebar-section]").first();
+  if (await section.count()) {
+    // Primary destinations lead the roster rather than overlapping its sections.
+    expect(last.y + last.height).toBeLessThanOrEqual((await box(section)).y);
+    expect((await box(channels)).height).toBeGreaterThan(40);
   }
-  // At short heights the page list scrolls independently, not over the channels.
-  const pageList = page.getByRole("navigation", { name: "Pages", exact: true });
-  const lastPage = pageList.getByRole("button").last();
-  await lastPage.scrollIntoViewIfNeeded();
-  await expect(lastPage).toBeInViewport();
-  await pageList.evaluate((element) => {
-    element.scrollTop = 0;
-  });
+  // At short heights destinations scroll with the roster and remain reachable.
+  await destinations.last().scrollIntoViewIfNeeded();
+  await expect(destinations.last()).toBeInViewport();
+  if (await channels.count())
+    await channels.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+  // The header keeps its launchers; sidebar destinations are not duplicated there.
   await expect(
     page
       .locator(".shell-header")
-      .getByRole("navigation", { name: "Pages", exact: true }),
+      .getByRole("button", { name: /^(Inbox|Agents)$/, includeHidden: true }),
   ).toHaveCount(0);
   const actions = await box(page.locator(".shell-actions"));
   const communities = await box(
@@ -114,7 +125,8 @@ async function shellFits(page, width) {
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
     .toBe(width);
   if (width > 700) {
-    expect(communities.x + communities.width).toBeLessThan(sidebar.x);
+    // The compact rail meets the sidebar edge without overlapping it.
+    expect(communities.x + communities.width).toBeLessThanOrEqual(sidebar.x);
   }
   if (collapsed) await button(page, "Hide navigation").click();
 }
@@ -178,8 +190,8 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
   const rail = await box(
     page.getByRole("navigation", { name: "Communities", exact: true }),
   );
-  near(rail.width, 56);
-  near(sidebar.x, rail.x + rail.width + 16);
+  near(rail.width, 48);
+  near(sidebar.x, rail.x + rail.width);
   near(before.x - sidebar.x - sidebar.width, 8);
   near(before.y, 56);
   near(before.height, 760);
@@ -284,16 +296,17 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
   near(narrow.width, narrowConversation.width);
   await button(page, "Close channel panel").click();
   await expect(composer).toBeInViewport();
-  await button(page, "Search Buzz").click();
-  await page
-    .getByRole("dialog", { name: "Search Buzz" })
-    .getByRole("option", { name: "Projects", exact: true })
-    .click();
+  await openPage(page, "Projects");
+  // Search selection owns the page change; no sidebar destination remains current.
   await expect(
-    page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Projects" }),
-  ).toHaveAttribute("aria-current", "page");
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("#main-content")).toBeFocused();
+  const hiddenDestinations = sidebarDestinations(page, { includeHidden: true });
+  await expect(hiddenDestinations).toHaveText(destinationTitles);
+  await expect(
+    hiddenDestinations.and(page.locator("[aria-current]")),
+  ).toHaveCount(0);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
@@ -306,25 +319,25 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
     name: "Enable Projects",
     exact: true,
   });
+  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  const expectProjectsChoice = async (count) => {
+    const choices = await pageChoices(page);
+    // Messages proves the Pages group rendered before counting Projects.
+    await expect(
+      choices.getByRole("option", { name: "Messages", exact: true }),
+    ).toBeVisible();
+    await expect(
+      choices.getByRole("option", { name: "Projects", exact: true }),
+    ).toHaveCount(count);
+    await page.keyboard.press("Escape");
+    await expect(search).toHaveCount(0);
+  };
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
-  await expect(
-    page
-      .getByRole("navigation", {
-        name: "Pages",
-        exact: true,
-        includeHidden: true,
-      })
-      .getByRole("button", { name: "Projects", includeHidden: true }),
-  ).toHaveCount(0);
+  await expectProjectsChoice(0);
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "true");
-  await button(page, "Show navigation").click();
-  await expect(
-    page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Projects" }),
-  ).toBeVisible();
+  await expectProjectsChoice(1);
 });
 
 test("narrow link panels begin after the rendered sidebar", async ({
@@ -742,7 +755,7 @@ todosOverlapTest(
     await expect(todos).toHaveCount(0); // Settings intentionally retires the drawer.
     await button(page, "Close channel settings").click();
     await expect(linked).toBeVisible();
-    await button(page, "Bestie").click();
+    await companionLauncher(page, "Bestie").click();
     await expect(bestie).toBeVisible();
     await expect(linked).toBeVisible();
     near(
@@ -856,17 +869,25 @@ test("Projects directory fits the workspace and page navigation survives plugin 
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
-  // Plugin ordering remains observable while narrow Settings collapses navigation.
-  const nav = page.getByRole("navigation", {
-    name: "Pages",
-    exact: true,
-    includeHidden: true,
-  });
+  // Header search owns page navigation, including while narrow Settings
+  // collapses the sidebar; its Pages group must preserve plugin ordering.
+  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const titles = ["Messages", "Projects", "Agents", "Sessions", "Workflows"];
-  await expect(nav.getByRole("button", { includeHidden: true })).toHaveText(
-    titles,
-  );
-  await nav.getByRole("button", { name: "Projects", exact: true }).click();
+  const expectPageOrder = async (expected) => {
+    const choices = await pageChoices(page);
+    await expect(choices.getByRole("option")).toHaveText([
+      ...expected,
+      "Settings",
+    ]);
+    return choices;
+  };
+  const closeSearch = async () => {
+    await page.keyboard.press("Escape");
+    await expect(search).toHaveCount(0);
+  };
+  await (await expectPageOrder(titles))
+    .getByRole("option", { name: "Projects", exact: true })
+    .click();
   const surface = page.getByRole("region", { name: "Projects", exact: true });
   const title = surface.getByRole("heading", {
     name: "Projects",
@@ -924,27 +945,15 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     exact: true,
   });
   await projects.click();
-  await expect(nav.getByRole("button", { includeHidden: true })).toHaveText([
-    "Messages",
-    "Agents",
-    "Sessions",
-    "Workflows",
-  ]);
+  await expect(projects).toHaveAttribute("aria-checked", "false");
+  await expectPageOrder(["Messages", "Agents", "Sessions", "Workflows"]);
+  await closeSearch();
   await projects.click();
-  await expect(nav.getByRole("button", { includeHidden: true })).toHaveText(
-    titles,
-  );
+  await expect(projects).toHaveAttribute("aria-checked", "true");
   // Re-enabled Projects registered last; navigation surfaces must still sort it.
-  await button(page, "Search Buzz").click();
-  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
-  const pageResults = search.locator("section").filter({
-    has: page.getByRole("heading", { name: "Pages", exact: true }),
-  });
-  await expect(pageResults.getByRole("option")).toHaveText([
-    ...titles,
-    "Settings",
-  ]);
-  await search.getByRole("option", { name: "Projects", exact: true }).click();
+  await (await expectPageOrder(titles))
+    .getByRole("option", { name: "Projects", exact: true })
+    .click();
   await expect(title).toBeVisible();
 });
 
@@ -966,7 +975,7 @@ sidebarActions(
       name: "Bestie",
       exact: true,
     });
-    await button(page, "Bestie").click();
+    await companionLauncher(page, "Bestie").click();
     await expect(bestie).toBeVisible();
     const alpha = page.locator('button[data-channel-id="alpha"]');
     for (const [index, action] of [
@@ -991,7 +1000,9 @@ sidebarActions(
         const sidebar = page.getByRole("navigation", {
           name: "Subscribed channels",
         });
-        await sidebar.locator("summary", { hasText: /^Messages$/ }).hover();
+        await sidebar
+          .locator("summary", { hasText: /^Direct messages$/ })
+          .hover();
         await sidebar
           .getByRole("button", { name: "New message", exact: true })
           .click();
@@ -1012,7 +1023,7 @@ sidebarActions(
         ).toBeVisible();
       }
       await expect(panel(page)).toHaveCount(0);
-      await expect(button(page, "Bestie")).toHaveAttribute(
+      await expect(companionLauncher(page, "Bestie")).toHaveAttribute(
         "aria-expanded",
         "true",
       );

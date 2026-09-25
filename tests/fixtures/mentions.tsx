@@ -40,6 +40,10 @@ const naming = new URLSearchParams(location.search).has("identity-names");
 let colliding = false;
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
 const testControls = new URLSearchParams(location.search).has("test-controls");
+const stream = new URLSearchParams(location.search).has("stream");
+const searches: string[] = [];
+let searchGate: Promise<void> | undefined;
+let releaseSearch = () => {};
 // Optional visual preview: real GIF search, with messages still local to this fixture.
 const gifRelay = new URLSearchParams(location.search).get("gif-community");
 const gifCommunity = gifRelay ? relayOrigin(gifRelay) : undefined;
@@ -92,9 +96,20 @@ const owner = createRelaySession(
       try {
         if (filters.some((filter) => filter.kinds?.includes(0)))
           await profileGate;
+        const search = filters.find((filter) => filter.search)?.search;
+        if (search !== undefined) {
+          searches.push(search);
+          await searchGate;
+        }
         const events = [
           roster(relay, "c", members, time),
-          metadata(relay, "c", "General"),
+          metadata(
+            relay,
+            "c",
+            "General",
+            undefined,
+            stream ? [["t", "stream"]] : [],
+          ),
           roster(relay, "other", [viewer.pubkey], time),
           metadata(relay, "other", "Other"),
           profile(viewer, { name: "Viewer" }),
@@ -110,7 +125,15 @@ const owner = createRelaySession(
           ...publications,
         ];
         return events.filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
+          filters.some((filter) =>
+            filter.search === undefined
+              ? matchesEvent(event, filter)
+              : // Name-prefix directory search, like the relay's prefix mode.
+                event.kind === 0 &&
+                String(JSON.parse(event.content).name ?? "")
+                  .toLowerCase()
+                  .startsWith(filter.search.toLowerCase()),
+          ),
         );
       } finally {
         pendingReads--;
@@ -208,6 +231,16 @@ Object.assign(window, {
     releaseProfiles: () => releaseProfiles(),
     libraryReads: () => libraryReads,
     reads: () => ({ kinds: reads, pending: pendingReads }),
+    searches: () => [...searches],
+    holdSearches() {
+      searchGate = new Promise((resolve) => {
+        releaseSearch = resolve;
+      });
+    },
+    releaseSearches() {
+      searchGate = undefined;
+      releaseSearch();
+    },
     setLibraryAgent(included: boolean) {
       libraryIncludesFirst = included;
       return owner.session.agentLibrary.refresh();

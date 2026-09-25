@@ -1083,3 +1083,53 @@ it("archived identities leave completion and return on unarchive; the viewer is 
   expect(labels()).toEqual(["Member"]);
   test.library.dispose();
 });
+
+it("closes prose after an unknown name without status or recovery, and skips searches a complete empty prefix refutes", async () => {
+  const t = setup();
+  const people = vi.fn(async (query: string) => ({
+    people: query.startsWith("Ou")
+      ? [{ pubkey: "e".repeat(64), name: "Outside" }]
+      : [],
+    hasMore: false,
+  }));
+  const uncached = new Map();
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    profiles: { ...t.session.profiles, snapshot: () => uncached },
+  };
+  const publish = vi.fn();
+  const last = () => publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const complete = (query: string) => (
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{
+        revision: 1,
+        text: `@${query}`,
+        start: query.length + 1,
+        end: query.length + 1,
+      }}
+      query={{ start: 0, end: query.length + 1, query }}
+      publish={publish}
+    />
+  );
+  const view = render(complete("Zed"));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(last()?.retry).toBeDefined());
+  for (const prose of ["Zed ", "Zed is", "Zed is typing"]) {
+    view.rerender(complete(prose));
+    await waitFor(() => expect(last()).toEqual({ items: [] }));
+  }
+  expect(people).toHaveBeenCalledTimes(1);
+  view.rerender(complete("Out"));
+  await waitFor(() =>
+    expect(people).toHaveBeenLastCalledWith("Out", 1, expect.any(AbortSignal)),
+  );
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Outside"]),
+  );
+  view.rerender(complete("Outside "));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(3));
+});

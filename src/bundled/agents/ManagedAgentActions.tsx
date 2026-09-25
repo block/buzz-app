@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   canStopAgent,
   agentLaunchBlock,
@@ -14,13 +14,24 @@ export function ManagedAgentActions({
   state,
   control,
   imported,
+  onMessage,
 }: {
   agent: AgentView;
   state: AgentControlState;
   control: AgentControl;
   imported: boolean;
+  onMessage?: ((signal: AbortSignal) => Promise<void>) | undefined;
 }) {
   const details = useRef<HTMLDivElement>(null);
+  const messageAttempt = useRef<AbortController>(undefined);
+  const [openingMessage, setOpeningMessage] = useState(false);
+  const [messageError, setMessageError] = useState("");
+  useEffect(
+    () => () => {
+      messageAttempt.current?.abort();
+    },
+    [],
+  );
   useEffect(() => {
     if (imported) {
       details.current?.scrollIntoView?.({ block: "nearest" });
@@ -30,6 +41,26 @@ export function ManagedAgentActions({
   const startBlock = agentLaunchBlock(state, agent);
   const act = (action: "start" | "stop") => {
     void control.action(agent.id, action).catch(() => {});
+  };
+  const message = async () => {
+    if (!onMessage || messageAttempt.current) return;
+    const controller = new AbortController();
+    messageAttempt.current = controller;
+    setOpeningMessage(true);
+    setMessageError("");
+    try {
+      await onMessage(controller.signal);
+    } catch (reason) {
+      if (!controller.signal.aborted)
+        setMessageError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not open the conversation. Try again.",
+        );
+    } finally {
+      messageAttempt.current = undefined;
+      if (!controller.signal.aborted) setOpeningMessage(false);
+    }
   };
   return (
     <div ref={details} tabIndex={-1} className="flex flex-col gap-4">
@@ -73,6 +104,16 @@ export function ManagedAgentActions({
         </div>
       )}
       <div className="flex flex-wrap gap-2">
+        {onMessage && (
+          <Button
+            variant="primary"
+            size="compact"
+            loading={openingMessage}
+            onClick={() => void message()}
+          >
+            Message
+          </Button>
+        )}
         {agent.status !== "running" && (
           <Button
             variant="primary"
@@ -91,6 +132,11 @@ export function ManagedAgentActions({
           Stop
         </Button>
       </div>
+      {messageError && (
+        <p role="alert" className="text-body-sm">
+          {messageError}
+        </p>
+      )}
       {startBlock && agent.status !== "running" && (
         <p className="text-body-sm text-secondary">{startBlock}</p>
       )}

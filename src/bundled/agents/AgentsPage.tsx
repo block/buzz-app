@@ -133,6 +133,7 @@ export function AgentsPage({
                       importedId={importedId}
                       control={control}
                       connection={connection}
+                      {...(open ? { open } : {})}
                     />
                   )
                 }
@@ -160,6 +161,7 @@ function ManagedAgents({
   importedId,
   control,
   connection,
+  open,
   label,
 }: {
   label(agent: AgentView): string;
@@ -170,8 +172,46 @@ function ManagedAgents({
   importedId: string | null;
   control: AgentControl;
   connection: RelaySnapshot;
+  open?: (
+    target: OpenTarget,
+    options?: { replace?: boolean },
+  ) => Promise<OpenResult>;
 }) {
   const library = connection.session.agentLibrary;
+  let communityOrigin: string | undefined;
+  if (
+    connection.scope &&
+    connection.viewer &&
+    connection.scope.endsWith(`:${connection.viewer}`)
+  ) {
+    try {
+      communityOrigin = relayOrigin(
+        connection.scope.slice(0, -(connection.viewer.length + 1)),
+      );
+    } catch {
+      // This session has no usable navigation scope.
+    }
+  }
+  const viewer = connection.viewer;
+  const messageAgent =
+    connection.session.directMessages.available &&
+    viewer &&
+    communityOrigin &&
+    open
+      ? async (pubkey: string, signal: AbortSignal) => {
+          const channelId = await connection.session.directMessages.open(
+            [pubkey],
+            signal,
+          );
+          signal.throwIfAborted();
+          void open({
+            version: 1,
+            kind: "conversation",
+            channelId,
+            scope: { viewer, communityOrigin },
+          });
+        }
+      : undefined;
   const snapshot = useSyncExternalStore(
     library.subscribe,
     library.snapshot,
@@ -217,6 +257,11 @@ function ManagedAgents({
                 state={state}
                 control={control}
                 imported={agent.id === importedId}
+                onMessage={
+                  messageAgent
+                    ? (signal) => messageAgent(agent.pubkey, signal)
+                    : undefined
+                }
               />
             </AgentCard>
           );

@@ -72,7 +72,7 @@ function setup(
     media: () => undefined,
   });
   disposals.push(() => owned.dispose());
-  const session =
+  const baseSession =
     mode === "archived"
       ? {
           ...owned.session,
@@ -82,6 +82,20 @@ function setup(
           },
         }
       : owned.session;
+  const directMessageOpen = vi.fn(
+    async (_pubkeys: readonly string[], _signal: AbortSignal) => "agent-dm",
+  );
+  const session =
+    mode === "connected"
+      ? {
+          ...baseSession,
+          directMessages: {
+            ...baseSession.directMessages,
+            available: true,
+            open: directMessageOpen,
+          },
+        }
+      : baseSession;
   let snapshot: RelaySnapshot = {
     status:
       mode === "disconnected"
@@ -128,6 +142,7 @@ function setup(
     f,
     read,
     control,
+    directMessageOpen,
     changeScope(scope: string, generation: number) {
       snapshot = { status: "ready", scope, generation, session };
       for (const listener of listeners) listener();
@@ -144,6 +159,62 @@ function setup(
     },
   };
 }
+it("starts a direct conversation with the selected managed agent", async () => {
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const { f, directMessageOpen } = setup(
+    "connected",
+    undefined,
+    undefined,
+    open,
+  );
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+
+  fireEvent.click(within(card).getByRole("button", { name: "Message" }));
+
+  await waitFor(() =>
+    expect(directMessageOpen).toHaveBeenCalledWith(
+      [f.agent.pubkey],
+      expect.any(AbortSignal),
+    ),
+  );
+  await waitFor(() =>
+    expect(open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "conversation",
+      channelId: "agent-dm",
+      scope: {
+        viewer: "de".repeat(32),
+        communityOrigin: "https://relay.example.test",
+      },
+    }),
+  );
+});
+
+it("reports a direct-message failure and allows a retry", async () => {
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const { directMessageOpen } = setup("connected", undefined, undefined, open);
+  directMessageOpen
+    .mockRejectedValueOnce(new Error("Relay refused the DM."))
+    .mockResolvedValueOnce("agent-dm");
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+
+  fireEvent.click(within(card).getByRole("button", { name: "Message" }));
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
+    "Relay refused the DM.",
+  );
+  expect(open).not.toHaveBeenCalled();
+
+  fireEvent.click(within(card).getByRole("button", { name: "Message" }));
+  await waitFor(() => expect(open).toHaveBeenCalledOnce());
+  expect(within(card).queryByRole("alert")).toBeNull();
+});
+
 it("shows one managed card per exact destination and keeps unimported templates out of My agents", async () => {
   const { f } = setup();
   const cards = await screen.findAllByRole("article", {

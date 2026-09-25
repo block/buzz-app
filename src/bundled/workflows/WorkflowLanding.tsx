@@ -1,5 +1,11 @@
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type {
   WorkflowCapability,
@@ -94,7 +100,10 @@ function useLandingDefinitions(
   refreshRequest: number,
   retryRequest: number,
   operationRefreshKey: string,
+  saveReadback: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined,
 ) {
+  // Mount already reads current definitions; only consume subsequent notifications.
+  const observedReadback = useRef(saveReadback);
   const store = useMemo(() => {
     let snapshots: Readonly<Record<string, DefinitionsSnapshot>> = {};
     let paused = false;
@@ -331,6 +340,21 @@ function useLandingDefinitions(
         true,
       );
   }, [operationRefreshKey, store]);
+  useEffect(() => {
+    // The receipt-triggered read may finish before the saved head is visible.
+    // Verified editor readback must also invalidate the landing’s copied result.
+    if (observedReadback.current === saveReadback) return;
+    observedReadback.current = saveReadback;
+    if (
+      saveReadback &&
+      !store
+        .snapshot()
+        .snapshots[saveReadback.channelId]?.data.items.some(
+          (definition) => definition.revision === saveReadback.revision,
+        )
+    )
+      store.refresh([saveReadback.channelId], true);
+  }, [saveReadback, store]);
   return useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
 }
 
@@ -605,6 +629,7 @@ export function WorkflowLanding({
   capability,
   channels,
   refreshRequest,
+  saveReadback,
   viewer,
   onCreate,
   onOpen,
@@ -612,6 +637,7 @@ export function WorkflowLanding({
   capability: WorkflowCapability;
   channels: readonly ChannelSummary[];
   refreshRequest: number;
+  saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
   viewer: string;
   onCreate: () => void;
   onOpen: (
@@ -643,6 +669,7 @@ export function WorkflowLanding({
     refreshRequest,
     retryRequest,
     operationRefreshKey,
+    saveReadback,
   );
   return (
     <>

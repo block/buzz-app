@@ -1600,81 +1600,115 @@ test("narrow inspector traps focus and dismisses above its editor", async ({
 });
 
 // Real session → save outcome → both modal and landing readback owners. The
-// definition is stored before OK, matching a relay that commits before replying.
-// This catches revision-key remounts burying a consumed one-time secret.
-test("create readback keeps the secret above the editor and refreshes its landing card", async ({
-  page,
-  browserName,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
-  const editor = editorControls(page);
-  const { button } = editor;
-  await button("Open Fixture A helper").waitFor();
-  await button("New workflow").click();
-  await page
-    .getByRole("option", { name: "First channel", exact: true })
-    .click();
-  await page.getByRole("combobox", { name: "Trigger", exact: true }).click();
-  await page.getByRole("option", { name: "Webhook", exact: true }).click();
-  await editor.closeInspector();
-  await editor.rename("Session readback helper");
-  await editor.primary("Add step").click();
-  await expect(button("Edit step 1: Send Message")).toBeFocused();
-  await editor.message.fill("Created through the real session");
-  await editor.closeInspector();
-  await editor.tab("YAML").click();
-  const submitted = await editor.yaml.inputValue();
-  await editor.primary("Create workflow").focus();
-  await page.keyboard.press("Enter");
-  try {
-    await expect
-      .poll(() =>
-        page.evaluate(() => window.workflowSessionFixture.publications()),
-      )
-      .toBe(1);
-    await expect(button("Creating…")).toBeFocused();
-    await expect(button("Creating…")).toBeDisabled();
-    await page.evaluate(() => window.workflowSessionFixture.readback());
-  } finally {
-    await page.evaluate(() => window.workflowSessionFixture.settleSave());
-  }
-  const secret = page.getByRole("dialog", { name: "Webhook ready" });
-  await expect(secret).toBeVisible();
-  await expect(secret.getByTestId("webhook-secret")).toHaveText("•".repeat(24));
-  await expect(
-    page.getByRole("dialog", { name: "Edit workflow", includeHidden: true }),
-  ).toHaveCount(1);
-  await expect(page.getByRole("dialog", { name: "Edit workflow" })).toHaveCount(
-    0,
-  );
-  const tab =
-    browserName === "webkit" && process.platform === "darwin"
-      ? "Alt+Tab"
-      : "Tab";
-  await secret.getByRole("button", { name: "Continue", exact: true }).focus();
-  for (let index = 0; index < 8; index++) {
-    await page.keyboard.press(tab);
-    await expect
-      .poll(() =>
-        secret.evaluate((node) => node.contains(document.activeElement)),
-      )
-      .toBe(true);
-  }
-  await secret.getByRole("button", { name: "Reveal webhook secret" }).click();
-  await expect(secret.getByTestId("webhook-secret")).toHaveText(
-    "fixture-late-webhook-secret",
-  );
-  await secret.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(secret).toHaveCount(0);
-  await expect(button("Save changes")).toBeFocused();
-  await button("Close editor").click();
-  await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  // No manual Refresh. A successful save must update the retained landing.
-  await button("Open Session readback helper").click();
-  await editor.tab("YAML").click();
-  await expect(editor.yaml).toHaveValue(submitted);
-  expect(
-    await page.evaluate(() => window.workflowSessionFixture.publications()),
-  ).toBe(1);
-});
+// receipt and definition can arrive in either order. This exercises the real
+// independent read owners plus modal stacking/focus during save recovery.
+for (const lateReadback of [false, true]) {
+  test(`create readback keeps the secret above the editor and refreshes its landing card (${lateReadback ? "receipt first" : "definition first"})`, async ({
+    page,
+    browserName,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(
+      url.replace("/fixture.html", "/session-fixture.html?writes"),
+    );
+    const editor = editorControls(page);
+    const { button } = editor;
+    await button("Open Fixture A helper").waitFor();
+    await button("New workflow").click();
+    await page
+      .getByRole("option", { name: "First channel", exact: true })
+      .click();
+    await page.getByRole("combobox", { name: "Trigger", exact: true }).click();
+    await page.getByRole("option", { name: "Webhook", exact: true }).click();
+    await editor.closeInspector();
+    await editor.rename("Session readback helper");
+    await editor.primary("Add step").click();
+    await expect(button("Edit step 1: Send Message")).toBeFocused();
+    await editor.message.fill("Created through the real session");
+    await editor.closeInspector();
+    await editor.tab("YAML").click();
+    const submitted = await editor.yaml.inputValue();
+    await editor.primary("Create workflow").focus();
+    await page.keyboard.press("Enter");
+    try {
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.workflowSessionFixture.publications()),
+        )
+        .toBe(1);
+      await expect(button("Creating…")).toBeFocused();
+      await expect(button("Creating…")).toBeDisabled();
+      if (!lateReadback)
+        await page.evaluate(() => window.workflowSessionFixture.readback());
+    } finally {
+      await page.evaluate(() => window.workflowSessionFixture.settleSave());
+    }
+    const secret = page.getByRole("dialog", { name: "Webhook ready" });
+    await expect(secret).toBeVisible();
+    await expect(secret.getByTestId("webhook-secret")).toHaveText(
+      "•".repeat(24),
+    );
+    await expect(
+      page.getByRole("dialog", {
+        name: lateReadback ? "Create workflow" : "Edit workflow",
+        includeHidden: true,
+      }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByRole("dialog", {
+        name: lateReadback ? "Create workflow" : "Edit workflow",
+      }),
+    ).toHaveCount(0);
+    const tab =
+      browserName === "webkit" && process.platform === "darwin"
+        ? "Alt+Tab"
+        : "Tab";
+    await secret.getByRole("button", { name: "Continue", exact: true }).focus();
+    for (let index = 0; index < 8; index++) {
+      await page.keyboard.press(tab);
+      await expect
+        .poll(() =>
+          secret.evaluate((node) => node.contains(document.activeElement)),
+        )
+        .toBe(true);
+    }
+    await secret.getByRole("button", { name: "Reveal webhook secret" }).click();
+    await expect(secret.getByTestId("webhook-secret")).toHaveText(
+      "fixture-late-webhook-secret",
+    );
+    await secret.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(secret).toHaveCount(0);
+    if (lateReadback) {
+      // Drain the receipt-triggered reads while the definition is still absent.
+      await expect(
+        page.getByText("Reading configurations…", { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByText(
+          "Workflow scan finished. Lists may be limited by the relay.",
+          { exact: true },
+        ),
+      ).toHaveCount(1);
+      await expect(
+        page.getByText(/Configuration saved; waiting for a readback/),
+      ).toBeVisible();
+      await page.evaluate(() => window.workflowSessionFixture.readback());
+      await button("Check saved configuration").click();
+      await expect(button("Save changes")).toBeEnabled();
+      await expect(
+        page.getByRole("dialog", { name: "Edit workflow" }),
+      ).toBeVisible();
+    } else {
+      await expect(button("Save changes")).toBeFocused();
+    }
+    await button("Close editor").click();
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    // No manual Refresh. A successful save must update the retained landing.
+    await button("Open Session readback helper").click();
+    await editor.tab("YAML").click();
+    await expect(editor.yaml).toHaveValue(submitted);
+    expect(
+      await page.evaluate(() => window.workflowSessionFixture.publications()),
+    ).toBe(1);
+  });
+}

@@ -78,6 +78,8 @@ export function WorkflowCommunity({
     "run" | "delete" | undefined
   >();
   const [refreshRequest, setRefreshRequest] = useState(0);
+  const [saveReadback, setSaveReadback] =
+    useState<Pick<WorkflowDefinition, "channelId" | "revision">>();
   const [createOpen, setCreateOpen] = useState(false);
   const channel = channels.channels.find((item) => item.id === selected);
   useEffect(() => {
@@ -183,6 +185,7 @@ export function WorkflowCommunity({
               openChannel(nextChannel.id, definition, action)
             }
             refreshRequest={refreshRequest}
+            saveReadback={saveReadback}
             viewer={viewer}
           />
         )}
@@ -198,6 +201,7 @@ export function WorkflowCommunity({
           channelName={channel.name}
           initialSelection={selectedDefinition}
           initialAction={initialAction}
+          onSaveReadback={setSaveReadback}
           viewer={viewer}
           {...(selectedDefinition === undefined
             ? {}

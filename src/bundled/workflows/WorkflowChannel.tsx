@@ -56,6 +56,7 @@ export function WorkflowChannel({
   initialAction,
   viewer,
   onDraftRiskChange,
+  onSaveReadback,
   onClose,
 }: {
   capability: WorkflowCapability;
@@ -65,6 +66,9 @@ export function WorkflowChannel({
   initialAction?: "run" | "delete" | undefined;
   viewer: string;
   onDraftRiskChange?: (atRisk: boolean) => void;
+  onSaveReadback?: (
+    saved: Pick<WorkflowDefinition, "channelId" | "revision">,
+  ) => void;
   onClose?: () => void;
 }) {
   const { snapshot, refresh } = useWorkflowView(
@@ -145,6 +149,10 @@ export function WorkflowChannel({
     const saved = exactSaveReadback(operation, snapshot.data.items);
     if (saved) {
       submission.current = null;
+      onSaveReadback?.({
+        channelId: saved.channelId,
+        revision: saved.revision,
+      });
       // Readback updates the draft, not its modal lifetime: remounting would
       // steal focus from a one-time secret dialog delivered by the same save.
       setDraft({
@@ -154,7 +162,7 @@ export function WorkflowChannel({
         initial: saved.yaml,
       });
     }
-  }, [operation, snapshot, draft]);
+  }, [operation, snapshot, draft, onSaveReadback]);
   // A cleared/unavailable view withdraws the saved private definition from display.
   // Unsaved user-authored drafts never become a second retained definition cache.
   useEffect(() => {

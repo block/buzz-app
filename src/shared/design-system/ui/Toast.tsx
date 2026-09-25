@@ -149,3 +149,15 @@ export function ToastNotice({
   }, [id, update, timeout]);
   return null;
 }
+
+/** Completed actions belong to the host stack, not the originating row's lifetime. */
+export function useToastNotification() {
+  const { add } = BaseToast.useToastManager<NoticeData>();
+  return (title: string, tone: "success" | "error") =>
+    add({
+      title,
+      type: tone,
+      timeout: 4000,
+      data: { dismissible: true, closeLabel: "Dismiss notification" },
+    });
+}

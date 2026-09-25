@@ -1,8 +1,10 @@
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
+import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
+import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { Button } from "../shared/design-system/ui/Button";
 import { Switch } from "../shared/design-system/ui/Switch";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import {
@@ -10,6 +12,7 @@ import {
   UserIcon,
   PaletteIcon,
   BellIcon,
+  RobotIcon,
   ChatCircleIcon,
   KeyboardIcon,
   WrenchIcon,
@@ -27,33 +30,24 @@ import type { ShortcutsService } from "../features/shortcuts/service";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
-import { MessageSettings } from "./MessageSettings";
+import { AgentSettings } from "./AgentSettings";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 
 type Section = { id: string; label: string; icon: typeof UserIcon };
 
-export const baseSettingsSections: Section[] = [
-  { id: "profile", label: "Profile", icon: UserIcon },
-  { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
+const appSections: readonly Section[] = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
-  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
-  { id: "messages", label: "Messages", icon: ChatCircleIcon },
   { id: "notifications", label: "Notifications", icon: BellIcon },
+  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
+  { id: "agents", label: "Agents", icon: RobotIcon },
+  { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
 ];
-
 // DEV alone is not enough: packaged desktop builds load a production bundle
 // from tauri://localhost, so the hostname check excludes them too.
 export const developerMode =
   import.meta.env.DEV &&
   /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
-
-export const settingsSections: Section[] = developerMode
-  ? [
-      ...baseSettingsSections,
-      { id: "developer", label: "Developer", icon: WrenchIcon },
-    ]
-  : baseSettingsSections;
 
 export function Settings({
   cards,
@@ -64,6 +58,7 @@ export function Settings({
   shortcutBindings,
   notifications,
   navigation,
+  onSection,
 }: {
   cards: SettingsCards;
   plugins: PluginManager;
@@ -75,27 +70,78 @@ export function Settings({
   navigation?:
     | import("../features/navigation/service").PageNavigation
     | undefined;
+  onSection?: (section: string) => void;
 }) {
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
-  const messageCards = contributed.filter((card) => !card.group);
-  const [chosen, setSelected] = useState("profile");
-  const selected =
-    settingsSections.some((section) => section.id === chosen) ||
-    contributed.some((card) => card.group && card.key === chosen)
-      ? chosen
-      : "profile";
+  const client = useSyncExternalStore(
+    communities.subscribe,
+    communities.snapshot,
+  );
+  const selectedCommunity = client.memberships.find(
+    (membership) => membership.id === client.selected,
+  );
+  const communityCards = useMemo(
+    () => contributed.filter((card) => !card.group),
+    [contributed],
+  );
+  const contributedGroups = useMemo(
+    () =>
+      [...new Set(contributed.flatMap((card) => card.group ?? []))].map(
+        (label) => ({
+          label,
+          cards: contributed.filter((card) => card.group === label),
+        }),
+      ),
+    [contributed],
+  );
+  const communitySections: readonly Section[] = useMemo(
+    () =>
+      selectedCommunity
+        ? [
+            { id: "profile", label: "Profile", icon: UserIcon },
+            ...communityCards.map((card) => ({
+              id: card.key,
+              label: card.title,
+              icon: ChatCircleIcon,
+            })),
+          ]
+        : [],
+    [communityCards, selectedCommunity],
+  );
+  const visibleSections = useMemo(
+    () => [
+      ...communitySections,
+      ...contributedGroups.flatMap((group) =>
+        group.cards.map((card) => ({
+          id: card.key,
+          label: card.title,
+          icon: ChatCircleIcon,
+        })),
+      ),
+      ...appSections,
+      ...(developerMode
+        ? [{ id: "developer", label: "Developer", icon: WrenchIcon }]
+        : []),
+    ],
+    [communitySections, contributedGroups],
+  );
+  const defaultSection = selectedCommunity ? "profile" : "appearance";
+  const [selected, setSelected] = useState(defaultSection);
   const requestedSection =
     navigation?.target.kind === "settings"
-      ? (navigation.target.section ?? "profile")
+      ? (navigation.target.section ?? defaultSection)
       : undefined;
   useEffect(() => {
     if (
       requestedSection &&
-      (settingsSections.some((section) => section.id === requestedSection) ||
-        contributed.some((card) => card.group && card.key === requestedSection))
+      visibleSections.some((section) => section.id === requestedSection)
     )
       setSelected(requestedSection);
-  }, [requestedSection, contributed]);
+    else if (!visibleSections.some((section) => section.id === selected)) {
+      setSelected(defaultSection);
+      if (requestedSection === selected) onSection?.(defaultSection);
+    }
+  }, [defaultSection, onSection, requestedSection, selected, visibleSections]);
   useEffect(() => {
     if (requestedSection === selected)
       navigation?.complete({ status: "opened" });
@@ -107,180 +153,276 @@ export function Settings({
   const externalPluginsPaused = ready?.externalPluginsPaused;
   return (
     <div className={styles.root}>
-      <Panel aria-label="Settings content">
-        <div className={styles.detail}>
-          <div hidden={selected !== "notifications"}>
-            <NotificationSettings
-              notifications={notifications}
-              active={selected === "notifications"}
-            />
-          </div>
-          <div hidden={selected !== "appearance"}>
-            <AppearanceSettings
-              appearance={appearance}
-              active={selected === "appearance"}
-            />
-          </div>
-          <div hidden={selected !== "shortcuts"}>
-            <ShortcutSettings
-              shortcuts={shortcuts}
-              bindings={shortcutBindings}
-              plugins={plugins}
-            />
-          </div>
-          <div hidden={selected !== "messages"}>
-            <MessageSettings active={selected === "messages"} />
-            {selected === "messages" &&
-              messageCards.map((card) => (
-                <OwnedContribution key={card.key} entry={card} registry={cards}>
-                  {(entry, active) => {
-                    const Card = entry.component;
-                    return <Card active={active} />;
-                  }}
-                </OwnedContribution>
-              ))}
-          </div>
-          {contributed.map(
-            (card) =>
-              card.group &&
-              selected === card.key && (
-                <OwnedContribution key={card.key} entry={card} registry={cards}>
-                  {(entry, active) => {
-                    const Card = entry.component;
-                    return <Card active={active} />;
-                  }}
-                </OwnedContribution>
-              ),
-          )}
-          <div hidden={selected !== "profile"}>
-            <ProfileSettings communities={communities} />
-          </div>
-          {developerMode && (
-            <div hidden={selected !== "developer"}>
-              <DeveloperSettings relay={communities.relay} />
+      <Panel aria-labelledby="settings-title">
+        <div className={styles.layout}>
+          <aside className={styles.sidebar}>
+            <div className={styles.sidebarHeader}>
+              <h1 id="settings-title" className="m-0 text-label">
+                Settings
+              </h1>
             </div>
-          )}
-          <div hidden={selected !== "plugins"}>
-            <section aria-labelledby="plugin-settings-title">
-              <h2 id="plugin-settings-title" className="mt-0 mb-6 text-label">
-                Plugins
-              </h2>
-              {catalog ? (
-                <PluginImport plugins={plugins} catalog={catalog} busy={busy} />
-              ) : configuration.status === "recovery" ? (
-                <RecoveryScreen plugins={plugins} />
-              ) : (
-                <p role="status">
-                  Plugin settings are unavailable. Profile and Appearance still
-                  work.
-                </p>
+            <nav aria-label="Settings sections" className={styles.navigation}>
+              {selectedCommunity && (
+                <NavigationSection label={selectedCommunity.name}>
+                  {communitySections.map(({ id, label, icon: Icon }) => (
+                    <NavigationItem
+                      label={label}
+                      icon={<Icon aria-hidden="true" size={18} />}
+                      selected={selected === id}
+                      type="button"
+                      key={id}
+                      aria-current={selected === id ? "page" : undefined}
+                      onClick={(event) => {
+                        event.currentTarget.focus();
+                        if (onSection) onSection(id);
+                        else setSelected(id);
+                      }}
+                    />
+                  ))}
+                </NavigationSection>
               )}
-              <div className="overflow-hidden">
-                <div>
-                  {externalPluginsPaused && (
-                    <p role="status" className="text-body-sm text-subtle">
-                      External plugins are paused for this launch. Your saved
-                      enabled settings are unchanged; you can still manage
-                      plugins here.
-                    </p>
-                  )}
-                  {selected === "plugins" && refreshError && (
-                    <ToastNotice
-                      title="Plugin settings couldn’t refresh"
-                      description={`Showing the last available configuration; retrying automatically. ${refreshError}`}
+              {contributedGroups.map((group) => (
+                <NavigationSection key={group.label} label={group.label}>
+                  {group.cards.map((card) => (
+                    <NavigationItem
+                      label={card.title}
+                      selected={selected === card.key}
+                      type="button"
+                      key={card.key}
+                      aria-current={selected === card.key ? "page" : undefined}
+                      onClick={(event) => {
+                        event.currentTarget.focus();
+                        if (onSection) onSection(card.key);
+                        else setSelected(card.key);
+                      }}
                     />
-                  )}
-                  {selected === "plugins" && error && (
-                    <ToastNotice
-                      title="Plugin change wasn’t confirmed"
-                      description={`Check the current settings before trying again. ${error}`}
-                      onDismiss={plugins.dismissError}
-                      closeLabel="Dismiss"
-                    />
-                  )}
-                </div>
-                <div className="divide-y divide-line">
-                  {catalog?.plugins.map((plugin) => {
-                    const id = plugin.manifest.id;
-                    const running = activation[id];
-                    const failure =
-                      plugin.error ??
-                      (running?.revision === plugin.revision
-                        ? running.error
-                        : null);
-                    return (
-                      <article
-                        className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
-                        key={id}
-                      >
-                        <div className="flex min-w-0 flex-1 items-center gap-3">
-                          <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-soft text-muted">
-                            <SquaresFourIcon aria-hidden="true" size={17} />
-                          </span>
-                          <div className="min-w-0">
-                            <h3 className="m-0 text-label font-medium">
-                              {plugin.manifest.name}
-                            </h3>
-                            {failure && (
-                              <p role="alert" className="error">
-                                {failure}
-                              </p>
+                  ))}
+                </NavigationSection>
+              ))}
+              <NavigationSection label="App">
+                {appSections.map(({ id, label, icon: Icon }) => (
+                  <NavigationItem
+                    label={label}
+                    icon={<Icon aria-hidden="true" size={18} />}
+                    selected={selected === id}
+                    type="button"
+                    key={id}
+                    aria-current={selected === id ? "page" : undefined}
+                    onClick={(event) => {
+                      event.currentTarget.focus();
+                      if (onSection) onSection(id);
+                      else setSelected(id);
+                    }}
+                  />
+                ))}
+              </NavigationSection>
+              {developerMode && (
+                <NavigationSection label="Development">
+                  <NavigationItem
+                    label="Developer"
+                    icon={<WrenchIcon aria-hidden="true" size={18} />}
+                    selected={selected === "developer"}
+                    type="button"
+                    aria-current={selected === "developer" ? "page" : undefined}
+                    onClick={(event) => {
+                      event.currentTarget.focus();
+                      if (onSection) onSection("developer");
+                      else setSelected("developer");
+                    }}
+                  />
+                </NavigationSection>
+              )}
+            </nav>
+          </aside>
+          <div className={styles.detail}>
+            <div hidden={selected !== "notifications"}>
+              <NotificationSettings
+                notifications={notifications}
+                active={selected === "notifications"}
+              />
+            </div>
+            <div hidden={selected !== "appearance"}>
+              <AppearanceSettings
+                appearance={appearance}
+                active={selected === "appearance"}
+              />
+            </div>
+            <div hidden={selected !== "shortcuts"}>
+              <ShortcutSettings
+                shortcuts={shortcuts}
+                bindings={shortcutBindings}
+                plugins={plugins}
+              />
+            </div>
+            <div hidden={selected !== "agents"}>
+              <AgentSettings active={selected === "agents"} />
+            </div>
+            {communityCards.map((card) => (
+              <div key={card.key} hidden={selected !== card.key}>
+                {selected === card.key && (
+                  <OwnedContribution entry={card} registry={cards}>
+                    {(entry, active) => {
+                      const Card = entry.component;
+                      return <Card active={active} />;
+                    }}
+                  </OwnedContribution>
+                )}
+              </div>
+            ))}
+            {contributedGroups.flatMap((group) =>
+              group.cards.map(
+                (card) =>
+                  selected === card.key && (
+                    <OwnedContribution
+                      key={card.key}
+                      entry={card}
+                      registry={cards}
+                    >
+                      {(entry, active) => {
+                        const Card = entry.component;
+                        return <Card active={active} />;
+                      }}
+                    </OwnedContribution>
+                  ),
+              ),
+            )}
+            <div hidden={selected !== "profile"}>
+              <ProfileSettings
+                communities={communities}
+                community={selectedCommunity}
+              />
+            </div>
+            {developerMode && (
+              <div hidden={selected !== "developer"}>
+                <DeveloperSettings relay={communities.relay} />
+              </div>
+            )}
+            <div hidden={selected !== "plugins"}>
+              <section aria-labelledby="plugin-settings-title">
+                <h2 id="plugin-settings-title" className="mt-0 mb-6 text-label">
+                  Plugins
+                </h2>
+                {catalog ? (
+                  <PluginImport
+                    plugins={plugins}
+                    catalog={catalog}
+                    busy={busy}
+                  />
+                ) : configuration.status === "recovery" ? (
+                  <RecoveryScreen plugins={plugins} />
+                ) : (
+                  <p role="status">
+                    Plugin settings are unavailable. Profile and Appearance
+                    still work.
+                  </p>
+                )}
+                <div className="overflow-hidden">
+                  <div>
+                    {externalPluginsPaused && (
+                      <p role="status" className="text-body-sm text-subtle">
+                        External plugins are paused for this launch. Your saved
+                        enabled settings are unchanged; you can still manage
+                        plugins here.
+                      </p>
+                    )}
+                    {selected === "plugins" && refreshError && (
+                      <ToastNotice
+                        title="Plugin settings couldn’t refresh"
+                        description={`Showing the last available configuration; retrying automatically. ${refreshError}`}
+                      />
+                    )}
+                    {selected === "plugins" && error && (
+                      <ToastNotice
+                        title="Plugin change wasn’t confirmed"
+                        description={`Check the current settings before trying again. ${error}`}
+                        onDismiss={plugins.dismissError}
+                        closeLabel="Dismiss"
+                      />
+                    )}
+                  </div>
+                  <div className="divide-y divide-line">
+                    {catalog?.plugins.map((plugin) => {
+                      const id = plugin.manifest.id;
+                      const running = activation[id];
+                      const failure =
+                        plugin.error ??
+                        (running?.revision === plugin.revision
+                          ? running.error
+                          : null);
+                      return (
+                        <article
+                          className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
+                          key={id}
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-3">
+                            <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-soft text-muted">
+                              <SquaresFourIcon aria-hidden="true" size={17} />
+                            </span>
+                            <div className="min-w-0">
+                              <h3 className="m-0 text-label font-medium">
+                                {plugin.manifest.name}
+                              </h3>
+                              {failure && (
+                                <p role="alert" className="error">
+                                  {failure}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="actions items-center">
+                            {/* Channels is required and has no enable/disable control. */}
+                            {id !== "buzz.channels" && (
+                              <Switch
+                                aria-label={`Enable ${plugin.manifest.name}`}
+                                checked={plugin.enabled}
+                                readOnly={busy}
+                                aria-disabled={busy}
+                                onClick={(event) => event.currentTarget.focus()}
+                                onCheckedChange={() => {
+                                  if (busy) return;
+                                  void plugins.change(
+                                    plugin.enabled ? "disable" : "enable",
+                                    id,
+                                  );
+                                }}
+                              />
+                            )}
+                            {plugin.previous && (
+                              <Button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => plugins.change("rollback", id)}
+                              >
+                                Roll back
+                              </Button>
+                            )}
+                            {plugin.reloadable && !plugin.enabled && (
+                              <Button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => plugins.reload(id)}
+                              >
+                                Reload
+                              </Button>
+                            )}
+                            {plugin.source === "external" && (
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                disabled={busy}
+                                onClick={() => plugins.change("remove", id)}
+                              >
+                                Delete
+                              </Button>
                             )}
                           </div>
-                        </div>
-                        <div className="actions items-center">
-                          {/* Channels is required and has no enable/disable control. */}
-                          {id !== "buzz.channels" && (
-                            <Switch
-                              aria-label={`Enable ${plugin.manifest.name}`}
-                              checked={plugin.enabled}
-                              readOnly={busy}
-                              aria-disabled={busy}
-                              onClick={(event) => event.currentTarget.focus()}
-                              onCheckedChange={() => {
-                                if (busy) return;
-                                void plugins.change(
-                                  plugin.enabled ? "disable" : "enable",
-                                  id,
-                                );
-                              }}
-                            />
-                          )}
-                          {plugin.previous && (
-                            <Button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => plugins.change("rollback", id)}
-                            >
-                              Roll back
-                            </Button>
-                          )}
-                          {plugin.reloadable && !plugin.enabled && (
-                            <Button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => plugins.reload(id)}
-                            >
-                              Reload
-                            </Button>
-                          )}
-                          {plugin.source === "external" && (
-                            <Button
-                              type="button"
-                              variant="destructive"
-                              disabled={busy}
-                              onClick={() => plugins.change("remove", id)}
-                            >
-                              Delete
-                            </Button>
-                          )}
-                        </div>
-                      </article>
-                    );
-                  })}
+                        </article>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            </section>
+              </section>
+            </div>
           </div>
         </div>
       </Panel>

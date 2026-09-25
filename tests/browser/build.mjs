@@ -15,6 +15,7 @@ export async function buildApp({ developmentReact, pluginFixtures }, use) {
   try {
     const config = {
       root,
+      mode: "production",
       configFile: false,
       envFile: false, // Never read the developer's live identity configuration.
       logLevel: "error",
@@ -33,6 +34,7 @@ export async function buildApp({ developmentReact, pluginFixtures }, use) {
           : []),
       ],
       define: {
+        ...(developmentReact ? { "import.meta.env.DEV": "true" } : {}),
         "import.meta.env.VITE_BUZZ_LIVE": '"1"',
         "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES":
           JSON.stringify(fixtureAliases),

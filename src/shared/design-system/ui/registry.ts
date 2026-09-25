@@ -308,6 +308,21 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["panel-header"],
   },
   {
+    slug: "preference-row",
+    name: "PreferenceRow",
+    purpose:
+      "A full-width on/off setting with aligned supporting text and a trailing switch.",
+    behavior:
+      "The visible label and optional description name the shared Switch control",
+    variants: ["label", "label with description", "disabled"],
+    status: "proposed",
+    collection: "components",
+    owner: "Buzz Settings",
+    source: "shared/design-system/ui/PreferenceRow.tsx",
+    baseUi: [],
+    composes: ["switch"],
+  },
+  {
     slug: "switch",
     name: "Switch",
     purpose: "A labelled setting that is on or off.",

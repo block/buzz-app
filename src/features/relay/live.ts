@@ -346,7 +346,7 @@ export function subscribeRelayTraffic(
       const scope = route.channelId
         ? { kinds: CHANNEL_KINDS, "#h": [route.channelId] }
         : route.id === "profiles"
-          ? { kinds: [0] }
+          ? { kinds: [0, 10100, 30177] }
           : route.id === "observer"
             ? { kinds: [OBSERVER_KIND], "#p": [viewer] }
             : { kinds: [44100, 44101], "#p": [viewer] };

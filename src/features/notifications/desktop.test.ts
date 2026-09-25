@@ -129,10 +129,10 @@ it("desktop settings explain OS sound and running-app exact clicks", async () =>
   expect(html).toContain("Desktop alerts");
   expect(html).toContain("Mentions");
   expect(html).toContain(
-    "Manage sound and permission in system notification settings",
+    "Manage app permissions and sounds in your system settings.",
   );
   expect(html).toContain(
-    "Desktop clicks bring Buzz forward and open the message or thread while Buzz is",
+    "Opening an alert takes you to its message or thread.",
   );
   expect(html).not.toContain("<span>Sound</span>");
   expect(html).not.toContain("Permission granted");

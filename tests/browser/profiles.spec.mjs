@@ -148,6 +148,34 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     panel.getByRole("img", { name: "Pinky avatar" }),
   ).toHaveAttribute("data-size", "fill");
   await expect(panel.getByText("Agent profile", { exact: true })).toBeVisible();
+  // Existing navigation journey also proves row hover/focus affordances and host toast wiring.
+  await expect(panel.getByRole("tab", { name: "Memories" })).toBeVisible();
+  const agentType = panel.getByRole("button", { name: /^Copy Agent type:/ });
+  await expect(agentType).toContainText("Codex");
+  const nip05 = panel.getByRole("button", { name: /^Copy NIP-05:/ });
+  await expect(nip05).toHaveText("NIP-05pinky@example.test");
+  await agentType.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(nip05).toBeFocused();
+  await expect(nip05.locator("[data-copied]")).toHaveCSS("opacity", "1");
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = async (value) =>
+      window.profileCopies.push(value);
+  });
+  await nip05.press("Enter");
+  await expect(page.getByText("Copied nip-05", { exact: true })).toBeVisible();
+  await expect(nip05.locator("[data-copied]")).toHaveAttribute(
+    "data-copied",
+    "true",
+  );
+  await agentType.click();
+  await panel.getByRole("button", { name: /^Copy Capabilities:/ }).click();
+  expect(await page.evaluate(() => window.profileCopies.slice(-3))).toEqual([
+    "pinky@example.test",
+    "codex-acp",
+    "code, review",
+  ]);
+
   await expect(panel.getByRole("tab", { name: "Memories" })).toBeVisible();
   await panel.getByRole("tab", { name: "Channels" }).click();
   await expect(panel.getByRole("region", { name: "Channels" })).toContainText(

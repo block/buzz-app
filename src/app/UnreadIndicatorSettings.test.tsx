@@ -41,7 +41,7 @@ it("requests permission only through the explicit Settings button and updates st
   const h = setup("default");
   await act(() => h.dock.refresh());
   expect(h.permission.mock.calls).toEqual([[false]]);
-  expect(screen.getByText(/not a message count/)).toBeInTheDocument();
+  expect(screen.getByText(/doesn’t show a message count/)).toBeInTheDocument();
   let resolve!: (permission: IndicatorPermission) => void;
   h.permission.mockImplementationOnce(
     () =>
@@ -63,15 +63,13 @@ it("requests permission only through the explicit Settings button and updates st
     resolve("enabled");
     await h.dock.refresh();
   });
-  expect(
-    screen.getByText("Dock badges are allowed by macOS."),
-  ).toBeInTheDocument();
+  expect(screen.getByText("Buzz can show Dock badges.")).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Allow notifications and badges" }),
   ).not.toBeInTheDocument();
 });
-it.each(["disabled", "denied", "unavailable"] as const)(
-  "never offers a request over %s",
+it.each(["disabled", "denied"] as const)(
+  "offers only a permission refresh over %s",
   async (permission) => {
     const h = setup(permission);
     await act(() => h.dock.refresh());
@@ -84,6 +82,16 @@ it.each(["disabled", "denied", "unavailable"] as const)(
     expect(h.permission.mock.calls).toEqual([[false], [false]]);
   },
 );
+
+it("shows no dead permission actions when Dock badges are unavailable", async () => {
+  const h = setup("unavailable");
+  await act(() => h.dock.refresh());
+  expect(
+    screen.getByText(/running Buzz from the development server/),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(h.permission.mock.calls).toEqual([[false]]);
+});
 
 it("offers missing-badge setup only as an explicit action", async () => {
   const h = setup("setup");

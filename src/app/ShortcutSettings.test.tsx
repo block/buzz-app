@@ -280,6 +280,7 @@ it("presents actual host registrations in navigation, text sizing, search/settin
             within(article).getByRole("heading", { level: 3 }).textContent,
         ),
     ).toEqual([
+      "Home",
       "Go back",
       "Go forward",
       "Increase text size",

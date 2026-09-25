@@ -8,7 +8,6 @@ import { useEffect, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
-import { SettingsSidebar } from "./SettingsSidebar";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
 import { useAppNavigation } from "./navigation";
@@ -19,6 +18,7 @@ import { pagePresentation, shellPresentation } from "./shell/presentation";
 import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
+import { communityDestination } from "../features/communities/destination";
 
 export function App({ services }: { services: AppServices }) {
   const { plugins } = services;
@@ -60,39 +60,20 @@ export function App({ services }: { services: AppServices }) {
     <ToastProvider>
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
-          sidebar={() =>
-            settings ? (
-              <SettingsSidebar
-                cards={services.settingsCards}
-                selected={
-                  route.target.kind === "settings"
-                    ? (route.target.section ?? "profile")
-                    : "profile"
-                }
-                onBack={route.leaveSettings}
-                onSection={(section) =>
-                  void services.navigation.open({
-                    version: 1,
-                    kind: "settings",
-                    section,
-                  })
-                }
-              />
-            ) : (
-              <ChannelSidebar
-                relay={services.relay}
-                navigator={services.navigation}
-                providers={services.channelTemplates}
-                target={route.target}
-                sessionsEnabled={route.pages.some(
-                  (page) => page.pluginId === "buzz.sessions",
-                )}
-                agentsEnabled={route.pages.some(
-                  (page) => page.key === "buzz.agents/agents",
-                )}
-              />
-            )
-          }
+          sidebar={() => (
+            <ChannelSidebar
+              relay={services.relay}
+              navigator={services.navigation}
+              providers={services.channelTemplates}
+              target={route.target}
+              sessionsEnabled={route.pages.some(
+                (page) => page.pluginId === "buzz.sessions",
+              )}
+              agentsEnabled={route.pages.some(
+                (page) => page.key === "buzz.agents/agents",
+              )}
+            />
+          )}
           navigationControls={
             <NavigationControls navigation={services.navigation} />
           }
@@ -152,6 +133,23 @@ export function App({ services }: { services: AppServices }) {
               shortcutBindings={services.shortcutBindings}
               notifications={services.notifications}
               navigation={route.request}
+              onSection={(section) => {
+                const client = services.communities.snapshot();
+                void services.navigation.open({
+                  version: 1,
+                  kind: "settings",
+                  section,
+                  ...(client.viewer && client.selected
+                    ? {
+                        scope: {
+                          viewer: client.viewer,
+                          communityOrigin: communityDestination(client.selected)
+                            .url,
+                        },
+                      }
+                    : { scope: null }),
+                });
+              }}
             />
           ) : route.waiting || startup === "loading" ? (
             <p role="status">Opening destination…</p>

@@ -725,6 +725,23 @@ export const test = base.extend({
         });
         return [];
       }
+      if (filter.kinds?.includes(10100)) {
+        expect(filter).toEqual({
+          kinds: [10100],
+          authors: [expect.stringMatching(/^[0-9a-f]{64}$/)],
+          limit: 1,
+        });
+        return [];
+      }
+      if (filter.kinds?.includes(30177)) {
+        expect(filter).toEqual({
+          kinds: [30177],
+          authors: [expect.stringMatching(/^[0-9a-f]{64}$/)],
+          "#d": [expect.stringMatching(/^[0-9a-f]{64}$/)],
+          limit: 1,
+        });
+        return [];
+      }
       if (filter.kinds?.includes(30315)) {
         expect(filter).toEqual({
           kinds: [30315],

@@ -210,7 +210,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     .poll(() => app.relay.hasRoute("primary", "observer"))
     .toBe(false);
   expect(app.relay.sockets).toHaveLength(sockets);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(region).toHaveCount(0);
 
@@ -220,7 +220,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await toggle.click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(agentEntry(page, first)).toBeVisible();
   await expect(agentEntry(page, second)).toHaveCount(0);
@@ -585,7 +585,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   await page
     .getByRole("switch", { name: "Enable Agent Activity", exact: true })
     .click();
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await page.locator('[data-channel-id="alpha"]').click();
   await avatar.click();
   await expect(profile).toBeVisible();

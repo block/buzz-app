@@ -84,8 +84,9 @@ it.each([
       document: b.host.document,
       matchMedia: b.host.matchMedia,
     });
+    const preference = parseColorModePreference(value);
     const mode =
-      value === "system" && systemDark ? "dark" : parseColorMode(value);
+      preference === "system" && systemDark ? "dark" : parseColorMode(value);
     expect(b.root.dataset.colorMode).toBe(mode);
     const app = createAppearance(b.host);
     expect(app.snapshot()).toEqual({

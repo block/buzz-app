@@ -1,3 +1,4 @@
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
@@ -106,10 +107,14 @@ it("real broker sorting preserves saved-section keys in transport confirmation a
   const signal = new AbortController().signal;
   h.heads.set(
     "channel-sort",
-    prepareSidebarSort(
-      [],
-      { group: "forums", mode: "recent", sectionIds: [] },
-      h.key,
+    (
+      await prepareSidebarSort(
+        [],
+        { group: "forums", mode: "recent", sectionIds: [] },
+        h.key,
+        createLocalSigningDelegate(h.key),
+        undefined,
+      )
     ).event,
   );
   expect(

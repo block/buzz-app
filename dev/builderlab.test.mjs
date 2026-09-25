@@ -6,6 +6,8 @@ import {
   createBuilderlab,
 } from "./builderlab.mjs";
 
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
+
 const challenge = {
   challenge_id: "0b7e3c1e-7a51-4c4a-9d3e-2f0b8a6c1d22",
   nonce: "a".repeat(43),
@@ -15,9 +17,13 @@ const challenge = {
 };
 const now = Date.parse("2029-12-31T23:59:00Z");
 
-it("signs the kind 24243 binding challenge with the desktop tag set", () => {
+it("signs the kind 24243 binding challenge with the desktop tag set", async () => {
   const key = generateSecretKey();
-  const event = bindingEvent(key, challenge, now);
+  const event = await bindingEvent(
+    createLocalSigningDelegate(key),
+    challenge,
+    now,
+  );
   expect(verifyEvent(event)).toBe(true);
   expect(event).toMatchObject({
     kind: 24243,
@@ -44,13 +50,17 @@ it.each([
   ["verification code", { verification_code: "12345a" }],
   ["origin", { origin: "https://evil.example" }],
   ["expiry", { expires_at: "2029-12-31T23:00:00Z" }],
-])("refuses to sign a challenge with an invalid %s", (_label, patch) => {
-  expect(() =>
-    bindingEvent(generateSecretKey(), { ...challenge, ...patch }, now),
-  ).toThrow("Invalid Nostr identity challenge");
+])("refuses to sign a challenge with an invalid %s", async (_label, patch) => {
+  await expect(
+    bindingEvent(
+      createLocalSigningDelegate(generateSecretKey()),
+      { ...challenge, ...patch },
+      now,
+    ),
+  ).rejects.toThrow("Invalid Nostr identity challenge");
 });
 
-function account(responses = {}) {
+function account(responses = {}, wrapSigner = (signer) => signer) {
   const requests = [];
   let opened;
   const fetch = async (url, init = {}) => {
@@ -74,9 +84,9 @@ function account(responses = {}) {
   const key = generateSecretKey();
   let signs = 0;
   const builderlab = createBuilderlab({
-    key: () => {
+    signer: () => {
       signs += 1;
-      return key;
+      return wrapSigner(createLocalSigningDelegate(key));
     },
     fetch,
     open: async (url) => {
@@ -308,3 +318,41 @@ it("rejects malformed and wrong callbacks without ending the listener", async ()
   await globalThis.fetch(`${returnTo}?code=one-time`);
   expect(await pending).toMatchObject({ email: "a@example.com" });
 });
+
+it.each(["sign-out", "new-login"])(
+  "a %s while binding is being signed never verifies the stale session",
+  async (mode) => {
+    const started = deferred(),
+      release = deferred();
+    const h = account(
+      {
+        "/v1/buzz/nostr-identities/challenge": () =>
+          Response.json({ ...challenge, expires_at: "2099-01-01T00:00:00Z" }),
+      },
+      (signer) => ({
+        async signEvent(event) {
+          started.resolve();
+          await release.promise;
+          return signer.signEvent(event);
+        },
+      }),
+    );
+    try {
+      await signIn(h);
+      const pending = h.builderlab.bind().catch((error) => error);
+      await started.promise;
+      if (mode === "sign-out") h.builderlab.signOut();
+      else h.builderlab.login(new AbortController().signal).catch(() => {});
+      release.resolve();
+      expect(await pending).toBeInstanceOf(Error);
+      expect(
+        h.requests.some(
+          ({ path }) => path === "/v1/buzz/nostr-identities/verify",
+        ),
+      ).toBe(false);
+    } finally {
+      release.resolve();
+      h.builderlab.signOut();
+    }
+  },
+);

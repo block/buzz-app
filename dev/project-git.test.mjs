@@ -1,3 +1,4 @@
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createServer } from "node:http";
 import { execFile, spawn } from "node:child_process";
@@ -119,7 +120,7 @@ it("reads authenticated Git content and the exact commit through real smart HTTP
   const result = await readProjectGit({
     input,
     relay,
-    key,
+    signer: createLocalSigningDelegate(key),
     signal: new AbortController().signal,
   });
   expect(result).toMatchObject({
@@ -151,7 +152,7 @@ it("shows binary content honestly and rejects missing files without a false snap
     readProjectGit({
       input: { owner, dtag: "repo", ...input },
       relay,
-      key,
+      signer: createLocalSigningDelegate(key),
       signal: new AbortController().signal,
     });
   expect((await read({ path: "image.bin" })).file.content).toBeNull();
@@ -164,7 +165,7 @@ it("distinguishes an authenticated empty repository from a missing revision", as
     readProjectGit({
       input: { owner, dtag: "empty", ...input },
       relay,
-      key,
+      signer: createLocalSigningDelegate(key),
       signal: new AbortController().signal,
     });
   const empty = await read({});
@@ -191,7 +192,7 @@ it("reports rejected reads without exposing process details or authorization", a
       readProjectGit({
         input: { owner, dtag: "repo" },
         relay,
-        key,
+        signer: createLocalSigningDelegate(key),
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow(/^Repository read failed$/);
@@ -204,7 +205,7 @@ it("reports rejected reads without exposing process details or authorization", a
     readProjectGit({
       input: { owner, dtag: "repo" },
       relay,
-      key,
+      signer: createLocalSigningDelegate(key),
       signal: controller.signal,
     }),
   ).rejects.toThrow();

@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { finalizeEvent } from "nostr-tools";
 
 /** Idempotent participant-set command. Keys stay in the broker. */
-export function directMessageEvent(input, viewer, key) {
+export async function directMessageEvent(input, viewer, signer, signal) {
   if (
     !input ||
     !Array.isArray(input.pubkeys) ||
@@ -17,7 +16,7 @@ export function directMessageEvent(input, viewer, key) {
     new Set(input.pubkeys).size !== input.pubkeys.length
   )
     throw new Error("Choose between one and eight other people.");
-  return finalizeEvent(
+  return signer.signEvent(
     {
       kind: 41010,
       content: "",
@@ -27,7 +26,7 @@ export function directMessageEvent(input, viewer, key) {
         ["client", randomUUID()],
       ],
     },
-    key,
+    signal,
   );
 }
 

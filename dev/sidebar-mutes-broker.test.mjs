@@ -1,3 +1,4 @@
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
@@ -130,7 +131,15 @@ it("real broker Mute roundtrip signs scoped requests and confirms before project
     signal = new AbortController().signal;
   h.heads.set(
     "channel-mutes",
-    prepareSidebarMute([], { channelId: "other", muted: true }, h.key).event,
+    (
+      await prepareSidebarMute(
+        [],
+        { channelId: "other", muted: true },
+        h.key,
+        createLocalSigningDelegate(h.key),
+        undefined,
+      )
+    ).event,
   );
   expect(
     await h.transport.writeSidebarMute(

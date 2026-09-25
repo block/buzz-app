@@ -1,3 +1,4 @@
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import { expect, it, vi } from "vitest";
 import {
   finalizeEvent,
@@ -60,22 +61,31 @@ it("rejects invalid intent shapes before relay reads", async () => {
       "Invalid sidebar mute intent",
     );
   const read = vi.fn();
-  await expect(mutateSidebarMute({}, h.secret, read, vi.fn())).rejects.toThrow(
-    "Invalid sidebar mute intent",
-  );
+  await expect(
+    mutateSidebarMute(
+      {},
+      h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
+      read,
+      vi.fn(),
+    ),
+  ).rejects.toThrow("Invalid sidebar mute intent");
   expect(read).not.toHaveBeenCalled();
 });
-it("encrypts explicit Mute/Unmute with monotonic timestamps and preserves unrelated tombstones", () => {
+it("encrypts explicit Mute/Unmute with monotonic timestamps and preserves unrelated tombstones", async () => {
   const h = harness();
   const channels = {
     alpha: { muted: false, updatedAt: 60000 },
     beta: { muted: true, updatedAt: 2 },
     gone: { muted: false, updatedAt: 3 },
   };
-  const added = prepareSidebarMute(
+  const added = await prepareSidebarMute(
     [h.encrypt(channels)],
     { channelId: "alpha", muted: true },
     h.secret,
+    createLocalSigningDelegate(h.secret),
+    undefined,
     50000,
   );
   expect(verifyEvent(added.event)).toBe(true);
@@ -97,10 +107,12 @@ it("encrypts explicit Mute/Unmute with monotonic timestamps and preserves unrela
     "alpha",
     "beta",
   ]);
-  const removed = prepareSidebarMute(
+  const removed = await prepareSidebarMute(
     [added.event],
     { channelId: "alpha", muted: false },
     h.secret,
+    createLocalSigningDelegate(h.secret),
+    undefined,
     50000,
   );
   expect(removed.mutes.channels).toEqual({
@@ -111,18 +123,30 @@ it("encrypts explicit Mute/Unmute with monotonic timestamps and preserves unrela
     "beta",
   ]);
   expect(
-    prepareSidebarMute(
-      [removed.event],
-      { channelId: "alpha", muted: false },
-      h.secret,
+    (
+      await prepareSidebarMute(
+        [removed.event],
+        { channelId: "alpha", muted: false },
+        h.secret,
+        createLocalSigningDelegate(h.secret),
+        undefined,
+      )
     ).event,
   ).toBeUndefined();
   expect(
-    prepareSidebarMute([], { channelId: "new", muted: false }, h.secret, 50000)
-      .mutes.channels,
+    (
+      await prepareSidebarMute(
+        [],
+        { channelId: "new", muted: false },
+        h.secret,
+        createLocalSigningDelegate(h.secret),
+        undefined,
+        50000,
+      )
+    ).mutes.channels,
   ).toEqual({ new: { muted: false, updatedAt: 50000 } });
 });
-it("refuses untrusted, ambiguous, malformed and over-budget heads rather than seeding", () => {
+it("refuses untrusted, ambiguous, malformed and over-budget heads rather than seeding", async () => {
   const h = harness(),
     other = harness();
   const intent = { channelId: "alpha", muted: true };
@@ -147,16 +171,30 @@ it("refuses untrusted, ambiguous, malformed and over-budget heads rather than se
     [h.encrypt({ alpha: { muted: true, updatedAt: -1 } })],
     [h.encrypt({}, { content: "x".repeat(SIDEBAR_REQUEST_BYTES) })],
   ])
-    expect(() => prepareSidebarMute(events, intent, h.secret)).toThrow();
+    await expect(
+      prepareSidebarMute(
+        events,
+        intent,
+        h.secret,
+        createLocalSigningDelegate(h.secret),
+        undefined,
+      ),
+    ).rejects.toThrow();
   const full = Object.fromEntries(
     Array.from({ length: 500 }, (_, i) => [
       `id-${i}`,
       { muted: false, updatedAt: 1 },
     ]),
   );
-  expect(() => prepareSidebarMute([h.encrypt(full)], intent, h.secret)).toThrow(
-    "budget exceeded",
-  );
+  await expect(
+    prepareSidebarMute(
+      [h.encrypt(full)],
+      intent,
+      h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
+    ),
+  ).rejects.toThrow("budget exceeded");
 });
 it("confirms fresh retained state, including newer unrelated entries, and does not publish no-ops", async () => {
   const h = harness();
@@ -172,11 +210,27 @@ it("confirms fresh retained state, including newer unrelated entries, and does n
   });
   const intent = { channelId: "alpha", muted: true };
   expect(
-    (await mutateSidebarMute(intent, h.secret, read, publish)).channels,
+    (
+      await mutateSidebarMute(
+        intent,
+        h.secret,
+        createLocalSigningDelegate(h.secret),
+        undefined,
+        read,
+        publish,
+      )
+    ).channels,
   ).toHaveProperty("beta");
   expect(read).toHaveBeenCalledTimes(2);
   expect(publish).toHaveBeenCalledOnce();
-  await mutateSidebarMute(intent, h.secret, read, publish);
+  await mutateSidebarMute(
+    intent,
+    h.secret,
+    createLocalSigningDelegate(h.secret),
+    undefined,
+    read,
+    publish,
+  );
   expect(publish).toHaveBeenCalledOnce();
 });
 it("does not report success on read/publish failures or conflicting confirmation", async () => {
@@ -187,6 +241,8 @@ it("does not report success on read/publish failures or conflicting confirmation
     mutateSidebarMute(
       intent,
       h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
       async () => {
         throw new Error("read failed");
       },
@@ -196,12 +252,26 @@ it("does not report success on read/publish failures or conflicting confirmation
   expect(publish).not.toHaveBeenCalled();
   const read = vi.fn(async () => []);
   await expect(
-    mutateSidebarMute(intent, h.secret, read, async () => {
-      throw new Error("publish failed");
-    }),
+    mutateSidebarMute(
+      intent,
+      h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
+      read,
+      async () => {
+        throw new Error("publish failed");
+      },
+    ),
   ).rejects.toThrow("publish failed");
   expect(read).toHaveBeenCalledOnce();
   await expect(
-    mutateSidebarMute(intent, h.secret, read, publish),
+    mutateSidebarMute(
+      intent,
+      h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
+      read,
+      publish,
+    ),
   ).rejects.toThrow("changed on another device");
 });

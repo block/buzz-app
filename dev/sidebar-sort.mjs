@@ -1,4 +1,4 @@
-import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
+import { getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import { projectSidebarPreferences } from "../src/features/relay/sidebar-preferences.ts";
 import { SIDEBAR_REQUEST_BYTES } from "./sidebar-preferences.mjs";
 
@@ -72,7 +72,14 @@ function parseSortEvent(events, secret, sectionIds) {
 }
 // Desktop compatibility uses one encrypted whole-blob LWW record, not per-group
 // conflict resolution. Only choices present in this read can be preserved.
-export function prepareSidebarSort(events, intent, secret, now = Date.now()) {
+export async function prepareSidebarSort(
+  events,
+  intent,
+  secret,
+  signer,
+  signal,
+  now = Date.now(),
+) {
   assertSidebarSortIntent(intent);
   const viewer = getPublicKey(secret);
   const current = parseSortEvent(events, secret, intent.sectionIds);
@@ -106,7 +113,7 @@ export function prepareSidebarSort(events, intent, secret, now = Date.now()) {
   }
   return {
     groups: projected,
-    event: finalizeEvent(
+    event: await signer.signEvent(
       {
         kind: 30078,
         content,
@@ -116,18 +123,39 @@ export function prepareSidebarSort(events, intent, secret, now = Date.now()) {
           ["t", SORT_COORDINATE],
         ],
       },
-      secret,
+      signal,
     ),
   };
 }
-export async function mutateSidebarSort(intent, secret, readHead, publish) {
+export async function mutateSidebarSort(
+  intent,
+  secret,
+  signer,
+  signal,
+  readHead,
+  publish,
+) {
   assertSidebarSortIntent(intent);
-  const draft = prepareSidebarSort(await readHead(), intent, secret);
+  const draft = await prepareSidebarSort(
+    await readHead(),
+    intent,
+    secret,
+    signer,
+    signal,
+  );
+  signal?.throwIfAborted();
   if (!draft.event) return draft.groups;
   await publish(draft.event);
   // This checks only the requested group now, not whether the whole-blob write
   // lost another device's intervening change to an unrelated group.
-  const confirmation = prepareSidebarSort(await readHead(), intent, secret);
+  const confirmation = await prepareSidebarSort(
+    await readHead(),
+    intent,
+    secret,
+    signer,
+    signal,
+  );
+  signal?.throwIfAborted();
   if (confirmation.event)
     throw new Error(
       "Sidebar sort changed on another device; reload and try again",

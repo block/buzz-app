@@ -887,6 +887,48 @@ it("discovers outside humans from the selected directory in both menus, not cach
   ).not.toBeInTheDocument();
 });
 
+it("qualifies outside directory namesakes that have no cached profile", async () => {
+  const t = setup();
+  const member = "a".repeat(64);
+  const people = vi.fn(async () => ({
+    people: [
+      { pubkey: "e".repeat(64), name: "Larry" },
+      { pubkey: "f".repeat(64), name: "Larry", isAgent: true as const },
+    ],
+    hasMore: false,
+  }));
+  const profiles = new Map([[member, { name: "Larry" }]]);
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    profiles: { ...t.session.profiles, snapshot: () => profiles },
+  };
+  const provider = createAgentDirectory();
+  const names = bindNames(
+    { profiles: session.profiles, agentLibrary: t.library.queries },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  const publish = vi.fn();
+  render(
+    <MentionCompletion
+      session={{ ...session, names }}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@Larr", start: 5, end: 5 }}
+      query={{ start: 0, end: 5, query: "Larr" }}
+      publish={publish}
+    />,
+  );
+  const labels = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.label,
+    ) ?? [];
+  await waitFor(() => expect(labels()).toHaveLength(3));
+  expect(new Set(labels()).size).toBe(3);
+  expect(labels()).not.toContain("Larry");
+  names.dispose();
+});
+
 it.each(["dm", "session"] as const)(
   "never expands %s candidates from the community directory",
   async (channelType) => {

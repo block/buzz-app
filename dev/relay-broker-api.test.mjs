@@ -2457,6 +2457,11 @@ test("broker HTTP summaries respect live levels and trace excludes private filte
 });
 
 test.each([
+  [
+    new DOMException("private timeout detail", "TimeoutError"),
+    "TimeoutError",
+    500,
+  ],
   [new SyntaxError("private response body"), "SyntaxError", 500],
   [
     new TypeError("private URL", { cause: { code: "ECONNREFUSED" } }),

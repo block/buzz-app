@@ -613,6 +613,7 @@ function failureSummary(error) {
     "SyntaxError",
     "RangeError",
     "AbortError",
+    "TimeoutError",
   ].includes(error?.name)
     ? error.name
     : "Error";

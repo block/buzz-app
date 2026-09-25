@@ -269,6 +269,11 @@ close button and actions. Pending operations set preventClose so Escape and the
 close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
+Editors can supply `headerActions` beside Close and `leadingActions` before the
+trailing footer actions. `onEscape` may return true to consume Escape for an
+inline layer (such as an inspector) before dismissing the dialog. Nested modal
+layers still use Dialog so Base UI owns their focus trap and dismissal order;
+`placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.
 Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.

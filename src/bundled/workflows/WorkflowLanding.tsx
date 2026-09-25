@@ -10,6 +10,7 @@ import type {
 } from "../../features/workflows/types";
 import {
   ArrowRightIcon,
+  DotsThreeIcon,
   CalendarIcon,
   ChatCircleIcon,
   GitPullRequestIcon,
@@ -20,6 +21,13 @@ import {
   WebhooksLogoIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { ConfirmAction } from "./ConfirmAction";
 import { getWorkflowActivationWarning } from "./workflowActivationWarning";
@@ -348,7 +356,11 @@ function WorkflowCard({
   operations: readonly WorkflowOperation[];
   viewer: string;
   onError: (message: string | null) => void;
-  onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
+  onOpen: (
+    definition: WorkflowDefinition,
+    channel: ChannelSummary,
+    action?: "run" | "delete",
+  ) => void;
 }) {
   const [confirmEnable, setConfirmEnable] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
@@ -451,6 +463,45 @@ function WorkflowCard({
                   else toggle(next);
                 }}
               />
+              <MenuRoot>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      aria-label={`Actions for ${name}`}
+                      size="sm"
+                      icon={<DotsThreeIcon size={20} aria-hidden="true" />}
+                    />
+                  }
+                />
+                <MenuPopup size="compact">
+                  <MenuItem onClick={() => onOpen(definition, channel)}>
+                    {readonly ? "View workflow" : "Edit workflow"}
+                  </MenuItem>
+                  <MenuItem
+                    disabled={
+                      readonly ||
+                      locked ||
+                      awaitingReadback ||
+                      !capability.availability.trigger
+                    }
+                    onClick={() => onOpen(definition, channel, "run")}
+                  >
+                    Run now
+                  </MenuItem>
+                  <MenuItem
+                    tone="danger"
+                    disabled={
+                      readonly ||
+                      locked ||
+                      awaitingReadback ||
+                      !capability.availability.delete
+                    }
+                    onClick={() => onOpen(definition, channel, "delete")}
+                  >
+                    Delete workflow
+                  </MenuItem>
+                </MenuPopup>
+              </MenuRoot>
             </div>
           </div>
           <h2 className="workflow-card-description text-body-lg">
@@ -460,9 +511,7 @@ function WorkflowCard({
             <div className="workflow-card-identity">
               <strong className="text-standard">#{channel.name}</strong>
               <span>{name}</span>
-              <span>
-                {enabled ? "Configured enabled" : "Configured disabled"}
-              </span>
+
               {readonly && <span>Read-only</span>}
             </div>
             <time
@@ -506,7 +555,11 @@ function WorkflowChannelCards({
   operations: readonly WorkflowOperation[];
   snapshot: DefinitionsSnapshot | undefined;
   viewer: string;
-  onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
+  onOpen: (
+    definition: WorkflowDefinition,
+    channel: ChannelSummary,
+    action?: "run" | "delete",
+  ) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
 
@@ -561,7 +614,11 @@ export function WorkflowLanding({
   refreshRequest: number;
   viewer: string;
   onCreate: () => void;
-  onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
+  onOpen: (
+    definition: WorkflowDefinition,
+    channel: ChannelSummary,
+    action?: "run" | "delete",
+  ) => void;
 }) {
   const operations = useSyncExternalStore(
     capability.operations.subscribe,

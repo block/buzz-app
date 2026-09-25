@@ -8,6 +8,7 @@ import type {
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { relayOrigin } from "../../features/communities/destination";
 import { useRelayConnection } from "../../features/relay/react";
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { AgentLibrary } from "./AgentLibrary";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -54,45 +55,47 @@ export function AgentsPage({
   return (
     <div className="h-full min-h-0">
       <FullPageSurface aria-label="Agents">
-        <div className="h-full min-h-0 overflow-auto p-panel-inset text-body">
-          <div className="mx-auto flex max-w-6xl flex-col gap-panel-gap">
-            {!control && (
-              <h1 className="m-0 text-title text-primary">Agents</h1>
-            )}
-            {control ? (
-              <AgentControlPanel
-                control={control}
-                resolveName={resolveName}
-                importDestination={importDestination}
-                createOwner={
-                  connection.status === "ready" ? connection.viewer : undefined
-                }
-              >
-                {(state, edit, importedId, label) =>
-                  state.status === "unavailable" ? (
-                    library
-                  ) : (
-                    <ManagedAgents
-                      key={`${connection.scope}:${connection.generation}`}
-                      state={state}
-                      label={label}
-                      edit={edit}
-                      importedId={importedId}
-                      control={control}
-                      connection={connection}
-                    />
-                  )
-                }
-              </AgentControlPanel>
-            ) : (
-              <>
-                <p className="text-secondary">
-                  Open the desktop app to import and run agents. You can still
-                  mention existing channel members.
-                </p>
-                {library}
-              </>
-            )}
+        <div className="flex h-full min-h-0 flex-col">
+          <PanelHeader title="Agents" />
+          <div className="min-h-0 flex-1 overflow-auto p-panel-inset text-body">
+            <div className="mx-auto flex max-w-6xl flex-col gap-panel-gap">
+              {control ? (
+                <AgentControlPanel
+                  control={control}
+                  resolveName={resolveName}
+                  importDestination={importDestination}
+                  createOwner={
+                    connection.status === "ready"
+                      ? connection.viewer
+                      : undefined
+                  }
+                >
+                  {(state, edit, importedId, label) =>
+                    state.status === "unavailable" ? (
+                      library
+                    ) : (
+                      <ManagedAgents
+                        key={`${connection.scope}:${connection.generation}`}
+                        state={state}
+                        label={label}
+                        edit={edit}
+                        importedId={importedId}
+                        control={control}
+                        connection={connection}
+                      />
+                    )
+                  }
+                </AgentControlPanel>
+              ) : (
+                <>
+                  <p className="text-secondary">
+                    Open the desktop app to import and run agents. You can still
+                    mention existing channel members.
+                  </p>
+                  {library}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </FullPageSurface>

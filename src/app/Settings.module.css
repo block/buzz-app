@@ -58,3 +58,29 @@
     padding-bottom: var(--space-16);
   }
 }
+
+.settingsSidebar {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding-block-start: var(--sidebar-padding);
+}
+.settingsNavigation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding-block: var(--space-5) var(--space-2);
+}
+.settingsGroupTitle {
+  margin: 0 0 var(--space-1);
+  padding-inline: var(--space-2);
+  color: var(--text-unavailable);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  font-weight: var(--type-weight-normal);
+}
+.settingsGroupItems {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+}

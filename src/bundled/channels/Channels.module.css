@@ -36,14 +36,13 @@
   /* Figma specifies true Semibold for unread rows, rather than the legacy 500 alias. */
   --type-weight-semibold: 600;
   --size-row: var(--space-6);
-  --radius-row: calc(var(--radius-panel) - var(--sidebar-padding));
+  --radius-row: 10px;
   --affordance-selected: var(--affordance-subtle);
   --affordance-panel-hover: var(--affordance-navigation-quiet);
   --sidebar-padding: var(--space-2);
   --sidebar-padding-end: var(--sidebar-padding);
   --channel-row-radius: var(--radius-control);
-  padding: var(--sidebar-padding) var(--sidebar-padding-end)
-    var(--sidebar-padding) var(--sidebar-padding);
+  padding-inline: var(--sidebar-padding) var(--sidebar-padding-end);
 }
 .sidebarBrand {
   height: var(--space-6);
@@ -57,6 +56,7 @@
   height: calc(var(--space-5) * 0.75);
   background: currentColor;
   mask: url("/buzz-mark.svg") center / contain no-repeat;
+  transform: translateX(1px);
 }
 .destinations {
   display: flex;
@@ -69,6 +69,7 @@
   --space-row-gap: calc(var(--space-1) + var(--space-half));
   color: var(--text-navigation);
   min-height: calc(var(--space-6) + var(--space-1));
+  height: calc(var(--space-6) + var(--space-1));
   padding: var(--space-half) calc(var(--space-1) + var(--space-half))
     var(--space-half) var(--space-2);
   border-radius: var(--radius-row);
@@ -92,8 +93,19 @@
 .sidebar [data-variant="row"][data-inset] {
   padding-inline-start: calc(var(--space-2) + var(--space-6));
 }
+.sidebarIcon > :is(svg, img) {
+  max-width: 100%;
+  max-height: 100%;
+}
 .sidebar [data-variant="row"] > :is(svg, img) {
   flex-shrink: 0;
+}
+.sidebarIcon {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
 }
 .placeholder {
   display: grid;
@@ -105,22 +117,35 @@
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
 .channelListFrame {
-  margin-block-start: calc(-1 * var(--sidebar-padding));
   position: relative;
   width: calc(100% + 4px);
   min-width: 0;
   min-height: calc(var(--space-6) + var(--space-5) + var(--space-1) + 1px);
   flex: 1;
-  padding-block-start: var(--space-2);
+  overflow: hidden;
+  border-radius: var(--radius-row);
+}
+/* WebKit ignores margins on scrollbar track pseudo-elements. Mask only the
+   scrollbar column so its visible start is inset without moving scroll content. */
+.channelListFrame::after {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 12px;
+  background: var(--surface-panel);
+  content: "";
+  pointer-events: none;
 }
 .channelList {
-  width: 100%;
+  width: calc(100% + 2px);
   height: 100%;
   min-width: 0;
   box-sizing: border-box;
   overflow-y: auto;
-  padding-block-start: var(--sidebar-padding);
-  --channel-row-fill-end: 3px;
+  padding-block: var(--sidebar-padding);
+  --channel-row-fill-end: 5px;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -153,8 +178,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-half);
-  transform: translateY(calc(-1 * var(--space-2)));
-  padding-block-end: var(--space-2);
+  padding-block-end: var(--sidebar-padding);
 }
 /* The cue floats over scrolled rows, so it needs the panel surface beneath
    it. `display: grid` keeps the wrapper flush with the control so no sliver
@@ -164,15 +188,19 @@
   left: 50%;
   display: grid;
   transform: translateX(-50%);
+  z-index: 3;
+  isolation: isolate;
   width: max-content;
   max-width: calc(100% - var(--space-2));
   border-radius: var(--radius-control);
-  background: var(--surface-panel);
+  background: var(--affordance-prominent);
   box-shadow: var(--shadow-sm);
 }
 
 .unreadEdge [data-buzz-ui] {
   border-radius: var(--radius-control);
+  background: var(--affordance-prominent);
+  color: var(--text-inverse);
   padding-inline: var(--space-1h) calc(var(--space-2) + var(--space-half));
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
@@ -245,9 +273,18 @@
   pointer-events: none;
 }
 .sectionActions [data-icon-variant] {
-  width: var(--space-6);
-  height: var(--space-6);
   color: inherit;
+}
+.untitledSection {
+  padding-block-start: var(--space-1);
+}
+.untitledSection .sectionActions {
+  top: 0;
+  opacity: 1;
+  pointer-events: auto;
+}
+.untitledSectionContent {
+  padding-inline-end: calc(var(--space-8) + var(--space-1));
 }
 .channelSection:has(
     summary:hover,

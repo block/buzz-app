@@ -58,7 +58,7 @@ export function sidebarSections<T extends ChannelSummary>(
     },
     {
       key: "dms",
-      title: "Messages",
+      title: "Direct messages",
       icon: undefined,
       rows: active.filter(
         (channel) => channel.channelType === "dm" && !hiddenDms.has(channel.id),

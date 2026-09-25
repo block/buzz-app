@@ -23,7 +23,6 @@ export type AgentManagementRequest =
         runtime?: string;
         provider?: string;
         model?: string;
-        respondTo?: "owner-only" | "anyone";
       }>;
     }>;
 
@@ -78,13 +77,9 @@ export function parseAgentManagementRequest(
       "runtime",
       "provider",
       "model",
-      "respondTo",
     ]) ||
     !text(request.channelId) ||
-    !text(request.agentName) ||
-    (request.respondTo !== undefined &&
-      request.respondTo !== "owner-only" &&
-      request.respondTo !== "anyone")
+    !text(request.agentName)
   )
     return null;
   const changes = {
@@ -95,11 +90,6 @@ export function parseAgentManagementRequest(
     ...(text(request.runtime) ? { runtime: request.runtime } : {}),
     ...(text(request.provider) ? { provider: request.provider } : {}),
     ...(text(request.model) ? { model: request.model } : {}),
-    ...(request.respondTo === "owner-only"
-      ? { respondTo: "owner-only" as const }
-      : request.respondTo === "anyone"
-        ? { respondTo: "anyone" as const }
-        : {}),
   };
   if (!Object.keys(changes).length) return null;
   return {

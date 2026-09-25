@@ -431,4 +431,39 @@ it("rejects unknown and secret-shaped agent-management fields", () => {
       request: { ...request.request, apiKey: "never" },
     }),
   ).toBeNull();
+  expect(
+    parseAgentManagementRequest({
+      ...request,
+      request: { ...request.request, respondTo: "anyone" },
+    }),
+  ).toBeNull();
+});
+
+it("bounds retained management request IDs", () => {
+  const f = fixture();
+  const receive = vi.fn();
+  f.activity.management.subscribe(receive);
+  const request = {
+    type: "agent_management_request",
+    action: "update",
+    requestId: "request-0",
+    request: {
+      channelId: "34aeaccc-c83b-4422-beac-a4b8661f9f59",
+      agentName: "Sol",
+      model: "gpt-6-sol",
+    },
+  };
+  const send = (requestId: string) =>
+    f.send(
+      f.item("agent_management_request", requestId, {
+        channelId: request.request.channelId,
+        payload: { ...request, requestId },
+      }),
+    );
+
+  for (let index = 0; index <= 200; index++) send(`request-${index}`);
+  send("request-0");
+
+  expect(receive).toHaveBeenCalledTimes(202);
+  f.activity.dispose();
 });

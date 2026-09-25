@@ -4,7 +4,14 @@ import type { RelayData } from "../relay/service";
 import { agentDraft, type AgentDraft } from "../../bundled/agents/agent-edit";
 import { AgentEditor } from "../../bundled/agents/AgentEditor";
 import type { AgentControl, AgentView } from "./control";
+import type { ChannelList } from "../relay/contracts";
 import type { AgentManagementRequest } from "./management-request";
+
+export type PendingManagementRequest = {
+  agent: string;
+  value: AgentManagementRequest;
+};
+const MANAGEMENT_QUEUE_LIMIT = 200;
 
 export function AgentManagementNotice({
   relay,
@@ -28,28 +35,28 @@ export function AgentManagementNotice({
     connection.session.channels.list,
     connection.session.channels.list,
   );
-  const [request, setRequest] = useState<{
-    agent: string;
-    value: AgentManagementRequest;
-  } | null>(null);
+  const [requests, setRequests] = useState<PendingManagementRequest[]>([]);
+  const request = requests[0] ?? null;
   useEffect(() => {
     if (connection.status !== "ready") return;
     const release = connection.session.agentActivity.activate();
     const unsubscribe = connection.session.agentManagement.subscribe(
       (agent, value) => {
-        if (request) return;
-        const channel = channelList.channels.find(
-          (candidate) => candidate.id === value.request.channelId,
+        setRequests((pending) =>
+          enqueueManagementRequest(pending, { agent, value }),
         );
-        if (!channel?.members?.includes(agent)) return;
-        setRequest({ agent, value });
       },
     );
     return () => {
       unsubscribe();
       release();
     };
-  }, [channelList, connection, request]);
+  }, [connection]);
+  useEffect(() => {
+    if (!request) return;
+    const authorized = managementRequesterAuthorized(request, channelList);
+    if (authorized === false) setRequests((pending) => pending.slice(1));
+  }, [channelList, request]);
   useEffect(() => {
     if (request) void control.refresh();
   }, [control, request]);
@@ -60,8 +67,8 @@ export function AgentManagementNotice({
       (agent) => agent.name.trim().toLocaleLowerCase() === target,
     );
   }, [controlState.data?.agents, request]);
-  if (!request) return null;
-  const dismiss = () => setRequest(null);
+  if (!request || channelList.status !== "ready") return null;
+  const dismiss = () => setRequests((pending) => pending.slice(1));
   if (request.value.action === "create") {
     return (
       <ToastNotice
@@ -96,6 +103,24 @@ export function AgentManagementNotice({
       onClose={dismiss}
     />
   );
+}
+
+export function enqueueManagementRequest(
+  pending: readonly PendingManagementRequest[],
+  request: PendingManagementRequest,
+): PendingManagementRequest[] {
+  return [...pending, request].slice(-MANAGEMENT_QUEUE_LIMIT);
+}
+
+export function managementRequesterAuthorized(
+  request: PendingManagementRequest,
+  channels: ChannelList,
+): boolean | null {
+  if (channels.status !== "ready") return null;
+  const channel = channels.channels.find(
+    (candidate) => candidate.id === request.value.request.channelId,
+  );
+  return channel?.members?.includes(request.agent) ?? false;
 }
 
 export function requestedDraft(

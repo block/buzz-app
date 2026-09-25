@@ -10,6 +10,7 @@ import { observerFrame, type ObserverFrame } from "./observer";
 export const ACTIVITY_RECORD_LIMIT = 200;
 export const ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
 export const ACTIVITY_TURN_LIMIT = 512;
+export const MANAGEMENT_REQUEST_LIMIT = 200;
 export const ACTIVITY_FRESH_MS = 30_000;
 type RawRecord = ObserverFrame &
   Readonly<{
@@ -292,6 +293,10 @@ export function createAgentActivity(
       if (management) {
         if (!managementIds.has(management.requestId)) {
           managementIds.add(management.requestId);
+          if (managementIds.size > MANAGEMENT_REQUEST_LIMIT) {
+            const oldest = managementIds.values().next().value;
+            if (oldest) managementIds.delete(oldest);
+          }
           for (const listener of managementListeners)
             notify(() => listener(frame.agent, management));
         }

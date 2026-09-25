@@ -12,7 +12,7 @@ export function formatTypingLabel(names: readonly string[]) {
   return `${names[0]}, ${names[1]}, and ${names.length - 2} others are typing...`;
 }
 
-/** Remote typing anywhere in a DM, including its threads, from the session store. */
+/** Remote human typing anywhere in a DM, including its threads, from the session store. */
 export function DmTypingBadge({
   session,
   channelId,
@@ -49,9 +49,13 @@ function TypingDots({
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
+  // Human-only: known agents are represented by the Agent working signal.
+  // Unclassified signers stay visible until a loaded profile marks them.
+  const humans = pubkeys.filter((pubkey) => !profiles.get(pubkey)?.isAgent);
+  if (!humans.length) return null;
   // Reuse already available names; optional typing must not trigger profile reads.
   const label = formatTypingLabel(
-    pubkeys.map((pubkey) =>
+    humans.map((pubkey) =>
       resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10)),
     ),
   );

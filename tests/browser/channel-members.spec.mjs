@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 // Browser-only contract: real header composition, modal focus and responsive geometry.
@@ -7,10 +8,7 @@ test("channel members opens from the header, fits each viewport, and returns key
   app,
 }, testInfo) => {
   await page.goto(app.origin);
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   const conversation = page.getByRole("article", { name: "Conversation" });
   await expect(
     conversation.getByRole("heading", { name: "Alpha", exact: true }),

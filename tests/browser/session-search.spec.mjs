@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 const parent = "11111111-1111-4111-8111-111111111111";
@@ -13,10 +14,7 @@ test("global search opens a child session without changing collapsed sidebar lev
   app,
 }) => {
   await page.goto(app.origin);
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const parentRow = page.locator(`button[data-channel-id="${parent}"]`);
   const child = sidebar.locator('button[data-channel-id="alpha"]');
@@ -53,14 +51,8 @@ test("global search opens a child session without changing collapsed sidebar lev
   ).toBeVisible();
 
   // Remount so accidental onToggle persistence cannot be hidden by local state.
-  await page
-    .getByRole("button", { name: "Projects", exact: true })
-    .first()
-    .click();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Projects");
+  await openPage(page, "Messages");
   await expect(section).not.toHaveAttribute("open");
   await section.locator("summary").focus();
   await page.keyboard.press("Enter");

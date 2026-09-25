@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 test.use({ pluginFixtures: true, historyCounts: { alpha: 0, beta: 0 } });
 for (const operation of ["complete", "resolve"]) {
@@ -224,10 +225,7 @@ test("a static pending page retains authority across a relay reconnect", async (
   app,
 }) => {
   await page.goto(app.origin);
-  await page
-    .getByRole("button", { name: "Pending fixture", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Pending fixture");
   await expect
     .poll(() => page.evaluate(() => window.pendingMounted))
     .toBe(true);
@@ -249,10 +247,7 @@ for (const operation of ["complete", "resolve"]) {
     app,
   }) => {
     await page.goto(app.origin);
-    await page
-      .getByRole("button", { name: "Pending fixture", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Pending fixture");
     await expect
       .poll(() => page.evaluate(() => window.pendingMounted))
       .toBe(true);

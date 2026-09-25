@@ -103,12 +103,11 @@ test("native Alt arrows preserve composer editing; deliberate history shortcuts 
   app,
 }) => {
   await open(page, app);
-  const nav = page.getByRole("navigation", { name: "Pages", exact: true });
-  await nav.getByRole("button", { name: "Projects", exact: true }).click();
+  await openPage(page, "Projects");
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
-  await nav.getByRole("button", { name: "Messages", exact: true }).click();
+  await openPage(page, "Messages");
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,

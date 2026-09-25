@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { expectPhosphor } from "./phosphor.mjs";
@@ -74,7 +75,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   expect(grip.width).toBeGreaterThanOrEqual(16);
   expect(grip.height).toBeGreaterThan(500);
   expect(before.x + before.width - (listBox.x + listBox.width)).toBeCloseTo(
-    1,
+    5,
     0,
   );
   await expect(handle).not.toHaveAttribute("title");
@@ -128,8 +129,8 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     .poll(async () => (await sidebar.boundingBox())?.width)
     .toBeGreaterThan(keyboardWidth + 100);
   const resized = await sidebar.boundingBox();
-  await button(page, "Projects").first().click();
-  await button(page, "Messages").first().click();
+  await openPage(page, "Projects");
+  await openPage(page, "Messages");
   await expect
     .poll(async () => (await sidebar.boundingBox())?.width)
     .toBeCloseTo(resized.width, 0);
@@ -190,7 +191,7 @@ sessionSidebar(
   "parent disclosures and child sessions share the channel icon and label columns",
   async ({ page, app }) => {
     await page.goto(app.origin);
-    await button(page, "Messages").first().click();
+    await openPage(page, "Messages");
     const parent = page.locator(`[data-channel-id="${sessionParent}"]`);
     const child = page.locator('[data-channel-id="alpha"]');
     const regular = page.locator('[data-channel-id="beta"]');
@@ -221,18 +222,18 @@ sessionSidebar(
       "xpath=ancestor::*[@data-channel-sidebar-row]",
     );
     await expect(
-      page.getByRole("button", { name: /More options for/ }),
+      parentSurface.getByRole("button", { name: /More options for/ }),
     ).toHaveCount(0);
     expect(
       await parent.evaluate((row) => getComputedStyle(row).backgroundColor),
     ).toBe("rgba(0, 0, 0, 0)");
     expect(
       await parentSurface.evaluate(
-        (row) => getComputedStyle(row).backgroundColor,
+        (row) => getComputedStyle(row, "::before").backgroundColor,
       ),
     ).not.toBe("rgba(0, 0, 0, 0)");
 
-    await button(page, "Projects").first().click();
+    await openPage(page, "Projects");
     await parent.click({ button: "right" });
     await page.getByRole("menuitem", { name: "New session" }).click();
     const draft = page.getByRole("button", { name: /New session draft in/ });
@@ -267,13 +268,13 @@ sessionSidebar(
   "session rows use pill hovers and Channels opens the shared creation dialog",
   async ({ page, app }) => {
     await page.goto(app.origin);
-    await button(page, "Messages").first().click();
+    await openPage(page, "Messages");
     const child = page.locator('[data-channel-id="alpha"]');
     await expect(child).toBeVisible();
     await child.hover();
     await expect(child).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 
-    await button(page, "Projects").first().click();
+    await openPage(page, "Projects");
     await expect(
       page.getByRole("heading", { name: "Projects", exact: true }),
     ).toBeVisible();
@@ -293,7 +294,7 @@ sessionSidebar(
       create.boundingBox(),
     ]);
     expect(summaryBox.x + summaryBox.width).toBeCloseTo(
-      createBox.x + createBox.width,
+      createBox.x + createBox.width + 4,
       0,
     );
     await create.click();
@@ -364,10 +365,10 @@ sessionSidebar(
     await expect(
       page.getByRole("heading", { name: "Projects", exact: true }),
     ).toBeVisible();
-    await button(page, "Messages").first().click();
-    await page
-      .getByRole("article", { name: "Conversation" })
-      .hover({ position: { x: 20, y: 20 } });
+    await openPage(page, "Messages");
+    const conversation = page.getByRole("article", { name: "Conversation" });
+    await conversation.click({ position: { x: 20, y: 20 } });
+    await expect(create).not.toBeFocused();
     await expect(createContainer).toHaveCSS("opacity", "0");
   },
 );
@@ -396,7 +397,7 @@ test("disabling Sessions keeps independent lifecycle actions available", async (
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "false");
 
-  await button(page, "Messages").first().click();
+  await openPage(page, "Messages");
   // Lifecycle is an independent action group: disabling Sessions removes only
   // New session, not the context menu or its unavailable-host explanation.
   for (const keyboard of [false, true]) {
@@ -559,7 +560,7 @@ test("community rail stays visible across pages and switches without a picker", 
   await expect(
     rail.getByRole("button", { name: "Switch to Secondary" }),
   ).toHaveAttribute("aria-current", "true");
-  await button(page, "Projects").first().click();
+  await openPage(page, "Projects");
   await expect(rail).toBeVisible();
   await expect(button(page, "Switch community")).toHaveCount(0);
   await rail.getByRole("button", { name: "Personal space" }).click();

@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 test.use({ pluginFixtures: true, historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -35,7 +36,7 @@ test.describe("page render failure", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await button(page, "Retry fixture").first().click();
+    await openPage(page, "Retry fixture");
     await expect(button(page, "Break fixture page")).toBeVisible();
     const status = () =>
       page.evaluate(() => window.fixtureNavigation.snapshot().status);
@@ -50,7 +51,7 @@ test.describe("page render failure", () => {
         exact: true,
       }),
     ).toBeVisible();
-    await button(page, "Retry fixture").first().click();
+    await openPage(page, "Retry fixture");
     await expect(button(page, "Break fixture page")).toBeVisible({
       timeout: 1500,
     });
@@ -72,7 +73,7 @@ test.describe("page render failure", () => {
     await page.evaluate(() => {
       window.fixturePageBroken = true;
     });
-    await button(page, "Retry fixture").first().click();
+    await openPage(page, "Retry fixture");
     await expect(
       page.getByRole("heading", {
         name: "This destination couldn’t open",
@@ -95,7 +96,7 @@ test("a healthy same-page reclick preserves its draft and visit identity", async
   app,
 }) => {
   await page.goto(app.origin);
-  await button(page, "Legacy").first().click();
+  await openPage(page, "Legacy");
   const draft = page.getByRole("textbox", {
     name: "Legacy page draft",
     exact: true,
@@ -104,7 +105,7 @@ test("a healthy same-page reclick preserves its draft and visit identity", async
   const entry = await page.evaluate(
     () => window.fixtureNavigation.snapshot().entry.id,
   );
-  await button(page, "Legacy").first().click();
+  await openPage(page, "Legacy");
   await expect(draft).toHaveValue("retain on reclick");
   expect(
     await page.evaluate(() => window.fixtureNavigation.snapshot().entry.id),

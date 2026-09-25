@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 
@@ -78,18 +79,12 @@ test("saved top resumes automatic history on an upward gesture after remount", a
   await expect.poll(() => app.pending.length).toBe(1);
   await settle(page);
   await expect.poll(() => history(page).evaluate((e) => e.scrollTop)).toBe(0);
-  await page
-    .getByRole("button", { name: "Projects", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Projects");
   // Remounting Channels captures the normal reading anchor in localStorage.
   // Reload gives a new session/finite head but preserves that user-owned anchor.
   await page.reload();
   app.pending.shift().release();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await expect(history(page)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Retry live updates", exact: true }),

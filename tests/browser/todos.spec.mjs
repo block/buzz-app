@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
@@ -56,10 +57,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   const messages = async () => {
     const disclosure = button("Show navigation");
     if (await disclosure.isVisible()) await disclosure.click();
-    await page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages", exact: true })
-      .click();
+    await openPage(page, "Messages");
     await expect(
       page
         .getByRole("article", { name: "Conversation" })

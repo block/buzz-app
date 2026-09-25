@@ -1,7 +1,10 @@
 import type { AgentControl } from "../../features/agents/control";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
-import { newSessionParent } from "../../features/channel-navigation/routes";
 import { ChannelMembersButton } from "./ChannelMembersDialog";
+import {
+  channelPlaceholder,
+  newSessionParent,
+} from "../../features/channel-navigation/routes";
 import { personalGroups } from "../../features/channel-templates/setup";
 import type { TemplateProviders } from "../../features/channel-templates/provider";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
@@ -177,6 +180,10 @@ function ChannelWorkspace({
   const composingMessage =
     navigation?.target.kind === "page" &&
     navigation.target.route?.params === "new-message";
+  const placeholder =
+    navigation?.target.kind === "page"
+      ? channelPlaceholder(navigation.target.route?.params)
+      : undefined;
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const kitState = useSyncExternalStore(
@@ -333,7 +340,7 @@ function ChannelWorkspace({
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
-    if (composingMessage) {
+    if (composingMessage || placeholder) {
       navigation?.complete({ status: "opened" });
       return;
     }
@@ -355,6 +362,7 @@ function ChannelWorkspace({
     }
   }, [
     composingMessage,
+    placeholder,
     requestedChannel,
     resolving,
     current,
@@ -510,7 +518,7 @@ function ChannelWorkspace({
     setOpened(next);
   }, []);
   useLayoutEffect(() => {
-    if (draftParent || composingMessage || requestedMessage) {
+    if (draftParent || composingMessage || placeholder || requestedMessage) {
       setThread(undefined);
       open(undefined);
     }
@@ -526,6 +534,7 @@ function ChannelWorkspace({
   }, [
     draftParent,
     composingMessage,
+    placeholder,
     requestedMessage,
     requestedChannel,
     requestedThread,
@@ -806,10 +815,12 @@ function ChannelWorkspace({
   const drawer = useChannelPanels(panels, drawerContext, () =>
     setSettings(undefined),
   );
+  const showingPanel =
+    !composingMessage &&
+    !showingMediaReview &&
+    (showingSettings || panel || showingThread || companion || drawer.side);
   return (
-    <div
-      className={`${styles.board} ${!composingMessage && (showingSettings || panel || showingThread || companion || drawer.side) ? styles.withPanel : ""}`}
-    >
+    <div className={`${styles.board} ${showingPanel ? styles.withPanel : ""}`}>
       {current && !current.readOnly && canvasOpen && (
         <ChannelCanvasDialog
           key={`${scope}:${current.id}`}
@@ -844,6 +855,13 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
+          ) : placeholder ? (
+            <>
+              <PanelHeader title={placeholder} />
+              <div className={styles.placeholder}>
+                <p>Content coming soon</p>
+              </div>
+            </>
           ) : drafting && current ? (
             <NewSessionView parentName={current.name}>
               <NewSessionComposer
@@ -1018,180 +1036,174 @@ function ChannelWorkspace({
           close={() => setMediaReview(undefined)}
         />
       )}
-      {!composingMessage &&
-        !showingMediaReview &&
-        (showingSettings ||
-          panel ||
-          showingThread ||
-          companion ||
-          drawer.side) && (
-          <div className={styles.panelStack}>
-            {showingSettings && (
-              <ChannelSettingsPanel
-                setupTools={
-                  current && (
-                    <div style={{ display: "grid", gap: "var(--space-3)" }}>
-                      {!current.readOnly && (
-                        <Button onClick={() => setCanvasOpen(true)}>
-                          Canvas
-                        </Button>
-                      )}
-                      {templateProvider && (
-                        <OwnedContribution
-                          key={current.id}
-                          entry={templateProvider}
-                          registry={providers}
-                        >
-                          {(entry, active) => {
-                            const SaveAs = entry.saveAs;
-                            return (
-                              <SaveAs
-                                session={queries}
-                                channel={current}
-                                active={active}
-                              />
+      {showingPanel && (
+        <div className={styles.panelStack}>
+          {showingSettings && (
+            <ChannelSettingsPanel
+              setupTools={
+                current && (
+                  <div style={{ display: "grid", gap: "var(--space-3)" }}>
+                    {!current.readOnly && (
+                      <Button onClick={() => setCanvasOpen(true)}>
+                        Canvas
+                      </Button>
+                    )}
+                    {templateProvider && (
+                      <OwnedContribution
+                        key={current.id}
+                        entry={templateProvider}
+                        registry={providers}
+                      >
+                        {(entry, active) => {
+                          const SaveAs = entry.saveAs;
+                          return (
+                            <SaveAs
+                              session={queries}
+                              channel={current}
+                              active={active}
+                            />
+                          );
+                        }}
+                      </OwnedContribution>
+                    )}
+                    {personal && (
+                      <Select
+                        label="Personal group"
+                        variant="field"
+                        value={personal.assignments[current.id] ?? ""}
+                        groups={[
+                          {
+                            label: "",
+                            options: [
+                              { value: "", label: "No group" },
+                              ...personal.groups.map((g) => ({
+                                value: g.id,
+                                label: g.name,
+                              })),
+                            ],
+                          },
+                        ]}
+                        onValueChange={async (groupId) => {
+                          const assignments = { ...personal.assignments };
+                          if (groupId) assignments[current.id] = groupId;
+                          else delete assignments[current.id];
+                          setKitError("");
+                          try {
+                            await queries.channelKit.save(
+                              { ...personal, assignments },
+                              groupEntry?.eventId,
                             );
-                          }}
-                        </OwnedContribution>
-                      )}
-                      {personal && (
-                        <Select
-                          label="Personal group"
-                          variant="field"
-                          value={personal.assignments[current.id] ?? ""}
-                          groups={[
-                            {
-                              label: "",
-                              options: [
-                                { value: "", label: "No group" },
-                                ...personal.groups.map((g) => ({
-                                  value: g.id,
-                                  label: g.name,
-                                })),
-                              ],
-                            },
-                          ]}
-                          onValueChange={async (groupId) => {
-                            const assignments = { ...personal.assignments };
-                            if (groupId) assignments[current.id] = groupId;
-                            else delete assignments[current.id];
-                            setKitError("");
-                            try {
-                              await queries.channelKit.save(
-                                { ...personal, assignments },
-                                groupEntry?.eventId,
-                              );
-                            } catch (error) {
-                              setKitError(String(error));
-                            }
-                          }}
-                        />
-                      )}
-                      {kitError && <p role="alert">{kitError}</p>}
-                    </div>
-                  )
-                }
-                key={currentId ?? "channels"}
-                channel={current}
-                close={closeSettings}
+                          } catch (error) {
+                            setKitError(String(error));
+                          }
+                        }}
+                      />
+                    )}
+                    {kitError && <p role="alert">{kitError}</p>}
+                  </div>
+                )
+              }
+              key={currentId ?? "channels"}
+              channel={current}
+              close={closeSettings}
+            >
+              <UnreadOptions session={queries} channelId={current?.id} />
+              <LiveStatus
+                live={queries.live}
+                channelId={current?.id}
+                partialRoster={list.coverage === "partial"}
+                diagnostics
+              />
+              <p>
+                {list.coverage === "partial" ? "Partial roster" : "Roster"} ·{" "}
+                {channels.length} channels
+              </p>
+              <Button
+                type="button"
+                onClick={() => queries.channels.refreshList?.()}
               >
-                <UnreadOptions session={queries} channelId={current?.id} />
-                <LiveStatus
-                  live={queries.live}
-                  channelId={current?.id}
-                  partialRoster={list.coverage === "partial"}
-                  diagnostics
-                />
-                <p>
-                  {list.coverage === "partial" ? "Partial roster" : "Roster"} ·{" "}
-                  {channels.length} channels
-                </p>
+                Refresh channels
+              </Button>
+              {preferences.error && (
+                <p>Saved groups and stars: {preferences.error}</p>
+              )}
+              {preferences.status !== "unsupported" && (
                 <Button
                   type="button"
-                  onClick={() => queries.channels.refreshList?.()}
+                  disabled={preferences.status === "loading"}
+                  onClick={preferences.reload}
                 >
-                  Refresh channels
+                  Refresh groups and stars
                 </Button>
-                {preferences.error && (
-                  <p>Saved groups and stars: {preferences.error}</p>
-                )}
-                {preferences.status !== "unsupported" && (
-                  <Button
-                    type="button"
-                    disabled={preferences.status === "loading"}
-                    onClick={preferences.reload}
-                  >
-                    Refresh groups and stars
-                  </Button>
-                )}
-                {current && (
-                  <Button
-                    type="button"
-                    onClick={() => queries.channels.refresh?.(current.id)}
-                  >
-                    Refresh messages
-                  </Button>
-                )}
-                {queries.outbox ? (
-                  <OutboxStatus
-                    outbox={queries.outbox}
-                    profiling={queries.profiling}
-                  />
-                ) : (
-                  <RelayTimings profiling={queries.profiling} />
-                )}
-              </ChannelSettingsPanel>
-            )}
-            {showingThread && (
-              <div className={styles.retainedPanel} inert={showingSettings}>
-                <ThreadPanel
-                  sessionConversation={current?.channelType === "session"}
-                  extensions={extensions}
-                  session={queries}
-                  scope={scope}
-                  channelName={current?.name ?? ""}
-                  channelId={showingThread.channelId}
-                  messageId={showingThread.messageId}
-                  navigation={showingThread.navigation}
-                  replyRequest={
-                    replyRequest?.channelId === showingThread.channelId &&
-                    replyRequest.messageId === showingThread.messageId &&
-                    replyRequest.entryId === showingThread.navigation?.entryId
-                      ? replyRequest.sequence
-                      : undefined
-                  }
-                  close={closeThread}
-                  onOpenLink={openLink}
-                  onOpenMediaReview={openMediaReview}
-                  canOpenLink={canOpenLink}
+              )}
+              {current && (
+                <Button
+                  type="button"
+                  onClick={() => queries.channels.refresh?.(current.id)}
+                >
+                  Refresh messages
+                </Button>
+              )}
+              {queries.outbox ? (
+                <OutboxStatus
+                  outbox={queries.outbox}
+                  profiling={queries.profiling}
                 />
-              </div>
-            )}
+              ) : (
+                <RelayTimings profiling={queries.profiling} />
+              )}
+            </ChannelSettingsPanel>
+          )}
+          {showingThread && (
+            <div className={styles.retainedPanel} inert={showingSettings}>
+              <ThreadPanel
+                sessionConversation={current?.channelType === "session"}
+                extensions={extensions}
+                session={queries}
+                scope={scope}
+                channelName={current?.name ?? ""}
+                channelId={showingThread.channelId}
+                messageId={showingThread.messageId}
+                navigation={showingThread.navigation}
+                replyRequest={
+                  replyRequest?.channelId === showingThread.channelId &&
+                  replyRequest.messageId === showingThread.messageId &&
+                  replyRequest.entryId === showingThread.navigation?.entryId
+                    ? replyRequest.sequence
+                    : undefined
+                }
+                close={closeThread}
+                onOpenLink={openLink}
+                onOpenMediaReview={openMediaReview}
+                canOpenLink={canOpenLink}
+              />
+            </div>
+          )}
 
-            {panel && opened && (
-              <div className={styles.retainedPanel} inert={showingSettings}>
-                <PanelCard
-                  key="target"
-                  panel={panel}
-                  target={opened.target}
-                  context={panelContext}
-                  close={close}
-                  closeLabel="Close channel panel"
-                />
-              </div>
-            )}
-            {drawer.side && (
-              <div className={styles.retainedPanel} hidden={showingSettings}>
-                {drawer.side}
-              </div>
-            )}
-            {companion && (
-              <div key="companion" className={styles.companion}>
-                {companion}
-              </div>
-            )}
-          </div>
-        )}
+          {panel && opened && (
+            <div className={styles.retainedPanel} inert={showingSettings}>
+              <PanelCard
+                key="target"
+                panel={panel}
+                target={opened.target}
+                context={panelContext}
+                close={close}
+                closeLabel="Close channel panel"
+              />
+            </div>
+          )}
+          {drawer.side && (
+            <div className={styles.retainedPanel} hidden={showingSettings}>
+              {drawer.side}
+            </div>
+          )}
+          {companion && (
+            <div key="companion" className={styles.companion}>
+              {companion}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

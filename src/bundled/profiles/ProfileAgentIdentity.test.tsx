@@ -202,7 +202,7 @@ it("does not trust a well-formed attestation with an invalid signature", async (
   expect(screen.queryByRole("button", { name: /owner profile/ })).toBeNull();
 });
 
-it("adds no agent section or owner reads for a profile without an agent hint", async () => {
+it("adds no agent section or owner read for a profile without an agent hint", async () => {
   const person = keypair();
   const { query } = mount(person, (filter) =>
     kind0(filter) ? [profile(person, { name: "Person" })] : [],

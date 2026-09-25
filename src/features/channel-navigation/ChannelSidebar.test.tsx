@@ -117,9 +117,8 @@ function fixture() {
           scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
         }}
         sessionsEnabled={sessionsEnabled}
-      >
-        {null}
-      </ChannelSidebar>
+        agentsEnabled={true}
+      />
     </ChannelNavigationProvider>
   );
   return { view, navigator, snapshot, list };

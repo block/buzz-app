@@ -136,7 +136,6 @@ readingTest(
     ]);
     const savedOffset = await history(page).evaluate((el) => el.scrollTop);
     await page.reload();
-    await button(page, "Messages").first().click();
     await composer(page, "Alpha").waitFor();
     await settle(page);
     await expectAnchor(page, saved);

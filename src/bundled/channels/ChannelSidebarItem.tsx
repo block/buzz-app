@@ -87,31 +87,36 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   const row = (
     <ChannelSidebarRow
       channel={channel}
+      dmVisualSpacing={channel.channelType === "dm"}
       icon={
         channel.channelType === "dm" && channel.participants?.length === 1 ? (
-          <Avatar
-            src={
-              profile?.picture
-                ? session.media(profile.picture, "small")
-                : undefined
-            }
-            alt=""
-            fallback={channel.name}
-            size="small"
-            shape={profile?.isAgent ? "squircle" : "circle"}
-            statusBadge={presence === "unknown" ? undefined : presence}
-          />
+          <span className={styles.dmAvatar} data-dm-identity="">
+            <Avatar
+              src={
+                profile?.picture
+                  ? session.media(profile.picture, "small")
+                  : undefined
+              }
+              alt=""
+              fallback={channel.name}
+              size="fill"
+              shape={profile?.isAgent ? "squircle" : "circle"}
+              statusBadge={presence === "unknown" ? undefined : presence}
+            />
+          </span>
         ) : channel.channelType === "dm" &&
           (channel.participants?.length ?? 0) > 1 ? (
           <span
             className={styles.dmCount}
+            data-dm-identity=""
+            data-dm-participant-count=""
             title={`${channel.participants?.length} other participants`}
             aria-hidden="true"
           >
             {channel.participants?.length}
           </span>
         ) : (
-          <Icon size={17} />
+          <Icon size={16} />
         )
       }
       nameAccessory={
@@ -126,21 +131,25 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         )
       }
       badge={
-        <>
+        <span className={styles.indicatorStack} data-channel-indicators="">
+          <span className={styles.indicatorLayer}>
+            <UnreadBadge
+              session={session}
+              channelId={channel.id}
+              dm={channel.channelType === "dm"}
+            />
+          </span>
           {working && (
             <span
               className={styles.working}
+              data-channel-working=""
+              data-indicator-layer="working"
               role="img"
               aria-label="Agent working"
               title="Agent working in this channel"
             />
           )}
-          <UnreadBadge
-            session={session}
-            channelId={channel.id}
-            dm={channel.channelType === "dm"}
-          />
-        </>
+        </span>
       }
       wrapSelect={(trigger) => {
         const activity = (

@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -74,10 +75,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   );
 
   await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await openPage(page, "Messages");
   const draft = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -380,10 +378,7 @@ for (const initial of ["invalid response", "unsupported relay"]) {
     });
 
     await page.goto(app.origin);
-    await page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages", exact: true })
-      .click();
+    await openPage(page, "Messages");
     const trigger = page.getByRole("button", {
       name: "Insert emoji",
       exact: true,

@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
 
@@ -21,6 +22,8 @@ async function expectNonPaging(page, app) {
 }
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
+const companionLauncher = (page, name) =>
+  button(page, name).and(page.locator("button[aria-expanded]"));
 const box = async (locator) => {
   const bounds = await locator.boundingBox();
   expect(bounds).not.toBeNull();
@@ -32,10 +35,7 @@ const panel = (page) =>
 
 async function open(page, app) {
   await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages" })
-    .click();
+  await openPage(page, "Messages");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();
@@ -142,10 +142,7 @@ scroll(
     expect(await box(shell)).toEqual(bounds);
 
     // Projects has no overflowing content: gestures must leave the shell in place.
-    await page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Projects", exact: true })
-      .click();
+    await openPage(page, "Projects");
     await page.getByRole("heading", { name: "Projects", exact: true }).hover();
     for (const [x, y] of [
       [0, -600],
@@ -274,10 +271,7 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
       page.getByRole("heading", { name: "Settings", exact: true }),
     ).toBeVisible();
     if (width <= 650) await button(page, "Show navigation").click();
-    await page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages" })
-      .click();
+    await openPage(page, "Messages");
     await expect(composer).toHaveJSProperty("value", "Layout draft");
     await expect(page.locator("[data-message-id]").last()).toBeInViewport();
   }
@@ -510,7 +504,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
     name: "Bestie",
     exact: true,
   });
-  const launch = button(page, "Bestie");
+  const launch = companionLauncher(page, "Bestie");
   await expect(launch).toBeVisible();
   await expect(bestie).toHaveCount(0);
   await launch.click();
@@ -541,10 +535,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await expect(launch).toBeVisible();
   await expect(bestie).toHaveCount(0);
   await launch.click();
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages" })
-    .click();
+  await openPage(page, "Messages");
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -683,10 +674,7 @@ todosOverlapTest(
     await page
       .getByRole("switch", { name: "Enable Todos", exact: true })
       .click();
-    await page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages", exact: true })
-      .click();
+    await openPage(page, "Messages");
     const todos = page.getByRole("region", {
       name: "Todos panel",
       exact: true,
@@ -774,14 +762,14 @@ readingTest(
     await settle(page);
     const saved = await upper(page);
     await expectNonPaging(page, app);
-    await button(page, "Bestie").click();
+    await companionLauncher(page, "Bestie").click();
     await settle(page);
     await expectAnchor(page, saved);
     await button(page, "Close Bestie panel").click();
     await settle(page);
     await expectAnchor(page, saved);
     await link(page, app, "https://github.com/block/buzz/pull/6");
-    await button(page, "Bestie").click();
+    await companionLauncher(page, "Bestie").click();
     for (const [width, height] of [
       [1440, 950],
       [800, 600],
@@ -824,7 +812,7 @@ readingTest(
     await open(page, app);
     await settle(page);
     const original = await upper(page);
-    await button(page, "Bestie").click();
+    await companionLauncher(page, "Bestie").click();
     await settle(page);
     const history = page.getByRole("region", {
       name: "Channel message history",
@@ -1000,8 +988,13 @@ sidebarActions(
           page.getByRole("complementary", { name: "Thread", exact: true }),
         ).toBeVisible();
       } else if (action === "message") {
-        await page.locator("summary", { hasText: /^DMs$/ }).hover();
-        await button(page, "New message").click();
+        const sidebar = page.getByRole("navigation", {
+          name: "Subscribed channels",
+        });
+        await sidebar.locator("summary", { hasText: /^Messages$/ }).hover();
+        await sidebar
+          .getByRole("button", { name: "New message", exact: true })
+          .click();
         await expect(
           page.getByRole("region", { name: "New message", exact: true }),
         ).toBeVisible();

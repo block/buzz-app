@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -29,10 +30,7 @@ test("Projects → Messages keeps saved groups, selected channel, and scroll on 
     return element.scrollTop;
   });
   expect(scroll).toBeGreaterThan(100);
-  await page
-    .getByRole("button", { name: "Projects", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Projects");
   await expect(sidebar).toBeVisible();
   let release;
   const held = new Promise((resolve) => {
@@ -63,10 +61,7 @@ test("Projects → Messages keeps saved groups, selected channel, and scroll on 
     requestAnimationFrame(frame);
   });
   try {
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Messages");
     await expect(sidebar).toBeVisible();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),

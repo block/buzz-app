@@ -5,12 +5,35 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 type Person = Awaited<
   ReturnType<RelaySession["directMessages"]["people"]>
 >["people"][number];
+type Page = { people: readonly Person[]; more: boolean };
 const empty: readonly Person[] = [];
-// Last complete, empty word-prefix search; queries strictly extending it
-// cannot match anyone. Re-entering the same query searches afresh.
-const exhausted = new WeakMap<RelaySession, string>();
+/** Typing pause before an uncached query reaches the network. */
+export const MENTION_DIRECTORY_DELAY_MS = 200;
+const CACHE_LIMIT = 100;
 
-/** Directory pages belong to this menu and community, not the global profile cache. */
+// Successful first pages, per session (community/viewer) and query. Session
+// lifetime bounds staleness; errors are not cached, so Retry reads again.
+const pages = new WeakMap<RelaySession, Map<string, Page>>();
+function cached(session: RelaySession, query: string) {
+  return pages.get(session)?.get(query);
+}
+function remember(session: RelaySession, query: string, page: Page) {
+  let queries = pages.get(session);
+  if (!queries) {
+    queries = new Map();
+    pages.set(session, queries);
+  }
+  queries.delete(query);
+  queries.set(query, page);
+  if (queries.size > CACHE_LIMIT)
+    queries.delete(queries.keys().next().value ?? "");
+}
+
+/**
+ * Directory pages belong to this menu and community, not the global profile
+ * cache. While a new query waits or loads, the last settled page stays visible
+ * so callers can keep its still-matching people instead of blanking the list.
+ */
 export function useMentionDirectory(
   session: RelaySession,
   channel: ChannelSummary | undefined,
@@ -25,71 +48,61 @@ export function useMentionDirectory(
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{
     session: RelaySession;
-    channelId: string;
     query: string;
-    people: readonly Person[];
+    attempt: number;
     error?: string;
-    loading: boolean;
-    more?: boolean;
   }>();
-  const channelId = channel?.id ?? "";
-  const prefix = exhausted.get(session);
-  // An exact key is an author lookup, which name-prefix evidence cannot refute.
-  const exactKey = /^[0-9a-f]{64}$/.test(query.trim());
-  const searching =
-    active &&
-    (attempt > 0 ||
-      exactKey ||
-      prefix === undefined ||
-      query.length <= prefix.length ||
-      !query.startsWith(prefix));
+  const [last, setLast] = useState<{ session: RelaySession; page: Page }>();
+  const hit = active ? cached(session, query) : undefined;
   useEffect(() => {
-    if (!searching) return;
+    if (!active || cached(session, query)) return;
     const controller = new AbortController();
-    const current = { session, channelId, query, attempt };
-    exhausted.delete(session);
-    setState({ ...current, people: empty, loading: true });
-    void session.directMessages.people(query, 1, controller.signal).then(
-      ({ people, hasMore }) => {
-        if (controller.signal.aborted) return;
-        // The relay ignores non-word text, so it only refutes word prefixes.
-        if (
-          /[\p{L}\p{N}]/u.test(query) &&
-          !exactKey &&
-          !people.length &&
-          !hasMore
-        )
-          exhausted.set(session, query);
-        setState({ ...current, people, loading: false, more: hasMore });
-      },
-      () => {
-        if (!controller.signal.aborted)
-          setState({
-            ...current,
-            people: empty,
-            loading: false,
-            error: "Could not search community people. Retry to refresh.",
-          });
-      },
-    );
-    return () => controller.abort();
-  }, [session, channelId, query, exactKey, searching, attempt]);
-  const current =
-    searching &&
+    const current = { session, query, attempt };
+    const timer = setTimeout(() => {
+      void session.directMessages.people(query, 1, controller.signal).then(
+        ({ people, hasMore }) => {
+          if (controller.signal.aborted) return;
+          remember(session, query, { people, more: hasMore });
+          setState(current);
+        },
+        () => {
+          if (!controller.signal.aborted)
+            setState({
+              ...current,
+              error: "Could not search community people. Retry to refresh.",
+            });
+        },
+      );
+    }, MENTION_DIRECTORY_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [session, query, active, attempt]);
+  if (hit && (last?.session !== session || last.page !== hit))
+    setLast({ session, page: hit });
+  const error =
+    active &&
+    !hit &&
     state?.session === session &&
-    state.channelId === channelId &&
-    state.query === query
-      ? state
+    state.query === query &&
+    state.attempt === attempt
+      ? state.error
       : undefined;
-  const retry = useCallback(() => setAttempt((value) => value + 1), []);
+  const shown = hit ?? (last?.session === session ? last.page : undefined);
+  const retry = useCallback(() => {
+    pages.get(session)?.delete(query);
+    setAttempt((value) => value + 1);
+  }, [session, query]);
   return useMemo(
     () => ({
-      people: current?.people ?? empty,
-      loading: searching && (!current || current.loading),
-      error: current?.error,
-      more: !!current?.more,
+      /** The current query's page, or the last settled page while it loads. */
+      people: (active && shown?.people) || empty,
+      loading: active && !hit && !error,
+      error,
+      more: !!hit?.more,
       retry,
     }),
-    [current, searching, retry],
+    [active, shown, hit, error, retry],
   );
 }

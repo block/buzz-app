@@ -65,6 +65,7 @@ pub(crate) fn fixture_with_models(
     )));
     let app = mock_builder()
         .manage(host.clone())
+        .manage(crate::harness_setup::HarnessSetup::default())
         .manage(model_host)
         .invoke_handler(crate::commands())
         .build(crate::app_context())
@@ -107,6 +108,23 @@ pub(crate) fn seed(dir: &std::path::Path) -> String {
     }]})).unwrap()).unwrap();
     id
 }
+#[test]
+fn goose_install_restart_does_not_reenable_an_agent_stopped_during_download() {
+    let (dir, host, _app, _view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    saved["agents"][0]["harness"]["command"] = json!("/missing/goose");
+    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    assert_eq!(host.waiting_for_goose().unwrap(), vec![id.clone()]);
+    host.with(|state| state.action(&id, Action::Stop)).unwrap();
+    let result =
+        tauri::async_runtime::block_on(start(host, id, Action::Restart, false, None, true));
+    assert_eq!(result.err().as_deref(), Some(NOT_WAITING_FOR_GOOSE));
+    let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(saved["agents"][0]["enabled"], false);
+}
+
 #[test]
 fn production_acl_allows_delete_to_reach_native_credentials() {
     let (dir, _host, _app, view) = fixture();
@@ -164,6 +182,10 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         )
     );
     assert_eq!(before["harnessOptions"][1]["label"], "Goose");
+    assert_eq!(
+        before["harnessOptions"][1]["installSupported"],
+        cfg!(any(target_os = "macos", target_os = "linux"))
+    );
     assert_eq!(before["harnessOptions"][1]["defaultArgs"], json!(["acp"]));
     assert_eq!(
         before["harnessOptions"][1]["status"],
@@ -333,7 +355,7 @@ fn queued_restore_skips_agent_stopped_after_launch() {
     .unwrap();
     assert_eq!(stopped["agents"][0]["startOnAppLaunch"], true);
     let restored =
-        tauri::async_runtime::block_on(start(host.clone(), id, Action::Start, true, None));
+        tauri::async_runtime::block_on(start(host.clone(), id, Action::Start, true, None, false));
     assert_eq!(
         restored.err().as_deref(),
         Some("Agent disabled before restore")
@@ -782,7 +804,7 @@ async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() 
                 owner.restore().await;
                 Err("restore completed".into())
             } else {
-                start(owner, agent_id, Action::Start, false, None).await
+                start(owner, agent_id, Action::Start, false, None, false).await
             }
         });
         tokio::task::spawn_blocking({

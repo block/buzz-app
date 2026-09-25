@@ -157,6 +157,11 @@ export function CommunityDialog({
       });
     }
   }
+  // Keeping an existing community profile publishes nothing, so it needs no edit validation.
+  const keepsProfile =
+    mode === "join" &&
+    !!original?.exists &&
+    profilesEqual(profile, original.profile);
   return (
     <Dialog
       open
@@ -329,7 +334,10 @@ export function CommunityDialog({
                 disabled={
                   busy ||
                   (step === "access" && !allowed) ||
-                  (step === "profile" && !canSaveProfile(profile))
+                  (step === "profile" &&
+                    (keepsProfile
+                      ? !profile.name.trim()
+                      : !canSaveProfile(profile)))
                 }
               >
                 {busy
@@ -337,8 +345,7 @@ export function CommunityDialog({
                   : step === "profile"
                     ? mode === "profile"
                       ? "Save profile"
-                      : original?.exists &&
-                          profilesEqual(profile, original.profile)
+                      : keepsProfile
                         ? "Open community"
                         : "Publish profile & open"
                     : "Continue"}

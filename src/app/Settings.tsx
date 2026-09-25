@@ -100,7 +100,7 @@ export function Settings({
         ? [
             { id: "profile", label: "Profile", icon: UserIcon },
             ...communityCards.map((card) => ({
-              id: `community-${card.id}`,
+              id: card.key,
               label: card.title,
               icon: ChatCircleIcon,
             })),
@@ -255,21 +255,18 @@ export function Settings({
             <div hidden={selected !== "agents"}>
               <AgentSettings active={selected === "agents"} />
             </div>
-            {communityCards.map((card) => {
-              const section = `community-${card.id}`;
-              return (
-                <div key={card.key} hidden={selected !== section}>
-                  {selected === section && (
-                    <OwnedContribution entry={card} registry={cards}>
-                      {(entry, active) => {
-                        const Card = entry.component;
-                        return <Card active={active} />;
-                      }}
-                    </OwnedContribution>
-                  )}
-                </div>
-              );
-            })}
+            {communityCards.map((card) => (
+              <div key={card.key} hidden={selected !== card.key}>
+                {selected === card.key && (
+                  <OwnedContribution entry={card} registry={cards}>
+                    {(entry, active) => {
+                      const Card = entry.component;
+                      return <Card active={active} />;
+                    }}
+                  </OwnedContribution>
+                )}
+              </div>
+            ))}
             {contributedGroups.flatMap((group) =>
               group.cards.map(
                 (card) =>

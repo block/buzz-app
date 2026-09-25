@@ -136,3 +136,21 @@ it("gives contributed cards their own community sections and retires removed car
     "page",
   );
 });
+
+it("keeps same-id community cards from different plugins distinct", () => {
+  const { cards } = registry([
+    card("groups", "Example groups"),
+    {
+      ...card("groups", "Other groups"),
+      key: "other/groups",
+      pluginId: "other",
+    },
+  ]);
+  render(<Settings {...host} cards={cards} />);
+  fireEvent.click(screen.getByRole("button", { name: "Other groups" }));
+  expect(screen.getByText("Other groups body")).toBeVisible();
+  expect(screen.queryByText("Example groups body")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Example groups" }),
+  ).not.toHaveAttribute("aria-current");
+});

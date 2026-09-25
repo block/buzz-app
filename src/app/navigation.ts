@@ -80,26 +80,30 @@ export function useAppNavigation(services: AppServices) {
       }
     }
   }
-  if (target.kind === "settings" && target.section) {
-    const builtIn = [
+  if (
+    target.kind === "settings" &&
+    target.section &&
+    ![
       "profile",
       "plugins",
       "appearance",
       "shortcuts",
       "agents",
       "notifications",
-    ].includes(target.section);
-    const contributed = settingsCards.some((card) =>
-      card.group
-        ? card.key === target.section
-        : `community-${card.id}` === target.section,
-    );
-    if (
-      !builtIn &&
-      !contributed &&
-      !(developerMode && target.section === "developer")
-    )
-      failure = "unavailable";
+    ].includes(target.section) &&
+    !(developerMode && target.section === "developer")
+  ) {
+    // Plugin cards are addressed by contribution key.
+    const section = target.section;
+    const owner = section.split("/")[0] ?? "";
+    if (!settingsCards.some((card) => card.key === section)) {
+      if (
+        startup === "loading" ||
+        plugins.activation[owner]?.status === "starting"
+      )
+        waiting = true;
+      else failure = "unavailable";
+    }
   }
   // Legacy Home targets (including unaddressed startup) resolve to Messages.
   // Resolve in place before paint: links and history share one policy.

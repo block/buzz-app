@@ -67,6 +67,50 @@ it("publishes a description-only edit to an existing community profile", async (
   );
 });
 
+it("opens with an unchanged over-limit profile and blocks publishing it", async () => {
+  const about = "a".repeat(800);
+  api.inspectProfile.mockResolvedValueOnce({
+    exists: true,
+    existing: { name: "Fixture", about },
+    profile: { name: "Fixture", picture: "", about },
+  });
+  const user = userEvent.setup();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info") return Response.json({ name: "Fixture" });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      profile: { name: "Local", picture: "" },
+    }),
+    joined: vi.fn(),
+  } as unknown as Communities;
+  render(
+    <CommunityDialog communities={communities} mode="join" close={() => {}} />,
+  );
+  await user.type(screen.getByLabelText("Relay URL"), "wss://relay.example");
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  const name = await screen.findByLabelText("Display name");
+  await user.type(name, " Renamed");
+  expect(
+    screen.getByRole("button", { name: "Publish profile & open" }),
+  ).toBeDisabled();
+  await user.clear(name);
+  await user.type(name, "Fixture");
+  await user.click(screen.getByRole("button", { name: "Open community" }));
+  expect(api.publishProfile).not.toHaveBeenCalled();
+  expect(communities.joined).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "https://relay.example" }),
+    { name: "Fixture", picture: "", about },
+  );
+});
+
 it("names exact relay claim refusals and keeps other failures generic", async () => {
   const user = userEvent.setup();
   let refusal = "invite_exhausted";

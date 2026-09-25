@@ -7,7 +7,10 @@ import { StrictMode } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { createRelaySession } from "../../features/relay/session";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { keypair, profile, signed } from "../../features/relay/testing";
@@ -33,6 +36,7 @@ function setup(
   initial = [
     metadata({ agent_type: "goose", capabilities: ["code", "search"] }),
   ],
+  wrap: (session: RelaySession) => RelaySession = (session) => session,
 ) {
   let events = [
     profile(
@@ -71,7 +75,7 @@ function setup(
   const snapshot = {
     status: "ready" as const,
     generation: 1,
-    session: owner.session,
+    session: wrap(owner.session),
   };
   const relay: RelayData = {
     snapshot: () => snapshot,
@@ -480,6 +484,70 @@ it("never presents legacy fields while the initial managed profile settles", asy
     expect(seen.join(" ")).not.toContain("Goose");
   } finally {
     observer.disconnect();
+    cleanup();
+    h.owner.dispose();
+  }
+});
+
+it("withholds metadata on ownership-only admission failure and retries through one control", async () => {
+  let blocked = true;
+  const admission = vi.fn(
+    (
+      session: RelaySession,
+      filters: Parameters<RelaySession["observe"]>[0],
+    ) => {
+      if (blocked && filters.some((filter) => filter.kinds?.includes(0)))
+        throw new Error("view capacity exhausted");
+      return session.observe(filters);
+    },
+  );
+  const h = setup(undefined, (session) =>
+    Object.create(session, {
+      observe: {
+        value: (filters: Parameters<RelaySession["observe"]>[0]) =>
+          admission(session, filters),
+      },
+    }),
+  );
+  try {
+    render(h.tree(person.pubkey));
+    await screen.findByRole("heading", { name: "Agent" });
+    await screen.findByRole("button", { name: "Retry profile" });
+    await waitFor(() =>
+      expect(
+        h.query.mock.calls.some(([filters]) =>
+          filters.some((filter: { kinds?: number[] }) =>
+            filter.kinds?.includes(10100),
+          ),
+        ),
+      ).toBe(true),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Copy Agent type" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copy Capabilities" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "Retry profile" }),
+    ).toHaveLength(1);
+    const attempts = admission.mock.calls.length;
+    blocked = false;
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Retry profile" }));
+    expect(admission.mock.calls.length).toBeGreaterThan(attempts);
+    expect(
+      await screen.findByRole("button", { name: "Copy Agent type" }),
+    ).toHaveTextContent("Goose");
+    expect(
+      screen.getByRole("button", { name: "Copy Capabilities" }),
+    ).toHaveTextContent("code, search");
+    expect(
+      screen.queryByRole("button", { name: "Retry profile" }),
+    ).not.toBeInTheDocument();
+  } finally {
     cleanup();
     h.owner.dispose();
   }

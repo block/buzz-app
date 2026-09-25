@@ -8,6 +8,7 @@ import { AgentModelPicker } from "./AgentModelPicker";
 import { agentDraft } from "./agent-edit";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
+import type { ModelCatalog } from "../../features/agents/models";
 
 afterEach(cleanup);
 
@@ -50,7 +51,7 @@ it("Goose Databricks v2 browses live IDs and flags an unlisted short name", asyn
   const view = render(<Editor />);
   try {
     await user.click(screen.getByRole("button", { name: "Browse models" }));
-    await screen.findByText(/not in Goose’s current Databricks v2 list/);
+    await screen.findByText(/not in Goose’s current provider list/);
     expect(run).toHaveBeenCalledWith(
       1,
       expect.objectContaining({
@@ -74,8 +75,173 @@ it("Goose Databricks v2 browses live IDs and flags an unlisted short name", asyn
       "data_workflow_tools.goose.goose-glm-5-3",
     );
     expect(
-      screen.queryByText(/not in Goose’s current Databricks v2 list/),
+      screen.queryByText(/not in Goose’s current provider list/),
     ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("shows ten Goose models at a time and searches the full provider catalog", async () => {
+  const f = controlFixture();
+  const run = vi.fn(async () => ({
+    host: "",
+    models: Array.from({ length: 30 }, (_, index) => ({
+      id: `model-${String(index).padStart(2, "0")}`,
+      name: `model-${String(index).padStart(2, "0")}`,
+    })),
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(f.host);
+  const user = userEvent.setup();
+  function Editor() {
+    const [draft, setDraft] = useState({
+      ...agentDraft(f.agent),
+      command: "/usr/local/bin/goose",
+      provider: "anthropic",
+      model: "",
+    });
+    return (
+      <AgentModelPicker
+        draft={draft}
+        control={control}
+        defaults={{ host: "", filter: "" }}
+        onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+      />
+    );
+  }
+  const view = render(<Editor />);
+  try {
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    await screen.findByText("Showing up to 10 models. Type to search all 30.");
+    expect(run).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        action: "connect",
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({ provider: "anthropic" }),
+        }),
+      }),
+    );
+    const input = screen.getByRole("combobox", { name: "Model" });
+    await waitFor(() => expect(input).toHaveAttribute("aria-expanded", "true"));
+    expect(screen.getAllByRole("option")).toHaveLength(10);
+    expect(screen.getByRole("option", { name: /^model-00$/ })).toBeVisible();
+    expect(screen.queryByRole("option", { name: /model-25/ })).toBeNull();
+    await user.type(input, "model-25");
+    await user.click(await screen.findByRole("option", { name: /model-25/ }));
+    expect(input).toHaveValue("model-25");
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("shows a loading row while Goose fetches models for the selected provider", async () => {
+  const f = controlFixture();
+  let finish: (catalog: ModelCatalog) => void = () => {};
+  const run = vi.fn(
+    () =>
+      new Promise<ModelCatalog>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(f.host);
+  const draft = {
+    ...agentDraft(f.agent),
+    command: "/usr/local/bin/goose",
+    provider: "anthropic",
+    model: "previous-model",
+  };
+  const view = render(
+    <AgentModelPicker
+      draft={draft}
+      control={control}
+      defaults={{ host: "", filter: "" }}
+      onChange={() => {}}
+    />,
+  );
+  try {
+    await userEvent.click(
+      screen.getByRole("button", { name: "Browse models" }),
+    );
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+      "previous-model",
+    );
+    expect(screen.getByText("Loading Goose models…")).toBeVisible();
+    expect(screen.queryByRole("option", { name: /previous-model/ })).toBeNull();
+    finish({
+      host: "",
+      models: [{ id: "claude-model", name: "claude-model" }],
+      modelOverridden: false,
+      disconnected: false,
+    });
+    expect(
+      await screen.findByRole("option", { name: /^claude-model$/ }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "Model" }),
+      ).not.toHaveAttribute("aria-busy"),
+    );
+  } finally {
+    finish({
+      host: "",
+      models: [],
+      modelOverridden: false,
+      disconnected: false,
+    });
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("shows Goose authentication errors while keeping manual model entry available", async () => {
+  const f = controlFixture();
+  f.host.models = {
+    begin: async () => 1,
+    run: async () => {
+      throw "Goose needs authentication for this provider. Enter its API key in Buzz if it uses one, then retry";
+    },
+    cancel: async () => {},
+  };
+  const control = createAgentControl(f.host);
+  const draft = {
+    ...agentDraft(f.agent),
+    command: "/usr/local/bin/goose",
+    provider: "openai",
+  };
+  const view = render(
+    <AgentModelPicker
+      draft={draft}
+      control={control}
+      defaults={{ host: "", filter: "" }}
+      onChange={() => {}}
+    />,
+  );
+  try {
+    await userEvent.click(
+      screen.getByRole("button", { name: "Browse models" }),
+    );
+    expect(await screen.findByText(/Goose needs authentication/)).toBeVisible();
+    const input = screen.getByRole("combobox", { name: "Model" });
+    await waitFor(() => expect(input).not.toHaveAttribute("aria-busy"));
+    await userEvent.keyboard("{Escape}");
+    expect(
+      await screen.findByRole("button", { name: "Retry models" }),
+    ).toBeVisible();
+    await userEvent.clear(input);
+    await userEvent.type(input, "custom-model");
+    expect(input).toHaveValue("custom-model");
   } finally {
     view.unmount();
     control.dispose();
@@ -201,11 +367,13 @@ it("Pi discovers extension providers before start and selects the exact provider
     await user.click(screen.getByRole("button", { name: "Browse models" }));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(
-      screen.getByRole("button", { name: "Cancel model lookup", hidden: true }),
-    ).toBeVisible();
-    expect(
       await screen.findByRole("status", { name: "Model lookup" }),
     ).toHaveTextContent("Loading Pi models…");
+    // The open popup marks outside content aria-hidden on its own schedule,
+    // which removes the button's accessible name. Cancel stays visible.
+    expect(
+      screen.getByText("Cancel model lookup").closest("button"),
+    ).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
       "aria-busy",
       "true",
@@ -242,6 +410,61 @@ it("Pi discovers extension providers before start and selects the exact provider
       await screen.findByRole("option", {
         name: /extension\/namespace\/model.v1/,
       }),
+    ).toBeVisible();
+    expect(run).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("explains an empty Pi provider in the open model list without discarding other providers", async () => {
+  const f = controlFixture();
+  const message =
+    "No Pi models for this provider. If it needs an API key, add the provider's key variable under Advanced → Environment overrides or configure it in Pi's auth.json (for example, with /login). Then refresh models.";
+  const run = vi.fn(async () => ({
+    host: "",
+    models: [{ id: "openai/model", name: "openai/model" }],
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = {
+    begin: async () => 1,
+    run,
+    cancel: async () => {},
+  };
+  const control = createAgentControl(f.host);
+  let provider = "google";
+  const renderPicker = () => (
+    <AgentModelPicker
+      draft={{
+        ...agentDraft(f.agent),
+        command: "/local/buzz-pi-acp",
+        provider,
+        model: "",
+      }}
+      control={control}
+      defaults={undefined}
+      onChange={() => {}}
+    />
+  );
+  const view = render(renderPicker());
+  try {
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Browse models" }));
+    await waitFor(() =>
+      expect(document.querySelector(".buzz-select-popup")).toHaveTextContent(
+        message,
+      ),
+    );
+    provider = "openai";
+    view.rerender(renderPicker());
+    expect(document.querySelector(".buzz-select-popup")).not.toHaveTextContent(
+      message,
+    );
+    expect(
+      await screen.findByRole("option", { name: /openai\/model/ }),
     ).toBeVisible();
     expect(run).toHaveBeenCalledOnce();
   } finally {

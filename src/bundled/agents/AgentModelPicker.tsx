@@ -158,6 +158,8 @@ export function AgentModelPicker({
   const entries = (fresh?.models ?? []).filter(
     (m) => !pi || !draft.provider || m.id.startsWith(`${draft.provider}/`),
   );
+  const piNoModelsMessage =
+    "No Pi models for this provider. If it needs an API key, add the provider's key variable under Advanced → Environment overrides or configure it in Pi's auth.json (for example, with /login). Then refresh models.";
   const selectedId =
     pi && draft.provider && draft.model
       ? `${draft.provider}/${draft.model}`
@@ -300,6 +302,16 @@ export function AgentModelPicker({
                   {pi ? "Loading Pi models…" : "Loading models…"}
                 </div>
               )}
+              {pi &&
+                !busy &&
+                (status ||
+                  (fresh && draft.provider && entries.length === 0)) && (
+                  <div className="px-3 py-2 text-body-sm text-secondary">
+                    {fresh && draft.provider && entries.length === 0
+                      ? piNoModelsMessage
+                      : status}
+                  </div>
+                )}
               <Combobox.List
                 style={{
                   maxHeight: "min(20rem, calc(var(--available-height) - 4rem))",
@@ -379,10 +391,7 @@ export function AgentModelPicker({
           </p>
         )}
         {pi && fresh && entries.length === 0 && draft.provider && (
-          <p className="text-body-sm text-secondary">
-            No Pi models available for this provider. Check Pi sign-in or
-            extension configuration, or enter a custom ID.
-          </p>
+          <p className="text-body-sm text-secondary">{piNoModelsMessage}</p>
         )}
         {pi &&
           fresh &&

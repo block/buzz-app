@@ -418,6 +418,61 @@ it("Pi discovers extension providers before start and selects the exact provider
   }
 });
 
+it("explains an empty Pi provider in the open model list without discarding other providers", async () => {
+  const f = controlFixture();
+  const message =
+    "No Pi models for this provider. If it needs an API key, add the provider's key variable under Advanced → Environment overrides or configure it in Pi's auth.json (for example, with /login). Then refresh models.";
+  const run = vi.fn(async () => ({
+    host: "",
+    models: [{ id: "openai/model", name: "openai/model" }],
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = {
+    begin: async () => 1,
+    run,
+    cancel: async () => {},
+  };
+  const control = createAgentControl(f.host);
+  let provider = "google";
+  const renderPicker = () => (
+    <AgentModelPicker
+      draft={{
+        ...agentDraft(f.agent),
+        command: "/local/buzz-pi-acp",
+        provider,
+        model: "",
+      }}
+      control={control}
+      defaults={undefined}
+      onChange={() => {}}
+    />
+  );
+  const view = render(renderPicker());
+  try {
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Browse models" }));
+    await waitFor(() =>
+      expect(document.querySelector(".buzz-select-popup")).toHaveTextContent(
+        message,
+      ),
+    );
+    provider = "openai";
+    view.rerender(renderPicker());
+    expect(document.querySelector(".buzz-select-popup")).not.toHaveTextContent(
+      message,
+    );
+    expect(
+      await screen.findByRole("option", { name: /openai\/model/ }),
+    ).toBeVisible();
+    expect(run).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
 it("Pi cancellation and workspace changes reject late catalogs; explicit retry recovers", async () => {
   const f = controlFixture();
   let release!: (value: {

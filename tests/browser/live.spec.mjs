@@ -19,7 +19,16 @@ const heads = (app, channel) =>
       filter.top_level === true &&
       filter.until === undefined,
   );
+/** Cross a quota cooldown in controlled time. The app starts its own deadline
+ * when it consumes the refusal, which precedes the visible error and ignored
+ * clicks; advancing the page clock by the full delay from here passes it. The
+ * broker's lane uses real time, so also wait for its exact reopening. */
+async function crossCooldown(page, app) {
+  await page.clock.runFor(app.relay.rejected[0].retryAfterMs);
+  await expect.poll(() => app.relay.brokerCooldownOver()).toBe(true);
+}
 async function ready(page, app) {
+  await page.clock.install();
   await open(page, app);
   await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
   // The first head may already start after stream establishment; a duplicate
@@ -93,7 +102,7 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
     globalRequests,
   );
   await expectAnchor(page, reading);
-  await expect.poll(() => app.relay.cooldownOver()).toBe(true);
+  await crossCooldown(page, app);
   await retry(page).click();
   await expect(retry(page)).toHaveCount(0);
   await expect.poll(() => heads(app, "alpha").length).toBe(calls + 1);
@@ -162,6 +171,7 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   // selected channel or on an interest change replacing the global stream.
   app.relay.emptyRoster();
   app.relay.quotaNextRoster(2);
+  await page.clock.install();
   await page.goto(app.origin);
   await openPage(page, "Messages");
   await expect.poll(() => app.relay.rejected.length).toBe(1);
@@ -188,7 +198,7 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   await retry(page).click();
   await retry(page).click();
   expect(rosters()).toHaveLength(calls);
-  await expect.poll(() => app.relay.cooldownOver()).toBe(true);
+  await crossCooldown(page, app);
   await retry(page).click();
   await expect(
     page.getByText("No channels yet.", { exact: true }),

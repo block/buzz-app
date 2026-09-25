@@ -50,11 +50,15 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
       target.y < visibleTop + 8
         ? target.y - visibleTop - 8
         : target.y + target.height - visibleBottom + 8;
+    const before = await scroller.evaluate((element) => element.scrollTop);
     await wheel(
       page,
       Math.sign(distance) * Math.max(Math.abs(distance), 24),
       scroller,
     );
+    await expect
+      .poll(() => scroller.evaluate((element) => element.scrollTop))
+      .not.toBe(before);
   }
   await expect(row).toBeInViewport({ ratio: 1 });
   await expect(toggle).toBeInViewport({ ratio: 1 });

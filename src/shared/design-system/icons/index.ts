@@ -292,3 +292,9 @@ export const WarningCircleIcon = defineIcon(
   "phosphor",
   PhosphorWarningCircleIcon,
 );
+
+import { ArrowsDownUpIcon as PhosphorArrowsDownUpIcon } from "@phosphor-icons/react/dist/csr/ArrowsDownUp";
+export const ArrowsDownUpIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowsDownUpIcon,
+);

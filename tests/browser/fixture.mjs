@@ -38,6 +38,9 @@ export const test = base.extend({
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
+  personalSidebar: [false, { option: true }],
+  sortingSidebar: [false, { option: true }],
+  initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
   lifecycleVisibility: [{ archived: [], hidden: [] }, { option: true }],
   expectedPageFailure: [false, { option: true }],
@@ -69,6 +72,9 @@ export const test = base.extend({
       sessionParents,
       sidebarUnread,
       savedSidebar,
+      personalSidebar,
+      sortingSidebar,
+      initialSidebarSort,
       channelLifecycle,
       lifecycleVisibility,
       expectedPageFailure,
@@ -149,6 +155,8 @@ export const test = base.extend({
       : dmLabels
         ? ["dm-peer"]
         : [];
+    const personalChannel = "11111111-1111-4111-8111-111111111111";
+    const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
     const lifecycleRows = channelLifecycle
       ? [
           {
@@ -170,7 +178,9 @@ export const test = base.extend({
       ...new Set([
         ...channels,
         ...dmIds,
+        ...sortingIds,
         ...lifecycleRows.map((row) => row.id),
+        ...(personalSidebar ? [personalChannel] : []),
         ...Object.values(sessionParents),
       ]),
     ];
@@ -194,6 +204,7 @@ export const test = base.extend({
               channels: { alpha: { starred: true, updatedAt: 1 } },
             },
           ],
+          ["channel-sort", { version: 1, groups: initialSidebarSort }],
         ]) {
           records.set(
             coordinate,
@@ -207,6 +218,44 @@ export const test = base.extend({
         }
       }
     }
+    if (personalSidebar) {
+      for (const community of ["primary", "secondary"]) {
+        const scope = JSON.parse(fixtureAliases)[community];
+        const coordinate = `buzz-channel-kit-v1:${encodeURIComponent(scope)}:groups:personal`;
+        const record = {
+          version: 1,
+          community: scope,
+          deleted: false,
+          value: {
+            type: "groups",
+            id: "personal",
+            groups: [
+              {
+                id: "personal-work",
+                name: "Personal work",
+                defaultTemplateId: "template",
+              },
+            ],
+            assignments: { [personalChannel]: "personal-work" },
+          },
+        };
+        readEvents.get(community).set(
+          coordinate,
+          sign(
+            30078,
+            [
+              ["d", coordinate],
+              ["t", "buzz-channel-kit-v1"],
+            ],
+            nip44.v2.encrypt(
+              JSON.stringify(record),
+              nip44.v2.utils.getConversationKey(userKey, viewer),
+            ),
+            userKey,
+          ),
+        );
+      }
+    }
     const hiddenChannels = new Set();
     const streams = new Map();
     const streamOwners = new Map();
@@ -216,6 +265,9 @@ export const test = base.extend({
     for (const community of ["primary", "secondary"])
       for (const parent of Object.values(sessionParents))
         histories.set(`${community}/${parent}`, []);
+    if (personalSidebar)
+      for (const community of ["primary", "secondary"])
+        histories.set(`${community}/${personalChannel}`, []);
     const historyStarted = performance.now();
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
@@ -235,6 +287,17 @@ export const test = base.extend({
     for (const community of ["primary", "secondary"])
       for (const id of [...dmIds, ...lifecycleRows.map((row) => row.id)])
         histories.set(`${community}/${id}`, []);
+    for (const community of ["primary", "secondary"])
+      for (const [index, id] of sortingIds.entries())
+        histories.set(`${community}/${id}`, [
+          sign(
+            9,
+            [["h", id]],
+            `Activity in ${id}`,
+            userKey,
+            1700000200 + index,
+          ),
+        ]);
     const targetEvents = [];
     let searchTarget;
     if (openSearch) {
@@ -482,6 +545,9 @@ export const test = base.extend({
         readState,
         sidebarUnread,
         savedSidebar,
+        personalSidebar,
+        sortingSidebar,
+        initialSidebarSort,
         dmLabels,
         tallMessages,
         browserVersion: browser.version(),
@@ -616,7 +682,9 @@ export const test = base.extend({
           };
         return events.filter(
           (event) =>
-            filter["#t"]?.includes("read-state") ||
+            event.tags.some(
+              ([key, value]) => key === "t" && filter["#t"]?.includes(value),
+            ) ||
             filter["#d"]?.includes(event.tags.find(([k]) => k === "d")?.[1]),
         );
       }
@@ -840,6 +908,18 @@ export const test = base.extend({
     const acceptReadPublication = (community, event) => {
       expect(verifyEvent(event)).toBe(true);
       expect(event.pubkey).toBe(viewer);
+      if (channelLifecycle && [9002, 9008, 9022, 41012].includes(event.kind)) {
+        const id = event.tags.find(([key]) => key === "h")?.[1];
+        expect(lifecycleRows.some((row) => row.id === id)).toBe(true);
+        if (event.kind === 9002) archivedIds.add(id);
+        if (event.kind === 41012) hiddenDmIds.add(id);
+        if (event.kind === 9008 || event.kind === 9022)
+          rosterIds.splice(rosterIds.indexOf(id), 1);
+        lifecycleTime++;
+        report.lifecyclePublications ??= [];
+        report.lifecyclePublications.push(event);
+        return;
+      }
       if (event.kind === 9) {
         report.publications.push({ community, event });
         const channel = event.tags.find(([name]) => name === "h")?.[1];
@@ -936,20 +1016,8 @@ export const test = base.extend({
                   if (
                     channelLifecycle &&
                     [9002, 9008, 9022, 41012].includes(event.kind)
-                  ) {
-                    const id = event.tags.find(([key]) => key === "h")?.[1];
-                    expect(lifecycleRows.some((row) => row.id === id)).toBe(
-                      true,
-                    );
-                    if (event.kind === 9002) archivedIds.add(id);
-                    if (event.kind === 41012) hiddenDmIds.add(id);
-                    if (event.kind === 9008 || event.kind === 9022)
-                      rosterIds.splice(rosterIds.indexOf(id), 1);
-                    lifecycleTime++;
-                    report.lifecyclePublications ??= [];
-                    report.lifecyclePublications.push(event);
-                    return;
-                  }
+                  )
+                    return acceptReadPublication(community, event);
                   if (event.kind === 30078)
                     return acceptReadPublication(community, event);
                   expect([9, 7]).toContain(event.kind);
@@ -969,17 +1037,54 @@ export const test = base.extend({
                 },
               }
             : {}),
-          ...(readState
+          ...(readState || savedSidebar
             ? {
-                discovery: (community) => ({
-                  self: getPublicKey(relayKey),
-                  read_state_snapshot: {
-                    version: 1,
-                    community_id: communityIds[community],
-                    max_events: 4096,
-                    max_bytes: 8388608,
-                  },
-                }),
+                ...(readState
+                  ? {
+                      discovery: (community) => ({
+                        self: getPublicKey(relayKey),
+                        read_state_snapshot: {
+                          version: 1,
+                          community_id: communityIds[community],
+                          max_events: 4096,
+                          max_bytes: 8388608,
+                        },
+                      }),
+                    }
+                  : {}),
+                acceptPublication: (community, event) => {
+                  expect(verifyEvent(event)).toBe(true);
+                  expect(event.pubkey).toBe(viewer);
+                  const coordinate = event.tags.find(
+                    ([key]) => key === "d",
+                  )?.[1];
+                  if (
+                    event.kind === 30078 &&
+                    [
+                      "channel-sections",
+                      "channel-stars",
+                      "channel-sort",
+                    ].includes(coordinate)
+                  ) {
+                    expect(event.tags).toContainEqual(["t", coordinate]);
+                    const blob = JSON.parse(
+                      nip44.v2.decrypt(
+                        event.content,
+                        nip44.v2.utils.getConversationKey(userKey, viewer),
+                      ),
+                    );
+                    readEvents.get(community).set(coordinate, event);
+                    report.sidebarPublications ??= [];
+                    report.sidebarPublications.push({
+                      community,
+                      coordinate,
+                      event,
+                      blob,
+                    });
+                    return;
+                  }
+                  acceptReadPublication(community, event);
+                },
               }
             : {}),
         })
@@ -1096,7 +1201,7 @@ export const test = base.extend({
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
         expect(body.length).toBeGreaterThan(0);
-        expect(body.length).toBeLessThanOrEqual(2);
+        expect(body.length).toBeLessThanOrEqual(3);
         const filter = body[0];
         const result = [
           ...new Map(
@@ -1443,25 +1548,30 @@ export const test = base.extend({
         observerFailures.splice(match, 1);
         return true;
       };
-      // Consume each deliberately injected mute failure by exact request URL.
-      const muteFailures = [...(report.sidebarMuteFailures ?? [])];
-      const injectedMuteFailure = (message, index) => {
+      // Sidebar recovery journeys inject specific failed host requests. Match
+      // each exact URL once, not every 502 or every console error in the test.
+      const sidebarFailures = [
+        ...(report.sidebarSortFailures ?? []),
+        ...(report.sidebarMuteFailures ?? []),
+        ...(report.sidebarActivityFailures ?? []),
+      ];
+      const injectedSidebarFailure = (message, index) => {
         if (
           !/^Failed to load resource: the server responded with a status of 502/.test(
             message,
           )
         )
           return false;
-        const match = muteFailures.indexOf(consoleLocations.get(index));
+        const match = sidebarFailures.indexOf(consoleLocations.get(index));
         if (match < 0) return false;
-        muteFailures.splice(match, 1);
+        sidebarFailures.splice(match, 1);
         return true;
       };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
-            !injectedMuteFailure(message, index) &&
+            !injectedSidebarFailure(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

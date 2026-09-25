@@ -77,6 +77,12 @@ it("reads legacy preferences through the production session, transport, and boun
         "#d": ["channel-mutes"],
         limit: 1,
       },
+      {
+        kinds: [30078],
+        authors: [viewer.pubkey],
+        "#d": ["channel-sort"],
+        limit: 1,
+      },
     ]);
     return Response.json(result);
   });
@@ -120,6 +126,22 @@ it("reads legacy preferences through the production session, transport, and boun
   try {
     expect(await owner.session.sidebarPreferences.read()).toEqual(expected);
     expect(upstream).toHaveBeenCalledTimes(1);
+    result = [
+      ...records,
+      encrypted("channel-mutes", {
+        version: 1,
+        channels: {
+          general: { muted: true, updatedAt: 1 },
+          removed: { muted: false, updatedAt: 2 },
+        },
+      }),
+      encrypted("channel-sort", { version: 1, groups: { channels: "recent" } }),
+    ];
+    expect(await owner.session.sidebarPreferences.read()).toEqual({
+      ...expected,
+      muted: ["general"],
+      sort: { channels: "recent" },
+    });
     const calls = upstream.mock.calls.length;
     const corrupt = { ...records[0], sig: "0".repeat(128) };
     const duplicateTag = signed(viewer, {

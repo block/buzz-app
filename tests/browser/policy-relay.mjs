@@ -195,6 +195,27 @@ export function policyRelay({
           );
         }
         if (
+          filters.length <= 128 &&
+          filters.every(
+            (filter) =>
+              filter.limit === 1 &&
+              filter["#h"]?.length === 1 &&
+              [9, 40002, 40008, 45001, 45003].every((kind) =>
+                filter.kinds?.includes(kind),
+              ),
+          )
+        ) {
+          for (const filter of filters)
+            report.queries.push({
+              community: communityOf(url),
+              filter,
+              at: performance.now(),
+            });
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
+        if (
           filters.length === 3 &&
           filters.every(
             (filter) =>
@@ -221,11 +242,12 @@ export function policyRelay({
           );
         }
         if (filters.length !== 1) {
-          // Sidebar preferences read only these three exact own-author coordinates.
-          expect(filters).toHaveLength(3);
+          // Sidebar preferences read only these four exact own-author coordinates.
+          expect(filters).toHaveLength(4);
           expect(filters.map((filter) => filter["#d"]?.[0]).sort()).toEqual([
             "channel-mutes",
             "channel-sections",
+            "channel-sort",
             "channel-stars",
           ]);
           for (const filter of filters) {

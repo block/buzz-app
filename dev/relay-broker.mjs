@@ -5,6 +5,7 @@ import {
   mutateSidebarMute,
 } from "./sidebar-mutes.mjs";
 import { prepareMedia } from "./media-preparation.mjs";
+import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
@@ -370,6 +371,31 @@ export function validAgentEnrollment(event) {
         typeof tag[1] === "string" &&
         Object.hasOwn(validators, tag[0]) &&
         validators[tag[0]].test(tag[1]),
+    )
+  );
+}
+export function validChannelActivityFilters(filters) {
+  return (
+    Array.isArray(filters) &&
+    filters.length >= 1 &&
+    filters.length <= 128 &&
+    filters.every(
+      (filter) =>
+        filter &&
+        typeof filter === "object" &&
+        filter.limit === 1 &&
+        Array.isArray(filter.kinds) &&
+        filter.kinds.length === 5 &&
+        [9, 40002, 40008, 45001, 45003].every((kind) =>
+          filter.kinds.includes(kind),
+        ) &&
+        Array.isArray(filter["#h"]) &&
+        filter["#h"].length === 1 &&
+        typeof filter["#h"][0] === "string" &&
+        /^[a-zA-Z0-9_-]{1,128}$/.test(filter["#h"][0]) &&
+        Object.keys(filter).every((key) =>
+          ["kinds", "#h", "limit"].includes(key),
+        ),
     )
   );
 }
@@ -745,6 +771,143 @@ export function relayBrokerPlugin({
               sidebarUploads--;
             }
           }
+          if (route === "/api/relay/sidebar-sort" && req.method === "POST") {
+            let raw = "";
+            for await (const part of req) {
+              raw += part;
+              if (Buffer.byteLength(raw) > 32 * 1024)
+                return json(res, 413, {
+                  error: `Sidebar preference intent is too large`,
+                });
+            }
+            let intent;
+            try {
+              intent = JSON.parse(raw);
+              assertSidebarSortIntent(intent);
+            } catch {
+              return json(res, 400, {
+                error: `Invalid sidebar preference intent`,
+              });
+            }
+            const request = new AbortController();
+            const close = () => request.abort();
+            res.once("close", close);
+            const previous = sidebarMutations.get(relay) ?? Promise.resolve();
+            const mutation = previous
+              .catch(() => {})
+              .then(async () => {
+                request.signal.throwIfAborted();
+                const filter = [
+                  {
+                    kinds: [30078],
+                    authors: [viewer],
+                    "#d": ["channel-sort"],
+                    limit: 1,
+                  },
+                ];
+                const lane = admissions(relay, viewer).api;
+                const requestSignal = AbortSignal.any([
+                  request.signal,
+                  AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+                ]);
+                const dispatch = (path, body) =>
+                  admittedApiRequest(
+                    lane,
+                    () => {
+                      requestSignal.throwIfAborted();
+                      const value = JSON.stringify(body);
+                      const auth = finalizeEvent(
+                        {
+                          kind: 27235,
+                          created_at: Math.floor(Date.now() / 1000),
+                          content: "",
+                          tags: [
+                            ["u", `${relay}${path}`],
+                            ["method", "POST"],
+                            [
+                              "payload",
+                              createHash("sha256").update(value).digest("hex"),
+                            ],
+                            ["nonce", randomBytes(16).toString("hex")],
+                          ],
+                        },
+                        key,
+                      );
+                      return fetchUpstream(`${relay}${path}`, {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization:
+                            "Nostr " +
+                            Buffer.from(JSON.stringify(auth)).toString(
+                              "base64",
+                            ),
+                        },
+                        body: value,
+                        redirect: "error",
+                        signal: requestSignal,
+                      });
+                    },
+                    requestSignal,
+                  );
+                const readHead = async () => {
+                  const response = await dispatch("/query", filter);
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar preference query failed (${response.status})`,
+                    );
+                  return readSidebarHead(response);
+                };
+                const publishEvent = async (event) => {
+                  const response = await dispatch("/events", event);
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar preference publish failed (${response.status})`,
+                    );
+                  const receipt = await readSidebarHead(
+                    response,
+                    "publication",
+                  );
+                  if (
+                    receipt.event_id !== event.id ||
+                    receipt.accepted !== true
+                  )
+                    throw new Error(
+                      "Sidebar preference publication was not accepted",
+                    );
+                };
+                return {
+                  groups: await mutateSidebarSort(
+                    intent,
+                    key,
+                    readHead,
+                    publishEvent,
+                  ),
+                };
+              });
+            sidebarMutations.set(relay, mutation);
+            try {
+              return json(res, 200, await mutation);
+            } catch (error) {
+              if (error instanceof ApiPaused)
+                return json(res, 429, {
+                  error: error.message,
+                  sent: false,
+                  paused: true,
+                  retryAfterMs: error.retryAfterMs,
+                });
+              return json(res, 502, {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : `Sidebar preference failed`,
+              });
+            } finally {
+              res.off("close", close);
+              if (sidebarMutations.get(relay) === mutation)
+                sidebarMutations.delete(relay);
+            }
+          }
           if (route === "/api/relay/sidebar-mute" && req.method === "POST") {
             let raw = "";
             for await (const part of req) {
@@ -902,6 +1065,8 @@ export function relayBrokerPlugin({
               projectGit: true,
               attachmentUploads: true,
               sidebarPreferences: true,
+              sidebarSortWrites: true,
+              channelActivity: true,
               sidebarMuteWrites: true,
               channelKit: true,
               readState: true,
@@ -1354,6 +1519,7 @@ export function relayBrokerPlugin({
               "/api/relay/query",
               "/api/relay/agent-memories",
               "/api/relay/presence-snapshot",
+              "/api/relay/channel-activity",
               "/api/relay/sign",
               "/api/relay/channel-lifecycle-sign",
               "/api/relay/channel-lifecycle-publish",
@@ -1491,6 +1657,9 @@ export function relayBrokerPlugin({
               });
             }
           }
+          const channelActivity = route === "/api/relay/channel-activity";
+          if (channelActivity && !validChannelActivityFilters(filters))
+            return json(res, 400, { error: "Activity filter rejected" });
           const profile = route === "/api/relay/profile";
           const directMessage = route === "/api/relay/direct-message";
           if (directMessage) {
@@ -1719,6 +1888,7 @@ export function relayBrokerPlugin({
             !workflowPath &&
             !readPublishing &&
             !snapshot &&
+            !channelActivity &&
             !validFilters(filters)
           )
             return json(res, 400, { error: "Read filter rejected" });
@@ -1853,8 +2023,9 @@ export function relayBrokerPlugin({
                   lane,
                   request,
                   requestSignal,
-                  route === "/api/relay/query" &&
-                    req.headers["x-buzz-read-priority"] === "background"
+                  channelActivity ||
+                    (route === "/api/relay/query" &&
+                      req.headers["x-buzz-read-priority"] === "background")
                     ? "background"
                     : "foreground",
                   refusal,

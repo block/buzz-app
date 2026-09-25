@@ -4,6 +4,7 @@ import { flush, keypair, scriptedTransport } from "./testing";
 import type {
   SidebarPreferences,
   SidebarMuteMutator,
+  SidebarSortMutator,
 } from "./sidebar-preferences";
 
 const data: SidebarPreferences = {
@@ -15,12 +16,14 @@ const data: SidebarPreferences = {
 function setup(
   decode = vi.fn(async (): Promise<SidebarPreferences> => data),
   writeSidebarMute?: SidebarMuteMutator,
+  writeSidebarSort?: SidebarSortMutator,
 ) {
   const wire = scriptedTransport(keypair().pubkey, keypair().pubkey);
   const owner = createRelaySession({
     ...wire.transport,
     decodeSidebarPreferences: decode,
     ...(writeSidebarMute ? { writeSidebarMute } : {}),
+    ...(writeSidebarSort ? { writeSidebarSort } : {}),
   });
   return { wire, owner, preferences: owner.session.sidebarPreferences, decode };
 }
@@ -336,3 +339,116 @@ it("does not mutate before a successful initial preference read or without host 
     readonly.owner.dispose();
   }
 });
+
+it.each(["mute-first", "sort-first"] as const)(
+  "%s shares the session queue and preserves confirmed mutes through sort rollback/retry",
+  async (order) => {
+    const muteGate = deferred<readonly string[]>();
+    const sortGate = deferred<Readonly<Record<string, "recent">>>();
+    const muteStarted = deferred<void>();
+    const sortStarted = deferred<void>();
+    const mute = vi.fn<SidebarMuteMutator>(async () => {
+      muteStarted.resolve();
+      return muteGate.promise;
+    });
+    const sort = vi.fn<SidebarSortMutator>(async () => {
+      sortStarted.resolve();
+      return sortGate.promise;
+    });
+    const { wire, owner, preferences } = setup(undefined, mute, sort);
+    try {
+      const initial = preferences.ensure();
+      await flush();
+      wire.next().respond([]);
+      await initial;
+      const startMute = () => preferences.setMute("alpha", true);
+      const startSort = () =>
+        preferences.setSort("channels", "recent", ["work"]);
+      const first = order === "mute-first" ? startMute() : startSort();
+      const firstResult = Promise.allSettled([first]);
+      await (order === "mute-first" ? muteStarted : sortStarted).promise;
+      const second = order === "mute-first" ? startSort() : startMute();
+      const secondResult = Promise.allSettled([second]);
+      expect(order === "mute-first" ? sort : mute).not.toHaveBeenCalled();
+      expect(preferences.snapshot().data).toEqual({
+        ...data,
+        sort: { channels: "recent" },
+      }); // Sort is optimistic; mute truth is still confirmed-only.
+      if (order === "mute-first") {
+        muteGate.resolve(["alpha"]);
+        await first;
+        expect(preferences.snapshot().data?.sort).toEqual({
+          channels: "recent",
+        });
+        await sortStarted.promise;
+        sortGate.reject(new Error("sort failed"));
+      } else {
+        sortGate.reject(new Error("sort failed"));
+        await muteStarted.promise;
+        muteGate.resolve(["alpha"]);
+      }
+      expect(
+        [...(await firstResult), ...(await secondResult)].map((r) => r.status),
+      ).toEqual(
+        order === "mute-first"
+          ? ["fulfilled", "rejected"]
+          : ["rejected", "fulfilled"],
+      );
+      expect(preferences.snapshot()).toEqual({
+        status: "ready",
+        data: { ...data, muted: ["alpha"], sort: {} },
+        sortErrors: [
+          { group: "channels", mode: "recent", error: "sort failed" },
+        ],
+      });
+      sort.mockResolvedValueOnce({ channels: "recent" });
+      await preferences.setSort("channels", "recent", ["work"]);
+      expect(preferences.snapshot()).toEqual({
+        status: "ready",
+        data: { ...data, muted: ["alpha"], sort: { channels: "recent" } },
+      });
+    } finally {
+      muteGate.resolve([]);
+      sortGate.resolve({});
+      owner.dispose();
+    }
+  },
+);
+
+it.each(["clearCache", "dispose"] as const)(
+  "%s fences an active mute and a queued optimistic sort together",
+  async (action) => {
+    const gate = deferred<readonly string[]>();
+    const started = deferred<AbortSignal>();
+    const mute = vi.fn<SidebarMuteMutator>(async (_intent, signal) => {
+      started.resolve(signal);
+      return gate.promise;
+    });
+    const sort = vi.fn<SidebarSortMutator>(async () => ({
+      channels: "recent",
+    }));
+    const { wire, owner, preferences } = setup(undefined, mute, sort);
+    try {
+      const initial = preferences.ensure();
+      await flush();
+      wire.next().respond([]);
+      await initial;
+      const muting = preferences.setMute("alpha", true);
+      const signal = await started.promise;
+      const sorting = preferences.setSort("channels", "recent", ["work"]);
+      const settled = Promise.allSettled([muting, sorting]);
+      await owner[action]();
+      expect(signal.aborted).toBe(true);
+      gate.resolve(["alpha"]);
+      expect((await settled).map((result) => result.status)).toEqual([
+        "rejected",
+        "rejected",
+      ]);
+      expect(sort).not.toHaveBeenCalled();
+      expect(preferences.snapshot()).toEqual({ status: "idle" });
+    } finally {
+      gate.resolve([]);
+      owner.dispose();
+    }
+  },
+);

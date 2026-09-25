@@ -201,6 +201,13 @@ it("keeps a verified exact target readable if unrelated thread context fails", a
   await waitFor(() =>
     expect(selected.closest("[data-message-id]")).toHaveFocus(),
   );
+  await waitFor(() =>
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({
+      block: "start",
+      inline: "nearest",
+      behavior: "instant",
+    }),
+  );
   expect(navigation.complete).not.toHaveBeenCalled();
   await userEvent
     .setup()

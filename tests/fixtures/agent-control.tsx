@@ -2,6 +2,7 @@ import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { Context } from "@deepseek-ai/cordis";
 import { createCommunities } from "../../src/features/communities/service";
 import { ProfileButton } from "../../src/app/shell/ProfileButton";
+import type { AccountActionsService } from "../../src/features/account-actions/service";
 import { ProfileSettings } from "../../src/app/ProfileSettings";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { communityDestination } from "../../src/features/communities/destination";
@@ -169,6 +170,11 @@ fixture.host.models = {
   },
 };
 const control = createAgentControl(fixture.host);
+const noActions: readonly [] = [];
+const accountActions = {
+  subscribe: () => () => {},
+  snapshot: () => noActions,
+} as unknown as AccountActionsService;
 const communities = avatarPreviewMode
   ? createCommunities(new Context(), true)
   : undefined;
@@ -291,6 +297,7 @@ function Fixture() {
         {communities && (
           <ProfileButton
             communities={communities}
+            accountActions={accountActions}
             settingsSelected={human}
             onSettings={() => setHuman(true)}
           />

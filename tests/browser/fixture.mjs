@@ -16,6 +16,7 @@ import { execFileSync } from "node:child_process";
 import { relayBrokerPlugin } from "../../dev/relay-broker.mjs";
 import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
+import { fixtureBody } from "./fixture-body.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 export const channels = ["alpha", "beta"];
@@ -592,6 +593,7 @@ export const test = base.extend({
       errors: [],
       consoleErrors: [],
       unexpected: [],
+      cancelledRequests: [],
       measurements: [],
     };
     const pending = [];
@@ -1153,9 +1155,9 @@ export const test = base.extend({
           requestedCommunity.match(
             /^https:\/\/(primary|secondary)\.(?:example|fixture\.invalid)$/,
           )?.[1] ?? requestedCommunity;
-        let raw = "";
-        for await (const part of request) raw += part;
-        const body = raw ? JSON.parse(raw) : undefined;
+        const parsed = await fixtureBody(request, report);
+        if (!parsed) return; // The client disconnected; there is no response to send.
+        const { body } = parsed;
         if (route === "identity") return send(response, { viewer });
         if (route === "register") return send(response, {});
         if (!["primary", "secondary"].includes(community))

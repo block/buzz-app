@@ -1,4 +1,6 @@
 import { test, expect } from "./fixture.mjs";
+import { connect } from "node:net";
+import { once } from "node:events";
 
 test.use({ pluginFixtures: true, historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -55,9 +57,25 @@ test("the launched card works with an empty Channels roster", async ({
   page,
   app,
 }) => {
-  // Model the empty roster before startup rather than intercepting every query.
-  // Startup legitimately cancels enrichment reads when roster authority changes;
-  // forwarding those through Playwright can abort a partially sent HTTP body.
+  // Exercise the actual fixture middleware, not just its body-reader helper.
+  // 100 Continue proves Node accepted the headers before the client disconnects.
+  const socket = connect(Number(new URL(app.origin).port), "127.0.0.1");
+  try {
+    await once(socket, "connect");
+    const accepted = once(socket, "data");
+    socket.write(
+      'POST /api/relay/primary/query HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 100\r\n\r\n[{"kinds":',
+    );
+    expect(String((await accepted)[0])).toContain("100 Continue");
+  } finally {
+    socket.destroy();
+  }
+  await expect
+    .poll(() => app.report.cancelledRequests)
+    .toEqual([{ method: "POST", url: "/api/relay/primary/query" }]);
+  expect(app.report.unexpected).toEqual([]);
+  expect(app.report.queries).toEqual([]);
+  // Model the empty roster before startup; leave query routing to the fixture.
   app.omitChannel("alpha");
   app.omitChannel("beta");
   await page.goto(app.origin);

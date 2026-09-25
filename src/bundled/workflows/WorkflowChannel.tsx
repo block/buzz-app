@@ -28,20 +28,20 @@ import { readWorkflowDocumentFields } from "./workflowYamlDocument";
 import { useWorkflowView } from "./useWorkflowView";
 
 type Draft = {
-  editorKey: string;
+  editorKey: number;
   original: WorkflowDefinition | undefined;
   yaml: string;
   initial: string;
   operationId?: string;
 };
 
-function draftFor(next: WorkflowDefinition | "new"): Draft {
+function draftFor(next: WorkflowDefinition | "new", editorKey: number): Draft {
   const yaml =
     next === "new"
       ? formStateToYaml({ ...DEFAULT_FORM_STATE, name: "Untitled workflow" })
       : next.yaml;
   return {
-    editorKey: next === "new" ? "new" : next.revision,
+    editorKey,
     original: next === "new" ? undefined : next,
     yaml,
     initial: yaml,
@@ -83,9 +83,10 @@ export function WorkflowChannel({
     capability.operations.snapshot,
   );
   const submission = useRef<string | null>(null);
+  const editorGeneration = useRef(0);
   const detailOnly = initialSelection !== undefined;
   const [draft, setDraft] = useState<Draft | null>(() =>
-    initialSelection === undefined ? null : draftFor(initialSelection),
+    initialSelection === undefined ? null : draftFor(initialSelection, 0),
   );
   const [pendingSelection, setPendingSelection] = useState<
     WorkflowDefinition | "new" | "close" | null
@@ -132,7 +133,10 @@ export function WorkflowChannel({
       return;
     }
     setLocalDraftAtRisk(false);
-    setDraft(next === "close" ? null : draftFor(next));
+    // Explicit replacement discards local form state even for the same revision.
+    setDraft(
+      next === "close" ? null : draftFor(next, ++editorGeneration.current),
+    );
     submission.current = null;
     setError(null);
     setReadRuns(false);

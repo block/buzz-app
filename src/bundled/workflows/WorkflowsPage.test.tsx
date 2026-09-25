@@ -219,3 +219,76 @@ it.each(["discard", "remove"])(
     );
   },
 );
+
+it("discards form-only state on same-revision review and re-arms the next draft's guards", async () => {
+  const parsed = yamlToFormState(fixtureYaml);
+  if (!parsed.ok) throw new Error(parsed.error);
+  const canonical = formStateToYaml(parsed.state);
+  const fixture = mount(canonical);
+  // Retain an older successful operation whose current head is a different revision.
+  await act(async () => {
+    fixture.capability.save({
+      channelId: fixtureChannel,
+      existing: fixtureDefinition,
+      yaml: canonical,
+    });
+    fixture.finish("succeeded", false);
+  });
+  const user = userEvent.setup();
+  const warnsOnUnload = () =>
+    !window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+  await user.click(
+    await screen.findByRole("button", { name: "Open Message helper" }),
+  );
+  // Repeat so replacement keys must be fresh, not merely differ from the first key.
+  for (const value of ["first-partial", "second-partial"]) {
+    const editor = screen.getByRole("dialog", { name: "Edit workflow" });
+    expect(warnsOnUnload()).toBe(false);
+    await user.click(
+      screen.getByRole("button", { name: "Edit trigger: Message posted" }),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Add condition" }));
+    await user.click(await screen.findByRole("option", { name: "Author" }));
+    await user.type(screen.getByRole("textbox", { name: "Value" }), value);
+    expect(warnsOnUnload()).toBe(true);
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Close inspector" }));
+    await user.click(
+      screen.getByRole("button", { name: "Workflow settings & activity" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Review current configuration" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByRole("dialog", { name: "Edit workflow" })).toBe(editor);
+    expect(warnsOnUnload()).toBe(true);
+    await user.click(
+      screen.getByRole("button", { name: "Edit trigger: Message posted" }),
+    );
+    expect(screen.getByRole("textbox", { name: "Value" })).toHaveValue(value);
+    await user.click(screen.getByRole("button", { name: "Close inspector" }));
+    await user.click(
+      screen.getByRole("button", { name: "Review current configuration" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Leave draft" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(warnsOnUnload()).toBe(false);
+    await user.click(
+      screen.getByRole("button", { name: "Edit trigger: Message posted" }),
+    );
+    expect(screen.queryByRole("textbox", { name: "Value" })).toBeNull();
+    expect(editor).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    await user.click(screen.getByRole("tab", { name: "YAML" }));
+    expect(screen.getByRole("textbox", { name: "Workflow YAML" })).toHaveValue(
+      canonical,
+    );
+    await user.click(screen.getByRole("tab", { name: "Form" }));
+  }
+  await user.click(screen.getByRole("button", { name: "Close editor" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull(),
+  );
+  expect(warnsOnUnload()).toBe(false);
+  expect(fixture.calls.save).toBe(1);
+});

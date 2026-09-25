@@ -30,6 +30,7 @@ export function AgentImport({
   const [previewing, setPreviewing] = useState(false);
   const generation = useRef(0);
   const [preview, setPreview] = useState<AgentImportPreview | null>(null);
+  const [repaired, setRepaired] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const invalidatePreview = () => {
     generation.current++;
@@ -68,7 +69,10 @@ export function AgentImport({
     };
   }, [initialDestination, load]);
   const candidates = preview?.candidates.filter(
-    (candidate) => !managedAgents.some((agent) => agent.id === candidate.id),
+    (candidate) =>
+      !managedAgents.some(
+        (agent) => agent.id === candidate.id && !agent.needsTeamImport,
+      ),
   );
   return (
     <section
@@ -76,14 +80,22 @@ export function AgentImport({
       className="flex flex-col gap-4 pt-3"
     >
       <p className="m-0 text-body-sm text-secondary">
-        These agents are not imported into this app. Import keeps the same
-        identity and leaves the agent stopped.
+        Bring agents from old Buzz into this app. Import keeps the same identity
+        and leaves the agent stopped. Repair team import adds missing team
+        instructions to an existing import without replacing its identity or
+        edited settings. Neither action starts an agent.
       </p>
       {destination && (
         <p className="m-0 break-all text-body-sm">Community: {destination}</p>
       )}
       {!commitAvailable && (
         <p role="status">Import is unavailable in this app session.</p>
+      )}
+      {repaired && (
+        <p role="status">
+          Team instructions imported for {repaired}. Use Start when ready to
+          hand over from old Buzz.
+        </p>
       )}
       {previewing && <p role="status">Loading agents from old Buzz…</p>}
       {error && (
@@ -98,50 +110,67 @@ export function AgentImport({
         </div>
       )}
       {candidates?.length === 0 && (
-        <p>No agents left to import from this library for this community.</p>
+        <p>
+          No agents left to import or repair from this library for this
+          community.
+        </p>
       )}
-      {candidates?.map((candidate) => (
-        <div
-          key={candidate.id}
-          className="flex flex-wrap items-center justify-between gap-3 border-t border-primary pt-3"
-        >
-          <div className="flex min-w-0 flex-col gap-1">
-            <p className="m-0 font-semibold">{candidate.name}</p>
-            <p className="m-0 text-body-sm text-secondary">Not imported</p>
-            <details className="text-body-sm text-secondary">
-              <summary className="cursor-pointer">Identity</summary>
-              <p className="break-all font-mono text-mono-sm">
-                {candidate.pubkey}
-              </p>
-            </details>
-          </div>
-          <Button
-            disabled={disabled || previewing || !commitAvailable}
-            aria-label={`Import ${candidate.name}`}
-            onClick={() => {
-              if (!preview) return;
-              const current = generation.current;
-              void control
-                .commitImport(preview.token, [candidate.id])
-                .then((result) => {
-                  if (generation.current !== current) return;
-                  onImported?.(
-                    result.agents.filter((agent) => agent.id === candidate.id),
-                  );
-                })
-                .catch(() => {
-                  if (generation.current !== current) return;
-                  setPreview(null);
-                  setError(
-                    "Import did not complete. Reload the list before trying again.",
-                  );
-                });
-            }}
+      {candidates?.map((candidate) => {
+        const repair = managedAgents.some(
+          (agent) => agent.id === candidate.id && agent.needsTeamImport,
+        );
+        return (
+          <div
+            key={candidate.id}
+            className="flex flex-wrap items-center justify-between gap-3 border-t border-primary pt-3"
           >
-            Import
-          </Button>
-        </div>
-      ))}
+            <div className="flex min-w-0 flex-col gap-1">
+              <p className="m-0 font-semibold">{candidate.name}</p>
+              <p className="m-0 text-body-sm text-secondary">
+                {repair ? "Team instructions not imported" : "Not imported"}
+              </p>
+              <details className="text-body-sm text-secondary">
+                <summary className="cursor-pointer">Identity</summary>
+                <p className="break-all font-mono text-mono-sm">
+                  {candidate.pubkey}
+                </p>
+              </details>
+            </div>
+            <Button
+              disabled={disabled || previewing || !commitAvailable}
+              aria-label={`${repair ? "Repair team import for" : "Import"} ${candidate.name}`}
+              onClick={() => {
+                if (!preview) return;
+                const current = generation.current;
+                void control
+                  .commitImport(preview.token, [candidate.id])
+                  .then((result) => {
+                    if (generation.current !== current) return;
+                    if (repair) {
+                      setRepaired(candidate.name);
+                      void load(source, destination);
+                      return;
+                    }
+                    onImported?.(
+                      result.agents.filter(
+                        (agent) => agent.id === candidate.id,
+                      ),
+                    );
+                  })
+                  .catch(() => {
+                    if (generation.current !== current) return;
+                    setPreview(null);
+                    setError(
+                      "Import did not complete. Reload the list before trying again.",
+                    );
+                  });
+              }}
+            >
+              {repair ? "Repair team import" : "Import"}
+            </Button>
+          </div>
+        );
+      })}
       <details open={!initialDestination || undefined} className="text-body-sm">
         <summary className="cursor-pointer text-secondary">
           Import options

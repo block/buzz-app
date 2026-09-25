@@ -122,6 +122,7 @@ fn bundle(directory: &Path) -> RuntimeBundle {
         let path = directory.join(name);
         fs::write(&path, r#"#!/bin/sh
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
+printf '%s' "$BUZZ_ACP_TEAM_INSTRUCTIONS" > team-instructions
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
 trap 'exit 0' TERM INT
 while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 0.1; done
@@ -1515,5 +1516,147 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
             .unwrap()
             .command(&configured, &key)
             .is_ok());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn imported_team_reaches_acp_without_weakening_remote_mesh_or_owner_guards() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = bundle(dir.path());
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let mut a = agent(dir.path());
+    a.imported["record"]["team_id"] = json!("crew");
+    a.imported["record"]["persona_team_dir"] = json!("/old/pack");
+    assert!(runtime
+        .command(&a, &key)
+        .err()
+        .unwrap()
+        .contains("Repair team import"));
+    for text in ["", "review carefully"] {
+        a.imported["teamInstructions"] = json!(text);
+        let command = runtime.command(&a, &key).unwrap();
+        let env: BTreeMap<_, _> = command.get_envs().collect();
+        assert_eq!(
+            env[std::ffi::OsStr::new("BUZZ_ACP_TEAM_INSTRUCTIONS")],
+            Some(std::ffi::OsStr::new(text))
+        );
+        assert_eq!(
+            env[std::ffi::OsStr::new("BUZZ_ACP_SYSTEM_PROMPT")],
+            Some(std::ffi::OsStr::new("test prompt"))
+        );
+    }
+    for (field, value) in [
+        ("backend", json!({"type":"provider"})),
+        ("relay_mesh", json!({})),
+    ] {
+        let mut unsupported = a.clone();
+        unsupported.imported["record"][field] = value;
+        assert!(runtime
+            .command(&unsupported, &key)
+            .err()
+            .unwrap()
+            .contains("remote/mesh"));
+    }
+    let mut mesh = a.clone();
+    mesh.harness.provider = "relay-mesh".into();
+    assert!(runtime
+        .command(&mesh, &key)
+        .err()
+        .unwrap()
+        .contains("remote/mesh"));
+    a.auth_tag = None;
+    assert!(runtime
+        .command(&a, &key)
+        .err()
+        .unwrap()
+        .contains("owner attestation"));
+}
+
+#[test]
+#[cfg(unix)]
+fn import_and_repair_deliver_team_instructions_to_a_started_process() {
+    for repairing in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = tempfile::tempdir().unwrap();
+        let old = tempfile::tempdir().unwrap();
+        let source = old
+            .path()
+            .join(crate::LegacySource::Installed.app_directory())
+            .join("agents");
+        fs::create_dir_all(&source).unwrap();
+        let mut saved = agent(dir.path());
+        saved.imported["record"]["team_id"] = json!("crew");
+        let record = json!({"pubkey":PUB,"private_key_nsec":KEY,"name":"Old name","team_id":"crew","auth_tag":saved.auth_tag,"system_prompt":"Old prompt"});
+        fs::write(
+            source.join("managed-agents.json"),
+            serde_json::to_vec(&json!([record])).unwrap(),
+        )
+        .unwrap();
+        let instructions = "Team instructions\nKeep the deployment contract.";
+        fs::write(
+            source.join("teams.json"),
+            serde_json::to_vec(&json!([{"id":"crew","instructions":instructions}])).unwrap(),
+        )
+        .unwrap();
+        let mut store = Store::open(dir.path().join("config")).unwrap();
+        if repairing {
+            store.insert(vec![saved.clone()]).unwrap();
+        }
+        let mut controller = Controller::new(
+            store,
+            Arc::new(Memory),
+            Ok(bundle(tools.path())),
+            dir.path().join("ownership"),
+        );
+        if repairing {
+            let blocked = controller.action(&saved.id, Action::Start).unwrap();
+            assert!(blocked.agents[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Repair team import"));
+            assert!(controller.running.is_empty());
+            controller.action(&saved.id, Action::Stop).unwrap();
+        }
+        let mut imports = crate::Imports::default();
+        let preview = imports
+            .preview(
+                crate::LegacySource::Installed,
+                old.path().into(),
+                dir.path().into(),
+                &saved.relay_url,
+            )
+            .unwrap();
+        let prepared = controller
+            .prepare_import(&mut imports, &preview.token, &[saved.id.clone()])
+            .unwrap();
+        imports.discard();
+        controller
+            .commit_import(prepared.acquire(&Memory).unwrap())
+            .unwrap();
+        let snapshot = controller.snapshot().unwrap();
+        assert!(!snapshot.agents[0].enabled);
+        assert!(!snapshot.agents[0].needs_team_import);
+        assert!(controller.running.is_empty());
+        assert!(!dir.path().join("team-instructions").exists());
+        if repairing {
+            assert_eq!(snapshot.agents[0].name, saved.name);
+            assert_eq!(snapshot.agents[0].revision, saved.revision + 1);
+        }
+        let started = controller.action(&saved.id, Action::Start).unwrap();
+        assert!(
+            matches!(started.agents[0].status, ProcessStatus::Running),
+            "{:?}",
+            started.agents[0].error
+        );
+        wait_for_contents(&dir.path().join("team-instructions"), |text| {
+            (text == instructions).then_some(())
+        });
+        assert!(matches!(
+            controller.action(&saved.id, Action::Stop).unwrap().agents[0].status,
+            ProcessStatus::Stopped
+        ));
+        assert!(controller.running.is_empty());
     }
 }

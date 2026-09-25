@@ -65,6 +65,8 @@ export interface AgentView {
   restartDiff: RestartDiffEntry[];
   /** Native refuses to delete a deployed remote record. */
   deployedRemote?: boolean;
+  /** Older imports need an explicit snapshot of their legacy team instructions. */
+  needsTeamImport?: boolean;
 }
 export interface ControlSnapshot {
   agents: AgentView[];

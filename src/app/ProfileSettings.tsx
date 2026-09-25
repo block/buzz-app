@@ -19,6 +19,16 @@ import type { Membership } from "../features/communities/service";
 
 type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
 
+const profileSaveGenerations = new WeakMap<Communities, number>();
+function beginProfileSave(communities: Communities) {
+  const generation = (profileSaveGenerations.get(communities) ?? 0) + 1;
+  profileSaveGenerations.set(communities, generation);
+  return generation;
+}
+function isCurrentProfileSave(communities: Communities, generation: number) {
+  return profileSaveGenerations.get(communities) === generation;
+}
+
 export function ProfileSettings({
   communities,
   community,
@@ -170,6 +180,7 @@ export function ProfileSettings({
                   name: profile.name.trim(),
                   about: profile.about?.trim() ?? "",
                 };
+                const saveGeneration = beginProfileSave(communities);
                 setSaving(true);
                 setSaved(false);
                 setError("");
@@ -187,7 +198,8 @@ export function ProfileSettings({
                         profile: next,
                       });
                     }
-                    communities.saveProfile(next);
+                    if (isCurrentProfileSave(communities, saveGeneration))
+                      communities.saveProfile(next);
                     setDraft(null);
                     setSaved(true);
                   } catch (reason) {

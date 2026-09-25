@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { npubEncode } from "nostr-tools/nip19";
 import { afterEach, expect, it, vi } from "vitest";
@@ -10,6 +16,14 @@ import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { ProfileSettings } from "./ProfileSettings";
 
 const viewer = "ab".repeat(32);
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function communities(): Communities {
   const state = {
@@ -83,6 +97,66 @@ it("loads and publishes the selected community profile before updating the local
   });
   expect(screen.getByText("Profile updated")).toBeVisible();
   expect(inspect).toHaveBeenCalledWith("community-id");
+});
+
+it("keeps a newer profile seed when an older community publication finishes last", async () => {
+  const service = communities();
+  const olderPublication = deferred();
+  vi.spyOn(communityApi, "inspectProfile").mockImplementation(async (id) => ({
+    exists: true,
+    existing: { name: id },
+    profile: { name: id === "older" ? "Older" : "Newer", picture: "" },
+  }));
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementationOnce(() => olderPublication.promise)
+    .mockResolvedValueOnce();
+  const user = userEvent.setup();
+  const older = render(
+    <ProfileSettings
+      communities={service}
+      community={{ id: "older", name: "Older community" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const olderName = await within(older.container).findByLabelText(
+    "Display name",
+  );
+  await user.clear(olderName);
+  await user.type(olderName, "Older save");
+  await user.click(
+    within(older.container).getByRole("button", { name: "Save profile" }),
+  );
+  expect(publish).toHaveBeenCalledTimes(1);
+
+  const newer = render(
+    <ProfileSettings
+      communities={service}
+      community={{ id: "newer", name: "Newer community" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const newerName = await within(newer.container).findByLabelText(
+    "Display name",
+  );
+  await user.clear(newerName);
+  await user.type(newerName, "Newer save");
+  await user.click(
+    within(newer.container).getByRole("button", { name: "Save profile" }),
+  );
+  await waitFor(() =>
+    expect(service.saveProfile).toHaveBeenCalledWith({
+      name: "Newer save",
+      picture: "",
+      about: "",
+    }),
+  );
+
+  olderPublication.resolve();
+  await olderPublication.promise;
+  await waitFor(() => expect(olderName).not.toBeDisabled());
+  expect(publish).toHaveBeenCalledTimes(2);
+  expect(service.saveProfile).toHaveBeenCalledTimes(1);
 });
 
 it("keeps a community draft when publication fails and retries a failed read", async () => {

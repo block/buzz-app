@@ -247,7 +247,6 @@ function ThreadMessages({
   );
   useSyncExternalStore(subscribeUnread, unreadSnapshot, unreadSnapshot);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [rootCollapsed, setRootCollapsed] = useState(false);
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
   const rows = useMemo(
@@ -611,82 +610,51 @@ function ThreadMessages({
         }}
         tabIndex={0}
       >
-        <ReplyBranch
-          message={
-            snapshot.root ? (
-              <>
-                <MessageRow
-                  extensions={extensions}
-                  session={session}
-                  scope={scope}
-                  onReply={focusReply}
-                  row={snapshot.root}
-                  profile={profiles.get(snapshot.root.authorId)}
-                  participantProfiles={profiles}
-                  agentPubkeys={agentPubkeys}
-                  media={session.media}
-                  onOpenLink={onOpenLink}
-                  canOpenLink={canOpenLink}
-                  day={false}
-                  layout="thread"
-                  retry={session.messages.retry}
-                  mediaMode="thread"
-                  {...(mediaSeek
-                    ? {
-                        mediaSeekTo: mediaSeek.seconds,
-                        mediaSeekRequest: mediaSeek.request,
-                      }
-                    : {})}
-                  onMediaPlayback={setMediaPlayback}
-                  {...(onOpenMediaReview
-                    ? { onOpenMediaReview: openRootMedia }
-                    : {})}
-                />
-                {videoAttachment && mediaPlayback && (
-                  <span className={styles.mediaCommentAction}>
-                    <Button
-                      size="sm"
-                      type="button"
-                      onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
-                    >
-                      Comment at {formatMediaTime(mediaPlayback.seconds)}
-                    </Button>
-                  </span>
-                )}
-              </>
-            ) : snapshot.status !== "loading" ? (
-              <p className={styles.empty}>Original message unavailable.</p>
-            ) : null
-          }
-          layout="thread"
-          depth={-1}
-          hideLabel="Hide thread replies"
-          collapsible={!!snapshot.root && snapshot.replies.length > 0}
-          label={`View thread replies: ${snapshot.replies.length}`}
-          summary={
-            <ReplySummary
-              count={snapshot.replies.length}
-              participants={[
-                ...new Set(snapshot.replies.map((reply) => reply.authorId)),
-              ]}
-              profiles={profiles}
+        {snapshot.root ? (
+          <>
+            <MessageRow
+              extensions={extensions}
+              session={session}
+              scope={scope}
+              onReply={focusReply}
+              row={snapshot.root}
+              profile={profiles.get(snapshot.root.authorId)}
+              participantProfiles={profiles}
               agentPubkeys={agentPubkeys}
-              resolveName={resolveName}
               media={session.media}
+              onOpenLink={onOpenLink}
+              canOpenLink={canOpenLink}
+              day={false}
+              layout="thread"
+              retry={session.messages.retry}
+              mediaMode="thread"
+              {...(mediaSeek
+                ? {
+                    mediaSeekTo: mediaSeek.seconds,
+                    mediaSeekRequest: mediaSeek.request,
+                  }
+                : {})}
+              onMediaPlayback={setMediaPlayback}
+              {...(onOpenMediaReview
+                ? { onOpenMediaReview: openRootMedia }
+                : {})}
             />
-          }
-          open={!snapshot.root || !rootCollapsed}
-          onOpenChange={(open) => {
-            follow.current = false;
-            targetAnchor.current = undefined;
-            setRootCollapsed(!open);
-            if (!open) setExpanded(new Set());
-          }}
-        >
-          {(!snapshot.root || !rootCollapsed) && (
-            <ol>{renderReplies(undefined)}</ol>
-          )}
-        </ReplyBranch>
+            {videoAttachment && mediaPlayback && (
+              <span className={styles.mediaCommentAction}>
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
+                >
+                  Comment at {formatMediaTime(mediaPlayback.seconds)}
+                </Button>
+              </span>
+            )}
+          </>
+        ) : snapshot.status !== "loading" ? (
+          <p className={styles.empty}>Original message unavailable.</p>
+        ) : null}
+        <ol>{renderReplies(undefined)}</ol>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>
@@ -761,7 +729,6 @@ function ThreadMessages({
             : {})}
           clearMediaTime={() => setMediaCommentTime(undefined)}
           onSend={(id) => {
-            setRootCollapsed(false);
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

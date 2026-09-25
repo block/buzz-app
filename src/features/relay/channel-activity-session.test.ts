@@ -11,7 +11,13 @@ import {
 } from "./testing";
 import type { LiveCallbacks } from "./live";
 import type { RelayEvent } from "./events";
-function setup() {
+import type { SidebarPreferences } from "./sidebar-preferences";
+import {
+  coordinate,
+  KIT_TAG,
+  type KitRecord,
+} from "../channel-templates/model";
+function setup(initialPreferences: Partial<SidebarPreferences> = {}) {
   const viewer = keypair(),
     relay = keypair(),
     peer = keypair();
@@ -29,7 +35,7 @@ function setup() {
         pending.push({ ids, signal, resolve, reject }),
       ),
   );
-  const sort: Record<string, "recent"> = {};
+  const sort = { ...initialPreferences.sort };
   const owner = createRelaySession({
     ...wire.transport,
     channelActivity: activity,
@@ -38,8 +44,17 @@ function setup() {
       assignments: {},
       starred: [],
       muted: [],
-      sort: {},
+      ...initialPreferences,
+      sort: { ...sort },
     }),
+    channelKit: {
+      prepare: async (record) => JSON.stringify(record),
+      decode: async (events) =>
+        events.map((event) => ({
+          eventId: event.id,
+          record: JSON.parse(event.content),
+        })),
+    },
     writeSidebarSort: async (group, mode) => {
       if (mode === "recent") sort[group] = mode;
       else delete sort[group];
@@ -81,8 +96,102 @@ function setup() {
     peer,
     live: () => live,
     initial,
+    async groups(ids: string[]) {
+      const record: KitRecord = {
+        version: 1,
+        community: "",
+        deleted: false,
+        value: {
+          type: "groups",
+          id: "personal",
+          assignments: {},
+          groups: ids.map((id) => ({ id, name: id, defaultTemplateId: "" })),
+        },
+      };
+      const refreshing = owner.session.channelKit.refresh();
+      await flush();
+      wire.next().respond([
+        signed(viewer, {
+          kind: 30078,
+          tags: [
+            ["d", coordinate(record)],
+            ["t", KIT_TAG],
+          ],
+          content: JSON.stringify(record),
+        }),
+      ]);
+      await refreshing;
+      expect(owner.session.channelKit.snapshot().status).toBe("ready");
+    },
   };
 }
+it("ignores retained removed-group overrides without deleting them", async () => {
+  const h = setup({ sort: { "section:removed": "recent" } });
+  try {
+    await h.initial();
+    await h.groups([]);
+    expect(h.activity).not.toHaveBeenCalled();
+    expect(h.channels.list().activityStatus).toBe("idle");
+    expect(h.preferences.snapshot().data?.sort).toEqual({
+      "section:removed": "recent",
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});
+it.each(["pending", "failed"])(
+  "tracks live personal groups independently of legacy sections with %s activity",
+  async (state) => {
+    const h = setup({
+      sections: [{ id: "legacy", name: "Legacy", order: 0 }],
+      sort: { "section:personal-work": "recent" },
+    });
+    try {
+      await h.initial();
+      expect(h.activity).not.toHaveBeenCalled();
+      await h.groups(["personal-work"]);
+      expect(h.activity).toHaveBeenCalledOnce();
+      const retired = take(h.pending);
+      if (state === "failed") {
+        retired.reject(new Error("offline"));
+        await flush();
+        expect(h.channels.list().activityStatus).toBe("error");
+      }
+      await h.groups([]);
+      if (state === "pending") expect(retired.signal.aborted).toBe(true);
+      expect(h.channels.list().activityStatus).toBe("idle");
+      expect(h.preferences.snapshot().data?.sort).toEqual({
+        "section:personal-work": "recent",
+      });
+      await h.groups(["personal-work"]);
+      expect(h.activity).toHaveBeenCalledTimes(2);
+      take(h.pending).resolve([message(h.peer, "alpha", "fresh", 100)]);
+      await flush();
+      expect(h.channels.list().activityStatus).toBe("ready");
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+it("uses legacy section demand only until personal groups replace that owner", async () => {
+  const h = setup({
+    sections: [{ id: "legacy", name: "Legacy", order: 0 }],
+    sort: { "section:legacy": "recent" },
+  });
+  try {
+    await h.initial();
+    expect(h.activity).toHaveBeenCalledOnce();
+    const retired = take(h.pending);
+    await h.groups(["personal-work"]);
+    expect(retired.signal.aborted).toBe(true);
+    expect(h.channels.list().activityStatus).toBe("idle");
+    expect(h.preferences.snapshot().data?.sort).toEqual({
+      "section:legacy": "recent",
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});
 it("reads no roster activity for A–Z, deduplicates Recent demand, and projects verified live activity monotonically", async () => {
   const h = setup();
   try {

@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import { hasRecentSidebarSection } from "../../features/relay/sidebar-preferences";
 import type { ChannelList } from "../../features/relay/contracts";
 
 // Presentation latch only, never roster/access data. Warm sidebar remounts reveal
@@ -19,6 +20,7 @@ export function useSidebarStartup(
   session: SidebarStartupSession,
   list: ChannelList,
   preferences: ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>,
+  sectionIds?: readonly string[],
 ) {
   // ChannelSidebar is keyed by scope and connection generation; the hook is
   // remounted for a replacement session, while same-session remounts reuse latches.
@@ -66,7 +68,7 @@ export function useSidebarStartup(
     preferences.status === "unsupported";
   const namesReady =
     live.roster.state !== "pending" && live.roster.state !== "idle";
-  const recent = Object.values(preferences.data?.sort ?? {}).includes("recent");
+  const recent = hasRecentSidebarSection(preferences.data, sectionIds);
   const activityReady =
     !recent ||
     list.activityStatus === "ready" ||

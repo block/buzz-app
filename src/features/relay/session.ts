@@ -46,7 +46,10 @@ import type { IncomingListener, IncomingMessage } from "./incoming";
 import { objectBody } from "./body";
 import type { ChannelList } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
-import { readSidebarPreferences } from "./sidebar-preferences";
+import {
+  hasRecentSidebarSection,
+  readSidebarPreferences,
+} from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
@@ -1875,10 +1878,15 @@ export function createRelaySession(
   let activityRosterKey: string | undefined;
   const refreshChannelActivity = () => {
     if (closed || !transport?.channelActivity) return;
+    const personal = personalGroups(channelKit.capability.snapshot().entries)
+      ?.record.value;
     if (
-      !Object.values(
-        sidebarPreferences.queries.snapshot().data?.sort ?? {},
-      ).includes("recent")
+      !hasRecentSidebarSection(
+        sidebarPreferences.queries.snapshot().data,
+        personal?.type === "groups"
+          ? personal.groups.map((group) => group.id)
+          : undefined,
+      )
     ) {
       channelActivity.cancel();
       activityRosterKey = undefined;
@@ -1900,6 +1908,10 @@ export function createRelaySession(
   const stopActivityPreferences = sidebarPreferences.queries.subscribe(
     refreshChannelActivity,
   );
+  const stopActivityGroups = channelKit.capability.subscribe(() => {
+    if (channelKit.capability.snapshot().status === "ready")
+      refreshChannelActivity();
+  });
   const stopInterests = channels.queries.subscribeList(updateInterests);
   updateInterests();
   refreshChannelActivity();
@@ -1950,6 +1962,7 @@ export function createRelaySession(
       channelActivity.dispose();
       stopActivityRoster();
       stopActivityPreferences();
+      stopActivityGroups();
       sidebarPreferences.dispose();
       lifecycle.dispose();
       stopInterests();

@@ -67,12 +67,14 @@ function View({
   session,
   value = list,
   prefs = preferences,
+  sectionIds,
 }: {
   session: SidebarStartupSession;
   value?: ChannelList;
   prefs?: Parameters<typeof useSidebarStartup>[2];
+  sectionIds?: readonly string[];
 }) {
-  const state = useSidebarStartup(session, value, prefs);
+  const state = useSidebarStartup(session, value, prefs, sectionIds);
   return (
     <div>
       {state.ready
@@ -222,5 +224,46 @@ it("retains unread settlement after page exit without revealing a replacement se
     <View session={h.session} value={{ ...list, activityStatus: "ready" }} />,
   );
   expect(screen.getByRole("button")).toBeVisible();
+  expect(screen.getByTestId("updating")).toHaveTextContent("false");
+});
+
+it("reveals all-A–Z sections without waiting on a removed group's Recent override", async () => {
+  vi.useFakeTimers();
+  const h = fixture();
+  h.names();
+  h.resolve();
+  await act(async () => {
+    render(
+      <View
+        session={h.session}
+        prefs={{
+          ...preferences,
+          data: { ...preferences.data, sort: { "section:removed": "recent" } },
+        }}
+      />,
+    );
+  });
+  expect(screen.getByRole("button", { name: "One" })).toBeVisible();
+  expect(screen.getByTestId("updating")).toHaveTextContent("false");
+});
+it("waits for a displayed personal group's Recent activity, then settles when that group is removed", async () => {
+  vi.useFakeTimers();
+  const h = fixture();
+  h.names();
+  h.resolve();
+  const prefs = {
+    ...preferences,
+    data: {
+      ...preferences.data,
+      sort: { "section:personal": "recent" as const },
+    },
+  };
+  const view = render(
+    <View session={h.session} prefs={prefs} sectionIds={["personal"]} />,
+  );
+  await act(async () => {});
+  expect(screen.queryByRole("button")).toBeNull();
+  view.rerender(<View session={h.session} prefs={prefs} sectionIds={[]} />);
+  expect(screen.getByRole("button", { name: "One" })).toBeVisible();
   expect(screen.getByTestId("updating")).toHaveTextContent("false");
 });

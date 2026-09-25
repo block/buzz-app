@@ -157,7 +157,6 @@ function ReadySidebar({
 }) {
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
-  const startup = useSidebarStartup(queries, list, preferences);
   const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
   useEffect(() => {
     if (list.activityStatus !== "error") setActivityErrorDismissed(false);
@@ -176,6 +175,12 @@ function ReadySidebar({
   );
   const personal = personalGroups(kitState.entries)?.record.value;
   const groups = personal?.type === "groups" ? personal : undefined;
+  const startup = useSidebarStartup(
+    queries,
+    list,
+    preferences,
+    groups?.groups.map((group) => group.id),
+  );
   const hiddenDms = useHiddenDms(scope, queries, list);
   const lifecycle = queries.channelLifecycle;
   const dmVisibility = useSyncExternalStore(

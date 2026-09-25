@@ -153,7 +153,11 @@ Each sidebar section can independently select **A–Z** (the default) or **Recen
 The development broker saves these choices in the desktop-compatible encrypted
 kind-30078 `channel-sort` record: `{ version: 1, groups: { ... } }`. A–Z removes
 that group's override. Saving preserves unrelated fields and choices present in
-the record read before publication.
+the record read before publication. Activity reads and cold sidebar reveal consider
+only built-in sections and the current custom-group owner: personal groups replace
+legacy sections when present, including an empty personal-group list. Removed-group
+sort overrides remain saved for compatibility but do not request activity or keep
+the sidebar waiting; adding/removing personal groups updates demand in the session.
 
 Persistence is **whole-record last-write-wins**, not conflict-safe per-section
 merging. Two devices can read the same record and save different sections; the

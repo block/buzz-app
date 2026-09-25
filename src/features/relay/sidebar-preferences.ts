@@ -20,6 +20,22 @@ export type SidebarPreferences = Readonly<{
   muted: readonly string[];
 }>;
 export type SidebarSortMode = "alpha" | "recent";
+/** Unknown saved overrides survive, but only current sections demand activity.
+ * Personal groups replace legacy sections, including an explicitly empty list. */
+export function hasRecentSidebarSection(
+  preferences: SidebarPreferences | undefined,
+  sectionIds: readonly string[] = preferences?.sections.map(
+    (section) => section.id,
+  ) ?? [],
+) {
+  return [
+    "starred",
+    "channels",
+    "forums",
+    "dms",
+    ...sectionIds.map((id) => `section:${id}`),
+  ].some((key) => preferences?.sort?.[key] === "recent");
+}
 export type SidebarSortMutator = (
   group: string,
   mode: SidebarSortMode,

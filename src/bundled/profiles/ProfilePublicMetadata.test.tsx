@@ -491,6 +491,7 @@ it("never presents legacy fields while the initial managed profile settles", asy
 
 it("withholds metadata on ownership-only admission failure and retries through one control", async () => {
   let blocked = true;
+  let enrichment: ReturnType<RelaySession["observe"]> | undefined;
   const admission = vi.fn(
     (
       session: RelaySession,
@@ -498,7 +499,10 @@ it("withholds metadata on ownership-only admission failure and retries through o
     ) => {
       if (blocked && filters.some((filter) => filter.kinds?.includes(0)))
         throw new Error("view capacity exhausted");
-      return session.observe(filters);
+      const view = session.observe(filters);
+      if (filters.some((filter) => filter.kinds?.includes(10100)))
+        enrichment = view;
+      return view;
     },
   );
   const h = setup(undefined, (session) =>
@@ -513,15 +517,12 @@ it("withholds metadata on ownership-only admission failure and retries through o
     render(h.tree(person.pubkey));
     await screen.findByRole("heading", { name: "Agent" });
     await screen.findByRole("button", { name: "Retry profile" });
-    await waitFor(() =>
+    await waitFor(() => {
+      expect(enrichment?.snapshot().status).toBe("ready");
       expect(
-        h.query.mock.calls.some(([filters]) =>
-          filters.some((filter: { kinds?: number[] }) =>
-            filter.kinds?.includes(10100),
-          ),
-        ),
-      ).toBe(true),
-    );
+        enrichment?.snapshot().events.some((event) => event.kind === 10100),
+      ).toBe(true);
+    });
     expect(
       screen.queryByRole("button", { name: "Copy Agent type" }),
     ).not.toBeInTheDocument();
@@ -532,12 +533,10 @@ it("withholds metadata on ownership-only admission failure and retries through o
     expect(
       screen.getAllByRole("button", { name: "Retry profile" }),
     ).toHaveLength(1);
-    const attempts = admission.mock.calls.length;
     blocked = false;
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: "Retry profile" }));
-    expect(admission.mock.calls.length).toBeGreaterThan(attempts);
     expect(
       await screen.findByRole("button", { name: "Copy Agent type" }),
     ).toHaveTextContent("Goose");

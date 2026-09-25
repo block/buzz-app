@@ -236,7 +236,7 @@ test("local controls preserve drafts, confirm operations and distinguish disable
   }
 });
 
-test("legacy launch fallback and explicit-on preference remain distinct after Stop", async ({
+test("explicit-on preference survives Stop without changing the enabled state", async ({
   page,
 }) => {
   const server = await createServer({
@@ -251,44 +251,17 @@ test("legacy launch fallback and explicit-on preference remain distinct after St
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
     );
     const editor = await openEditor(page);
-    // Native projects a legacy record with no stored preference from enabled intent.
-    await page.evaluate(async () => {
-      const fixture = window.agentControlFixture;
-      fixture.agent.startOnAppLaunch = fixture.agent.enabled;
-      await fixture.control.refresh();
-    });
-    await expect(
-      editor.getByText("Enabled · starts with buzz-app", { exact: true }),
-    ).toBeVisible();
-    // Without a stored preference, native recomputes the projection from enabled
-    // intent after Stop. This is not an explicit-on record.
-    await editor.getByRole("button", { name: "Stop", exact: true }).click();
-    await page.evaluate(async () => {
-      const fixture = window.agentControlFixture;
-      fixture.agent.startOnAppLaunch = fixture.agent.enabled;
-      await fixture.control.refresh();
-    });
-    await expect(
-      editor.getByText("Stopped · a later sent mention can start this agent"),
-    ).toBeVisible();
-    // Explicit on is a separate persisted preference: Stop must not clear it.
-    // Re-enter with a running record; the first Stop already disabled the process.
-    await page.evaluate(async () => {
-      const fixture = window.agentControlFixture;
-      fixture.agent.enabled = true;
-      fixture.agent.status = "running";
-      fixture.agent.runningRevision = fixture.agent.revision;
-      await fixture.control.refresh();
-    });
-    await expect(
-      editor.getByRole("button", { name: "Stop", exact: true }),
-    ).toBeEnabled();
+    // Native owns the legacy None → enabled projection (store/tests.rs).
+    // This browser fixture witnesses explicit-on while running and after Stop.
     await page.evaluate(() =>
       window.agentControlFixture.control.setStartOnAppLaunch(
         "fixture-agent",
         true,
       ),
     );
+    await expect(
+      editor.getByText("Enabled · starts with buzz-app", { exact: true }),
+    ).toBeVisible();
     await editor.getByRole("button", { name: "Stop", exact: true }).click();
     await expect(
       editor.getByText("Stopped · starts with buzz-app", { exact: true }),
@@ -305,7 +278,6 @@ test("legacy launch fallback and explicit-on preference remain distinct after St
       enabled: false,
       startOnAppLaunch: true,
       actions: [
-        { action: "stop", payload: { id: "fixture-agent" } },
         {
           action: "startOnAppLaunch",
           payload: { id: "fixture-agent", enabled: true },

@@ -204,17 +204,35 @@ it("does not trust a well-formed attestation with an invalid signature", async (
 
 it("adds no agent section or owner reads for a profile without an agent hint", async () => {
   const person = keypair();
-  const { query } = mount(person, (filter) =>
-    kind0(filter) ? [profile(person, { name: "Person" })] : [],
+  let metadataView: ReturnType<RelaySession["observe"]> | undefined;
+  const { query } = mount(
+    person,
+    (filter) => (kind0(filter) ? [profile(person, { name: "Person" })] : []),
+    {
+      wrap: (session) => ({
+        ...session,
+        observe(filters) {
+          const view = session.observe(filters);
+          if (filters.some((filter) => filter.kinds?.includes(10100)))
+            metadataView = view;
+          return view;
+        },
+      }),
+    },
   );
   await screen.findByRole("heading", { name: "Person" });
+  // Public metadata is queried even without a kind-0 agent hint. Wait for
+  // that owned view to settle before asserting the absence of owner work.
+  await waitFor(() => expect(metadataView?.snapshot().status).toBe("ready"));
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
+  expect(verify).not.toHaveBeenCalled();
   const reads = query.mock.calls.flatMap(([filters]) => filters);
-  expect(reads).toHaveLength(2);
+  expect(reads).toHaveLength(3);
   expect(reads).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
       expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
+      expect.objectContaining({ authors: [person.pubkey], kinds: [10100] }),
     ]),
   );
 });

@@ -42,6 +42,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   menuAnchor,
   menuContent,
   onCloseMenu,
+  onMenuClosed,
   menuFinalFocus,
 }: {
   channel: ChannelSummary;
@@ -70,6 +71,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   /** Only the open row receives content, so closed rows keep equal props. */
   menuContent?: ReactNode;
   onCloseMenu?: () => void;
+  onMenuClosed?: (channelId: string) => void;
   menuFinalFocus?: (channelId: string) => HTMLElement | false;
 }) {
   const peer =
@@ -215,7 +217,10 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         } else if (menuOpen) onCloseMenu?.();
       }}
       onOpenChangeComplete={(open) => {
-        if (!open) lastMenuContent.current = undefined;
+        if (!open) {
+          lastMenuContent.current = undefined;
+          onMenuClosed?.(channel.id);
+        }
       }}
     >
       {row}

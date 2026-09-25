@@ -53,7 +53,9 @@ function fixture() {
   const delivered = vi.fn(async () => {});
   const canWrite = vi.fn(() => true);
   const host = {
-    prepare: vi.fn(async (value: KitRecord) => JSON.stringify(value)),
+    prepare: vi.fn(async (value: KitRecord, _signal: AbortSignal) =>
+      JSON.stringify(value),
+    ),
     decode: vi.fn(async (rows: readonly RelayEvent[]) =>
       rows.map((event) => ({
         eventId: event.id,
@@ -98,6 +100,82 @@ it("saves scoped private recipe intent, confirms the exact event, and rejects st
     /changed/,
   );
   expect(f.outbox.send).toHaveBeenCalledTimes(1);
+});
+it.each(["head read", "encryption"] as const)(
+  "cancels recipe preparation during %s without enqueueing a durable write",
+  async (stage) => {
+    const f = fixture();
+    const operation = new AbortController();
+    let reached!: (signal: AbortSignal | undefined) => void;
+    const entered = new Promise<AbortSignal | undefined>((resolve) => {
+      reached = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    if (stage === "head read")
+      vi.mocked(f.reader.read).mockImplementationOnce(
+        async (_filters, options) => {
+          reached(options?.signal);
+          await gate; // Deliberately ignore abort to probe the post-await fence.
+          return [];
+        },
+      );
+    else
+      f.host.prepare.mockImplementationOnce(async (value, signal) => {
+        reached(signal);
+        await gate;
+        return JSON.stringify(value);
+      });
+    const saving = f.capability.save(
+      record.value,
+      undefined,
+      false,
+      operation.signal,
+    );
+    const rejected = expect(saving).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    try {
+      const signal = await entered;
+      operation.abort();
+      expect(signal?.aborted).toBe(true);
+      release();
+      await rejected;
+      expect(f.outbox.send).not.toHaveBeenCalled();
+      if (stage === "head read") expect(f.host.prepare).not.toHaveBeenCalled();
+      // A cancelled preparation must release the existing save guard.
+      await f.capability.save(record.value, undefined);
+      expect(f.outbox.send).toHaveBeenCalledOnce();
+    } finally {
+      release();
+      f.controller.abort();
+    }
+  },
+);
+it("caller cancellation after enqueue does not retract or interrupt durable delivery", async () => {
+  const f = fixture();
+  const operation = new AbortController();
+  const send = f.outbox.send;
+  f.outbox.send = vi.fn((intent) => {
+    const id = send(intent);
+    operation.abort();
+    return id;
+  });
+  try {
+    const id = await f.capability.save(
+      record.value,
+      undefined,
+      false,
+      operation.signal,
+    );
+    expect(operation.signal.aborted).toBe(true);
+    expect(f.capability.snapshot().entries[0]?.eventId).toBe(id);
+    expect(f.outbox.dismiss).not.toHaveBeenCalled();
+  } finally {
+    f.controller.abort();
+  }
 });
 it("keeps drafts safe from stale Canvas, unresolved writes and access loss", async () => {
   const f = fixture();

@@ -49,6 +49,10 @@ import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
+import {
+  activeSidebarAssignment,
+  readActiveSidebarGroups,
+} from "./sidebar-personal-groups";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
@@ -897,6 +901,72 @@ export function createRelaySession(
         "A selected recipient is no longer a channel member; remove them or refresh membership",
       );
   }
+  const workSessions = createWorkSessions(
+    writes?.outbox,
+    channels.queries,
+    verified,
+    lifetime.signal,
+    writes?.local,
+    async (id) => {
+      if (!transport) return false;
+      // Confirm only this viewer's exact creation receipt. Discovery may be
+      // incomplete; this never admits the channel or grants content access.
+      const events = await requests.reader.read(
+        [{ kinds: [9007], ids: [id], authors: [transport.viewer], limit: 1 }],
+        { signal: lifetime.signal, fresh: true },
+      );
+      return events.some(
+        (event) =>
+          event.id === id &&
+          event.kind === 9007 &&
+          event.pubkey === transport.viewer,
+      );
+    },
+    () => agentChoices.snapshot().identities.map((agent) => agent.pubkey),
+    transport?.relayAuthor,
+    { read: (filters, settings) => readVerified(filters, settings, false) },
+  );
+  // Roster authority invalidates in-flight reads, including account-owned
+  // preferences. Retry those once at the current epoch, never channel content
+  // or a read cancelled by its caller/session/cache clear.
+  const preferenceReader = {
+    async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
+      const epoch = accessEpoch;
+      const cleared = cacheClearEpoch;
+      try {
+        return await verified.read(filters, settings);
+      } catch (error) {
+        if (
+          readErrorKind(error) !== "cancelled" ||
+          lifetime.signal.aborted ||
+          settings?.signal?.aborted ||
+          epoch === accessEpoch ||
+          cleared !== cacheClearEpoch ||
+          !filters.every(
+            (filter) =>
+              filter.kinds?.length === 1 &&
+              filter.kinds[0] === 30078 &&
+              filter.authors?.length === 1 &&
+              filter.authors[0] === transport?.viewer,
+          )
+        )
+          throw error;
+        return verified.read(filters, settings);
+      }
+    },
+  };
+  const channelKit = createChannelKit({
+    host: transport?.channelKit,
+    reader: preferenceReader,
+    outbox: writes?.outbox,
+    local: writes?.local,
+    ready: writes?.ready,
+    viewer: transport?.viewer ?? "",
+    community: transport?.scope ?? "",
+    signal: lifetime.signal,
+    canWrite: (id) => !closed && channels.canParticipate(id),
+    delivered: workSessions.delivered,
+  });
   const sidebarPreferences = createSidebarPreferencesStore(
     async (signal?: AbortSignal) => {
       const decode = transport?.decodeSidebarPreferences;
@@ -909,33 +979,44 @@ export function createRelaySession(
         AbortSignal.timeout(10_000),
         ...(signal ? [signal] : []),
       ]);
-      return readSidebarPreferences(
-        {
-          read: async (filters, settings) => {
-            const epoch = accessEpoch;
-            const cleared = cacheClearEpoch;
-            try {
-              return await verified.read(filters, settings);
-            } catch (error) {
-              if (
-                readErrorKind(error) !== "cancelled" ||
-                combined.aborted ||
-                epoch === accessEpoch ||
-                cleared !== cacheClearEpoch
-              )
-                throw error;
-              // Initial roster authority can cancel this account-owned read.
-              // Retry once under current access, sharing the original deadline.
-              return verified.read(filters, settings);
-            }
-          },
-        },
+      const legacy = await readSidebarPreferences(
+        preferenceReader,
         transport.viewer,
         decode,
         combined,
       );
+      return readActiveSidebarGroups(channelKit.capability, legacy, combined);
     },
     !!transport?.decodeSidebarPreferences,
+    (() => {
+      const write = transport?.writeSidebarAssignment;
+      return write
+        ? activeSidebarAssignment(channelKit.capability, (intent, signal) =>
+            write(
+              intent,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            ),
+          )
+        : undefined;
+    })(),
+    (() => {
+      const write = transport?.writeSidebarStar;
+      return write
+        ? (intent, signal) =>
+            write(
+              intent,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
     notify,
     (() => {
       const write = transport?.writeSidebarMute;
@@ -968,42 +1049,14 @@ export function createRelaySession(
         : undefined;
     })(),
   );
-  const workSessions = createWorkSessions(
-    writes?.outbox,
-    channels.queries,
-    verified,
-    lifetime.signal,
-    writes?.local,
-    async (id) => {
-      if (!transport) return false;
-      // Confirm only this viewer's exact creation receipt. Discovery may be
-      // incomplete; this never admits the channel or grants content access.
-      const events = await requests.reader.read(
-        [{ kinds: [9007], ids: [id], authors: [transport.viewer], limit: 1 }],
-        { signal: lifetime.signal, fresh: true },
-      );
-      return events.some(
-        (event) =>
-          event.id === id &&
-          event.kind === 9007 &&
-          event.pubkey === transport.viewer,
-      );
-    },
-    () => agentChoices.snapshot().identities.map((agent) => agent.pubkey),
-    transport?.relayAuthor,
-    { read: (filters, settings) => readVerified(filters, settings, false) },
-  );
-  const channelKit = createChannelKit({
-    host: transport?.channelKit,
-    reader: verified,
-    outbox: writes?.outbox,
-    local: writes?.local,
-    ready: writes?.ready,
-    viewer: transport?.viewer ?? "",
-    community: transport?.scope ?? "",
-    signal: lifetime.signal,
-    canWrite: (id) => !closed && channels.canParticipate(id),
-    delivered: workSessions.delivered,
+  let groupHead: string | undefined;
+  const stopSidebarGroups = channelKit.capability.subscribe(() => {
+    const state = channelKit.capability.snapshot();
+    if (state.status !== "ready") return;
+    const head = personalGroups(state.entries)?.eventId;
+    if (head === groupHead) return;
+    groupHead = head;
+    void sidebarPreferences.queries.refresh();
   });
   const channelSetup =
     transport && writes && transport.channelKit
@@ -2017,6 +2070,7 @@ export function createRelaySession(
       }
     },
     dispose() {
+      stopSidebarGroups();
       closed = true;
       typing.dispose();
       lifetime.abort();

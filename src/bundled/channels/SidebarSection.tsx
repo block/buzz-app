@@ -19,7 +19,7 @@ import {
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { RelaySession } from "../../features/relay/session";
-import { SidebarSectionIcon } from "./SidebarSectionIcon";
+import { SidebarGroupIcon } from "./SidebarGroupIcon";
 import styles from "./Channels.module.css";
 
 export function SidebarSection({
@@ -93,7 +93,7 @@ export function SidebarSection({
           >
             <span className={styles.sectionLabel}>
               {icon && session && (
-                <SidebarSectionIcon icon={icon} session={session} />
+                <SidebarGroupIcon icon={icon} session={session} />
               )}
               {title}
             </span>

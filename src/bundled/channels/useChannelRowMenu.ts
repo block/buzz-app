@@ -8,10 +8,13 @@ type RowMenu = {
   anchor?: HTMLElement;
 };
 
-/** Page-owned menu identity follows rendered placement, not a saved group id. */
+/** Sidebar-owned menu identity follows rendered placement, not a saved group id. */
 export function useChannelRowMenu(
   sections: readonly Section[],
-  actionsFor: (channel: ChannelSummary) => readonly ReactNode[],
+  actionsFor: (
+    channel: ChannelSummary,
+    sectionKey: string,
+  ) => readonly ReactNode[],
 ) {
   const [rowMenu, setRowMenu] = useState<RowMenu>();
   // Clear during render so children cannot commit a stale portal after a move.
@@ -20,7 +23,8 @@ export function useChannelRowMenu(
     const channel = sections
       .find((section) => section.key === rowMenu.sectionKey)
       ?.rows.find((channel) => channel.id === rowMenu.channelId);
-    if (!channel || actionsFor(channel).length === 0) setRowMenu(undefined);
+    if (!channel || actionsFor(channel, rowMenu.sectionKey).length === 0)
+      setRowMenu(undefined);
   }
   const open = useCallback(
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {

@@ -57,18 +57,21 @@ export function createChannelKit({
       l();
     });
   };
-  const fresh = (filters: readonly ReadFilter[]) =>
-    reader.read(filters, { signal, fresh: true });
-  async function readRecord(record: KitRecord) {
+  const fresh = (filters: readonly ReadFilter[], readSignal = signal) =>
+    reader.read(filters, { signal: readSignal, fresh: true });
+  async function readRecord(record: KitRecord, readSignal = signal) {
     return selectedHead(
-      await fresh([
-        {
-          kinds: [30078],
-          authors: [viewer],
-          "#d": [coordinate(record)],
-          limit: 1,
-        },
-      ]),
+      await fresh(
+        [
+          {
+            kinds: [30078],
+            authors: [viewer],
+            "#d": [coordinate(record)],
+            limit: 1,
+          },
+        ],
+        readSignal,
+      ),
     );
   }
   async function refresh() {
@@ -153,8 +156,18 @@ export function createChannelKit({
       if (state.status === "idle") void refresh();
     },
     refresh,
-    async save(value: KitValue, expected: string | undefined, deleted = false) {
-      signal.throwIfAborted();
+    async save(
+      value: KitValue,
+      expected: string | undefined,
+      deleted = false,
+      operationSignal?: AbortSignal,
+    ) {
+      // Before enqueue, the caller can cancel preparation. After enqueue, the
+      // durable outbox and session own delivery; caller cancellation cannot undo it.
+      const preparing = operationSignal
+        ? AbortSignal.any([signal, operationSignal])
+        : signal;
+      preparing.throwIfAborted();
       if (!host || !outbox || saving)
         throw new Error("Recipe saving is unavailable or already in progress");
       const record = parseKitRecord(
@@ -164,8 +177,9 @@ export function createChannelKit({
       saving = true;
       try {
         await ready;
-        signal.throwIfAborted();
-        const head = await readRecord(record);
+        preparing.throwIfAborted();
+        const head = await readRecord(record, preparing);
+        preparing.throwIfAborted();
         if (head?.id !== expected)
           throw new Error(
             "This saved recipe changed. Refresh the catalog and review your draft before replacing it.",
@@ -189,8 +203,8 @@ export function createChannelKit({
           throw new Error(
             "Please wait a second before saving this recipe again",
           );
-        const content = await host.prepare(record, signal);
-        signal.throwIfAborted();
+        const content = await host.prepare(record, preparing);
+        preparing.throwIfAborted();
         const id = outbox.send({
           kind: 30078,
           content,

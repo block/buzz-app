@@ -568,11 +568,9 @@ function ReadySidebar({
             removedDmFocus.current =
               rows[index + 1] ??
               rows[index - 1] ??
-              [
-                ...(section?.parentElement?.querySelectorAll<HTMLElement>(
-                  "details > summary",
-                ) ?? []),
-              ].find((summary) => summary.parentElement !== section);
+              sidebar.list.current?.querySelector<HTMLElement>(
+                "details > summary",
+              );
             hiddenDms.hide(channel.id);
           }}
         >

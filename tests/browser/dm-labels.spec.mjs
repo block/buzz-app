@@ -45,6 +45,25 @@ test("DM identity cues remain exactly 22px at normal and narrow sidebar widths",
   });
 });
 
+test("keyboard removal of the final DM moves focus to a surviving section", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  const dms = sidebar.locator('button[data-channel-id^="dm-"]');
+  for (let remaining = await dms.count(); remaining > 0; remaining -= 1) {
+    const dm = dms.last();
+    await dm.focus();
+    await dm.press("Shift+F10");
+    await page
+      .getByRole("menuitem", { name: "Remove from Messages", exact: true })
+      .click();
+    await expect(dms).toHaveCount(remaining - 1);
+  }
+  await expect(sidebar.locator("details > summary").first()).toBeFocused();
+});
+
 for (const cold of [false, true]) {
   test(`DM names recover after ${cold ? "hidden channel deletion aborts a cold fetch" : "channel deletion purges loaded profiles"}`, async ({
     page,

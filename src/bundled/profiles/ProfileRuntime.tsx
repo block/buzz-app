@@ -129,34 +129,43 @@ export function ProfileRuntime({
       )}
       <section aria-label="Activity" className={styles.runtime}>
         <h3 className="text-body">Activity</h3>
-        <Rows rows={[["Status", statusLabel(agent.status)]]} />
-        <Switch
-          label="Start on launch"
-          checked={agent.startOnAppLaunch}
-          disabled={blocked}
-          onCheckedChange={toggle}
-        />
-        {control.readLog && authorizeLog && onOpenLog && (
-          <div className={styles.logEntry}>
-            <Button
-              size="compact"
-              variant="ghost"
-              disabled={state.status !== "ready"}
-              onClick={() =>
-                onOpenLog({
-                  id: agent.id,
-                  pubkey: agent.pubkey,
-                  relayUrl: agent.relayUrl,
-                  authorize: authorizeLog,
-                })
-              }
-            >
-              <FileTextIcon size={18} aria-hidden="true" />
-              Harness log
-              <CaretRightIcon size={18} aria-hidden="true" />
-            </Button>
+        <div className={styles.activityRows}>
+          <div className={styles.activityRow}>
+            <span>Status</span>
+            <span className={styles.activityStatus} data-status={agent.status}>
+              {statusLabel(agent.status)}
+            </span>
           </div>
-        )}
+          <div className={styles.activityRow}>
+            <Switch
+              label="Start on launch"
+              checked={agent.startOnAppLaunch}
+              disabled={blocked}
+              onCheckedChange={toggle}
+            />
+          </div>
+          {control.readLog && authorizeLog && onOpenLog && (
+            <div className={styles.logEntry}>
+              <Button
+                size="compact"
+                variant="ghost"
+                disabled={state.status !== "ready"}
+                onClick={() =>
+                  onOpenLog({
+                    id: agent.id,
+                    pubkey: agent.pubkey,
+                    relayUrl: agent.relayUrl,
+                    authorize: authorizeLog,
+                  })
+                }
+              >
+                <FileTextIcon size={18} aria-hidden="true" />
+                Harness log
+                <CaretRightIcon size={18} aria-hidden="true" />
+              </Button>
+            </div>
+          )}
+        </div>
       </section>
       {state.status === "error" && (
         <div className="flex flex-col items-start gap-2">

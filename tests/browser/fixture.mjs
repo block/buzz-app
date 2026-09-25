@@ -140,6 +140,17 @@ export const test = base.extend({
       key = relayKey,
       time = 1700000000,
     ) => finalizeEvent({ kind, tags, content, created_at: time }, key);
+    const profiles = new Map(
+      ["primary", "secondary"].map((community) => [
+        community,
+        sign(
+          0,
+          [],
+          JSON.stringify({ name: "Fixture Reader", picture: profilePicture }),
+          userKey,
+        ),
+      ]),
+    );
     const participants = largeSidebar
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
@@ -750,7 +761,7 @@ export const test = base.extend({
       }
       if (filter.kinds?.includes(0))
         return [
-          sign(0, [], JSON.stringify({ name: "Fixture Reader" }), userKey),
+          profiles.get(community),
           ...membershipKeys
             .filter((key) => filter.authors?.includes(getPublicKey(key)))
             .map((key) =>
@@ -1238,6 +1249,25 @@ export const test = base.extend({
             streamOwners.delete(streamId);
           });
           return;
+        }
+        if (route === "profile" && request.method === "POST") {
+          const { existing, name, picture, about } = body;
+          const event = sign(
+            0,
+            [],
+            JSON.stringify({
+              ...existing,
+              name: name.trim(),
+              display_name: name.trim(),
+              picture,
+              about,
+            }),
+            userKey,
+            profiles.get(community).created_at + 1,
+          );
+          profiles.set(community, event);
+          // Deliberately no live echo: Save must confirm through a signed read.
+          return send(response, { accepted: true, event_id: event.id });
         }
         if (route !== "query" || request.method !== "POST")
           throw new Error(

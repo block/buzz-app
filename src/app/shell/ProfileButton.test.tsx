@@ -206,7 +206,6 @@ it("shows the selected community name and authenticated avatar without saving a 
     expect(
       screen.getByRole("button", { name: "Availability: Online" }),
     ).toBeVisible();
-    expect(ensure).toHaveBeenCalledWith([viewer], "background");
     expect(media).toHaveBeenCalledWith(
       "https://community.test/media/avatar.png",
       "small",
@@ -409,6 +408,113 @@ it("drops the previous community profile on switching and uses local defaults on
       "src",
       "https://public.test/local.png",
     );
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});
+
+it("refreshes the viewer through the real session after roster setup, not a stale cache", async () => {
+  const { createRelaySession } = await import("../../features/relay/session");
+  const { keypair, metadata, profile, roster, scriptedTransport } =
+    await import("../../features/relay/testing");
+  const viewer = keypair();
+  const relay = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: import("../../features/relay/live").LiveCallbacks;
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  live.state({ status: "connected", routes: [] });
+  owner.session.channels.ensureList();
+  const initialRoster = wire.next();
+  const read = vi.fn(owner.session.read);
+  const connection = {
+    viewer: viewer.pubkey,
+    status: "ready",
+    session: { ...owner.session, read },
+  };
+  const snapshot = {
+    viewer: viewer.pubkey,
+    selected: "https://community.test",
+    profile: { name: "Local only", picture: "" },
+  };
+  const presence = { status: "online", preference: "auto", error: null };
+  const subscribe = () => () => {};
+  const communities = {
+    subscribe,
+    snapshot: () => snapshot,
+    presence: { subscribe, snapshot: () => presence },
+    relay: { subscribe, snapshot: () => connection },
+  } as unknown as Communities;
+  const view = render(
+    <ProfileButton
+      communities={communities}
+      settingsSelected={false}
+      onSettings={() => {}}
+    />,
+  );
+  try {
+    expect(wire.pending).toHaveLength(0);
+    await act(async () => {
+      initialRoster.respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    });
+    await waitFor(() =>
+      expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+    );
+    await waitFor(() =>
+      expect(read).toHaveBeenCalledWith(
+        [{ kinds: [0], authors: [viewer.pubkey], limit: 5 }],
+        expect.objectContaining({
+          priority: "background",
+          fresh: true,
+          signal: expect.any(AbortSignal),
+        }),
+      ),
+    );
+    // Status enrichment shares the background lane; finish it before the avatar read.
+    await act(async () => {
+      for (const request of wire.pending.filter(
+        (entry) => entry.filters[0]?.kinds?.[0] !== 0,
+      ))
+        request.respond([]);
+    });
+    await waitFor(() =>
+      expect(
+        wire.pending.some((entry) => entry.filters[0]?.kinds?.[0] === 0),
+      ).toBe(true),
+    );
+    const lookup = wire.pending.find(
+      (entry) => entry.filters[0]?.kinds?.[0] === 0,
+    );
+    if (!lookup) throw new Error("Missing profile read");
+    // A disk/live cached record arriving during the fresh read must not suppress it.
+    act(() => live.receive([profile(viewer, { name: "Old cached name" })]));
+    fireEvent.click(screen.getByRole("button", { name: "Your profile" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("menu", { name: "Old cached name" }),
+      ).toBeVisible(),
+    );
+    await act(async () =>
+      lookup.respond([
+        profile(viewer, { name: "Current community name" }, 1_700_000_001),
+      ]),
+    );
+    expect(
+      await screen.findByRole("menu", { name: "Current community name" }),
+    ).toBeVisible();
+    expect(snapshot.profile.name).toBe("Local only");
+    // Unrelated live notifications do not start extra reads.
+    act(() => live.state({ status: "connected", routes: [] }));
+    expect(read).toHaveBeenCalledTimes(1);
   } finally {
     view.unmount();
     owner.dispose();

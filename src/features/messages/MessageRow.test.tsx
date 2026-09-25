@@ -37,6 +37,7 @@ it("badges agent and human bylines with known presence", () => {
   const status = vi.fn<() => "online" | "unknown">(() => "online");
   const channels = { channels: [], status: "ready" };
   const session = {
+    messages: {},
     presence: { subscribe, status, limited: () => false },
     channels: {
       subscribeList: () => () => {},

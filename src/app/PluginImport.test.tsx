@@ -96,7 +96,9 @@ it("shows exact declared access and changes before an enabled update", async () 
     screen.getByText(/Removed:.*--brief.*https:\/\/old.example.com/),
   ).toBeVisible();
   expect(
-    screen.getByText(/stays enabled and may run immediately/),
+    screen.getByText(
+      /stays on and may run immediately unless this launch is in safe mode/,
+    ),
   ).toBeVisible();
   expect(manager.installImport).not.toHaveBeenCalled();
 });

@@ -13,6 +13,7 @@ import { useIdentityNames } from "../../features/identity-names/react";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import {
+  archivedMention,
   mentionCandidates,
   mentionHistory,
 } from "../../features/messages/mention-candidates";
@@ -210,7 +211,7 @@ export function useMentionChoices(
         ? row.member && !now.member
           ? "Channel membership changed. Reopen to review adding this recipient."
           : undefined
-        : archives.archived.includes(row.recipient.pubkey)
+        : archivedMention(session, row.recipient.pubkey)
           ? "Archived"
           : "No longer available. Change your search to refresh choices.";
       return {
@@ -246,6 +247,7 @@ export function useMentionChoices(
       truncated: rankMentions(candidates, query).length > 50,
     };
   }, [
+    session,
     rows,
     directory,
     people,

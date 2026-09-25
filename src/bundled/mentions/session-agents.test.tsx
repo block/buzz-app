@@ -85,6 +85,13 @@ function setup(parent: boolean | null = true, archived = false) {
         return () => listeners.delete(listener);
       },
       ensure: async () => {},
+      refresh: async () => {},
+      state: (pubkey: string) =>
+        archiveSnapshot.status !== "ready"
+          ? ("unknown" as const)
+          : archiveSnapshot.archived.includes(pubkey)
+            ? ("archived" as const)
+            : ("not-archived" as const),
     },
     channels: {
       list: () => list,
@@ -1231,6 +1238,9 @@ it("keeps installed rows and fresh authorization through rename, removal, arriva
         archive.archived.includes(key) ? "archived" : "not-archived",
       ensure: async () => {},
       refresh,
+      writable: false,
+      consent: vi.fn(),
+      request: vi.fn(),
     },
   } as RelaySession;
   let result: CompletionResult | undefined;
@@ -1324,6 +1334,9 @@ it("retains button rows while disabling an archived member, then hides it on reo
       },
       ensure: async () => {},
       refresh: async () => {},
+      writable: false,
+      consent: vi.fn(),
+      request: vi.fn(),
     },
   } as RelaySession;
   render(
@@ -1392,31 +1405,43 @@ it("offers usable partial agent choices without waiting for another source", asy
 it("archived identities leave completion and return on unarchive; the viewer is never hidden from themself", async () => {
   const test = setup();
   const publish = vi.fn();
-  const labels = () =>
+  const rows = () =>
     (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
-      (item) => item.label,
+      (item) => [item.label, item.disabled],
     );
-  const props = {
+  const props = (query: string) => ({
     scope: "test",
     channelId: "parent",
-    observation: { revision: 1, text: "@", start: 1, end: 1 },
-    query: { start: 0, end: 1, query: "" },
+    observation: {
+      revision: 1,
+      text: `@${query}`,
+      start: query.length + 1,
+      end: query.length + 1,
+    },
+    query: { start: 0, end: query.length + 1, query },
     publish,
-  };
-  const view = render(<MentionCompletion session={test.session} {...props} />);
-  expect(labels()).toEqual(["Member"]);
+  });
+  const view = render(
+    <MentionCompletion session={test.session} {...props("")} />,
+  );
+  expect(rows()).toEqual([["Member", undefined]]);
+  // A shown row stays in place but cannot be chosen; the next query drops it.
   act(() => test.setArchived([test.member]));
-  expect(labels()).toEqual([]);
+  expect(rows()).toEqual([["Member", "Archived"]]);
+  view.rerender(<MentionCompletion session={test.session} {...props("M")} />);
+  expect(rows()).toEqual([]);
+  // Unarchive returns the row on the next query; installed rows never grow.
   act(() => test.setArchived([]));
-  expect(labels()).toEqual(["Member"]);
+  view.rerender(<MentionCompletion session={test.session} {...props("Me")} />);
+  expect(rows()).toEqual([["Member", undefined]]);
   act(() => test.setArchived([test.member]));
   view.rerender(
     <MentionCompletion
       session={{ ...test.session, viewer: test.member }}
-      {...props}
+      {...props("Mem")}
     />,
   );
-  expect(labels()).toEqual(["Member"]);
+  expect(rows()).toEqual([["Member", undefined]]);
   test.library.dispose();
 });
 
@@ -1499,7 +1524,7 @@ type RelaySessionPeople = (
   query: string,
 ) => Promise<{ people: { pubkey: string; name: string }[]; hasMore: boolean }>;
 
-it("an exact public key still looks up its author after an empty partial-key search", async () => {
+it("an empty partial-key search does not refute an exact-key lookup, and keys still match no choice", async () => {
   const key = "9".repeat(64);
   const people = vi.fn(async (query: string) => ({
     people: query === key ? [{ pubkey: key, name: "Keyholder" }] : [],
@@ -1510,12 +1535,12 @@ it("an exact public key still looks up its author after an empty partial-key sea
   await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(last()?.items).toEqual([]));
   view.rerender(complete(key));
+  // The empty partial-key page does not refute the exact-key author lookup.
   await waitFor(() =>
     expect(people).toHaveBeenLastCalledWith(key, 1, expect.any(AbortSignal)),
   );
-  await waitFor(() =>
-    expect(last()?.items.map((item) => item.label)).toEqual(["Keyholder"]),
-  );
+  // Choices still match names only, never public keys.
+  await waitFor(() => expect(last()?.items).toEqual([]));
 });
 
 it("a failed multi-word directory search keeps its error and retry", async () => {
@@ -1571,7 +1596,7 @@ it("a fresh search for a refuted name searches again, and non-word text refutes 
   await waitFor(() =>
     expect(last()?.items.map((item) => item.label)).toEqual(["🐝 Buzz Bot"]),
   );
-||||||| parent of a928984b (fix: match mention names without public key search)
+});
 
 it("uses base matches and visible lexical ties for Fizz in both chooser surfaces", async () => {
   const test = setup();
@@ -1770,6 +1795,7 @@ it("keeps still-matching directory people across the inline host's per-keystroke
       editor={editor({ revision, text, start: text.length, end: text.length })}
       input={{ current: input }}
       replace={() => true}
+      resolved={{ text, recipients: [] }}
       session={session}
       scope="test"
       channelId="parent"

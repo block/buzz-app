@@ -11,8 +11,10 @@ const empty: readonly Person[] = [];
 export const MENTION_DIRECTORY_DELAY_MS = 200;
 const CACHE_LIMIT = 100;
 
-// Successful first pages, per session (community/viewer) and query. Session
-// lifetime bounds staleness; errors are not cached, so Retry reads again.
+// Successful non-empty first pages, per session (community/viewer) and query.
+// Session lifetime bounds staleness; errors are not cached, so Retry reads
+// again. Empty results are not cached: `exhausted` owns that evidence, and a
+// fresh search for the same query reads again.
 const pages = new WeakMap<RelaySession, Map<string, Page>>();
 function cached(session: RelaySession, query: string) {
   return pages.get(session)?.get(query);
@@ -44,6 +46,10 @@ function settle(session: RelaySession, lifetime: string, page: Page) {
   if (lifetimes.size > LIFETIME_LIMIT)
     lifetimes.delete(lifetimes.keys().next().value ?? "");
 }
+// Last complete, empty word-prefix search; queries strictly extending it
+// cannot match anyone. Re-entering the same query searches afresh.
+const exhausted = new WeakMap<RelaySession, string>();
+const refutedPage: Page = { people: empty, more: false };
 
 /**
  * Directory pages belong to this menu and community, not the global profile
@@ -69,19 +75,50 @@ export function useMentionDirectory(
     session: RelaySession;
     query: string;
     attempt: number;
+    /** A settled page that is not cached (an empty result). */
+    page?: Page;
     error?: string;
   }>();
-  const hit = active ? cached(session, query) : undefined;
+  const own =
+    state?.session === session &&
+    state.query === query &&
+    state.attempt === attempt
+      ? state
+      : undefined;
+  // An exact key is an author lookup, which name-prefix evidence cannot refute.
+  const exactKey = /^[0-9a-f]{64}$/.test(query.trim());
+  const prefix = exhausted.get(session);
+  const refuted =
+    attempt === 0 &&
+    !exactKey &&
+    prefix !== undefined &&
+    query.length > prefix.length &&
+    query.startsWith(prefix);
+  const hit = active
+    ? (cached(session, query) ??
+      own?.page ??
+      (refuted ? refutedPage : undefined))
+    : undefined;
+  const searching = active && !hit;
   useEffect(() => {
-    if (!active || cached(session, query)) return;
+    if (!searching) return;
     const controller = new AbortController();
     const current = { session, query, attempt };
     const timer = setTimeout(() => {
+      exhausted.delete(session);
       void session.directMessages.people(query, 1, controller.signal).then(
         ({ people, hasMore }) => {
           if (controller.signal.aborted) return;
-          remember(session, query, { people, more: hasMore });
-          setState(current);
+          const page = { people, more: hasMore };
+          if (people.length) {
+            remember(session, query, page);
+            setState(current);
+            return;
+          }
+          // The relay ignores non-word text, so it only refutes word prefixes.
+          if (!hasMore && !exactKey && /[\p{L}\p{N}]/u.test(query))
+            exhausted.set(session, query);
+          setState({ ...current, page });
         },
         () => {
           if (!controller.signal.aborted)
@@ -96,16 +133,9 @@ export function useMentionDirectory(
       clearTimeout(timer);
       controller.abort();
     };
-  }, [session, query, active, attempt]);
+  }, [session, query, searching, exactKey, attempt]);
   if (hit) settle(session, lifetime, hit);
-  const error =
-    active &&
-    !hit &&
-    state?.session === session &&
-    state.query === query &&
-    state.attempt === attempt
-      ? state.error
-      : undefined;
+  const error = active && !hit ? own?.error : undefined;
   const shown = hit ?? settled.get(session)?.get(lifetime);
   const retry = useCallback(() => {
     pages.get(session)?.delete(query);

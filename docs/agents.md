@@ -137,7 +137,8 @@ will accept or answer the prompt. DMs do not gain outside recipients. Ordinary
 nonmember consent and session invitation rules remain the access owners;
 selection itself neither grants access nor starts an agent. Invalid recipient
 keys, known-archived identities, and archived/read-only destinations are excluded.
-Unknown archive state does not block selection. Optional archive reads are lazy.
+The viewer is never hidden from themself. Unknown archive state does not block
+selection. Optional archive reads are lazy.
 
 Search trims and lowercases the query. Members precede nonmembers, with humans and agents in each group. Within each
 group, matches against the visible resolved label come first: whole-name exact,
@@ -184,7 +185,7 @@ names, ambiguous names, modified Space, IME composition, code and protected lite
 ranges keep ordinary editing behavior. Selection rechecks available evidence and
 stores only `{pubkey, name}`; qualifiers are presentation, not wire data.
 
-The composer rejects already-known archived recipients at send entry and omits
+The composer rejects already-known archived recipients (never the viewer) at send entry and omits
 ineligible agents from the next draft. This is not an archive transaction: archive
 changes during enrollment, dispatch or retry are intentionally not covered. The
 existing relay membership/send/retry validator is unchanged.

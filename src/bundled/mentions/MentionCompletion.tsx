@@ -71,6 +71,18 @@ export function MentionCompletion({
       !draftRoster && (!inviteAgents || !!channel) && !channel?.members;
     const membershipError = !draftRoster && list.error;
     const missing = !draftRoster && members.some((key) => !profiles.has(key));
+    // A multi-word query that continues no known name is prose, not a search.
+    if (
+      !admitted &&
+      !model.pending &&
+      !model.directory.loading &&
+      !model.directory.error
+    ) {
+      const withdraw = publish({ items: [] });
+      return () => {
+        if (withdraw) withdraw();
+      };
+    }
     const withdraw = publish({
       spaceId: model.spaceId,
       items: matching.map(({ recipient, label, disabled }) => ({

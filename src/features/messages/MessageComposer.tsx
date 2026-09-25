@@ -2,7 +2,11 @@ import { animate, useReducedMotion } from "motion/react";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { SelectedMentionContext } from "./selected-mention-context";
 import { DraftMentionRoster } from "./draft-mention-roster";
-import { mentionCandidates, rememberMention } from "./mention-candidates";
+import {
+  archivedMention,
+  mentionCandidates,
+  rememberMention,
+} from "./mention-candidates";
 import {
   readComposerSnapshot,
   composerMarkdownContext,
@@ -522,11 +526,7 @@ function Composer({
     const captured = valueRef.current;
     const capturedAttachments = attachments.store.snapshot();
     try {
-      if (
-        captured.recipients.some(
-          (p) => session.archives?.state(p.pubkey) === "archived",
-        )
-      )
+      if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
         throw new Error(
           "A selected recipient is archived. Remove it before sending.",
         );

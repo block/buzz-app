@@ -87,6 +87,14 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/sessions/manifest.json"))
             .expect("sessions manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/hosted-communities/manifest.json"
+        ))
+        .expect("hosted communities manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/moderation/manifest.json"
+        ))
+        .expect("moderation manifest"),
     ]
 }
 fn is_bundled(id: &str) -> bool {

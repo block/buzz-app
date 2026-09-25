@@ -1,3 +1,4 @@
+import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -279,7 +280,17 @@ export const MessageRow = memo(function MessageRow({
             />
           )}
           <div className={styles.byline}>
-            <strong>{name}</strong>
+            <span className={styles.author}>
+              <strong>{name}</strong>
+              {session && (
+                <UserStatusDisplay
+                  session={session}
+                  userId={row.authorId}
+                  compact
+                  focusable={false}
+                />
+              )}
+            </span>
             <time dateTime={new Date(row.createdAt * 1000).toISOString()}>
               {new Date(row.createdAt * 1000).toLocaleTimeString(undefined, {
                 hour: "numeric",

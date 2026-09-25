@@ -74,3 +74,17 @@ it("same-origin input wakes an idle peer without rebroadcast or per-input notifi
   activity.dispose();
   expect(channels[0]?.close).toHaveBeenCalledOnce();
 });
+it("keeps an explicit Online choice while idle and restores automatic activity detection", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("localStorage", { getItem: () => null, setItem: vi.fn() });
+  const activity = createPresenceActivity();
+  activity.setViewer("viewer");
+  expect(activity.snapshot().preference).toBe("auto");
+  activity.setPreference("online");
+  await vi.advanceTimersByTimeAsync(600000);
+  expect(activity.status()).toBe("online");
+  activity.setPreference("auto");
+  await vi.advanceTimersByTimeAsync(600000);
+  expect(activity.status()).toBe("away");
+  activity.dispose();
+});

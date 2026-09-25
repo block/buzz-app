@@ -1,8 +1,10 @@
+import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import { ProfileAgentActions } from "./ProfileAgentActions";
 import { ProfileMemories } from "./ProfileMemories";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
+import { ProfileAgentRuntime } from "./ProfileAgentRuntime";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
@@ -27,7 +29,10 @@ import { selectProfiles } from "../../features/relay/profile-selection";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
+import {
+  ProfileAgentIdentity,
+  useVerifiedAgentOwner,
+} from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
 
 export function ProfilePanel({
@@ -102,10 +107,6 @@ function ProfileDetails({
   const messageAttempt = useRef<AbortController>(undefined);
   const [openingMessage, setOpeningMessage] = useState(false);
   const [messageError, setMessageError] = useState("");
-  const [userStatus, setUserStatus] = useState<{
-    text: string;
-    emoji: string;
-  }>();
   useEffect(() => {
     region.current?.focus();
     // Target, viewer and community changes remount this view (see key above).
@@ -128,30 +129,18 @@ function ProfileDetails({
       active = false;
     };
   }, [session, pubkey, attempt]);
-  // One snapshot of the self-published NIP-38 status; not live-updated.
-  useEffect(() => {
-    const controller = new AbortController();
-    void session
-      .read(
-        [{ kinds: [30315], authors: [pubkey], "#d": ["general"], limit: 1 }],
-        { signal: controller.signal },
-      )
-      .then(
-        (events) => {
-          if (controller.signal.aborted) return;
-          const latest = events
-            .filter((event) => event.pubkey === pubkey && event.kind === 30315)
-            .sort((a, b) => b.created_at - a.created_at)[0];
-          const emoji =
-            latest?.tags.find(([name]) => name === "emoji")?.[1] ?? "";
-          const text = latest?.content.trim() ?? "";
-          setUserStatus(text || emoji ? { text, emoji } : undefined);
-        },
-        () => {},
-      );
-    return () => controller.abort();
-  }, [session, pubkey]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const knownAgent = agentPubkeys.has(pubkey);
+  const verifiedOwner = useVerifiedAgentOwner(
+    session,
+    knownAgent ? pubkey : undefined,
+  );
+  const canViewMemories = knownAgent && !!viewer && verifiedOwner === viewer;
+  const selectedTab = tab === "memories" && !canViewMemories ? "info" : tab;
+  useEffect(() => {
+    if (!canViewMemories)
+      setTab((current) => (current === "memories" ? "info" : current));
+  }, [canViewMemories]);
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
     try {
@@ -239,12 +228,14 @@ function ProfileDetails({
         <h2 className="text-heading">{name}</h2>
       </div>
       <Tabs
-        value={tab}
+        value={selectedTab}
         onValueChange={setTab}
         items={[
           { value: "info", label: "Info" },
           { value: "channels", label: "Channels" },
-          { value: "memories", label: "Memories" },
+          ...(canViewMemories
+            ? [{ value: "memories" as const, label: "Memories" }]
+            : []),
         ]}
         label="Profile sections"
         variant="panel"
@@ -257,13 +248,7 @@ function ProfileDetails({
                   pubkey={pubkey}
                   profile
                 />
-                {userStatus && (
-                  <p className={styles.status}>
-                    {userStatus.emoji && <span>{userStatus.emoji}</span>}
-                    {userStatus.emoji && userStatus.text && " "}
-                    {userStatus.text && <span>{userStatus.text}</span>}
-                  </p>
-                )}
+                <UserStatusDisplay session={session} userId={pubkey} />
                 {profile?.nip05 && (
                   <p className={styles.identifier}>
                     <span>NIP-05 (unverified)</span>{" "}
@@ -285,11 +270,18 @@ function ProfileDetails({
                 {profile?.about && (
                   <p className={styles.about}>{profile.about}</p>
                 )}
+                {control && scope && (
+                  <ProfileAgentRuntime
+                    control={control}
+                    scope={scope}
+                    pubkey={pubkey}
+                  />
+                )}
                 {children}
-                {agentPubkeys.has(pubkey) && (
+                {knownAgent && verifiedOwner && (
                   <ProfileAgentIdentity
                     session={session}
-                    pubkey={pubkey}
+                    owner={verifiedOwner}
                     viewer={viewer}
                     context={context}
                   />
@@ -359,7 +351,7 @@ function ProfileDetails({
                     </>
                   ))}
               </>
-            ) : selected === "memories" ? (
+            ) : selected === "memories" && canViewMemories ? (
               <ProfileMemories session={session} pubkey={pubkey} />
             ) : (
               <ProfileChannels

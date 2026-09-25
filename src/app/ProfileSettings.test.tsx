@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   Communities,
@@ -84,4 +91,57 @@ it("keeps cancel available for invalid edits and refuses unchanged form submissi
   fireEvent.change(name, { target: { value: "" } });
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+});
+
+it.each(["Cancel", "Save"])(
+  "returns focused %s to Display name when actions retire",
+  async (action) => {
+    const user = userEvent.setup();
+    const { name } = setup();
+    await user.type(name, " updated");
+    screen.getByRole("button", { name: action }).focus();
+    await user.keyboard("{Enter}");
+    expect(
+      screen.queryByRole("button", { name: action }),
+    ).not.toBeInTheDocument();
+    expect(name).toHaveFocus();
+  },
+);
+
+it("keeps the focused Save on failure and hands focus off after retry", async () => {
+  const user = userEvent.setup();
+  const { name, saveProfile } = setup();
+  await user.type(name, " updated");
+  const save = screen.getByRole("button", { name: "Save" });
+  save.focus();
+  saveProfile.mockImplementationOnce(() => {
+    throw new Error("Could not save");
+  });
+  await user.keyboard("{Enter}");
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not save");
+  expect(save).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(name).toHaveFocus();
+});
+
+it("preserves input focus on implicit submit and external profile updates", async () => {
+  const user = userEvent.setup();
+  const { name, saveProfile } = setup();
+  const picture = screen.getByRole("textbox", {
+    name: "Picture URL (optional)",
+  });
+  await user.type(name, " updated");
+  picture.focus();
+  await user.keyboard("{Enter}");
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  expect(picture).toHaveFocus();
+  await user.type(name, " again");
+  picture.focus();
+  act(() => saveProfile({ name: "Arjun updated again", picture: "" }));
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  expect(picture).toHaveFocus();
 });

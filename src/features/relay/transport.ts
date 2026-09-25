@@ -17,7 +17,13 @@ import {
   readSnapshotText,
 } from "./read-state-snapshot";
 import type { AgentLibraryReader } from "../agents/library";
-import type { SidebarDecoder, SidebarPreferences } from "./sidebar-preferences";
+import {
+  projectSidebarPreferences,
+  type SidebarSortMutator,
+  type SidebarMuteMutator,
+  type SidebarDecoder,
+  type SidebarPreferences,
+} from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
 import {
@@ -66,13 +72,16 @@ export interface ReadTransport {
     signal: AbortSignal,
   ) => Promise<string>;
   readonly workflows?: WorkflowHost;
+  /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
+  readonly channelLifecycle?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
   /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;
-  /** Host-only decoder of the viewer's two signed sidebar preference coordinates. */
+  /** Host-only decoder of the viewer's signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
+  readonly writeSidebarSort?: SidebarSortMutator;
   readonly readState?: ReadStateHost;
   readonly channelKit?: ChannelKitHost;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
@@ -89,11 +98,14 @@ export interface ReadTransport {
     string,
     "online" | "away" | "offline" | "unknown"
   > | null>;
+  readonly writeSidebarMute?: SidebarMuteMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
   /** Stable community endpoint identity for durable session partitioning. */
   readonly scope?: string;
+  /** Relay HTTP base for display only, such as a workflow's webhook address. */
+  readonly relayHttpUrl?: string;
   /** Optional host-owned write capability, exposed to plugins only through the outbox. */
   readonly writer?: RelayWriter;
   /** The signed-in viewer whose channel roster is authoritative. */
@@ -102,6 +114,11 @@ export interface ReadTransport {
   readonly relayAuthor: string;
   /** Explicit NIP-11 self from this community, never a contact-key fallback. */
   readonly archiveAuthority?: string;
+  /** Purpose-bound authoritative recency, verified and max 128 channel IDs. */
+  channelActivity?(
+    channelIds: readonly string[],
+    signal: AbortSignal,
+  ): Promise<RelayEvent[]>;
   query(
     filters: readonly ReadFilter[],
     signal?: AbortSignal,
@@ -130,6 +147,22 @@ export function mediaUrl(
 export interface Signer {
   getPublicKey(): Promise<string>;
   signEvent(event: EventTemplate): Promise<VerifiedEvent>;
+}
+
+/** The host's explicit HTTP base wins; otherwise translate the ws(s) relay URL's scheme. */
+export function relayHttpBase(
+  explicit: unknown,
+  relayUrl: unknown,
+): string | undefined {
+  const candidate =
+    typeof explicit === "string"
+      ? explicit
+      : typeof relayUrl === "string"
+        ? relayUrl.replace(/^ws(s?):\/\//i, "http$1://")
+        : undefined;
+  return candidate && /^https?:\/\/[^\s/?#@]+\/?$/i.test(candidate)
+    ? candidate.replace(/\/$/, "")
+    : undefined;
 }
 
 async function parseEvents(
@@ -243,10 +276,15 @@ export async function connectBrokerTransport(
     projectGit?: boolean;
     attachmentUploads?: boolean;
     directMessages?: boolean;
+    channelLifecycle?: boolean;
     relayUrl?: string;
+    relayHttpUrl?: string;
     live?: boolean;
     presence?: boolean;
     sidebarPreferences?: boolean;
+    sidebarSortWrites?: boolean;
+    channelActivity?: boolean;
+    sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
@@ -267,6 +305,7 @@ export async function connectBrokerTransport(
       "Relay broker session is malformed",
     );
   let traffic: LiveSubscription | undefined;
+  const relayHttpUrl = relayHttpBase(session.relayHttpUrl, session.relayUrl);
   const publicationHeaders = () => ({
     "Content-Type": "application/json",
     // Matched development frontend/host: publication requires the existing owner.
@@ -328,6 +367,7 @@ export async function connectBrokerTransport(
         }
       : {}),
     ...(session.relayUrl ? { scope: session.relayUrl } : {}),
+    ...(relayHttpUrl ? { relayHttpUrl } : {}),
     ...(session.directMessages === true
       ? {
           async openDirectMessage(
@@ -563,6 +603,90 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    ...(session.sidebarSortWrites
+      ? {
+          async writeSidebarSort(group, mode, sectionIds, signal) {
+            const result = await fetch(`${endpoint}/sidebar-sort`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ group, mode, sectionIds }),
+              signal,
+            });
+            if (!result.ok) {
+              const failure = await readApiFailure(result);
+              throw new Error(failure.error);
+            }
+            const value = (await result.json()) as { groups?: unknown };
+            return (
+              projectSidebarPreferences(
+                undefined,
+                undefined,
+                undefined,
+                {
+                  version: 1,
+                  groups: value.groups,
+                },
+                sectionIds,
+              ).sort ?? {}
+            );
+          },
+        }
+      : {}),
+    ...(session.sidebarMuteWrites
+      ? {
+          async writeSidebarMute(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-mute`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: publicationHeaders(),
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok)
+              throw new Error((await readApiFailure(result)).error);
+            return projectSidebarPreferences(
+              undefined,
+              undefined,
+              await result.json(),
+            ).muted;
+          },
+        }
+      : {}),
+    ...(session.channelLifecycle === true
+      ? {
+          channelLifecycle: {
+            async sign(template: EventTemplate, signal: AbortSignal) {
+              const response = await fetch(
+                `${endpoint}/channel-lifecycle-sign`,
+                {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(template),
+                  signal,
+                },
+              );
+              if (!response.ok)
+                throw new Error((await readApiFailure(response)).error);
+              return eventDto(await response.json());
+            },
+            async publish(event: RelayEvent, signal: AbortSignal) {
+              const response = await fetch(
+                `${endpoint}/channel-lifecycle-publish`,
+                {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: publicationHeaders(),
+                  body: JSON.stringify(event),
+                  signal,
+                },
+              );
+              return acceptPublish(response, event.id);
+            },
+          },
+        }
+      : {}),
     ...(session.writeKinds
       ? {
           writer: {
@@ -592,6 +716,30 @@ export async function connectBrokerTransport(
               recordServerTiming(result, profiling, event.id);
               return acceptPublish(result, event.id);
             },
+          },
+        }
+      : {}),
+    ...(session.channelActivity
+      ? {
+          async channelActivity(channelIds, signal) {
+            const result = await fetch(`${endpoint}/channel-activity`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Buzz-Read-Priority": "background",
+              },
+              body: JSON.stringify(
+                channelIds.map((channelId) => ({
+                  kinds: [9, 40002, 40008, 45001, 45003],
+                  "#h": [channelId],
+                  limit: 1,
+                })),
+              ),
+              signal,
+            });
+            if (!result.ok) throw httpReadError(result.status);
+            return parseEvents(await result.json(), verify, signal);
           },
         }
       : {}),
@@ -679,6 +827,7 @@ export async function connectSignedTransport(
       };
     },
     scope: httpOrigin,
+    relayHttpUrl: httpOrigin,
     viewer,
     relayAuthor,
     media: (url, size) => mediaUrl(url, undefined, httpOrigin, size),

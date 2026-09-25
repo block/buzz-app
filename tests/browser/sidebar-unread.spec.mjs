@@ -66,15 +66,10 @@ test("DM hide control removes a row and a new message restores it", async ({
       return { x: marker.x - row.x, y: marker.y - row.y };
     });
   const before = await badgePosition();
-  const container = dm.locator("..").locator("..");
+  const container = dm.locator("xpath=ancestor::*[@data-channel-sidebar-row]");
   await container.screenshot({ path: info.outputPath("dm-row-default.png") });
   await dm.hover();
-  const hide = dm
-    .locator("..")
-    .locator("..")
-    .getByRole("button", {
-      name: /Remove .* from DMs/,
-    });
+  const hide = container.getByRole("button", { name: /Remove .* from DMs/ });
   await expect(hide).toBeVisible();
   await expect
     .poll(() =>
@@ -298,8 +293,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   if (info.project.name === "chromium") {
     await page.keyboard.press("Tab");
     const remove = row(page, "dm-030")
-      .locator("..")
-      .locator("..")
+      .locator("xpath=ancestor::*[@data-channel-sidebar-row]")
       .getByRole("button", { name: /Remove .* from DMs/ });
     await expect(remove).toBeFocused();
     await page.keyboard.press("Tab");
@@ -395,15 +389,12 @@ test("session changes discard the previous sidebar targets and manual unread sti
   const held = new Promise((resolve) => {
     release = resolve;
   });
-  let requested = false;
-  await page.route(
-    "**/api/relay/secondary/sidebar-preferences",
-    async (route) => {
-      requested = true;
-      await held;
-      await route.continue();
-    },
-  );
+  const pendingRoutes = [];
+  await page.route("**/api/relay/secondary/sidebar-preferences", (route) => {
+    const pending = held.then(() => route.continue());
+    pendingRoutes.push(pending);
+    return pending;
+  });
   try {
     await open(page, app);
     await expect(cue(page, "below")).toBeVisible();
@@ -424,13 +415,19 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await page
       .getByRole("button", { name: "Channel settings", exact: true })
       .click();
-    await expect.poll(() => requested).toBe(true);
+    await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
+    // A new session reveals its roster after the bounded startup wait even if
+    // preferences are still blocked. Scrolling the empty loading view is a no-op.
+    await expect(row(page, "alpha")).toBeVisible();
+    await expect(
+      page.getByText("Updating sidebar details…", { exact: true }),
+    ).toBeVisible();
     await scroll(page, 1800);
     await expect(cue(page, "above")).toBeVisible();
     // Completing delayed preferences must not replace the user's newer viewport.
     release();
     await expect(
-      page.getByText("Loading saved groups and stars…", { exact: true }),
+      page.getByText("Updating sidebar details…", { exact: true }),
     ).toBeHidden();
     expect(await list(page).evaluate((element) => element.scrollTop)).toBe(
       1800,
@@ -444,6 +441,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
     ).toBeAttached();
   } finally {
     release();
+    await Promise.all(pendingRoutes);
     await page.unroute("**/api/relay/secondary/sidebar-preferences");
   }
 });

@@ -23,15 +23,32 @@ import "../../shared/styles/globals.css";
 
 // Real session/protocol/read ownership with disposable test keys and memory only.
 // No broker, network, keychain, or real workflow writes.
-const writable = new URLSearchParams(location.search).has("writes");
+const fixtureParams = new URLSearchParams(location.search);
+const writable = fixtureParams.has("writes");
+const manyChannels = fixtureParams.has("many");
 let traffic: LiveCallbacks;
 let publishCount = 0;
+let definitionQueries = 0;
+const definitionChannels = new Set<string>();
+let metadataSequence = 0;
+let heldDefinitionRelease: (() => void) | undefined;
+let heldDefinitionReject: (() => void) | undefined;
+let definitionHoldReleased = false;
 let finishPublish: ((value: string) => void) | undefined;
 let failPublish: ((error: Error) => void) | undefined;
+let lastPublished: RelayEvent | undefined;
+let activeEvents: RelayEvent[] = [];
 const viewer = keypair();
 const authority = keypair();
 const secondChannel = "88888888-8888-4888-8888-888888888888";
-const channels = [fixtureChannel, secondChannel];
+const extraChannels = Array.from(
+  { length: 127 },
+  (_, index) =>
+    `99999999-9999-4999-8999-${String(index + 1).padStart(12, "0")}`,
+);
+const channels = manyChannels
+  ? [fixtureChannel, secondChannel, ...extraChannels]
+  : [fixtureChannel, secondChannel];
 let incoming: ((events: readonly RelayEvent[]) => void) | undefined;
 let generation = 0;
 let currentScope = "Fixture A";
@@ -39,7 +56,15 @@ function session(scope: string) {
   let journal: ReadJournal | undefined;
   const events = channels.flatMap((channel, index) => [
     roster(authority, channel, [viewer.pubkey]),
-    metadata(authority, channel, index ? "Second channel" : "First channel"),
+    metadata(
+      authority,
+      channel,
+      index === 0
+        ? "First channel"
+        : index === 1
+          ? "Second channel"
+          : `Channel ${index + 1}`,
+    ),
     // The second channel exercises the real session's read-only empty state.
     ...(index
       ? []
@@ -54,6 +79,7 @@ function session(scope: string) {
           }),
         ]),
   ]);
+  activeEvents = events;
   return createRelaySession(
     {
       scope,
@@ -66,7 +92,8 @@ function session(scope: string) {
               kinds: [9, 30620, 46020, 5],
               sign: async (template: Parameters<typeof signed>[1]) =>
                 signed(viewer, template),
-              publish: () => {
+              publish: (event) => {
+                lastPublished = event;
                 publishCount++;
                 return new Promise<string>((resolve, reject) => {
                   finishPublish = resolve;
@@ -77,7 +104,45 @@ function session(scope: string) {
             workflows: { runs: async () => ({ runs: [], next: null }) },
           }
         : {}),
-      async query(filters) {
+      async query(filters, signal) {
+        if (filters.some((filter) => filter.kinds?.includes(30620))) {
+          definitionQueries++;
+          for (const filter of filters)
+            for (const channelId of filter["#h"] ?? [])
+              definitionChannels.add(channelId);
+          if (
+            fixtureParams.has("hold") &&
+            !definitionHoldReleased &&
+            filters.some((filter) =>
+              filter["#h"]?.includes(
+                manyChannels
+                  ? (extraChannels[126] ?? secondChannel)
+                  : secondChannel,
+              ),
+            )
+          )
+            await new Promise<void>((resolve, reject) => {
+              const abort = () => {
+                heldDefinitionReject = undefined;
+                if (heldDefinitionRelease === release)
+                  heldDefinitionRelease = undefined;
+                reject(new DOMException("Aborted", "AbortError"));
+              };
+              const release = () => {
+                heldDefinitionReject = undefined;
+                signal?.removeEventListener("abort", abort);
+                if (heldDefinitionRelease === release)
+                  heldDefinitionRelease = undefined;
+                resolve();
+              };
+              heldDefinitionRelease = release;
+              heldDefinitionReject = () => {
+                reject(new Error("Fixture workflow read failed"));
+                release();
+              };
+              signal?.addEventListener("abort", abort, { once: true });
+            });
+        }
         return events.filter((event) =>
           filters.some(
             (filter) =>
@@ -118,8 +183,65 @@ Object.assign(window, {
       finishPublish?.(
         'response:{"run_id":"33333333-3333-4333-8333-333333333333"}',
       ),
+    settleSave: () => {
+      if (lastPublished?.kind !== 30620) return;
+      finishPublish?.(
+        `response:${JSON.stringify({
+          workflow_id: lastPublished.tags.find(([key]) => key === "d")?.[1],
+          webhook_secret: "fixture-late-webhook-secret",
+        })}`,
+      );
+    },
+    settleDelete: () => {
+      const coordinate = lastPublished?.tags.find(([key]) => key === "a")?.[1];
+      finishPublish?.(
+        `response:${JSON.stringify({
+          workflow_id: coordinate?.split(":").at(-1),
+          deleted: true,
+        })}`,
+      );
+    },
     reject: () => failPublish?.(new PublishRejected("Fixture non-delivery")),
     operations: () => owner.session.workflows.operations.snapshot(),
+    definitionQueries: () => definitionQueries,
+    definitionChannelCount: () => definitionChannels.size,
+    definitionReadHeld: () => heldDefinitionRelease !== undefined,
+    failDefinitionRead: () => {
+      definitionHoldReleased = true;
+      heldDefinitionReject?.();
+    },
+    releaseDefinitionRead: () => {
+      definitionHoldReleased = true;
+      heldDefinitionRelease?.();
+    },
+    renameFirstChannel: () => {
+      metadataSequence++;
+      incoming?.([
+        metadata(
+          authority,
+          fixtureChannel,
+          `${metadataSequence % 2 ? "Z-last" : "A-first"} channel ${metadataSequence}`,
+          1_800_001_000 + metadataSequence,
+        ),
+      ]);
+    },
+    restoreAccess: () =>
+      incoming?.([
+        roster(authority, fixtureChannel, [viewer.pubkey], 1_800_000_001),
+      ]),
+    readback: () => {
+      if (lastPublished?.kind !== 30620) return;
+      const workflowId = lastPublished.tags.find(([key]) => key === "d")?.[1];
+      for (let index = activeEvents.length - 1; index >= 0; index--) {
+        const event = activeEvents[index];
+        if (
+          event?.kind === 30620 &&
+          event.tags.some(([key, value]) => key === "d" && value === workflowId)
+        )
+          activeEvents.splice(index, 1);
+      }
+      activeEvents.push(lastPublished);
+    },
     sendMessage: () =>
       owner.session.outbox?.send({
         kind: 9,

@@ -1,6 +1,6 @@
 import { Header } from "../shared/design-system/ui/Header";
 import { Button } from "../shared/design-system/ui/Button";
-import { useState, useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import type {
   Communities,
   PersonalProfile,
@@ -15,6 +15,14 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
     communities.subscribe,
     communities.snapshot,
   );
+  const actionsRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    // Capture focus before the conditional actions leave the DOM.
+    return () => {
+      if (node.contains(document.activeElement))
+        node.closest("form")?.querySelector<HTMLInputElement>("input")?.focus();
+    };
+  }, []);
   const [draft, setDraft] = useState<PersonalProfile | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -71,7 +79,10 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
               </p>
             )}
             {changed && (
-              <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+              <div
+                ref={actionsRef}
+                className="mt-6 flex flex-wrap items-center justify-end gap-3"
+              >
                 <Button
                   size="sm"
                   type="button"

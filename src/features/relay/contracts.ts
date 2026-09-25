@@ -16,6 +16,8 @@ export type ChannelSummary = Readonly<{
   id: string;
   name: string;
   preview?: string | undefined;
+  /** Newest verified user-visible activity for sidebar ordering, in Unix seconds. */
+  lastActivityAt?: number | undefined;
   /** Readable public nonmember channel; not part of the joined roster. */
   readOnly?: true;
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
@@ -113,6 +115,8 @@ export type ChannelList = Readonly<{
   /** Set when the viewer's roster read hit its cap; omitted channels are then not evidence of removal. */
   coverage?: "partial";
   asOf?: number;
+  /** Initial Recent ordering observation, independent of roster/access readiness. */
+  activityStatus?: "idle" | "loading" | "ready" | "error" | "unavailable";
   channels: readonly ChannelSummary[];
   error?: string;
 }>;

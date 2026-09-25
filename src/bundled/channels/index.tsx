@@ -4,6 +4,7 @@ import { ChannelsPage } from "./ChannelsPage";
 import { ChannelSetupSettings } from "./ChannelSetupSettings";
 export const inject = [
   "pages",
+  "agentControl",
   "relay",
   "panels",
   "conversation",
@@ -13,6 +14,7 @@ export const inject = [
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   const extensions = ctx.conversation;
+  const agentControl = ctx.agentControl;
   const relay = ctx.relay;
   const panels = ctx.panels;
   const pages = ctx.pages;
@@ -38,6 +40,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     route: { version: 1, validate: isChannelRoute },
     component: ({ companion, navigation }) => (
       <ChannelsPage
+        agentControl={agentControl}
         providers={providers}
         navigation={navigation}
         navigator={navigator}

@@ -372,7 +372,7 @@ sessionSidebar(
   },
 );
 
-test("disabling the only row action leaves no empty menu", async ({
+test("disabling Sessions keeps independent lifecycle actions available", async ({
   page,
   app,
 }) => {
@@ -397,11 +397,27 @@ test("disabling the only row action leaves no empty menu", async ({
   await expect(toggle).toHaveAttribute("aria-checked", "false");
 
   await button(page, "Messages").first().click();
-  await button(page, "Alpha").click({ button: "right" });
-  await expect(menu).toHaveCount(0);
-  await button(page, "Alpha").focus();
-  await page.keyboard.press("Shift+F10");
-  await expect(menu).toHaveCount(0);
+  // Lifecycle is an independent action group: disabling Sessions removes only
+  // New session, not the context menu or its unavailable-host explanation.
+  for (const keyboard of [false, true]) {
+    if (keyboard) {
+      await button(page, "Alpha").focus();
+      await page.keyboard.press("Shift+F10");
+    } else await button(page, "Alpha").click({ button: "right" });
+    await expect(menu).toBeVisible();
+    await expect(
+      menu.getByRole("menuitem", { name: "New session" }),
+    ).toHaveCount(0);
+    await expect(
+      menu.getByRole("menuitem", {
+        name: "Channel actions unavailable on this connection",
+      }),
+    ).toBeVisible();
+    await expect(menu.getByRole("separator")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(button(page, "Alpha")).toBeFocused();
+  }
 });
 
 test("channel navigation preserves sidebar DOM, group state and scroll", async ({

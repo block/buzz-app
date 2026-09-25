@@ -8,6 +8,7 @@ import "./workflows.css";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Button } from "../../shared/design-system/ui/Button";
 import { WorkflowChannel } from "./WorkflowChannel";
+import { WorkflowWebhookSecrets } from "./WorkflowWebhookSecrets";
 import {
   createWorkflowFixture,
   fixtureChannel,
@@ -28,6 +29,13 @@ function Fixture() {
         </Button>
         <Button onClick={() => fixture.finish("succeeded", false)}>
           Complete concurrent head
+        </Button>
+        <Button
+          onClick={() =>
+            fixture.finish("succeeded", true, "fixture-webhook-secret-2f6c")
+          }
+        >
+          Complete save with webhook secret
         </Button>
         <Button onClick={() => fixture.finish("rejected")}>
           Reject operation
@@ -51,12 +59,15 @@ function Fixture() {
       <Panel>
         <div className="workflows-page">
           {mounted && (
-            <WorkflowChannel
-              capability={fixture.capability}
-              channelId={fixtureChannel}
-              channelName="Fixture channel"
-              viewer={fixtureViewer}
-            />
+            <>
+              <WorkflowWebhookSecrets capability={fixture.capability} />
+              <WorkflowChannel
+                capability={fixture.capability}
+                channelId={fixtureChannel}
+                channelName="Fixture channel"
+                viewer={fixtureViewer}
+              />
+            </>
           )}
         </div>
       </Panel>

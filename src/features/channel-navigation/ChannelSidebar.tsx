@@ -2,12 +2,16 @@ import {
   Component,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
+import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
+import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { personalGroups } from "../channel-templates/setup";
 import type { TemplateProviders } from "../channel-templates/provider";
 import type { RelayData } from "../relay/service";
@@ -20,22 +24,38 @@ import { Button } from "../../shared/design-system/ui/Button";
 import {
   ContextMenuRoot,
   MenuItem,
+  MenuIcon,
   MenuPopup,
+  MenuRoot,
+  MenuTrigger,
+  MenuSubmenu,
+  MenuSubmenuTrigger,
+  MenuSubmenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
+  BellIcon,
+  BellSlashIcon,
   CaretRightIcon,
+  ArrowsDownUpIcon,
+  DotsThreeIcon,
   PlusIcon,
 } from "../../shared/design-system/icons/index";
+import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
+import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
 import { SidebarSectionIcon } from "../../bundled/channels/SidebarSectionIcon";
 import { useChannelLabels } from "../../bundled/channels/useChannelLabels";
 import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
+import { useSidebarStartup } from "../../bundled/channels/useSidebarStartup";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import {
   sidebarSections,
@@ -137,6 +157,19 @@ function ReadySidebar({
 }) {
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const startup = useSidebarStartup(queries, list, preferences);
+  const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
+  useEffect(() => {
+    if (list.activityStatus !== "error") setActivityErrorDismissed(false);
+  }, [list.activityStatus]);
+  const [sectionMenu, setSectionMenu] = useState<{ key: string }>();
+  const mute = useOptimisticMute(queries.sidebarPreferences.setMute);
+  const rowMenuGeneration = useRef(0);
+  const [readWrite, setReadWrite] = useState<{
+    pending: boolean;
+    error?: string;
+  }>();
+  const [rowFocus, setRowFocus] = useState<string>();
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
@@ -144,9 +177,26 @@ function ReadySidebar({
   const personal = personalGroups(kitState.entries)?.record.value;
   const groups = personal?.type === "groups" ? personal : undefined;
   const hiddenDms = useHiddenDms(scope, queries, list);
+  const lifecycle = queries.channelLifecycle;
+  const dmVisibility = useSyncExternalStore(
+    lifecycle.subscribe,
+    lifecycle.snapshot,
+    lifecycle.snapshot,
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a completed roster refresh also refreshes per-viewer visibility.
+  useEffect(() => {
+    if (list.status === "ready") void lifecycle.refreshVisibility();
+  }, [lifecycle, list.asOf, list.status]);
+  const [lifecycleDialog, setLifecycleDialog] = useState<{
+    channel: ChannelSummary;
+    action: ChannelLifecycleAction;
+  }>();
+  const lifecycleFocus = useRef<string | undefined>(undefined);
   const sidebar = useSidebarView(
     scope,
-    list.status === "ready" && preferences.status !== "loading",
+    startup.ready &&
+      list.status === "ready" &&
+      preferences.status !== "loading",
   );
   const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
@@ -226,7 +276,6 @@ function ReadySidebar({
   useEffect(() => {
     if (list.status === "ready") {
       queries.channelKit.ensure();
-      void queries.unread.ensure();
     }
   }, [queries, list.status]);
   const mounted = useRef(false);
@@ -236,6 +285,35 @@ function ReadySidebar({
       mounted.current = false;
     };
   }, []);
+  const chooseLifecycle = (
+    channel: ChannelSummary,
+    action: ChannelLifecycleAction,
+  ) => {
+    // Let the existing context menu restore focus before opening confirmation.
+    requestAnimationFrame(() => {
+      if (mounted.current) setLifecycleDialog({ channel, action });
+    });
+  };
+  useLayoutEffect(() => {
+    if (!lifecycleFocus.current || lifecycleDialog) return;
+    const id = lifecycleFocus.current;
+    lifecycleFocus.current = undefined;
+    const rows = [
+      ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
+        "[data-channel-id]",
+      ) ?? []),
+    ];
+    const row =
+      rows.find(
+        (row) => row.dataset.channelId === id && row.getClientRects().length,
+      ) ?? rows.find((row) => row.getClientRects().length);
+    (
+      row ??
+      sidebar.list.current
+        ?.closest("aside")
+        ?.querySelector<HTMLButtonElement>("button")
+    )?.focus({ preventScroll: true });
+  }, [lifecycleDialog, sidebar.list]);
   const select = useCallback(
     (id: string) => {
       if (!viewer || relay.snapshot().session !== queries) return;
@@ -252,73 +330,112 @@ function ReadySidebar({
     },
     [navigator, relay, queries, scope, viewer],
   );
-  const startSession = (parentId: string) => {
-    const parent = channels.find((channel) => channel.id === parentId);
-    if (
-      !viewer ||
-      relay.snapshot().session !== queries ||
-      !sessionsEnabled ||
-      !parent ||
-      parent.readOnly ||
-      parent.archived ||
-      parent.channelType === "dm" ||
-      parent.channelType === "session"
-    )
-      return;
-    handoff?.updateDraftParents((previous) =>
-      previous.includes(parentId) ? previous : [...previous, parentId],
-    );
-    sidebar.toggle(`session-children:${parentId}`, true);
-    void navigator.open({
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
-      route: { version: 1, params: { kind: "new-session", parentId } },
-      scope: { viewer, communityOrigin: scope.slice(0, -(viewer.length + 1)) },
-    });
-  };
-  const openActivityThread = (channelId: string, rootId: string) => {
-    if (!viewer || relay.snapshot().session !== queries) return;
-    if (handoff)
-      handoff.activityThread.current = {
+  const startSession = useCallback(
+    (parentId: string) => {
+      const parent = channels.find((channel) => channel.id === parentId);
+      if (
+        !viewer ||
+        relay.snapshot().session !== queries ||
+        !sessionsEnabled ||
+        !parent ||
+        parent.readOnly ||
+        parent.archived ||
+        parent.channelType === "dm" ||
+        parent.channelType === "session"
+      )
+        return;
+      handoff?.updateDraftParents((previous) =>
+        previous.includes(parentId) ? previous : [...previous, parentId],
+      );
+      sidebar.toggle(`session-children:${parentId}`, true);
+      void navigator.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        route: { version: 1, params: { kind: "new-session", parentId } },
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+    },
+    [
+      channels,
+      viewer,
+      relay,
+      queries,
+      sessionsEnabled,
+      handoff,
+      sidebar.toggle,
+      navigator,
+      scope,
+    ],
+  );
+  const openActivityThread = useCallback(
+    (channelId: string, rootId: string) => {
+      if (!viewer || relay.snapshot().session !== queries) return;
+      if (handoff)
+        handoff.activityThread.current = {
+          channelId,
+          rootId,
+          trigger:
+            sidebar.list.current?.querySelector<HTMLElement>(
+              `[data-channel-id="${CSS.escape(channelId)}"]`,
+            ) ?? null,
+        };
+      void navigator.open({
+        version: 1,
+        kind: "conversation",
         channelId,
-        rootId,
-        trigger:
-          sidebar.list.current?.querySelector<HTMLElement>(
-            `[data-channel-id="${CSS.escape(channelId)}"]`,
-          ) ?? null,
-      };
-    void navigator.open({
-      version: 1,
-      kind: "conversation",
-      channelId,
-      messageId: rootId,
-      threadRootId: rootId,
-      scope: { viewer, communityOrigin: scope.slice(0, -(viewer.length + 1)) },
-    });
-  };
+        messageId: rootId,
+        threadRootId: rootId,
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+    },
+    [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
+  );
   const createChannel = async (input: CreateChannelInput) => {
     const id = await queries.channelCreation.create(input);
     if (!mounted.current || relay.snapshot().session !== queries) return;
     select(id);
     sidebar.toggle("channels", true);
   };
-  const sections = sidebarSections(
-    sidebarChannels,
-    groups
-      ? {
-          sections: groups.groups.map((group, order) => ({
-            id: group.id,
-            name: group.name,
-            order,
-          })),
-          assignments: groups.assignments,
-          starred: preferences.data?.starred ?? [],
-        }
-      : preferences.data,
-    hiddenDms.hiddenIds,
-  );
+  const displayedPreferences = groups
+    ? {
+        ...preferences.data,
+        sections: groups.groups.map((g, order) => ({
+          id: g.id,
+          name: g.name,
+          order,
+        })),
+        assignments: groups.assignments,
+        starred: preferences.data?.starred ?? [],
+        muted: preferences.data?.muted ?? [],
+      }
+    : preferences.data;
+  const sections = startup.ready
+    ? sidebarSections(
+        sidebarChannels,
+        displayedPreferences,
+        new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
+      )
+    : [];
+  const closeSectionMenu = useCallback(() => setSectionMenu(undefined), []);
+  const setSectionSort = (key: string, mode: "alpha" | "recent") => {
+    // The session applies the choice immediately and owns rollback/retry state.
+    void preferences
+      .setSort(
+        key.startsWith("group:") ? `section:${key.slice(6)}` : key,
+        mode,
+        displayedPreferences?.sections.map((section) => section.id) ?? [],
+      )
+      .catch(() => {});
+    closeSectionMenu();
+  };
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
   const rowActions = (channel: ChannelSummary) => {
@@ -341,22 +458,142 @@ function ReadySidebar({
         </MenuItem>,
       );
     }
+    const muteable =
+      queries.sidebarPreferences.muteWritable && !!preferences.data;
+    const readable = queries.unread.sync().capability === "frontier-sync";
+    if (actions.length && (muteable || readable))
+      actions.push(<MenuSeparator key="attention-separator" />);
+    if (muteable) {
+      const intent = mute.intents.get(channel.id);
+      const muted = intent?.pending
+        ? intent.muted
+        : (preferences.data?.muted.includes(channel.id) ?? false);
+      actions.push(
+        <MenuItem
+          key="mute"
+          closeOnClick={false}
+          disabled={readWrite?.pending ?? false}
+          onClick={() => changeMute(channel.id, channel.name, !muted)}
+        >
+          <MenuIcon>
+            {muted ? <BellIcon size={14} /> : <BellSlashIcon size={14} />}
+          </MenuIcon>
+          {muted ? "Unmute" : "Mute"}
+        </MenuItem>,
+      );
+    }
+    if (readable)
+      actions.push(
+        <ChannelReadMenuItem
+          key="read"
+          unread={queries.unread}
+          channelId={channel.id}
+          pending={readWrite?.pending ?? false}
+          run={(action) => runReadAction(channel.id, action)}
+        />,
+      );
+    if (channel.channelType !== "session" && !channel.archived) {
+      actions.push(
+        <ChannelLifecycleMenu
+          key="lifecycle"
+          separator={actions.length > 0}
+          channelId={channel.id}
+          lifecycle={lifecycle}
+          disabled={!!lifecycleDialog}
+          choose={(action) => chooseLifecycle(channel, action)}
+        />,
+      );
+    }
     return actions;
   };
   const {
     rowMenu,
     open: openMenu,
-    close: closeRowMenu,
+    close: closeMenu,
   } = useChannelRowMenu(sections, rowActions);
   const openRowMenu = useCallback(
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
       startingSession.current = false;
+      rowMenuGeneration.current++;
+      setReadWrite(undefined);
       openMenu(channel, sectionKey, anchor);
     },
     [openMenu],
   );
+  const closeRowMenu = useCallback(() => {
+    rowMenuGeneration.current++;
+    setReadWrite(undefined);
+    closeMenu();
+  }, [closeMenu]);
+  useLayoutEffect(() => {
+    if (!rowFocus) return;
+    sidebar.list.current
+      ?.querySelector<HTMLButtonElement>(
+        `[data-channel-id="${CSS.escape(rowFocus)}"]`,
+      )
+      ?.focus({ preventScroll: true });
+    setRowFocus(undefined);
+  }, [rowFocus, sidebar.list]);
+  const runReadAction = async (
+    channelId: string,
+    action: () => Promise<unknown>,
+  ) => {
+    const generation = rowMenuGeneration.current;
+    setReadWrite({ pending: true });
+    try {
+      await action();
+      if (!mounted.current || generation !== rowMenuGeneration.current) return;
+      // Startup can move the row; resolve its current owner after the commit.
+      setRowFocus(channelId);
+      closeRowMenu();
+    } catch (error) {
+      if (!mounted.current || generation !== rowMenuGeneration.current) return;
+      setReadWrite({
+        pending: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  const changeMute = (channelId: string, name: string, muted: boolean) => {
+    mute.change(channelId, name, muted);
+    setRowFocus(channelId);
+    closeRowMenu();
+  };
   return (
     <>
+      {lifecycleDialog && (
+        <ChannelLifecycleDialog
+          channelId={lifecycleDialog.channel.id}
+          channelName={lifecycleDialog.channel.name}
+          action={lifecycleDialog.action}
+          lifecycle={lifecycle}
+          close={() => {
+            lifecycleFocus.current = lifecycleDialog.channel.id;
+            setLifecycleDialog(undefined);
+          }}
+          completed={() => {
+            const id = lifecycleDialog.channel.id;
+            lifecycleFocus.current = id;
+            setLifecycleDialog(undefined);
+            if (current?.id === id) {
+              const next = sections
+                .flatMap((section) => section.rows)
+                .find((channel) => channel.id !== id);
+              if (next) select(next.id);
+              else {
+                writeView(scope, "selected-channel", undefined);
+                void navigator.open({
+                  version: 1,
+                  kind: "page",
+                  pluginId: "buzz.channels",
+                  pageId: "channels",
+                  route: { version: 1, params: "empty" },
+                });
+              }
+            }
+          }}
+        />
+      )}
       <div className="shell-sidebar" style={{ width: sidebar.width }}>
         <Panel as="aside" aria-label="Channel sidebar">
           <div className={styles.sidebar}>
@@ -410,12 +647,21 @@ function ReadySidebar({
                 )}
               </div>
             )}
+            {dmVisibility.status === "error" && (
+              <div role="alert">
+                Hidden conversations could not be refreshed.{" "}
+                <Button onClick={() => void lifecycle.refreshVisibility()}>
+                  Retry hidden conversations
+                </Button>
+              </div>
+            )}
             <SidebarUnread listRef={sidebar.list}>
               {sections.map((section) => {
                 const showsCreateChannel = isChannelSectionKey(section.key);
                 return (
                   <details
                     key={section.key}
+                    data-sidebar-section={section.key}
                     className={styles.channelSection}
                     open={!sidebar.collapsed.includes(section.key)}
                   >
@@ -507,6 +753,88 @@ function ReadySidebar({
                           />
                         </span>
                       )}
+                      {preferences.sortWritable && (
+                        <MenuRoot
+                          open={sectionMenu?.key === section.key}
+                          onOpenChange={(open) => {
+                            if (open) {
+                              closeSectionMenu();
+                              setSectionMenu({ key: section.key });
+                            } else if (sectionMenu?.key === section.key)
+                              closeSectionMenu();
+                          }}
+                        >
+                          <MenuTrigger
+                            render={(props) => (
+                              <span className={styles.sectionSortAction}>
+                                <IconButton
+                                  {...props}
+                                  type="button"
+                                  size="sm"
+                                  icon={
+                                    <DotsThreeIcon
+                                      size={16}
+                                      aria-hidden="true"
+                                    />
+                                  }
+                                  aria-label={`More actions for ${section.title}`}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    props.onClick?.(event);
+                                  }}
+                                />
+                              </span>
+                            )}
+                          />
+                          <MenuPopup
+                            align="end"
+                            aria-label={`Actions for ${section.title}`}
+                          >
+                            <MenuSubmenu>
+                              <MenuSubmenuTrigger>
+                                <MenuIcon>
+                                  <ArrowsDownUpIcon size={14} />
+                                </MenuIcon>
+                                Sort
+                              </MenuSubmenuTrigger>
+                              <MenuSubmenuPopup
+                                aria-label={`Sort ${section.title}`}
+                                finalFocus={false}
+                              >
+                                <MenuRadioGroup
+                                  value={
+                                    preferences.data?.sort?.[
+                                      section.key.startsWith("group:")
+                                        ? `section:${section.key.slice(6)}`
+                                        : section.key
+                                    ] ?? "alpha"
+                                  }
+                                  onValueChange={(mode) =>
+                                    void setSectionSort(
+                                      section.key,
+                                      mode as "alpha" | "recent",
+                                    )
+                                  }
+                                >
+                                  <MenuRadioItem
+                                    closeOnClick={false}
+                                    value="recent"
+                                  >
+                                    Recent
+                                  </MenuRadioItem>
+                                  <MenuRadioItem
+                                    closeOnClick={false}
+                                    value="alpha"
+                                  >
+                                    A–Z
+                                  </MenuRadioItem>
+                                </MenuRadioGroup>
+                              </MenuSubmenuPopup>
+                            </MenuSubmenu>
+                          </MenuPopup>
+                        </MenuRoot>
+                      )}
                     </summary>
                     {section.rows.map((channel) => {
                       const sessions = childrenByParent.get(channel.id);
@@ -577,6 +905,10 @@ function ReadySidebar({
                             }
                           >
                             {actions}
+                            {readWrite?.pending && <p role="status">Saving…</p>}
+                            {readWrite?.error && (
+                              <p role="alert">{readWrite.error}</p>
+                            )}
                           </MenuPopup>
                         </ContextMenuRoot>
                       );
@@ -592,13 +924,80 @@ function ReadySidebar({
                   {list.error}
                 </p>
               )}
-              {list.status === "ready" && !channels.length && (
+              {!startup.ready && (
+                <p className={styles.empty} role="status">
+                  Loading your sidebar…
+                </p>
+              )}
+              {startup.ready && list.status === "ready" && !channels.length && (
                 <p className={styles.empty}>No channels yet.</p>
               )}
             </SidebarUnread>
-            {preferences.status === "error" ? (
+            {startup.updating && (
+              <p className={styles.preferenceNotice} role="status">
+                Updating sidebar details…
+              </p>
+            )}
+            {preferences.sortErrors?.map(({ group, mode, error }) => (
+              <div key={group} className={styles.preferenceNotice} role="alert">
+                <p>
+                  Couldn’t save the sort order for{" "}
+                  {sections.find(
+                    ({ key }) =>
+                      key ===
+                      (group.startsWith("section:")
+                        ? `group:${group.slice(8)}`
+                        : group),
+                  )?.title ?? "this section"}
+                  . {error}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSectionSort(group, mode)}
+                >
+                  Retry sort
+                </button>
+                <button
+                  type="button"
+                  onClick={() => preferences.dismissSortError(group)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            ))}
+            {[...mute.intents.values()]
+              .filter((intent) => !intent.pending)
+              .map((intent) => (
+                <ToastNotice
+                  key={intent.channelId}
+                  title={`Couldn’t ${intent.muted ? "mute" : "unmute"} ${intent.name}`}
+                  description={intent.error ?? "Please try again."}
+                  tone="warning"
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() =>
+                      changeMute(intent.channelId, intent.name, intent.muted)
+                    }
+                  >
+                    Retry
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      mute.dismiss(intent.channelId);
+                      setRowFocus(intent.channelId);
+                    }}
+                  >
+                    Dismiss
+                  </Button>
+                </ToastNotice>
+              ))}
+            {startup.ready && preferences.status === "error" ? (
               <ToastNotice
-                title="Saved groups and stars couldn’t refresh"
+                title="Saved sidebar preferences couldn’t refresh"
                 description="Your conversations are still available."
                 tone="warning"
               >
@@ -606,13 +1005,27 @@ function ReadySidebar({
                   Retry
                 </Button>
               </ToastNotice>
-            ) : preferences.status !== "ready" ? (
-              <p className={styles.preferenceNotice}>
-                {preferences.status === "loading"
-                  ? "Loading saved groups and stars…"
-                  : "Saved groups and stars aren’t supported by this host yet."}
+            ) : startup.ready && preferences.status === "unsupported" ? (
+              <p className={styles.preferenceNotice} role="status">
+                Saved groups and stars aren’t supported by this host yet.
               </p>
             ) : null}
+            {list.activityStatus === "error" && !activityErrorDismissed && (
+              <ToastNotice
+                title="Couldn’t refresh recent activity"
+                description="Sections sorted by Recent may be out of date."
+                tone="warning"
+                onDismiss={() => setActivityErrorDismissed(true)}
+              >
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => queries.channels.refreshList?.()}
+                >
+                  Retry
+                </Button>
+              </ToastNotice>
+            )}
           </div>
         </Panel>
         <CreateChannelDialog

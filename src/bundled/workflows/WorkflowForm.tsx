@@ -5,12 +5,17 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Switch } from "../../shared/design-system/ui/Switch";
+import { WorkflowScheduleFields } from "./WorkflowScheduleFields";
 import { formWithStep, type WorkflowDraftIssue } from "./editor-model";
 import {
   ACTION_LABELS,
+  isThreadReplyEligibleTrigger,
+  isTriggerType,
   nextStepId,
+  withTriggerType,
   type WorkflowFormState,
 } from "./workflowFormTypes";
+import { defaultScheduleTrigger } from "./workflowSchedule";
 
 export function WorkflowForm({
   state,
@@ -51,15 +56,26 @@ export function WorkflowForm({
             options: [
               { value: "message_posted", label: "Message posted" },
               { value: "reaction_added", label: "Reaction added" },
+              { value: "diff_posted", label: "Diff posted" },
             ],
+          },
+          {
+            label: "Time",
+            options: [{ value: "schedule", label: "Schedule" }],
+          },
+          {
+            label: "Integrations",
+            options: [{ value: "webhook", label: "Webhook" }],
           },
         ]}
         onValueChange={(value) => {
-          if (
-            !disabled &&
-            (value === "message_posted" || value === "reaction_added")
-          )
-            onChange({ ...state, trigger: { on: value } });
+          if (disabled || !isTriggerType(value)) return;
+          const next = withTriggerType(state, value);
+          onChange(
+            value === "schedule"
+              ? { ...next, trigger: defaultScheduleTrigger() }
+              : next,
+          );
         }}
       />
       {state.trigger.on === "reaction_added" && (
@@ -73,23 +89,36 @@ export function WorkflowForm({
           />
         </Field>
       )}
-      <details>
-        <summary>Trigger options</summary>
-        <div className="workflow-options">
-          <Field
-            label="Trigger condition (optional)"
-            description="An evalexpr expression; leave empty to match every event of this type."
-          >
-            <Input
-              id={`${id}-3`}
-              value={state.trigger.filter ?? ""}
-              onValueChange={(filter) =>
-                onChange({ ...state, trigger: { ...state.trigger, filter } })
-              }
-            />
-          </Field>
-        </div>
-      </details>
+      {state.trigger.on === "schedule" ? (
+        <WorkflowScheduleFields
+          disabled={disabled}
+          trigger={state.trigger}
+          onUpdate={(trigger) => onChange({ ...state, trigger })}
+        />
+      ) : state.trigger.on === "webhook" ? (
+        <p className="text-body-sm text-secondary">
+          A unique URL is generated after creation. Its address and one-time
+          secret are shown once, after the first save.
+        </p>
+      ) : (
+        <details>
+          <summary>Trigger options</summary>
+          <div className="workflow-options">
+            <Field
+              label="Trigger condition (optional)"
+              description="An evalexpr expression; leave empty to match every event of this type."
+            >
+              <Input
+                id={`${id}-3`}
+                value={state.trigger.filter ?? ""}
+                onValueChange={(filter) =>
+                  onChange({ ...state, trigger: { ...state.trigger, filter } })
+                }
+              />
+            </Field>
+          </div>
+        </details>
+      )}
       <ol className="workflow-steps">
         {state.steps.map((step, index) => (
           <li key={step.id} className="workflow-step">
@@ -127,14 +156,16 @@ export function WorkflowForm({
                     }
                   />
                 </Field>
-                <Switch
-                  label="Reply in the triggering thread"
-                  checked={step.replyInThread === true}
-                  disabled={disabled}
-                  onCheckedChange={(replyInThread) =>
-                    onChange(formWithStep(state, step.id, { replyInThread }))
-                  }
-                />
+                {isThreadReplyEligibleTrigger(state.trigger.on) && (
+                  <Switch
+                    label="Reply in the triggering thread"
+                    checked={step.replyInThread === true}
+                    disabled={disabled}
+                    onCheckedChange={(replyInThread) =>
+                      onChange(formWithStep(state, step.id, { replyInThread }))
+                    }
+                  />
+                )}
               </>
             ) : (
               <Field

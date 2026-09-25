@@ -289,8 +289,9 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     await second
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
+    await second.getByRole("button", { name: /^Availability:/ }).click();
     await second
-      .getByRole("menuitemradio", { name: "Appear offline", exact: true })
+      .getByRole("menuitemradio", { name: "Offline", exact: true })
       .click();
     await expect(
       page.getByRole("img", { name: "Your status: Offline" }),
@@ -409,18 +410,17 @@ test("avatar choices publish through the existing socket and persist across relo
     name: "Your profile",
     exact: true,
   });
-  const account = page.getByRole("menu", { name: "Your account" });
+  const account = page.getByRole("menu", { name: "Browser Fixture" });
   const published = (status) =>
     app.report.presencePublications.filter(
       ({ event }) => event.content === status,
     ).length;
   await expect(
-    avatar.getByRole("img", { name: "Your status: Active" }),
+    avatar.getByRole("img", { name: "Your status: Online" }),
   ).toBeVisible();
   await avatar.click();
-  await account
-    .getByRole("menuitemradio", { name: "Away", exact: true })
-    .click();
+  await page.getByRole("button", { name: /^Availability:/ }).click();
+  await page.getByRole("menuitemradio", { name: "Away", exact: true }).click();
   await expect(
     avatar.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
@@ -435,8 +435,9 @@ test("avatar choices publish through the existing socket and persist across relo
     avatar.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
   await avatar.click();
-  await account
-    .getByRole("menuitemradio", { name: "Appear offline", exact: true })
+  await page.getByRole("button", { name: /^Availability:/ }).click();
+  await page
+    .getByRole("menuitemradio", { name: "Offline", exact: true })
     .click();
   await expect.poll(() => published("offline")).toBeGreaterThan(0);
   await page.reload();
@@ -444,15 +445,16 @@ test("avatar choices publish through the existing socket and persist across relo
     avatar.getByRole("img", { name: "Your status: Offline" }),
   ).toBeVisible();
   await avatar.click();
+  await page.getByRole("button", { name: /^Availability:/ }).click();
   await expect(
-    account.getByRole("menuitemradio", { name: "Appear offline", exact: true }),
+    page.getByRole("menuitemradio", { name: "Offline", exact: true }),
   ).toBeChecked();
   const before = published("online");
-  await account
+  await page
     .getByRole("menuitemradio", { name: "Automatic", exact: true })
     .click();
   await expect(
-    avatar.getByRole("img", { name: "Your status: Active" }),
+    avatar.getByRole("img", { name: "Your status: Online" }),
   ).toBeVisible();
   await expect.poll(() => published("online")).toBeGreaterThan(before);
   await account.screenshot({

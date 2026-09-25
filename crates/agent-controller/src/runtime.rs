@@ -1,6 +1,9 @@
 use crate::bundle::RuntimeBundle;
 use crate::config::Agent;
+#[cfg(not(unix))]
 use crate::process::Process;
+#[cfg(unix)]
+use crate::supervisor::Supervised;
 use crate::{AgentEdit, ControlSnapshot, Credentials, ProcessStatus, Result, Store};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -10,17 +13,26 @@ use std::sync::Arc;
 
 impl RuntimeBundle {
     fn command(&self, agent: &Agent, key: &crate::Secret) -> Result<Command> {
+        self.command_with_defaults(agent, key, &crate::build_defaults())
+    }
+    fn command_with_defaults(
+        &self,
+        agent: &Agent,
+        key: &crate::Secret,
+        defaults: &crate::BuildDefaults,
+    ) -> Result<Command> {
         agent.validate()?;
+        let harness = defaults.resolve(&agent.harness, &agent.environment);
         if key.pubkey() != agent.pubkey {
             return Err("Credential does not match the saved agent".into());
         }
         if !Path::new(&agent.workspace).is_dir() {
             return Err("Agent workspace does not exist".into());
         }
-        let worker = if agent.harness.command == "buzz-agent" {
+        let worker = if harness.command == "buzz-agent" {
             self.executable("buzz-agent")?
         } else {
-            let path = PathBuf::from(&agent.harness.command);
+            let path = PathBuf::from(&harness.command);
             if !path.is_absolute() {
                 return Err("Choose the installed harness's absolute executable path".into());
             }
@@ -35,12 +47,16 @@ impl RuntimeBundle {
             || record["persona_team_dir"]
                 .as_str()
                 .is_some_and(|s| !s.is_empty())
-            || agent.harness.provider == "relay-mesh"
+            || harness.provider == "relay-mesh"
             || !record["relay_mesh"].is_null()
         {
             return Err("This imported agent requires a remote/team/mesh integration not supported by the local controller".into());
         }
-        let respond_to = record["respond_to"].as_str().unwrap_or("owner-only");
+        let respond_to = if defaults.owner_only {
+            "owner-only"
+        } else {
+            record["respond_to"].as_str().unwrap_or("owner-only")
+        };
         if !matches!(respond_to, "owner-only" | "allowlist" | "anyone") {
             return Err("Invalid imported response policy".into());
         }
@@ -115,7 +131,12 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
             .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
             .env("BUZZ_ACP_RELAY_OBSERVER", "false");
-        let worker_name = Path::new(&agent.harness.command)
+        if defaults.owner_only {
+            command
+                .env("BUZZ_ACP_ALLOWED_RESPOND_TO", "owner-only")
+                .env_remove("BUZZ_ACP_RESPOND_TO_ALLOWLIST");
+        }
+        let worker_name = Path::new(&harness.command)
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("");
@@ -125,10 +146,10 @@ impl RuntimeBundle {
             "buzz-agent" => Some(("BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER")),
             "goose" => Some(("GOOSE_MODEL", "GOOSE_PROVIDER")),
             "buzz-pi-acp" => None,
-            _ if !agent.harness.provider.is_empty() => return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into()),
+            _ if !harness.provider.is_empty() => return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into()),
             _ => None,
         };
-        let mut model = (!agent.harness.model.is_empty()).then_some(agent.harness.model.as_str());
+        let mut model = (!harness.model.is_empty()).then_some(harness.model.as_str());
         if let Some((model_key, provider_key)) = mapping {
             model = agent
                 .environment
@@ -139,9 +160,7 @@ impl RuntimeBundle {
                 .environment
                 .get(provider_key)
                 .map(String::as_str)
-                .or_else(|| {
-                    (!agent.harness.provider.is_empty()).then_some(agent.harness.provider.as_str())
-                });
+                .or_else(|| (!harness.provider.is_empty()).then_some(harness.provider.as_str()));
             if let Some(value) = model {
                 command.env(model_key, value);
             }
@@ -194,14 +213,21 @@ impl RuntimeBundle {
     }
 }
 fn effective_databricks(agent: &Agent) -> Result<Option<crate::connection::DatabricksSettings>> {
-    let buzz_agent = Path::new(&agent.harness.command)
+    databricks_with_defaults(agent, &crate::build_defaults())
+}
+fn databricks_with_defaults(
+    agent: &Agent,
+    defaults: &crate::BuildDefaults,
+) -> Result<Option<crate::connection::DatabricksSettings>> {
+    let harness = defaults.resolve(&agent.harness, &agent.environment);
+    let buzz_agent = Path::new(&harness.command)
         .file_name()
         .and_then(|s| s.to_str())
         == Some("buzz-agent");
     if !buzz_agent {
         return Ok(None);
     }
-    if !agent.harness.args.is_empty() {
+    if !harness.args.is_empty() {
         return Err(
             "Buzz Agent runs in ACP mode without arguments; use Connect for sign-in".into(),
         );
@@ -209,7 +235,7 @@ fn effective_databricks(agent: &Agent) -> Result<Option<crate::connection::Datab
     let provider = agent
         .environment
         .get("BUZZ_AGENT_PROVIDER")
-        .unwrap_or(&agent.harness.provider);
+        .unwrap_or(&harness.provider);
     if !matches!(
         provider.as_str(),
         "databricks_v2" | "databricks-v2" | "databricks"
@@ -219,7 +245,7 @@ fn effective_databricks(agent: &Agent) -> Result<Option<crate::connection::Datab
     if agent.environment.contains_key("DATABRICKS_TOKEN") {
         return Err("Remove DATABRICKS_TOKEN to use this app's persistent OAuth connection".into());
     }
-    let mut settings = agent.harness.databricks.clone().unwrap_or_default();
+    let mut settings = harness.databricks.clone().unwrap_or_default();
     if let Some(host) = agent.environment.get("DATABRICKS_HOST") {
         settings.host = host.clone();
     }
@@ -272,21 +298,22 @@ pub enum Action {
     Restart,
 }
 struct Running {
+    #[cfg(unix)]
+    process: Supervised,
+    #[cfg(not(unix))]
     process: Process,
     revision: u64,
     databricks_host: Option<String>,
-    temporary: Option<tempfile::TempDir>,
+    #[cfg(all(test, unix))]
+    temporary: Option<PathBuf>,
+    #[cfg(not(unix))]
+    _temporary: Option<tempfile::TempDir>,
+    #[cfg(not(unix))]
     _ownership: crate::ownership::Ownership,
 }
 impl Drop for Running {
     fn drop(&mut self) {
-        if self.process.stop().is_err() {
-            // Never delete temporary signing material out from under an unconfirmed
-            // descendant. Retain the private directory for explicit recovery.
-            if let Some(directory) = self.temporary.take() {
-                let _ = directory.keep();
-            }
-        }
+        let _ = self.process.stop();
     }
 }
 /// Deliberately not serializable: only the native connection owner consumes it.
@@ -344,6 +371,10 @@ impl Controller {
                         );
                     }
                     Err(error) => {
+                        #[cfg(unix)]
+                        if run.process.stopped() {
+                            self.running.remove(&agent.id);
+                        }
                         self.errors.insert(agent.id.clone(), error);
                     }
                 }
@@ -442,15 +473,15 @@ impl Controller {
         if !matches!(action, Action::Stop) && !self.store.agents()?.iter().any(|a| a.id == id) {
             return Err("Agent no longer exists".into());
         }
+        let mut disable_failed = false;
         let result = match action {
             Action::Stop => {
-                // Stop the process even if durable disable fails; report failure
-                // instead of claiming it will remain stopped on next launch.
+                // Stop even if disabling fails. Report cleanup first, but still
+                // reject Stop when its durable disable did not succeed.
                 let stopped = self.stop(id);
                 let saved = self.store.enabled(id, false);
-                stopped?;
-                saved?;
-                Ok(())
+                disable_failed = saved.is_err();
+                stopped.and(saved)
             }
             Action::Start => self.store.enabled(id, true).and_then(|_| self.start(id)),
             Action::Restart => self
@@ -459,13 +490,16 @@ impl Controller {
                 .and_then(|_| self.stop(id))
                 .and_then(|_| self.start(id)),
         };
-        match result {
+        match &result {
             Ok(()) => {
                 self.errors.remove(id);
             }
             Err(error) => {
-                self.errors.insert(id.into(), error);
+                self.errors.insert(id.into(), error.clone());
             }
+        }
+        if disable_failed {
+            result?;
         }
         self.snapshot()
     }
@@ -501,7 +535,10 @@ impl Controller {
         }
         self.store.enabled(id, true)?;
         if matches!(action, Action::Restart) {
-            self.stop(id)?;
+            if let Err(error) = self.stop(id) {
+                self.errors.insert(id.into(), error);
+                return self.snapshot();
+            }
         }
         match self.start_with_key(id, Some(key), replay_floor) {
             Ok(()) => {
@@ -550,6 +587,7 @@ impl Controller {
             return Err("Agent is disabled".into());
         }
         let bundle = self.bundle.as_ref().map_err(Clone::clone)?;
+        #[cfg(not(unix))]
         let ownership = crate::ownership::Ownership::acquire(&self.ownership_root, &agent.id)?;
         let stored;
         let key = match supplied {
@@ -589,6 +627,13 @@ impl Controller {
                 .env("DATABRICKS_MODEL_FILTER", &settings.filter)
                 .env_remove("DATABRICKS_TOKEN");
         }
+        // Disarm app-side deletion before a child can use this directory. The
+        // supervisor deletes it only after confirmed whole-session teardown.
+        #[cfg(unix)]
+        let temporary = temporary.keep();
+        #[cfg(unix)]
+        let process = Supervised::spawn(&command, &self.ownership_root, &agent.id, &temporary)?;
+        #[cfg(not(unix))]
         let process = Process::spawn(&mut command)?;
         self.running.insert(
             id.into(),
@@ -596,7 +641,11 @@ impl Controller {
                 process,
                 revision: agent.revision,
                 databricks_host: settings.map(|s| s.host),
+                #[cfg(all(test, unix))]
                 temporary: Some(temporary),
+                #[cfg(not(unix))]
+                _temporary: Some(temporary),
+                #[cfg(not(unix))]
                 _ownership: ownership,
             },
         );
@@ -604,7 +653,13 @@ impl Controller {
     }
     fn stop(&mut self, id: &str) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
-            run.process.stop()?;
+            let result = run.process.stop();
+            #[cfg(unix)]
+            if run.process.stopped() {
+                // E confirms worker exit even when private-dir removal failed.
+                self.running.remove(id);
+            }
+            result?;
         }
         self.running.remove(id);
         Ok(())
@@ -661,6 +716,14 @@ fn model_context(
     harness: &crate::HarnessEdit,
     environment: &BTreeMap<String, String>,
 ) -> Result<ModelContext> {
+    model_context_with_defaults(harness, environment, &crate::build_defaults())
+}
+fn model_context_with_defaults(
+    harness: &crate::HarnessEdit,
+    environment: &BTreeMap<String, String>,
+    defaults: &crate::BuildDefaults,
+) -> Result<ModelContext> {
+    let harness = defaults.resolve(harness, environment);
     if Path::new(&harness.command)
         .file_name()
         .and_then(|s| s.to_str())
@@ -671,7 +734,7 @@ fn model_context(
     let provider = environment
         .get("BUZZ_AGENT_PROVIDER")
         .unwrap_or(&harness.provider);
-    if provider != "databricks_v2" {
+    if !matches!(provider.as_str(), "databricks_v2" | "databricks-v2") {
         return Err(
             "Effective provider is not Databricks v2; check the provider and environment overrides"
                 .into(),
@@ -681,13 +744,10 @@ fn model_context(
         return Err("A saved or draft token override conflicts with this app-isolated OAuth connection. Remove it explicitly or keep manual model entry".into());
     }
     Ok(ModelContext {
-        host: environment.get("DATABRICKS_HOST").cloned().or_else(|| {
-            harness
-                .databricks
-                .as_ref()
-                .map(|s| s.host.clone())
-                .filter(|h| !h.is_empty())
-        }),
+        host: environment
+            .get("DATABRICKS_HOST")
+            .cloned()
+            .or_else(|| harness.databricks.as_ref().map(|s| s.host.clone())),
         filter: environment
             .get("DATABRICKS_MODEL_FILTER")
             .cloned()

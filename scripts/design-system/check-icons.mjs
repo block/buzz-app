@@ -56,6 +56,7 @@ const nonIconDependencies = new Set([
   "prosemirror-state",
   "prosemirror-view",
   "react",
+  "react-day-picker", // Calendar behavior; navigation icons use our Phosphor gateway.
   "react-diff-view", // Patch tables/parser, not an icon library.
   "react-dom",
   "react-markdown",

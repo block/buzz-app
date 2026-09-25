@@ -430,7 +430,9 @@ const readingTest = test.extend({ tallMessages: true });
 readingTest(
   "exact thread navigation leaves the ordinary channel reading anchor unchanged",
   async ({ page, app }, testInfo) => {
-    const { settle, anchor, expectAnchor } = await import("./timeline.mjs");
+    const { settle, anchor, expectAnchor, wheelToCompletion } = await import(
+      "./timeline.mjs"
+    );
     await open(page, app);
     const history = page.getByRole("region", {
       name: "Channel message history",
@@ -498,8 +500,7 @@ readingTest(
       record("installed");
     });
     try {
-      await history.hover();
-      await page.mouse.wheel(0, -650);
+      await wheelToCompletion(page, -650);
       await settle(page);
       const reading = await anchor(page);
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });

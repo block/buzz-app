@@ -1,5 +1,12 @@
 import { test, expect } from "./fixture.mjs";
-import { open, upper, anchor, expectAnchor } from "./timeline.mjs";
+import {
+  open,
+  upper,
+  anchor,
+  expectAnchor,
+  settle,
+  wheelToCompletion,
+} from "./timeline.mjs";
 
 // Reading setup must not accidentally exercise older-page loading.
 test.use({
@@ -181,5 +188,64 @@ test("reading setup drains a timed-out DOM read before returning its rejection",
     expect.poll = poll;
     page.getByRole = getByRole;
     page.mouse.wheel = wheel;
+  }
+});
+
+test("wheel completion waits through stable geometry and a held input tail", async ({
+  page,
+}) => {
+  // Real browser scrolling, without an app build. Hold completion delivery so
+  // stable geometry cannot accidentally stand in for the wheel lifecycle.
+  await page.setContent(`
+    <section role="region" aria-label="Channel message history"
+      style="height:200px;width:400px;overflow:auto">
+      <div data-message-id="reading"><p style="margin:0;height:1600px">Reading</p></div>
+    </section>
+  `);
+  await expect(wheelToCompletion(page, -17)).rejects.toThrow(
+    "wheel completion requires room to scroll",
+  );
+  await history(page).evaluate((element) => {
+    window.heldScrollEnds = 0;
+    element.addEventListener(
+      "scrollend",
+      (event) => {
+        if (event.isTrusted) {
+          event.stopImmediatePropagation();
+          window.heldScrollEnds++;
+        }
+      },
+      { capture: true },
+    );
+  });
+  let finished = false;
+  const outcome = wheelToCompletion(page, 633).then(
+    () => {
+      finished = true;
+    },
+    (error) => {
+      finished = true;
+      return error;
+    },
+  );
+  try {
+    await page.waitForFunction(() => window.heldScrollEnds === 1);
+    await settle(page);
+    const paused = await anchor(page);
+    expect(finished, "stable geometry is not wheel completion").toBe(false);
+    // Deliver the remaining movement only after the old geometry poll passed.
+    await page.mouse.wheel(0, 17);
+    await page.waitForFunction(() => window.heldScrollEnds === 2);
+    await settle(page);
+    expect(finished, "the completion event is still held").toBe(false);
+    await history(page).dispatchEvent("scrollend");
+    expect(await outcome).toBeUndefined();
+    const completed = await anchor(page);
+    expect(completed.id).toBe(paused.id);
+    expect(paused.y - completed.y).toBeGreaterThan(4);
+    await expectAnchor(page, completed);
+  } finally {
+    await history(page).dispatchEvent("scrollend");
+    await outcome;
   }
 });

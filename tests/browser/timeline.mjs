@@ -6,6 +6,38 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const composer = (page, name) =>
   page.getByRole("textbox", { name: `Message #${name}`, exact: true });
 
+// Use for a gesture that must move this scroller, not input at an edge.
+// Stable geometry can be a pause in native wheel animation, not its end.
+export async function wheelToCompletion(page, deltaY) {
+  await history(page).hover();
+  const completion = await history(page).evaluateHandle((element, deltaY) => {
+    const room =
+      deltaY < 0
+        ? element.scrollTop
+        : element.scrollHeight - element.clientHeight - element.scrollTop;
+    if (!deltaY || room <= 0)
+      throw new Error("wheel completion requires room to scroll");
+    const state = { done: false };
+    const onEnd = (event) => {
+      if (event.target === element) state.done = true;
+    };
+    element.addEventListener("scrollend", onEnd);
+    state.cleanup = () => element.removeEventListener("scrollend", onEnd);
+    return state;
+  }, deltaY);
+  try {
+    await page.mouse.wheel(0, deltaY);
+    const result = await page.waitForFunction(
+      (state) => state.done,
+      completion,
+    );
+    await result.dispose();
+  } finally {
+    await completion.evaluate((state) => state.cleanup());
+    await completion.dispose();
+  }
+}
+
 export async function settle(page) {
   // Wait for geometry to stop moving, rather than assuming a fixed animation delay.
   let previous;

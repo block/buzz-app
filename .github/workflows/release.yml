@@ -1,0 +1,154 @@
+name: macOS prerelease
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-prerelease
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'block/buzz-app'
+    name: Build, sign, and notarize
+    runs-on: macos-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      CI: "true"
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Require main and signing configuration
+        env:
+          SOURCE_REF: ${{ github.ref }}
+          SIGNING_ROLE: ${{ secrets.OSX_CODESIGN_ROLE }}
+          SIGNING_BUCKET: ${{ secrets.CODESIGN_S3_BUCKET }}
+        run: |
+          test "$SOURCE_REF" = refs/heads/main || { echo '::error::Releases must run from main'; exit 1; }
+          test -n "$SIGNING_ROLE" && test -n "$SIGNING_BUCKET" || { echo '::error::Set OSX_CODESIGN_ROLE and CODESIGN_S3_BUCKET'; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: macos-prerelease
+          cache-all-crates: true
+
+      - name: Set preview version
+        id: version
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+          const config = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          const base = config.version.split('-')[0];
+          if (!/^\d+\.\d+\.\d+$/.test(base)) throw new Error('Expected a numeric Tauri version');
+          const version = `${base}-preview.${process.env.GITHUB_RUN_NUMBER}.${process.env.GITHUB_RUN_ATTEMPT}`;
+          writeFileSync(`${process.env.RUNNER_TEMP}/release.json`, JSON.stringify({ version, bundle: { createUpdaterArtifacts: false } }));
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          JS
+
+      - name: Build unsigned app and DMG
+        run: |
+          rm -rf target/release/bundle
+          pnpm tauri build --ci --no-sign --bundles dmg --config "$RUNNER_TEMP/release.json" -- --locked
+        env:
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+
+      - name: Locate unsigned DMG
+        id: unsigned
+        run: |
+          shopt -s nullglob
+          dmgs=(target/release/bundle/dmg/*.dmg)
+          test "${#dmgs[@]}" -eq 1 || { echo '::error::Expected exactly one DMG'; exit 1; }
+          echo "path=${dmgs[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign and notarize
+        id: codesign
+        uses: block/apple-codesign-action@679535d1ab7c5a7c18e6f9afcba3464512cc3dde # v1.1.0
+        with:
+          osx-codesign-role: ${{ secrets.OSX_CODESIGN_ROLE }}
+          codesign-s3-bucket: ${{ secrets.CODESIGN_S3_BUCKET }}
+          unsigned-artifact-path: ${{ steps.unsigned.outputs.path }}
+          artifact-name: buzz-app-${{ github.run_id }}-${{ github.run_attempt }}-arm64
+
+      - name: Verify release DMG and bundled runtime
+        env:
+          SIGNED_DMG: ${{ steps.codesign.outputs.signed-dmg-path }}
+        run: |
+          app_dir=$(mktemp -d "$RUNNER_TEMP/verify-release.XXXXXX")
+          hdiutil attach "$SIGNED_DMG" -readonly -nobrowse -mountpoint "$app_dir" >/dev/null
+          trap 'hdiutil detach "$app_dir" >/dev/null' EXIT
+          app="$app_dir/Buzz Foundation.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+          xcrun stapler validate "$app"
+          node --input-type=module - "$app/Contents/Resources/agent-runtime" <<'JS'
+          import { readFileSync, lstatSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import assert from 'node:assert/strict';
+          const directory = process.argv[2];
+          const source = JSON.parse(readFileSync('runtime/agent-runtime.json', 'utf8'));
+          const manifest = JSON.parse(readFileSync(`${directory}/manifest.json`, 'utf8'));
+          assert.equal(manifest.version, 1);
+          assert.equal(manifest.revision, source.revision);
+          assert.equal(manifest.target, 'aarch64-apple-darwin');
+          assert.deepEqual(Object.keys(manifest.files).sort(), [...source.tools].sort());
+          for (const name of source.tools) {
+            const path = `${directory}/${name}`;
+            assert.ok(lstatSync(path).isFile(), `${name} must be a regular file`);
+            const hash = createHash('sha256').update(readFileSync(path)).digest('hex');
+            assert.equal(hash, manifest.files[name], `${name} failed its runtime integrity check`);
+          }
+          JS
+
+      - name: Stage release asset and checksum
+        env:
+          SIGNED_DMG: ${{ steps.codesign.outputs.signed-dmg-path }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir release-assets
+          cp "$SIGNED_DMG" "release-assets/Buzz_${VERSION}_aarch64.dmg"
+          cd release-assets
+          shasum -a 256 ./*.dmg > SHA256SUMS
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-macos-release
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub prerelease
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-macos-release
+          path: release-assets
+      - name: Publish signed DMG
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "v$VERSION" release-assets/* \
+            --target "$SOURCE_SHA" --prerelease --latest=false \
+            --title "Buzz $VERSION (macOS preview)" \
+            --notes "Apple Silicon macOS preview from commit $SOURCE_SHA. Built, signed, and notarized by Actions run $GITHUB_RUN_ID."

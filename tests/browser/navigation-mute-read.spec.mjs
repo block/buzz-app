@@ -270,6 +270,10 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     menu.getByRole("menuitem", { name: "Mute", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+  // A click in the same instant as Escape can be lost while the row menu
+  // dismisses. Open the next menu only after this one has closed.
+  await expect(menu).toHaveCount(0);
+  await expect(beta).toBeFocused();
   // Removing session entry preserves attention and lifecycle groups; only the
   // separator between those remaining groups survives.
   const toggleSessions = async (enabled) => {

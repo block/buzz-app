@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
@@ -9,12 +16,24 @@ import { createServices, type AppServices } from "./services";
 import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
+import { createAgentControl } from "../features/agents/control";
+import { controlFixture } from "../features/agents/control-testing";
+
+let agentFixture: ReturnType<typeof controlFixture> | undefined;
+vi.mock("../features/agents/control-native", () => ({
+  createNativeAgentControl: () =>
+    createAgentControl(agentFixture?.host ?? null),
+}));
 
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
     {
       manifest: { id: "buzz.projects", name: "Projects", apiVersion: 1 },
       module: await import("../bundled/projects"),
+    },
+    {
+      manifest: { id: "buzz.agents", name: "Agents", apiVersion: 1 },
+      module: await import("../bundled/agents"),
     },
   ],
 }));
@@ -41,6 +60,7 @@ afterEach(async () => {
   stop();
   await services?.dispose();
   services = undefined;
+  agentFixture = undefined;
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   localStorage.clear();
@@ -128,4 +148,91 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   expect(
     screen.queryByRole("button", { name: "Retry navigation" }),
   ).not.toBeInTheDocument();
+});
+
+it("reconnects a failed routed Agents edit from the shell and opens its exact editor", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  agentFixture = controlFixture();
+  agentFixture.agent.relayUrl = "wss://community.example";
+  agentFixture.data.agents.push({
+    ...structuredClone(agentFixture.agent),
+    id: "different-agent",
+    pubkey: "cd".repeat(32),
+    name: "Different agent",
+  });
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Fixture", picture: "" },
+      memberships: [{ id: origin, name: "Fixture community" }],
+      selected: origin,
+    }),
+  );
+  let attempts = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/register")) return Response.json({});
+      if (url.endsWith("/session")) {
+        attempts++;
+        return attempts === 1
+          ? Response.json({ error: "relay offline" }, { status: 503 })
+          : Response.json({
+              viewer,
+              relayAuthor: viewer,
+              relayUrl: "wss://community.example",
+            });
+      }
+      if (url.endsWith("/query")) return Response.json([]);
+      return Response.json({});
+    }),
+  );
+  services = createServices();
+  const current = services;
+  const target = {
+    version: 1 as const,
+    kind: "page" as const,
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: { viewer, communityOrigin: origin },
+    route: {
+      version: 1 as const,
+      params: { pubkey: agentFixture.agent.pubkey },
+    },
+  };
+  render(<App services={current} />);
+  await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
+  void current.navigation.open(target);
+  await screen.findByRole("button", { name: "Retry navigation" });
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "unavailable",
+    entry: { target },
+  });
+  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+  expect(attempts).toBe(1);
+
+  await userEvent.click(
+    screen.getByRole("button", { name: "Retry navigation" }),
+  );
+  await waitFor(() => expect(current.relay.snapshot().status).toBe("ready"));
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Fixture agent");
+  expect(within(dialog).getByLabelText("Agent instructions")).toHaveValue(
+    "Help with the project.",
+  );
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "opened",
+    entry: { target },
+  });
+  expect(attempts).toBe(2);
 });

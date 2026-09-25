@@ -1502,16 +1502,16 @@ export const test = base.extend({
           }
           return event;
         },
-        deleteTarget() {
+        deleteTarget(target = exact.target) {
           const event = sign(
             5,
             [
               ["h", "alpha"],
-              ["e", exact.target.id],
+              ["e", target.id],
             ],
             "",
             userKey,
-            exact.target.created_at + 100,
+            target.created_at + 100,
           );
           targetEvents.push(event);
           relay.publish("primary", event);

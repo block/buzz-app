@@ -534,49 +534,46 @@ function ThreadMessages({
             </p>
           )}
 
-          {children?.length ? (
-            <ReplyBranch
-              message={message}
-              layout={continuation ? "continuation" : "thread"}
-              label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
-              summary={
-                <ReplySummary
-                  count={descendants.length}
-                  participants={[
-                    ...new Set(descendants.map((reply) => reply.authorId)),
-                  ]}
-                  profiles={profiles}
-                  agentPubkeys={agentPubkeys}
-                  resolveName={resolveName}
-                  media={session.media}
-                  unreadLabel={unreadLabel}
-                  unreadCount={unreadCount}
-                />
-              }
-              depth={depth}
-              open={expanded.has(row.id)}
-              onOpenChange={(open) => {
-                follow.current = false;
-                targetAnchor.current = undefined;
-                setExpanded((current) => {
-                  const next = new Set(current);
-                  if (open) next.add(row.id);
-                  else {
-                    next.delete(row.id);
-                    for (const id of current)
-                      if (tree.ancestors(id).includes(row.id)) next.delete(id);
-                  }
-                  return next;
-                });
-              }}
-            >
-              {expanded.has(row.id) && (
-                <ol>{renderReplies(row.id, depth + 1)}</ol>
-              )}
-            </ReplyBranch>
-          ) : (
-            message()
-          )}
+          <ReplyBranch
+            message={message}
+            collapsible={!!children?.length}
+            layout={continuation ? "continuation" : "thread"}
+            label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+            summary={
+              <ReplySummary
+                count={descendants.length}
+                participants={[
+                  ...new Set(descendants.map((reply) => reply.authorId)),
+                ]}
+                profiles={profiles}
+                agentPubkeys={agentPubkeys}
+                resolveName={resolveName}
+                media={session.media}
+                unreadLabel={unreadLabel}
+                unreadCount={unreadCount}
+              />
+            }
+            depth={depth}
+            open={expanded.has(row.id)}
+            onOpenChange={(open) => {
+              follow.current = false;
+              targetAnchor.current = undefined;
+              setExpanded((current) => {
+                const next = new Set(current);
+                if (open) next.add(row.id);
+                else {
+                  next.delete(row.id);
+                  for (const id of current)
+                    if (tree.ancestors(id).includes(row.id)) next.delete(id);
+                }
+                return next;
+              });
+            }}
+          >
+            {expanded.has(row.id) && (
+              <ol>{renderReplies(row.id, depth + 1)}</ol>
+            )}
+          </ReplyBranch>
         </li>
       );
     });

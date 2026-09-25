@@ -227,7 +227,9 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     expect(geometry.rail).toBeGreaterThanOrEqual(24);
     const deepestBox = await deepest.boundingBox();
     expect(deepestBox.width).toBeGreaterThan(140);
-    const capped = deepest.locator("xpath=ancestor::*[@data-depth][1]");
+    const capped = deepest.locator(
+      'xpath=ancestor::*[@data-depth and @data-open="true"][1]',
+    );
     await expect(capped.locator(":scope > div").nth(1)).toBeHidden();
     const rail = capped.locator(
       ":scope > [id] > button[aria-label='Hide replies']",

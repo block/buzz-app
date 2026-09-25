@@ -785,6 +785,76 @@ traversalTest(
   },
 );
 
+// Native focus and revealed markdown must survive live leaf/branch transitions.
+for (const movedFocus of [false, true])
+  traversalTest(
+    `live child-count changes preserve reply state and ${movedFocus ? "deliberately moved" : "target"} focus`,
+    async ({ page, app }) => {
+      const parent = app.append(
+        "primary",
+        "alpha",
+        "||PERSISTENT SPOILER||",
+        false,
+        true,
+        app.exact.root.id,
+      );
+      await open(page, app);
+      expect(await openTarget(page, target(app, parent.id))).toEqual({
+        status: "opened",
+      });
+      const region = thread(page);
+      await expect(region.locator("[data-message-id]")).toHaveCount(82);
+      await expect(region.getByText("Loading thread…")).toHaveCount(0);
+      const row = region.locator(`[data-message-id="${parent.id}"]`);
+      await row.getByRole("button", { name: "Reveal spoiler" }).click();
+      const original = await row.elementHandle();
+      const close = page.getByRole("button", {
+        name: "Close thread",
+        exact: true,
+      });
+      const focusTarget = movedFocus ? close : row;
+      await focusTarget.focus();
+      const child = app.append(
+        "primary",
+        "alpha",
+        "First live child",
+        true,
+        true,
+        app.exact.root.id,
+        parent.id,
+      );
+      const branch = row.locator("xpath=ancestor::*[@data-depth][1]");
+      const expand = branch.getByRole("button", { name: /^View 1 reply/ });
+      await expect(expand).toBeVisible();
+      await expect(focusTarget).toBeFocused();
+      expect(await row.evaluate((node, old) => node === old, original)).toBe(
+        true,
+      );
+      await expect(row.locator('[data-revealed="true"]')).toHaveCount(1);
+      await expand.click();
+      await expect(
+        region.getByText("First live child", { exact: true }),
+      ).toBeVisible();
+      // Opening moves focus intentionally; establish the owned/moved focus anew.
+      await expect(
+        branch.getByRole("button", { name: "Hide replies", exact: true }),
+      ).toBeFocused();
+      await focusTarget.focus();
+      app.deleteTarget(child);
+      await expect(
+        region.getByText("First live child", { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        branch.getByRole("button", { name: "Hide replies", exact: true }),
+      ).toHaveCount(0);
+      await expect(focusTarget).toBeFocused();
+      expect(await row.evaluate((node, old) => node === old, original)).toBe(
+        true,
+      );
+      await expect(row.locator('[data-revealed="true"]')).toHaveCount(1);
+    },
+  );
+
 const liveTest = test.extend({ productionBroker: true });
 liveTest(
   "stream repair retains thread rows, reading position and composer focus after exact opening",

@@ -303,3 +303,26 @@ it("keeps replies available while a collapsed root is missing and restores its c
   );
   expect(screen.getByText("parent")).toBeVisible();
 });
+
+for (const startsWithChild of [false, true])
+  it(`preserves a reply subtree when it ${startsWithChild ? "loses its last" : "gains its first"} child`, () => {
+    const h = setup("parent");
+    const parent = row("parent", "root");
+    const child = row("child", "parent");
+    h.update(startsWithChild ? [parent, child] : [parent]);
+    const message = screen.getByText("parent").closest("article");
+    const reply = screen.getByRole("button", { name: "Reply to parent" });
+    reply.focus();
+    h.update(startsWithChild ? [parent] : [parent, child]);
+    expect(screen.getByText("parent").closest("article")).toBe(message);
+    expect(reply).toHaveFocus();
+    expect(message).toBeInTheDocument();
+    if (startsWithChild)
+      expect(
+        screen.queryByRole("button", { name: "View 1 reply" }),
+      ).not.toBeInTheDocument();
+    else
+      expect(
+        screen.getByRole("button", { name: "View 1 reply" }),
+      ).toBeVisible();
+  });

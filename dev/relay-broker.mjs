@@ -11,6 +11,7 @@ import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
+import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
 import {
   prepareChannelKit,
   decodeChannelKit,
@@ -18,6 +19,7 @@ import {
   validCanvas,
 } from "./channel-kit.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
+import { validateUploadResult } from "../src/features/relay/attachments.ts";
 import { validChannelCommand } from "./session-commands.mjs";
 import {
   adminReason,
@@ -281,6 +283,92 @@ async function relayAuthority(fetch, relay) {
     ...(nip11.self === author ? { archiveAuthority: author } : {}),
   };
 }
+export function validProductFeedback(event, mediaOrigin) {
+  if (
+    event?.kind !== 42000 ||
+    typeof event.content !== "string" ||
+    !event.content.trim() ||
+    Buffer.byteLength(event.content) > 32 * 1024 ||
+    !Number.isSafeInteger(event.created_at) ||
+    !Array.isArray(event.tags)
+  )
+    return false;
+  const allowed = new Set(["category", "client-id", "imeta"]);
+  if (
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.every((part) => typeof part === "string") &&
+        allowed.has(tag[0]) &&
+        (tag[0] === "imeta" ? tag.length >= 6 : tag.length === 2),
+    ) ||
+    Buffer.byteLength(JSON.stringify(event.tags)) > 64 * 1024
+  )
+    return false;
+  const categories = event.tags.filter((tag) => tag[0] === "category");
+  const imeta = event.tags.filter((tag) => tag[0] === "imeta");
+  return (
+    imeta.every((tag) => {
+      const fields = new Map();
+      for (const part of tag.slice(1)) {
+        const split = part.indexOf(" ");
+        if (split <= 0 || fields.has(part.slice(0, split))) return false;
+        fields.set(part.slice(0, split), part.slice(split + 1));
+      }
+      if (
+        !mediaOrigin ||
+        !["url", "m", "size", "x", "filename"].every((name) =>
+          fields.has(name),
+        ) ||
+        !fields.get("filename") ||
+        fields.get("filename").includes("/") ||
+        fields.get("filename").includes("\\") ||
+        Buffer.byteLength(fields.get("filename")) > 255 ||
+        Array.from(fields.get("filename")).some((char) => {
+          const code = char.charCodeAt(0);
+          return code < 32 || code === 127;
+        }) ||
+        !/^[1-9][0-9]*$/.test(fields.get("size")) ||
+        ![
+          "image/jpeg",
+          "image/png",
+          "image/gif",
+          "image/webp",
+          "application/octet-stream",
+          "text/plain",
+        ].includes(fields.get("m"))
+      )
+        return false;
+      try {
+        const result = validateUploadResult(
+          {
+            url: fields.get("url"),
+            sha256: fields.get("x"),
+            size: Number(fields.get("size")),
+            type: fields.get("m"),
+          },
+          mediaOrigin,
+          Number(fields.get("size")),
+          "feedback",
+        );
+        const extension = result.url.match(/\.([a-z0-9]{1,8})$/)?.[1];
+        const imageExtension = {
+          "image/jpeg": "jpg",
+          "image/png": "png",
+          "image/gif": "gif",
+          "image/webp": "webp",
+        }[result.type];
+        return !imageExtension || extension === imageExtension;
+      } catch {
+        return false;
+      }
+    }) &&
+    categories.length <= 1 &&
+    (!categories.length ||
+      ["bug", "praise", "needs-work"].includes(categories[0][1]))
+  );
+}
+
 export function validMessageTemplate(event) {
   return (
     event &&
@@ -420,6 +508,27 @@ export function validAgentEnrollment(event) {
         Object.hasOwn(validators, tag[0]) &&
         validators[tag[0]].test(tag[1]),
     )
+  );
+}
+/** Base Buzz agent delete: only removal of one member, relay-authorized. */
+export function validAgentRemoval(event) {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const [h, p, clientId, ...extra] = Array.isArray(event?.tags)
+    ? event.tags
+    : [];
+  return (
+    event?.kind === 9001 &&
+    event.content === "" &&
+    Number.isSafeInteger(event.created_at) &&
+    event.created_at >= 0 &&
+    !extra.length &&
+    [h, p, clientId].every((tag) => Array.isArray(tag) && tag.length === 2) &&
+    h[0] === "h" &&
+    uuid.test(h[1]) &&
+    p[0] === "p" &&
+    /^[0-9a-f]{64}$/.test(p[1]) &&
+    clientId[0] === "client-id" &&
+    uuid.test(clientId[1])
   );
 }
 export function validChannelActivityFilters(filters) {
@@ -1105,7 +1214,9 @@ export function relayBrokerPlugin({
                 7,
                 9,
                 40003,
+                42000,
                 9000,
+                9001,
                 30078,
                 40100,
                 1984,
@@ -1113,6 +1224,7 @@ export function relayBrokerPlugin({
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               channelLifecycle: true,
+              identityArchives: true,
               workflowReads: true,
               projectGit: true,
               attachmentUploads: true,
@@ -1575,6 +1687,8 @@ export function relayBrokerPlugin({
               "/api/relay/sign",
               "/api/relay/channel-lifecycle-sign",
               "/api/relay/channel-lifecycle-publish",
+              "/api/relay/identity-archive-sign",
+              "/api/relay/identity-archive-publish",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
               "/api/relay/channel-kit-prepare",
@@ -1849,14 +1963,30 @@ export function relayBrokerPlugin({
           const lifecycle =
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/channel-lifecycle-publish";
+          const archive =
+            route === "/api/relay/identity-archive-sign" ||
+            route === "/api/relay/identity-archive-publish";
           const signing =
             route === "/api/relay/sign" ||
-            route === "/api/relay/channel-lifecycle-sign";
+            route === "/api/relay/channel-lifecycle-sign" ||
+            route === "/api/relay/identity-archive-sign";
           const publishing =
             route === "/api/relay/publish" ||
-            route === "/api/relay/channel-lifecycle-publish";
+            route === "/api/relay/channel-lifecycle-publish" ||
+            route === "/api/relay/identity-archive-publish";
           if (signing || publishing) {
-            if (lifecycle) {
+            if (archive) {
+              try {
+                validateArchiveRequestTemplate(filters);
+                if (!(await getAuthority(relay)).archiveAuthority)
+                  throw new Error("Archive authority unavailable");
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid identity archive request",
+                  sent: false,
+                });
+              }
+            } else if (lifecycle) {
               try {
                 validateLifecycleTemplate(filters);
               } catch {
@@ -1869,6 +1999,12 @@ export function relayBrokerPlugin({
               if (!validStatusTemplate(filters))
                 return json(res, 400, {
                   error: "Status rejected",
+                  sent: false,
+                });
+            } else if (filters?.kind === 9001) {
+              if (!validAgentRemoval(filters))
+                return json(res, 400, {
+                  error: "Agent removal invalid",
                   sent: false,
                 });
             } else if ([9000, 9007].includes(filters?.kind)) {
@@ -1884,6 +2020,12 @@ export function relayBrokerPlugin({
                 return json(res, 400, {
                   error:
                     "Agent enrollment or channel operation unavailable or invalid",
+                  sent: false,
+                });
+            } else if (filters?.kind === 42000) {
+              if (!validProductFeedback(filters, relay))
+                return json(res, 400, {
+                  error: "Product feedback rejected",
                   sent: false,
                 });
             } else if (filters?.kind === 30078 || filters?.kind === 40100) {

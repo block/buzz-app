@@ -232,6 +232,7 @@ it("adds no agent section or owner reads for a profile without an agent hint", a
     expect.arrayContaining([
       expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
       expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
+      // Public metadata added on main probes the identity, not an alleged owner.
       expect.objectContaining({ authors: [person.pubkey], kinds: [10100] }),
     ]),
   );

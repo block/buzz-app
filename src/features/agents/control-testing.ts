@@ -35,6 +35,7 @@ export function controlFixture() {
   };
   const data: ControlSnapshot = {
     runtimeAvailable: true,
+    avatarEditingAvailable: true,
     agents: [agent],
     // Simulates the native snapshot; never imported by production UI.
     harnessOptions: [
@@ -48,8 +49,15 @@ export function controlFixture() {
   const calls: { action: string; payload?: unknown }[] = [];
   let failSave = false;
   let failStartOnAppLaunch = false;
+  let failProfile = false;
   let importDestination = "";
   const host: AgentControlHost = {
+    async publishProfile(id) {
+      calls.push({ action: "profile", payload: { id } });
+      if (failProfile) throw "The fixture could not publish the profile.";
+      agent.profilePending = false;
+      return structuredClone(data);
+    },
     async snapshot() {
       calls.push({ action: "snapshot" });
       return structuredClone(data);
@@ -66,6 +74,9 @@ export function controlFixture() {
       }
       Object.assign(agent, {
         name: edit.name,
+        ...(edit.picture === undefined || edit.picture === agent.picture
+          ? {}
+          : { picture: edit.picture, profilePending: true }),
         systemPrompt: edit.systemPrompt,
         workspace: edit.workspace,
         harness: { ...edit.harness, environmentKeys: [...keys] },
@@ -84,6 +95,15 @@ export function controlFixture() {
       agent.enabled = action !== "stop";
       agent.status = action === "stop" ? "stopped" : "running";
       agent.runningRevision = action === "stop" ? null : agent.revision;
+      return structuredClone(data);
+    },
+    async delete(id, expectedRevision) {
+      calls.push({ action: "delete", payload: { id, expectedRevision } });
+      const index = data.agents.findIndex((item) => item.id === id);
+      if (index < 0) throw "Agent no longer exists";
+      if (data.agents[index]?.revision !== expectedRevision)
+        throw "Agent settings changed. Reload before deleting";
+      data.agents.splice(index, 1);
       return structuredClone(data);
     },
     async previewImport(source, destination) {
@@ -122,6 +142,9 @@ export function controlFixture() {
     agent,
     data,
     calls,
+    failProfile(value: boolean) {
+      failProfile = value;
+    },
     failSave(value: boolean) {
       failSave = value;
     },

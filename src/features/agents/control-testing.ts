@@ -29,6 +29,8 @@ export function controlFixture() {
     mcpCommand: "/fixture/bin/buzz-dev-mcp",
     launchModel: "fixture-model",
     launchProvider: "fixture-provider",
+    launchModelEnv: null,
+    launchProviderEnv: null,
     restartDiff: [],
   };
   const data: ControlSnapshot = {

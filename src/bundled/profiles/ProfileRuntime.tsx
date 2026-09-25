@@ -145,13 +145,15 @@ export function ProfileRuntime({
         <dl>
           {(
             [
-              ["Model", agent.launchModel],
-              ["Provider", agent.launchProvider],
+              ["Model", agent.launchModel, agent.launchModelEnv],
+              ["Provider", agent.launchProvider, agent.launchProviderEnv],
             ] as const
-          ).map(([label, value]) => (
+          ).map(([label, value, env]) => (
             <div key={label}>
               <dt className="text-body-sm text-subtle">{label}</dt>
-              <dd className="font-mono text-mono">{value ?? "—"}</dd>
+              <dd className="font-mono text-mono">
+                {env ? `Set by environment (${env})` : (value ?? "—")}
+              </dd>
               <Button
                 size="compact"
                 aria-label={`Edit ${label}`}

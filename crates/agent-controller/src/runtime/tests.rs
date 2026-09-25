@@ -1039,9 +1039,11 @@ fn launch_selectors_show_defaults_blanks_and_overrides() {
     agent
         .environment
         .insert("BUZZ_AGENT_MODEL".into(), "override-model".into());
+    // The view names the deciding override key, never its value.
     let view = agent.view();
     assert_eq!(view.harness.model, "saved-model");
-    assert_eq!(view.launch_model.as_deref(), Some("override-model"));
+    assert_eq!(view.launch_model, None);
+    assert_eq!(view.launch_model_env, Some("BUZZ_AGENT_MODEL"));
     agent.harness.command = "/usr/local/bin/goose".into();
     agent.environment.clear();
     agent.harness.provider = "saved-provider".into();
@@ -1050,7 +1052,9 @@ fn launch_selectors_show_defaults_blanks_and_overrides() {
         .insert("GOOSE_PROVIDER".into(), "override-provider".into());
     let view = agent.view();
     assert_eq!(view.launch_model.as_deref(), Some("saved-model"));
-    assert_eq!(view.launch_provider.as_deref(), Some("override-provider"));
+    assert_eq!(view.launch_model_env, None);
+    assert_eq!(view.launch_provider, None);
+    assert_eq!(view.launch_provider_env, Some("GOOSE_PROVIDER"));
     agent.harness.model.clear();
     agent.environment.clear();
     agent.harness.provider.clear();

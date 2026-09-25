@@ -52,10 +52,13 @@ export interface AgentView {
   backend: string | null;
   acpCommand: string | null;
   mcpCommand: string | null;
-  /** Model/provider the next start uses: saved selectors, build defaults, then
-   * the worker's model/provider environment overrides. Null when none applies. */
+  /** Model/provider the next start uses from saved selectors or build
+   * defaults. Null when none applies or an environment override decides it. */
   launchModel: string | null;
   launchProvider: string | null;
+  /** Environment key deciding that selector; its value stays native. */
+  launchModelEnv: string | null;
+  launchProviderEnv: string | null;
   /** Empty unless a running process was started with different saved settings. */
   restartDiff: RestartDiffEntry[];
 }

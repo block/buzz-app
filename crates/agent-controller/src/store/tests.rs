@@ -39,6 +39,76 @@ fn edit() -> AgentEdit {
     }
 }
 #[test]
+fn snapshot_withholds_model_and_provider_environment_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let agent = |key: &str, command: &str, provider: &str, env: &[(&str, &str)]| {
+        let mut agent = fixture();
+        agent.pubkey = key.repeat(32);
+        agent.id = agent_id(&agent.pubkey, &agent.relay_url);
+        agent.harness.command = command.into();
+        agent.harness.model.clear();
+        agent.harness.provider = provider.into();
+        agent.environment = env
+            .iter()
+            .map(|(k, v)| ((*k).into(), (*v).into()))
+            .collect();
+        agent
+    };
+    store
+        .insert(vec![
+            agent(
+                "a1",
+                "buzz-agent",
+                "",
+                &[
+                    ("BUZZ_AGENT_MODEL", "synthetic-buzz-model"),
+                    ("BUZZ_AGENT_PROVIDER", "synthetic-buzz-provider"),
+                ],
+            ),
+            agent(
+                "b2",
+                "goose",
+                "",
+                &[
+                    ("GOOSE_MODEL", "synthetic-goose-model"),
+                    ("GOOSE_PROVIDER", "synthetic-goose-provider"),
+                ],
+            ),
+            // A blank model on a Databricks provider falls back to this key.
+            agent(
+                "c3",
+                "buzz-agent",
+                "databricks",
+                &[("DATABRICKS_MODEL", "synthetic-databricks-model")],
+            ),
+        ])
+        .unwrap();
+    let snapshot = store.snapshot().unwrap();
+    let wire = serde_json::to_string(&snapshot).unwrap();
+    for value in [
+        "synthetic-buzz-model",
+        "synthetic-buzz-provider",
+        "synthetic-goose-model",
+        "synthetic-goose-provider",
+        "synthetic-databricks-model",
+    ] {
+        assert!(!wire.contains(value), "projected {value}");
+    }
+    let sources: Vec<_> = snapshot
+        .agents
+        .iter()
+        .map(|a| (a.launch_model_env, a.launch_provider_env))
+        .collect();
+    for source in [
+        (Some("BUZZ_AGENT_MODEL"), Some("BUZZ_AGENT_PROVIDER")),
+        (Some("GOOSE_MODEL"), Some("GOOSE_PROVIDER")),
+        (Some("DATABRICKS_MODEL"), None),
+    ] {
+        assert!(sources.contains(&source), "missing {source:?}");
+    }
+}
+#[test]
 fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = Store::open(dir.path().to_owned()).unwrap();

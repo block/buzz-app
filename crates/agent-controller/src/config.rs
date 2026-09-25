@@ -41,10 +41,13 @@ pub struct AgentView {
     pub backend: Option<String>,
     pub acp_command: Option<String>,
     pub mcp_command: Option<String>,
-    /// Model/provider the next start passes to the worker: saved selectors,
-    /// build defaults, then the worker's selector environment overrides.
+    /// Model/provider the next start passes to the worker from saved selectors
+    /// or build defaults; `None` when an environment override decides it.
     pub launch_model: Option<String>,
     pub launch_provider: Option<String>,
+    /// Environment key deciding that selector. Its value never leaves native.
+    pub launch_model_env: Option<&'static str>,
+    pub launch_provider_env: Option<&'static str>,
     /// Redacted saved-versus-running differences while the process is alive.
     pub restart_diff: Vec<crate::restart::RestartDiffEntry>,
 }
@@ -114,8 +117,7 @@ pub(crate) struct Agent {
 impl Agent {
     pub fn view(&self) -> AgentView {
         let defaults = crate::build_defaults();
-        let resolved = defaults.resolve(&self.harness, &self.environment);
-        let launch = crate::defaults::selectors(&resolved, &self.environment);
+        let launch = defaults.launch_view(&self.harness, &self.environment);
         AgentView {
             id: self.id.clone(),
             pubkey: self.pubkey.clone(),
@@ -146,12 +148,10 @@ impl Agent {
                 .map(str::to_owned),
             acp_command: None,
             mcp_command: None,
-            launch_model: launch.model.map(str::to_owned),
-            // Unmapped workers (Pi) take the saved provider directly.
-            launch_provider: launch
-                .provider
-                .or_else(|| (!resolved.provider.is_empty()).then_some(resolved.provider.as_str()))
-                .map(str::to_owned),
+            launch_model: launch.model,
+            launch_provider: launch.provider,
+            launch_model_env: launch.model_env,
+            launch_provider_env: launch.provider_env,
             restart_diff: Vec::new(),
         }
     }

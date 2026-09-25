@@ -34,10 +34,11 @@ redacted saved-versus-running diff, Activity (status and the Start on launch
 switch), Agent configuration (runtime command, who can send instructions, ACP
 and MCP commands, imported provider backend), Model settings and Advanced
 (workspace, environment variable names and Databricks settings). Model and
-Provider show what the next start passes to the worker: saved selectors, build
-defaults, then that worker's model/provider environment overrides; Edit Model and
-Edit Provider open the existing Agents editor. Other environment values,
-arguments and credentials are not shown. Runtime config-file settings (MCP
+Provider show what the next start passes to the worker from saved selectors or
+build defaults. When a saved environment override decides one, it shows "Set by
+environment (KEY)" and never the value; Edit Model and Edit Provider open the
+existing Agents editor. Environment values, arguments and credentials are not
+shown. Runtime config-file settings (MCP
 servers, mode, token limits) are not read. The switch persists through the host;
 failures keep the confirmed value and expose Retry status. Losing ownership or the
 native record returns to Info. The owner check is presentation only: these fields

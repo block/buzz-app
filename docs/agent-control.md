@@ -233,6 +233,9 @@ containment on non-Unix platforms.
   Saved `BUZZ_AGENT_MODEL`/`BUZZ_AGENT_PROVIDER` (buzz-agent) and
   `GOOSE_MODEL`/`GOOSE_PROVIDER` (Goose) overrides win over Model/Provider
   selectors; blank selectors do not erase them. ACP uses the same effective model.
+  Snapshots name the deciding key (`launchModelEnv`/`launchProviderEnv`,
+  including `DATABRICKS_MODEL` or a hidden provider behind a blank buzz-agent
+  model) and omit the resolved value.
 - Import previews only the chosen installed/development library and requires an
   explicit secure **Destination community** origin. Old Buzz ignores saved relay
   pins at runtime; blank, stale or malformed saved pins do not route or hide

@@ -1300,6 +1300,27 @@ export function createRelaySession(
       validateMentions,
       (id) => !closed && channels.canParticipate(id),
       transport?.scope,
+      writer && (!writer.kinds || writer.kinds.includes(1984))
+        ? async (template) => {
+            if (closed) throw new Error("Relay session closed");
+            const signal = AbortSignal.any([
+              lifetime.signal,
+              AbortSignal.timeout(10_000),
+            ]);
+            // Race each step so the deadline holds even if the writer ignores `signal`.
+            const aborted = new Promise<never>((_, reject) => {
+              const fail = () => reject(signal.reason);
+              if (signal.aborted) fail();
+              else signal.addEventListener("abort", fail, { once: true });
+            });
+            const signed = await Promise.race([
+              writer.sign(template, signal),
+              aborted,
+            ]);
+            signal.throwIfAborted();
+            await Promise.race([writer.publish(signed, signal), aborted]);
+          }
+        : undefined,
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(

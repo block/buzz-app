@@ -48,6 +48,7 @@ import type { ChannelList } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
+import { createUserStatuses } from "./user-status";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
@@ -342,6 +343,7 @@ export function createRelaySession(
       );
       profiles.clear();
       emoji.clear();
+      statuses.clear();
       activity.clear();
       memories.clear();
       presence.clear();
@@ -469,6 +471,8 @@ export function createRelaySession(
         if (epoch !== accessEpoch) return;
         emoji.accept(visible);
         if (epoch !== accessEpoch) return;
+        statuses.accept(visible);
+        if (epoch !== accessEpoch) return;
         if (channelTraffic) channels.accept(visible);
         for (const listener of observations) {
           if (closed || epoch !== accessEpoch) return;
@@ -512,6 +516,12 @@ export function createRelaySession(
   );
   const profiles = createProfileDirectory(verified, localViews, notify);
   const emoji = createEmojiDirectory(verified, notify);
+  const statuses = createUserStatuses(
+    verified,
+    transport?.viewer,
+    writer,
+    notify,
+  );
   let memoryConnected = !transport?.subscribe;
   const memories = createAgentMemories(
     transport?.readAgentMemories,
@@ -1362,6 +1372,7 @@ export function createRelaySession(
     names: identityNames,
     profiles: profiles.queries,
     emoji: emoji.queries,
+    statuses: statuses.queries,
     agentLibrary: agentLibrary.queries,
     agentChoices,
     workflows: workflows.capability,
@@ -1844,6 +1855,7 @@ export function createRelaySession(
               activityRosterKey = undefined;
               refreshChannelActivity();
               emoji.reconnect();
+              statuses.reconnect();
               unread.reconnect();
               for (const refresh of refreshers) void refresh();
             }
@@ -1931,6 +1943,7 @@ export function createRelaySession(
         requests.invalidate();
         profiles.clear();
         emoji.clear();
+        statuses.clear();
         agentLibrary.clear();
         archives.clear();
         workflows.clear();
@@ -1966,6 +1979,7 @@ export function createRelaySession(
       channels.dispose();
       profiles.dispose();
       emoji.dispose();
+      statuses.dispose();
       workflows.dispose();
       identityNames.dispose();
       agentLibrary.dispose();

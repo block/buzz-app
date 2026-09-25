@@ -1,3 +1,4 @@
+import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import { ProfileAgentActions } from "./ProfileAgentActions";
 import { ProfileMemories } from "./ProfileMemories";
 import { relayOrigin } from "../../features/communities/destination";
@@ -106,10 +107,6 @@ function ProfileDetails({
   const messageAttempt = useRef<AbortController>(undefined);
   const [openingMessage, setOpeningMessage] = useState(false);
   const [messageError, setMessageError] = useState("");
-  const [userStatus, setUserStatus] = useState<{
-    text: string;
-    emoji: string;
-  }>();
   useEffect(() => {
     region.current?.focus();
     // Target, viewer and community changes remount this view (see key above).
@@ -132,29 +129,6 @@ function ProfileDetails({
       active = false;
     };
   }, [session, pubkey, attempt]);
-  // One snapshot of the self-published NIP-38 status; not live-updated.
-  useEffect(() => {
-    const controller = new AbortController();
-    void session
-      .read(
-        [{ kinds: [30315], authors: [pubkey], "#d": ["general"], limit: 1 }],
-        { signal: controller.signal },
-      )
-      .then(
-        (events) => {
-          if (controller.signal.aborted) return;
-          const latest = events
-            .filter((event) => event.pubkey === pubkey && event.kind === 30315)
-            .sort((a, b) => b.created_at - a.created_at)[0];
-          const emoji =
-            latest?.tags.find(([name]) => name === "emoji")?.[1] ?? "";
-          const text = latest?.content.trim() ?? "";
-          setUserStatus(text || emoji ? { text, emoji } : undefined);
-        },
-        () => {},
-      );
-    return () => controller.abort();
-  }, [session, pubkey]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const knownAgent = agentPubkeys.has(pubkey);
   const verifiedOwner = useVerifiedAgentOwner(
@@ -274,13 +248,7 @@ function ProfileDetails({
                   pubkey={pubkey}
                   profile
                 />
-                {userStatus && (
-                  <p className={styles.status}>
-                    {userStatus.emoji && <span>{userStatus.emoji}</span>}
-                    {userStatus.emoji && userStatus.text && " "}
-                    {userStatus.text && <span>{userStatus.text}</span>}
-                  </p>
-                )}
+                <UserStatusDisplay session={session} userId={pubkey} />
                 {profile?.nip05 && (
                   <p className={styles.identifier}>
                     <span>NIP-05 (unverified)</span>{" "}

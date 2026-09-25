@@ -1,0 +1,257 @@
+// Real UI and signed session traffic; all state and publications stay in this fixture.
+import { createRoot } from "react-dom/client";
+import { ProfileButton } from "../../src/app/shell/ProfileButton";
+import { ChannelSidebarItem } from "../../src/bundled/channels/ChannelSidebarItem";
+import { MessageRow } from "../../src/features/messages/MessageRow";
+import { UserStatusDisplay } from "../../src/features/user-status/StatusDisplay";
+import { createRelaySession } from "../../src/features/relay/session";
+import type { LiveCallbacks } from "../../src/features/relay/live";
+import type { RelayEvent } from "../../src/features/relay/events";
+import type { Communities } from "../../src/features/communities/service";
+import { keypair, signed, profile } from "../../src/features/relay/testing";
+import "../../src/shared/styles/globals.css";
+
+const viewer = keypair(),
+  other = keypair(),
+  relay = keypair();
+const events = new Map<string, RelayEvent>();
+const listeners: LiveCallbacks[] = [];
+let reject = false;
+let releasePublication: (() => void) | undefined;
+let holdPublication = false;
+Object.assign(window, {
+  statusPublication: {
+    hold() {
+      holdPublication = true;
+    },
+    pending: () => !!releasePublication,
+    release() {
+      releasePublication?.();
+      releasePublication = undefined;
+    },
+  },
+});
+let remoteTime = Math.floor(Date.now() / 1000);
+const profiles = [
+  profile(viewer, { name: "Alice" }),
+  profile(other, { name: "Bob" }),
+];
+const catalog = signed(relay, {
+  kind: 30030,
+  content: "",
+  tags: [
+    ["d", "buzz:custom-emoji"],
+    ["emoji", "party", "https://emoji.test/party.svg"],
+  ],
+});
+const owners = [0, 1].map(() =>
+  createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      scope: "https://status.test",
+      media: (url) => url,
+      async query(filters) {
+        const filter = filters[0];
+        if (filter?.kinds?.includes(30315))
+          return [...events.values()].filter((event) =>
+            filter.authors?.includes(event.pubkey),
+          );
+        if (filter?.kinds?.includes(0)) return profiles;
+        if (filter?.kinds?.includes(30030)) return [catalog];
+        return [];
+      },
+      subscribe(callbacks) {
+        listeners.push(callbacks);
+        return { update() {}, retry() {}, dispose() {} };
+      },
+      writer: {
+        kinds: [30315],
+        async sign(template) {
+          return signed(viewer, template);
+        },
+        async publish(event) {
+          if (holdPublication) {
+            holdPublication = false;
+            await new Promise<void>((resolve) => {
+              releasePublication = resolve;
+            });
+          }
+          if (reject) {
+            reject = false;
+            throw new Error("Fixture save rejected. Try again.");
+          }
+          events.set(event.pubkey, event);
+          for (const listener of listeners) listener.receive([event]);
+        },
+      },
+    },
+    { outboxStorage: { load: () => [], save() {} } },
+  ),
+);
+const first = owners[0]?.session,
+  second = owners[1]?.session;
+if (!first || !second) throw new Error("Missing fixture sessions");
+const scope = `https://status.test:${viewer.pubkey}`;
+const client = {
+  profile: { name: "Alice", picture: "" },
+  selected: "https://status.test",
+  memberships: [],
+  status: "ready",
+  viewer: viewer.pubkey,
+};
+const connection = {
+  status: "ready",
+  generation: 0,
+  session: first,
+  viewer: viewer.pubkey,
+  scope,
+};
+const presence = { status: "online", preference: "auto", error: null };
+const communities = {
+  presence: {
+    subscribe: () => () => {},
+    snapshot: () => presence,
+    setPreference() {},
+  },
+  snapshot: () => client,
+  subscribe: () => () => {},
+  relay: { snapshot: () => connection, subscribe: () => () => {} },
+} as unknown as Communities;
+function remote(text: string, emoji = "🏠") {
+  const event = signed(other, {
+    kind: 30315,
+    created_at: ++remoteTime,
+    content: text,
+    tags: [
+      ["d", "general"],
+      ["emoji", emoji],
+    ],
+  });
+  events.set(other.pubkey, event);
+  for (const listener of listeners) listener.receive([event]);
+}
+const root = document.getElementById("root");
+if (!root) throw new Error("Missing fixture root");
+createRoot(root).render(
+  <main className="mx-auto max-w-4xl p-8">
+    <div className="flex justify-between">
+      <h1>Custom statuses</h1>
+      <ProfileButton
+        communities={communities}
+        settingsSelected={false}
+        onSettings={() => {}}
+      />
+    </div>
+    <div className="grid grid-cols-2 gap-8">
+      <section
+        aria-label="Navigation"
+        className="rounded-2xl border border-line p-4"
+      >
+        <h2>Navigation</h2>
+        <ChannelSidebarItem
+          channel={{
+            id: "status-dm",
+            name: "Bob",
+            channelType: "dm",
+            participants: [other.pubkey],
+          }}
+          session={first}
+          working={false}
+          selected={undefined}
+          collapsed
+          onToggle={() => {}}
+          draft={false}
+          draftSelected={false}
+          sessions={[]}
+          onSelect={() => {}}
+          onNewSession={() => {}}
+          onOpenThread={() => {}}
+        />
+      </section>
+      <section aria-label="Chat" className="rounded-2xl border border-line p-4">
+        <h2>Chat</h2>
+        {(
+          [
+            [viewer.pubkey, "Alice"],
+            [other.pubkey, "Bob"],
+          ] as const
+        ).map(([authorId, name]) => (
+          <MessageRow
+            key={authorId}
+            row={{
+              id: name,
+              channelId: "status-dm",
+              authorId: authorId,
+              content: "A message",
+              createdAt: remoteTime,
+              mentions: [],
+              participants: [],
+              attachments: [],
+              reactions: [],
+              replyCount: 0,
+            }}
+            profile={{ name: name }}
+            session={first}
+            scope={scope}
+            media={first.media}
+            day={false}
+            retry={undefined}
+            onOpenLink={() => false}
+          />
+        ))}
+      </section>
+      <section
+        aria-label="Second device"
+        className="rounded-2xl border border-line p-4"
+      >
+        <h2>Second device</h2>
+        Alice <UserStatusDisplay session={second} userId={viewer.pubkey} />
+      </section>
+      <section
+        aria-label="Profile"
+        className="rounded-2xl border border-line p-4"
+      >
+        <h2>Profile</h2>
+        <UserStatusDisplay session={first} userId={viewer.pubkey} />
+        <UserStatusDisplay session={first} userId={other.pubkey} />
+      </section>
+    </div>
+    <div className="mt-6 flex gap-2">
+      <button
+        type="button"
+        onClick={() => {
+          reject = true;
+        }}
+      >
+        Reject next save
+      </button>
+      <button type="button" onClick={() => remote("Working remotely")}>
+        Update Bob
+      </button>
+      <button type="button" onClick={() => remote("Celebrating", ":party:")}>
+        Custom Bob
+      </button>
+      <button type="button" onClick={() => remote("Buzzy", "")}>
+        Text-only Bob
+      </button>
+      <button type="button" onClick={() => remote("", "")}>
+        Clear Bob
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const stale = signed(other, {
+            kind: 30315,
+            created_at: remoteTime - 1,
+            content: "Stale",
+            tags: [["d", "general"]],
+          });
+          for (const listener of listeners) listener.receive([stale]);
+        }}
+      >
+        Replay older Bob
+      </button>
+    </div>
+  </main>,
+);

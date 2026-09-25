@@ -1,3 +1,12 @@
+import { Calendar } from "../../../../src/shared/design-system/ui/Calendar";
+import { FieldButton } from "../../../../src/shared/design-system/ui/FieldButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+} from "../../../../src/shared/design-system/ui/Menu";
 import {
   MenuSpecimen,
   PopoverSpecimen,
@@ -61,6 +70,31 @@ const DESTINATIONS = [
 ] as const;
 
 type Destination = (typeof DESTINATIONS)[number]["value"];
+
+function CalendarSpecimen() {
+  const [date, setDate] = useState(new Date());
+  return <Calendar mode="single" required selected={date} onSelect={setDate} />;
+}
+
+function FieldButtonSpecimen() {
+  const [duration, setDuration] = useState("Today");
+  return (
+    <MenuRoot>
+      <MenuTrigger render={<FieldButton aria-label="Duration" />}>
+        {duration}
+      </MenuTrigger>
+      <MenuPopup>
+        <MenuRadioGroup value={duration} onValueChange={setDuration}>
+          {["Today", "This week", "Custom"].map((item) => (
+            <MenuRadioItem key={item} value={item}>
+              {item}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuPopup>
+    </MenuRoot>
+  );
+}
 
 function SpecimenFrame({
   children,
@@ -841,6 +875,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       </Field>
     </SpecimenFrame>
   ),
+  calendar: CalendarSpecimen,
+  "field-button": FieldButtonSpecimen,
   input: InputExamples,
   textarea: TextareaExamples,
   "radio-group": RadioGroupSpecimen,

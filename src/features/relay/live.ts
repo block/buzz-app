@@ -373,6 +373,12 @@ export function subscribeRelayTraffic(
         ...(route.id === "profiles"
           ? [
               {
+                kinds: [30315],
+                "#d": ["general"],
+                since: route.since,
+                limit: LIVE_REPLAY_LIMIT,
+              },
+              {
                 kinds: [30030],
                 "#d": [EMOJI_SET],
                 since: route.since,

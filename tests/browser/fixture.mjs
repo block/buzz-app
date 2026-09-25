@@ -688,6 +688,17 @@ export const test = base.extend({
             filter["#d"]?.includes(event.tags.find(([k]) => k === "d")?.[1]),
         );
       }
+      if (filter.kinds?.includes(30315)) {
+        expect(filter).toEqual({
+          kinds: [30315],
+          "#d": ["general"],
+          authors: expect.any(Array),
+          limit: filter.authors.length,
+        });
+        expect(filter.authors.length).toBeGreaterThan(0);
+        expect(filter.authors.length).toBeLessThanOrEqual(100);
+        return [];
+      }
       if (filter.kinds?.includes(30030)) {
         expect(filter).toEqual({
           kinds: [30030],
@@ -1118,7 +1129,7 @@ export const test = base.extend({
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
-            writeKinds: sessionChannels.length ? [9, 9007] : [9],
+            writeKinds: sessionChannels.length ? [9, 9007, 30315] : [9, 30315],
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });

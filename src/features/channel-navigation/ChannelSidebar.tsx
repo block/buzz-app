@@ -330,52 +330,74 @@ function ReadySidebar({
     },
     [navigator, relay, queries, scope, viewer],
   );
-  const startSession = (parentId: string) => {
-    const parent = channels.find((channel) => channel.id === parentId);
-    if (
-      !viewer ||
-      relay.snapshot().session !== queries ||
-      !sessionsEnabled ||
-      !parent ||
-      parent.readOnly ||
-      parent.archived ||
-      parent.channelType === "dm" ||
-      parent.channelType === "session"
-    )
-      return;
-    handoff?.updateDraftParents((previous) =>
-      previous.includes(parentId) ? previous : [...previous, parentId],
-    );
-    sidebar.toggle(`session-children:${parentId}`, true);
-    void navigator.open({
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
-      route: { version: 1, params: { kind: "new-session", parentId } },
-      scope: { viewer, communityOrigin: scope.slice(0, -(viewer.length + 1)) },
-    });
-  };
-  const openActivityThread = (channelId: string, rootId: string) => {
-    if (!viewer || relay.snapshot().session !== queries) return;
-    if (handoff)
-      handoff.activityThread.current = {
+  const startSession = useCallback(
+    (parentId: string) => {
+      const parent = channels.find((channel) => channel.id === parentId);
+      if (
+        !viewer ||
+        relay.snapshot().session !== queries ||
+        !sessionsEnabled ||
+        !parent ||
+        parent.readOnly ||
+        parent.archived ||
+        parent.channelType === "dm" ||
+        parent.channelType === "session"
+      )
+        return;
+      handoff?.updateDraftParents((previous) =>
+        previous.includes(parentId) ? previous : [...previous, parentId],
+      );
+      sidebar.toggle(`session-children:${parentId}`, true);
+      void navigator.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        route: { version: 1, params: { kind: "new-session", parentId } },
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+    },
+    [
+      channels,
+      viewer,
+      relay,
+      queries,
+      sessionsEnabled,
+      handoff,
+      sidebar.toggle,
+      navigator,
+      scope,
+    ],
+  );
+  const openActivityThread = useCallback(
+    (channelId: string, rootId: string) => {
+      if (!viewer || relay.snapshot().session !== queries) return;
+      if (handoff)
+        handoff.activityThread.current = {
+          channelId,
+          rootId,
+          trigger:
+            sidebar.list.current?.querySelector<HTMLElement>(
+              `[data-channel-id="${CSS.escape(channelId)}"]`,
+            ) ?? null,
+        };
+      void navigator.open({
+        version: 1,
+        kind: "conversation",
         channelId,
-        rootId,
-        trigger:
-          sidebar.list.current?.querySelector<HTMLElement>(
-            `[data-channel-id="${CSS.escape(channelId)}"]`,
-          ) ?? null,
-      };
-    void navigator.open({
-      version: 1,
-      kind: "conversation",
-      channelId,
-      messageId: rootId,
-      threadRootId: rootId,
-      scope: { viewer, communityOrigin: scope.slice(0, -(viewer.length + 1)) },
-    });
-  };
+        messageId: rootId,
+        threadRootId: rootId,
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+    },
+    [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
+  );
   const createChannel = async (input: CreateChannelInput) => {
     const id = await queries.channelCreation.create(input);
     if (!mounted.current || relay.snapshot().session !== queries) return;

@@ -1,3 +1,4 @@
+import { validStatusTemplate } from "./user-status.mjs";
 import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
 import { memoryResponseText } from "../src/features/agents/memory.ts";
 import {
@@ -1051,6 +1052,7 @@ export function relayBrokerPlugin({
               relayUrl: relay,
               directMessages: true,
               writeKinds: [
+                30315,
                 7,
                 9,
                 40003,
@@ -1803,6 +1805,12 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
+            } else if (filters?.kind === 30315) {
+              if (!validStatusTemplate(filters))
+                return json(res, 400, {
+                  error: "Status rejected",
+                  sent: false,
+                });
             } else if ([9000, 9007].includes(filters?.kind)) {
               const enrollment = validAgentEnrollment(filters);
               const authority = await getAuthority(relay);

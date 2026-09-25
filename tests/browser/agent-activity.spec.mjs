@@ -729,6 +729,10 @@ test.describe("thread activity", () => {
       .click();
     sendTyping();
     await expect(marker).toBeVisible();
+    const workingBox = await marker.boundingBox();
+    expect(workingBox).toEqual(
+      expect.objectContaining({ width: 6, height: 6 }),
+    );
     await expect(channelActivity(page)).toBeVisible();
     const channelBox = await channelActivity(page)
       .getByRole("button")

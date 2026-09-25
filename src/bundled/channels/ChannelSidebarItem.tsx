@@ -91,12 +91,18 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         )
       }
       badge={
-        <span className={styles.indicatorStack} data-channel-indicators="">
-          <UnreadBadge
-            session={session}
-            channelId={channel.id}
-            dm={channel.channelType === "dm"}
-          />
+        <span
+          className={styles.indicatorStack}
+          data-channel-indicators=""
+          style={{ display: "inline-grid" }}
+        >
+          <span style={{ display: "grid", gridArea: "1 / 1" }}>
+            <UnreadBadge
+              session={session}
+              channelId={channel.id}
+              dm={channel.channelType === "dm"}
+            />
+          </span>
           {working && (
             <span
               className={styles.working}
@@ -105,6 +111,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
               role="img"
               aria-label="Agent working"
               title="Agent working in this channel"
+              style={{ display: "block", gridArea: "1 / 1", zIndex: 1 }}
             />
           )}
         </span>

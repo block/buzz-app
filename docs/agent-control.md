@@ -90,66 +90,6 @@ Choose a result or enter a custom ID (blank is allowed); Enter or leaving the fi
 commits typed text, Escape abandons the query. Save, close and reopen to check it.
 If no workspace is configured, set it under **Advanced model settings**.
 
-## Planned: Harnesses and agent defaults
-
-This is the approved Settings → Agents contract for the next implementation
-slices, not a description of controls already shipped. The current desktop still
-requires a restart to discover newly installed CLIs, and Save currently leaves
-running agents unchanged. Individual-agent configuration stays on the Agents
-page; Settings → Agents owns installation guidance and device-wide defaults.
-
-### Harnesses
-
-The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
-
-- **Buzz Agent** is bundled and shows **Ready**.
-- **Goose** shows **Ready** or **CLI needed**, with **Install** when needed.
-  Install runs the upstream `download_cli.sh` via `curl | bash` with
-  `CONFIGURE=false`, as in old Buzz. Goose uses built-in `goose acp`; no
-  adapter is needed. Only one install
-  runs at a time. Keep an install log, re-detect afterward, and restart agents
-  that were waiting for Goose.
-- **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. V1 offers a hint
-  and copyable install commands for Pi and its `buzz-pi-acp` adapter (with
-  Node.js available); Pi one-click installation with managed Node v24 and a
-  Buzz-owned npm folder and launch PATH is a follow-up:
-
-  ```sh
-  npm install -g @mariozechner/pi-coding-agent
-  npm install -g buzz-pi-acp
-  ```
-
-**Check again** re-detects installed Harnesses without reopening Buzz. Status
-is executable detection, not a guarantee of sign-in, ACP readiness or inference.
-Add/Edit links to Settings → Agents for setup instead of telling people to reopen
-the app. The ACP tooltip says:
-
-> Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.
-
-### Global agent defaults and saving
-
-Settings → Agents provides a default harness, provider, model, effort and
-environment variables. The default harness is **copied into each new agent** at
-creation; changing it later does not switch existing agents. Provider, model,
-effort and environment defaults are **looked up at each start** only for fields
-an agent leaves blank. Per-agent values win. Changing the default harness clears
-the default model and effort to avoid applying choices from the old harness.
-
-These mutable defaults live in a native store under app-data
-`agent-controller/`, not localStorage. Native files use owner-only permissions
-(0600); environment values are write-only and never read back into the UI, as
-with per-agent API keys. Resolve these settings above
-[`BuildDefaults::resolve()`](../crates/agent-controller/src/defaults.rs):
-per-agent values take precedence over global defaults, which take precedence
-over the existing nonsecret build floor where it applies. Build defaults remain
-compiled, nonsecret inputs; they are not the editable native store.
-
-Saving an agent or defaults restarts **running agents whose effective settings
-changed** through the native supervisor. Unchanged and stopped agents are not
-restarted. Report **“Saved. Restarted N agents.”** on success. This supersedes
-the old Save-without-restart behavior; saving or editing a default harness does
-not retroactively change existing agents' copied harnesses.
-
 ### Nonsecret build defaults
 
 Native builds read these inputs from the repository-root, ignored `.env.local`,
@@ -201,6 +141,62 @@ and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
 
 See [configuration parity](configuration.md) for development routing, release
 flag exclusions and the supported deployment boundary.
+
+## Planned: Harnesses and agent defaults
+
+This is the approved Settings → Agents contract for the next implementation
+slices, not a description of controls already shipped. The current desktop still
+requires a restart to discover newly installed CLIs, and Save currently leaves
+running agents unchanged. Individual-agent configuration stays on the Agents
+page; Settings → Agents owns installation guidance and device-wide defaults.
+
+### Harnesses
+
+The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
+
+- **Buzz Agent** is bundled and shows **Ready**.
+- **Goose** shows **Ready** or **CLI needed**, with **Install** when needed.
+  Install runs upstream `download_cli.sh` with `CONFIGURE=false`, as old Buzz
+  did; Goose then uses built-in `goose acp`. One install runs at a time.
+  Afterward Buzz re-detects, writes an install log, and restarts agents that
+  were waiting for Goose.
+- **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. V1 shows a hint
+  and copyable commands (Node.js required); one-click Pi install comes later:
+
+  ```sh
+  npm install -g @mariozechner/pi-coding-agent
+  npm install -g buzz-pi-acp
+  ```
+
+**Check again** re-detects installed Harnesses without reopening Buzz. Status
+is executable detection, not a guarantee of sign-in, ACP readiness or inference.
+Add/Edit links to Settings → Agents for setup instead of telling people to reopen
+the app. The ACP tooltip says:
+
+> Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.
+
+### Global agent defaults and saving
+
+Settings → Agents provides a default harness, provider, model, effort and
+environment variables. The default harness is **copied into each new agent** at
+creation; changing it later does not switch existing agents. Provider, model,
+effort and environment defaults are **looked up at each start** only for fields
+an agent leaves blank; per-agent values win. Per-agent effort is not yet an
+editable field. Changing the default harness clears the default model and effort.
+
+These mutable defaults live in a native store under app-data
+`agent-controller/`, not localStorage. Native files use owner-only permissions
+(0600); environment values are write-only and never read back into the UI, as
+with per-agent API keys. This layer sits above
+[`BuildDefaults::resolve()`](../crates/agent-controller/src/defaults.rs): global
+defaults win over the [nonsecret build floor](#nonsecret-build-defaults), which
+stays compiled and is not the editable store.
+
+Saving an agent or defaults restarts **running agents whose effective settings
+changed** through the native supervisor and reports **“Saved. Restarted N
+agents.”** Unchanged and stopped agents are not restarted. Effective settings
+include inherited defaults, so today's `restartDiff` (raw saved configs) is not
+enough on its own. This supersedes the current Save-without-restart rule.
 
 ## Runtime boundary
 

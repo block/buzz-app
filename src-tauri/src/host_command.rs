@@ -12,11 +12,18 @@ use tokio::process::Command;
 #[cfg(windows)]
 mod windows_job {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-    use tokio::process::Child;
+    use tokio::process::{Child, Command};
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
         SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenThread, ResumeThread, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
     };
 
     pub(super) struct WindowsJob(OwnedHandle);
@@ -49,6 +56,63 @@ mod windows_job {
                 AssignProcessToJobObject(self.0.as_raw_handle(), handle) != 0
             })
         }
+
+        pub(super) fn spawn(&self, command: &mut Command) -> Option<Child> {
+            self.spawn_with_check(command, |_, _| {})
+        }
+
+        pub(super) fn spawn_with_check(
+            &self,
+            command: &mut Command,
+            check: impl FnOnce(&Child, &OwnedHandle),
+        ) -> Option<Child> {
+            command.creation_flags(CREATE_SUSPENDED).kill_on_drop(true);
+            let child = command.spawn().ok()?;
+            let primary_thread = primary_thread(child.id()?)?;
+            check(&child, &primary_thread);
+            if !self.assign(&child) {
+                return None;
+            }
+            if unsafe { ResumeThread(primary_thread.as_raw_handle()) } != 1 {
+                return None;
+            }
+            Some(child)
+        }
+    }
+
+    fn primary_thread(process_id: u32) -> Option<OwnedHandle> {
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+        if snapshot == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot) };
+        let mut entry = THREADENTRY32 {
+            dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        if unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) } == 0 {
+            return None;
+        }
+        let mut thread_id = None;
+        loop {
+            if entry.th32OwnerProcessID == process_id {
+                if thread_id.replace(entry.th32ThreadID).is_some() {
+                    return None;
+                }
+            }
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            if unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) } == 0 {
+                break;
+            }
+        }
+        if unsafe { GetLastError() } != ERROR_NO_MORE_FILES {
+            return None;
+        }
+        let handle = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, thread_id?) };
+        if handle.is_null() {
+            return None;
+        }
+        Some(unsafe { OwnedHandle::from_raw_handle(handle) })
     }
 }
 
@@ -178,11 +242,10 @@ async fn run(
 
     #[cfg(windows)]
     let _job = windows_job::WindowsJob::new()?;
-    let mut child = command.spawn().ok()?;
     #[cfg(windows)]
-    if !_job.assign(&child) {
-        return None;
-    }
+    let mut child = _job.spawn(&mut command)?;
+    #[cfg(not(windows))]
+    let mut child = command.spawn().ok()?;
     #[cfg(unix)]
     let mut process_group = ProcessGroupGuard {
         process_id: child.id()? as i32,
@@ -400,14 +463,17 @@ mod tests {
 
 #[cfg(all(test, windows))]
 mod windows_tests {
-    use super::{effective_path, run};
+    use super::{effective_path, run, windows_job::WindowsJob};
     use std::fs;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use std::path::{Path, PathBuf};
+    use std::process::Stdio;
     use std::time::Duration;
+    use tokio::process::Command;
     use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
     use windows_sys::Win32::System::Threading::{
-        OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        OpenProcess, ResumeThread, SuspendThread, TerminateProcess, WaitForSingleObject,
+        PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
     };
 
     fn command_script(directory: &Path) -> (PathBuf, PathBuf) {
@@ -455,6 +521,40 @@ mod windows_tests {
             unsafe { TerminateProcess(process.as_raw_handle(), 1) };
         }
         assert_eq!(result, WAIT_OBJECT_0, "command left a descendant running");
+    }
+
+    #[tokio::test]
+    async fn command_starts_only_after_job_assignment() {
+        let directory = tempfile::tempdir().unwrap();
+        let (script, marker) = command_script(directory.path());
+        let mut command = Command::new("powershell.exe");
+        command
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                script.to_str().unwrap(),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let job = WindowsJob::new().unwrap();
+        let child = job
+            .spawn_with_check(&mut command, |_, thread| {
+                let previous_count = unsafe { SuspendThread(thread.as_raw_handle()) };
+                let restored_count = unsafe { ResumeThread(thread.as_raw_handle()) };
+                assert_eq!(previous_count, 1, "command ran before job assignment");
+                assert_eq!(restored_count, 2);
+                assert!(!marker.exists(), "command ran before job assignment");
+            })
+            .unwrap();
+        let process_id = descendant_id(&marker).await;
+        drop(job);
+        assert_descendant_exited(process_id);
+        drop(child);
     }
 
     #[tokio::test]

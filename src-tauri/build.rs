@@ -25,6 +25,8 @@ fn main() {
             "plugin_reload",
             "plugin_module",
             "plugin_recover",
+            "plugin_host_run_command",
+            "plugin_host_request",
             "agent_control_create_prepare",
             "agent_control_create_commit",
             "agent_control_creation_profile",

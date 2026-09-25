@@ -393,6 +393,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             deep_links::setup(app.handle());
+            let plugin_home = std::env::var_os("BUZZODZ_HOME")
+                .map(|home| Ok(std::path::PathBuf::from(home)))
+                .unwrap_or_else(|| app.path().app_data_dir().map_err(|e| e.to_string()));
+            app.manage(PluginManager(plugin_home.and_then(|home| {
+                Manager::open(
+                    Some(home),
+                    &std::env::var("BUZZODZ_PROFILE").unwrap_or_else(|_| "default".into()),
+                    std::env::var("BUZZODZ_SAFE_MODE").as_deref() == Ok("1"),
+                )
+            })));
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {
@@ -433,7 +443,6 @@ pub fn run() {
         .manage(Terminals::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
-        .manage(PluginManager(Manager::from_env()))
         .invoke_handler({
             let application_commands = commands::<tauri::Wry>();
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![

@@ -27,38 +27,30 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
     const visual = await alpha.evaluate((button) => {
       const row = button.closest("[data-channel-sidebar-row]");
       const viewport = button.closest("nav");
-      const panel = viewport.closest("aside");
-      if (
-        !(row instanceof HTMLElement) ||
-        !(viewport instanceof HTMLElement) ||
-        !(panel instanceof HTMLElement)
-      )
+      if (!(row instanceof HTMLElement) || !(viewport instanceof HTMLElement))
         throw new Error("Missing sidebar row geometry");
       const fillStyle = getComputedStyle(row, "::before");
       const rowStyle = getComputedStyle(row);
       const rowRect = row.getBoundingClientRect();
       const viewportRect = viewport.getBoundingClientRect();
-      const panelRect = panel.getBoundingClientRect();
-      const borderLeft = Number.parseFloat(
-        getComputedStyle(panel).borderLeftWidth,
-      );
-      const borderRight = Number.parseFloat(
-        getComputedStyle(panel).borderRightWidth,
-      );
+      const scrollbarWidth = viewport.offsetWidth - viewport.clientWidth;
+      const contentRight = viewportRect.right - scrollbarWidth;
       return {
-        fillRight: rowRect.right - Number.parseFloat(fillStyle.right),
-        panelContentRight: viewportRect.left + viewport.clientWidth,
-        leftInset: rowRect.left - (panelRect.left + borderLeft),
-        rightInset: panelRect.right - borderRight - rowRect.right,
+        fillInset:
+          contentRight - (rowRect.right - Number.parseFloat(fillStyle.right)),
+        leftContentInset: rowRect.left - viewportRect.left,
+        rightContentInset: contentRight - rowRect.right,
         radius: fillStyle.borderTopRightRadius,
         overflow: rowStyle.overflow,
         clientWidth: viewport.clientWidth,
         offsetWidth: viewport.offsetWidth,
+        scrollbarWidth,
       };
     });
-    expect(visual.offsetWidth).toBeGreaterThanOrEqual(visual.clientWidth);
-    expect(visual.fillRight).toBeLessThanOrEqual(visual.panelContentRight);
-    expect(visual.leftInset - visual.rightInset).toBe(4);
+    expect(visual.scrollbarWidth).toBe(visual.offsetWidth - visual.clientWidth);
+    expect(visual.leftContentInset).toBe(0);
+    expect(visual.rightContentInset).toBe(0);
+    expect(visual.fillInset).toBe(5);
     expect(Number.parseFloat(visual.radius)).toBeGreaterThan(0);
     expect(visual.overflow).toBe("visible");
   };
@@ -112,11 +104,11 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   await expect(alpha).toBeFocused();
   const node = await sidebar.elementHandle();
   await page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Projects", exact: true })
+    .getByRole("button", { name: "Agents", exact: true })
+    .first()
     .click();
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();
   await expect(sidebar).toBeVisible();
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
@@ -145,15 +137,16 @@ test("section disclosure toggles content and honors reduced motion", async ({
     .getByRole("navigation", { name: "Subscribed channels" })
     .locator("summary")
     .filter({ hasText: /^Channels$/ });
-  const section = summary.locator("..");
-  const content = section.locator(":scope > div");
+  const section = summary.locator("../..");
+  const content = section.locator(":scope > div").last();
+  const details = section.locator(":scope > details");
   const expanded = await section.evaluate(
     (el) => el.getBoundingClientRect().height,
   );
   for (const opening of [false, true]) {
     await summary.click();
-    if (opening) await expect(section).toHaveAttribute("open", "");
-    else await expect(section).not.toHaveAttribute("open");
+    if (opening) await expect(details).toHaveAttribute("open", "");
+    else await expect(details).not.toHaveAttribute("open");
     if (opening) await expect(content).not.toHaveAttribute("inert");
     else await expect(content).toHaveAttribute("inert", "");
     await expect
@@ -162,9 +155,9 @@ test("section disclosure toggles content and honors reduced motion", async ({
   }
   await page.emulateMedia({ reducedMotion: "reduce" });
   await summary.click();
-  await expect(section).not.toHaveAttribute("open");
+  await expect(details).not.toHaveAttribute("open");
   const durations = await section.evaluate((el) => {
-    const content = el.querySelector(":scope > div");
+    const content = el.querySelector(":scope > div:last-child");
     const chevron = el.querySelector("summary > span:last-child");
     return [content, chevron].map(
       (element) => getComputedStyle(element).transitionDuration,

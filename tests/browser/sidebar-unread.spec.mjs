@@ -241,10 +241,8 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await cue(page, "above").press("Enter");
   await expect.poll(() => inView(page, "dm-030")).toBe(true);
   await expect(row(page, "dm-030")).toBeFocused();
-  await expect(list(page).locator('[aria-current="page"]')).toHaveAttribute(
-    "data-channel-id",
-    "alpha",
-  );
+  // The edge cue reveals and focuses without selecting a conversation.
+  await expect(list(page).locator('[aria-current="page"]')).toHaveCount(0);
   await cue(page, "below").focus();
   await cue(page, "below").press("Enter");
   await expect.poll(() => inView(page, "dm-090")).toBe(true);
@@ -306,12 +304,13 @@ test("resizing, collapsed groups and new unread evidence update only the display
   // Messages are hidden behind a visible section summary: not below the scroll fold.
   await list(page)
     .locator("summary")
-    .filter({ hasText: /^Messages$/ })
+    .filter({ hasText: /^Channels$/ })
     .click();
-  await expect(cue(page, "below")).toHaveCount(0);
+  // Channels are collapsed, but unread DMs remain eligible and keep the cue.
+  await expect(cue(page, "below")).toBeVisible();
   await list(page)
     .locator("summary")
-    .filter({ hasText: /^Messages$/ })
+    .filter({ hasText: /^Channels$/ })
     .click();
   await cue(page, "below").click();
   await expect.poll(() => inView(page, "dm-030")).toBe(true);
@@ -332,7 +331,13 @@ test("resizing, collapsed groups and new unread evidence update only the display
   ).toHaveCount(0);
   await expect(row(page, "Beta")).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(row(page, "alpha")).toBeFocused();
+  // The integrated sidebar inserts the Direct messages summary/actions after
+  // Channels, so native tab order reaches that visible header before Alpha.
+  await expect(
+    list(page)
+      .locator("summary")
+      .filter({ hasText: /^Direct messages$/ }),
+  ).toBeFocused();
   // A tall viewport makes every row visible; shrinking restores the bottom cue.
   await scroll(page, 0);
   await page.setViewportSize({ width: 1440, height: 6000 });

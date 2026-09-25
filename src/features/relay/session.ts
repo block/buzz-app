@@ -53,6 +53,7 @@ import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
 import { UploadError } from "./attachments";
+import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import type { ReadTransport } from "./transport";
 import type { LiveSnapshot, LiveSubscription } from "./live";
 import {
@@ -252,7 +253,10 @@ export function createRelaySession(
               : {}),
             profiling,
             notifyListener: notify,
-            onAccepted: (event) => confirm(event),
+            onAccepted: (event) => {
+              // Product feedback is accepted into a private sidecar, not queryable history.
+              if (event.kind !== PRODUCT_FEEDBACK_KIND) confirm(event);
+            },
             needsReceipt: isWorkflowOperation,
             onReceipt: (event, message) => workflows.receipt(event, message),
             preparePublish: async (event, signal) => {
@@ -310,7 +314,10 @@ export function createRelaySession(
   }
   const local = () => {
     const visible = visibility();
-    return rawLocal().filter((item) => visible(item.event));
+    return rawLocal().filter(
+      (item) =>
+        item.event.kind !== PRODUCT_FEEDBACK_KIND && visible(item.event),
+    );
   };
   const localViews = writes
     ? { snapshot: local, subscribe: writes.local.subscribe }
@@ -390,6 +397,9 @@ export function createRelaySession(
     }
     if (closed || epoch !== accessEpoch)
       throw new DOMException("Stale relay read", "AbortError");
+    // A broken or stale transport must not promote private sidecar events into
+    // finite reads, retained views, or store discovery.
+    events = events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
     // Ranked global search needs channel authority before visibility filtering.
     // Store metadata reads use channelTraffic=false, so this cannot recurse.
     if (
@@ -452,7 +462,12 @@ export function createRelaySession(
       channels.acceptDiscovery(events);
     // Ephemeral typing and observer telemetry never enter retained content views.
     const visible = events
-      .filter((event) => event.kind !== OBSERVER_KIND && event.kind !== 20002)
+      .filter(
+        (event) =>
+          event.kind !== OBSERVER_KIND &&
+          event.kind !== 20002 &&
+          event.kind !== PRODUCT_FEEDBACK_KIND,
+      )
       .filter(visibility(events));
     const epoch = accessEpoch;
     typing.accept(visible);
@@ -554,6 +569,7 @@ export function createRelaySession(
     requests.reader,
     transport?.archiveAuthority,
     notify,
+    { writer: transport?.identityArchive, viewer: transport?.viewer },
   );
   const channelActivity = createChannelActivity(
     transport?.channelActivity
@@ -975,6 +991,7 @@ export function createRelaySession(
     },
     () => agentChoices.snapshot().identities.map((agent) => agent.pubkey),
     transport?.relayAuthor,
+    { read: (filters, settings) => readVerified(filters, settings, false) },
   );
   const channelKit = createChannelKit({
     host: transport?.channelKit,
@@ -1364,7 +1381,9 @@ export function createRelaySession(
                     "Selected message exceeded its evidence limit",
                   );
                 // The thread owner admits the complete target fold atomically.
-                return events;
+                return events.filter(
+                  (event) => event.kind !== PRODUCT_FEEDBACK_KIND,
+                );
               },
             }
           : verified,

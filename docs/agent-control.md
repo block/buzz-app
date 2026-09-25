@@ -22,6 +22,7 @@ process evidence and visible **Start / Stop**. **Edit**, **Duplicate**, and
 settings and a fresh identity; write-only environment values require re-entry.
 Delete stops the local process and removes this app's settings and Keychain key
 after confirmation. It does not archive the relay identity or erase messages.
+Deployed remote records are refused.
 Same-key identities at different destinations have separate
 cards; actions use native ID/revision, never the display name. Managed controls
 remain available when the old library is disconnected, unavailable or archived.
@@ -46,16 +47,22 @@ identities are excluded. Each remaining row says **Not imported** and has its ow
 Import options. Import focuses the imported card and says **Imported, not started**.
 It does not start a listener, invite an agent or change the old library.
 
-To use an agent, open a channel and select it from **@ mentions**. The chooser
-includes this app's managed agents in that same community. A nonmember is labeled
-**Adds to channel when you send**. Selection alone does nothing; Send adds the agent
-through the existing outbox, verifies membership, then sends the message. Failed or
-unconfirmed additions keep the draft and expose the error; Send retries the same
-pending enrollment. A definitively failed addition older than 15 minutes directs
-the person to remove its labeled **Add agent** item from Outbox before sending
-again; an unknown outcome is never silently replaced. Channel and thread composers
-share this behavior. DMs and
-other-community agents are excluded. No Agents-page channel picker is needed.
+To use an agent, open a channel and select it from **@ mentions**. Both mention
+menus include the selected community’s people directory alongside channel members
+and managed agents. Directory reads are bounded; narrow the search for more people.
+A nonmember is labeled **Not in channel · Choose whether to add when you send**.
+Selection alone does nothing. Send asks, as block/buzz desktop does: **Invite**
+or **Do nothing**. Without add permission, the only action is **Send anyway**.
+Invite uses the existing durable member-add operation and confirms membership
+before addressed delivery. It does not start an agent before the outgoing message.
+Do nothing and Send anyway send nonmembers as reference mentions, without granting
+access or notifying them; channel-member mentions remain addressed. Close or
+Escape keeps the draft.
+Failed additions keep the draft and allow retry of the same pending operation.
+A definitively failed addition older than 15 minutes must be dismissed in Outbox
+before a new add; unknown outcomes are never silently replaced. Channel, thread,
+and forum-channel composers share this behavior. DM participants and session
+admission rules are unchanged.
 
 A confirmed outgoing channel or thread mention now starts an exact imported local
 agent (public key + community), without a separate Start click. Import itself
@@ -88,7 +95,9 @@ can open browser sign-in. No separate Connect button is required. Errors/cancell
 need explicit Retry; Refresh in **Advanced model settings** stays headless.
 Choose a result or enter a custom ID (blank is allowed); Enter or leaving the field
 commits typed text, Escape abandons the query. Save, close and reopen to check it.
-If no workspace is configured, set it under **Advanced model settings**.
+If no workspace is configured, edit the agent and set **Databricks workspace (HTTPS origin)**
+under **Advanced → Model**. App maintainers can instead supply the nonsecret
+`DATABRICKS_HOST` build default below and rebuild the app.
 
 ### Nonsecret build defaults
 
@@ -198,6 +207,33 @@ agents.”** Unchanged and stopped agents are not restarted. Effective settings
 include inherited defaults, so today's `restartDiff` (raw saved configs) is not
 enough on its own. This supersedes the current Save-without-restart rule.
 
+## Avatar editing
+
+Edit uses the same draft avatar picker as human Profile settings: upload/drop an
+image, paste an HTTPS URL, choose emoji artwork, or remove the picture. Done changes
+the form; Save first persists the exact native ID/revision, then publishes to that
+agent's saved community without restarting it. Older native hosts without
+`avatarEditingAvailable` retain the display-only avatar.
+
+An omitted picture preserves the saved override; an empty string explicitly removes
+it. A changed picture durably marks `profilePending`, so closing/reloading does not
+lose the Retry action. The native publisher reads and verifies the agent's current
+signed kind-0 profile, changes only picture, and preserves unrelated content and
+non-auth tags. Name/bot initialization is only for a missing profile. A local
+configuration rename is not an implicit published-profile rename.
+
+One native publication per agent can run at a time, including across renderer
+reloads. The host verifies current-profile readback after a matching accepted
+receipt before clearing pending at the same saved revision. Conflicting or failed
+reads/publications keep pending for explicit retry; no automatic broadcast or
+retry loop is introduced. Another client can still replace the profile after this
+confirmation; this is not a cross-client transaction.
+
+Browser tests use synthetic profiles/media and controller fixtures. Rust checks
+use temporary stores, public fixture keys and loopback HTTP. They do not establish
+live relay access, native image rendering or packaged human signing. Camera and
+recording are outside this avatar slice.
+
 ## Runtime boundary
 
 Native startup opens `app_data_dir/agent-controller`, never the old library as a
@@ -230,10 +266,13 @@ containment on non-Unix platforms.
   unavailable capability; no fetch fallback, local storage, signing or runner.
 - `bundled/agents/AgentControlPanel.tsx`: compose with `{ control }` independently
   of selected community or relay connectivity. It owns only observation and UI
-  drafts. Its five-second refresh runs while visible/ready; reads coalesce. A read
+  drafts. Its five-second status refresh runs while visible, including after a
+  read or operation error; reads coalesce and never replay writes. A read
   rejected specifically because native startup is initializing or its lock is busy
-  stays pending for at most twenty 250ms waits. Genuine errors or exhausted retries
-  stop polling and expose explicit Retry; writes are never automatically retried.
+  stays pending for at most twenty 250ms waits. Other errors or exhausted retries
+  remain visible above the cards, with explicit Retry as well as the next periodic
+  read. Successful reads clear the global warning; native per-agent errors remain
+  on the affected agent, and failed Save/Create/Delete details stay in their dialog.
   Unmount clears the timer, not enabled intent or processes.
 - Native host owns persistent state, credential custody, process groups, lock and
   duplicate ownership checks, source import validation and sanitized diagnostics.
@@ -278,14 +317,22 @@ containment on non-Unix platforms.
   planned **Check again** action re-detects it after installation without an app
   restart. Switching into or out of Goose supplies ACP
   arguments and clears the previous provider/model; selecting a Goose provider clears the
-  previous model. For Goose with Databricks v2, an explicit Browse asks Goose ACP
-  for its live supported-model list and searches it in the existing picker. The
+  previous model. For Goose, an explicit Browse asks Goose ACP for the selected
+  provider's supported-model list and searches it in the existing picker. The
   exact returned ID is saved; an unlisted ID remains possible but is flagged
-  after discovery. Saved write-only `GOOSE_PROVIDER` overrides keep Browse
-  reachable; native checks the effective provider before asking Goose. Goose
-  has no separate Refresh action because its catalog lookup can start OAuth.
-  Other Goose providers retain manual model entry. Existing Goose credentials
-  are reused; providers without local setup need `goose configure` before Start. Executable detection
+  after discovery. The picker shows at most ten matches while filtering the full
+  list. Saved write-only `GOOSE_PROVIDER` overrides remain native; native uses
+  the effective provider before asking Goose. Goose has no separate Refresh
+  action because its catalog lookup can start OAuth. Known API-key providers
+  show a masked key field beside Provider. Its write-only environment patch is
+  used for both model lookup and agent launch; a blank field uses Goose's
+  existing credentials. The key field follows a draft `GOOSE_PROVIDER` override.
+  When a saved override's value is hidden, Buzz asks the user to replace or
+  remove it in Advanced → Environment before showing a provider-specific key
+  field. These per-agent keys are stored in the app's local
+  `agents.json` settings file and its backup with restricted filesystem
+  permissions, not in Goose's keyring. Listing errors prompt the user to enter credentials or retry;
+  manual model entry remains available. Executable detection
   is not a sign-in or ACP readiness check. Custom command/provider values remain
   editable, including absolute paths. Buzz Agent retains on-demand Databricks
   model browsing. A Goose catalog entry does not establish caller EXECUTE permission
@@ -382,8 +429,10 @@ to the same immutable source revision as the native library. The build script us
 and stages binaries plus revision/target/SHA256 manifest in
 `src-tauri/resources/agent-runtime`. Native build copies them to
 `target/debug/agent-runtime`. Generated binaries/manifest are not committed.
-Startup verifies the exact tool set, target, revision and file hashes; required
-launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
+Startup verifies the exact tool set, target, revision and file hashes. Packaged
+macOS apps may accept signing-induced hash changes only when the runtime belongs
+to the running app and its resource seal verifies under Block's Developer ID.
+The final hashes are retained in memory; required launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
 download. The manifest detects corrupt/mixed resources, not a same-user attacker
 who can replace the app and manifest. Inputs are immutable, not a promise of
 bit-identical machine-independent binaries. This build is not a signed installer.

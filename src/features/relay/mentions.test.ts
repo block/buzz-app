@@ -253,3 +253,42 @@ it.each([false, true])(
     expect(h.publish).toHaveBeenCalledTimes(2);
   },
 );
+
+it.each([false, true])(
+  "publishes nonmember references without addressed tags, reply=%s",
+  async (reply) => {
+    const h = setup();
+    await h.members([viewer.pubkey, honey.pubkey]);
+    const root = "f".repeat(64);
+    if (reply)
+      h.session.messages.reply(
+        "c",
+        root,
+        "@Honey and @Outside",
+        [honey.pubkey],
+        [],
+        undefined,
+        [namesake.pubkey],
+      );
+    else
+      h.session.messages.send(
+        "c",
+        "@Honey and @Outside",
+        [honey.pubkey],
+        [],
+        undefined,
+        [namesake.pubkey],
+      );
+    await flush();
+    const event = h.publish.mock.calls[0]?.[0];
+    expect(event?.tags).toContainEqual(["p", honey.pubkey]);
+    expect(event?.tags).toContainEqual(["mention", namesake.pubkey]);
+    expect(event?.tags).not.toContainEqual(["p", namesake.pubkey]);
+    expect(() =>
+      h.session.messages.send("c", "@Outside", [namesake.pubkey]),
+    ).toThrow(/no longer a channel member/);
+    expect(() =>
+      h.session.messages.send("c", "@Outside", [], [], undefined, ["invalid"]),
+    ).toThrow(/valid mention references/);
+  },
+);

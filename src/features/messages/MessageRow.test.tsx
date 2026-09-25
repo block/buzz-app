@@ -38,6 +38,7 @@ it("badges agent and human bylines with known presence", () => {
   const channels = { channels: [], status: "ready" };
   const session = {
     presence: { subscribe, status, limited: () => false },
+    messages: { report: undefined },
     channels: {
       subscribeList: () => () => {},
       list: () => channels,

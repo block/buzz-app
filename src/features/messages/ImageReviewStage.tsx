@@ -5,12 +5,14 @@ import {
   ArrowSquareOutIcon,
   CaretLeftIcon,
   CaretRightIcon,
+  CopyIcon,
   DownloadIcon,
   MinusIcon,
   PlusIcon,
 } from "../../shared/design-system/icons/index";
 import type { Attachment } from "../relay/contracts";
 import { isProxySource, safeOpenUrl } from "./attachment-source";
+import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
 import styles from "./Messages.module.css";
 
 const MIN_ZOOM = 1;
@@ -46,6 +48,9 @@ export function ImageReviewStage({
   const [zoom, setZoom] = useState(MIN_ZOOM);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [notice, setNotice] = useState<{ text: string; error: boolean }>();
+  const copyBusy = useRef(false);
   const selectedIndex = Math.max(
     0,
     attachments.findIndex((item) => item.url === selectedUrl),
@@ -54,6 +59,7 @@ export function ImageReviewStage({
   const source = selected ? media(selected.url) : undefined;
   const proxySource = source ? isProxySource(source) : false;
   const externalSource = source ? safeOpenUrl(source) && !proxySource : false;
+  const canCopyImage = supportsImageCopy();
   const pannable = zoom > MIN_ZOOM;
 
   const panLimits = (nextZoom = zoom) => {
@@ -86,7 +92,23 @@ export function ImageReviewStage({
     if (!item) return;
     setZoom(MIN_ZOOM);
     setOffset({ x: 0, y: 0 });
+    setNotice(undefined);
     select(item.url);
+  };
+  const copyImage = async () => {
+    if (copyBusy.current || !image.current) return;
+    copyBusy.current = true;
+    setCopying(true);
+    setNotice(undefined);
+    try {
+      await copyImageToClipboard(image.current);
+      setNotice({ text: "Image copied", error: false });
+    } catch {
+      setNotice({ text: "Couldn't copy image", error: true });
+    } finally {
+      copyBusy.current = false;
+      setCopying(false);
+    }
   };
 
   useEffect(() => {
@@ -105,6 +127,7 @@ export function ImageReviewStage({
     <div
       ref={stage}
       className={`${styles.imageReviewStage} ${pannable ? styles.imageReviewPannable : ""} ${dragging ? styles.imageReviewDragging : ""}`}
+      aria-describedby={notice ? "image-review-copy-notice" : undefined}
       onPointerDown={(event) => {
         if (!pannable) return;
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -209,15 +232,26 @@ export function ImageReviewStage({
           </Button>
         </div>
         {proxySource && (
-          <IconButton
-            nativeButton={false}
-            role="link"
-            render={<a href={source} download />}
-            size="compact"
-            aria-label="Download image"
-            title="Download image"
-            icon={<DownloadIcon size={17} />}
-          />
+          <>
+            <IconButton
+              size="compact"
+              type="button"
+              aria-label="Copy image"
+              title={canCopyImage ? "Copy image" : "Image copy unavailable"}
+              disabled={!canCopyImage || copying}
+              onClick={() => void copyImage()}
+              icon={<CopyIcon size={17} />}
+            />
+            <IconButton
+              nativeButton={false}
+              role="link"
+              render={<a href={source} download />}
+              size="compact"
+              aria-label="Download image"
+              title="Download image"
+              icon={<DownloadIcon size={17} />}
+            />
+          </>
         )}
         {externalSource && (
           <IconButton
@@ -239,6 +273,15 @@ export function ImageReviewStage({
             title="Open image in browser"
             icon={<ArrowSquareOutIcon size={17} />}
           />
+        )}
+        {notice && (
+          <p
+            id="image-review-copy-notice"
+            className={styles.messageActionNotice}
+            role={notice.error ? "alert" : "status"}
+          >
+            {notice.text}
+          </p>
         )}
       </div>
     </div>

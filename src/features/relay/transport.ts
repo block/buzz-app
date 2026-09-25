@@ -71,6 +71,8 @@ export interface ReadTransport {
     signal: AbortSignal,
   ) => Promise<string>;
   readonly workflows?: WorkflowHost;
+  /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
+  readonly channelLifecycle?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
   /** Explicit relay-advertised session command support. */
@@ -249,6 +251,7 @@ export async function connectBrokerTransport(
     projectGit?: boolean;
     attachmentUploads?: boolean;
     directMessages?: boolean;
+    channelLifecycle?: boolean;
     relayUrl?: string;
     live?: boolean;
     presence?: boolean;
@@ -587,6 +590,40 @@ export async function connectBrokerTransport(
               undefined,
               await result.json(),
             ).muted;
+          },
+        }
+      : {}),
+    ...(session.channelLifecycle === true
+      ? {
+          channelLifecycle: {
+            async sign(template: EventTemplate, signal: AbortSignal) {
+              const response = await fetch(
+                `${endpoint}/channel-lifecycle-sign`,
+                {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(template),
+                  signal,
+                },
+              );
+              if (!response.ok)
+                throw new Error((await readApiFailure(response)).error);
+              return eventDto(await response.json());
+            },
+            async publish(event: RelayEvent, signal: AbortSignal) {
+              const response = await fetch(
+                `${endpoint}/channel-lifecycle-publish`,
+                {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: publicationHeaders(),
+                  body: JSON.stringify(event),
+                  signal,
+                },
+              );
+              return acceptPublish(response, event.id);
+            },
           },
         }
       : {}),

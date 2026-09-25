@@ -1414,6 +1414,7 @@ export function createRelaySession(
       : undefined,
     channelLifecycle: lifecycle.capability,
     agentActivity: activity.queries,
+    agentManagement: activity.management,
     agentMemories: memories.capability,
     archives: archives.queries,
     media: (url: string, size?: "small") => transport?.media(url, size),

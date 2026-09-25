@@ -1,4 +1,8 @@
 import type { EventData } from "../relay/events";
+import {
+  parseAgentManagementRequest,
+  type AgentManagementRequest,
+} from "./management-request";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
 import { observerFrame, type ObserverFrame } from "./observer";
@@ -79,6 +83,10 @@ export function createAgentActivity(
   const typing = new Map<string, Typing>();
   const listeners = new Set<() => void>();
   const workingListeners = new Set<() => void>();
+  const managementListeners = new Set<
+    (agent: string, request: AgentManagementRequest) => void
+  >();
+  const managementIds = new Set<string>();
   let workingChannels = "[]";
   let snapshot: Snapshot = Object.freeze({
     status,
@@ -211,6 +219,15 @@ export function createAgentActivity(
     }
   }
   return {
+    management: Object.freeze({
+      subscribe(
+        listener: (agent: string, request: AgentManagementRequest) => void,
+      ) {
+        if (closed) return () => {};
+        managementListeners.add(listener);
+        return () => managementListeners.delete(listener);
+      },
+    }),
     queries: Object.freeze({
       snapshot: () => snapshot,
       workingSnapshot: () => workingChannels,
@@ -268,6 +285,18 @@ export function createAgentActivity(
         })
       )
         return;
+      const management =
+        envelope?.kind === "agent_management_request"
+          ? parseAgentManagementRequest(envelope.payload)
+          : null;
+      if (management) {
+        if (!managementIds.has(management.requestId)) {
+          managementIds.add(management.requestId);
+          for (const listener of managementListeners)
+            notify(() => listener(frame.agent, management));
+        }
+        return;
+      }
       for (const item of items) fold(frame.agent, item);
       const record = Object.freeze({
         ...frame,
@@ -380,6 +409,7 @@ export function createAgentActivity(
       restart();
       listeners.clear();
       workingListeners.clear();
+      managementListeners.clear();
     },
   };
 }

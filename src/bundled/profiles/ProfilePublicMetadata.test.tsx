@@ -1,0 +1,343 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
+import { StrictMode } from "react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
+import { createRelaySession } from "../../features/relay/session";
+import type { RelayData } from "../../features/relay/service";
+import type { LiveCallbacks } from "../../features/relay/live";
+import { keypair, profile, signed } from "../../features/relay/testing";
+import { matchesEvent } from "../../features/relay/projection";
+import { profileTarget } from "../../features/profiles/target";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { ProfilePanel } from "./ProfilePanel";
+
+const person = keypair(),
+  human = keypair();
+const metadata = (body: unknown, time = 2) =>
+  signed(person, {
+    kind: 10100,
+    content: JSON.stringify(body),
+    tags: [],
+    created_at: time,
+  });
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+function setup(
+  initial = [
+    metadata({ agent_type: "goose", capabilities: ["code", "search"] }),
+  ],
+) {
+  let events = [
+    profile(
+      person,
+      { name: "Agent", is_agent: true, nip05: "agent@example.test" },
+      1,
+    ),
+    profile(human, { name: "Human", nip05: "human@example.test" }, 1),
+    ...initial,
+  ];
+  let live!: LiveCallbacks;
+  let fail = false;
+  const query = vi.fn(async (filters) => {
+    if (
+      fail &&
+      filters.some((f: { kinds?: number[] }) => f.kinds?.includes(10100))
+    )
+      throw new Error("unavailable");
+    return events.filter((event) =>
+      filters.some((filter: Parameters<typeof matchesEvent>[1]) =>
+        matchesEvent(event, filter),
+      ),
+    );
+  });
+  const owner = createRelaySession({
+    viewer: human.pubkey,
+    relayAuthor: keypair().pubkey,
+    query,
+    media: () => undefined,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  const tree = (key: string) => (
+    <StrictMode>
+      <ToastProvider>
+        <ProfilePanel
+          relay={relay}
+          target={profileTarget(key) ?? ""}
+          close={() => {}}
+        />
+      </ToastProvider>
+    </StrictMode>
+  );
+  return {
+    owner,
+    query,
+    tree,
+    fail: (value: boolean) => {
+      fail = value;
+    },
+    emit: async (event: (typeof events)[number]) => {
+      events = [...events, event];
+      await act(async () => {
+        live.receive([event]);
+      });
+    },
+  };
+}
+
+it("renders base labels/order, copies raw type/capabilities/NIP-05 and preserves npub behavior", async () => {
+  const h = setup();
+  const user = userEvent.setup();
+  const clipboard = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockResolvedValue();
+  try {
+    render(h.tree(person.pubkey));
+    const type = await screen.findByRole("button", { name: "Copy Agent type" });
+    expect(type).toHaveTextContent("Goose");
+    expect(screen.getByText("NIP-05 (unverified)")).toBeInTheDocument();
+    const nip = screen.getByRole("button", { name: "Copy NIP-05" });
+    const cap = screen.getByRole("button", { name: "Copy Capabilities" });
+    expect(
+      screen
+        .getByRole("button", { name: "Copy npub" })
+        .compareDocumentPosition(nip) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      nip.compareDocumentPosition(type) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      type.compareDocumentPosition(cap) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    for (const [button, value, feedback] of [
+      [type, "goose", "Copied agent type"],
+      [cap, "code, search", "Copied capabilities"],
+      [nip, "agent@example.test", "Copied nip-05"],
+    ] as const) {
+      await user.click(button);
+      expect(clipboard).toHaveBeenLastCalledWith(value);
+      await screen.findByText(feedback);
+      expect(button.querySelector("[data-copied]")).toHaveAttribute(
+        "data-copied",
+        "true",
+      );
+    }
+    await user.click(screen.getByRole("button", { name: "Copy npub" }));
+    expect(clipboard).toHaveBeenLastCalledWith(
+      profileTarget(person.pubkey)?.slice(6),
+    );
+    expect(await screen.findByText("Public key copied.")).toBeInTheDocument();
+    clipboard.mockRejectedValueOnce(new Error("denied"));
+    await user.click(nip);
+    await screen.findByText("Couldn't copy nip-05.");
+    expect(nip.querySelector("[data-copied]")).toHaveAttribute(
+      "data-copied",
+      "false",
+    );
+  } finally {
+    cleanup();
+    h.owner.dispose();
+  }
+});
+
+it("updates and clears live metadata, ignores older results and isolates human navigation", async () => {
+  const h = setup();
+  try {
+    const mounted = render(h.tree(person.pubkey));
+    await screen.findByRole("button", { name: "Copy Agent type" });
+    await h.emit(
+      metadata({ agent_type: "codex-acp", capabilities: ["review"] }, 3),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Copy Agent type" }),
+      ).toHaveTextContent("Codex"),
+    );
+    await h.emit(metadata({ agent_type: "aider", capabilities: ["old"] }, 2));
+    expect(
+      screen.getByRole("button", { name: "Copy Agent type" }),
+    ).toHaveTextContent("Codex");
+    await h.emit(metadata({ agent_type: "", capabilities: [] }, 4));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Copy Agent type" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Copy Capabilities" }),
+    ).not.toBeInTheDocument();
+    await h.emit(
+      profile(
+        person,
+        { name: "Agent", is_agent: true, nip05: { malformed: true } },
+        5,
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Copy NIP-05" }),
+      ).not.toBeInTheDocument(),
+    );
+    mounted.rerender(h.tree(human.pubkey));
+    await screen.findByRole("heading", { name: "Human" });
+    expect(
+      screen.getByRole("button", { name: "Copy NIP-05" }),
+    ).toHaveTextContent("human@example.test");
+    expect(
+      screen.queryByRole("button", { name: "Copy Agent type" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copy Capabilities" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    cleanup();
+    h.owner.dispose();
+  }
+});
+
+it("exposes read recovery without treating failure as absent metadata", async () => {
+  const h = setup();
+  h.fail(true);
+  try {
+    render(h.tree(person.pubkey));
+    await screen.findByRole("alert");
+    expect(
+      screen.queryByRole("button", { name: "Copy Agent type" }),
+    ).not.toBeInTheDocument();
+    h.fail(false);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Retry profile" }));
+    await screen.findByRole("button", { name: "Copy Agent type" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    cleanup();
+    h.owner.dispose();
+  }
+});
+
+it("does not report an old clipboard completion on a replacement identifier", async () => {
+  const h = setup();
+  const user = userEvent.setup();
+  let finish!: () => void;
+  vi.spyOn(navigator.clipboard, "writeText").mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  try {
+    render(h.tree(person.pubkey));
+    await user.click(
+      await screen.findByRole("button", { name: "Copy NIP-05" }),
+    );
+    await h.emit(
+      profile(
+        person,
+        { name: "Agent", is_agent: true, nip05: "new@example.test" },
+        5,
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Copy NIP-05" }),
+      ).toHaveTextContent("new@example.test"),
+    );
+    await act(async () => finish());
+    expect(screen.queryByText("Copied nip-05")).not.toBeInTheDocument();
+  } finally {
+    cleanup();
+    h.owner.dispose();
+  }
+});
+
+it("applies a verified owner policy live, reserves malformed updates and follows owner removal", async () => {
+  const h = setup();
+  try {
+    render(h.tree(person.pubkey));
+    await screen.findByRole("button", { name: "Copy Agent type" });
+    const digest = new Uint8Array(
+      createHash("sha256")
+        .update(`nostr:agent-auth:${person.pubkey}:`)
+        .digest(),
+    );
+    const owned = signed(person, {
+      kind: 0,
+      content: JSON.stringify({ name: "Agent", is_agent: true }),
+      created_at: 10,
+      tags: [
+        [
+          "auth",
+          human.pubkey,
+          "",
+          bytesToHex(schnorr.sign(digest, human.secret)),
+        ],
+      ],
+    });
+    const policy = signed(human, {
+      kind: 30177,
+      content: JSON.stringify({
+        name: "Agent",
+        parallelism: 4,
+        respond_to: "owner-only",
+      }),
+      tags: [["d", person.pubkey]],
+      created_at: 11,
+    });
+    await h.emit(policy);
+    await h.emit(owned);
+    await screen.findByRole("region", { name: "Agent identity" });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Copy Agent type" }),
+      ).toHaveTextContent("agent"),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Copy Capabilities" }),
+    ).not.toBeInTheDocument();
+    await h.emit(signed(human, { ...policy, content: "{}", created_at: 12 }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Copy Agent type" }),
+      ).not.toBeInTheDocument(),
+    );
+    await h.emit(profile(person, { name: "Agent", is_agent: true }, 13));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Agent identity" }),
+      ).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Copy Agent type" }),
+      ).toHaveTextContent("Goose"),
+    );
+    expect(
+      screen.getByRole("button", { name: "Copy Capabilities" }),
+    ).toHaveTextContent("code, search");
+  } finally {
+    cleanup();
+    h.owner.dispose();
+  }
+});

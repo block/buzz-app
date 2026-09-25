@@ -1,4 +1,8 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
+import {
+  ProfilePublicMetadata,
+  usePublicAgentMetadata,
+} from "./ProfilePublicMetadata";
 import { ProfileAgentActions } from "./ProfileAgentActions";
 import { ProfileMemories } from "./ProfileMemories";
 import { relayOrigin } from "../../features/communities/destination";
@@ -148,6 +152,7 @@ function ProfileDetails({
     session,
     knownAgent ? pubkey : undefined,
   );
+  const publicMetadata = usePublicAgentMetadata(session, pubkey, verifiedOwner);
   const isOwner = knownAgent && !!viewer && verifiedOwner === viewer;
   // Private local configuration needs both native custody and verified ownership.
   const runtimeAgent = useRuntimeAgent(control, scope, pubkey);
@@ -275,12 +280,6 @@ function ProfileDetails({
                   profile
                 />
                 <UserStatusDisplay session={session} userId={pubkey} />
-                {profile?.nip05 && (
-                  <p className={styles.identifier}>
-                    <span>NIP-05 (unverified)</span>{" "}
-                    <span>{profile.nip05}</span>
-                  </p>
-                )}
                 {canMessage && (
                   <div>
                     <Button
@@ -295,43 +294,6 @@ function ProfileDetails({
                 )}
                 {profile?.about && (
                   <p className={styles.about}>{profile.about}</p>
-                )}
-                {control && scope && (
-                  <ProfileAgentRuntime
-                    control={control}
-                    scope={scope}
-                    pubkey={pubkey}
-                    instanceId={instanceId}
-                  />
-                )}
-                {children}
-                {knownAgent && verifiedOwner && (
-                  <ProfileAgentIdentity
-                    session={session}
-                    owner={verifiedOwner}
-                    viewer={viewer}
-                    context={context}
-                  />
-                )}
-                <ProfileActivity
-                  session={session}
-                  pubkey={pubkey}
-                  context={context}
-                />
-                {control && (
-                  <ProfileInstances
-                    errorHandledByActions
-                    control={control}
-                    pubkey={pubkey}
-                    context={context}
-                    session={session}
-                    canOpenPrivate={verifiedOwner === viewer && !!viewer}
-                    selectedId={instanceId}
-                    scope={scope}
-                    communityOrigin={communityOrigin}
-                    viewer={viewer}
-                    knownAgent={agentPubkeys.has(pubkey)}
-                  />
                 )}
                 <div className={styles.publicKey}>
                   <div className={styles.keyHeading}>
@@ -362,6 +324,48 @@ function ProfileDetails({
                     {copyStatus}
                   </span>
                 </div>
+                {knownAgent && verifiedOwner && (
+                  <ProfileAgentIdentity
+                    session={session}
+                    owner={verifiedOwner}
+                    viewer={viewer}
+                    context={context}
+                  />
+                )}
+                <ProfilePublicMetadata
+                  key={verifiedOwner ?? "unowned"}
+                  source={publicMetadata}
+                  nip05={profile?.nip05}
+                />
+                {control && scope && (
+                  <ProfileAgentRuntime
+                    control={control}
+                    scope={scope}
+                    pubkey={pubkey}
+                    instanceId={instanceId}
+                  />
+                )}
+                {children}
+                <ProfileActivity
+                  session={session}
+                  pubkey={pubkey}
+                  context={context}
+                />
+                {control && (
+                  <ProfileInstances
+                    errorHandledByActions
+                    control={control}
+                    pubkey={pubkey}
+                    context={context}
+                    session={session}
+                    canOpenPrivate={verifiedOwner === viewer && !!viewer}
+                    selectedId={instanceId}
+                    scope={scope}
+                    communityOrigin={communityOrigin}
+                    viewer={viewer}
+                    knownAgent={agentPubkeys.has(pubkey)}
+                  />
+                )}
                 {!profile &&
                   (status === "loading" ? (
                     <p role="status">Loading profile…</p>

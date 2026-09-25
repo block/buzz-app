@@ -76,7 +76,7 @@ it("uses independent explicit channel routes and self-p globals; equal interests
   await h.first.auth();
   await vi.advanceTimersByTimeAsync(750);
   expect(h.first.requests().map((r) => r[2])).toEqual([
-    { kinds: [0], since: expect.any(Number), limit: 500 },
+    { kinds: [0, 10100, 30177], since: expect.any(Number), limit: 500 },
     {
       kinds: [44100, 44101],
       "#p": [h.key.pubkey],
@@ -567,7 +567,7 @@ it("requests statuses and community emoji on the profile route and delivers veri
   await h.first.auth();
   const req = h.first.sent.find((entry) => entry[0] === "REQ");
   expect(req?.slice(2)).toEqual([
-    { kinds: [0], since: expect.any(Number), limit: 500 },
+    { kinds: [0, 10100, 30177], since: expect.any(Number), limit: 500 },
     {
       kinds: [30315],
       "#d": ["general"],
@@ -1207,6 +1207,36 @@ it("publishes manual Offline on the authenticated presence socket with a correla
     expect(event).toMatchObject({ kind: 20001, content: "offline", tags: [] });
     await h.first.receive(["OK", event.id, true]);
     expect(await result).toBe(true);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("receives public agent metadata on the existing profile route without another subscription", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    const route = h.first
+      .requests()
+      .find((request) => request[2].kinds.includes(10100));
+    assert.exists(route);
+    expect(route[2].kinds).toEqual([0, 10100, 30177]);
+    expect(h.first.requests()).toHaveLength(2);
+    await h.first.receive(["EOSE", route[1]]);
+    for (const kind of [10100, 30177]) {
+      const event = signed(h.key, {
+        kind,
+        content: "{}",
+        tags: [],
+        created_at: 10,
+      });
+      await h.first.receive(["EVENT", route[1], event]);
+      expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+        phase: "live",
+      });
+    }
   } finally {
     h.owner.dispose();
   }

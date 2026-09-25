@@ -201,3 +201,46 @@
   list-style: none;
   overflow-wrap: anywhere;
 }
+
+.copyField {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  text-align: left;
+  color: var(--text-primary);
+  background: var(--surface-panel);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.copyField:hover {
+  background: var(--surface-inset);
+}
+.copyField:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.fieldText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+.fieldValue {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.copyIndicator {
+  flex-shrink: 0;
+  opacity: 0;
+}
+.copyField:hover .copyIndicator,
+.copyField:focus-visible .copyIndicator,
+.copyIndicator[data-copied="true"] {
+  opacity: 1;
+}

@@ -168,9 +168,9 @@ it("uses channel scope in link previews and activity, and participant scope in s
   act(() => f.setPresence("away"));
   expect(
     screen.getByRole("button", {
-      name: `View activity for Larry ${a.slice(0, 12)}`,
+      name: `View activity for Larry ${a.slice(0, 12)}, Presence: away`,
     }),
-  ).toHaveAttribute("aria-description", "Presence: away");
+  ).toBeVisible();
   act(() => f.join());
   expect(view.container.querySelector("strong")).toHaveTextContent(
     "Larry · rcaj",
@@ -180,7 +180,7 @@ it("uses channel scope in link previews and activity, and participant scope in s
   );
   expect(
     screen.getByRole("button", {
-      name: `View activity for Larry · rcaj ${a.slice(0, 12)}`,
+      name: `View activity for Larry · rcaj ${a.slice(0, 12)}, Presence: away`,
     }),
   ).toBeVisible();
 });

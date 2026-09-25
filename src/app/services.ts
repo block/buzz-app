@@ -4,6 +4,7 @@ import { TemplateProvidersService } from "../features/channel-templates/provider
 import { IdentityNamesService } from "../features/identity-names/service";
 import { bindAgentMentions } from "../features/agents/mention-wake";
 import { provideAgentControl } from "../features/agents/control-service";
+import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
 import { bindDeepLinks } from "../features/navigation/deep-links";
@@ -29,6 +30,7 @@ export function createServices() {
   const appearance = createAppearance();
   const shortcutBindings = createShortcutBindings();
   const ctx = new Context();
+  new HostService(ctx);
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
   });

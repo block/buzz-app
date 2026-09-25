@@ -295,6 +295,44 @@ external JSX plugins declare `inject = ["react"]` to use the shared instance. Th
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
 
+External plugins can declare host access in `manifest.json`:
+
+```json
+{
+  "host": {
+    "commands": [{ "id": "status", "program": "example-cli", "args": ["status"] }],
+    "networkOrigins": ["https://api.example.com"]
+  }
+}
+```
+
+Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
+`ctx.host.request({ url, method, headers, body })`. Command calls name a declared
+ID; the program and arguments come only from the installed manifest. Native
+execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
+UTF-8 stdout. The direct command invocation has a five-second deadline;
+cancellation or timeout kills its process group on Unix or its job process tree
+on Windows. Failure returns `null`. The app
+also searches standard Homebrew binary directories when a macOS GUI launch has a
+limited PATH and passes that search path to the command.
+Plugins parse and retain their own credentials; the host has no provider registry
+or credential store.
+
+Requests use the native HTTPS client, so an external plugin can declare an exact
+origin without changing the renderer CSP. URLs must use a declared origin; redirects
+are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text
+body and 8 KiB of headers; responses return status, up to 64 headers totaling
+16 KiB (excluding `Set-Cookie`), and up to 16 MiB of UTF-8 body. The full request
+has a 30-second deadline. Browser calls cannot use these native operations.
+Existing bundled GitHub requests retain their first-party renderer fetch and CSP
+entry.
+
+The import preview lists declarations and marks added or changed access on updates.
+The install/update action accepts that displayed version; an enabled update may run
+immediately. These declarations help review and catch mistakes. Plugins share the
+main WebView and can invoke app commands directly, so the declarations do not
+isolate a malicious plugin. Load only trusted plugin code.
+
 ### Loading from folders and repositories
 
 Desktop Settings → Plugins loads a folder with the native folder picker, or an
@@ -306,12 +344,14 @@ folders. Choose one and explicitly install/update; the same preview can install
 another plugin without fetching again. New plugins stay disabled. Updates match
 **manifest ID**, even across repositories, and preserve the saved enabled state:
 an enabled update may activate immediately except in safe mode. The UI warns before
-that action. Installed artifacts do not watch/pull the source. Plugins installed from
-a folder keep the selected folder path for Settings → Plugins → Reload while disabled;
+that action and shows declared host access, including changes. Installed artifacts do
+not watch/pull the source. Plugins installed from a folder keep the selected folder
+path for Settings → Plugins → Reload while disabled;
 reloading reads the recorded candidate folder and requires the manifest ID to stay the
-same. Enabled plugins must be disabled before reload so memory-only plugin state, such
-as credentials, is not discarded by replacing the running module. Git installs and older
-installs without saved folder metadata must be imported again.
+same. Reload rejects changed host declarations; use Load from folder to review and
+install that revision. Enabled plugins must be disabled before reload so memory-only
+plugin state, such as credentials, is not discarded by replacing the running module.
+Git installs and older installs without saved folder metadata must be imported again.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
 single pending preview per native process. Replacing/closing a preview discards it;

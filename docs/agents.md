@@ -147,10 +147,14 @@ names are searchable. Public keys (including unnamed identity fallbacks) are not
 completion matches. Arbitrary name substrings do not match. A hidden base-name match never
 promotes a weaker visible-label match. When visible-label match quality ties,
 base-name/alias match quality breaks the tie before recipient preferences.
-Equally matched agents prefer profile-reported ownership by the viewer. Same-base-name
-agent ties then use explicit-choice recency, managed status, and already-known
-online/away status. Remaining ties use the case-insensitive full displayed label
-(including disambiguating suffixes), then the full key. Ownership comes
+Among equal matches, agents with profile-reported ownership by the viewer come
+first, before humans and other agents. Agents that share a base name then form one
+block, placed at the first of their case-insensitive displayed labels (including
+disambiguating suffixes). Inside a block, explicit-choice recency, managed status,
+and already-known online/away status decide the order. Humans never join a block
+and sort first on an equal label. Remaining ties use the displayed label, then the
+full key. Each rule is a per-choice sort key, so the order is the same for any
+input order. Ownership comes
 from profile owner metadata, not a name or presence in the saved library.
 Recency stays in memory per session/destination and is bounded to 100 destinations
 and 100 recipients each. Neither ownership nor recency overrides membership or

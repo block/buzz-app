@@ -33,35 +33,58 @@ export function mentionMatch(choice: MentionChoice, query: string) {
   if (Number.isFinite(visible)) return visible;
   return 4 + baseMatch(choice, query);
 }
+/**
+ * Sorts by per-choice keys, so the order is transitive for any mix of people
+ * and agents. After match quality, your own agents come first. Agents that
+ * share a name form one block at its first visible label; recency, managed,
+ * and presence order only that block.
+ */
 export function rankMentions(
   choices: readonly MentionChoice[],
   query: string,
   history?: ReadonlyMap<string, number>,
   presence: (key: string) => string = () => "unknown",
 ) {
-  const group = (c: MentionChoice) => (c.member ? 0 : 1);
-  const online = (c: MentionChoice) =>
-    ({ online: 0, away: 1 })[presence(c.recipient.pubkey)] ?? 2;
-  return choices
+  const keyed = choices
     .filter((c) => Number.isFinite(mentionMatch(c, query)))
-    .sort((a, b) => {
-      const nameA = normalized(a.recipient.name),
-        nameB = normalized(b.recipient.name);
-      return (
-        group(a) - group(b) ||
-        mentionMatch(a, query) - mentionMatch(b, query) ||
-        baseMatch(a, query) - baseMatch(b, query) ||
-        (a.agent && b.agent ? Number(b.owned) - Number(a.owned) : 0) ||
-        (a.agent && b.agent && nameA === nameB
-          ? (history?.get(b.recipient.pubkey) ?? 0) -
-              (history?.get(a.recipient.pubkey) ?? 0) ||
-            Number(b.managed) - Number(a.managed) ||
-            online(a) - online(b)
-          : 0) ||
-        compare(normalized(a.label), normalized(b.label)) ||
-        compare(a.recipient.pubkey, b.recipient.pubkey)
-      );
+    .map((c) => {
+      const tier = [
+        c.member ? 0 : 1,
+        mentionMatch(c, query),
+        baseMatch(c, query),
+        c.agent && c.owned ? 0 : 1,
+      ];
+      return {
+        c,
+        tier,
+        label: normalized(c.label),
+        // People never join a block. On an equal label they sort first.
+        block: c.agent
+          ? `1${JSON.stringify([tier, normalized(c.recipient.name)])}`
+          : `0${c.recipient.pubkey}`,
+        recent: history?.get(c.recipient.pubkey) ?? 0,
+        online: { online: 0, away: 1 }[presence(c.recipient.pubkey)] ?? 2,
+      };
     });
+  const first = new Map<string, string>();
+  for (const k of keyed) {
+    const label = first.get(k.block);
+    if (label === undefined || k.label < label) first.set(k.block, k.label);
+  }
+  const blockLabel = (k: (typeof keyed)[number]) => first.get(k.block) ?? "";
+  return keyed
+    .sort(
+      (a, b) =>
+        a.tier.reduce((d, value, i) => d || value - (b.tier[i] ?? 0), 0) ||
+        compare(blockLabel(a), blockLabel(b)) ||
+        compare(a.block, b.block) ||
+        b.recent - a.recent ||
+        Number(b.c.managed) - Number(a.c.managed) ||
+        a.online - b.online ||
+        compare(a.label, b.label) ||
+        compare(a.c.recipient.pubkey, b.c.recipient.pubkey),
+    )
+    .map((k) => k.c);
 }
 /** Space is intent only for one exact key across the full, uncapped choice set. */
 export function exactMention(choices: readonly MentionChoice[], query: string) {

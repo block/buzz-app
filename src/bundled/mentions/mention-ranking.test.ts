@@ -189,3 +189,42 @@ it("ranks outside humans and agents in one relevance group", () => {
     agent,
   ]);
 });
+const permutations = <T>(items: readonly T[]): T[][] =>
+  items.length < 2
+    ? [[...items]]
+    : items.flatMap((item, i) =>
+        permutations([...items.slice(0, i), ...items.slice(i + 1)]).map(
+          (rest) => [item, ...rest],
+        ),
+      );
+it("orders mixed people and agents the same way from every input order", () => {
+  // Review case: owned Zed, unowned Alpha, human Mary. A pairwise agent-only
+  // ownership rule made Zed < Alpha < Mary < Zed, a cycle.
+  const zed = choice("a", "Zed", { agent: true, owned: true });
+  const alpha = choice("b", "Alpha", { agent: true });
+  const mary = choice("c", "Mary");
+  for (const rows of permutations([zed, alpha, mary]))
+    expect(rankMentions(rows, "")).toEqual([zed, alpha, mary]);
+  // Same-name agents stay one block at its first label. Recency, managed and
+  // presence order only that block, never a person or another name between.
+  const recent = choice("d", "Honey", { agent: true, label: "Honey · zz" });
+  const managed = choice("e", "Honey", {
+    agent: true,
+    managed: true,
+    label: "Wes’s Honey",
+  });
+  const online = choice("f", "Honey", { agent: true, label: "Honey · aa" });
+  const human = choice("1", "Honey · b");
+  const other = choice("2", "Honey Bee", { agent: true, label: "Honey · c" });
+  const history = new Map([[recent.recipient.pubkey, 2]]);
+  const presence = (key: string) =>
+    key === online.recipient.pubkey ? "online" : "unknown";
+  for (const rows of permutations([recent, managed, online, human, other]))
+    expect(rankMentions(rows, "", history, presence)).toEqual([
+      recent,
+      managed,
+      online,
+      human,
+      other,
+    ]);
+});

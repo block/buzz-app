@@ -17,6 +17,7 @@ import {
   ChatCircleIcon,
   KeyboardIcon,
   WrenchIcon,
+  DownloadIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
@@ -35,6 +36,8 @@ import { DeveloperSettings } from "./DeveloperSettings";
 import { AgentSettings } from "./AgentSettings";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
+import type { Updates } from "../features/updates/updates";
+import { UpdateSettings } from "../features/updates/UpdateSettings";
 
 type Section = { id: string; label: string; icon: typeof UserIcon };
 
@@ -47,6 +50,7 @@ const appSections: readonly Section[] = [
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
   { id: "agents", label: "Agents", icon: RobotIcon },
   { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
+  { id: "updates", label: "Updates", icon: DownloadIcon },
 ];
 // DEV alone is not enough: packaged desktop builds load a production bundle
 // from tauri://localhost, so the hostname check excludes them too.
@@ -63,6 +67,7 @@ export function Settings({
   shortcuts,
   shortcutBindings,
   notifications,
+  updates,
   navigation,
   onSection,
 }: {
@@ -74,6 +79,7 @@ export function Settings({
   shortcuts: ShortcutsService;
   shortcutBindings: ShortcutBindings;
   notifications: NotificationsService;
+  updates: Updates;
   navigation?:
     | import("../features/navigation/service").PageNavigation
     | undefined;
@@ -267,6 +273,9 @@ export function Settings({
             </div>
             <div hidden={selected !== "agents"}>
               <AgentSettings active={selected === "agents"} />
+            </div>
+            <div hidden={selected !== "updates"}>
+              <UpdateSettings updates={updates} />
             </div>
             {communityCards.map((card) => (
               <div key={card.key} hidden={selected !== card.key}>

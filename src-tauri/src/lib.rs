@@ -399,6 +399,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             deep_links::setup(app.handle());
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
@@ -436,6 +437,13 @@ pub fn run() {
         });
     #[cfg(target_os = "macos")]
     let builder = builder.manage(TitleBarFillFrames::default());
+    // Register the updater only in configured release builds; omit it locally.
+    #[cfg(buzz_updater_enabled)]
+    let builder = if cfg!(debug_assertions) {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    };
     builder
         .manage(IdentityHost::default())
         .manage(Imports::default())

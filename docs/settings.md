@@ -10,7 +10,8 @@ Settings has two groups:
 - The selected **community name** comes first. It contains **Profile**, **Personal
   groups**, **Templates & teams**, and future community-scoped personal or
   permission-gated settings.
-- **App** contains Appearance, Notifications, Shortcuts, Agents, and Plugins.
+- **App** contains Appearance, Notifications, Shortcuts, Agents, Plugins, and
+  Updates.
   These preferences apply across communities on this device. In Personal space,
   **Profile** is also in App so identity details and the local profile remain
   accessible before joining. With a community selected, Profile stays under its
@@ -111,7 +112,8 @@ when a product decision or complete Buzz 1.0 owner exists.
 | Keep awake while agents are active | Approved as a future device-wide preference; requires the bounded native lifecycle above. |
 | Harnesses and global agent defaults | Approved for Settings → Agents, pending implementation; individual configuration remains on the Agents page. See [the planned contract](agent-control.md#planned-harnesses-and-agent-defaults). |
 | Voice, custom emoji, local archive, and channel templates | Pending dedicated product and implementation slices. |
-| Compute, experiments, mobile pairing, and updates | Pending dedicated native/app capability owners. |
+| Compute, experiments, and mobile pairing | Pending dedicated native/app capability owners. |
+| Software updates | Implemented under **Updates** with a restart notice; release builds need [updater configuration](configuration.md). |
 | Community profiles and administration | Live community profile editing is implemented; permission-gated administration requires its own capability owner. |
 
 Do not add empty destinations or functional-looking placeholders for pending rows.

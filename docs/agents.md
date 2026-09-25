@@ -200,10 +200,10 @@ The picker supports Up/Down navigation, Enter selection and Escape dismissal.
 
 `session.messages.send/reply` accepts up to 32 exact notification pubkeys and emits
 deduplicated `p` tags. In ordinary channels, Send pauses for selected nonmembers:
-**Add to channel** grants access only with permission and explicit consent, waits
-for confirmed membership, then sends notifications. **Do nothing** sends those
-identities as separate `mention` reference tags, without adding or notifying them.
-**Cancel** or Escape keeps the draft. Existing member mentions still notify in a
+**Invite** grants access only with permission and explicit consent, waits
+for confirmed membership, then sends notifications. **Do nothing** (or **Send
+anyway** without add permission) sends those identities as separate `mention`
+reference tags, without adding or notifying them. Close or Escape keeps the draft. Existing member mentions still notify in a
 mixed send. Reference keys are validated and bounded to 32. Selection itself never
 invites or starts anyone; confirmed outgoing notifications own agent wakeup. See
 [local agent controls](agent-control.md#normal-desktop-workflow). DM and session

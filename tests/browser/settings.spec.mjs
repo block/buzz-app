@@ -43,14 +43,30 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
       target.y + target.height <= bounds.y + bounds.height
     )
       break;
-    const before = await scroller.evaluate((element) => element.scrollTop);
-    await page.mouse.wheel(
-      0,
-      bounds.height * (target.y < bounds.y ? -0.4 : 0.4),
-    );
-    await expect
-      .poll(() => scroller.evaluate((element) => element.scrollTop))
-      .not.toBe(before);
+    // A changed scrollTop only proves that scrolling started. In WebKit the
+    // remaining wheel motion can otherwise clip the row after the assertions.
+    const settled = await scroller.evaluateHandle((element) => {
+      const state = { done: false };
+      element.addEventListener(
+        "scrollend",
+        () => {
+          state.done = true;
+        },
+        { once: true },
+      );
+      return state;
+    });
+    try {
+      await page.mouse.wheel(
+        0,
+        bounds.height * (target.y < bounds.y ? -0.4 : 0.4),
+      );
+      await expect
+        .poll(() => settled.evaluate((state) => state.done))
+        .toBe(true);
+    } finally {
+      await settled.dispose();
+    }
   }
   await expect(row).toBeInViewport({ ratio: 1 });
   await expect(toggle).toBeInViewport({ ratio: 1 });

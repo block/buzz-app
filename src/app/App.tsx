@@ -18,6 +18,7 @@ import { pagePresentation, shellPresentation } from "./shell/presentation";
 import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
+import { communityDestination } from "../features/communities/destination";
 
 export function App({ services }: { services: AppServices }) {
   const { plugins } = services;

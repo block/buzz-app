@@ -474,8 +474,9 @@ html[data-keyboard-navigation]
 }
 .workflow-inspector {
   min-width: 0;
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-panel);
-  background: var(--surface-inset);
+  background: var(--surface-panel);
   padding: var(--space-5);
 }
 .workflow-inspector p {
@@ -488,7 +489,12 @@ html[data-keyboard-navigation]
   gap: var(--space-2);
   margin-bottom: var(--space-5);
 }
+.workflow-inspector-heading > :first-child {
+  flex: 1;
+  min-width: 0;
+}
 .workflow-inspector-actions {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--space-1);

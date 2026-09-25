@@ -14,13 +14,18 @@ See the [capability contract](../src/features/workflows/types.ts).
   Form mode uses a selectable flow and contextual inspector, with insertion
   menus and removal. On narrow screens the inspector is a nested side dialog.
   Escape closes a menu, then inspector, then editor with a dirty-draft warning.
-  Pencil name editing commits on Enter/blur and reverts on Escape. Settings and
+  Trigger and step-action choices use labelled field selectors. Pencil name
+  editing commits on Enter/blur and reverts on Escape; invalid names remain
+  explained outside edit mode. Settings and
   run history are disclosed separately; operation recovery stays visible.
 - Form editing for message/reaction/diff/schedule/webhook triggers and Send
   Message/Delay/Call Webhook actions. Basic conditions cover text, author,
   reaction and message-ID comparisons; unrepresentable expressions stay Advanced.
-  Incomplete Basic rows block saving and lossy view switches until corrected or
-  explicitly removed. Step conditions and timeouts live under Run controls.
+  Basic literal whitespace is preserved; expressions that cannot rebuild
+  losslessly stay Advanced. Incomplete Basic rows block saving and lossy view
+  switches until corrected or explicitly removed, and participate in leave/unload
+  warnings even when their YAML is unchanged. Step conditions and timeouts live
+  under Run controls.
   Webhook URLs may contain relay-expanded templates; headers and request bodies
   are configuration visible to channel members, not a secret store. The relay
   owns destination safety and channel-owner/admin authorization.

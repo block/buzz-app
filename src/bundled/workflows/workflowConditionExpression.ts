@@ -79,7 +79,7 @@ export function conditionValueError(
   value: string,
 ): string | null {
   const trimmed = value.trim();
-  if (!trimmed) return null;
+  if (!value) return null;
   if (field === "trigger_author" && !HEX_ID_PATTERN.test(trimmed)) {
     return "Enter a 64-character hex pubkey.";
   }
@@ -94,7 +94,7 @@ export function conditionRowError(
   row: ParsedConditionExpression,
 ): string | null {
   if (!conditionOperatorNeedsValue(row.operator)) return null;
-  if (!row.value.trim()) return "Enter a value or remove this condition.";
+  if (!row.value) return "Enter a value or remove this condition.";
   return conditionValueError(row.field, row.value);
 }
 
@@ -108,7 +108,10 @@ export function buildConditionExpression(
   const { field, operator } = condition;
   if (operator === "is_not_empty") return `str_len(${field}) > 0`;
   if (operator === "is_empty") return `str_len(${field}) == 0`;
-  const value = condition.value.trim();
+  const value =
+    field === "trigger_author" || field.endsWith("_id")
+      ? condition.value.trim()
+      : condition.value;
   if (!value || conditionValueError(field, value)) return null;
   const normalizedValue =
     field === "trigger_author" || field.endsWith("_id")
@@ -190,7 +193,8 @@ export function parseConditionExpression(
       value: unescapeEvalexprString(fn[4]),
       webhookField: "",
     };
-    return conditionOperatorsForField(result.field).includes(result.operator)
+    return conditionOperatorsForField(result.field).includes(result.operator) &&
+      buildConditionExpression(result) === trimmed
       ? result
       : null;
   }
@@ -209,7 +213,9 @@ export function parseConditionExpression(
       value: unescapeEvalexprString(equality[3]),
       webhookField: "",
     };
-    return conditionValueError(result.field, result.value) ? null : result;
+    // Noncanonical identifiers and empty literals must not be silently
+    // normalized or dropped when another Basic row is edited.
+    return buildConditionExpression(result) === trimmed ? result : null;
   }
   return null;
 }

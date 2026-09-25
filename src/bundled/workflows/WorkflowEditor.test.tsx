@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { WorkflowEditor } from "./WorkflowEditor";
 import { fixtureYaml } from "./fixtures";
+import { parse } from "yaml";
 
 vi.stubGlobal(
   "ResizeObserver",
@@ -35,6 +36,11 @@ test("form errors follow the editable field and clear when corrected", async () 
   const save = screen.getByRole("button", { name: "Save changes" });
   await user.clear(name);
   await user.keyboard("{Enter}");
+  expect(screen.getByText("Give this workflow a name.")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Edit workflow name" }),
+  ).toHaveAccessibleDescription("Give this workflow a name.");
+  expect(screen.queryByRole("textbox", { name: "Workflow name" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Edit workflow name" }));
   expect(
     screen.getByRole("textbox", { name: "Workflow name" }),
@@ -276,3 +282,30 @@ test.each(["", "   "])(
     expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
   },
 );
+
+test("editing another Basic condition preserves the untouched literal", async () => {
+  const user = userEvent.setup();
+  const initial = fixtureYaml.replace(
+    "on: message_posted",
+    `on: message_posted\n  filter: 'str_starts_with(trigger_text, "deploy ")'`,
+  );
+  render(<Example initial={initial} />);
+  await user.click(
+    screen.getByRole("button", { name: "Edit trigger: Message posted" }),
+  );
+  await user.click(screen.getByRole("combobox", { name: "Add condition" }));
+  await user.click(await screen.findByRole("option", { name: "Author" }));
+  const authorValue = screen.getAllByRole("textbox", { name: "Value" })[1];
+  if (!authorValue) throw new Error("Author condition input is missing");
+  await user.type(authorValue, "a".repeat(64));
+  expect(screen.getAllByRole("textbox", { name: "Value" })[0]).toHaveValue(
+    "deploy ",
+  );
+  await user.click(screen.getByRole("tab", { name: "YAML" }));
+  const yaml = screen.getByRole<HTMLTextAreaElement>("textbox", {
+    name: "Workflow YAML",
+  }).value;
+  expect(parse(yaml).trigger.filter).toBe(
+    `str_starts_with(trigger_text, "deploy ") && trigger_author == "${"a".repeat(64)}"`,
+  );
+});

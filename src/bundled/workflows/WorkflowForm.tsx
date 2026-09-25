@@ -181,14 +181,14 @@ export function WorkflowForm({
     <>
       <div className="workflow-inspector-heading">
         <div>
-          <p className="text-caption text-subtle">
-            {selectedStep ? `STEP ${stepIndex + 1}` : "TRIGGER"}
-          </p>
+          {selectedStep && (
+            <p className="text-caption text-subtle">STEP {stepIndex + 1}</p>
+          )}
           {selectedStep ? (
             <Select
               key="step-action"
               label="Step action"
-              variant="compact"
+              variant="field"
               disabled={disabled}
               value={selectedStep.action}
               groups={[
@@ -233,7 +233,7 @@ export function WorkflowForm({
             <Select
               key="trigger-type"
               label="Trigger"
-              variant="compact"
+              variant="field"
               disabled={disabled}
               value={state.trigger.on}
               groups={[

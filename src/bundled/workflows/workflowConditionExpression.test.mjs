@@ -7,6 +7,7 @@ import {
   conditionFieldsForTrigger,
   conditionOperatorsForField,
   conditionValueError,
+  conditionRowError,
   parseConditionExpression,
   parseConditionExpressions,
 } from "./workflowConditionExpression.ts";
@@ -167,5 +168,51 @@ test("keeps unsupported expressions in advanced mode", () => {
       "reaction_added",
     ),
     null,
+  );
+});
+
+test("preserves whitespace-bearing text and emoji literals when rebuilding parsed rows", () => {
+  for (const [trigger, expression] of [
+    ["message_posted", 'str_starts_with(trigger_text, "deploy ")'],
+    ["message_posted", 'str_ends_with(trigger_text, " deploy")'],
+    ["message_posted", 'str_contains(trigger_text, " ")'],
+    ["message_posted", 'trigger_text == " deploy "'],
+    ["reaction_added", 'trigger_emoji == " 👾 "'],
+  ]) {
+    const rows = parseConditionExpressions(expression, trigger);
+    assert.ok(rows);
+    assert.equal(conditionRowError(rows[0]), null);
+    assert.equal(buildConditionExpressions(rows), expression);
+    assert.equal(
+      buildConditionExpressions([
+        ...rows,
+        {
+          field: "trigger_author",
+          operator: "equals",
+          value: AUTHOR,
+          webhookField: "",
+        },
+      ]),
+      `${expression} && trigger_author == "${AUTHOR}"`,
+    );
+  }
+});
+
+test("keeps saved literals that Basic would normalize or drop in Advanced", () => {
+  for (const expression of [
+    `trigger_author == " ${AUTHOR} "`,
+    `trigger_author == "${AUTHOR.toUpperCase()}"`,
+    'trigger_text == ""',
+    'str_contains(trigger_text, "")',
+  ])
+    assert.equal(parseConditionExpressions(expression, "message_posted"), null);
+  assert.equal(
+    conditionRowError({
+      field: "trigger_author",
+      operator: "equals",
+      value: "   ",
+      webhookField: "",
+    }),
+    "Enter a 64-character hex pubkey.",
   );
 });

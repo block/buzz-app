@@ -104,8 +104,9 @@ export function WorkflowChannel({
   );
   const busy =
     !!draft?.operationId && (!operation || operation.outcome === "pending");
+  const [localDraftAtRisk, setLocalDraftAtRisk] = useState(false);
   const readonly = !!draft?.original && draft.original.owner !== viewer;
-  const dirty = !!draft && draft.yaml !== draft.initial;
+  const dirty = !!draft && (draft.yaml !== draft.initial || localDraftAtRisk);
   const atRisk = dirty || !!draft?.operationId;
   const unresolvedWrite = ownOperations.some(
     (item) =>
@@ -130,6 +131,7 @@ export function WorkflowChannel({
       onClose();
       return;
     }
+    setLocalDraftAtRisk(false);
     setDraft(next === "close" ? null : draftFor(next));
     submission.current = null;
     setError(null);
@@ -383,6 +385,7 @@ export function WorkflowChannel({
             initialYaml={draft.original?.yaml}
             onChange={(yaml) => setDraft({ ...draft, yaml })}
             onSave={save}
+            onLocalDraftRiskChange={setLocalDraftAtRisk}
             readOnly={readonly}
             busy={busy}
             locked={!!draft.operationId}

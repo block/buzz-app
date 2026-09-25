@@ -10,11 +10,14 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { formStateToYaml, yamlToFormState } from "./workflowFormTypes";
 import type { RelaySession } from "../../features/relay/session";
 import { WorkflowCommunity } from "./WorkflowsPage";
 import {
   createWorkflowFixture,
   fixtureChannel,
+  fixtureDefinition,
   fixtureViewer,
   fixtureYaml,
 } from "./fixtures";
@@ -27,8 +30,15 @@ vi.stubGlobal(
 );
 afterEach(cleanup);
 
-function mount() {
+function mount(initialYaml = fixtureYaml) {
   const fixture = createWorkflowFixture();
+  fixture.definitions.update({
+    status: "ready",
+    data: {
+      partial: false,
+      items: [{ ...fixtureDefinition, yaml: initialYaml }],
+    },
+  });
   const list = {
     status: "ready",
     coverage: "complete",
@@ -132,3 +142,80 @@ it("keeps the editor mounted through exact readback beneath the one-time secret"
     fixtureYaml.replace("message_posted", "webhook"),
   );
 });
+
+it.each(["discard", "remove"])(
+  "guards canonical YAML's incomplete local condition until %s",
+  async (finish) => {
+    const parsed = yamlToFormState(fixtureYaml);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const canonical = formStateToYaml(parsed.state);
+    const fixture = mount(canonical);
+    const user = userEvent.setup();
+    const warnsOnUnload = () =>
+      !window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+    await user.click(
+      await screen.findByRole("button", { name: "Open Message helper" }),
+    );
+    expect(warnsOnUnload()).toBe(false);
+    await user.click(
+      screen.getByRole("button", { name: "Edit trigger: Message posted" }),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Add condition" }));
+    await user.click(await screen.findByRole("option", { name: "Author" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Value" }),
+      "partial-pubkey",
+    );
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(warnsOnUnload()).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Close inspector" }));
+    await user.click(screen.getByRole("button", { name: "Close editor" }));
+    const confirm = screen.getByRole("alertdialog", {
+      name: "Leave this draft?",
+    });
+    await user.click(
+      within(confirm).getByRole("button", { name: "Keep editing" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Edit trigger: Message posted" }),
+    );
+    expect(screen.getByRole("textbox", { name: "Value" })).toHaveValue(
+      "partial-pubkey",
+    );
+    if (finish === "remove") {
+      await user.click(
+        screen.getByRole("button", { name: "Remove Author condition" }),
+      );
+      expect(warnsOnUnload()).toBe(false);
+      await user.click(screen.getByRole("tab", { name: "YAML" }));
+      // Prove this was a form-only edit, not incidental YAML reformatting.
+      expect(
+        screen.getByRole("textbox", { name: "Workflow YAML" }),
+      ).toHaveValue(canonical);
+    } else {
+      await user.click(screen.getByRole("button", { name: "Close inspector" }));
+    }
+    await user.click(screen.getByRole("button", { name: "Close editor" }));
+    if (finish === "discard") {
+      await user.click(
+        within(
+          screen.getByRole("alertdialog", { name: "Leave this draft?" }),
+        ).getByRole("button", { name: "Leave draft" }),
+      );
+    }
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Edit workflow" }),
+      ).toBeNull(),
+    );
+    expect(warnsOnUnload()).toBe(false);
+    expect(fixture.calls.save).toBe(0);
+    await user.click(
+      screen.getByRole("button", { name: "Open Message helper" }),
+    );
+    await user.click(screen.getByRole("tab", { name: "YAML" }));
+    expect(screen.getByRole("textbox", { name: "Workflow YAML" })).toHaveValue(
+      canonical,
+    );
+  },
+);

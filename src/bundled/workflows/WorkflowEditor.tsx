@@ -30,6 +30,7 @@ export function WorkflowEditor({
   initialYaml,
   onChange,
   onSave,
+  onLocalDraftRiskChange,
   readOnly = false,
   blocked,
   busy = false,
@@ -47,6 +48,7 @@ export function WorkflowEditor({
   initialYaml?: string | undefined;
   onChange: (yaml: string) => void;
   onSave: () => void;
+  onLocalDraftRiskChange?: (atRisk: boolean) => void;
   readOnly?: boolean;
   blocked?: string | undefined;
   busy?: boolean;
@@ -103,6 +105,14 @@ export function WorkflowEditor({
   )
     ? "Header names must be unique."
     : undefined;
+  // Invalid form-only values may serialize to unchanged YAML. Keep them in
+  // the channel's existing leave/unload guard without creating another draft owner.
+  const localDraftAtRisk =
+    formYaml === yaml && !!formDraft && !!(conditionError || headerError);
+  useEffect(() => {
+    onLocalDraftRiskChange?.(localDraftAtRisk);
+    return () => onLocalDraftRiskChange?.(false);
+  }, [localDraftAtRisk, onLocalDraftRiskChange]);
   const error = issue?.message || conditionError || headerError;
   const showingForm = mode === "form" && !!form;
   const mutateForm = (state: WorkflowFormState) => {
@@ -259,6 +269,9 @@ export function WorkflowEditor({
                 <IconButton
                   ref={nameButton}
                   aria-label="Edit workflow name"
+                  aria-describedby={
+                    issue?.field === "name" ? `${id}-name-error` : undefined
+                  }
                   icon={<PencilSimpleIcon size={16} aria-hidden="true" />}
                   size="sm"
                   disabled={disabled || !fields.editable}
@@ -268,6 +281,15 @@ export function WorkflowEditor({
                   }}
                 />
               </div>
+            )}
+            {!editingName && issue?.field === "name" && (
+              <p
+                id={`${id}-name-error`}
+                role="status"
+                className="text-body-sm text-danger"
+              >
+                {issue.message}
+              </p>
             )}
           </div>
           <Switch

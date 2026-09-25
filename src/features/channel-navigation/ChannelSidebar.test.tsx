@@ -61,8 +61,13 @@ function fixture() {
       channelType: "stream",
     })),
   };
+  const live = {
+    ...owner.session.live.snapshot(),
+    roster: { state: "verified" as const },
+  };
   const session = {
     ...owner.session,
+    live: { ...owner.session.live, snapshot: () => live },
     channels: { ...owner.session.channels, list: () => list, ensureList() {} },
   };
   const snapshot: RelaySnapshot = {

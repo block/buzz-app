@@ -26,6 +26,13 @@ import {
   MenuItem,
   MenuIcon,
   MenuPopup,
+  MenuRoot,
+  MenuTrigger,
+  MenuSubmenu,
+  MenuSubmenuTrigger,
+  MenuSubmenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary } from "../relay/contracts";
@@ -36,6 +43,8 @@ import {
   BellIcon,
   BellSlashIcon,
   CaretRightIcon,
+  ArrowsDownUpIcon,
+  DotsThreeIcon,
   PlusIcon,
 } from "../../shared/design-system/icons/index";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
@@ -46,6 +55,7 @@ import { SidebarSectionIcon } from "../../bundled/channels/SidebarSectionIcon";
 import { useChannelLabels } from "../../bundled/channels/useChannelLabels";
 import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
+import { useSidebarStartup } from "../../bundled/channels/useSidebarStartup";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import {
   sidebarSections,
@@ -147,6 +157,12 @@ function ReadySidebar({
 }) {
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const startup = useSidebarStartup(queries, list, preferences);
+  const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
+  useEffect(() => {
+    if (list.activityStatus !== "error") setActivityErrorDismissed(false);
+  }, [list.activityStatus]);
+  const [sectionMenu, setSectionMenu] = useState<{ key: string }>();
   const mute = useOptimisticMute(queries.sidebarPreferences.setMute);
   const rowMenuGeneration = useRef(0);
   const [readWrite, setReadWrite] = useState<{
@@ -178,7 +194,9 @@ function ReadySidebar({
   const lifecycleFocus = useRef<string | undefined>(undefined);
   const sidebar = useSidebarView(
     scope,
-    list.status === "ready" && preferences.status !== "loading",
+    startup.ready &&
+      list.status === "ready" &&
+      preferences.status !== "loading",
   );
   const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
@@ -258,7 +276,6 @@ function ReadySidebar({
   useEffect(() => {
     if (list.status === "ready") {
       queries.channelKit.ensure();
-      void queries.unread.ensure();
     }
   }, [queries, list.status]);
   const mounted = useRef(false);
@@ -387,22 +404,38 @@ function ReadySidebar({
     select(id);
     sidebar.toggle("channels", true);
   };
-  const sections = sidebarSections(
-    sidebarChannels,
-    groups
-      ? {
-          sections: groups.groups.map((group, order) => ({
-            id: group.id,
-            name: group.name,
-            order,
-          })),
-          assignments: groups.assignments,
-          starred: preferences.data?.starred ?? [],
-          muted: preferences.data?.muted ?? [],
-        }
-      : preferences.data,
-    new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
-  );
+  const displayedPreferences = groups
+    ? {
+        ...preferences.data,
+        sections: groups.groups.map((g, order) => ({
+          id: g.id,
+          name: g.name,
+          order,
+        })),
+        assignments: groups.assignments,
+        starred: preferences.data?.starred ?? [],
+        muted: preferences.data?.muted ?? [],
+      }
+    : preferences.data;
+  const sections = startup.ready
+    ? sidebarSections(
+        sidebarChannels,
+        displayedPreferences,
+        new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
+      )
+    : [];
+  const closeSectionMenu = useCallback(() => setSectionMenu(undefined), []);
+  const setSectionSort = (key: string, mode: "alpha" | "recent") => {
+    // The session applies the choice immediately and owns rollback/retry state.
+    void preferences
+      .setSort(
+        key.startsWith("group:") ? `section:${key.slice(6)}` : key,
+        mode,
+        displayedPreferences?.sections.map((section) => section.id) ?? [],
+      )
+      .catch(() => {});
+    closeSectionMenu();
+  };
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
   const rowActions = (channel: ChannelSummary) => {
@@ -628,6 +661,7 @@ function ReadySidebar({
                 return (
                   <details
                     key={section.key}
+                    data-sidebar-section={section.key}
                     className={styles.channelSection}
                     open={!sidebar.collapsed.includes(section.key)}
                   >
@@ -719,6 +753,88 @@ function ReadySidebar({
                           />
                         </span>
                       )}
+                      {preferences.sortWritable && (
+                        <MenuRoot
+                          open={sectionMenu?.key === section.key}
+                          onOpenChange={(open) => {
+                            if (open) {
+                              closeSectionMenu();
+                              setSectionMenu({ key: section.key });
+                            } else if (sectionMenu?.key === section.key)
+                              closeSectionMenu();
+                          }}
+                        >
+                          <MenuTrigger
+                            render={(props) => (
+                              <span className={styles.sectionSortAction}>
+                                <IconButton
+                                  {...props}
+                                  type="button"
+                                  size="sm"
+                                  icon={
+                                    <DotsThreeIcon
+                                      size={16}
+                                      aria-hidden="true"
+                                    />
+                                  }
+                                  aria-label={`More actions for ${section.title}`}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    props.onClick?.(event);
+                                  }}
+                                />
+                              </span>
+                            )}
+                          />
+                          <MenuPopup
+                            align="end"
+                            aria-label={`Actions for ${section.title}`}
+                          >
+                            <MenuSubmenu>
+                              <MenuSubmenuTrigger>
+                                <MenuIcon>
+                                  <ArrowsDownUpIcon size={14} />
+                                </MenuIcon>
+                                Sort
+                              </MenuSubmenuTrigger>
+                              <MenuSubmenuPopup
+                                aria-label={`Sort ${section.title}`}
+                                finalFocus={false}
+                              >
+                                <MenuRadioGroup
+                                  value={
+                                    preferences.data?.sort?.[
+                                      section.key.startsWith("group:")
+                                        ? `section:${section.key.slice(6)}`
+                                        : section.key
+                                    ] ?? "alpha"
+                                  }
+                                  onValueChange={(mode) =>
+                                    void setSectionSort(
+                                      section.key,
+                                      mode as "alpha" | "recent",
+                                    )
+                                  }
+                                >
+                                  <MenuRadioItem
+                                    closeOnClick={false}
+                                    value="recent"
+                                  >
+                                    Recent
+                                  </MenuRadioItem>
+                                  <MenuRadioItem
+                                    closeOnClick={false}
+                                    value="alpha"
+                                  >
+                                    A–Z
+                                  </MenuRadioItem>
+                                </MenuRadioGroup>
+                              </MenuSubmenuPopup>
+                            </MenuSubmenu>
+                          </MenuPopup>
+                        </MenuRoot>
+                      )}
                     </summary>
                     {section.rows.map((channel) => {
                       const sessions = childrenByParent.get(channel.id);
@@ -808,10 +924,47 @@ function ReadySidebar({
                   {list.error}
                 </p>
               )}
-              {list.status === "ready" && !channels.length && (
+              {!startup.ready && (
+                <p className={styles.empty} role="status">
+                  Loading your sidebar…
+                </p>
+              )}
+              {startup.ready && list.status === "ready" && !channels.length && (
                 <p className={styles.empty}>No channels yet.</p>
               )}
             </SidebarUnread>
+            {startup.updating && (
+              <p className={styles.preferenceNotice} role="status">
+                Updating sidebar details…
+              </p>
+            )}
+            {preferences.sortErrors?.map(({ group, mode, error }) => (
+              <div key={group} className={styles.preferenceNotice} role="alert">
+                <p>
+                  Couldn’t save the sort order for{" "}
+                  {sections.find(
+                    ({ key }) =>
+                      key ===
+                      (group.startsWith("section:")
+                        ? `group:${group.slice(8)}`
+                        : group),
+                  )?.title ?? "this section"}
+                  . {error}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSectionSort(group, mode)}
+                >
+                  Retry sort
+                </button>
+                <button
+                  type="button"
+                  onClick={() => preferences.dismissSortError(group)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            ))}
             {[...mute.intents.values()]
               .filter((intent) => !intent.pending)
               .map((intent) => (
@@ -842,7 +995,7 @@ function ReadySidebar({
                   </Button>
                 </ToastNotice>
               ))}
-            {preferences.status === "error" ? (
+            {startup.ready && preferences.status === "error" ? (
               <ToastNotice
                 title="Saved sidebar preferences couldn’t refresh"
                 description="Your conversations are still available."
@@ -852,13 +1005,27 @@ function ReadySidebar({
                   Retry
                 </Button>
               </ToastNotice>
-            ) : preferences.status !== "ready" ? (
-              <p className={styles.preferenceNotice}>
-                {preferences.status === "loading"
-                  ? "Loading saved groups and stars…"
-                  : "Saved groups and stars aren’t supported by this host yet."}
+            ) : startup.ready && preferences.status === "unsupported" ? (
+              <p className={styles.preferenceNotice} role="status">
+                Saved groups and stars aren’t supported by this host yet.
               </p>
             ) : null}
+            {list.activityStatus === "error" && !activityErrorDismissed && (
+              <ToastNotice
+                title="Couldn’t refresh recent activity"
+                description="Sections sorted by Recent may be out of date."
+                tone="warning"
+                onDismiss={() => setActivityErrorDismissed(true)}
+              >
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => queries.channels.refreshList?.()}
+                >
+                  Retry
+                </Button>
+              </ToastNotice>
+            )}
           </div>
         </Panel>
         <CreateChannelDialog

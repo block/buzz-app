@@ -582,3 +582,8 @@ html[data-keyboard-navigation]
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+
+.sectionSortAction {
+  flex-shrink: 0;
+  margin-block: calc(-1 * var(--space-1));
+}

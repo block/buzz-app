@@ -19,6 +19,7 @@ import {
 import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
+  type SidebarSortMutator,
   type SidebarMuteMutator,
   type SidebarDecoder,
   type SidebarPreferences,
@@ -78,8 +79,9 @@ export interface ReadTransport {
   /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;
-  /** Host-only decoder of the viewer's two signed sidebar preference coordinates. */
+  /** Host-only decoder of the viewer's signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
+  readonly writeSidebarSort?: SidebarSortMutator;
   readonly readState?: ReadStateHost;
   readonly channelKit?: ChannelKitHost;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
@@ -110,6 +112,11 @@ export interface ReadTransport {
   readonly relayAuthor: string;
   /** Explicit NIP-11 self from this community, never a contact-key fallback. */
   readonly archiveAuthority?: string;
+  /** Purpose-bound authoritative recency, verified and max 128 channel IDs. */
+  channelActivity?(
+    channelIds: readonly string[],
+    signal: AbortSignal,
+  ): Promise<RelayEvent[]>;
   query(
     filters: readonly ReadFilter[],
     signal?: AbortSignal,
@@ -256,6 +263,8 @@ export async function connectBrokerTransport(
     live?: boolean;
     presence?: boolean;
     sidebarPreferences?: boolean;
+    sidebarSortWrites?: boolean;
+    channelActivity?: boolean;
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     agentLibrary?: boolean;
@@ -573,6 +582,36 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    ...(session.sidebarSortWrites
+      ? {
+          async writeSidebarSort(group, mode, sectionIds, signal) {
+            const result = await fetch(`${endpoint}/sidebar-sort`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ group, mode, sectionIds }),
+              signal,
+            });
+            if (!result.ok) {
+              const failure = await readApiFailure(result);
+              throw new Error(failure.error);
+            }
+            const value = (await result.json()) as { groups?: unknown };
+            return (
+              projectSidebarPreferences(
+                undefined,
+                undefined,
+                undefined,
+                {
+                  version: 1,
+                  groups: value.groups,
+                },
+                sectionIds,
+              ).sort ?? {}
+            );
+          },
+        }
+      : {}),
     ...(session.sidebarMuteWrites
       ? {
           async writeSidebarMute(intent, signal) {
@@ -656,6 +695,30 @@ export async function connectBrokerTransport(
               recordServerTiming(result, profiling, event.id);
               return acceptPublish(result, event.id);
             },
+          },
+        }
+      : {}),
+    ...(session.channelActivity
+      ? {
+          async channelActivity(channelIds, signal) {
+            const result = await fetch(`${endpoint}/channel-activity`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Buzz-Read-Priority": "background",
+              },
+              body: JSON.stringify(
+                channelIds.map((channelId) => ({
+                  kinds: [9, 40002, 40008, 45001, 45003],
+                  "#h": [channelId],
+                  limit: 1,
+                })),
+              ),
+              signal,
+            });
+            if (!result.ok) throw httpReadError(result.status);
+            return parseEvents(await result.json(), verify, signal);
           },
         }
       : {}),

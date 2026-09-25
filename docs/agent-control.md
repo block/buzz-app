@@ -335,8 +335,10 @@ to the same immutable source revision as the native library. The build script us
 and stages binaries plus revision/target/SHA256 manifest in
 `src-tauri/resources/agent-runtime`. Native build copies them to
 `target/debug/agent-runtime`. Generated binaries/manifest are not committed.
-Startup verifies the exact tool set, target, revision and file hashes; required
-launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
+Startup verifies the exact tool set, target, revision and file hashes. Packaged
+macOS apps may accept signing-induced hash changes only when the runtime belongs
+to the running app and its resource seal verifies under Block's Developer ID.
+The final hashes are retained in memory; required launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
 download. The manifest detects corrupt/mixed resources, not a same-user attacker
 who can replace the app and manifest. Inputs are immutable, not a promise of
 bit-identical machine-independent binaries. This build is not a signed installer.

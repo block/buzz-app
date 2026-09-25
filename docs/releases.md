@@ -21,6 +21,9 @@ and set these repository Actions secrets:
 - `OSX_CODESIGN_ROLE`: ARN of `block-buzz-app-codesign-role`.
 - `CODESIGN_S3_BUCKET`: `block-buzz-app-artifacts-bucket-<environment>`.
 
-**Signing is blocked:** the runtime manifest contains hashes of binaries before
-signing changes them. Resolve that mismatch before merging. The workflow checks
-signatures, notarization, and runtime hashes before publishing a release.
+The manifest records hashes before signing. Packaged macOS apps accept changed
+hashes only after verifying their enclosing app's resource seal and Block Developer
+ID signature. The app retains the signed files' hashes in memory and checks them
+before each launch. Development builds and other platforms still require the
+manifest hashes to match. The release workflow verifies the signed seal,
+notarization, and manifest identity before publishing.

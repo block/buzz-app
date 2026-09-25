@@ -1,7 +1,12 @@
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
-import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
+import {
+  generateSecretKey,
+  getPublicKey,
+  nip44,
+  verifyEvent,
+} from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { prepareSidebarStar } from "./sidebar-stars.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
@@ -11,7 +16,7 @@ const disposals = [];
 afterEach(async () => {
   for (const dispose of disposals.splice(0)) await dispose();
 });
-async function harness() {
+async function harness(chunkBytes) {
   const key = generateSecretKey(),
     viewer = getPublicKey(key);
   let handler, queryFailure, publicationFailure;
@@ -20,6 +25,16 @@ async function harness() {
     calls = [];
   const server = createServer((req, res) => {
     req.headers.origin ??= `http://${req.headers.host}`;
+    if (chunkBytes) {
+      const incoming = req[Symbol.asyncIterator].bind(req);
+      // Force broker-visible boundaries; TCP may coalesce separate client writes.
+      req[Symbol.asyncIterator] = async function* () {
+        for await (const part of { [Symbol.asyncIterator]: incoming }) {
+          for (let offset = 0; offset < part.length; offset += chunkBytes)
+            yield part.subarray(offset, offset + chunkBytes);
+        }
+      };
+    }
     handler(req, res);
   });
   await relayBrokerPlugin({
@@ -219,3 +234,52 @@ it("real broker creates and assigns a section through the signed, confirmed narr
   ).toBe(400);
   expect(h.calls).toHaveLength(before);
 });
+
+it("preserves split UTF-8 section names in the published record and response", async () => {
+  const h = await harness(1);
+  const intent = {
+    channelId: "alpha",
+    createSection: {
+      id: "12345678-1234-1234-1234-123456789abc",
+      name: "Launch 🚀 · Café · 日本語",
+    },
+  };
+  const response = await h.post(intent, undefined, "sidebar-assignment");
+  expect(response.status).toBe(200);
+  const expected = {
+    sections: [{ ...intent.createSection, order: 0 }],
+    assignments: { alpha: intent.createSection.id },
+  };
+  expect.soft(await response.json()).toEqual({
+    ...expected,
+    starred: [],
+    muted: [],
+  });
+  expect(h.calls.map(({ url }) => new URL(url).pathname)).toEqual([
+    "/query",
+    "/events",
+    "/query",
+  ]);
+  const key = nip44.v2.utils.getConversationKey(h.key, h.viewer);
+  try {
+    const published = h.heads.get("channel-sections");
+    expect(JSON.parse(nip44.v2.decrypt(published.content, key))).toEqual({
+      version: 1,
+      ...expected,
+    });
+  } finally {
+    key.fill(0);
+  }
+});
+
+it.each(["sidebar-assignment", "sidebar-star"])(
+  "%s rejects split UTF-8 bodies over the byte budget before any upstream request",
+  async (route) => {
+    const h = await harness(1);
+    const intent = { channelId: "🚀".repeat(512) };
+    expect(JSON.stringify(intent).length).toBeLessThan(2048);
+    expect(Buffer.byteLength(JSON.stringify(intent))).toBeGreaterThan(2048);
+    expect((await h.post(intent, undefined, route)).status).toBe(413);
+    expect(h.calls).toEqual([]);
+  },
+);

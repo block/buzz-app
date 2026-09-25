@@ -1199,17 +1199,19 @@ export function relayBrokerPlugin({
             req.method === "POST"
           ) {
             const starring = route === "/api/relay/sidebar-star";
-            let raw = "";
+            const chunks = [];
+            let bytes = 0;
             for await (const part of req) {
-              raw += part;
-              if (Buffer.byteLength(raw) > 2048)
+              bytes += part.length;
+              if (bytes > 2048)
                 return json(res, 413, {
                   error: `Sidebar preference intent is too large`,
                 });
+              chunks.push(part);
             }
             let intent;
             try {
-              intent = JSON.parse(raw);
+              intent = JSON.parse(Buffer.concat(chunks).toString("utf8"));
               if (starring) assertSidebarStarIntent(intent);
               else assertSidebarAssignmentIntent(intent);
             } catch {

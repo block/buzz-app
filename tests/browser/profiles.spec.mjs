@@ -153,7 +153,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   const agentType = panel.getByRole("button", { name: /^Copy Agent type:/ });
   await expect(agentType).toContainText("Codex");
   const nip05 = panel.getByRole("button", { name: /^Copy NIP-05:/ });
-  await expect(nip05).toContainText("NIP-05 (unverified)");
+  await expect(nip05).toHaveText("NIP-05pinky@example.test");
   await agentType.focus();
   await page.keyboard.press("Shift+Tab");
   await expect(nip05).toBeFocused();

@@ -123,12 +123,10 @@ it("renders base labels/order, copies raw type/capabilities/NIP-05 and preserves
       name: /^Copy Agent type:/,
     });
     expect(type).toHaveTextContent("Goose");
-    expect(screen.getByText("NIP-05 (unverified)")).toBeInTheDocument();
+    expect(screen.queryByText("NIP-05 (unverified)")).not.toBeInTheDocument();
     const nip = screen.getByRole("button", { name: /^Copy NIP-05:/ });
     const cap = screen.getByRole("button", { name: /^Copy Capabilities:/ });
-    expect(nip).toHaveAccessibleName(
-      "Copy NIP-05: agent@example.test (unverified)",
-    );
+    expect(nip).toHaveAccessibleName("Copy NIP-05: agent@example.test");
     expect(type).toHaveAccessibleName("Copy Agent type: Goose");
     expect(cap).toHaveAccessibleName("Copy Capabilities: code, search");
     expect(

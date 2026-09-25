@@ -89,12 +89,7 @@ export function ProfilePublicMetadata({
   return (
     <>
       {nip05 && (
-        <ProfileCopyField
-          key={`nip05:${nip05}`}
-          label="NIP-05"
-          value={nip05}
-          unverified
-        />
+        <ProfileCopyField key={`nip05:${nip05}`} label="NIP-05" value={nip05} />
       )}
       {metadata?.agentType && (
         <ProfileCopyField
@@ -123,12 +118,10 @@ function ProfileCopyField({
   label,
   value,
   display = value,
-  unverified = false,
 }: {
   label: string;
   value: string;
   display?: string;
-  unverified?: boolean;
 }) {
   const notify = useToastNotification();
   const [copied, setCopied] = useState(false);
@@ -150,7 +143,7 @@ function ProfileCopyField({
         tabIndex={0}
         type="button"
         className={styles.copyField}
-        aria-label={`Copy ${label}: ${display}${unverified ? " (unverified)" : ""}`}
+        aria-label={`Copy ${label}: ${display}`}
         title={`Copy ${label}`}
         onClick={() => {
           const current = ++generation.current;
@@ -175,9 +168,6 @@ function ProfileCopyField({
           <span className={styles.fieldValue} title={display}>
             {display}
           </span>
-          {unverified && (
-            <span className={styles.identifier}>NIP-05 (unverified)</span>
-          )}
         </span>
         <span
           className={styles.copyIndicator}

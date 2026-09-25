@@ -116,8 +116,8 @@ its exact value and feedback. The other public fields are whole-row copy buttons
 with hover/keyboard indicators, a 1.5-second success check and base Buzz's copy
 feedback. Runtime names use the base labels (Goose, Claude Code, Codex, Aider),
 while copying the raw agent type; capabilities display/copy comma-separated values.
-NIP-05 remains self-declared and explicitly unverified. Display/copy never performs
-DNS verification or adds a verification badge.
+NIP-05 remains self-declared: the row matches base Buzz without a verification
+claim or badge. Display/copy never performs DNS verification.
 
 The typed `features/agents/public-metadata` projection consumes signature-verified
 session views scoped to the exact kind-10100 author. The newest event wins (lower

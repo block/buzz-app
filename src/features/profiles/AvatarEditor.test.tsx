@@ -184,5 +184,18 @@ it("rejects unsafe URLs before selecting the draft", async () => {
       target: { value },
     });
     expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+    expect(
+      screen.getByLabelText("Picture URL (optional)"),
+    ).toHaveAccessibleDescription(/Use an HTTPS image URL/);
   }
+});
+
+it("accepts equivalent HTTPS spellings without a misleading validation error", async () => {
+  render(<Form />);
+  await open();
+  fireEvent.change(screen.getByLabelText("Picture URL (optional)"), {
+    target: { value: "HTTPS://IMAGES.example:443/avatar.png" },
+  });
+  expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

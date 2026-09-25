@@ -43,7 +43,11 @@ impl Secret {
             ),
         };
         if let Some(picture) = picture {
-            content.insert("picture".into(), json!(picture));
+            if picture.is_empty() {
+                content.remove("picture");
+            } else {
+                content.insert("picture".into(), json!(picture));
+            }
         }
         let auth: Vec<String> =
             serde_json::from_str(auth).map_err(|_| "Invalid owner authorization")?;

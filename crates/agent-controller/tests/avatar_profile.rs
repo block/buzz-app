@@ -75,10 +75,14 @@ fn replacement_preserves_unowned_metadata_and_omitted_picture_but_can_clear() {
             .confirm(std::slice::from_ref(&event), event["id"].as_str().unwrap())
             .unwrap();
         let content: Value = serde_json::from_str(event["content"].as_str().unwrap()).unwrap();
-        assert_eq!(
-            content["picture"],
-            picture.unwrap_or("https://images.example/old.png")
-        );
+        if picture == Some("") {
+            assert!(content.get("picture").is_none());
+        } else {
+            assert_eq!(
+                content["picture"],
+                picture.unwrap_or("https://images.example/old.png")
+            );
+        }
         assert_eq!(content["about"], "Keep me");
         assert_eq!(content["nip05"], "alice@example.com");
         assert_eq!(content["extension"], json!({"nested":[1,2]}));

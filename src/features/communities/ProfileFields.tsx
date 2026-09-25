@@ -1,19 +1,10 @@
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { AvatarEditor } from "../profiles/AvatarEditor";
+import { avatarPictureError } from "../profiles/avatar-upload";
 import type { PersonalProfile } from "./service";
 import { PROFILE_ABOUT_MAX_LENGTH } from "./service";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
-
-function validPicture(value: string) {
-  if (!value) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password;
-  } catch {
-    return false;
-  }
-}
 
 export function profilesEqual(left: PersonalProfile, right: PersonalProfile) {
   return (
@@ -26,7 +17,7 @@ export function profilesEqual(left: PersonalProfile, right: PersonalProfile) {
 export function canSaveProfile(profile: PersonalProfile) {
   return (
     !!profile.name.trim() &&
-    validPicture(profile.picture) &&
+    !avatarPictureError(profile.picture) &&
     (profile.about?.length ?? 0) <= PROFILE_ABOUT_MAX_LENGTH
   );
 }

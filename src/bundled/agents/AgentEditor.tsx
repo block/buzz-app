@@ -1,6 +1,6 @@
 import { AvatarEditor } from "../../features/profiles/AvatarEditor";
-import { avatarPreview } from "../../features/profiles/avatar-upload";
-import { avatarSource } from "../../shared/avatar-source";
+import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
+import { avatarPictureError } from "../../features/profiles/avatar-upload";
 import { XIcon } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useEffect, useRef, useState } from "react";
@@ -54,6 +54,10 @@ export function AgentEditor({
   const stale = current.revision !== agent.revision;
   const blocked = state.busy || uploading || state.status !== "ready";
   const picture = current.picture ?? agent.picture ?? avatar ?? "";
+  const preview = useAvatarPreview(
+    state.data?.avatarEditingAvailable ? "" : picture,
+    agent.relayUrl,
+  );
   const canClose =
     !state.busy || !!(state.pendingLaunch || state.pendingCredentialWrite);
   const launchBlocked = !!agentLaunchBlock(state, agent) || dirty;
@@ -105,12 +109,9 @@ export function AgentEditor({
             onSubmit={(event) => {
               event.preventDefault();
               if (blocked || !dirty || stale) return;
-              if (
-                current.picture &&
-                (!current.picture.startsWith("https://") ||
-                  !avatarSource(current.picture))
-              ) {
-                setError("Use an HTTPS image URL without credentials.");
+              const pictureError = avatarPictureError(current.picture ?? "");
+              if (pictureError) {
+                setError(pictureError);
                 return;
               }
               let edit: ReturnType<typeof agentEdit>;
@@ -161,7 +162,7 @@ export function AgentEditor({
                   />
                 ) : (
                   <Avatar
-                    src={avatarPreview(picture, agent.relayUrl)}
+                    src={preview}
                     alt=""
                     fallback={displayName}
                     size="large"

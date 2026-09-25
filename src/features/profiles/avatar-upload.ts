@@ -3,6 +3,16 @@ import { connectBrokerTransport, mediaUrl } from "../relay/transport";
 import { communityDestination } from "../communities/destination";
 import { avatarSource } from "../../shared/avatar-source";
 
+/** Shared save policy; display-only inherited artwork may still fail validation. */
+export function avatarPictureError(value: string): string | undefined {
+  if (
+    !value ||
+    (value.length <= 2048 && avatarSource(value)?.startsWith("https://"))
+  )
+    return undefined;
+  return "Use an HTTPS image URL without credentials (up to 2,048 characters), or remove the avatar.";
+}
+
 export function avatarPreview(
   value: string,
   community?: string,

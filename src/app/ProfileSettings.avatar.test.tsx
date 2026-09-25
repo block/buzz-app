@@ -40,7 +40,11 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function setup(selected: string | null = a, picture = "") {
+function setup(
+  selected: string | null = a,
+  picture = "",
+  inheritedPicture = "",
+) {
   let state: ClientSnapshot = {
     status: "ready",
     viewer: "a".repeat(64),
@@ -73,7 +77,20 @@ function setup(selected: string | null = a, picture = "") {
     string,
     Awaited<ReturnType<typeof api.inspectProfile>>
   >([
-    [a, original("Alpha human")],
+    [
+      a,
+      {
+        ...original("Alpha human"),
+        profile: {
+          ...original("Alpha human").profile,
+          picture: inheritedPicture,
+        },
+        existing: {
+          ...original("Alpha human").existing,
+          picture: inheritedPicture,
+        },
+      },
+    ],
     [b, original("Beta human")],
   ]);
   vi.mocked(api.inspectProfile).mockImplementation(async (id) => {
@@ -393,6 +410,10 @@ it("confirms a dispatched save through its captured session after leaving Settin
 
 it.each([
   ["https://a.example/media/upload.png", "https://public.example/previous.png"],
+  [
+    "https://A.example:443/media/upload.png",
+    "https://public.example/previous.png",
+  ],
   ["https://public.example/new.png", "https://public.example/new.png"],
   ["", ""],
 ])(
@@ -419,5 +440,31 @@ it.each([
       picture: expected,
       about: "Keep this",
     });
+  },
+);
+
+it.each(["http://images.example/avatar.png", "data:image/png;base64,AA=="])(
+  "explains inherited invalid picture %s and recovers after removal",
+  async (picture) => {
+    setup(a, "", picture);
+    await editName();
+    expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Use an HTTPS image URL without credentials",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit avatar" }));
+    const input = await screen.findByLabelText("Picture URL (optional)");
+    expect(input).toHaveValue(picture);
+    expect(input).toHaveAccessibleDescription(/Use an HTTPS image URL/);
+    fireEvent.click(screen.getByRole("button", { name: "Remove avatar" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
+    save();
+    await screen.findByText("Profile updated");
+    expect(api.publishProfile).toHaveBeenCalledWith(
+      a,
+      { name: "Changed", picture: "", about: "Keep this" },
+      expect.objectContaining({ picture }),
+    );
   },
 );

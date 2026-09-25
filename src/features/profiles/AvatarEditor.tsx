@@ -10,8 +10,8 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { avatarSource } from "../../shared/avatar-source";
-import { avatarPreview, emojiAvatar, uploadAvatar } from "./avatar-upload";
+import { avatarPictureError, emojiAvatar, uploadAvatar } from "./avatar-upload";
+import { useAvatarPreview } from "./use-avatar-preview";
 
 type Props = {
   value: string;
@@ -26,6 +26,9 @@ type Props = {
 /** One draft editor for humans and agents; the enclosing form owns profile Save. */
 export function AvatarEditor(props: Props) {
   const [open, setOpen] = useState(false);
+  const preview = useAvatarPreview(props.value, props.community);
+  const pictureError = avatarPictureError(props.value);
+  const errorId = useId();
   const callback = useRef(props.onBusyChange);
   callback.current = props.onBusyChange;
   useEffect(() => {
@@ -36,7 +39,7 @@ export function AvatarEditor(props: Props) {
     <Popover.Root open={open} onOpenChange={setOpen}>
       <div className="relative mx-auto size-36 shrink-0">
         <Avatar
-          src={avatarPreview(props.value, props.community)}
+          src={preview}
           alt="Avatar"
           fallback={props.name}
           size="fill"
@@ -48,6 +51,7 @@ export function AvatarEditor(props: Props) {
               <IconButton
                 variant="prominent"
                 aria-label="Edit avatar"
+                aria-describedby={pictureError ? errorId : undefined}
                 icon={<PencilSimpleIcon size={24} />}
                 disabled={props.disabled}
               />
@@ -55,6 +59,11 @@ export function AvatarEditor(props: Props) {
           />
         </div>
       </div>
+      {pictureError && (
+        <p id={errorId} role="alert" className="text-body-sm text-danger">
+          {pictureError}
+        </p>
+      )}
       <Popover.Portal>
         <Popover.Positioner
           side="bottom"
@@ -142,11 +151,8 @@ function AvatarDraft({
       }
     }
   }
-  const valid =
-    !picture ||
-    (picture.length <= 2048 &&
-      picture.startsWith("https://") &&
-      !!avatarSource(picture));
+  const pictureError = avatarPictureError(picture);
+  const preview = useAvatarPreview(picture, community);
   return (
     <div className="space-y-4">
       <Tabs
@@ -189,7 +195,7 @@ function AvatarDraft({
           </div>
         ) : (
           <Avatar
-            src={avatarPreview(picture, community)}
+            src={preview}
             alt="Avatar preview"
             fallback={name}
             size="fill"
@@ -238,7 +244,7 @@ function AvatarDraft({
               }}
             />
           </fieldset>
-          <Field label="Picture URL (optional)">
+          <Field label="Picture URL (optional)" error={pictureError}>
             <Input
               type="url"
               placeholder="Paste an image URL"
@@ -304,7 +310,7 @@ function AvatarDraft({
           disabled={
             disabled ||
             busy ||
-            (mode === "emoji" ? !community || !emoji.trim() : !valid)
+            (mode === "emoji" ? !community || !emoji.trim() : !!pictureError)
           }
           onClick={() => {
             if (mode === "emoji")

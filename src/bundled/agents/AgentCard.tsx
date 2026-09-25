@@ -8,7 +8,7 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
-import { avatarPreview } from "../../features/profiles/avatar-upload";
+import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import {
   DotsThreeIcon,
   UsersIcon,
@@ -52,9 +52,13 @@ export function AgentCard({
   );
   const managed = editable.length === 1 ? editable[0] : undefined;
   const source = avatarSource(managed?.picture ?? avatar);
+  const managedPicture = useAvatarPreview(
+    managed?.picture ?? "",
+    managed?.relayUrl,
+  );
   const picture =
     managed?.picture != null
-      ? avatarPreview(managed.picture, managed.relayUrl)
+      ? managedPicture
       : source?.startsWith("data:")
         ? source
         : source

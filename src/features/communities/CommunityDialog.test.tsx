@@ -155,22 +155,67 @@ it("names exact relay claim refusals and keeps other failures generic", async ()
   }
 });
 
-it("keeps a community upload out of first-join local defaults without changing the published profile", async () => {
+it.each([
+  "https://relay.example/media/avatar.png",
+  "https://RELAY.example:443/media/avatar.png",
+])(
+  "keeps %s out of first-join local defaults without changing the published profile",
+  async (picture) => {
+    api.inspectProfile.mockResolvedValueOnce({
+      exists: true,
+      existing: { name: "Fixture" },
+      profile: {
+        name: "Fixture",
+        picture,
+        about: "",
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const route = String(url).split("/").at(-1);
+        if (route === "register") return Response.json({ id: "x" });
+        if (route === "info") return Response.json({ name: "Fixture" });
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+    const communities = {
+      snapshot: () => ({ status: "ready", profile: { name: "", picture: "" } }),
+      joined: vi.fn(),
+    } as unknown as Communities;
+    render(
+      <CommunityDialog
+        communities={communities}
+        mode="join"
+        close={() => {}}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Relay URL"), "wss://relay.example");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Open community" }),
+    );
+    expect(api.publishProfile).not.toHaveBeenCalled();
+    expect(communities.joined).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "https://relay.example" }),
+      { name: "Fixture", picture: "", about: "" },
+    );
+  },
+);
+
+it("explains an inherited invalid avatar when editing at join and recovers on replacement", async () => {
+  const picture = "http://images.example/avatar.png";
   api.inspectProfile.mockResolvedValueOnce({
     exists: true,
-    existing: { name: "Fixture" },
-    profile: {
-      name: "Fixture",
-      picture: "https://relay.example/media/avatar.png",
-      about: "",
-    },
+    existing: { name: "Fixture", picture },
+    profile: { name: "Fixture", picture, about: "" },
   });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      const route = String(url).split("/").at(-1);
-      if (route === "register") return Response.json({ id: "x" });
-      if (route === "info") return Response.json({ name: "Fixture" });
+      if (url.endsWith("/register")) return Response.json({ id: "x" });
+      if (url.endsWith("/info")) return Response.json({ name: "Fixture" });
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
@@ -184,12 +229,28 @@ it("keeps a community upload out of first-join local defaults without changing t
   const user = userEvent.setup();
   await user.type(screen.getByLabelText("Relay URL"), "wss://relay.example");
   await user.click(screen.getByRole("button", { name: "Continue" }));
+  await user.type(await screen.findByLabelText("Display name"), " changed");
+  expect(
+    screen.getByRole("button", { name: "Publish profile & open" }),
+  ).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent("Use an HTTPS image URL");
+  await user.click(screen.getByRole("button", { name: "Edit avatar" }));
+  const input = await screen.findByLabelText("Picture URL (optional)");
+  expect(input).toHaveAccessibleDescription(/Use an HTTPS image URL/);
+  await user.clear(input);
+  await user.type(input, "https://images.example/new.png");
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   await user.click(
-    await screen.findByRole("button", { name: "Open community" }),
+    screen.getByRole("button", { name: "Publish profile & open" }),
   );
-  expect(api.publishProfile).not.toHaveBeenCalled();
-  expect(communities.joined).toHaveBeenCalledWith(
-    expect.objectContaining({ id: "https://relay.example" }),
-    { name: "Fixture", picture: "", about: "" },
+  expect(api.publishProfile).toHaveBeenCalledWith(
+    "https://relay.example",
+    {
+      name: "Fixture changed",
+      picture: "https://images.example/new.png",
+      about: "",
+    },
+    { name: "Fixture", picture },
   );
 });

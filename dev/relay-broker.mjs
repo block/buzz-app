@@ -1235,6 +1235,7 @@ export function relayBrokerPlugin({
               channelKit: true,
               readState: true,
               agentLibrary: true,
+              agentLogProof: true,
               agentMemories: true,
               live: true,
               presence: true,
@@ -1696,6 +1697,7 @@ export function relayBrokerPlugin({
               "/api/relay/profile",
               "/api/relay/direct-message",
               "/api/relay/authorize-agent",
+              "/api/relay/agent-log-proof",
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/invite",
@@ -1789,6 +1791,44 @@ export function relayBrokerPlugin({
             } finally {
               gitReads--;
             }
+          }
+          if (route === "/api/relay/agent-log-proof") {
+            // A proof never delegates the broker's key as a general signing API.
+            // Native validates the saved attestation and consumes its challenge.
+            let canonicalRelay;
+            try {
+              canonicalRelay = relayOrigin(filters?.relayUrl);
+            } catch {
+              return json(res, 400, {
+                error: "Invalid harness log authorization",
+              });
+            }
+            const wssRelay = canonicalRelay.replace(/^https:/, "wss:");
+            if (
+              !scoped ||
+              !filters ||
+              Object.keys(filters).length !== 4 ||
+              typeof filters.id !== "string" ||
+              !/^[0-9a-f]{64}-[0-9a-f]{64}$/.test(filters.id) ||
+              !/^[0-9a-f]{64}$/.test(filters.pubkey ?? "") ||
+              filters.id !==
+                `${filters.pubkey}-${createHash("sha256").update(wssRelay).digest("hex")}` ||
+              filters.pubkey === viewer ||
+              canonicalRelay !== relay ||
+              typeof filters.nonce !== "string" ||
+              !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+                filters.nonce,
+              )
+            )
+              return json(res, 400, {
+                error: "Invalid harness log authorization",
+              });
+            cancel.signal.throwIfAborted();
+            const message = `buzz-app:harness-log:v1:${filters.id}:${filters.pubkey}:${wssRelay}:${filters.nonce}`;
+            const signature = Buffer.from(
+              schnorr.sign(createHash("sha256").update(message).digest(), key),
+            ).toString("hex");
+            return json(res, 200, { signature });
           }
           if (route === "/api/relay/authorize-agent") {
             if (

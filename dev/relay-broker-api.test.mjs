@@ -3,6 +3,7 @@ import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
 import { createServer } from "node:http";
 import { createHash, createHmac } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import { ReadableStream } from "node:stream/web";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
@@ -127,6 +128,104 @@ const success = (call) =>
       ? { accepted: true, event_id: call.body.id }
       : [],
   );
+
+test("production transport obtains scoped broker harness log proofs for aliases and canonical origins", async () => {
+  const h = await harness(success);
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const viewer = getPublicKey(key);
+  const pubkey = "ab".repeat(32);
+  const relayUrl = "wss://primary.example";
+  const id = `${pubkey}-${createHash("sha256").update(relayUrl).digest("hex")}`;
+  const nonce = "12345678-1234-1234-1234-123456789abc";
+  const target = { id, pubkey, relayUrl };
+  try {
+    for (const community of ["primary", fixtureRelayUrl]) {
+      const transport = await connectBrokerTransport(
+        h.base,
+        undefined,
+        community,
+      );
+      expect(transport.authorizeAgentLog).toBeTypeOf("function");
+      const signature = await transport.authorizeAgentLog(target, nonce);
+      const digest = createHash("sha256")
+        .update(`buzz-app:harness-log:v1:${id}:${pubkey}:${relayUrl}:${nonce}`)
+        .digest();
+      expect(
+        schnorr.verify(
+          Buffer.from(signature, "hex"),
+          digest,
+          Buffer.from(viewer, "hex"),
+        ),
+      ).toBe(true);
+      await expect(
+        transport.authorizeAgentLog(
+          { ...target, relayUrl: "wss://secondary.example" },
+          nonce,
+        ),
+      ).rejects.toThrow("Log authorization unavailable");
+    }
+    const other = await connectBrokerTransport(h.base, undefined, "secondary");
+    await expect(other.authorizeAgentLog(target, nonce)).rejects.toThrow(
+      "Log authorization unavailable",
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+test("harness log proof signs only exact scoped community and agent inputs", async () => {
+  const h = await harness(success);
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const viewer = getPublicKey(key);
+  const pubkey = "ab".repeat(32);
+  const relayUrl = "wss://primary.example";
+  const id = `${pubkey}-${createHash("sha256").update(relayUrl).digest("hex")}`;
+  const nonce = "12345678-1234-1234-1234-123456789abc";
+  const target = { id, pubkey, relayUrl, nonce };
+  try {
+    const registered = await h.post("register", { url: fixtureRelayUrl });
+    expect(registered.status).toBe(200);
+    const route = "primary/agent-log-proof";
+    expect((await h.post("agent-log-proof", target)).status).toBe(400);
+    for (const invalid of [
+      { ...target, id: `${"f".repeat(64)}-${id.slice(65)}` },
+      { ...target, pubkey: viewer },
+      { ...target, relayUrl: "wss://secondary.example" },
+      { ...target, relayUrl: "file:///private" },
+      { ...target, nonce: "invalid" },
+      { ...target, extra: true },
+    ])
+      expect((await h.post(route, invalid)).status).toBe(400);
+    const result = await h.post(route, target);
+    expect(result.status).toBe(200);
+    const { signature } = await result.json();
+    const digest = createHash("sha256")
+      .update(`buzz-app:harness-log:v1:${id}:${pubkey}:${relayUrl}:${nonce}`)
+      .digest();
+    expect(
+      schnorr.verify(
+        Buffer.from(signature, "hex"),
+        digest,
+        Buffer.from(viewer, "hex"),
+      ),
+    ).toBe(true);
+    expect(
+      schnorr.verify(
+        Buffer.from(signature, "hex"),
+        createHash("sha256")
+          .update(
+            `buzz-app:harness-log:v1:${id}:${pubkey}:wss://secondary.example:${nonce}`,
+          )
+          .digest(),
+        Buffer.from(viewer, "hex"),
+      ),
+    ).toBe(false);
+  } finally {
+    await h.close();
+  }
+});
 
 test("saved icon discovery survives join-policy failure without changing join discovery", async () => {
   const icon = "https://images.example/icon@2x.png";

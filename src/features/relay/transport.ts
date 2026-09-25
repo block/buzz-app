@@ -65,6 +65,11 @@ export interface RelayWriter {
 export interface ReadTransport {
   readonly projectGit?: ProjectGit;
   readonly readAgentMemories?: MemoryReader;
+  /** Session-scoped owner proof, not an arbitrary signing capability. */
+  readonly authorizeAgentLog?: (
+    target: { id: string; pubkey: string; relayUrl: string },
+    nonce: string,
+  ) => Promise<string>;
   readonly uploadAttachment?: AttachmentUpload;
   /** Host-owned idempotent DM opening. The session verifies membership before use. */
   readonly openDirectMessage?: (
@@ -291,6 +296,7 @@ export async function connectBrokerTransport(
     channelKit?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
+    agentLogProof?: boolean;
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
@@ -451,6 +457,37 @@ export async function connectBrokerTransport(
               signal,
             }),
           ),
+        }
+      : {}),
+    ...(session.agentLogProof === true && community
+      ? {
+          authorizeAgentLog: async (
+            target: { id: string; pubkey: string; relayUrl: string },
+            nonce: string,
+          ) => {
+            if (
+              !session.relayUrl ||
+              relayOrigin(target.relayUrl) !== relayOrigin(session.relayUrl)
+            )
+              throw new Error("Log authorization unavailable");
+            const response = await fetch(`${endpoint}/agent-log-proof`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...target, nonce }),
+            });
+            if (!response.ok) throw new Error("Log authorization unavailable");
+            const value: unknown = await response.json();
+            if (
+              !value ||
+              typeof value !== "object" ||
+              !("signature" in value) ||
+              typeof value.signature !== "string" ||
+              !/^[0-9a-f]{128}$/.test(value.signature)
+            )
+              throw new Error("Log authorization unavailable");
+            return value.signature;
+          },
         }
       : {}),
     ...(session.agentMemories === true && community

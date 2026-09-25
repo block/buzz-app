@@ -8,6 +8,7 @@ import {
 import type {
   AgentControl,
   AgentView,
+  AgentLogTarget,
   RestartChange,
   RestartDiffEntry,
 } from "../../features/agents/control";
@@ -18,6 +19,7 @@ import { useIdentityNames } from "../../features/identity-names/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
+import { FileTextIcon, CaretRightIcon } from "../../shared/design-system/icons";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { AgentEditor } from "../agents/AgentEditor";
@@ -60,12 +62,16 @@ export function ProfileRuntime({
   session,
   owner,
   instances,
+  authorizeLog,
+  onOpenLog,
 }: {
   control: AgentControl;
   agent: AgentView;
   session: RelaySession;
   owner: string;
   instances: ReactNode;
+  authorizeLog?: AgentLogTarget["authorize"] | undefined;
+  onOpenLog?(target: AgentLogTarget): void;
 }) {
   const state = useAgentControl(control);
   const [editing, setEditing] = useState(false);
@@ -130,6 +136,27 @@ export function ProfileRuntime({
           disabled={blocked}
           onCheckedChange={toggle}
         />
+        {control.readLog && authorizeLog && onOpenLog && (
+          <div className={styles.logEntry}>
+            <Button
+              size="compact"
+              variant="ghost"
+              disabled={state.status !== "ready"}
+              onClick={() =>
+                onOpenLog({
+                  id: agent.id,
+                  pubkey: agent.pubkey,
+                  relayUrl: agent.relayUrl,
+                  authorize: authorizeLog,
+                })
+              }
+            >
+              <FileTextIcon size={18} aria-hidden="true" />
+              Harness log
+              <CaretRightIcon size={18} aria-hidden="true" />
+            </Button>
+          </div>
+        )}
       </section>
       {state.status === "error" && (
         <div className="flex flex-col items-start gap-2">

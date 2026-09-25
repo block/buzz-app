@@ -31,6 +31,8 @@ fn main() {
             "agent_control_create_commit",
             "agent_control_creation_profile",
             "agent_control_snapshot",
+            "agent_control_log_challenge",
+            "agent_control_read_log",
             "agent_control_save",
             "agent_control_start_on_app_launch",
             "agent_control_delete",

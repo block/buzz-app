@@ -1025,6 +1025,133 @@ it("shows Retry after persistent or genuine read failure without hiding the erro
   expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
 });
 
+for (const mode of ["edit", "create"] as const) {
+  it(`${mode} saves no untouched build defaults after the native defaults change`, async () => {
+    const create = vi.fn();
+    vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+    const { f, control } = setup("connected", (fixture) => {
+      Object.assign(fixture.agent.harness, {
+        command: "buzz-agent",
+        provider: "",
+        model: "",
+        args: [],
+      });
+      fixture.data.agentDefaults = {
+        provider: "databricks_v2",
+        model: "first-model",
+        ownerOnly: true,
+      };
+      fixture.data.databricksDefaults = {
+        host: "https://first.example.com",
+        filter: "first-*",
+      };
+      fixture.data.createAvailable = true;
+      fixture.data.defaultWorkspace = "/fixture/workspace";
+      fixture.host.models = {
+        begin: async () => 1,
+        cancel: async () => {},
+        run: async () => {
+          throw Error("Untouched defaults must not request models");
+        },
+      };
+      fixture.host.prepareCreate = async () => ({
+        id: "created",
+        pubkey: "cd".repeat(32),
+      });
+      fixture.host.commitCreate = create.mockImplementation(
+        async (_requestId, edit) => {
+          fixture.data.agents.push({
+            ...structuredClone(fixture.agent),
+            ...edit,
+            id: "created",
+            profilePending: true,
+          });
+          return structuredClone(fixture.data);
+        },
+      );
+      fixture.host.publishProfile = async () => structuredClone(fixture.data);
+    });
+    if (mode === "create") {
+      fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+    } else {
+      const cards = await screen.findAllByRole("article", {
+        name: "Agent Fixture agent",
+      });
+      const card = cards[0];
+      if (!card) throw Error("Missing agent");
+      fireEvent.click(
+        within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+      );
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+    }
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Model" }));
+    expect(
+      within(dialog).getByLabelText("Databricks workspace (HTTPS origin)"),
+    ).toHaveValue("https://first.example.com");
+    expect(
+      within(dialog).getByLabelText("Model", {
+        exact: true,
+        selector: "input",
+      }),
+    ).toHaveAttribute("placeholder", "Build default: first-model");
+    expect(
+      within(dialog).getByText(
+        "Editing either field saves both displayed values.",
+      ),
+    ).toBeVisible();
+    fireEvent.change(within(dialog).getByLabelText("Name"), {
+      target: { value: "Name-only change" },
+    });
+    f.data.agentDefaults = {
+      provider: "databricks",
+      model: "next-model",
+      ownerOnly: true,
+    };
+    f.data.databricksDefaults = {
+      host: "https://next.example.com",
+      filter: "next-*",
+    };
+    await act(async () => control.refresh());
+    expect(
+      within(dialog).getByLabelText("Databricks workspace (HTTPS origin)"),
+    ).toHaveValue("https://next.example.com");
+    expect(
+      within(dialog).getByLabelText("Model filter (optional)"),
+    ).toHaveValue("next-*");
+    expect(
+      within(dialog).getByLabelText("Model", {
+        exact: true,
+        selector: "input",
+      }),
+    ).toHaveAttribute("placeholder", "Build default: next-model");
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: mode === "create" ? "Create agent" : "Save changes",
+      }),
+    );
+    if (mode === "create")
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    else
+      await within(dialog).findByText("Saved. Running work was not restarted.");
+    const edit =
+      mode === "create"
+        ? create.mock.calls[0]?.[1]
+        : (
+            f.calls.find((call) => call.action === "save")?.payload as
+              | {
+                  edit: unknown;
+                }
+              | undefined
+          )?.edit;
+    expect(edit).toMatchObject({
+      name: "Name-only change",
+      environment: {},
+      harness: { command: "buzz-agent", provider: "", model: "" },
+    });
+    expect(edit.harness.databricks).toBeUndefined();
+  });
+}
 it("qualifies management identities while keeping configured names and edit targets exact", async () => {
   const { f } = setup("ready", (fixture) => {
     fixture.data.agents.push({

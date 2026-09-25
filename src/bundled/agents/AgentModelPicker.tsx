@@ -18,6 +18,7 @@ export function AgentModelPicker({
   savedRevision,
   control,
   defaults,
+  defaultModel,
   onPiProviders,
   onChange,
   disabled = false,
@@ -29,6 +30,7 @@ export function AgentModelPicker({
   draft: AgentDraft;
   control: AgentControl;
   defaults: ControlSnapshot["databricksDefaults"];
+  defaultModel?: string | undefined;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const statusId = useId();
@@ -253,7 +255,11 @@ export function AgentModelPicker({
                 if (supported && !fresh && attempted.current !== key)
                   void run("connect");
               }}
-              placeholder="Choose or enter a model"
+              placeholder={
+                draft.command === "buzz-agent" && defaultModel
+                  ? `Build default: ${defaultModel}`
+                  : "Choose or enter a model"
+              }
               onBlur={commitQuery}
               onKeyDown={(event) => {
                 if (event.key === "Escape") setQuery(null);
@@ -441,6 +447,9 @@ export function AgentModelPicker({
                           }
                         />
                       </Field>
+                      <p className="text-body-sm text-secondary">
+                        Editing either field saves both displayed values.
+                      </p>
                       <div className="flex flex-wrap gap-2">
                         <Button
                           disabled={disabled || busy}

@@ -39,10 +39,16 @@ it("keeps the header cutout and menu status in sync with presence", () => {
       setPreference: () => {},
     },
   } as unknown as Communities;
+  const actions: readonly [] = [];
+  const accountActions = {
+    subscribe,
+    snapshot: () => actions,
+  } as unknown as AccountActionsService;
 
   render(
     <ProfileButton
       communities={communities}
+      accountActions={accountActions}
       settingsSelected={false}
       onSettings={() => {}}
     />,

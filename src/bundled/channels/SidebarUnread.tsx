@@ -30,7 +30,9 @@ function unreadEdges(list: HTMLElement): Edges {
   for (const row of rows) {
     // A collapsed section represents its hidden rows at the summary. Clicking
     // an edge cue expands that section before revealing the actual channel.
-    const closed = row.closest("details:not([open])");
+    const closed = row
+      .closest("[data-sidebar-section]")
+      ?.querySelector("details:not([open])");
     const anchor = closed?.querySelector("summary") ?? row;
     const rect = anchor.getBoundingClientRect();
     if (!rect.height || !rect.width) continue;
@@ -115,11 +117,12 @@ export function SidebarUnread({
     const target = edge === "above" ? targets.at(-1) : targets[0];
     if (!target) return;
     const { row } = target;
-    const section = row.closest("details");
-    if (section && !section.open) {
+    const section = row.closest("[data-sidebar-section]");
+    const disclosure = section?.querySelector("details");
+    if (disclosure && !disclosure.open) {
       // Use the section's controlled toggle path so React removes `inert`
       // before focus enters the newly expanded content.
-      section.querySelector<HTMLElement>("summary")?.click();
+      disclosure.querySelector<HTMLElement>("summary")?.click();
     }
     requestAnimationFrame(() => {
       const rect = row.getBoundingClientRect();

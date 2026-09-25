@@ -558,7 +558,7 @@ function ReadySidebar({
             const trigger = sidebar.list.current?.querySelector<HTMLElement>(
               `[data-channel-id="${CSS.escape(channel.id)}"]`,
             );
-            const section = trigger?.closest("details");
+            const section = trigger?.closest("[data-sidebar-section]");
             const rows = [
               ...(section?.querySelectorAll<HTMLElement>(
                 "button[data-channel-id]",

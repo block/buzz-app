@@ -59,7 +59,7 @@ export function SidebarSection({
       </div>
     );
   return (
-    <div className={styles.channelSection}>
+    <div className={styles.channelSection} data-sidebar-section="">
       <details open={open}>
         {/* biome-ignore lint/a11y/noStaticElementInteractions: summary has native keyboard activation. */}
         <summary
@@ -80,9 +80,6 @@ export function SidebarSection({
             <CaretDownIcon weight="bold" size={15} />
           </span>
         </summary>
-        <div id={id} className={styles.sectionContent} inert={!open}>
-          <div>{children}</div>
-        </div>
       </details>
       <div className={styles.sectionActions}>
         <Menu.Root>
@@ -140,6 +137,14 @@ export function SidebarSection({
             icon={<PlusIcon weight="bold" size={15} />}
           />
         )}
+      </div>
+      <div
+        id={id}
+        className={styles.sectionContent}
+        inert={!open}
+        hidden={!open}
+      >
+        <div>{children}</div>
       </div>
     </div>
   );

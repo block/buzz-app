@@ -18,7 +18,12 @@ function Section() {
   const [revision, setRevision] = useState(0);
   return (
     <>
-      <SidebarSection title="Channels" open={open} onToggle={setOpen}>
+      <SidebarSection
+        title="Channels"
+        open={open}
+        onToggle={setOpen}
+        newMessage={() => {}}
+      >
         <button type="button">General</button>
       </SidebarSection>
       <button type="button" onClick={() => setRevision(revision + 1)}>
@@ -51,6 +56,20 @@ it("keeps section actions independent of disclosure and supports menu keyboard d
   await user.click(screen.getByLabelText("Channels"));
   expect(screen.getByRole("button", { name: "General" })).toBeVisible();
 });
+it("orders header actions before section rows for keyboard navigation", async () => {
+  const user = userEvent.setup();
+  render(<Section />);
+  const summary = screen.getByLabelText("Channels");
+  summary.focus();
+  await user.tab();
+  expect(
+    screen.getByRole("button", { name: "More options for Channels" }),
+  ).toHaveFocus();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "New message" })).toHaveFocus();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "General" })).toHaveFocus();
+});
 it("retains an expansion requested by an offscreen unread cue on subsequent renders", async () => {
   const user = userEvent.setup();
   render(<Section />);
@@ -58,8 +77,7 @@ it("retains an expansion requested by an offscreen unread cue on subsequent rend
   await user.click(summary);
   const details = summary.closest("details");
   if (!details) throw new Error("Missing section disclosure");
-  details.open = true;
-  fireEvent(details, new Event("toggle"));
+  fireEvent.click(summary);
   await user.click(screen.getByRole("button", { name: "Update 0" }));
   expect(details).toHaveAttribute("open");
   expect(screen.getByRole("button", { name: "General" })).toBeVisible();

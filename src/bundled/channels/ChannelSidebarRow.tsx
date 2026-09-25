@@ -148,7 +148,9 @@ export function ChannelSidebarRow({
               shape="round"
               aria-label={`Remove ${channel.name} from DMs`}
               onClick={(event) => {
-                const section = event.currentTarget.closest("details");
+                const section = event.currentTarget.closest(
+                  "[data-sidebar-section]",
+                );
                 const rows = [
                   ...(section?.querySelectorAll<HTMLElement>(
                     "button[data-channel-id]",

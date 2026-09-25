@@ -136,7 +136,15 @@ it("only hints the compiled model when the current provider and overrides can us
   }
 });
 
-function setup(savedKey = false) {
+function setup({
+  savedKeys = [],
+  environment = {},
+  provider = "openai",
+}: {
+  savedKeys?: string[];
+  environment?: AgentDraft["environment"];
+  provider?: string;
+} = {}) {
   const fixture = controlFixture();
   fixture.data.harnessOptions = [
     {
@@ -164,8 +172,9 @@ function setup(savedKey = false) {
       ...agentDraft(fixture.agent),
       command: "/usr/local/bin/goose",
       args: '["acp"]',
-      provider: "openai",
+      provider,
       model: "",
+      environment,
     }));
     draft = value;
     return (
@@ -179,7 +188,7 @@ function setup(savedKey = false) {
           error: null,
         }}
         disabled={false}
-        environmentKeys={savedKey ? ["OPENAI_API_KEY"] : []}
+        environmentKeys={savedKeys}
         onChange={(patch) => setValue((current) => ({ ...current, ...patch }))}
       />
     );
@@ -230,7 +239,7 @@ it("uses a masked OpenAI key for Goose model lookup and discards unsaved keys on
 });
 
 it("preserves a saved key when blank and replaces it only when entered", async () => {
-  const { draft, view, control } = setup(true);
+  const { draft, view, control } = setup({ savedKeys: ["OPENAI_API_KEY"] });
   const user = userEvent.setup();
   try {
     expect(screen.getByLabelText("OpenAI API key")).toHaveAttribute(
@@ -244,6 +253,107 @@ it("preserves a saved key when blank and replaces it only when entered", async (
     });
     await user.clear(screen.getByLabelText("OpenAI API key"));
     expect(agentEdit(draft()).environment).toEqual({});
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("uses a draft Goose provider override for the API key and model lookup", async () => {
+  const { draft, run, view, control } = setup({
+    environment: { GOOSE_PROVIDER: "anthropic" },
+  });
+  const user = userEvent.setup();
+  try {
+    expect(screen.queryByLabelText("OpenAI API key")).toBeNull();
+    await user.type(
+      screen.getByLabelText("Anthropic API key"),
+      "anthropic-key",
+    );
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({ provider: "openai" }),
+          environment: {
+            GOOSE_PROVIDER: "anthropic",
+            ANTHROPIC_API_KEY: "anthropic-key",
+          },
+        }),
+      }),
+    );
+    expect(draft().environment).not.toHaveProperty("OPENAI_API_KEY");
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("shows the OpenAI key when a Databricks selector has an OpenAI override", () => {
+  const { view, control } = setup({
+    provider: "databricks_v2",
+    environment: { GOOSE_PROVIDER: "openai" },
+  });
+  try {
+    expect(screen.getByLabelText("OpenAI API key")).toHaveAttribute(
+      "type",
+      "password",
+    );
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("keeps a pending key while the effective override stays fixed, then clears it on removal", async () => {
+  const { draft, view, control } = setup({
+    environment: { GOOSE_PROVIDER: "anthropic" },
+  });
+  const user = userEvent.setup();
+  try {
+    await user.type(
+      screen.getByLabelText("Anthropic API key"),
+      "anthropic-key",
+    );
+    await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
+    await user.click(await screen.findByRole("option", { name: "Ollama" }));
+    expect(draft().environment.ANTHROPIC_API_KEY).toBe("anthropic-key");
+    await user.click(screen.getByRole("button", { name: "Environment" }));
+    await user.click(
+      screen.getByRole("button", { name: "Remove GOOSE_PROVIDER" }),
+    );
+    expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
+    expect(draft().environment).toEqual({ GOOSE_PROVIDER: null });
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("hides the key for an unknown saved provider until its override is removed", async () => {
+  const { draft, view, control } = setup({ savedKeys: ["GOOSE_PROVIDER"] });
+  const user = userEvent.setup();
+  try {
+    expect(screen.queryByLabelText("OpenAI API key")).toBeNull();
+    expect(
+      screen.getByText(/saved GOOSE_PROVIDER override whose value is hidden/),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Environment" }));
+    await user.click(
+      screen.getByRole("button", { name: "Remove GOOSE_PROVIDER" }),
+    );
+    await user.type(screen.getByLabelText("OpenAI API key"), "openai-key");
+    expect(draft().environment).toEqual({
+      GOOSE_PROVIDER: null,
+      OPENAI_API_KEY: "openai-key",
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Undo change to GOOSE_PROVIDER" }),
+    );
+    expect(screen.queryByLabelText("OpenAI API key")).toBeNull();
+    expect(draft().environment).toEqual({});
   } finally {
     view.unmount();
     control.dispose();

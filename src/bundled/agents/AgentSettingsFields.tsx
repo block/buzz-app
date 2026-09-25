@@ -12,6 +12,14 @@ import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
 import { AgentModelPicker } from "./AgentModelPicker";
 
+function effectiveGooseProvider(draft: AgentDraft, savedKeys: string[]) {
+  const override = draft.environment.GOOSE_PROVIDER;
+  if (typeof override === "string") return override;
+  if (override === undefined && savedKeys.includes("GOOSE_PROVIDER"))
+    return null;
+  return draft.provider;
+}
+
 /** Create and Edit share the same settings and native model discovery. */
 export function AgentSettingsFields({
   id,
@@ -52,8 +60,27 @@ export function AgentSettingsFields({
   const databricks = ["databricks_v2", "databricks-v2", "databricks"].includes(
     buzzProvider ?? "",
   );
-  const apiKey = goose ? gooseApiKey(draft.provider) : undefined;
+  const gooseProvider = goose
+    ? effectiveGooseProvider(draft, environmentKeys)
+    : null;
+  const apiKey = gooseProvider ? gooseApiKey(gooseProvider) : undefined;
   const savedKey = !!apiKey && environmentKeys.includes(apiKey.env);
+  const change = (patch: Partial<AgentDraft>) => {
+    const next = { ...draft, ...patch };
+    const nextProvider = isGoose(next.command)
+      ? effectiveGooseProvider(next, environmentKeys)
+      : null;
+    if (gooseProvider !== nextProvider && gooseProvider) {
+      const key = gooseApiKey(gooseProvider)?.env;
+      const environment = { ...(patch.environment ?? draft.environment) };
+      if (key && typeof environment[key] === "string") {
+        delete environment[key];
+        onChange({ ...patch, environment });
+        return;
+      }
+    }
+    onChange(patch);
+  };
   return (
     <div className="min-w-0">
       <div className="min-w-0 space-y-section-gap">
@@ -86,8 +113,15 @@ export function AgentSettingsFields({
               goose ? undefined : state.data?.agentDefaults?.provider
             }
             piProviders={piProviders}
-            onChange={onChange}
+            onChange={change}
           />
+          {goose && gooseProvider === null && (
+            <p role="status" className="text-body-sm text-secondary">
+              This agent has a saved GOOSE_PROVIDER override whose value is
+              hidden. Replace or remove it under Advanced → Environment to enter
+              the matching API key here.
+            </p>
+          )}
           {apiKey && (
             <div className="space-y-2">
               <Field label={`${apiKey.label} API key`}>
@@ -109,7 +143,7 @@ export function AgentSettingsFields({
                     if (event.target.value)
                       environment[apiKey.env] = event.target.value;
                     else delete environment[apiKey.env];
-                    onChange({ environment });
+                    change({ environment });
                   }}
                 />
               </Field>
@@ -134,7 +168,7 @@ export function AgentSettingsFields({
                 : undefined
             }
             draft={draft}
-            onChange={onChange}
+            onChange={change}
           />
           {pi && (
             <p className="text-body-sm text-secondary">
@@ -185,7 +219,7 @@ export function AgentSettingsFields({
                     keys={environmentKeys}
                     patch={draft.environment}
                     disabled={disabled}
-                    onChange={(environment) => onChange({ environment })}
+                    onChange={(environment) => change({ environment })}
                   />
                   <p className="text-body-sm text-secondary">
                     {pi

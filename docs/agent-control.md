@@ -226,7 +226,10 @@ containment on non-Unix platforms.
   action because its catalog lookup can start OAuth. Known API-key providers
   show a masked key field beside Provider. Its write-only environment patch is
   used for both model lookup and agent launch; a blank field uses Goose's
-  existing credentials. These per-agent keys are stored in the app's local
+  existing credentials. The key field follows a draft `GOOSE_PROVIDER` override.
+  When a saved override's value is hidden, Buzz asks the user to replace or
+  remove it in Advanced → Environment before showing a provider-specific key
+  field. These per-agent keys are stored in the app's local
   `agents.json` settings file and its backup with restricted filesystem
   permissions, not in Goose's keyring. Listing errors prompt the user to enter credentials or retry;
   manual model entry remains available. Executable detection

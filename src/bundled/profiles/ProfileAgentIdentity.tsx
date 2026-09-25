@@ -27,6 +27,18 @@ export function useVerifiedAgentOwner(
   session: RelaySession,
   pubkey: string | undefined,
 ): string | undefined {
+  return useAgentOwnerEvidence(session, pubkey).owner;
+}
+
+/** Private admission must inspect readiness as well as signed-head ownership.
+ * Public identity attribution may still display its retained signed evidence. */
+export function useAgentOwnerEvidence(
+  session: RelaySession,
+  pubkey: string | undefined,
+): {
+  status: "loading" | "ready" | "error" | "unavailable";
+  owner: string | undefined;
+} {
   // A session-owned view: live events, reconnect refresh and purge, no polling.
   // Capacity or a closed session leaves no view; reopening the profile retries.
   const [view, setView] = useState<ProfileView | null>();
@@ -83,9 +95,21 @@ export function useVerifiedAgentOwner(
   useEffect(() => {
     if (events.status === "idle") void view?.refresh();
   }, [view, events.status]);
-  return verified && latest && verified.id === latest.id
-    ? verified.owner
-    : undefined;
+  const owner =
+    verified && latest && verified.id === latest.id
+      ? verified.owner
+      : undefined;
+  const status =
+    view === null
+      ? "unavailable"
+      : events.status === "error"
+        ? "error"
+        : !view ||
+            events.status !== "ready" ||
+            (latest && verified?.id !== latest.id)
+          ? "loading"
+          : "ready";
+  return { status, owner };
 }
 
 export function ProfileAgentIdentity({

@@ -40,6 +40,7 @@ function fixture({
   owner = viewer,
   archived = false,
   initial = "second",
+  holdOwner = false,
 } = {}) {
   const head = signed(identity, {
     kind: 0,
@@ -63,6 +64,13 @@ function fixture({
     ],
   });
   let callbacks: LiveCallbacks | undefined;
+  let failOwner = false;
+  let releaseOwner = () => {};
+  const ownerGate = holdOwner
+    ? new Promise<void>((resolve) => {
+        releaseOwner = resolve;
+      })
+    : Promise.resolve();
   const sessionOwner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: viewer.pubkey,
@@ -71,15 +79,25 @@ function fixture({
       return { update() {}, retry() {}, dispose() {} };
     },
     media: () => undefined,
-    query: async (filters) =>
-      filters.some((f) => f.kinds?.includes(0)) ? [head] : [],
+    query: async (filters) => {
+      if (!filters.some((f) => f.kinds?.includes(0))) return [];
+      await ownerGate;
+      if (failOwner) throw new Error("Fixture ownership unavailable");
+      return [head];
+    },
   });
   const archiveSnapshot = {
     status: "ready" as const,
     archived: archived ? [identity.pubkey] : [],
   };
+  const ownershipViews: ReturnType<typeof sessionOwner.session.observe>[] = [];
   const session = {
     ...sessionOwner.session,
+    observe: (...args: Parameters<typeof sessionOwner.session.observe>) => {
+      const view = sessionOwner.session.observe(...args);
+      ownershipViews.push(view);
+      return view;
+    },
     archives: {
       ...sessionOwner.session.archives,
       snapshot: () => archiveSnapshot,
@@ -105,6 +123,7 @@ function fixture({
     systemPrompt: "Second instructions",
   });
   let failRead = false;
+  let failAction = false;
   const control = createAgentControl({
     ...native.host,
     async snapshot() {
@@ -113,6 +132,7 @@ function fixture({
     },
     async action(id, action) {
       native.calls.push({ action, payload: { id } });
+      if (failAction) throw new Error("Fixture action rejected");
       const selected = native.data.agents.find((agent) => agent.id === id);
       if (!selected) throw new Error("Missing fixture agent");
       selected.enabled = action !== "stop";
@@ -181,6 +201,18 @@ function fixture({
     opened,
     target,
     sessionOwner,
+    releaseOwner,
+    failOwner(value: boolean) {
+      failOwner = value;
+    },
+    failAction(value: boolean) {
+      failAction = value;
+    },
+    async refreshOwnership() {
+      await act(async () => {
+        await Promise.all(ownershipViews.map((view) => view.refresh()));
+      });
+    },
     async revokeOwner() {
       if (!callbacks) throw new Error("Fixture subscription not mounted");
       const next = signed(identity, {
@@ -250,7 +282,7 @@ it("does not substitute the first sibling after deletion", async () => {
   expect(screen.queryByText("/first")).toBeNull();
   expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
 });
-it("hides stale native detail after a failed read and retries the exact instance", async () => {
+it("retains exact native recovery after a failed read", async () => {
   const f = fixture();
   const user = userEvent.setup();
   await screen.findByText("/second");
@@ -258,11 +290,20 @@ it("hides stale native detail after a failed read and retries the exact instance
   await act(async () => {
     await f.control.refresh();
   });
-  expect(screen.getByRole("alert")).toHaveTextContent("Unavailable");
-  expect(screen.queryByText("/second")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not refresh local agents.",
+  );
+  expect(screen.getByText("/second")).toBeVisible();
+  expect(screen.getByText(/Showing the last host snapshot/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Start" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await user.click(screen.getByRole("button", { name: "Start" }));
+  expect(f.native.calls.some((call) => call.action === "start")).toBe(false);
+  expect(screen.queryByRole("button", { name: "Retry agents" })).toBeNull();
   f.failRead(false);
-  await user.click(screen.getByRole("button", { name: "Retry" }));
+  await user.click(screen.getByRole("button", { name: "Retry status" }));
   expect(await screen.findByText("/second")).toBeVisible();
   expect(screen.queryByText("/first")).toBeNull();
 });
@@ -292,4 +333,61 @@ it("opens each row from the ordinary profile rather than generic Agents", async 
   await user.click(await screen.findByRole("button", { name: "Second" }));
   expect(await screen.findByText("/second")).toBeVisible();
   expect(f.opened).toHaveBeenCalledWith(f.target("second"));
+});
+
+it("announces loading while ownership is pending, not unavailable", async () => {
+  const f = fixture({ holdOwner: true });
+  try {
+    await act(async () => {
+      await f.control.refresh();
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Loading…");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByText("/second")).toBeNull();
+  } finally {
+    await act(async () => f.releaseOwner());
+  }
+  expect(await screen.findByText("/second")).toBeVisible();
+});
+it("fails closed on rejected ownership refresh, retries, and observes newer revocation", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  await screen.findByText("/second");
+  f.failOwner(true);
+  await f.refreshOwnership();
+  expect(screen.getByRole("alert")).toHaveTextContent("Unavailable");
+  expect(screen.queryByText("/second")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+  expect(f.control.snapshot().status).toBe("ready");
+  f.failOwner(false);
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("/second")).toBeVisible();
+  await f.revokeOwner();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Unavailable");
+  expect(screen.queryByText("/second")).toBeNull();
+});
+it("retains selected details and recovery Stop after a rejected action", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  await screen.findByText("/second");
+  await user.click(screen.getByRole("button", { name: "Start" }));
+  await screen.findByRole("button", { name: "Stop" });
+  f.failAction(true);
+  await user.click(screen.getByRole("button", { name: "Restart" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not confirm the operation.",
+  );
+  expect(screen.getByText("/second")).toBeVisible();
+  expect(screen.getByText(/Showing the last host snapshot/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Retry agents" })).toBeNull();
+  f.failAction(false);
+  await user.click(screen.getByRole("button", { name: "Stop" }));
+  await waitFor(() => expect(f.native.data.agents[1]?.status).toBe("stopped"));
+  expect(screen.getByText("/second")).toBeVisible();
+  expect(f.native.calls.at(-1)).toMatchObject({
+    action: "stop",
+    payload: { id: "second" },
+  });
 });

@@ -61,7 +61,7 @@ export function ProfileInstances({
   if (
     state.status === "error" &&
     errorHandledByActions &&
-    (!state.data || matches.length === 1)
+    (!state.data || matches.length === 1 || !!selectedId)
   )
     return null;
   const instances = state.status === "ready" ? matches : [];

@@ -11,7 +11,7 @@ import {
 } from "../../features/profiles/instance-target";
 import { profileTarget } from "../../features/profiles/target";
 import { Button } from "../../shared/design-system/ui/Button";
-import { useVerifiedAgentOwner } from "./ProfileAgentIdentity";
+import { useAgentOwnerEvidence } from "./ProfileAgentIdentity";
 import { ProfilePanel } from "./ProfilePanel";
 
 /** Host retains the exact target and owns replacement, close and focus restoration.
@@ -51,21 +51,24 @@ function InstanceDetails(
   },
 ) {
   const connection = useRelayConnection(props.relay);
-  const owner = useVerifiedAgentOwner(
+  const ownership = useAgentOwnerEvidence(
     connection.session,
     props.instance.pubkey,
   );
   const state = useAgentControl(props.control);
   const target = profileTarget(props.instance.pubkey) ?? "";
-  const agent =
-    state.status === "ready" && connection.scope
-      ? exactProfileAgent(
-          state.data?.agents ?? [],
-          connection.scope,
-          props.instance.pubkey,
-          props.instance.id,
-        )
-      : undefined;
+  const agent = connection.scope
+    ? exactProfileAgent(
+        state.data?.agents ?? [],
+        connection.scope,
+        props.instance.pubkey,
+        props.instance.id,
+      )
+    : undefined;
+  const loading =
+    ownership.status === "loading" ||
+    state.status === "loading" ||
+    state.status === "idle";
   return (
     <>
       {props.context?.canOpen(target) && (
@@ -77,31 +80,27 @@ function InstanceDetails(
           Back to profile
         </Button>
       )}
-      {owner === connection.viewer && agent ? (
+      {ownership.status === "ready" &&
+      ownership.owner === connection.viewer &&
+      agent ? (
         <ProfilePanel {...props} target={target} instanceId={agent.id} />
       ) : (
         <>
-          <p
-            role={
-              state.status === "loading" || state.status === "idle"
-                ? "status"
-                : "alert"
-            }
-          >
-            {state.status === "loading" || state.status === "idle"
-              ? "Loading…"
-              : "Unavailable"}
+          <p role={loading ? "status" : "alert"}>
+            {loading ? "Loading…" : "Unavailable"}
           </p>
-          <Button
-            size="compact"
-            disabled={state.busy}
-            onClick={() => {
-              void props.control.refresh();
-              props.retry();
-            }}
-          >
-            Retry
-          </Button>
+          {!loading && (
+            <Button
+              size="compact"
+              disabled={state.busy}
+              onClick={() => {
+                void props.control.refresh();
+                props.retry();
+              }}
+            >
+              Retry
+            </Button>
+          )}
         </>
       )}
     </>

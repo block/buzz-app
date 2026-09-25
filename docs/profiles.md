@@ -212,12 +212,15 @@ Each owner-accessible row opens the existing Profile panel with a typed
 `buzz:agent-instance:` target containing native ID, identity public key, viewer
 and canonical community origin. The target is selection, not authorization:
 private instance detail additionally requires the current signed profile's
-verified owner to equal the viewer and a ready native record matching ID, public
-key and community. Deletion, a failed host read or a changed viewer/community
-shows **Unavailable**, never a sibling's settings. **Retry** refreshes native
+verified owner to equal the viewer, successful ownership observation, and an exact
+native record matching ID, public key and community. Pending ownership shows
+**Loading…**; a failed ownership read, deletion or changed viewer/community shows
+**Unavailable**, never a sibling's settings. **Retry** refreshes native
 control and ownership evidence. **Back to profile** opens the ordinary identity;
 the Channels host still owns panel replacement, close and focus restoration.
-Tabs retain the exact instance. Ordinary identity runtime/actions require one
+Native read/operation errors retain exact-instance detail and the existing actions'
+stale-snapshot notice, Retry status and recovery Stop while ownership remains
+established. Tabs retain the exact instance. Ordinary identity runtime/actions require one
 unambiguous native match; an instance view selects that record by ID.
 
 Archive labels come from `session.archives`, keyed by identity, rather than native

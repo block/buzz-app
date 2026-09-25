@@ -1142,7 +1142,7 @@ function ChannelWorkspace({
               </ChannelSettingsPanel>
             )}
             {showingThread && (
-              <div className={styles.retainedPanel} hidden={showingSettings}>
+              <div className={styles.retainedPanel} inert={showingSettings}>
                 <ThreadPanel
                   sessionConversation={current?.channelType === "session"}
                   extensions={extensions}
@@ -1168,7 +1168,7 @@ function ChannelWorkspace({
             )}
 
             {panel && opened && (
-              <div className={styles.retainedPanel} hidden={showingSettings}>
+              <div className={styles.retainedPanel} inert={showingSettings}>
                 <PanelCard
                   key="target"
                   panel={panel}

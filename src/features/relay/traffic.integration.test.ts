@@ -187,6 +187,41 @@ function fixture(
   };
 }
 
+it("uses whole-thread totals from window summaries and live additions/deletions without loading replies", async () => {
+  const root = message(other, "c", "root", 10);
+  const summary = (total: number, at: number, author = relay) =>
+    signed(author, {
+      kind: 39005,
+      created_at: at,
+      tags: [
+        ["h", "c"],
+        ["e", root.id],
+        ["d", root.id],
+      ],
+      content: JSON.stringify({
+        reply_count: 1,
+        descendant_count: total,
+        participants: [other.pubkey],
+      }),
+    });
+  const initial = summary(3, 20);
+  const h = fixture([root, initial]);
+  await h.open();
+  const row = () => h.session.channels.window("c").rows[0];
+  expect(row()?.replyCount).toBe(3);
+  const before = row();
+  h.emit([summary(4, 21)]);
+  expect(row()?.replyCount).toBe(4);
+  expect(row()).not.toBe(before);
+  h.emit([summary(2, 22)]);
+  expect(row()?.replyCount).toBe(2);
+  h.emit([initial, summary(99, 23, other)]);
+  expect(row()?.replyCount).toBe(2);
+  h.emit([summary(0, 24)]);
+  expect(row()?.replyCount).toBe(0);
+  expect(h.session.channels.window("c").rows).toHaveLength(1);
+});
+
 it("attributes a slow first send to signing and publish acknowledgement, independently of read-back", async () => {
   const h = fixture();
   await h.open();
@@ -643,58 +678,81 @@ it("reconnect cancels stalled reads before refreshing owned views and ignores th
   );
 });
 
-it("reuses the durable outbox for immediate thread replies, failed-row retry and same-ID echo without leaking into the channel", async () => {
-  const root = message(other, "c", "root", 1);
-  const h = fixture([root]);
-  await h.open();
-  const thread = h.session.thread("c", root.id);
-  const id = h.session.messages.reply("c", root.id, "  reply  ");
-  expect(thread.snapshot().replies).toMatchObject([
-    { id, content: "reply", delivery: "sending" },
-  ]);
-  expect(h.session.channels.window("c").rows.map((row) => row.id)).toEqual([
-    root.id,
-  ]);
-  const event = await h.sign();
-  expect(event.tags).toEqual([
-    ["h", "c"],
-    ["e", root.id, "", "reply"],
-    ["client-id", expect.any(String)],
-  ]);
-  const publication = h.publications.shift();
-  assert.exists(publication);
-  publication.result.reject(new PublishRejected("denied"));
-  await flush();
-  expect(thread.snapshot().replies).toMatchObject([
-    { id, delivery: "failed", deliveryError: "denied" },
-  ]);
-  h.session.messages.retry(id);
-  expect(thread.snapshot().replies).toMatchObject([
-    { id, delivery: "sending" },
-  ]);
-  await flush();
-  expect(h.signings).toHaveLength(0); // Retry reuses the persisted signature.
-  expect(h.publications[0]?.event).toEqual(event);
-  h.emit([event]);
-  expect(thread.snapshot().replies).toHaveLength(1);
-  expect(thread.snapshot().replies[0]?.id).toBe(id);
-  expect(h.session.outbox?.snapshot()).toHaveLength(0);
-  expect(h.session.channels.window("c").rows.map((row) => row.id)).toEqual([
-    root.id,
-  ]);
-  h.publications.shift()?.result.resolve();
-  await flush();
-  const editId = h.session.messages.edit(id, "edited", id);
-  expect(thread.snapshot().replies[0]?.content).toBe("edited");
-  await h.sign();
-  const edit = h.publications.shift();
-  assert.exists(edit);
-  edit.result.reject(new PublishRejected("edit denied"));
-  await flush();
-  expect(
-    h.session.outbox?.snapshot().find((item) => item.event.id === editId)
-      ?.delivery,
-  ).toBe("failed");
-  expect(thread.snapshot().replies[0]?.content).toBe("reply");
-  thread.dispose();
-});
+it.each([false, true])(
+  "reuses the durable outbox for reply ancestry, retry and echo without channel leaks (nested=%s)",
+  async (nested) => {
+    const root = message(other, "c", "root", 1);
+    const h = fixture([root]);
+    await h.open();
+    const thread = h.session.thread("c", root.id);
+    const parentId = nested ? "a".repeat(64) : root.id;
+    // A parent outside recent history must not prevent a valid targeted send.
+    const id = h.session.messages.reply(
+      "c",
+      root.id,
+      "  reply  ",
+      [],
+      [],
+      parentId,
+    );
+    expect(thread.snapshot().replies).toMatchObject([
+      {
+        id,
+        content: "reply",
+        delivery: "sending",
+        threadRootId: root.id,
+        replyParentId: parentId,
+      },
+    ]);
+    expect(h.session.channels.window("c").rows.map((row) => row.id)).toEqual([
+      root.id,
+    ]);
+    const event = await h.sign();
+    expect(event.tags).toEqual([
+      ["h", "c"],
+      ...(nested ? [["e", root.id, "", "root"]] : []),
+      ["e", parentId, "", "reply"],
+      ["client-id", expect.any(String)],
+    ]);
+    const publication = h.publications.shift();
+    assert.exists(publication);
+    publication.result.reject(new PublishRejected("denied"));
+    await flush();
+    expect(thread.snapshot().replies).toMatchObject([
+      { id, delivery: "failed", deliveryError: "denied" },
+    ]);
+    h.session.messages.retry(id);
+    expect(thread.snapshot().replies).toMatchObject([
+      { id, delivery: "sending" },
+    ]);
+    await flush();
+    expect(h.signings).toHaveLength(0); // Retry reuses the persisted signature.
+    expect(h.publications[0]?.event).toEqual(event);
+    h.emit([event]);
+    expect(thread.snapshot().replies).toHaveLength(1);
+    expect(thread.snapshot().replies[0]?.id).toBe(id);
+    expect(h.session.outbox?.snapshot()).toHaveLength(0);
+    expect(h.session.channels.window("c").rows.map((row) => row.id)).toEqual([
+      root.id,
+    ]);
+    h.publications.shift()?.result.resolve();
+    await flush();
+    const editId = h.session.messages.edit(id, "edited", id);
+    expect(thread.snapshot().replies[0]).toMatchObject({
+      content: "edited",
+      threadRootId: root.id,
+      replyParentId: parentId,
+    });
+    await h.sign();
+    const edit = h.publications.shift();
+    assert.exists(edit);
+    edit.result.reject(new PublishRejected("edit denied"));
+    await flush();
+    expect(
+      h.session.outbox?.snapshot().find((item) => item.event.id === editId)
+        ?.delivery,
+    ).toBe("failed");
+    expect(thread.snapshot().replies[0]?.content).toBe("reply");
+    thread.dispose();
+  },
+);

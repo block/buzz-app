@@ -29,7 +29,7 @@ test("read broker accepts non-channel finite reads without relaxing filter budge
     assert.equal(validFilters(filters), false);
 });
 
-test("broker signing is limited to bounded channel messages and canonical direct replies", () => {
+test("broker signing is limited to bounded channel messages and canonical direct and nested replies", () => {
   const message = {
     kind: 9,
     content: "hello",
@@ -45,7 +45,19 @@ test("broker signing is limited to bounded channel messages and canonical direct
     validMessageTemplate({ ...message, tags: [...message.tags, reply] }),
     true,
   );
+  const root = ["e", "b".repeat(64), "", "root"];
+  assert.equal(
+    validMessageTemplate({ ...message, tags: [...message.tags, root, reply] }),
+    true,
+  );
   for (const references of [
+    [reply, root],
+    [root, root],
+    [root, ["e", root[1], "", "reply"]],
+    [root, reply, reply],
+    [[...root, "extra"], reply],
+    [["e", "B".repeat(64), "", "root"], reply],
+    [["e", root[1], "relay", "root"], reply],
     [["e", "a".repeat(64)]],
     [["e", "a".repeat(64), "", "root"]],
     [["e", "invalid", "", "reply"]],

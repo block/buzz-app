@@ -402,17 +402,23 @@ The thread and a linked object panel share that slot; a companion can remain bel
 Close or Escape returns focus to the reply button when it is still mounted. Changing
 channel/community or disabling Channels disposes the owned thread view.
 
-The footer reuses `MessageComposer` and sends direct replies to the resolved root
-through `session.messages.reply`. Channel and thread drafts are separate and survive
-reconnection; failed replies remain inline with the shared retry action. Read-only
-connections keep the existing composer capability notice; missing/revoked roots do
-not expose a composer. Exact navigation can retain and focus a selected reply
-beyond the traversal range; it does not extend that range or promise complete history.
+The footer reuses `MessageComposer` and defaults to a direct reply to the resolved
+root through `session.messages.reply`. Reply on a child selects that message as the
+parent without changing the root-keyed draft; canceling the target returns to the
+root. Channel and thread drafts are separate and survive reconnection; failed
+replies remain inline with the shared retry action and retain their signed ancestry.
+Read-only connections keep the existing composer capability notice; missing/revoked
+roots do not expose a composer. Exact navigation can retain and focus a selected
+reply beyond the traversal range; it does not extend that range or promise complete history.
 
-Replies use ascending timestamp/event-ID order, including nested replies. Retry
-appears only after a failed read; there is no routine Refresh control. Names are
-optional shared background enrichment. The panel describes **replies shown**, not
-complete history.
+Replies form nested lists, with ascending timestamp/event-ID order among siblings.
+Branches start collapsed, expand one level at a time, and forget descendant expansion
+when collapsed. Labeled controls remain available when visual indentation is capped
+in narrow panels. Exact links reveal available ancestors; a reply whose parent is
+outside loaded history remains visible with a notice. Sessions remain inline.
+Retry appears only after a failed read; there is no routine Refresh control. Names
+are optional shared background enrichment. The panel describes **replies loaded**,
+not visible rows or complete history.
 The relay can filter rows after its limit, and summaries/EOSE are not proof of
 exhaustion. See [the thread owner and bounds](relay-queries.md#thread-views).
 

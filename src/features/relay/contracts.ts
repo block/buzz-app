@@ -104,7 +104,10 @@ export type ChannelMessage = Readonly<{
   reactions: readonly MessageReaction[];
   /** Canonical thread-opening target from signed reply/root tags; absent on root messages. */
   threadRootId?: string | undefined;
-  /** Relay-signed thread summary for this row; zero when the row has no replies. */
+  /** Immediate signed reply target; separate from the canonical thread root. */
+  replyParentId?: string | undefined;
+  /** Relay-signed whole-thread reply total (including nested replies).
+   * Falls back to direct replies when the summary lacks a valid descendant total. */
   replyCount: number;
   /** Pubkeys the relay reports as thread participants (may be empty even with replies). */
   participants: readonly string[];

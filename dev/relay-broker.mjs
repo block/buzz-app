@@ -299,15 +299,17 @@ export function validMessageTemplate(event) {
           /^[0-9a-f]{64}$/.test(references[0][1])
         );
       if (!references.length) return true;
-      const [reply] = references;
-      // This write surface supports direct-to-root replies, not arbitrary references.
-      return (
-        references.length === 1 &&
-        reply.length === 4 &&
-        /^[0-9a-f]{64}$/.test(reply[1]) &&
-        reply[2] === "" &&
-        reply[3] === "reply"
-      );
+      const canonical = (tag, marker) =>
+        tag.length === 4 &&
+        /^[0-9a-f]{64}$/.test(tag[1]) &&
+        tag[2] === "" &&
+        tag[3] === marker;
+      return references.length === 1
+        ? canonical(references[0], "reply")
+        : references.length === 2 &&
+            canonical(references[0], "root") &&
+            canonical(references[1], "reply") &&
+            references[0][1] !== references[1][1];
     })()
   );
 }

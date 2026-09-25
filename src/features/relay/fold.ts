@@ -158,11 +158,15 @@ function parseSummary(
     const body = objectBody(event.content);
     if (!body) return { replyCount: 0, participants: Object.freeze([]) };
     const replyCount =
-      typeof body.reply_count === "number" &&
-      Number.isInteger(body.reply_count) &&
-      body.reply_count >= 0
-        ? body.reply_count
-        : 0;
+      typeof body.descendant_count === "number" &&
+      Number.isInteger(body.descendant_count) &&
+      body.descendant_count >= 0
+        ? body.descendant_count
+        : typeof body.reply_count === "number" &&
+            Number.isInteger(body.reply_count) &&
+            body.reply_count >= 0
+          ? body.reply_count
+          : 0;
     const participants = Array.isArray(body.participants)
       ? body.participants.filter(
           (value): value is string =>
@@ -276,6 +280,7 @@ export function foldMessages(
         id: event.id,
         channelId,
         threadRootId: threadReference(event)?.rootId,
+        replyParentId: threadReference(event)?.parentId,
         authorId: event.pubkey,
         createdAt: event.created_at,
         content: projected.content,

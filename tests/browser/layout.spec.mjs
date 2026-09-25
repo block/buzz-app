@@ -667,6 +667,106 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await expect(launch).toHaveCount(0);
 });
 
+const todosOverlapTest = test.extend({
+  threadUnread: true,
+  readState: true,
+  historyCounts: { alpha: 3, beta: 1 },
+});
+todosOverlapTest(
+  "Todos stacks beside threads and linked panels in either opening order",
+  async ({ page, app }) => {
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await open(page, app);
+    await button(page, "Your profile").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    await button(page, "Plugins").click();
+    await page
+      .getByRole("switch", { name: "Enable Todos", exact: true })
+      .click();
+    await page
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: "Messages", exact: true })
+      .click();
+    const todos = page.getByRole("region", {
+      name: "Todos panel",
+      exact: true,
+    });
+    const toggle = button(page, "Toggle channel todos");
+    const thread = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const linked = panel(page);
+    const settings = page.getByRole("complementary", {
+      name: "Channel settings",
+      exact: true,
+    });
+    const bestie = page.getByRole("complementary", {
+      name: "Bestie",
+      exact: true,
+    });
+    const stacked = async (primary) => {
+      await expect(primary).toBeVisible();
+      await expect(todos).toBeVisible();
+      const top = await box(primary);
+      const bottom = await box(todos);
+      near(top.x, bottom.x);
+      near(top.width, bottom.width);
+      near(bottom.y - top.y - top.height, 4);
+      const conversation = await box(
+        page.getByRole("article", {
+          name: "Conversation",
+          exact: true,
+        }),
+      );
+      near(bottom.y + bottom.height, conversation.y + conversation.height);
+    };
+    const openThread = async () => {
+      const root = app.histories
+        .get("primary/alpha")
+        .find((event) => event.content === "Thread root 0");
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      await expect(thread).toBeVisible();
+    };
+
+    await toggle.click();
+    await openThread();
+    await stacked(thread);
+    await button(page, "Close thread").click();
+    await button(page, "Hide todos").click();
+    await openThread();
+    await toggle.click();
+    await stacked(thread);
+    await button(page, "Close thread").click();
+
+    await link(page, app, "https://github.com/block/buzz/pull/6");
+    await stacked(linked);
+    await button(page, "Close channel panel").click();
+    await button(page, "Hide todos").click();
+    await link(page, app, "https://github.com/block/buzz/pull/7");
+    await toggle.click();
+    await stacked(linked);
+    await button(page, "Channel settings").click();
+    await expect(settings).toBeVisible();
+    await expect(todos).toHaveCount(0); // Settings intentionally retires the drawer.
+    await button(page, "Close channel settings").click();
+    await expect(linked).toBeVisible();
+    await button(page, "Bestie").click();
+    await expect(bestie).toBeVisible();
+    await expect(linked).toBeVisible();
+    near(
+      (await box(bestie)).y -
+        (await box(linked)).y -
+        (await box(linked)).height,
+      4,
+    );
+    await button(page, "Close Bestie panel").click();
+  },
+);
+
 readingTest(
   "companion resize preserves the timeline anchor and both cards at narrow sizes",
   async ({ page, app }) => {
@@ -683,6 +783,7 @@ readingTest(
     await link(page, app, "https://github.com/block/buzz/pull/6");
     await button(page, "Bestie").click();
     for (const [width, height] of [
+      [1440, 950],
       [800, 600],
       [480, 400],
       [390, 844],
@@ -696,6 +797,23 @@ readingTest(
       near(bottom.y - top.y - top.height, 4);
       await expect(button(page, "Close channel panel")).toBeInViewport();
       await expect(button(page, "Close Bestie panel")).toBeInViewport();
+      await page
+        .getByRole("button", { name: "Channel settings", exact: true })
+        .evaluate((element) => element.click());
+      const settings = page.getByRole("complementary", {
+        name: "Channel settings",
+        exact: true,
+      });
+      await expect(settings).toBeVisible();
+      const covered = await box(settings);
+      const retainedCompanion = await box(
+        page.getByRole("complementary", { name: "Bestie", exact: true }),
+      );
+      near(covered.height, top.height);
+      near(retainedCompanion.height, bottom.height);
+      near(retainedCompanion.y, bottom.y);
+      await button(page, "Close channel settings").click();
+      await expect(button(page, "Close channel panel")).toBeInViewport();
     }
   },
 );

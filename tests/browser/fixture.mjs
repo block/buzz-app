@@ -337,6 +337,21 @@ export const test = base.extend({
           root.created_at + i + 1,
         ),
       );
+      if (exactMessages === "nested") {
+        const last = replies.at(-1);
+        replies[replies.length - 1] = sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["e", root.id, "", "root"],
+            ["e", replies.at(-2).id, "", "reply"],
+            ["p", getPublicKey(peerKey)],
+          ],
+          last.content,
+          userKey,
+          last.created_at,
+        );
+      }
       const target = replies.at(-1);
       const edit = sign(
         40003,
@@ -1487,16 +1502,16 @@ export const test = base.extend({
           }
           return event;
         },
-        deleteTarget() {
+        deleteTarget(target = exact.target) {
           const event = sign(
             5,
             [
               ["h", "alpha"],
-              ["e", exact.target.id],
+              ["e", target.id],
             ],
             "",
             userKey,
-            exact.target.created_at + 100,
+            target.created_at + 100,
           );
           targetEvents.push(event);
           relay.publish("primary", event);
@@ -1518,11 +1533,29 @@ export const test = base.extend({
           if (deliver) relay.publish("primary", event);
           return event;
         },
-        append(community, channel, content, deliver = true, own = true, root) {
+        append(
+          community,
+          channel,
+          content,
+          deliver = true,
+          own = true,
+          root,
+          parent,
+        ) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
             9,
-            [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
+            [
+              ["h", channel],
+              ...(root
+                ? parent && parent !== root
+                  ? [
+                      ["e", root, "", "root"],
+                      ["e", parent, "", "reply"],
+                    ]
+                  : [["e", root, "", "reply"]]
+                : []),
+            ],
             content ?? `Live append ${history.length}`,
             own ? userKey : peerKey,
             (history.at(-1)?.created_at ?? 1700000900) + 1,

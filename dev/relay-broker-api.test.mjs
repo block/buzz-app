@@ -964,7 +964,7 @@ test("reaction sign and publish preserve kind 7 and reject malformed targets bef
   }
 });
 
-test("both real sign and publish routes admit direct replies but reject arbitrary references before upstream I/O", async () => {
+test("both real sign and publish routes admit direct and nested replies but reject arbitrary references before upstream I/O", async () => {
   const h = await harness((call) =>
     Response.json({ accepted: true, event_id: call.body.id }),
   );
@@ -988,8 +988,26 @@ test("both real sign and publish routes admit direct replies but reject arbitrar
     expect(published.status).toBe(200);
     expect(h.publications).toHaveLength(1);
     expect(h.publications[0]).toEqual(JSON.parse(JSON.stringify(event)));
+    const root = ["e", "c".repeat(64), "", "root"];
+    const reply = ["e", "d".repeat(64), "", "reply"];
+    const nestedSigned = await h.post("sign", {
+      ...template,
+      tags: [["h", "c"], root, reply],
+    });
+    expect(nestedSigned.status).toBe(200);
+    const nested = await nestedSigned.json();
+    expect(verifyEvent(nested)).toBe(true);
+    expect(nested.tags).toEqual([["h", "c"], root, reply]);
+    expect((await h.post("publish", nested)).status).toBe(200);
+    expect(h.publications[1]).toEqual(JSON.parse(JSON.stringify(nested)));
     for (const route of ["sign", "publish"]) {
       for (const references of [
+        [reply, root],
+        [root, ["e", root[1], "", "reply"]],
+        [root, reply, reply],
+        [[...root, "extra"], reply],
+        [["e", "C".repeat(64), "", "root"], reply],
+        [["e", root[1], "relay", "root"], reply],
         [["e", "a".repeat(64)]],
         [["e", "a".repeat(64), "", "root"]],
         [["e", "invalid", "", "reply"]],
@@ -1006,7 +1024,7 @@ test("both real sign and publish routes admit direct replies but reject arbitrar
         expect(await rejected.json()).toEqual({ error: "Message rejected" });
       }
     }
-    expect(h.publications).toHaveLength(1);
+    expect(h.publications).toHaveLength(2);
   } finally {
     await h.close();
   }

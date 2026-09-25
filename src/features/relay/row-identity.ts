@@ -73,6 +73,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
         ),
     ) &&
     left.threadRootId === right.threadRootId &&
+    left.replyParentId === right.replyParentId &&
     left.replyCount === right.replyCount &&
     sameArray(left.participants, right.participants)
   );

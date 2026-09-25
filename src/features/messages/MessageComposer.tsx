@@ -85,6 +85,8 @@ export type MessageComposerProps = {
   onOpenLink?: ((target: string) => boolean) | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  replyParentId?: string | undefined;
+  replyContext?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
   focusRequest?: number;
@@ -129,6 +131,8 @@ function Composer({
   onOpenLink,
   canOpenLink,
   threadRootId,
+  replyParentId,
+  replyContext,
   mediaTimeSeconds,
   clearMediaTime,
   focusRequest,
@@ -161,6 +165,8 @@ function Composer({
   useLayoutEffect(() => {
     if (disabled) sendAttempt.current?.abort();
   }, [disabled]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
+  useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
   const inputId = useId();
   const draftKey =
     submission?.draftKey ??
@@ -511,6 +517,7 @@ function Composer({
             content,
             recipients,
             uploaded,
+            ...(replyParentId ? [replyParentId] : []),
           )
         : session.messages.send(channelId, content, recipients, uploaded);
       attachments.store.clear();
@@ -803,6 +810,7 @@ function Composer({
             }}
           />
         </div>
+        {!editing.target && replyContext}
         {!editing.target &&
           threadRootId &&
           mediaTimeSeconds !== undefined &&

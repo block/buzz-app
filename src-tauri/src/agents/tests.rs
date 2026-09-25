@@ -353,6 +353,9 @@ mod overlap {
         release: Mutex<BTreeMap<String, std::sync::mpsc::Receiver<()>>>,
     }
     impl Credentials for Gated {
+        fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+            panic!("not a deletion")
+        }
         fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
             panic!("not an import")
         }

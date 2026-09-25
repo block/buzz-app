@@ -33,11 +33,17 @@ export function ComposerCompletions({
   editor,
   input,
   replace,
+  resolved,
   ...context
 }: CompletionContext & {
   registry: ContributionReader<ComposerCompletion>;
   editor: CompletionEditor;
   input: RefObject<ComposerInputElement | null>;
+  /** Chip ranges and the draft text they were measured against. */
+  resolved: Readonly<{
+    text: string;
+    recipients: readonly Readonly<{ start: number; end: number }>[];
+  }>;
   replace(
     edit: CompletionEdit,
     query: CompletionQuery,
@@ -50,7 +56,11 @@ export function ComposerCompletions({
     registry.snapshot,
   );
   const observation = editor.observation;
-  const match = observation && matchCompletion(providers, observation, context);
+  // Stale chip ranges cannot classify this caret.
+  const match =
+    observation &&
+    resolved.text === observation.text &&
+    matchCompletion(providers, observation, context, resolved.recipients);
   if (!match || !observation) return null;
   return (
     <ContributionBoundary

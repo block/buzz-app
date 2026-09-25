@@ -85,15 +85,13 @@ export function metadata(
   channelId: string,
   name: string,
   created_at = 1_700_000_000,
+  extra: readonly string[][] = [],
 ): RelayEvent {
   return signed(relay, {
     kind: 39000,
     content: JSON.stringify({ name }),
     created_at,
-    tags: [
-      ["d", channelId],
-      ["name", name],
-    ],
+    tags: [["d", channelId], ["name", name], ...extra],
   });
 }
 export function profile(

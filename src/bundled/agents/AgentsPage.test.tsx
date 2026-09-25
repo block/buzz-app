@@ -1738,3 +1738,200 @@ it("clears an obsolete route before editing another card", async () => {
     { replace: true },
   );
 });
+
+it("offers explicit repair for an existing team import without replacing or starting it", async () => {
+  let finish: (() => void) | undefined;
+  let commit = vi.fn();
+  const { f } = setup("ready", (fixture) => {
+    fixture.agent.needsTeamImport = true;
+    fixture.host.previewImport = async () => ({
+      token: "team-preview",
+      sourcePath: "/fixture/installed/managed-agents.json",
+      warnings: [],
+      candidates: [
+        {
+          id: fixture.agent.id,
+          pubkey: fixture.agent.pubkey,
+          name: fixture.agent.name,
+          relayUrl: fixture.agent.relayUrl,
+        },
+      ],
+    });
+    commit = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      fixture.agent.needsTeamImport = false;
+      fixture.agent.revision++;
+      return structuredClone(fixture.data);
+    });
+    fixture.host.commitImport = commit;
+  });
+  await screen.findAllByRole("article", { name: "Agent Fixture agent" });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Import or repair from old Buzz" }),
+  );
+  fireEvent.change(screen.getByLabelText("Destination community"), {
+    target: { value: f.agent.relayUrl },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+  const button = await screen.findByRole("button", {
+    name: "Repair team import for Fixture agent",
+  });
+  expect(commit).not.toHaveBeenCalled();
+  fireEvent.click(button);
+  await waitFor(() =>
+    expect(commit).toHaveBeenCalledWith("team-preview", [f.agent.id]),
+  );
+  expect(button).toBeDisabled();
+  await act(async () => finish?.());
+  expect(
+    await screen.findByText(/Team instructions imported for Fixture agent/),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", {
+      name: "Repair team import for Fixture agent",
+    }),
+  ).toBeNull();
+  expect(f.data.agents).toHaveLength(2);
+  expect(f.calls.some((call) => call.action === "start")).toBe(false);
+});
+
+it("refreshes the consumed preview after a repair so the next agent can be repaired", async () => {
+  let token: string | undefined;
+  let previews = 0;
+  const commits: string[] = [];
+  const { f } = setup("ready", (fixture) => {
+    fixture.agent.needsTeamImport = true;
+    fixture.data.agents.push({
+      ...structuredClone(fixture.agent),
+      id: "second-agent",
+      pubkey: "cd".repeat(32),
+      name: "Second agent",
+    });
+    fixture.host.previewImport = async () => {
+      token = `team-preview-${++previews}`;
+      return {
+        token,
+        sourcePath: "/fixture/installed/managed-agents.json",
+        warnings: [],
+        candidates: fixture.data.agents.filter(
+          (agent) => agent.relayUrl === fixture.agent.relayUrl,
+        ),
+      };
+    };
+    fixture.host.commitImport = async (selected, ids) => {
+      if (!token || selected !== token) throw "Import preview expired";
+      token = undefined;
+      commits.push(selected);
+      for (const agent of fixture.data.agents) {
+        if (ids.includes(agent.id)) {
+          agent.needsTeamImport = false;
+          agent.revision++;
+        }
+      }
+      return structuredClone(fixture.data);
+    };
+  });
+  await screen.findAllByRole("article", { name: "Agent Fixture agent" });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Import or repair from old Buzz" }),
+  );
+  fireEvent.change(screen.getByLabelText("Destination community"), {
+    target: { value: f.agent.relayUrl },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Repair team import for Fixture agent",
+    }),
+  );
+  await screen.findByText(/Team instructions imported for Fixture agent/);
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Repair team import for Second agent",
+    }),
+  );
+  await screen.findByText(/Team instructions imported for Second agent/);
+  expect(commits).toEqual(["team-preview-1", "team-preview-2"]);
+  expect(f.calls.some((call) => call.action === "start")).toBe(false);
+});
+
+it.each([
+  {
+    name: "mismatched source library",
+    rejection:
+      "Source team binding differs from the imported agent; choose its original library",
+    expected: "choose its original library",
+    fromControl: false,
+  },
+  {
+    name: "changed saved revision",
+    rejection: "Agent settings changed; preview the team import again",
+    expected: "Agent settings changed; preview the team import again",
+    fromControl: false,
+  },
+  {
+    name: "unknown native failure",
+    rejection: new Error("raw private diagnostic"),
+    expected: "Could not confirm the operation.",
+    fromControl: false,
+  },
+  {
+    name: "unknown control failure",
+    rejection: { detail: "raw private diagnostic" },
+    expected: "Import did not complete. Reload the list before trying again.",
+    fromControl: true,
+  },
+])(
+  "retains safe repair recovery after status refresh: $name",
+  async ({ rejection, expected, fromControl }) => {
+    const commit = vi.fn().mockRejectedValue(rejection);
+    const { f, control } = setup("ready", (fixture) => {
+      fixture.agent.needsTeamImport = true;
+      fixture.host.previewImport = async () => ({
+        token: "team-preview",
+        sourcePath: "/fixture/installed/managed-agents.json",
+        warnings: [],
+        candidates: [fixture.agent],
+      });
+      if (!fromControl) fixture.host.commitImport = commit;
+    });
+    // Unexpected control-level failures retain the fallback; native failures go
+    // through the real projection's sanitized error boundary.
+    if (fromControl)
+      vi.spyOn(control, "commitImport").mockImplementation(commit);
+    await screen.findAllByRole("article", { name: "Agent Fixture agent" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Import or repair from old Buzz" }),
+    );
+    fireEvent.change(screen.getByLabelText("Destination community"), {
+      target: { value: f.agent.relayUrl },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+    const panel = within(
+      screen.getByRole("region", { name: "Import from old Buzz" }),
+    );
+    fireEvent.click(
+      await panel.findByRole("button", {
+        name: "Repair team import for Fixture agent",
+      }),
+    );
+    expect(await panel.findByRole("alert")).toHaveTextContent(expected);
+    await act(async () => control.refresh());
+    expect(control.snapshot()).toMatchObject({ status: "ready", error: null });
+    expect(panel.getByRole("alert")).toHaveTextContent(expected);
+    expect(screen.queryByText(/raw private diagnostic/)).toBeNull();
+    expect(f.agent.needsTeamImport).toBe(true);
+    expect(commit).toHaveBeenCalledExactlyOnceWith("team-preview", [
+      f.agent.id,
+    ]);
+    expect(f.calls.some((call) => call.action === "start")).toBe(false);
+    fireEvent.click(panel.getByRole("button", { name: "Retry" }));
+    await panel.findByRole("button", {
+      name: "Repair team import for Fixture agent",
+    });
+    expect(panel.queryByRole("alert")).toBeNull();
+    expect(commit).toHaveBeenCalledTimes(1);
+  },
+);

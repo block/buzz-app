@@ -379,6 +379,64 @@ function mount(
   };
 }
 
+it("autofocuses each selected conversation once without stealing focus on updates", () => {
+  const h = mount({ autoFocus: true });
+  expect(h.input()).toHaveFocus();
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    other.focus();
+    h.retarget({ channelName: "Renamed", autoFocus: false });
+    h.retarget({ autoFocus: true });
+    expect(other).toHaveFocus();
+    h.retarget({ channelId: "another-channel" });
+    expect(h.input()).toHaveFocus();
+    h.retarget({ channelId: "keyboard-navigation" });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    other.remove();
+  }
+});
+
+it("lets an explicit focus restoration in the mount commit win", () => {
+  const h = mount();
+  h.unmount();
+  const target = document.createElement("button");
+  document.body.append(target);
+  function RestoreFocus() {
+    useLayoutEffect(() => target.focus(), []);
+    return null;
+  }
+  try {
+    render(
+      <>
+        <MessageComposer
+          session={h.session}
+          scope="scope"
+          channelId="channel"
+          channelName="General"
+          autoFocus
+        />
+        <RestoreFocus />
+      </>,
+    );
+    expect(target).toHaveFocus();
+  } finally {
+    target.remove();
+  }
+});
+
+it("leaves focus alone unless an enabled composer opts into mount focus", () => {
+  const h = mount();
+  expect(h.input()).not.toHaveFocus();
+  h.retarget({
+    channelId: "disabled-channel",
+    disabled: true,
+    autoFocus: true,
+  });
+  expect(h.input()).not.toHaveFocus();
+});
+
 it("keeps unpublished completions invisible but lets Escape revoke pending work", () => {
   const h = mount();
   const input = h.input();

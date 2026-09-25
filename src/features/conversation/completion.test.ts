@@ -92,3 +92,23 @@ it("the closest trigger wins over an earlier broad query, then order resolves ti
     )?.provider.id,
   ).toBe("emoji");
 });
+
+it("a trigger that starts inside a resolved chip is not an open query; later triggers still are", () => {
+  const editor = { revision: 3, text: "@Honey hi :smile", start: 16, end: 16 };
+  const chip = [{ start: 0, end: 6 }];
+  expect(
+    matchCompletion([provider("mentions", 0, 16)], editor, context, chip),
+  ).toBeUndefined();
+  expect(
+    matchCompletion(
+      [provider("mentions", 0, 16, -10), provider("emoji", 10, 16)],
+      editor,
+      context,
+      chip,
+    )?.provider.id,
+  ).toBe("emoji");
+  expect(
+    matchCompletion([provider("mentions", 10, 16)], editor, context, chip)
+      ?.provider.id,
+  ).toBe("mentions");
+});

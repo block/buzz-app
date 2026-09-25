@@ -24,7 +24,7 @@ async function setup() {
     ],
     assignments: { alpha: "work", beta: "work" },
     starred: ["alpha"],
-  muted: [],
+    muted: [],
   };
   const read = vi.fn(async () => data);
   const assignment = vi.fn(async (intent: SidebarAssignmentIntent) => {
@@ -56,7 +56,14 @@ async function setup() {
     data = { ...data, muted: [...mutes] };
     return data.muted;
   });
-  const owner = createSidebarPreferencesStore(read, true, assignment, star, undefined, mute);
+  const owner = createSidebarPreferencesStore(
+    read,
+    true,
+    assignment,
+    star,
+    undefined,
+    mute,
+  );
   await owner.queries.ensure();
   return { owner, prefs: owner.queries, assignment, star, read, mute };
 }
@@ -176,107 +183,196 @@ it.each(["clear", "dispose"] as const)(
   },
 );
 
-
-it.each(["success", "failure"])("Mute confirmation preserves a queued optimistic Move through %s", async (outcome) => {
-  const h = await setup();
-  const muteGate = deferred<readonly string[]>();
-  const muteStarted = deferred<void>();
-  const moveGate = deferred<Awaited<ReturnType<typeof h.assignment>>>();
-  const moveStarted = deferred<void>();
-  h.mute.mockImplementationOnce(async () => {
-    muteStarted.resolve();
-    return muteGate.promise;
-  });
-  h.assignment.mockImplementationOnce(async () => {
-    moveStarted.resolve();
-    return moveGate.promise;
-  });
-  const before = h.prefs.snapshot().data!;
-  try {
-    const muting = h.prefs.setMute("alpha", true);
-    await muteStarted.promise;
-    const moving = h.prefs.assign("alpha", "later");
-    const result = Promise.allSettled([moving]);
-    expect(h.assignment).not.toHaveBeenCalled();
-    expect(h.prefs.snapshot().data).toMatchObject({ assignments: { alpha: "later" }, starred: [], muted: [] });
-    muteGate.resolve(["alpha"]);
-    await muting;
-    await moveStarted.promise;
-    expect(h.prefs.snapshot().data).toMatchObject({ assignments: { alpha: "later" }, starred: [], muted: ["alpha"] });
-    expect(Object.isFrozen(h.prefs.snapshot().data?.muted)).toBe(true);
-    if (outcome === "success") moveGate.resolve({ sections: before.sections, assignments: { ...before.assignments, alpha: "later" } });
-    else moveGate.reject(new Error("move rejected"));
-    expect((await result)[0]?.status).toBe(outcome === "success" ? "fulfilled" : "rejected");
-    expect(h.prefs.snapshot().data).toEqual({
-      ...before,
-      assignments: outcome === "success" ? { ...before.assignments, alpha: "later" } : before.assignments,
-      starred: outcome === "success" ? [] : before.starred,
-      muted: ["alpha"],
+it.each(["success", "failure"])(
+  "Mute confirmation preserves a queued optimistic Move through %s",
+  async (outcome) => {
+    const h = await setup();
+    const muteGate = deferred<readonly string[]>();
+    const muteStarted = deferred<void>();
+    const moveGate = deferred<Awaited<ReturnType<typeof h.assignment>>>();
+    const moveStarted = deferred<void>();
+    h.mute.mockImplementationOnce(async () => {
+      muteStarted.resolve();
+      return muteGate.promise;
     });
-  } finally {
-    muteGate.resolve([]);
-    moveGate.resolve({ sections: before.sections, assignments: before.assignments });
-    h.owner.dispose();
-  }
-});
-
-it.each(["success", "failure"])("Move %s cannot overwrite a later confirmed Mute", async (outcome) => {
-  const h = await setup();
-  const gate = deferred<readonly string[]>();
-  const started = deferred<void>();
-  h.star.mockImplementationOnce(async () => {
-    started.resolve();
-    return gate.promise;
-  });
-  const before = h.prefs.snapshot().data!;
-  try {
-    const moving = h.prefs.assign("alpha", "later");
-    const result = Promise.allSettled([moving]);
-    await started.promise;
-    const muting = h.prefs.setMute("beta", true);
-    expect(h.mute).not.toHaveBeenCalled();
-    if (outcome === "success") gate.resolve([]);
-    else gate.reject(new Error("star clear rejected"));
-    await result;
-    await muting;
-    expect(h.prefs.snapshot().data).toEqual({
-      ...before,
-      assignments: outcome === "success" ? { ...before.assignments, alpha: "later" } : before.assignments,
-      starred: outcome === "success" ? [] : before.starred,
-      muted: ["beta"],
+    h.assignment.mockImplementationOnce(async () => {
+      moveStarted.resolve();
+      return moveGate.promise;
     });
-  } finally {
-    gate.resolve([]);
-    h.owner.dispose();
-  }
-});
+    const before = h.prefs.snapshot().data;
+    if (!before) throw new Error("Initial preferences missing");
+    try {
+      const muting = h.prefs.setMute("alpha", true);
+      await muteStarted.promise;
+      const moving = h.prefs.assign("alpha", "later");
+      const result = Promise.allSettled([moving]);
+      expect(h.assignment).not.toHaveBeenCalled();
+      expect(h.prefs.snapshot().data).toMatchObject({
+        assignments: { alpha: "later" },
+        starred: [],
+        muted: [],
+      });
+      muteGate.resolve(["alpha"]);
+      await muting;
+      await moveStarted.promise;
+      expect(h.prefs.snapshot().data).toMatchObject({
+        assignments: { alpha: "later" },
+        starred: [],
+        muted: ["alpha"],
+      });
+      expect(Object.isFrozen(h.prefs.snapshot().data?.muted)).toBe(true);
+      if (outcome === "success")
+        moveGate.resolve({
+          sections: before.sections,
+          assignments: { ...before.assignments, alpha: "later" },
+        });
+      else moveGate.reject(new Error("move rejected"));
+      expect((await result)[0]?.status).toBe(
+        outcome === "success" ? "fulfilled" : "rejected",
+      );
+      expect(h.prefs.snapshot().data).toEqual({
+        ...before,
+        assignments:
+          outcome === "success"
+            ? { ...before.assignments, alpha: "later" }
+            : before.assignments,
+        starred: outcome === "success" ? [] : before.starred,
+        muted: ["alpha"],
+      });
+    } finally {
+      muteGate.resolve([]);
+      moveGate.resolve({
+        sections: before.sections,
+        assignments: before.assignments,
+      });
+      h.owner.dispose();
+    }
+  },
+);
 
-it.each(["clear", "dispose", "cancel"] as const)("%s fences an active Mute and queued Move together", async (action) => {
-  const h = await setup();
-  const gate = deferred<readonly string[]>();
-  const started = deferred<AbortSignal>();
-  const caller = new AbortController();
-  h.mute.mockImplementationOnce(async (_intent, signal) => {
-    started.resolve(signal);
-    return gate.promise;
-  });
-  const before = h.prefs.snapshot().data;
-  try {
-    const muting = h.prefs.setMute("alpha", true, caller.signal);
-    const signal = await started.promise;
-    const moving = h.prefs.assign("alpha", "later", caller.signal);
-    const result = Promise.allSettled([muting, moving]);
-    if (action === "cancel") caller.abort();
-    else h.owner[action]();
-    expect(signal.aborted).toBe(true);
-    gate.resolve(["alpha"]);
-    expect((await result).map(({ status }) => status)).toEqual(["rejected", "rejected"]);
-    expect(h.assignment).not.toHaveBeenCalled();
-    expect(h.star).not.toHaveBeenCalled();
-    expect(h.prefs.snapshot().data).toEqual(action === "cancel" ? before : undefined);
-    expect(h.prefs.snapshot().moves).toBeUndefined();
-  } finally {
-    gate.resolve([]);
-    h.owner.dispose();
-  }
-});
+it.each(["success", "failure"])(
+  "Move %s cannot overwrite a later confirmed Mute",
+  async (outcome) => {
+    const h = await setup();
+    const gate = deferred<readonly string[]>();
+    const started = deferred<void>();
+    h.star.mockImplementationOnce(async () => {
+      started.resolve();
+      return gate.promise;
+    });
+    const before = h.prefs.snapshot().data;
+    if (!before) throw new Error("Initial preferences missing");
+    try {
+      const moving = h.prefs.assign("alpha", "later");
+      const result = Promise.allSettled([moving]);
+      await started.promise;
+      const muting = h.prefs.setMute("beta", true);
+      expect(h.mute).not.toHaveBeenCalled();
+      if (outcome === "success") gate.resolve([]);
+      else gate.reject(new Error("star clear rejected"));
+      await result;
+      await muting;
+      expect(h.prefs.snapshot().data).toEqual({
+        ...before,
+        assignments:
+          outcome === "success"
+            ? { ...before.assignments, alpha: "later" }
+            : before.assignments,
+        starred: outcome === "success" ? [] : before.starred,
+        muted: ["beta"],
+      });
+    } finally {
+      gate.resolve([]);
+      h.owner.dispose();
+    }
+  },
+);
+
+it.each(["clear", "dispose", "cancel"] as const)(
+  "%s fences an active Mute and queued Move together",
+  async (action) => {
+    const h = await setup();
+    const gate = deferred<readonly string[]>();
+    const started = deferred<AbortSignal>();
+    const caller = new AbortController();
+    h.mute.mockImplementationOnce(async (_intent, signal) => {
+      started.resolve(signal);
+      return gate.promise;
+    });
+    const before = h.prefs.snapshot().data;
+    try {
+      const muting = h.prefs.setMute("alpha", true, caller.signal);
+      const signal = await started.promise;
+      const moving = h.prefs.assign("alpha", "later", caller.signal);
+      const result = Promise.allSettled([muting, moving]);
+      if (action === "cancel") caller.abort();
+      else h.owner[action]();
+      expect(signal.aborted).toBe(true);
+      gate.resolve(["alpha"]);
+      expect((await result).map(({ status }) => status)).toEqual([
+        "rejected",
+        "rejected",
+      ]);
+      expect(h.assignment).not.toHaveBeenCalled();
+      expect(h.star).not.toHaveBeenCalled();
+      expect(h.prefs.snapshot().data).toEqual(
+        action === "cancel" ? before : undefined,
+      );
+      expect(h.prefs.snapshot().moves).toBeUndefined();
+    } finally {
+      gate.resolve([]);
+      h.owner.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  "Mute preserves failed preference recovery without admitting Move (retry pending: %s)",
+  async (retryPending) => {
+    const h = await setup();
+    const gate = deferred<SidebarPreferences>();
+    const started = deferred<void>();
+    const before = h.prefs.snapshot().data;
+    if (!before) throw new Error("Initial preferences missing");
+    try {
+      h.read.mockRejectedValueOnce(new Error("preferences unavailable"));
+      await h.prefs.refresh();
+      let retry: Promise<void> | undefined;
+      if (retryPending) {
+        h.read.mockImplementationOnce(() => {
+          started.resolve();
+          return gate.promise;
+        });
+        retry = h.prefs.refresh();
+        await started.promise;
+      }
+      await h.prefs.setMute("alpha", true);
+      gate.resolve(before); // Pre-mute read must not overwrite confirmation.
+      await retry;
+      expect(h.prefs.snapshot()).toMatchObject({
+        status: "error",
+        error: "preferences unavailable",
+        data: { muted: ["alpha"] },
+      });
+      expect(h.prefs.writable).toBe(false);
+      await expect(h.prefs.assign("alpha", "later")).rejects.toThrow(
+        "unavailable",
+      );
+      expect(h.assignment).not.toHaveBeenCalled();
+      await h.prefs.refresh();
+      expect(h.prefs.snapshot()).toMatchObject({
+        status: "ready",
+        data: { muted: ["alpha"] },
+      });
+      expect(h.prefs.writable).toBe(true);
+      await h.prefs.assign("alpha", "later");
+      expect(h.prefs.snapshot().data).toMatchObject({
+        assignments: { alpha: "later" },
+        muted: ["alpha"],
+      });
+    } finally {
+      gate.resolve(before);
+      h.owner.dispose();
+    }
+  },
+);

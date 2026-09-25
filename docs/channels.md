@@ -89,7 +89,7 @@ survive. Invalid, unreadable, or over-budget heads fail closed; only a successfu
 can seed a record. Same-host writes serialize per relay. This is confirmed
 whole-record replacement, not atomic cross-device merging or a durable outbox;
 simultaneous writers on different hosts can still race. Failure requires explicit
-retry. No group/star mutation or alternate menu implementation is included;
+retry. Group/star writes use their separate narrow commands;
 [section sorting](#sidebar-sort-persistence) uses its separate preference coordinate.
 
 Rows expose mute/read actions through right-click/long-press, Shift+F10, or the
@@ -112,6 +112,14 @@ for explicit retry. Focus resolves the current row by identity even if saved
 preferences relocated it during the transaction. Read actions require
 `frontier-sync`; hosts lacking mute writes keep read-only preference projection.
 Packaged hosts gain no speculative native preference writer.
+
+Move channel, Create new, exclusive Starred placement and startup presentation also
+belong to this persistent sidebar. The session serializes placement and mute writes
+through one queue. It retains confirmed preferences separately from pending Move
+projections: mute confirmation updates only confirmed mutes, then reapplies pending
+placement. A failed Move cannot roll back a confirmed mute, and mute completion
+cannot promote an unconfirmed placement. Mute optimism remains presentation-only;
+notification policy continues to use confirmed mutes.
 
 Collapsed section keys and sidebar scroll remain separate, scoped view intent.
 They survive page switches in the same mounted sidebar, are saved when that
@@ -257,8 +265,9 @@ New session and the mute/read group. Lifecycle items use shared leading icons an
 a separator only when they resolve and earlier actions exist. Right-click
 and keyboard access reuse the existing row trigger; no ⋮ control or second popup
 is added. Session creation, attention actions and child-session navigation keep
-their existing owners; sessions do not receive lifecycle actions. This slice adds
-no Move/Star/grouping controls or shared-menu restyling.
+their existing owners; sessions do not receive lifecycle actions. Move/Star/grouping
+controls share this popup with independent eligibility; lifecycle actions do not
+change shared-menu styling.
 
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering

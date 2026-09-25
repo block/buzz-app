@@ -704,7 +704,7 @@ export const test = base.extend({
                 [
                   "name",
                   channelNames[id] ??
-                  lifecycleRows.find((row) => row.id === id)?.name ??
+                    lifecycleRows.find((row) => row.id === id)?.name ??
                     (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id),
                 ],
                 ...lifecycleRows
@@ -1071,7 +1071,9 @@ export const test = base.extend({
       ) {
         expect(event.tags).toContainEqual([
           "t",
-          sidebarCoordinate.startsWith("buzz-channel-kit-v1:") ? "buzz-channel-kit-v1" : sidebarCoordinate,
+          sidebarCoordinate.startsWith("buzz-channel-kit-v1:")
+            ? "buzz-channel-kit-v1"
+            : sidebarCoordinate,
         ]);
         const blob = JSON.parse(
           nip44.v2.decrypt(

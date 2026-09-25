@@ -345,7 +345,12 @@ it("serializes mute writes without changing saved groups or stars", async () => 
       return gate.promise;
     })
     .mockResolvedValueOnce(["alpha", "beta"]);
-  const { wire, owner, preferences } = setup(undefined, undefined, undefined, mute);
+  const { wire, owner, preferences } = setup(
+    undefined,
+    undefined,
+    undefined,
+    mute,
+  );
   try {
     const initial = preferences.ensure();
     await flush();
@@ -373,7 +378,12 @@ it("failed Mute retains the confirmed snapshot and a retry can unmute", async ()
     .fn<SidebarMuteMutator>()
     .mockRejectedValueOnce(new Error("publish rejected"))
     .mockResolvedValueOnce([]);
-  const { wire, owner, preferences } = setup(undefined, undefined, undefined, mute);
+  const { wire, owner, preferences } = setup(
+    undefined,
+    undefined,
+    undefined,
+    mute,
+  );
   try {
     const initial = preferences.ensure();
     await flush();
@@ -399,10 +409,12 @@ it.each(["success", "failure"])(
     const decode = vi
       .fn(async () => data)
       .mockImplementationOnce(async () => data);
-    const { wire, owner, preferences } = setup(decode, undefined, undefined, async () => [
-      "alpha",
-      "beta",
-    ]);
+    const { wire, owner, preferences } = setup(
+      decode,
+      undefined,
+      undefined,
+      async () => ["alpha", "beta"],
+    );
     try {
       const initial = preferences.ensure();
       await flush();
@@ -440,7 +452,12 @@ it.each(["clearCache", "dispose", "cancel"] as const)(
       started.resolve(signal);
       return gate.promise;
     });
-    const { wire, owner, preferences } = setup(undefined, undefined, undefined, mute);
+    const { wire, owner, preferences } = setup(
+      undefined,
+      undefined,
+      undefined,
+      mute,
+    );
     const caller = new AbortController();
     try {
       const initial = preferences.ensure();

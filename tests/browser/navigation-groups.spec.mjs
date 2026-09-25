@@ -64,6 +64,16 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   const beta = rowIn(page, "group:work");
   await expect(beta).toBeVisible();
   await beta.click({ button: "right" });
+  const actions = page.getByRole("menu", { name: "Actions for Beta" });
+  await expect(
+    actions.getByRole("menuitem", { name: "New session", exact: true }),
+  ).toBeVisible();
+  await expect(
+    actions.getByRole("menuitem", { name: "Move channel", exact: true }),
+  ).toBeVisible();
+  await expect(
+    actions.getByRole("menuitem", { name: "Mute", exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("menuitem", { name: "Move channel", exact: true })
     .focus();
@@ -521,7 +531,7 @@ test("Create new retains its draft when preferences fail before submission and r
     await failed;
     await expect(
       page.getByRole("dialog", {
-        name: "Saved groups and stars couldn’t refresh",
+        name: "Saved sidebar preferences couldn’t refresh",
       }),
     ).toBeVisible();
     await dialog.getByRole("button", { name: "Create and move" }).click();
@@ -710,7 +720,7 @@ test.describe("new personal schema", () => {
       `[data-sidebar-section="group:personal-work"] [data-channel-id="${id}"]`,
     );
     const failure = page.getByRole("dialog", {
-      name: "Saved groups and stars couldn’t refresh",
+      name: "Saved sidebar preferences couldn’t refresh",
     });
     await expect(failure).toBeVisible();
     await expect(personal).toBeVisible();
@@ -722,6 +732,13 @@ test.describe("new personal schema", () => {
     await expect(
       page.getByRole("menuitem", { name: "Move channel", exact: true }),
     ).toHaveCount(0);
+    // Sessions remains independently eligible when group writes are unavailable.
+    const actions = page.getByRole("menu", { name: `Actions for ${id}` });
+    await expect(
+      actions.getByRole("menuitem", { name: "New session", exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(actions).toHaveCount(0);
     expect(app.report.sidebarPublications ?? []).toHaveLength(0);
     await page.unroute("**/sidebar-preferences", failLegacy);
     await failure.getByRole("button", { name: "Retry", exact: true }).click();
@@ -751,6 +768,18 @@ test.describe("new personal schema", () => {
     await expect(
       page.getByRole("menuitem", { name: "Move channel", exact: true }),
     ).toHaveCount(0);
+    // Sessions remains independently eligible when group writes are unavailable.
+    const retainedActions = page.getByRole("menu", {
+      name: `Actions for ${id}`,
+    });
+    await expect(
+      retainedActions.getByRole("menuitem", {
+        name: "New session",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(retainedActions).toHaveCount(0);
     expect(app.report.sidebarPublications ?? []).toHaveLength(0);
     await page.unroute("**/sidebar-preferences", failLegacy);
     await failure.getByRole("button", { name: "Retry", exact: true }).click();
@@ -834,6 +863,11 @@ test.describe("new personal schema", () => {
       .click();
     await expect(placed("starred")).toBeFocused();
     await saved(page, app, 2);
+    // Personal records are second-granularity replaceable events. Control the
+    // next save's clock rather than depending on reload/interaction taking >1s.
+    await page.clock.setFixedTime(
+      new Date((publication.event.created_at + 2) * 1000),
+    );
     menu = await openMove(page, row());
     await menu.getByRole("menuitem", { name: "Remove from Starred" }).click();
     await expect(placed("channels")).toBeFocused();
@@ -847,4 +881,61 @@ test.describe("new personal schema", () => {
     await expect(placed("channels")).toBeVisible();
     await expect(row()).toHaveCount(1);
   });
+});
+
+// Browser-owned integration: app-level plugin toggles, the persistent sidebar's
+// menu/dialog portals, and encrypted saves while Messages is not mounted.
+test("Move and Create stay available on Projects with Sessions disabled", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page.getByRole("button", { name: "Your profile", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  const sessions = page
+    .getByRole("region", { name: "Plugins", exact: true })
+    .getByRole("article")
+    .filter({
+      has: page.getByRole("heading", { name: "Sessions", exact: true }),
+    });
+  const toggle = sessions.getByRole("switch", { name: "Enable Sessions" });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await page
+    .getByRole("button", { name: "Projects", exact: true })
+    .first()
+    .click();
+  const projects = page.getByRole("heading", { name: "Projects", exact: true });
+  await expect(projects).toBeVisible();
+  const node = await sidebar(page).elementHandle();
+  const menu = await openMove(page, rowIn(page, "group:work"));
+  const actions = page.getByRole("menu", {
+    name: "Actions for Beta",
+    exact: true,
+  });
+  await expect(
+    actions.getByRole("menuitem", { name: "New session", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    actions.getByRole("menuitem", { name: "Mute", exact: true }),
+  ).toBeVisible();
+  await menu
+    .getByRole("menuitem", { name: "Create new…", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Create new section" });
+  await dialog.getByRole("textbox").fill("Off-page group");
+  await dialog
+    .getByRole("button", { name: "Create and move", exact: true })
+    .click();
+  await saved(page, app, 1);
+  const section = app.report.sidebarPublications[0].blob.sections.find(
+    ({ name }) => name === "Off-page group",
+  );
+  await expect(rowIn(page, `group:${section.id}`)).toBeFocused();
+  await expect(projects).toBeVisible();
+  expect(await node.evaluate((element) => element.isConnected)).toBe(true);
+  await page.reload();
+  await expect(projects).toBeVisible();
+  await expect(rowIn(page, `group:${section.id}`)).toBeVisible();
 });

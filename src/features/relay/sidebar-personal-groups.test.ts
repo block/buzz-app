@@ -35,7 +35,7 @@ function fixture(personal = true) {
     sections: [{ id: "work", name: "OG work", icon: "★", order: 0 }],
     assignments: { [channel]: "work" },
     starred: [],
-  muted: [],
+    muted: [],
   };
   const install = (value: Groups, deleted = false) => {
     const record: KitRecord = { version: 1, community, deleted, value };
@@ -122,6 +122,7 @@ it("routes moves/create to opted-in personal groups, preserves defaults and neve
       assignments: { [other]: "work" },
       starred: [],
       groupSource: "personal",
+      muted: [],
     });
     const move = f.preferences.assign(channel, "work");
     expect(f.preferences.snapshot().data?.assignments[channel]).toBe("work");

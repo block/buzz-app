@@ -53,9 +53,9 @@ export function createSidebarPreferencesStore(
   let writeLifetime = new AbortController();
   let mutation = 0;
   let confirmed: SidebarPreferences | undefined;
-  let readFailed = false;
+  let readFailure: string | undefined;
   const writable = () =>
-    !closed && !!confirmed && !readFailed && !!write && !!writeStar;
+    !closed && !!confirmed && readFailure === undefined && !!write && !!writeStar;
   let nextMove = 0;
   const pendingMoves = new Map<number, MoveIntent>();
   const failedMoves = new Map<string, MoveFailure>();
@@ -149,7 +149,11 @@ export function createSidebarPreferencesStore(
   const project = () => {
     if (!confirmed) return;
     publish({
-      status: "ready",
+      // A field-only confirmation cannot recover a failed full read. Any
+      // concurrent read made stale by a write must leave recovery available.
+      ...(readFailure === undefined
+        ? { status: "ready" as const }
+        : { status: "error" as const, error: readFailure }),
       data: retained(withPendingMoves(
         pendingSorts.size
           ? { ...confirmed, sort: withPendingSorts(confirmed.sort ?? {}) }
@@ -181,7 +185,7 @@ export function createSidebarPreferencesStore(
           mutation !== refreshMutation
         )
           return;
-        readFailed = false;
+        readFailure = undefined;
         confirmed = data;
         project();
       } catch (error) {
@@ -191,11 +195,11 @@ export function createSidebarPreferencesStore(
           active === job &&
           mutation === refreshMutation
         ) {
-          readFailed = true;
+          readFailure = error instanceof Error ? error.message : String(error);
           publish({
             ...snapshot,
             status: "error",
-            error: error instanceof Error ? error.message : String(error),
+            error: readFailure,
           });
         }
       } finally {
@@ -478,7 +482,7 @@ export function createSidebarPreferencesStore(
       pendingSorts.clear();
       latestSort.clear();
       failedSorts.clear();
-      readFailed = false;
+      readFailure = undefined;
       pendingMoves.clear();
       failedMoves.clear();
       latestMove.clear();
@@ -497,7 +501,7 @@ export function createSidebarPreferencesStore(
       pendingSorts.clear();
       latestSort.clear();
       failedSorts.clear();
-      readFailed = false;
+      readFailure = undefined;
       pendingMoves.clear();
       failedMoves.clear();
       latestMove.clear();

@@ -51,6 +51,7 @@ impl NewAgent {
             environment: BTreeMap::new(),
             revision: 0,
             enabled: false,
+            start_on_app_launch: Some(false),
             credential_id: self.id.clone(),
             auth_tag: Some(auth.into()),
             imported: Value::Null,

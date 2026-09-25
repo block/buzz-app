@@ -731,9 +731,8 @@ it("credential import keeps real Stop controls reachable without trapping the ed
       within(dialog).getByRole("button", { name: "Close editor" }),
     ).toBeEnabled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Stop" }));
-    await within(dialog).findByText(
-      "Stopped · a later sent mention can start this agent",
-    );
+    // Stop leaves the independent launch preference on.
+    await within(dialog).findByText("Stopped · starts with buzz-app");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Close editor" }),
     );

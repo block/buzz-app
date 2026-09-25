@@ -186,3 +186,18 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.runtimeTab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+.restartDiff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}

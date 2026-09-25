@@ -11,6 +11,17 @@ declare module "@deepseek-ai/cordis" {
 }
 export type AgentAction = "start" | "stop" | "restart";
 export type ImportSource = "installed" | "development";
+/** Native-redacted saved-versus-running difference; raw values never cross IPC. */
+export type RestartChange =
+  | { kind: "value"; before: unknown; after: unknown }
+  | { kind: "text"; beforeChars: number | null; afterChars: number | null }
+  | { kind: "masked"; before: string | null; after: string | null }
+  | { kind: "added" }
+  | { kind: "removed" };
+export interface RestartDiffEntry {
+  field: string;
+  change: RestartChange;
+}
 export interface AgentView {
   id: string;
   pubkey: string;
@@ -33,6 +44,23 @@ export interface AgentView {
   error: string | null;
   diagnostics: string[];
   profilePending?: boolean;
+  /** Launch restore preference; saving it never changes the running process. */
+  startOnAppLaunch: boolean;
+  /** Effective response policy for the next start; null when it is invalid. */
+  respondTo: "owner-only" | "allowlist" | "anyone" | null;
+  /** Imported provider backend id; null for local agents. */
+  backend: string | null;
+  acpCommand: string | null;
+  mcpCommand: string | null;
+  /** Model/provider the next start uses from saved selectors or build
+   * defaults. Null when none applies or an environment override decides it. */
+  launchModel: string | null;
+  launchProvider: string | null;
+  /** Environment key deciding that selector; its value stays native. */
+  launchModelEnv: string | null;
+  launchProviderEnv: string | null;
+  /** Empty unless a running process was started with different saved settings. */
+  restartDiff: RestartDiffEntry[];
 }
 export interface ControlSnapshot {
   agents: AgentView[];
@@ -81,6 +109,7 @@ export interface AgentControlHost {
     auth: string,
   ): Promise<ControlSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(
     id: string,
@@ -118,6 +147,7 @@ export interface AgentControl {
     edit: AgentEdit,
   ): Promise<AgentView>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
@@ -369,6 +399,16 @@ export function createAgentControl(
               undefined,
               true,
             ),
+        }
+      : {}),
+    ...(host?.setStartOnAppLaunch
+      ? {
+          setStartOnAppLaunch: (id: string, enabled: boolean) =>
+            run((native) => {
+              if (!native.setStartOnAppLaunch)
+                throw new Error("Startup preference is unavailable.");
+              return native.setStartOnAppLaunch(id, enabled);
+            }, ready),
         }
       : {}),
     snapshot: () => state,

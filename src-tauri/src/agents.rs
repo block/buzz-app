@@ -4,7 +4,7 @@ use buzz_agent_controller::{
     LegacySource, NewAgent, PlatformCredentials, RuntimeBundle, Store,
 };
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -185,6 +185,8 @@ struct Host {
     credentials: Arc<dyn Credentials>,
     starts: BTreeMap<String, (u64, Option<String>)>,
     next_start: u64,
+    /// Agents with an explicit Start/Stop since open; queued restore skips them.
+    acted: BTreeSet<String>,
     creating: Option<(String, Arc<NewAgent>)>,
     legacy_check: fn() -> Result<(), String>,
 }
@@ -212,6 +214,7 @@ impl Host {
             credentials,
             starts: BTreeMap::new(),
             next_start: 0,
+            acted: BTreeSet::new(),
             creating: None,
             legacy_check: refuse_legacy,
         })
@@ -223,6 +226,7 @@ impl Host {
     }
     fn action(&mut self, id: &str, action: Action) -> Result<Snapshot, String> {
         self.starts.remove(id);
+        self.acted.insert(id.to_owned());
         self.controller.action(id, action)?;
         self.snapshot()
     }
@@ -292,7 +296,7 @@ impl AgentHost {
     }
     pub(crate) async fn restore(&self) {
         let ids = self
-            .with(|host| host.controller.enabled_ids())
+            .with(|host| host.controller.launch_ids())
             .unwrap_or_default();
         for id in ids {
             let _ = start(self.clone(), id, Action::Start, true, None).await;
@@ -388,6 +392,18 @@ pub(crate) async fn agent_control_save(
     .await
 }
 #[tauri::command]
+pub(crate) async fn agent_control_start_on_app_launch(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    enabled: bool,
+) -> Result<Snapshot, String> {
+    run(state.inner().clone(), move |host| {
+        host.controller.set_start_on_app_launch(&id, enabled)?;
+        host.snapshot()
+    })
+    .await
+}
+#[tauri::command]
 pub(crate) async fn agent_control_action(
     state: tauri::State<'_, AgentHost>,
     id: String,
@@ -408,9 +424,12 @@ async fn start(
     replay_floor: Option<u64>,
 ) -> Result<Snapshot, String> {
     let prepared = owner.with(|host| {
-        host.starts.remove(&id);
-        if restore && !host.controller.enabled_ids()?.contains(&id) {
+        if restore && (host.acted.contains(&id) || !host.controller.launch_ids()?.contains(&id)) {
             return Err("Agent disabled before restore".into());
+        }
+        host.starts.remove(&id);
+        if !restore {
+            host.acted.insert(id.clone());
         }
         let request = match host.controller.credential_request(&id) {
             Ok(request) => request,

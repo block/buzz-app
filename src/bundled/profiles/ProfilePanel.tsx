@@ -5,6 +5,7 @@ import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
 import { ProfileAgentRuntime } from "./ProfileAgentRuntime";
+import { ProfileRuntime, useRuntimeAgent } from "./ProfileRuntime";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
@@ -112,7 +113,9 @@ function ProfileDetails({
   );
   const [attempt, retry] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
-  const [tab, setTab] = useState<"info" | "channels" | "memories">("info");
+  const [tab, setTab] = useState<"info" | "runtime" | "channels" | "memories">(
+    "info",
+  );
   const region = useRef<HTMLElement>(null);
   const messageAttempt = useRef<AbortController>(undefined);
   const [openingMessage, setOpeningMessage] = useState(false);
@@ -145,12 +148,22 @@ function ProfileDetails({
     session,
     knownAgent ? pubkey : undefined,
   );
-  const canViewMemories = knownAgent && !!viewer && verifiedOwner === viewer;
-  const selectedTab = tab === "memories" && !canViewMemories ? "info" : tab;
+  const isOwner = knownAgent && !!viewer && verifiedOwner === viewer;
+  // Private local configuration needs both native custody and verified ownership.
+  const runtimeAgent = useRuntimeAgent(control, scope, pubkey);
+  const canViewRuntime = isOwner && !!runtimeAgent;
+  const selectedTab =
+    (tab === "memories" && !isOwner) || (tab === "runtime" && !canViewRuntime)
+      ? "info"
+      : tab;
   useEffect(() => {
-    if (!canViewMemories)
+    if (!isOwner)
       setTab((current) => (current === "memories" ? "info" : current));
-  }, [canViewMemories]);
+  }, [isOwner]);
+  useEffect(() => {
+    if (!canViewRuntime)
+      setTab((current) => (current === "runtime" ? "info" : current));
+  }, [canViewRuntime]);
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
     try {
@@ -242,8 +255,11 @@ function ProfileDetails({
         onValueChange={setTab}
         items={[
           { value: "info", label: "Info" },
+          ...(canViewRuntime
+            ? [{ value: "runtime" as const, label: "Runtime" }]
+            : []),
           { value: "channels", label: "Channels" },
-          ...(canViewMemories
+          ...(isOwner
             ? [{ value: "memories" as const, label: "Memories" }]
             : []),
         ]}
@@ -365,7 +381,18 @@ function ProfileDetails({
                     </>
                   ))}
               </>
-            ) : selected === "memories" && canViewMemories ? (
+            ) : selected === "runtime" &&
+              canViewRuntime &&
+              control &&
+              runtimeAgent &&
+              verifiedOwner ? (
+              <ProfileRuntime
+                control={control}
+                agent={runtimeAgent}
+                session={session}
+                owner={verifiedOwner}
+              />
+            ) : selected === "memories" && isOwner ? (
               <ProfileMemories session={session} pubkey={pubkey} />
             ) : (
               <ProfileChannels

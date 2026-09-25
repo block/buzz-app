@@ -38,6 +38,7 @@ fn agent(workspace: &Path) -> Agent {
         environment: BTreeMap::from([("PROVIDER_TEST_SETTING".into(), "explicit-value".into())]),
         revision: 1,
         enabled: false,
+        start_on_app_launch: None,
         credential_id: "test".into(),
         auth_tag: Some(crate::secret::test_attestation(PUB)),
         imported: json!({"record":{"respond_to":"owner-only","parallelism":2,"effort_level":"high"}}),
@@ -160,12 +161,19 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     let saved = controller.save(&a.id, 1, edit).unwrap();
     assert_eq!(saved.agents[0].revision, 2);
     assert_eq!(saved.agents[0].running_revision, Some(1));
+    let fields: Vec<_> = saved.agents[0]
+        .restart_diff
+        .iter()
+        .map(|e| e.field.as_str())
+        .collect();
+    assert_eq!(fields, ["name", "system_prompt"]);
     assert_eq!(
         fs::read_to_string(dir.path().join("starts")).unwrap(),
         first
     );
     let restarted = controller.action(&a.id, Action::Restart).unwrap();
     assert_eq!(restarted.agents[0].running_revision, Some(2));
+    assert!(restarted.agents[0].restart_diff.is_empty());
     let deadline = Instant::now() + Duration::from_secs(5);
     while !fs::read_to_string(dir.path().join("starts"))
         .unwrap()
@@ -191,6 +199,57 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     let restored = controller.restore().unwrap();
     assert!(!restored.agents[0].enabled);
     assert!(controller.running.is_empty());
+    let preferred = controller.set_start_on_app_launch(&a.id, true).unwrap();
+    assert!(preferred.agents[0].start_on_app_launch);
+    assert!(controller.running.is_empty());
+    let restored = controller.restore().unwrap();
+    assert!(
+        matches!(restored.agents[0].status, ProcessStatus::Running),
+        "{:?}",
+        restored.agents[0].error
+    );
+    controller.shutdown().unwrap();
+    controller.set_start_on_app_launch(&a.id, false).unwrap();
+    assert!(controller.store.agents().unwrap()[0].enabled);
+    assert!(controller.launch_ids().unwrap().is_empty());
+    controller.restore().unwrap();
+    assert!(controller.running.is_empty());
+}
+#[test]
+#[cfg(unix)]
+fn new_records_launch_preference_is_independent_of_start_and_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let owner: Vec<String> = serde_json::from_str(&crate::secret::test_attestation(PUB)).unwrap();
+    let prepared = crate::NewAgent::prepare("wss://relay.example", &owner[1]).unwrap();
+    let a = agent(dir.path());
+    let mut controller = Controller::new(
+        Store::open(dir.path().join("config")).unwrap(),
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let edit = AgentEdit {
+        name: a.name.clone(),
+        system_prompt: a.system_prompt.clone(),
+        workspace: a.workspace.clone(),
+        harness: a.harness.clone(),
+        environment: BTreeMap::new(),
+    };
+    let auth = crate::secret::test_attestation(prepared.key.pubkey());
+    controller.create(&prepared, edit, &auth).unwrap();
+    let created = &controller.store.agents().unwrap()[0];
+    assert_eq!(created.start_on_app_launch, Some(false));
+    // Start/Stop change execution intent only, never the launch preference.
+    let mut explicit = a.clone();
+    explicit.start_on_app_launch = Some(false);
+    controller.store.insert(vec![explicit]).unwrap();
+    controller.action(&a.id, Action::Start).unwrap();
+    assert!(controller.launch_ids().unwrap().is_empty());
+    controller.action(&a.id, Action::Stop).unwrap();
+    controller.set_start_on_app_launch(&a.id, true).unwrap();
+    controller.action(&a.id, Action::Stop).unwrap();
+    assert_eq!(controller.launch_ids().unwrap(), vec![a.id.clone()]);
 }
 #[test]
 #[cfg(unix)]
@@ -962,6 +1021,45 @@ fn saved_selectors_and_environment_override_build_floor_including_empty() {
         .insert("DATABRICKS_TOKEN".into(), "SYNTHETIC".into());
     assert!(databricks_with_defaults(&agent, &defaults).is_err());
     assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+}
+
+#[test]
+fn launch_selectors_show_defaults_blanks_and_overrides() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = agent(dir.path());
+    agent.harness.provider.clear();
+    agent.harness.model.clear();
+    let defaults = deployment_defaults();
+    let resolved = defaults.resolve(&agent.harness, &agent.environment);
+    let blank = crate::defaults::selectors(&resolved, &agent.environment);
+    assert_eq!(blank.provider, Some(defaults.provider.as_str()));
+    assert_eq!(blank.model, Some(defaults.model.as_str()));
+    // Saved selector plus an explicit override: the override is launched.
+    agent.harness.model = "saved-model".into();
+    agent
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "override-model".into());
+    // The view names the deciding override key, never its value.
+    let view = agent.view();
+    assert_eq!(view.harness.model, "saved-model");
+    assert_eq!(view.launch_model, None);
+    assert_eq!(view.launch_model_env, Some("BUZZ_AGENT_MODEL"));
+    agent.harness.command = "/usr/local/bin/goose".into();
+    agent.environment.clear();
+    agent.harness.provider = "saved-provider".into();
+    agent
+        .environment
+        .insert("GOOSE_PROVIDER".into(), "override-provider".into());
+    let view = agent.view();
+    assert_eq!(view.launch_model.as_deref(), Some("saved-model"));
+    assert_eq!(view.launch_model_env, None);
+    assert_eq!(view.launch_provider, None);
+    assert_eq!(view.launch_provider_env, Some("GOOSE_PROVIDER"));
+    agent.harness.model.clear();
+    agent.environment.clear();
+    agent.harness.provider.clear();
+    let view = agent.view();
+    assert!(view.launch_model.is_none() && view.launch_provider.is_none());
 }
 
 #[test]

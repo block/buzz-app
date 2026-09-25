@@ -20,12 +20,14 @@ it("all command names and camelCase payloads match the native contract", async (
   };
   await host.save("exact-id", 3, edit);
   await host.action("exact-id", "stop");
+  await host.setStartOnAppLaunch?.("exact-id", false);
   await host.previewImport("development", "wss://chosen.example");
   await host.commitImport("exact-preview", ["exact-id"]);
   expect(vi.mocked(invoke).mock.calls).toEqual([
     ["agent_control_snapshot"],
     ["agent_control_save", { id: "exact-id", expectedRevision: 3, edit }],
     ["agent_control_action", { id: "exact-id", action: "stop" }],
+    ["agent_control_start_on_app_launch", { id: "exact-id", enabled: false }],
     [
       "agent_control_import_preview",
       { source: "development", destination: "wss://chosen.example" },

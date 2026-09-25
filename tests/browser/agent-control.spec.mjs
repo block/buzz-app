@@ -236,6 +236,60 @@ test("local controls preserve drafts, confirm operations and distinguish disable
   }
 });
 
+test("explicit-on preference survives Stop without changing the enabled state", async ({
+  page,
+}) => {
+  const server = await createServer({
+    ...config,
+    configFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
+    );
+    const editor = await openEditor(page);
+    // Native owns the legacy None → enabled projection (store/tests.rs).
+    // This browser fixture witnesses explicit-on while running and after Stop.
+    await page.evaluate(() =>
+      window.agentControlFixture.control.setStartOnAppLaunch(
+        "fixture-agent",
+        true,
+      ),
+    );
+    await expect(
+      editor.getByText("Enabled · starts with buzz-app", { exact: true }),
+    ).toBeVisible();
+    await editor.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(
+      editor.getByText("Stopped · starts with buzz-app", { exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => ({
+        enabled: window.agentControlFixture.agent.enabled,
+        startOnAppLaunch: window.agentControlFixture.agent.startOnAppLaunch,
+        actions: window.agentControlFixture.calls.filter((call) =>
+          ["startOnAppLaunch", "stop"].includes(call.action),
+        ),
+      })),
+    ).toEqual({
+      enabled: false,
+      startOnAppLaunch: true,
+      actions: [
+        {
+          action: "startOnAppLaunch",
+          payload: { id: "fixture-agent", enabled: true },
+        },
+        { action: "stop", payload: { id: "fixture-agent" } },
+      ],
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 for (const previouslyStopped of [false, true]) {
   test(`unreadable status allows only explicit Stop from a retained ${previouslyStopped ? "stopped" : "running"} snapshot`, async ({
     page,
@@ -323,7 +377,7 @@ for (const previouslyStopped of [false, true]) {
       ).toContainText("unconfirmed");
       if (!previouslyStopped) {
         await expect(
-          editor.getByText("Enabled · starts with buzz-app", {
+          editor.getByText("Enabled · manual-start only", {
             exact: true,
           }),
         ).toBeVisible();

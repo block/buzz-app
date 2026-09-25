@@ -20,12 +20,18 @@ use tauri::Manager as _;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 const INSTALL: &str = "curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash";
 
+/// App-lifetime install owner: one install at a time, and the running installer's
+/// process group so normal Quit can stop it (Tauri exits without dropping futures).
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 #[derive(Default)]
-pub(crate) struct HarnessSetup(AtomicBool);
+pub(crate) struct HarnessSetup(AtomicBool, std::sync::Mutex<(bool, Option<u32>)>);
 #[cfg(not(any(target_os = "macos", target_os = "linux", test)))]
 #[derive(Default)]
 pub(crate) struct HarnessSetup;
+#[cfg(not(any(target_os = "macos", target_os = "linux", test)))]
+impl HarnessSetup {
+    pub(crate) fn shutdown(&self) {}
+}
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 struct InstallGuard<'a>(&'a HarnessSetup);
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
@@ -40,7 +46,51 @@ impl HarnessSetup {
         self.0
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| "A Goose installation is already in progress".to_owned())?;
-        Ok(InstallGuard(self))
+        let guard = InstallGuard(self);
+        if self
+            .1
+            .lock()
+            .map_err(|_| "Goose install state is unavailable")?
+            .0
+        {
+            return Err("Buzz is quitting".into());
+        }
+        Ok(guard)
+    }
+    /// Records a spawned installer group; after Quit it is killed immediately.
+    fn track(&self, group: u32) -> Result<(), String> {
+        let mut state = self
+            .1
+            .lock()
+            .map_err(|_| "Goose install state is unavailable")?;
+        if state.0 {
+            kill_group(group);
+            return Err("Buzz is quitting".into());
+        }
+        state.1 = Some(group);
+        Ok(())
+    }
+    fn untrack(&self) {
+        if let Ok(mut state) = self.1.lock() {
+            state.1 = None;
+        }
+    }
+    /// Normal-Quit cleanup: stop the active installer and fence later spawns.
+    pub(crate) fn shutdown(&self) {
+        if let Ok(mut state) = self.1.lock() {
+            state.0 = true;
+            if let Some(group) = state.1.take() {
+                kill_group(group);
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+fn kill_group(group: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(group as i32), libc::SIGKILL);
     }
 }
 
@@ -116,20 +166,21 @@ where
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-struct InstallerChild(tokio::process::Child, Option<u32>);
+struct InstallerChild<'a>(tokio::process::Child, Option<u32>, &'a HarnessSetup);
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-impl Drop for InstallerChild {
+impl Drop for InstallerChild<'_> {
     fn drop(&mut self) {
         // Child::id() is None once waited, so keep the group id from spawn.
         if let Some(pid) = self.1 {
-            unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+            kill_group(pid);
         }
         let _ = self.0.start_kill();
+        self.2.untrack();
     }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-async fn upstream(log: File) -> Result<bool, String> {
+async fn upstream(setup: &HarnessSetup, log: File) -> Result<bool, String> {
     // pipefail preserves curl failures; the group owns every installer child.
     // Never pass app, agent or provider credentials to the downloaded script.
     let home = std::env::var_os("HOME").ok_or("Goose install requires HOME")?;
@@ -168,7 +219,8 @@ async fn upstream(log: File) -> Result<bool, String> {
         .spawn()
         .map_err(|_| "Could not start the Goose installer".to_owned())?;
     let pid = child.id();
-    let mut child = InstallerChild(child, pid);
+    let mut child = InstallerChild(child, pid, setup);
+    setup.track(pid.ok_or("Could not start the Goose installer")?)?;
     let result = tokio::time::timeout(std::time::Duration::from_secs(300), child.0.wait())
         .await
         .map_err(|_| "Goose installer timed out after five minutes".to_owned())?
@@ -189,7 +241,7 @@ pub(crate) fn waiting_for_goose(agent: &buzz_agent_controller::AgentView) -> boo
 }
 
 fn waiting(enabled: bool, status: ProcessStatus, command: &str, error: Option<&str>) -> bool {
-    if !enabled || !matches!(status, ProcessStatus::Failed | ProcessStatus::Stopped) {
+    if !enabled || status != ProcessStatus::Failed {
         return false;
     }
     if Path::new(command)
@@ -202,7 +254,7 @@ fn waiting(enabled: bool, status: ProcessStatus, command: &str, error: Option<&s
     // Only a start that failed on the missing CLI was waiting. Stopped agents are
     // indistinguishable from ones the person chose not to run this session, and a
     // relative command still fails after install.
-    status == ProcessStatus::Failed && error == Some("Required runtime executable is missing")
+    error == Some("Required runtime executable is missing")
 }
 
 #[tauri::command]
@@ -230,7 +282,8 @@ pub(crate) async fn goose_install<R: tauri::Runtime>(
             .join("agent-controller/goose-install.log");
         // The outer guard includes re-detection and restarts; the inner runner
         // only owns file creation and captured combined output.
-        let mut report = run_install(&path, upstream).await?;
+        let setup = state.inner();
+        let mut report = run_install(&path, |log| upstream(setup, log)).await?;
         if !report.ready {
             return Ok(report);
         }

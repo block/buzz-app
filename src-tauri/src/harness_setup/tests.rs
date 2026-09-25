@@ -106,3 +106,37 @@ fn only_enabled_goose_waiting_for_a_missing_cli_restarts() {
         Some("Saved agent key is unavailable")
     ));
 }
+
+#[cfg(unix)]
+#[test]
+fn quit_kills_the_tracked_installer_group_and_fences_late_spawns() {
+    use std::os::unix::process::CommandExt;
+    let spawn = || {
+        std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30 & wait"])
+            .process_group(0)
+            .spawn()
+            .unwrap()
+    };
+    let state = HarnessSetup::default();
+    let mut active = spawn();
+    let guard = state.claim().unwrap();
+    state.track(active.id()).unwrap();
+    state.shutdown();
+    // SIGKILL reached the group leader; its sleeping child shares the group.
+    assert!(!active.wait().unwrap().success());
+    let gone = (0..50).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        (unsafe { libc::kill(-(active.id() as i32), 0) }) == -1
+    });
+    assert!(gone, "installer helpers survived Quit");
+    drop(guard);
+
+    assert_eq!(state.claim().err().as_deref(), Some("Buzz is quitting"));
+    let mut late = spawn();
+    assert_eq!(
+        state.track(late.id()).err().as_deref(),
+        Some("Buzz is quitting")
+    );
+    assert!(!late.wait().unwrap().success());
+}

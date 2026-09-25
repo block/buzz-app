@@ -472,6 +472,7 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<HarnessSetup>().shutdown();
                 browser::shutdown();
                 if let Err(error) = app.state::<Terminals>().shutdown() {
                     eprintln!("Terminal shutdown failed: {error}");

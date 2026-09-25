@@ -1379,6 +1379,17 @@ export const test = base.extend({
                       url: req.url,
                       at: performance.now(),
                     });
+                  // A quota refusal starts the app's cooldown only once the
+                  // broker has relayed it, which can be well after the relay
+                  // refused under load.
+                  if (/^\/api\/relay\/[^/]+\/query$/.test(req.url ?? ""))
+                    res.once("finish", () => {
+                      if (res.statusCode !== 429) return;
+                      const rejection = relay.rejected.find(
+                        (item) => item.relayed === undefined,
+                      );
+                      if (rejection) rejection.relayed = performance.now();
+                    });
                   if (req.url?.endsWith("/stream"))
                     res.once("close", () => {
                       retiredStreams.add(res.getHeader("x-buzz-live-id"));

@@ -93,9 +93,7 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
     globalRequests,
   );
   await expectAnchor(page, reading);
-  await expect
-    .poll(() => performance.now())
-    .toBeGreaterThan(app.relay.rejected[0].until + 50);
+  await expect.poll(() => app.relay.cooldownOver()).toBe(true);
   await retry(page).click();
   await expect(retry(page)).toHaveCount(0);
   await expect.poll(() => heads(app, "alpha").length).toBe(calls + 1);
@@ -190,9 +188,7 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   await retry(page).click();
   await retry(page).click();
   expect(rosters()).toHaveLength(calls);
-  await expect
-    .poll(() => performance.now())
-    .toBeGreaterThan(app.relay.rejected[0].until + 50);
+  await expect.poll(() => app.relay.cooldownOver()).toBe(true);
   await retry(page).click();
   await expect(
     page.getByText("No channels yet.", { exact: true }),

@@ -139,9 +139,7 @@ test.describe("quota retry without threshold-driven continuation", () => {
     await settle(page);
     expect(cursors()).toHaveLength(count);
     expect(browserCursors).toHaveLength(count);
-    await expect
-      .poll(() => performance.now())
-      .toBeGreaterThan(app.relay.rejected[0].until + 50);
+    await expect.poll(() => app.relay.cooldownOver()).toBe(true);
     await history(page)
       .getByRole("button", { name: "Load older messages", exact: true })
       .click();

@@ -101,6 +101,16 @@ export function policyRelay({
     requests,
     rejected,
     expectedHttpErrors: () => rejected.length > 0,
+    /** The app starts its cooldown when the refusal reaches the browser, after
+     * the broker hop. The fixture records `relayed` when the broker finishes
+     * the response; the margin covers delivery and the app's own handling. */
+    cooldownOver(index = 0) {
+      const rejection = rejected[index];
+      return (
+        rejection?.relayed !== undefined &&
+        performance.now() > rejection.relayed + rejection.retryAfterMs + 250
+      );
+    },
     emptyRoster() {
       emptyRoster = true;
     },
@@ -332,7 +342,7 @@ export function policyRelay({
           quotas.delete(quota);
           rejected.push({
             channel,
-            until: performance.now() + (seconds + 1) * 1000,
+            retryAfterMs: (seconds + 1) * 1000,
           });
           return Response.json(
             { error: `rate-limited: quota exceeded; retry in ${seconds}s` },

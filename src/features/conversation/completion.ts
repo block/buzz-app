@@ -12,6 +12,7 @@ export function matchCompletion(
   providers: readonly Contribution<ComposerCompletion>[],
   observation: ComposerObservation,
   context: CompletionContext,
+  resolved: readonly Readonly<{ start: number; end: number }>[] = [],
 ) {
   const order = (value: ComposerCompletion) =>
     Number.isFinite(value.order) ? (value.order ?? 0) : 0;
@@ -25,8 +26,12 @@ export function matchCompletion(
       const query = provider.match(observation, context);
       // A later trigger owns the caret over a broad earlier query (e.g.
       // @Mary Jane :smile). Order/key resolve providers claiming the same start.
+      // A trigger inside a resolved chip is not an open query.
       if (
         validQuery(query, observation) &&
+        !resolved.some(
+          (span) => span.start <= query.start && query.start < span.end,
+        ) &&
         (!winner || query.start > winner.query.start)
       )
         winner = {

@@ -208,13 +208,21 @@ it("adds no agent section or owner reads for a profile without an agent hint", a
     kind0(filter) ? [profile(person, { name: "Person" })] : [],
   );
   await screen.findByRole("heading", { name: "Person" });
+  // Completion barrier: every issued read has settled and React has committed
+  // its result, so any owner read it would trigger has been issued.
+  await act(async () => {
+    await Promise.all(query.mock.results.map((result) => result.value));
+  });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
+  // Only the profile's own reads: kind 0, user status and the public kind-10100
+  // metadata every profile observes. No owner evidence or 30177 policy read.
   const reads = query.mock.calls.flatMap(([filters]) => filters);
-  expect(reads).toHaveLength(2);
+  expect(reads).toHaveLength(3);
   expect(reads).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
       expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
+      expect.objectContaining({ authors: [person.pubkey], kinds: [10100] }),
     ]),
   );
 });

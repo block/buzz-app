@@ -28,8 +28,10 @@ export function AgentControlPanel({
   editTarget,
   editRequest,
   onCloseTarget,
+  onOpenHarnesses,
 }: {
   resolveName?: ReturnType<typeof useIdentityNames>;
+  onOpenHarnesses?: (() => void) | undefined;
   control: AgentControl;
   importDestination?: string;
   createOwner?: string | undefined;
@@ -221,6 +223,7 @@ export function AgentControlPanel({
           owner={adding.owner}
           {...(adding.source ? { source: adding.source } : {})}
           onClose={() => setAdding(null)}
+          onOpenHarnesses={onOpenHarnesses}
         />
       )}
       {editing && (
@@ -231,6 +234,7 @@ export function AgentControlPanel({
           control={control}
           state={state}
           avatar={editTarget ? undefined : selected?.avatar}
+          onOpenHarnesses={onOpenHarnesses}
           onClose={
             editTarget ? (onCloseTarget ?? (() => {})) : () => setSelected(null)
           }

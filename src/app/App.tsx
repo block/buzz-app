@@ -133,6 +133,7 @@ export function App({ services }: { services: AppServices }) {
               shortcuts={services.shortcuts}
               shortcutBindings={services.shortcutBindings}
               notifications={services.notifications}
+              agentControl={services.agentControl}
               navigation={route.request}
               onSection={(section) => {
                 const client = services.communities.snapshot();

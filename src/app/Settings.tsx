@@ -32,6 +32,7 @@ import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
 import { AgentSettings } from "./AgentSettings";
+import type { AgentControl } from "../features/agents/control";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 
@@ -58,10 +59,12 @@ export function Settings({
   shortcuts,
   shortcutBindings,
   notifications,
+  agentControl,
   navigation,
   onSection,
 }: {
   cards: SettingsCards;
+  agentControl: AgentControl;
   plugins: PluginManager;
   communities: Communities;
   appearance: Appearance;
@@ -256,7 +259,10 @@ export function Settings({
               />
             </div>
             <div hidden={selected !== "agents"}>
-              <AgentSettings active={selected === "agents"} />
+              <AgentSettings
+                control={agentControl}
+                active={selected === "agents"}
+              />
             </div>
             {communityCards.map((card) => (
               <div key={card.key} hidden={selected !== card.key}>

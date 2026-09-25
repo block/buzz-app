@@ -129,3 +129,37 @@ it("keeps an OS entity intent through real community selection and Retry in App"
     screen.queryByRole("button", { name: "Retry navigation" }),
   ).not.toBeInTheDocument();
 });
+
+it.each(["compute", "wallet"] as const)(
+  "opens the built-in %s settings destination",
+  async (section) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    services = createServices();
+    const current = services;
+    render(<App services={current} />);
+    await waitFor(() =>
+      expect(current.plugins.snapshot().configuration.status).toBe("ready"),
+    );
+
+    await act(async () => {
+      await current.navigation.open({ version: 1, kind: "settings", section });
+    });
+
+    await waitFor(() =>
+      expect(current.navigation.snapshot().status).toBe("opened"),
+    );
+    expect(
+      screen.getByRole("button", { name: new RegExp(section, "i") }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.queryByRole("heading", { name: "This destination couldn’t open" }),
+    ).not.toBeInTheDocument();
+  },
+);

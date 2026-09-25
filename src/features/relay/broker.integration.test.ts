@@ -17,7 +17,7 @@ import { connectBrokerTransport } from "./transport";
 import { createRelaySession } from "./session";
 import { keypair } from "./testing";
 
-it("profiles a first slow publish through real local IPC, signing, authenticated socket, and receipt reconciliation", async () => {
+it("profiles a gated publish through real local IPC, signing, authenticated socket, and receipt reconciliation", async () => {
   const viewer = keypair(),
     relay = keypair();
   let handler: RequestListener | undefined;
@@ -104,10 +104,15 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
     const pending = owner.session.profiling
       .snapshot()
       .find((sample) => sample.stage === "send.publish" && sample.id === first);
+    assert.exists(pending);
     expect(pending).toMatchObject({ outcome: "pending" });
+    expect(outbox.snapshot()).toMatchObject([
+      { event: { id: first }, delivery: "sending" },
+    ]);
+    expect(events.has(first)).toBe(false);
     expect(uploaded).toBe(1);
-    // Hold the first publish long enough that it is slow by construction, not
-    // by comparison with a second publish on a loaded runner.
+    // Measure time inside this publication's gate, not against another publish
+    // whose independent IPC scheduling can be slower on a loaded runner.
     const heldAt = performance.now();
     await new Promise((resolve) => setTimeout(resolve, 200));
     const heldMs = performance.now() - heldAt;
@@ -129,8 +134,18 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
       (sample) => sample.id === second && sample.stage === "send.publish",
     );
     assert.exists(secondUpstream);
+    expect(firstUpstream).toMatchObject({
+      start: pending.start,
+      outcome: "ok",
+    });
+    expect(firstUpstream.duration).toBeGreaterThanOrEqual(pending.duration);
     expect(firstUpstream.duration).toBeGreaterThanOrEqual(heldMs);
-    expect(secondUpstream.duration).toBeLessThan(firstUpstream.duration);
+    // Exact first/subsequent latency attribution uses the controlled clock in
+    // traffic.integration.test.ts; real IPC durations need not be ordered.
+    expect(secondUpstream.outcome).toBe("ok");
+    expect(secondUpstream.duration).toBeGreaterThan(0);
+    expect(published).toBe(2);
+    expect(events.get(second)).toMatchObject({ content: "second" });
     expect(events.get(first)).toMatchObject({
       content: `first\n\n[report.pdf](<${fixtureRelayUrl}/media/${hash}.pdf>)`,
       tags: expect.arrayContaining([

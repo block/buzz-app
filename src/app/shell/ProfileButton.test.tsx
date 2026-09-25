@@ -326,7 +326,9 @@ it("drops the previous community profile on switching and uses local defaults on
     snapshot: () => new Map([[viewer, oldProfile]]),
     subscribe: (listener: () => void) => {
       oldListeners.add(listener);
-      return () => oldListeners.delete(listener);
+      return () => {
+        oldListeners.delete(listener);
+      };
     },
     ensure: vi.fn(async () => {}),
   };

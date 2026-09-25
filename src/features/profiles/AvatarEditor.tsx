@@ -170,10 +170,22 @@ function AvatarDraft({
             role="img"
             aria-label="Emoji avatar preview"
             data-avatar-shape={shape}
-            className="flex size-full items-center justify-center text-[76px]"
+            className="flex size-full items-center justify-center"
             style={{ background: color }}
           >
-            {emoji}
+            {/* Artwork coordinates match emojiAvatar's 512px canvas, not UI type. */}
+            <svg viewBox="0 0 512 512" className="size-full" aria-hidden="true">
+              <text
+                x="256"
+                y="286"
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize="258"
+                fontFamily='"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif'
+              >
+                {emoji}
+              </text>
+            </svg>
           </div>
         ) : (
           <Avatar

@@ -2051,7 +2051,6 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
     await h.close();
   }
 });
-||||||| parent of 9f8153e (feat: add private text feedback from account menu)
 
 test("product feedback signs and publishes only private bounded text/category", async () => {
   const h = await harness(success);

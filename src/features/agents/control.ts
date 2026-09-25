@@ -231,7 +231,8 @@ export function createAgentControl(
     if (!host || disposed || state.busy) return Promise.resolve();
     if (read) return read;
     const current = generation;
-    if (!state.data) update({ status: "loading", error: null });
+    if (!state.data && state.status === "idle")
+      update({ status: "loading", error: null });
     const pending = Promise.resolve()
       .then(async () => {
         // Only read-only native startup/contention failures are transient. Keep
@@ -260,7 +261,7 @@ export function createAgentControl(
             update({
               status: "error",
               error:
-                "Could not refresh local agents. Retry to get current host status.",
+                "Could not refresh local agents. Current host status is unconfirmed.",
             });
         },
       )
@@ -302,12 +303,10 @@ export function createAgentControl(
     } catch (error) {
       // Host rejects with sanitized user-facing strings, never raw child output.
       const detail = typeof error === "string" ? `${error} ` : "";
-      if (current === generation)
-        update({
-          status: "error",
-          error: `${detail}Could not confirm the operation. Refresh status before other operations; Stop remains available for known agents. Your edits are retained.`,
-        });
-      throw new Error("Could not confirm the agent operation.");
+      const message = `${detail}Could not confirm the operation. Check current status and saved settings before retrying; the operation will not be repeated automatically. Your edits are retained.`;
+      if (current === generation) update({ status: "error", error: message });
+      // Dialogs own failed-write details after a successful status read.
+      throw new Error(message);
     } finally {
       // A superseded credential wait still owns its busy lane, but never the
       // newer Stop's result/error. Credential writes may commit; refresh recovers them.

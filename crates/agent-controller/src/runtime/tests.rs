@@ -1035,6 +1035,46 @@ fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_age
 }
 
 #[test]
+fn databricks_workspace_errors_distinguish_missing_configuration_from_invalid_origins() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = agent(dir.path());
+    agent.harness.provider = "databricks_v2".into();
+    let defaults = crate::BuildDefaults::default();
+    let error = databricks_with_defaults(&agent, &defaults).err().unwrap();
+    assert!(error.contains("Databricks workspace is not configured"));
+    assert!(error.contains("Edit the agent, open Advanced → Model"));
+    assert!(error.contains("Databricks workspace (HTTPS origin)"));
+    // Empty offline drafts remain saveable; runtime validation supplies guidance.
+    crate::connection::DatabricksSettings::default()
+        .validate()
+        .unwrap();
+    for host in [
+        "http://workspace.example",
+        "https://user:SYNTHETIC@workspace.example",
+        "https://workspace.example/path",
+    ] {
+        agent
+            .environment
+            .insert("DATABRICKS_HOST".into(), host.into());
+        let error = databricks_with_defaults(&agent, &defaults).err().unwrap();
+        assert!(error.contains("Enter a Databricks HTTPS workspace origin"));
+        assert!(!error.contains("SYNTHETIC"));
+        assert!(!error.contains("not configured"));
+    }
+    agent.environment.insert(
+        "DATABRICKS_HOST".into(),
+        "https://WORKSPACE.example:443/".into(),
+    );
+    assert_eq!(
+        databricks_with_defaults(&agent, &defaults)
+            .unwrap()
+            .unwrap()
+            .host,
+        "https://workspace.example"
+    );
+}
+
+#[test]
 fn saved_selectors_and_environment_override_build_floor_including_empty() {
     let dir = tempfile::tempdir().unwrap();
     let mut agent = agent(dir.path());

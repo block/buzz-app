@@ -122,7 +122,7 @@ export function AgentEditor({
                   setError(null);
                   setNotice("Saved. Running work was not restarted.");
                 })
-                .catch(() => {});
+                .catch((problem: Error) => setError(problem.message));
             }}
           >
             <div className="min-w-0">
@@ -236,9 +236,9 @@ export function AgentEditor({
                 {agent.error}
               </p>
             )}
-            {state.error && (
+            {(state.error || error) && (
               <p role="alert" className="text-danger">
-                {state.error}
+                {state.error ?? error}
               </p>
             )}
             {state.status === "error" && (
@@ -251,11 +251,6 @@ export function AgentEditor({
                 The host has a newer saved revision. Your edits are still here;
                 copy anything you need, then discard to load the latest
                 settings.
-              </p>
-            )}
-            {error && (
-              <p role="alert" className="text-danger">
-                {error}
               </p>
             )}
             {notice && (

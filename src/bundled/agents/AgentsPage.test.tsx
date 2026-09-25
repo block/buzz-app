@@ -455,6 +455,12 @@ it("confirms local deletion, keeps the card on failure, and removes it only afte
       ).getByRole("button", { name: "Delete agent" }),
     ).toBeEnabled(),
   );
+  expect(
+    within(
+      screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
+    ).getByRole("alert"),
+  ).toHaveTextContent("Could not remove the saved credential");
+  expect(remove).toHaveBeenCalledTimes(1);
   fireEvent.click(
     within(
       screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
@@ -1128,6 +1134,10 @@ it("retries the same saved profile even if the runtime becomes unavailable", asy
   f.data.runtimeAvailable = false;
   await act(async () => control.refresh());
   const retry = within(dialog).getByRole("button", { name: "Retry profile" });
+  expect(control.snapshot().error).toBeNull();
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Synthetic profile failure",
+  );
   expect(retry).toBeEnabled();
   await user.click(retry);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -1162,7 +1172,7 @@ for (const error of [
     expect(snapshot).toHaveBeenCalledTimes(2);
   });
 }
-it("shows Retry after persistent or genuine read failure without hiding the error", async () => {
+it("keeps persistent read failures visible and recovers on the next periodic read", async () => {
   vi.useFakeTimers();
   const { f } = setup("ready", (f) => {
     vi.spyOn(f.host, "snapshot").mockRejectedValue(
@@ -1175,17 +1185,135 @@ it("shows Retry after persistent or genuine read failure without hiding the erro
   expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
   expect(screen.getByText(/Could not refresh local agents/)).toBeVisible();
   expect(f.host.snapshot).toHaveBeenCalledTimes(21);
+  vi.mocked(f.host.snapshot).mockRejectedValue("Store is unreadable");
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(10000);
+    await vi.advanceTimersByTimeAsync(4999);
   });
   expect(f.host.snapshot).toHaveBeenCalledTimes(21);
-  vi.mocked(f.host.snapshot).mockRejectedValue("Store is unreadable");
-  fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(1);
   });
   expect(f.host.snapshot).toHaveBeenCalledTimes(22);
   expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(23);
+  expect(screen.queryByText("Reading local agent status…")).toBeNull();
+  vi.mocked(f.host.snapshot).mockResolvedValue(structuredClone(f.data));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(24);
+  expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+  expect(screen.queryByText(/Could not refresh local agents/)).toBeNull();
+  expect(
+    screen.getAllByRole("article", { name: "Agent Fixture agent" }),
+  ).toHaveLength(2);
+});
+
+it.each(["running", "failed"] as const)(
+  "recovers Start status to %s without replay or cross-agent errors",
+  async (status) => {
+    vi.useFakeTimers();
+    const { f, control } = setup("ready", (f) => {
+      f.agent.enabled = false;
+      f.agent.status = "stopped";
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const [card] = screen.getAllByRole("article", {
+      name: "Agent Fixture agent",
+    });
+    if (!card) throw Error("Missing managed card");
+    const action = vi
+      .spyOn(f.host, "action")
+      .mockRejectedValueOnce("Synthetic start failure.");
+    fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const error = screen.getByRole("alert");
+    const retry = screen.getByRole("button", { name: "Retry status" });
+    expect(error).toHaveTextContent("Synthetic start failure.");
+    for (const notice of [error, retry]) {
+      expect(
+        notice.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+    expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
+    f.agent.enabled = true;
+    f.agent.status = status;
+    f.agent.error = status === "failed" ? "Synthetic start failure." : null;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(control.snapshot().status).toBe("ready");
+    expect(control.snapshot().error).toBeNull();
+    if (status === "failed") {
+      expect(within(card).getByRole("alert")).toHaveTextContent(
+        "Synthetic start failure.",
+      );
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+    } else {
+      expect(
+        within(card).getByText("Process running · relay readiness unverified"),
+      ).toBeVisible();
+      expect(screen.queryByRole("alert")).toBeNull();
+    }
+    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+    expect(action).toHaveBeenCalledExactlyOnceWith(f.agent.id, "start");
+    const other = screen.getAllByRole("article", {
+      name: "Agent Fixture agent",
+    })[1];
+    if (!other) throw Error("Missing other agent");
+    expect(within(other).queryByRole("alert")).toBeNull();
+    fireEvent.click(
+      within(other).getByRole("button", { name: "Actions for Fixture agent" }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(
+      within(screen.getByRole("dialog", { name: "Edit agent" })).queryByRole(
+        "alert",
+      ),
+    ).toBeNull();
+  },
+);
+
+it("pauses error polling while hidden and clears the timer on unmount", async () => {
+  vi.useFakeTimers();
+  const visibility = vi
+    .spyOn(document, "visibilityState", "get")
+    .mockReturnValue("visible");
+  const { f } = setup("ready", (f) => {
+    vi.spyOn(f.host, "snapshot").mockRejectedValue("Store is unreadable");
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
+  expect(f.host.snapshot).toHaveBeenCalledTimes(1);
+  visibility.mockReturnValue("hidden");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(1);
+  visibility.mockReturnValue("visible");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(2);
+  cleanup();
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(f.host.snapshot).toHaveBeenCalledTimes(2);
 });
 
 for (const mode of ["edit", "create"] as const) {
@@ -1521,9 +1649,9 @@ it("closes a routed editor back to the unrouted Agents page", async () => {
   );
 });
 
-it("retains a routed draft when the native save fails", async () => {
+it("retains a routed draft and its save error after status recovery only in that editor", async () => {
   const { navigation } = routed("ab".repeat(32));
-  const { f } = setup(
+  const { f, control } = setup(
     "connected",
     (fixture) => fixture.failSave(true),
     navigation,
@@ -1535,7 +1663,15 @@ it("retains a routed draft when the native save fails", async () => {
   fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
   await within(dialog).findByText(/Your edits are retained/);
   expect(within(dialog).getByLabelText("Name")).toHaveValue("Unsaved draft");
-  expect(f.calls.some((call) => call.action === "save")).toBe(true);
+  await act(() => control.refresh());
+  expect(control.snapshot()).toMatchObject({ status: "ready", error: null });
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "The host could not save settings.",
+  );
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Unsaved draft");
+  expect(f.calls.filter((call) => call.action === "save")).toHaveLength(1);
+  // Include the dialog-inert page so a leaked global banner cannot hide.
+  expect(document.querySelectorAll('[role="alert"]')).toHaveLength(1);
 });
 
 it("waits for a connecting relay before opening a routed editor", async () => {

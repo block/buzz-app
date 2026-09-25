@@ -151,6 +151,25 @@ export function AgentControlPanel({
           </Button>
         )}
       </header>
+      {(state.status === "idle" || state.status === "loading") && (
+        <p role="status">Reading local agent status…</p>
+      )}
+      {state.error && (
+        <p role={state.status === "unavailable" ? "status" : "alert"}>
+          {state.error}
+        </p>
+      )}
+      {state.status === "error" && state.data && (
+        <p className="text-body-sm text-secondary">
+          Showing the last host snapshot. Current process state and durable
+          enabled intent are unconfirmed. Status retries automatically while
+          this page is visible; actions are never repeated automatically.
+        </p>
+      )}
+      {state.status === "error" && (
+        <Button onClick={() => void control.refresh()}>Retry status</Button>
+      )}
+      {state.busy && <p role="status">Waiting for the host to confirm…</p>}
       {children ? (
         children(state, edit, duplicate, remove, importedId, label)
       ) : (
@@ -208,24 +227,6 @@ export function AgentControlPanel({
           onClose={() => setAdding(null)}
         />
       )}
-      {(state.status === "idle" || state.status === "loading") && (
-        <p role="status">Reading local agent status…</p>
-      )}
-      {state.error && (
-        <p role={state.status === "unavailable" ? "status" : "alert"}>
-          {state.error}
-        </p>
-      )}
-      {state.status === "error" && state.data && (
-        <p className="text-body-sm text-secondary">
-          Showing the last host snapshot. Current process state and durable
-          enabled intent are unconfirmed.
-        </p>
-      )}
-      {state.status === "error" && (
-        <Button onClick={() => void control.refresh()}>Retry status</Button>
-      )}
-      {state.busy && <p role="status">Waiting for the host to confirm…</p>}
       {editing && (
         <AgentEditor
           key={editing.id}

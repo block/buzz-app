@@ -93,7 +93,9 @@ can open browser sign-in. No separate Connect button is required. Errors/cancell
 need explicit Retry; Refresh in **Advanced model settings** stays headless.
 Choose a result or enter a custom ID (blank is allowed); Enter or leaving the field
 commits typed text, Escape abandons the query. Save, close and reopen to check it.
-If no workspace is configured, set it under **Advanced model settings**.
+If no workspace is configured, edit the agent and set **Databricks workspace (HTTPS origin)**
+under **Advanced → Model**. App maintainers can instead supply the nonsecret
+`DATABRICKS_HOST` build default below and rebuild the app.
 
 ### Nonsecret build defaults
 
@@ -179,10 +181,13 @@ containment on non-Unix platforms.
   unavailable capability; no fetch fallback, local storage, signing or runner.
 - `bundled/agents/AgentControlPanel.tsx`: compose with `{ control }` independently
   of selected community or relay connectivity. It owns only observation and UI
-  drafts. Its five-second refresh runs while visible/ready; reads coalesce. A read
+  drafts. Its five-second status refresh runs while visible, including after a
+  read or operation error; reads coalesce and never replay writes. A read
   rejected specifically because native startup is initializing or its lock is busy
-  stays pending for at most twenty 250ms waits. Genuine errors or exhausted retries
-  stop polling and expose explicit Retry; writes are never automatically retried.
+  stays pending for at most twenty 250ms waits. Other errors or exhausted retries
+  remain visible above the cards, with explicit Retry as well as the next periodic
+  read. Successful reads clear the global warning; native per-agent errors remain
+  on the affected agent, and failed Save/Create/Delete details stay in their dialog.
   Unmount clears the timer, not enabled intent or processes.
 - Native host owns persistent state, credential custody, process groups, lock and
   duplicate ownership checks, source import validation and sanitized diagnostics.

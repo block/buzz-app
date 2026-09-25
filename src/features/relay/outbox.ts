@@ -6,7 +6,7 @@ import type { RelayWriter } from "./transport";
 import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { channelRowKind } from "./membership";
-import { nextMessageMs } from "./message-order";
+import { MessageClock } from "./message-order";
 
 export type Delivery = "sending" | "accepted" | "unknown" | "failed" | "seen";
 /** Durable, caller-owned recovery state committed with the operation. */
@@ -85,7 +85,10 @@ export function createOutbox(
     preparePublish,
     needsReceipt = () => false,
     onReceipt = (_event: EventData, _message: string | undefined) => {},
+    clock = new MessageClock(),
   }: {
+    /** The session's send clock, shared with its rendered views. */
+    clock?: MessageClock;
     timeoutMs?: number;
     /** Commands await their receipt even after a verified echo. Never persisted. */
     needsReceipt?: (event: EventData) => boolean;
@@ -659,7 +662,7 @@ export function createOutbox(
       const channelId = channelRowKind(input.kind)
         ? input.tags.find(([name]) => name === "h")?.[1]
         : undefined;
-      const ms = channelId ? nextMessageMs(channelId) : Date.now();
+      const ms = channelId ? clock.next(channelId) : Date.now();
       const template = {
         ...input,
         pubkey: viewer,

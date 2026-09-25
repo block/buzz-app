@@ -2,22 +2,20 @@ import { afterEach, assert, expect, it, vi } from "vitest";
 import type { EventData } from "./events";
 import { foldMessages } from "./fold";
 import { MessageProjection } from "./message-projection";
-import {
-  compareMessages,
-  eventMs,
-  nextMessageMs,
-  observeMessageMs,
-} from "./message-order";
+import { compareMessages, eventMs, MessageClock } from "./message-order";
 import { createOutbox } from "./outbox";
 import { createRelayProfiler } from "./profiling";
-import { keypair, message, signed } from "./testing";
+import { createRelaySession } from "./session";
+import { keypair, message, metadata, roster, signed } from "./testing";
 
 const alice = keypair(),
   viewer = keypair(),
   relay = keypair();
 const owners: ReturnType<typeof createOutbox>[] = [];
+const sessions: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
+  for (const owner of sessions.splice(0)) owner.dispose();
   vi.restoreAllMocks();
 });
 const tagged = (content: string, second: number, ms: string) =>
@@ -90,26 +88,88 @@ it("renders channel and thread orderings identically", () => {
   expect(ids(channel)).toEqual(ids([...channel].sort(compareMessages)));
 });
 
-it("clamps an allocation more than 5s ahead of the local clock to now", () => {
+it("caps other authors' lead at 5s without rewinding or tying local sends", () => {
   const now = 2_000_000_000_000;
-  observeMessageMs("clamp", now + 4999);
-  expect(nextMessageMs("clamp", now)).toBe(now + 5000);
-  observeMessageMs("clamp", now + 5000);
-  expect(nextMessageMs("clamp", now)).toBe(now);
-  // The device's own last send stays within the bound for the next allocation.
-  expect(nextMessageMs("elsewhere", now)).toBe(now + 1);
+  const clock = new MessageClock();
+  clock.observe("near", now + 4999);
+  expect([0, 1, 2].map(() => clock.next("near", now))).toEqual([
+    now + 5000,
+    now + 5001,
+    now + 5002,
+  ]);
+
+  clock.observe("far", now + 60_000); // Skewed peer far in the future.
+  expect([0, 1, 2].map(() => clock.next("far", now))).toEqual([
+    now + 5000,
+    now + 5001,
+    now + 5002,
+  ]);
+
+  // Another channel's allocations do not leak in.
+  expect(clock.next("elsewhere", now)).toBe(now);
+});
+
+it("restarts the local chain at the clock after a large rollback", () => {
+  const now = 2_050_000_000_000;
+  const clock = new MessageClock();
+  expect(clock.next("rollback", now)).toBe(now);
+  expect(clock.next("rollback", now - 120_000)).toBe(now - 115_000);
+  expect(clock.next("rollback", now - 120_000)).toBe(now - 114_999);
+});
+
+it("keeps a near-cap burst in send order through relay replacement", async () => {
+  const now = 2_200_000_000_000;
+  vi.spyOn(Date, "now").mockReturnValue(now);
+  const channel = "near-cap";
+  const messageClock = new MessageClock();
+  messageClock.observe(channel, now + 4999);
+  const sign = vi.fn(async (event) => signed(viewer, event));
+  const owner = createOutbox(
+    viewer.pubkey,
+    { sign, publish: async () => {} },
+    { load: () => [], save: () => {} },
+    { clock: messageClock },
+  );
+  owners.push(owner);
+  await owner.ready;
+  const sent = ["one", "two", "three"].map((content) =>
+    owner.outbox.send({ kind: 9, content, tags: [["h", channel]] }),
+  );
+  const local = owner.outbox.snapshot();
+  const projection = new MessageProjection(
+    channel,
+    relay.pubkey,
+    createRelayProfiler(),
+    () => false,
+    messageClock,
+  );
+  expect(
+    ids(
+      projection.reconcile(
+        local.map((item) => item.event),
+        local,
+      ),
+    ),
+  ).toEqual(sent);
+  await vi.waitFor(() => expect(sign).toHaveBeenCalledTimes(3));
+  const relayed = await Promise.all(
+    sign.mock.results.map((result) => result.value),
+  );
+  expect(ids(projection.reconcile(relayed, []))).toEqual(sent);
 });
 
 it("renders three same-second sends in send order and never moves them on replacement", async () => {
   const now = 2_100_000_000_000;
   const clock = vi.spyOn(Date, "now").mockReturnValue(now);
   const channel = "burst";
-  observeMessageMs(channel, now + 700); // Another author's newer message.
+  const messageClock = new MessageClock();
+  messageClock.observe(channel, now + 700); // Another author's newer message.
   const sign = vi.fn(async (event) => signed(viewer, event));
   const owner = createOutbox(
     viewer.pubkey,
     { sign, publish: async () => {} },
     { load: () => [], save: () => {} },
+    { clock: messageClock },
   );
   owners.push(owner);
   await owner.ready;
@@ -133,6 +193,8 @@ it("renders three same-second sends in send order and never moves them on replac
     channel,
     relay.pubkey,
     createRelayProfiler(),
+    () => false,
+    messageClock,
   );
   const optimistic = projection.reconcile(
     local.map((item) => item.event),
@@ -158,4 +220,52 @@ it("renders three same-second sends in send order and never moves them on replac
   );
   expect(ids(projection.reconcile(relayed, []))).toEqual(sent);
   clock.mockRestore();
+});
+
+it("gives each relay session its own send clock for the same channel id", async () => {
+  const now = 2_300_000_000_000;
+  vi.spyOn(Date, "now").mockReturnValue(now);
+  const open = (scope: string) => {
+    const sign = vi.fn(async (event) => signed(viewer, event));
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        scope,
+        media: (url) => url,
+        async query(filters) {
+          return filters.some((f) => f.kinds?.includes(39002))
+            ? [
+                roster(relay, "c", [viewer.pubkey], 1),
+                metadata(relay, "c", "General", 1),
+              ]
+            : [];
+        },
+        writer: { sign, publish: async () => {} },
+      },
+      { outboxStorage: { load: () => [], save() {} } },
+    );
+    sessions.push(owner);
+    return owner.session;
+  };
+  const msOf = (session: ReturnType<typeof open>, id: string) =>
+    session.outbox
+      ?.snapshot()
+      .find((item) => item.event.id === id)
+      ?.event.tags.find(([name]) => name === "ms")?.[1];
+  const a = open("https://a.test");
+  const b = open("https://b.test");
+  for (const session of [a, b])
+    await session.read([{ kinds: [39002, 39000], "#d": ["c"], limit: 10 }]);
+
+  const burst = ["one", "two", "three"].map((text) =>
+    a.messages.send("c", text, []),
+  );
+  expect(burst.map((id) => msOf(a, id))).toEqual([
+    String(now),
+    String(now + 1),
+    String(now + 2),
+  ]);
+  // Community B's channel "c" is unrelated evidence; A's burst must not lead it.
+  expect(msOf(b, b.messages.send("c", "hello", []))).toBe(String(now));
 });

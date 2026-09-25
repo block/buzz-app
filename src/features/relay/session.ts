@@ -52,6 +52,7 @@ import { createUserStatuses } from "./user-status";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
+import { MessageClock } from "./message-order";
 import { UploadError, type UploadedAttachment } from "./attachments";
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import type { ReadTransport } from "./transport";
@@ -225,6 +226,7 @@ export function createRelaySession(
   const views = new Map<() => void, (clear?: boolean) => void>();
   const threads = new Set<ReturnType<typeof createThreadView>>();
   const writer = transport?.writer;
+  const clock = new MessageClock();
   const uploadAttachment = transport?.uploadAttachment;
   const writes =
     transport && writer
@@ -252,6 +254,7 @@ export function createRelaySession(
               ? { timeoutMs: options.deliveryTimeoutMs }
               : {}),
             profiling,
+            clock,
             notifyListener: notify,
             onAccepted: (event) => {
               // Product feedback is accepted into a private sidecar, not queryable history.
@@ -596,6 +599,7 @@ export function createRelaySession(
     {
       ...options,
       profiling,
+      clock,
       notifyListener: notify,
       ...(localViews ? { local: localViews } : {}),
     },
@@ -1413,6 +1417,7 @@ export function createRelaySession(
         admit: options?.exact ? (events) => accept(events, false) : undefined,
         seed: recent.peek(messageId)?.event ?? retainedEvent(messageId),
         local: localViews,
+        clock,
         canAccess: () => !closed && canAccess(channelId),
         visible: (events) => events.filter(visibility(events)),
         notify,

@@ -5,7 +5,7 @@ import type { OutgoingEvent } from "./outbox";
 import type { RelayProfiler } from "./profiling";
 
 import { channelRowKind as messageKind } from "./membership";
-import { compareMessages, eventMs, observeMessageMs } from "./message-order";
+import { compareMessages, eventMs, MessageClock } from "./message-order";
 const PARENT_OVERLAY_DEPTH = 2;
 const CHILD_OVERLAY_DEPTH = 1;
 
@@ -21,6 +21,7 @@ export class MessageProjection {
     private relayAuthor: string,
     private profiling: RelayProfiler,
     private includeReplies: () => boolean = () => false,
+    private clock = new MessageClock(),
   ) {}
   snapshot() {
     return this.rows;
@@ -51,7 +52,7 @@ export class MessageProjection {
       // Stable event IDs identify immutable payloads, including unsigned local intent.
       if (this.inputs.has(id)) continue;
       if (messageKind(event.kind))
-        observeMessageMs(this.channelId, eventMs(event));
+        this.clock.observe(this.channelId, eventMs(event));
       for (const target of targets(event)) {
         affected.add(target);
         if (!messageKind(event.kind)) {

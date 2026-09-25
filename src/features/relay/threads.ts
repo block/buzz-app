@@ -6,7 +6,7 @@ import type { LocalEvents } from "./outbox";
 import type { RelayReader } from "./reader";
 import { byteSize } from "./budget";
 import { foldMessages } from "./fold";
-import { compareMessages, observeMessageMs } from "./message-order";
+import { compareMessages, MessageClock } from "./message-order";
 import { shareMessageRows } from "./row-identity";
 
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
@@ -55,6 +55,7 @@ export function createThreadView({
   notify,
   exact = false,
   admit = (events) => events,
+  clock = new MessageClock(),
 }: {
   channelId: string;
   messageId: string;
@@ -66,6 +67,8 @@ export function createThreadView({
   visible(events: readonly RelayEvent[]): readonly RelayEvent[];
   notify(listener: () => void): void;
   exact?: boolean;
+  /** The session's send clock; rendered replies raise its channel watermark. */
+  clock?: MessageClock;
   /** Exact finite reads enter session reconciliation only after a complete fold. */
   admit?:
     | ((events: readonly RelayEvent[]) => readonly RelayEvent[])
@@ -195,7 +198,7 @@ export function createThreadView({
       )
       .sort(compareMessages);
     for (const row of nextReplies)
-      observeMessageMs(channelId, row.createdAtMs ?? row.createdAt * 1000);
+      clock.observe(channelId, row.createdAtMs ?? row.createdAt * 1000);
     const replies =
       snapshot.replies.length === nextReplies.length &&
       snapshot.replies.every((row, index) => row === nextReplies[index])

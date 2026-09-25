@@ -43,7 +43,8 @@ or imply confirmed delivery. There is no durable invisible policy on the relay.
   profiles, message bylines, and one-to-one DM sidebar rows demand authors. At
   most 256 unique authors are selected; profiles take priority, then existing
   selections and stable acquisition order. Overflow has no visible status.
-- Initial/new demand coalesces for 100ms behind a five-second start gate. Successful
+- Initial/new demand coalesces for 100ms, waiting at least five seconds after the
+  previous read settles so transit cannot race the broker’s start gate. Successful
   views refresh after 60–65 seconds. Evidence expires 75 seconds after request start.
   Empty demand makes no request; removed authors lose their evidence. Hidden views,
   disconnect, access/cache invalidation and disposal invalidate observations.

@@ -315,10 +315,14 @@ it("does not close a reopened dialog when old Done completes", async () => {
     <FeedbackDialog open onOpenChange={close} relay={h.relay} />,
   );
   await user.click(screen.getByRole("button", { name: "Done" }));
+  const closeButton = screen.getAllByRole("button", { name: "Close" }).at(-1);
+  if (!closeButton) throw new Error("Missing Close button");
+  await user.click(closeButton);
   view.rerender(
     <FeedbackDialog open={false} onOpenChange={close} relay={h.relay} />,
   );
   view.rerender(<FeedbackDialog open onOpenChange={close} relay={h.relay} />);
+  close.mockClear();
   release();
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Done" })).toBeEnabled(),

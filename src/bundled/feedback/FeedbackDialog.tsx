@@ -65,11 +65,6 @@ function FeedbackForConnection({
 }) {
   const active = useRef(false);
   const dialogEpoch = useRef(0);
-  const lastOpen = useRef(open);
-  if (lastOpen.current !== open) {
-    dialogEpoch.current++;
-    lastOpen.current = open;
-  }
   useEffect(() => {
     active.current = true;
     return () => {

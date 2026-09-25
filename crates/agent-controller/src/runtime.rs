@@ -454,6 +454,50 @@ impl Controller {
     pub fn commit_import(&mut self, prepared: crate::CredentialedImport) -> Result<()> {
         prepared.commit(&mut self.store)
     }
+    /// Check an exact saved instance has an unconditional signed owner attestation.
+    /// This is not read authorization; the caller must still prove that owner key.
+    pub fn log_target(&self, id: &str, pubkey: &str, relay_url: &str) -> Result<()> {
+        let relay = crate::config::canonical_relay(relay_url)?;
+        let agents = self.store.agents()?;
+        let agent = agents
+            .iter()
+            .find(|agent| agent.id == id && agent.pubkey == pubkey && agent.relay_url == relay)
+            .ok_or("Agent no longer exists")?;
+        crate::secret::validate_attestation(
+            agent
+                .auth_tag
+                .as_deref()
+                .ok_or("Owner authorization is unavailable")?,
+            pubkey,
+        )
+    }
+    /// Read retained output for an exact locally managed identity and community.
+    /// Raw output is never included in a snapshot or published to the relay.
+    pub fn read_log(
+        &self,
+        id: &str,
+        pubkey: &str,
+        relay_url: &str,
+        nonce: &str,
+        signature: &str,
+    ) -> Result<String> {
+        let relay = crate::config::canonical_relay(relay_url)?;
+        let agents = self.store.agents()?;
+        let agent = agents
+            .iter()
+            .find(|agent| agent.id == id && agent.pubkey == pubkey && agent.relay_url == relay)
+            .ok_or("Agent no longer exists")?;
+        let auth = agent
+            .auth_tag
+            .as_deref()
+            .ok_or("Owner authorization is unavailable")?;
+        crate::secret::validate_attestation(auth, pubkey)?;
+        let tag: Vec<String> =
+            serde_json::from_str(auth).map_err(|_| "Owner authorization is unavailable")?;
+        crate::logs::verify_owner_proof(&tag[1], id, pubkey, &relay, nonce, signature)?;
+        let path = crate::logs::path(self.store.root(), id)?;
+        crate::logs::read(&path)
+    }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<ControlSnapshot> {
         self.store.save(id, revision, edit)?;
         self.snapshot()
@@ -659,9 +703,17 @@ impl Controller {
         // Disarm app-side deletion before a child can use this directory. The
         // supervisor deletes it only after confirmed whole-session teardown.
         #[cfg(unix)]
+        let log_path = crate::logs::path(config, &agent.id)?;
+        #[cfg(unix)]
         let temporary = temporary.keep();
         #[cfg(unix)]
-        let process = Supervised::spawn(&command, &self.ownership_root, &agent.id, &temporary)?;
+        let process = Supervised::spawn(
+            &command,
+            &self.ownership_root,
+            &agent.id,
+            &temporary,
+            &log_path,
+        )?;
         #[cfg(not(unix))]
         let process = Process::spawn(&mut command)?;
         self.running.insert(

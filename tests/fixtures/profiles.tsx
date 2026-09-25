@@ -49,6 +49,7 @@ const fixtureOrigin = instanceProbe
   : "https://relay.example.test";
 const archivedProbe = new URLSearchParams(location.search).has("archived");
 const actionsProbe = new URLSearchParams(location.search).has("agent-actions");
+const logProbe = new URLSearchParams(location.search).has("harness-log");
 const root = message(viewer, "one", "Hello @Mic", 10, [["p", mic.pubkey]]);
 const unknown = message(missing, "one", "Unknown author", 11);
 const reply = message(viewer, "one", "Thread @Pinky", 12, [
@@ -89,19 +90,33 @@ async function attestAgentProfile() {
   const ownerSignature = bytesToHex(
     schnorr.sign(new Uint8Array(digest), viewer.secret),
   );
+  const micDigest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${mic.pubkey}:`),
+  );
+  const micSignature = bytesToHex(
+    schnorr.sign(new Uint8Array(micDigest), viewer.secret),
+  );
   data = data.map((head) =>
-    head.pubkey === pinky.pubkey
-      ? signed(pinky, {
+    head.pubkey === mic.pubkey && logProbe
+      ? signed(mic, {
           kind: 0,
           content: head.content,
-          tags: [["auth", viewer.pubkey, "", ownerSignature]],
+          tags: [["auth", viewer.pubkey, "", micSignature]],
         })
-      : head,
+      : head.pubkey === pinky.pubkey
+        ? signed(pinky, {
+            kind: 0,
+            content: head.content,
+            tags: [["auth", viewer.pubkey, "", ownerSignature]],
+          })
+        : head,
   );
 }
 function session() {
   return createRelaySession({
     viewer: viewer.pubkey,
+    ...(logProbe ? { authorizeAgentLog: async () => "fixture-proof" } : {}),
     relayAuthor: authority.pubkey,
     archiveAuthority: authority.pubkey,
     subscribe(callbacks) {
@@ -261,6 +276,18 @@ context.provide("relay", relay);
 const navigationHost = provideNavigation(context, undefined);
 const native = controlFixture();
 native.agent.pubkey = mic.pubkey;
+if (logProbe)
+  native.host.readLog = async ({ id, pubkey, relayUrl, authorize }) => {
+    if (
+      id !== native.agent.id ||
+      pubkey !== mic.pubkey ||
+      relayUrl !== native.agent.relayUrl ||
+      (await authorize({ id, pubkey, relayUrl }, "fixture-nonce")) !==
+        "fixture-proof"
+    )
+      throw new Error("Unauthorized fixture log");
+    return "fixture harness output\n";
+  };
 native.agent.status = "stopped";
 native.agent.enabled = false;
 let releaseLaunch: (() => void) | undefined;
@@ -289,7 +316,7 @@ if (instanceProbe) {
   });
 }
 const agentControl = createAgentControl(
-  actionsProbe || instanceProbe ? native.host : null,
+  actionsProbe || instanceProbe || logProbe ? native.host : null,
 );
 context.provide("agentControl", agentControl);
 context.effect(() => () => agentControl.dispose());

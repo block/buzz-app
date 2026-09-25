@@ -7,6 +7,7 @@ mod create;
 mod credentials;
 mod defaults;
 mod import;
+pub mod logs;
 mod ownership;
 pub mod pi;
 mod process;

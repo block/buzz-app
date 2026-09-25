@@ -363,13 +363,15 @@ it("matches an exact public key without exposing short key substrings", async ()
 
   await t.user.type(recipient(), people[0]?.pubkey ?? "");
   expect(await screen.findByRole("option", { name: "Person 1" })).toBeVisible();
-  await t.user.clear(recipient());
-  await t.user.type(recipient(), (people[0]?.pubkey ?? "").slice(0, 7));
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("option", { name: "Person 1" }),
-    ).not.toBeInTheDocument(),
-  );
+  for (const length of [8, 40]) {
+    await t.user.clear(recipient());
+    await t.user.type(recipient(), (people[0]?.pubkey ?? "").slice(0, length));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("option", { name: "Person 1" }),
+      ).not.toBeInTheDocument(),
+    );
+  }
 });
 
 it("removes once for pointerdown plus click, then Backspace; effects outlive chips", async () => {

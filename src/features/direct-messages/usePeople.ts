@@ -35,7 +35,7 @@ function matching(people: Recipient[], query: string) {
   return people.filter(
     (person) =>
       normalize(person.name).includes(needle) ||
-      (needle.length >= 8 && person.pubkey.startsWith(needle)),
+      (/^[0-9a-f]{64}$/.test(needle) && person.pubkey === needle),
   );
 }
 export function usePeople(session: RelaySession, query: string) {

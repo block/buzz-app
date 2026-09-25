@@ -15,14 +15,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "agents",
     title: "Agents",
     layout: "workspace",
+    companion: true,
     handlesNavigation: true,
     route: {
       version: 1,
       validate: (params) => editAgentRoute(params) !== null,
     },
-    component: (props) => (
+    component: ({ companion, ...props }) => (
       <AgentsPage
         {...props}
+        companion={companion}
         relay={relay}
         control={control}
         panels={ctx.panels}

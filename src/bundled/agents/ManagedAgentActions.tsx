@@ -20,7 +20,7 @@ export function ManagedAgentActions({
   state: AgentControlState;
   control: AgentControl;
   imported: boolean;
-  onViewProfile?: (() => void) | undefined;
+  onViewProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
 }) {
   const details = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -76,7 +76,11 @@ export function ManagedAgentActions({
       )}
       <div className="flex flex-wrap gap-2">
         {onViewProfile && (
-          <Button variant="primary" size="compact" onClick={onViewProfile}>
+          <Button
+            variant="primary"
+            size="compact"
+            onClick={(event) => onViewProfile(event.currentTarget)}
+          >
             View profile
           </Button>
         )}

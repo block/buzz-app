@@ -1,5 +1,11 @@
 import { useIdentityNames } from "../../features/identity-names/react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { PageProps } from "../../features/pages/service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import type { OpenResult } from "../../features/navigation/controller";
@@ -33,6 +39,7 @@ export function AgentsPage({
   navigation,
   open,
   panels,
+  companion,
 }: PageProps & {
   relay: RelayData;
   control?: AgentControl;
@@ -51,7 +58,15 @@ export function AgentsPage({
   const [profile, setProfile] = useState<{
     panel: RegisteredPanel;
     target: string;
+    trigger: HTMLButtonElement;
   }>();
+  const previousProfile = useRef(profile);
+  useEffect(() => {
+    const before = previousProfile.current;
+    previousProfile.current = profile;
+    if (before && !profile && before.trigger.isConnected)
+      before.trigger.focus();
+  }, [profile]);
   useEffect(() => {
     if (profile && !registeredPanels.includes(profile.panel))
       setProfile(undefined);
@@ -59,7 +74,9 @@ export function AgentsPage({
   const resolveProfile = (pubkey: string) => {
     const target = profileTarget(pubkey);
     const panel = target && panels?.resolve(target);
-    return target && panel ? () => setProfile({ panel, target }) : undefined;
+    return target && panel
+      ? (trigger: HTMLButtonElement) => setProfile({ panel, target, trigger })
+      : undefined;
   };
   const resolveName = useIdentityNames(connection.session.names);
   const request = useMemo(
@@ -121,7 +138,9 @@ export function AgentsPage({
               target={profile.target}
               close={() => setProfile(undefined)}
             />
-          ) : undefined
+          ) : (
+            companion
+          )
         }
       >
         <FullPageSurface aria-label="Agents">
@@ -207,7 +226,9 @@ function ManagedAgents({
   label,
 }: {
   label(agent: AgentView): string;
-  resolveProfile(pubkey: string): (() => void) | undefined;
+  resolveProfile(
+    pubkey: string,
+  ): ((trigger: HTMLButtonElement) => void) | undefined;
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
   duplicate(agent: AgentView): void;

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
 // @vitest-environment jsdom
@@ -40,6 +41,7 @@ function setup(
     options?: { replace?: boolean },
   ) => Promise<{ status: "opened" }>,
   panels?: Panels,
+  companion?: ReactNode,
 ) {
   const f = controlFixture();
   configure?.(f);
@@ -126,6 +128,7 @@ function setup(
       navigation={navigation}
       {...(open ? { open } : {})}
       {...(panels ? { panels } : {})}
+      companion={companion}
     />,
   );
   return {
@@ -175,7 +178,10 @@ it("opens the selected managed agent in the existing profile panel", async () =>
   });
   if (!card) throw Error("Missing managed card");
 
-  fireEvent.click(within(card).getByRole("button", { name: "View profile" }));
+  const profileButton = within(card).getByRole("button", {
+    name: "View profile",
+  });
+  fireEvent.click(profileButton);
 
   expect(
     await screen.findByRole("complementary", { name: "Profile" }),
@@ -184,6 +190,22 @@ it("opens the selected managed agent in the existing profile panel", async () =>
   expect(profileTargetSeen).toBe(profileTarget(f.agent.pubkey));
   fireEvent.click(screen.getByRole("button", { name: "Close Profile panel" }));
   expect(screen.queryByRole("complementary", { name: "Profile" })).toBeNull();
+  await waitFor(() => expect(profileButton).toHaveFocus());
+});
+
+it("keeps the shell companion in the page-owned companion slot", async () => {
+  setup(
+    "ready",
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    <aside aria-label="Shell companion">Shell companion</aside>,
+  );
+
+  expect(
+    await screen.findByRole("complementary", { name: "Shell companion" }),
+  ).toBeVisible();
 });
 
 it("omits View profile when the profile panel is unavailable", async () => {

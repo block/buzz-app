@@ -46,9 +46,9 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
     setClearing(true);
     try {
       await relay.clearCache();
-      setStatus("Caches cleared. Channels and media will refetch on demand.");
+      setStatus("Cache cleared. Buzz will load channels and media as needed.");
     } catch (error) {
-      setStatus(`Clear failed: ${String(error)}`);
+      setStatus(`Buzz couldn’t clear the cache. ${String(error)}`);
     } finally {
       setClearing(false);
     }
@@ -61,8 +61,8 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
       </h2>
       <div className="ui-card space-y-5 p-5 sm:p-6">
         <p className="text-body-sm text-muted">
-          Diagnostics for local development. This tab only appears when the app
-          is served from localhost in a development build.
+          View local development diagnostics. This section appears only in
+          development builds served from localhost.
         </p>
         <div className="space-y-2">
           <h3 className="m-0 text-label-sm">Relay broker stats</h3>
@@ -87,16 +87,16 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
             </dl>
           ) : (
             <p role="status" className="m-0 text-body-sm text-muted">
-              Broker stats are unavailable. They exist only when the dev relay
-              broker is running on this origin.
+              Broker stats aren’t available. Start the development relay broker
+              on this origin to view them.
             </p>
           )}
         </div>
         <div className="space-y-2">
           <h3 className="m-0 text-label-sm">Caches</h3>
           <p className="m-0 text-body-sm text-muted">
-            Clears cached channels, messages, and media. Account, relay, and
-            sidebar settings are kept.
+            Clear cached channels, messages, and media. Buzz keeps your account,
+            relay, and sidebar settings.
           </p>
           <Button
             type="button"

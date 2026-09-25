@@ -56,6 +56,7 @@ export async function inspectProfile(id: string) {
   const profile: PersonalProfile = {
     name: String(existing.display_name ?? existing.name ?? ""),
     picture: typeof existing.picture === "string" ? existing.picture : "",
+    about: typeof existing.about === "string" ? existing.about : "",
   };
   return { existing, profile, exists: !!event };
 }

@@ -220,8 +220,8 @@ export function PluginImport({
           {candidate && (
             <p className="m-0 text-body-sm">
               {existing
-                ? `This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays enabled and may run immediately unless this launch is in safe mode." : "It stays disabled."} Roll back remains available.`
-                : "This plugin will be installed disabled. Enable it in the list when you’re ready."}
+                ? `This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} You can still roll back.`
+                : "This plugin starts off. Turn it on in the list when you’re ready."}
             </p>
           )}
           <div className="flex flex-wrap gap-2">

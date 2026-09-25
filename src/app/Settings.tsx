@@ -4,7 +4,7 @@ import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { Button } from "../shared/design-system/ui/Button";
 import { Switch } from "../shared/design-system/ui/Switch";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import {
@@ -12,6 +12,7 @@ import {
   UserIcon,
   PaletteIcon,
   BellIcon,
+  RobotIcon,
   ChatCircleIcon,
   KeyboardIcon,
   WrenchIcon,
@@ -29,30 +30,24 @@ import type { ShortcutsService } from "../features/shortcuts/service";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
-import { MessageSettings } from "./MessageSettings";
+import { AgentSettings } from "./AgentSettings";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 
 type Section = { id: string; label: string; icon: typeof UserIcon };
 
-const baseSections: Section[] = [
-  { id: "profile", label: "Profile", icon: UserIcon },
-  { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
+const appSections: readonly Section[] = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
-  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
-  { id: "messages", label: "Messages", icon: ChatCircleIcon },
   { id: "notifications", label: "Notifications", icon: BellIcon },
+  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
+  { id: "agents", label: "Agents", icon: RobotIcon },
+  { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
 ];
-
 // DEV alone is not enough: packaged desktop builds load a production bundle
 // from tauri://localhost, so the hostname check excludes them too.
 export const developerMode =
   import.meta.env.DEV &&
   /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
-
-const sections: Section[] = developerMode
-  ? [...baseSections, { id: "developer", label: "Developer", icon: WrenchIcon }]
-  : baseSections;
 
 export function Settings({
   cards,
@@ -78,36 +73,73 @@ export function Settings({
   onSection?: (section: string) => void;
 }) {
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
-  const messageCards = contributed.filter((card) => !card.group);
-  const groups = [
-    ...new Set(contributed.flatMap((card) => card.group ?? [])),
-  ].map((label) => ({
-    label,
-    cards: contributed.filter((card) => card.group === label),
-  }));
-  const [chosen, setSelected] = useState("profile");
-  // A grouped card's section is its contribution key; it closes with its plugin.
-  const selected =
-    sections.some((section) => section.id === chosen) ||
-    contributed.some((card) => card.group && card.key === chosen)
-      ? chosen
-      : "profile";
+  const client = useSyncExternalStore(
+    communities.subscribe,
+    communities.snapshot,
+  );
+  const selectedCommunity = client.memberships.find(
+    (membership) => membership.id === client.selected,
+  );
+  const communityCards = useMemo(
+    () => contributed.filter((card) => !card.group),
+    [contributed],
+  );
+  const contributedGroups = useMemo(
+    () =>
+      [...new Set(contributed.flatMap((card) => card.group ?? []))].map(
+        (label) => ({
+          label,
+          cards: contributed.filter((card) => card.group === label),
+        }),
+      ),
+    [contributed],
+  );
+  const communitySections: readonly Section[] = useMemo(
+    () =>
+      selectedCommunity
+        ? [
+            { id: "profile", label: "Profile", icon: UserIcon },
+            ...communityCards.map((card) => ({
+              id: card.key,
+              label: card.title,
+              icon: ChatCircleIcon,
+            })),
+          ]
+        : [],
+    [communityCards, selectedCommunity],
+  );
+  const visibleSections = useMemo(
+    () => [
+      ...communitySections,
+      ...contributedGroups.flatMap((group) =>
+        group.cards.map((card) => ({
+          id: card.key,
+          label: card.title,
+          icon: ChatCircleIcon,
+        })),
+      ),
+      ...appSections,
+      ...(developerMode
+        ? [{ id: "developer", label: "Developer", icon: WrenchIcon }]
+        : []),
+    ],
+    [communitySections, contributedGroups],
+  );
+  const defaultSection = selectedCommunity ? "profile" : "appearance";
+  const [selected, setSelected] = useState(defaultSection);
   const requestedSection =
     navigation?.target.kind === "settings"
-      ? (navigation.target.section ?? "profile")
+      ? (navigation.target.section ?? defaultSection)
       : undefined;
   useEffect(() => {
     if (
       requestedSection &&
-      (sections.some((section) => section.id === requestedSection) ||
-        contributed.some((card) => card.group && card.key === requestedSection))
+      visibleSections.some((section) => section.id === requestedSection)
     )
       setSelected(requestedSection);
-  }, [requestedSection, contributed]);
-  const choose = (id: string) => {
-    if (onSection) onSection(id);
-    else setSelected(id);
-  };
+    else if (!visibleSections.some((section) => section.id === selected))
+      setSelected(defaultSection);
+  }, [defaultSection, requestedSection, selected, visibleSections]);
   useEffect(() => {
     if (requestedSection === selected)
       navigation?.complete({ status: "opened" });
@@ -122,25 +154,32 @@ export function Settings({
       <Panel aria-labelledby="settings-title">
         <div className={styles.layout}>
           <aside className={styles.sidebar}>
-            <h1 id="settings-title" className="m-0 px-3 py-4 text-label">
-              Settings
-            </h1>
+            <div className={styles.sidebarHeader}>
+              <h1 id="settings-title" className="m-0 text-label">
+                Settings
+              </h1>
+            </div>
             <nav aria-label="Settings sections" className={styles.navigation}>
-              {sections.map(({ id, label, icon: Icon }) => (
-                <NavigationItem
-                  label={label}
-                  icon={<Icon aria-hidden="true" size={18} />}
-                  selected={selected === id}
-                  type="button"
-                  key={id}
-                  aria-current={selected === id ? "page" : undefined}
-                  onClick={(event) => {
-                    event.currentTarget.focus();
-                    choose(id);
-                  }}
-                />
-              ))}
-              {groups.map((group) => (
+              {selectedCommunity && (
+                <NavigationSection label={selectedCommunity.name}>
+                  {communitySections.map(({ id, label, icon: Icon }) => (
+                    <NavigationItem
+                      label={label}
+                      icon={<Icon aria-hidden="true" size={18} />}
+                      selected={selected === id}
+                      type="button"
+                      key={id}
+                      aria-current={selected === id ? "page" : undefined}
+                      onClick={(event) => {
+                        event.currentTarget.focus();
+                        if (onSection) onSection(id);
+                        else setSelected(id);
+                      }}
+                    />
+                  ))}
+                </NavigationSection>
+              )}
+              {contributedGroups.map((group) => (
                 <NavigationSection key={group.label} label={group.label}>
                   {group.cards.map((card) => (
                     <NavigationItem
@@ -151,12 +190,46 @@ export function Settings({
                       aria-current={selected === card.key ? "page" : undefined}
                       onClick={(event) => {
                         event.currentTarget.focus();
-                        choose(card.key);
+                        if (onSection) onSection(card.key);
+                        else setSelected(card.key);
                       }}
                     />
                   ))}
                 </NavigationSection>
               ))}
+              <NavigationSection label="App">
+                {appSections.map(({ id, label, icon: Icon }) => (
+                  <NavigationItem
+                    label={label}
+                    icon={<Icon aria-hidden="true" size={18} />}
+                    selected={selected === id}
+                    type="button"
+                    key={id}
+                    aria-current={selected === id ? "page" : undefined}
+                    onClick={(event) => {
+                      event.currentTarget.focus();
+                      if (onSection) onSection(id);
+                      else setSelected(id);
+                    }}
+                  />
+                ))}
+              </NavigationSection>
+              {developerMode && (
+                <NavigationSection label="Development">
+                  <NavigationItem
+                    label="Developer"
+                    icon={<WrenchIcon aria-hidden="true" size={18} />}
+                    selected={selected === "developer"}
+                    type="button"
+                    aria-current={selected === "developer" ? "page" : undefined}
+                    onClick={(event) => {
+                      event.currentTarget.focus();
+                      if (onSection) onSection("developer");
+                      else setSelected("developer");
+                    }}
+                  />
+                </NavigationSection>
+              )}
             </nav>
           </aside>
           <div className={styles.detail}>
@@ -179,40 +252,43 @@ export function Settings({
                 plugins={plugins}
               />
             </div>
-            <div hidden={selected !== "messages"}>
-              <MessageSettings active={selected === "messages"} />
-              {selected === "messages" &&
-                messageCards.map((card) => (
-                  <OwnedContribution
-                    key={card.key}
-                    entry={card}
-                    registry={cards}
-                  >
-                    {(entry, active) => {
-                      const Card = entry.component;
-                      return <Card active={active} />;
-                    }}
-                  </OwnedContribution>
-                ))}
+            <div hidden={selected !== "agents"}>
+              <AgentSettings active={selected === "agents"} />
             </div>
-            {contributed.map(
-              (card) =>
-                card.group &&
-                selected === card.key && (
-                  <OwnedContribution
-                    key={card.key}
-                    entry={card}
-                    registry={cards}
-                  >
+            {communityCards.map((card) => (
+              <div key={card.key} hidden={selected !== card.key}>
+                {selected === card.key && (
+                  <OwnedContribution entry={card} registry={cards}>
                     {(entry, active) => {
                       const Card = entry.component;
                       return <Card active={active} />;
                     }}
                   </OwnedContribution>
-                ),
+                )}
+              </div>
+            ))}
+            {contributedGroups.flatMap((group) =>
+              group.cards.map(
+                (card) =>
+                  selected === card.key && (
+                    <OwnedContribution
+                      key={card.key}
+                      entry={card}
+                      registry={cards}
+                    >
+                      {(entry, active) => {
+                        const Card = entry.component;
+                        return <Card active={active} />;
+                      }}
+                    </OwnedContribution>
+                  ),
+              ),
             )}
             <div hidden={selected !== "profile"}>
-              <ProfileSettings communities={communities} />
+              <ProfileSettings
+                communities={communities}
+                community={selectedCommunity}
+              />
             </div>
             {developerMode && (
               <div hidden={selected !== "developer"}>

@@ -16,7 +16,12 @@ export type OpenTarget = Target<NavigationScope>;
 export type SharedTarget = Target<LocatorScope>;
 type Target<Scope> =
   | Readonly<{ version: 1; kind: "home" }>
-  | Readonly<{ version: 1; kind: "settings"; section?: string }>
+  | Readonly<{
+      version: 1;
+      kind: "settings";
+      section?: string;
+      scope?: Scope | null;
+    }>
   | Readonly<{
       version: 1;
       kind: "page";
@@ -123,12 +128,15 @@ function parseTarget<S>(
         target = { version: 1, kind: "home" };
         break;
       case "settings":
-        fields(value, ["version", "kind", "section"]);
+        fields(value, ["version", "kind", "section", "scope"]);
         target = {
           version: 1,
           kind: "settings",
           ...(value.section !== undefined
             ? { section: text(value.section, section) }
+            : {}),
+          ...(value.scope !== undefined
+            ? { scope: value.scope === null ? null : parseScope(value.scope) }
             : {}),
         };
         break;

@@ -201,7 +201,7 @@ function ManagedAgents({
   control: AgentControl;
   connection: RelaySnapshot;
   destination: string;
-  onUseHere(pubkey: string): void;
+  onUseHere(pubkey: string, action: "use" | "clone"): void;
 }) {
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(

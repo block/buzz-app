@@ -1,7 +1,7 @@
 use super::*;
 use buzz_agent_controller::Secret;
 use serde_json::{json, Value};
-use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime};
+use tauri::test::{get_ipc_response, mock_builder, MockRuntime};
 
 const RUNTIME_GATE: &str = "Synthetic runtime unavailable.";
 const IMPORT_GATE: &str = "Synthetic credential refusal.";
@@ -67,7 +67,7 @@ pub(crate) fn fixture_with_models(
         .manage(host.clone())
         .manage(model_host)
         .invoke_handler(crate::commands())
-        .build(mock_context(noop_assets()))
+        .build(crate::app_context())
         .unwrap();
     let view = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
@@ -106,6 +106,22 @@ pub(crate) fn seed(dir: &std::path::Path) -> String {
         "environment":{"SAMPLE_TOKEN":"DO_NOT_PROJECT"},"revision":1,"enabled":true,"credentialId":"missing-fixture-key", "authTag":null, "imported":{}
     }]})).unwrap()).unwrap();
     id
+}
+#[test]
+fn production_acl_allows_delete_to_reach_native_credentials() {
+    let (dir, _host, _app, view) = fixture();
+    let id = seed(dir.path());
+    let error = invoke(
+        &view,
+        "agent_control_delete",
+        json!({"id": id, "expectedRevision": 1}),
+    )
+    .unwrap_err();
+    assert_eq!(error, IMPORT_GATE);
+    let stored: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("store/agents.json")).unwrap())
+            .unwrap();
+    assert_eq!(stored["agents"][0]["enabled"], false);
 }
 #[test]
 fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {

@@ -60,7 +60,8 @@ test("shared human and agent avatar upload, scoped save, publication retry and n
   expect(human.other.picture).toBe("");
   expect(human.local).toMatchObject({
     name: human.saved.name,
-    picture: human.saved.picture,
+    // Private community artwork must not become the seed for another community.
+    picture: "",
     about: human.saved.about,
   });
   // No live kind-0 transport in this fixture: confirmation must refresh the

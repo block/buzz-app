@@ -44,11 +44,12 @@ function fixture() {
   const open = vi.fn(() => true);
   const context = { open, canOpen: () => true, channelId: "channel" };
   const archiveSnapshot = { status: "ready", archived: [] };
+  const ensureArchives = vi.fn(async () => {});
   const session = {
     archives: {
       subscribe: () => () => {},
       snapshot: () => archiveSnapshot,
-      ensure: async () => {},
+      ensure: ensureArchives,
     },
   } as unknown as RelaySession;
   const update = (next: AgentControlState) =>
@@ -56,7 +57,7 @@ function fixture() {
       state = next;
       for (const listener of listeners) listener();
     });
-  return { control, context, session, open, update, refresh };
+  return { control, context, session, open, update, refresh, ensureArchives };
 }
 afterEach(cleanup);
 
@@ -93,6 +94,7 @@ it("uses native exact identity and community, never library display links", () =
     error: null,
   });
   expect(screen.getByText("matched")).toBeTruthy();
+  expect(f.ensureArchives).toHaveBeenCalledOnce();
   expect(screen.queryByText(/wrong-key|wrong-relay|stopped/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "matched" }));
   expect(f.open).toHaveBeenCalledWith(
@@ -129,6 +131,7 @@ it("omits instances without a valid community", () => {
     screen.queryByRole("region", { name: "Linked agent instances" }),
   ).toBeNull();
   expect(f.refresh).not.toHaveBeenCalled();
+  expect(f.ensureArchives).not.toHaveBeenCalled();
   expect(f.open).not.toHaveBeenCalled();
 });
 
@@ -170,6 +173,7 @@ it("does not refresh or display instances for a human without a native match", (
     />,
   );
   expect(f.refresh).not.toHaveBeenCalled();
+  expect(f.ensureArchives).not.toHaveBeenCalled();
   f.update({
     status: "ready",
     data: {

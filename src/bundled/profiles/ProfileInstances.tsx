@@ -43,19 +43,20 @@ export function ProfileInstances({
     session.archives.snapshot,
     session.archives.snapshot,
   );
-  useEffect(() => {
-    void session.archives.ensure();
-  }, [session]);
-  useEffect(() => {
-    if (communityOrigin && knownAgent && state.status === "idle")
-      void control.refresh();
-  }, [control, communityOrigin, knownAgent, state.status]);
-  if (!communityOrigin || state.status === "unavailable") return null;
   const matches = scope
     ? sameCommunityAgents(state.data?.agents ?? [], scope).filter(
         (agent) => agent.pubkey === pubkey,
       )
     : [];
+  const hasInstances = !!communityOrigin && matches.length > 0;
+  useEffect(() => {
+    if (hasInstances) void session.archives.ensure();
+  }, [session, hasInstances]);
+  useEffect(() => {
+    if (communityOrigin && knownAgent && state.status === "idle")
+      void control.refresh();
+  }, [control, communityOrigin, knownAgent, state.status]);
+  if (!communityOrigin || state.status === "unavailable") return null;
   // Actions own errors only with unknown inventory or one exact native match.
   if (
     state.status === "error" &&

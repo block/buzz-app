@@ -182,6 +182,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
     app.relay.releaseEose("alpha");
   }
   const ordinary = row(page, "alpha");
+  await expect(ordinary).toHaveAttribute("aria-current", "page");
   const ordinaryState = ordinary.locator("[data-channel-unread]");
   const directed = row(page, "dm-090").locator("[data-channel-priority]");
   await expect(ordinaryState).toHaveAttribute("data-priority", "false");
@@ -241,8 +242,12 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await cue(page, "above").press("Enter");
   await expect.poll(() => inView(page, "dm-030")).toBe(true);
   await expect(row(page, "dm-030")).toBeFocused();
-  // The edge cue reveals and focuses without selecting a conversation.
-  await expect(list(page).locator('[aria-current="page"]')).toHaveCount(0);
+  await expect(row(page, "dm-030")).not.toHaveAttribute("aria-current");
+  // The edge cue reveals and focuses without changing the selected conversation.
+  await expect(list(page).locator('[aria-current="page"]')).toHaveAttribute(
+    "data-channel-id",
+    "alpha",
+  );
   await cue(page, "below").focus();
   await cue(page, "below").press("Enter");
   await expect.poll(() => inView(page, "dm-090")).toBe(true);

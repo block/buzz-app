@@ -172,6 +172,7 @@ export const test = base.extend({
         : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
+    const renamedChannels = new Map();
     const lifecycleRows = channelLifecycle
       ? [
           {
@@ -706,7 +707,8 @@ export const test = base.extend({
                 ["d", id],
                 [
                   "name",
-                  channelNames[id] ??
+                  renamedChannels.get(id) ??
+                    channelNames[id] ??
                     lifecycleRows.find((row) => row.id === id)?.name ??
                     (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id),
                 ],
@@ -1536,6 +1538,11 @@ export const test = base.extend({
         },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.
+        renameChannel(id, name) {
+          expect(rosterIds).toContain(id);
+          renamedChannels.set(id, name);
+          lifecycleTime++;
+        },
         hideChannel(id) {
           expect(rosterIds).toContain(id);
           hiddenChannels.add(id);

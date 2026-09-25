@@ -125,6 +125,27 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
     );
     await sidebar.screenshot({ path: info.outputPath(`sidenav-${mode}.png`) });
   }
+  await page
+    .getByRole("button", { name: "Personal space", exact: true })
+    .click();
+  for (const name of ["Inbox", "Bestie"]) {
+    const button = page
+      .getByRole("complementary", { name: "Channel sidebar", exact: true })
+      .getByRole("button", { name, exact: true });
+    await expect(button).toBeDisabled();
+    await button.hover();
+    await expect(button).toHaveCSS("cursor", "default");
+    await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    const unavailable = await button.evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--text-unavailable)";
+      element.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    });
+    await expect(button).toHaveCSS("color", unavailable);
+  }
 });
 
 // Browser layout and native disclosure behavior are not represented in jsdom.
@@ -221,5 +242,57 @@ test("placeholder destinations retain companion layout across navigation and res
     await sidebar.getByRole("button", { name: "Inbox", exact: true }).click();
     await checkGeometry(width <= 1000);
     await launcher.click();
+  }
+});
+
+// Real text layout: a rename changes scrollWidth without resizing the label box.
+test("channel name fades follow renames without resizing the sidebar", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  const alpha = sidebar.locator('button[data-channel-id="alpha"]');
+  const label = alpha.getByText("Alpha", { exact: true });
+  const labelNode = await label.elementHandle();
+  const originalWidth = await label.evaluate((element) => element.clientWidth);
+  const sidebarWidth = (await sidebar.boundingBox()).width;
+  await expect(label).not.toHaveAttribute("data-overflowing");
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  const settings = page.getByRole("complementary", {
+    name: "Channel settings",
+    exact: true,
+  });
+  await settings.getByText("Diagnostics", { exact: true }).click();
+  for (const [name, overflow] of [
+    [
+      "A very long renamed channel that cannot possibly fit in this fixed width sidebar",
+      true,
+    ],
+    ["Alpha", false],
+  ]) {
+    app.renameChannel("alpha", name);
+    await settings
+      .getByRole("button", { name: "Refresh channels", exact: true })
+      .click();
+    const renamed = alpha.getByText(name, { exact: true });
+    await expect(renamed).toBeVisible();
+    expect(await labelNode.evaluate((element) => element.isConnected)).toBe(
+      true,
+    );
+    expect(await renamed.evaluate((element) => element.clientWidth)).toBe(
+      originalWidth,
+    );
+    expect((await sidebar.boundingBox()).width).toBe(sidebarWidth);
+    expect(
+      await renamed.evaluate(
+        (element) => element.scrollWidth > element.clientWidth,
+      ),
+    ).toBe(overflow);
+    if (overflow)
+      await expect(renamed).toHaveAttribute("data-overflowing", "true");
+    else await expect(renamed).not.toHaveAttribute("data-overflowing");
   }
 });

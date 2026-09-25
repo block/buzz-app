@@ -31,12 +31,22 @@ function FadingLabel({
     const measure = () =>
       setOverflowing(element.scrollWidth > element.clientWidth);
     measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
+    const mutations = new MutationObserver(measure);
+    mutations.observe(element, {
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(measure);
+    observer?.observe(element);
+    return () => {
+      mutations.disconnect();
+      observer?.disconnect();
+    };
   }, []);
-  if (!children) return null;
   return (
     <span
       ref={label}

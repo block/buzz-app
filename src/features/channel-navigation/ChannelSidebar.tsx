@@ -161,18 +161,21 @@ function SidebarNavigation({
       title: "Inbox",
       icon: <BellIcon weight="bold" size={15} />,
       selected: placeholder === "Inbox",
+      disabled: !viewer || communityOrigin === undefined,
       open: () => openChannelDestination("Inbox"),
     },
     {
       title: "Bestie",
       icon: <img src="/bestie.png" alt="" width={17} height={17} />,
       selected: placeholder === "Bestie",
+      disabled: !viewer || communityOrigin === undefined,
       open: () => openChannelDestination("Bestie"),
     },
     ...(agentsEnabled
       ? [
           {
             title: "Agents",
+            disabled: false,
             icon: <RobotIcon weight="bold" size={15} />,
             selected:
               target.kind === "page" && target.pluginId === "buzz.agents",
@@ -201,10 +204,11 @@ function SidebarNavigation({
         />
       </div>
       <div className={styles.destinations}>
-        {destinations.map(({ title, icon, selected, open }) => (
+        {destinations.map(({ title, icon, selected, disabled, open }) => (
           <NavigationItem
             key={title}
             label={title}
+            disabled={disabled}
             selected={selected}
             icon={<span className={styles.sidebarIcon}>{icon}</span>}
             onClick={open}

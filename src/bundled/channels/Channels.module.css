@@ -78,7 +78,7 @@
   letter-spacing: var(--text-body-sm--letter-spacing);
   font-weight: var(--type-weight-normal);
 }
-.sidebar [data-variant="row"]:hover:not([data-selected]) {
+.sidebar [data-variant="row"]:hover:not([data-selected], [data-disabled]) {
   background: var(--affordance-panel-hover);
 }
 @media (hover: hover) and (pointer: fine) {
@@ -92,6 +92,12 @@
 }
 .sidebar [data-variant="row"][data-inset] {
   padding-inline-start: calc(var(--space-2) + var(--space-6));
+}
+/* Unavailable destinations must not advertise an enabled hover action. */
+.sidebar [data-variant="row"][data-disabled] {
+  color: var(--text-unavailable);
+  cursor: default;
+  background: transparent;
 }
 .sidebarIcon > :is(svg, img) {
   max-width: 100%;

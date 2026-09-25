@@ -119,11 +119,18 @@ it("renders base labels/order, copies raw type/capabilities/NIP-05 and preserves
     .mockResolvedValue();
   try {
     render(h.tree(person.pubkey));
-    const type = await screen.findByRole("button", { name: "Copy Agent type" });
+    const type = await screen.findByRole("button", {
+      name: /^Copy Agent type:/,
+    });
     expect(type).toHaveTextContent("Goose");
     expect(screen.getByText("NIP-05 (unverified)")).toBeInTheDocument();
-    const nip = screen.getByRole("button", { name: "Copy NIP-05" });
-    const cap = screen.getByRole("button", { name: "Copy Capabilities" });
+    const nip = screen.getByRole("button", { name: /^Copy NIP-05:/ });
+    const cap = screen.getByRole("button", { name: /^Copy Capabilities:/ });
+    expect(nip).toHaveAccessibleName(
+      "Copy NIP-05: agent@example.test (unverified)",
+    );
+    expect(type).toHaveAccessibleName("Copy Agent type: Goose");
+    expect(cap).toHaveAccessibleName("Copy Capabilities: code, search");
     expect(
       screen
         .getByRole("button", { name: "Copy npub" })
@@ -170,27 +177,27 @@ it("updates and clears live metadata, ignores older results and isolates human n
   const h = setup();
   try {
     const mounted = render(h.tree(person.pubkey));
-    await screen.findByRole("button", { name: "Copy Agent type" });
+    await screen.findByRole("button", { name: /^Copy Agent type:/ });
     await h.emit(
       metadata({ agent_type: "codex-acp", capabilities: ["review"] }, 3),
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Copy Agent type" }),
+        screen.getByRole("button", { name: /^Copy Agent type:/ }),
       ).toHaveTextContent("Codex"),
     );
     await h.emit(metadata({ agent_type: "aider", capabilities: ["old"] }, 2));
     expect(
-      screen.getByRole("button", { name: "Copy Agent type" }),
+      screen.getByRole("button", { name: /^Copy Agent type:/ }),
     ).toHaveTextContent("Codex");
     await h.emit(metadata({ agent_type: "", capabilities: [] }, 4));
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Copy Agent type" }),
+        screen.queryByRole("button", { name: /^Copy Agent type:/ }),
       ).not.toBeInTheDocument(),
     );
     expect(
-      screen.queryByRole("button", { name: "Copy Capabilities" }),
+      screen.queryByRole("button", { name: /^Copy Capabilities:/ }),
     ).not.toBeInTheDocument();
     await h.emit(
       profile(
@@ -201,19 +208,19 @@ it("updates and clears live metadata, ignores older results and isolates human n
     );
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Copy NIP-05" }),
+        screen.queryByRole("button", { name: /^Copy NIP-05:/ }),
       ).not.toBeInTheDocument(),
     );
     mounted.rerender(h.tree(human.pubkey));
     await screen.findByRole("heading", { name: "Human" });
     expect(
-      screen.getByRole("button", { name: "Copy NIP-05" }),
+      screen.getByRole("button", { name: /^Copy NIP-05:/ }),
     ).toHaveTextContent("human@example.test");
     expect(
-      screen.queryByRole("button", { name: "Copy Agent type" }),
+      screen.queryByRole("button", { name: /^Copy Agent type:/ }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Copy Capabilities" }),
+      screen.queryByRole("button", { name: /^Copy Capabilities:/ }),
     ).not.toBeInTheDocument();
   } finally {
     cleanup();
@@ -230,13 +237,13 @@ it("exposes read recovery without treating failure as absent metadata", async ()
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Agent" })).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Copy Agent type" }),
+      screen.queryByRole("button", { name: /^Copy Agent type:/ }),
     ).not.toBeInTheDocument();
     h.fail(false);
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: "Retry profile" }));
-    await screen.findByRole("button", { name: "Copy Agent type" });
+    await screen.findByRole("button", { name: /^Copy Agent type:/ });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   } finally {
     cleanup();
@@ -257,7 +264,7 @@ it("does not report an old clipboard completion on a replacement identifier", as
   try {
     render(h.tree(person.pubkey));
     await user.click(
-      await screen.findByRole("button", { name: "Copy NIP-05" }),
+      await screen.findByRole("button", { name: /^Copy NIP-05:/ }),
     );
     await h.emit(
       profile(
@@ -268,7 +275,7 @@ it("does not report an old clipboard completion on a replacement identifier", as
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Copy NIP-05" }),
+        screen.getByRole("button", { name: /^Copy NIP-05:/ }),
       ).toHaveTextContent("new@example.test"),
     );
     await act(async () => finish());
@@ -283,7 +290,7 @@ it("applies a verified owner policy live, reserves malformed updates and follows
   const h = setup();
   try {
     render(h.tree(person.pubkey));
-    await screen.findByRole("button", { name: "Copy Agent type" });
+    await screen.findByRole("button", { name: /^Copy Agent type:/ });
     const digest = new Uint8Array(
       createHash("sha256")
         .update(`nostr:agent-auth:${person.pubkey}:`)
@@ -317,16 +324,16 @@ it("applies a verified owner policy live, reserves malformed updates and follows
     await screen.findByRole("region", { name: "Agent identity" });
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Copy Agent type" }),
+        screen.getByRole("button", { name: /^Copy Agent type:/ }),
       ).toHaveTextContent("agent"),
     );
     expect(
-      screen.queryByRole("button", { name: "Copy Capabilities" }),
+      screen.queryByRole("button", { name: /^Copy Capabilities:/ }),
     ).not.toBeInTheDocument();
     await h.emit(signed(human, { ...policy, content: "{}", created_at: 12 }));
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Copy Agent type" }),
+        screen.queryByRole("button", { name: /^Copy Agent type:/ }),
       ).not.toBeInTheDocument(),
     );
     await h.emit(profile(person, { name: "Agent", is_agent: true }, 13));
@@ -337,11 +344,11 @@ it("applies a verified owner policy live, reserves malformed updates and follows
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Copy Agent type" }),
+        screen.getByRole("button", { name: /^Copy Agent type:/ }),
       ).toHaveTextContent("Goose"),
     );
     expect(
-      screen.getByRole("button", { name: "Copy Capabilities" }),
+      screen.getByRole("button", { name: /^Copy Capabilities:/ }),
     ).toHaveTextContent("code, search");
   } finally {
     cleanup();
@@ -364,7 +371,7 @@ for (const runtime of [
     try {
       render(h.tree(person.pubkey));
       const row = await screen.findByRole("button", {
-        name: "Copy Agent type",
+        name: /^Copy Agent type:/,
       });
       expect(row).toHaveTextContent(runtime);
       await user.click(row);
@@ -411,13 +418,13 @@ it("keeps completed copy feedback after metadata replacement and profile navigat
   try {
     const mounted = render(h.tree(person.pubkey));
     await user.click(
-      await screen.findByRole("button", { name: "Copy Capabilities" }),
+      await screen.findByRole("button", { name: /^Copy Capabilities:/ }),
     );
     await screen.findByText("Copied capabilities");
     await h.emit(metadata({ agent_type: "aider", capabilities: [] }, 4));
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Copy Capabilities" }),
+        screen.queryByRole("button", { name: /^Copy Capabilities:/ }),
       ).not.toBeInTheDocument(),
     );
     expect(screen.getByText("Copied capabilities")).toBeVisible();
@@ -478,7 +485,9 @@ it("never presents legacy fields while the initial managed profile settles", asy
   try {
     render(h.tree(person.pubkey));
     await screen.findByRole("region", { name: "Agent identity" });
-    const row = await screen.findByRole("button", { name: "Copy Agent type" });
+    const row = await screen.findByRole("button", {
+      name: /^Copy Agent type:/,
+    });
     expect(row).toHaveTextContent("agent");
     expect(seen.join(" ")).not.toContain("legacy-only");
     expect(seen.join(" ")).not.toContain("Goose");
@@ -524,10 +533,10 @@ it("withholds metadata on ownership-only admission failure and retries through o
       ).toBe(true);
     });
     expect(
-      screen.queryByRole("button", { name: "Copy Agent type" }),
+      screen.queryByRole("button", { name: /^Copy Agent type:/ }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Copy Capabilities" }),
+      screen.queryByRole("button", { name: /^Copy Capabilities:/ }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
@@ -538,10 +547,10 @@ it("withholds metadata on ownership-only admission failure and retries through o
       .setup()
       .click(screen.getByRole("button", { name: "Retry profile" }));
     expect(
-      await screen.findByRole("button", { name: "Copy Agent type" }),
+      await screen.findByRole("button", { name: /^Copy Agent type:/ }),
     ).toHaveTextContent("Goose");
     expect(
-      screen.getByRole("button", { name: "Copy Capabilities" }),
+      screen.getByRole("button", { name: /^Copy Capabilities:/ }),
     ).toHaveTextContent("code, search");
     expect(
       screen.queryByRole("button", { name: "Retry profile" }),

@@ -150,9 +150,9 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(panel.getByText("Agent profile", { exact: true })).toBeVisible();
   // Existing navigation journey also proves row hover/focus affordances and host toast wiring.
   await expect(panel.getByRole("tab", { name: "Memories" })).toBeVisible();
-  const agentType = panel.getByRole("button", { name: "Copy Agent type" });
+  const agentType = panel.getByRole("button", { name: /^Copy Agent type:/ });
   await expect(agentType).toContainText("Codex");
-  const nip05 = panel.getByRole("button", { name: "Copy NIP-05" });
+  const nip05 = panel.getByRole("button", { name: /^Copy NIP-05:/ });
   await expect(nip05).toContainText("NIP-05 (unverified)");
   await agentType.focus();
   await page.keyboard.press("Shift+Tab");
@@ -169,7 +169,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     "true",
   );
   await agentType.click();
-  await panel.getByRole("button", { name: "Copy Capabilities" }).click();
+  await panel.getByRole("button", { name: /^Copy Capabilities:/ }).click();
   expect(await page.evaluate(() => window.profileCopies.slice(-3))).toEqual([
     "pinky@example.test",
     "codex-acp",

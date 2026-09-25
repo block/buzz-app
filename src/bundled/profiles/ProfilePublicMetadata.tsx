@@ -150,7 +150,7 @@ function ProfileCopyField({
         tabIndex={0}
         type="button"
         className={styles.copyField}
-        aria-label={`Copy ${label}`}
+        aria-label={`Copy ${label}: ${display}${unverified ? " (unverified)" : ""}`}
         title={`Copy ${label}`}
         onClick={() => {
           const current = ++generation.current;

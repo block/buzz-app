@@ -300,6 +300,7 @@ pub struct ModelContext {
 /// Native-only Goose catalog context; environment values never enter a snapshot.
 pub struct GooseModelContext {
     pub command: PathBuf,
+    pub provider_id: String,
     pub environment: BTreeMap<String, String>,
     pub model_overridden: bool,
 }
@@ -792,17 +793,16 @@ fn goose_model_context(
         return Err("Model discovery requires an absolute Goose executable path".into());
     }
     executable(&command)?;
-    if environment
+    let provider = environment
         .get("GOOSE_PROVIDER")
-        .unwrap_or(&harness.provider)
-        != "databricks_v2"
+        .unwrap_or(&harness.provider);
+    if provider.trim().is_empty() || provider.len() > 128 || provider.chars().any(char::is_control)
     {
-        return Err(
-            "Effective Goose provider is not Databricks v2; check environment overrides".into(),
-        );
+        return Err("Choose a valid Goose provider before browsing models".into());
     }
     Ok(GooseModelContext {
         command,
+        provider_id: provider.clone(),
         environment: environment.clone(),
         model_overridden: environment.contains_key("GOOSE_MODEL"),
     })

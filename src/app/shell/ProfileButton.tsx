@@ -33,6 +33,10 @@ import {
   MenuSeparator,
   MenuTrailing,
 } from "../../shared/design-system/ui/Menu";
+import type {
+  AccountActionsService,
+  RegisteredAccountAction,
+} from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
 import styles from "./ProfileButton.module.css";
 
@@ -41,10 +45,12 @@ const noLiveSnapshot = () => undefined;
 
 export function ProfileButton({
   communities,
+  accountActions,
   settingsSelected,
   onSettings,
 }: {
   communities: Communities;
+  accountActions: AccountActionsService;
   settingsSelected: boolean;
   onSettings(): void;
 }) {
@@ -116,6 +122,15 @@ export function ProfileButton({
   const openingStatus = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const openingSettings = useRef(false);
+  const actions = useSyncExternalStore(
+    accountActions.subscribe,
+    accountActions.snapshot,
+  );
+  const [selectedAction, setSelectedAction] =
+    useState<RegisteredAccountAction | null>(null);
+  const ActionDialog = actions.find(
+    (action) => action === selectedAction,
+  )?.component;
   const accountLabel = useId();
   const statusUnavailable = useId();
   const avatar = (
@@ -294,6 +309,14 @@ export function ProfileButton({
               )}
             </>
           )}
+          {actions.map((action) => (
+            <MenuItem
+              key={action.key}
+              onClick={() => setSelectedAction(action)}
+            >
+              {action.title}
+            </MenuItem>
+          ))}
           <MenuSeparator />
           <MenuItem
             aria-current={settingsSelected ? "page" : undefined}
@@ -314,6 +337,14 @@ export function ProfileButton({
           </MenuItem>
         </MenuPopup>
       </MenuRoot>
+      {ActionDialog && (
+        <ActionDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setSelectedAction(null);
+          }}
+        />
+      )}
       {statusEditor.editor && session && connection.scope && (
         <StatusEditor
           session={session}

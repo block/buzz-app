@@ -281,6 +281,34 @@ async function relayAuthority(fetch, relay) {
     ...(nip11.self === author ? { archiveAuthority: author } : {}),
   };
 }
+export function validProductFeedback(event) {
+  if (
+    event?.kind !== 42000 ||
+    typeof event.content !== "string" ||
+    !event.content.trim() ||
+    Buffer.byteLength(event.content) > 32 * 1024 ||
+    !Number.isSafeInteger(event.created_at) ||
+    !Array.isArray(event.tags)
+  )
+    return false;
+  if (
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag.every((part) => typeof part === "string") &&
+        ["category", "client-id"].includes(tag[0]),
+    )
+  )
+    return false;
+  const categories = event.tags.filter((tag) => tag[0] === "category");
+  return (
+    categories.length <= 1 &&
+    (!categories.length ||
+      ["bug", "praise", "needs-work"].includes(categories[0][1]))
+  );
+}
+
 export function validMessageTemplate(event) {
   return (
     event &&
@@ -1105,6 +1133,7 @@ export function relayBrokerPlugin({
                 7,
                 9,
                 40003,
+                42000,
                 9000,
                 30078,
                 40100,
@@ -1884,6 +1913,12 @@ export function relayBrokerPlugin({
                 return json(res, 400, {
                   error:
                     "Agent enrollment or channel operation unavailable or invalid",
+                  sent: false,
+                });
+            } else if (filters?.kind === 42000) {
+              if (!validProductFeedback(filters))
+                return json(res, 400, {
+                  error: "Product feedback rejected",
                   sent: false,
                 });
             } else if (filters?.kind === 30078 || filters?.kind === 40100) {

@@ -55,12 +55,11 @@ test("the launched card works with an empty Channels roster", async ({
   page,
   app,
 }) => {
-  await page.route("**/api/relay/primary/query", async (route) => {
-    const filters = route.request().postDataJSON();
-    if (filters.some((filter) => filter.kinds?.includes(39002)))
-      return route.fulfill({ json: [] });
-    return route.continue();
-  });
+  // Model the empty roster before startup rather than intercepting every query.
+  // Startup legitimately cancels enrichment reads when roster authority changes;
+  // forwarding those through Playwright can abort a partially sent HTTP body.
+  app.omitChannel("alpha");
+  app.omitChannel("beta");
   await page.goto(app.origin);
   await page
     .getByRole("navigation", { name: "Pages", exact: true })

@@ -16,6 +16,23 @@ export interface AgentDraft {
 export function isGoose(command: string): boolean {
   return command.replaceAll("\\", "/").split("/").at(-1) === "goose";
 }
+// Goose provider config keys, checked against built-in ConfigKey declarations
+// and declarative provider api_key_env values. OAuth/local providers have none.
+const GOOSE_API_KEYS: Record<string, { label: string; env: string }> = {
+  openai: { label: "OpenAI", env: "OPENAI_API_KEY" },
+  anthropic: { label: "Anthropic", env: "ANTHROPIC_API_KEY" },
+  openrouter: { label: "OpenRouter", env: "OPENROUTER_API_KEY" },
+  google: { label: "Google Gemini", env: "GOOGLE_API_KEY" },
+  groq: { label: "Groq", env: "GROQ_API_KEY" },
+  mistral: { label: "Mistral AI", env: "MISTRAL_API_KEY" },
+  together: { label: "Together AI", env: "TOGETHER_API_KEY" },
+  perplexity: { label: "Perplexity", env: "PERPLEXITY_API_KEY" },
+  cerebras: { label: "Cerebras", env: "CEREBRAS_API_KEY" },
+  custom_deepseek: { label: "DeepSeek", env: "DEEPSEEK_API_KEY" },
+};
+export function gooseApiKey(provider: string) {
+  return GOOSE_API_KEYS[provider];
+}
 export function agentDraft(agent: AgentView): AgentDraft {
   const databricks = agent.harness.databricks;
   return {

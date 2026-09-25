@@ -113,6 +113,11 @@ const connection = {
   scope,
 };
 const presence = { status: "online", preference: "auto", error: null };
+const noActions: readonly [] = [];
+const accountActions = {
+  subscribe: () => () => {},
+  snapshot: () => noActions,
+} as unknown as import("../../src/features/account-actions/service").AccountActionsService;
 const communities = {
   presence: {
     subscribe: () => () => {},
@@ -144,6 +149,7 @@ createRoot(root).render(
       <h1>Custom statuses</h1>
       <ProfileButton
         communities={communities}
+        accountActions={accountActions}
         settingsSelected={false}
         onSettings={() => {}}
       />

@@ -1133,3 +1133,72 @@ it("closes prose after an unknown name without status or recovery, and skips sea
   view.rerender(complete("Outside "));
   await waitFor(() => expect(people).toHaveBeenCalledTimes(3));
 });
+
+function directoryCompletion(people: RelaySessionPeople) {
+  const t = setup();
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  };
+  const publish = vi.fn();
+  const last = () => publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const complete = (query: string) => (
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{
+        revision: 1,
+        text: `@${query}`,
+        start: query.length + 1,
+        end: query.length + 1,
+      }}
+      query={{ start: 0, end: query.length + 1, query }}
+      publish={publish}
+    />
+  );
+  return { last, complete };
+}
+type RelaySessionPeople = (
+  query: string,
+) => Promise<{ people: { pubkey: string; name: string }[]; hasMore: boolean }>;
+
+it("an exact public key still looks up its author after an empty partial-key search", async () => {
+  const key = "9".repeat(64);
+  const people = vi.fn(async (query: string) => ({
+    people: query === key ? [{ pubkey: key, name: "Keyholder" }] : [],
+    hasMore: false,
+  }));
+  const { last, complete } = directoryCompletion(people);
+  const view = render(complete("9".repeat(10)));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(last()?.items).toEqual([]));
+  view.rerender(complete(key));
+  await waitFor(() =>
+    expect(people).toHaveBeenLastCalledWith(key, 1, expect.any(AbortSignal)),
+  );
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Keyholder"]),
+  );
+});
+
+it("a failed multi-word directory search keeps its error and retry", async () => {
+  const people = vi
+    .fn<RelaySessionPeople>()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue({
+      people: [{ pubkey: "f".repeat(64), name: "Mary Jane" }],
+      hasMore: false,
+    });
+  const { last, complete } = directoryCompletion(people);
+  render(complete("Mary J"));
+  await waitFor(() =>
+    expect(last()?.status).toBe(
+      "Could not search community people. Retry to refresh.",
+    ),
+  );
+  act(() => last()?.retry?.());
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Mary Jane"]),
+  );
+});

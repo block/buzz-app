@@ -209,6 +209,7 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
   const listbox = page.getByRole("listbox");
   const chips = input.locator(".inline-chip");
   const searches = () => page.evaluate(() => window.mentionFixture.searches());
+  const held = () => page.evaluate(() => window.mentionFixture.heldSearches());
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.list().status))
     .toBe("ready");
@@ -243,6 +244,7 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
   try {
     await input.pressSequentially("@Ho");
     await expect(options).toHaveCount(2);
+    await expect.poll(held).toContain("Ho");
     await input.press("Tab");
     await expect(chips).toHaveCount(1);
     await input.pressSequentially("later");
@@ -262,6 +264,7 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
   try {
     await input.pressSequentially("@Hon");
     await expect(options).toHaveCount(2);
+    await expect.poll(held).toContain("Hon");
     await input.press("Escape");
     await expect(listbox).toHaveCount(0);
   } finally {

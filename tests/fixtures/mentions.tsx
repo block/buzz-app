@@ -42,6 +42,7 @@ const delayed = new URLSearchParams(location.search).has("delayed-profiles");
 const testControls = new URLSearchParams(location.search).has("test-controls");
 const stream = new URLSearchParams(location.search).has("stream");
 const searches: string[] = [];
+const heldSearches: string[] = [];
 let searchGate: Promise<void> | undefined;
 let releaseSearch = () => {};
 // Optional visual preview: real GIF search, with messages still local to this fixture.
@@ -99,7 +100,11 @@ const owner = createRelaySession(
         const search = filters.find((filter) => filter.search)?.search;
         if (search !== undefined) {
           searches.push(search);
-          await searchGate;
+          if (searchGate) {
+            heldSearches.push(search);
+            await searchGate;
+            heldSearches.splice(heldSearches.indexOf(search), 1);
+          }
         }
         const events = [
           roster(relay, "c", members, time),
@@ -232,6 +237,7 @@ Object.assign(window, {
     libraryReads: () => libraryReads,
     reads: () => ({ kinds: reads, pending: pendingReads }),
     searches: () => [...searches],
+    heldSearches: () => [...heldSearches],
     holdSearches() {
       searchGate = new Promise((resolve) => {
         releaseSearch = resolve;

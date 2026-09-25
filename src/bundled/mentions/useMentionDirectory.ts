@@ -33,20 +33,26 @@ export function useMentionDirectory(
   }>();
   const channelId = channel?.id ?? "";
   const prefix = exhausted.get(session);
+  const value = query.trim();
+  // An exact key is an author lookup, which name-prefix evidence cannot refute.
+  const exactKey = /^[0-9a-f]{64}$/.test(value);
   const searching =
     active &&
-    (attempt > 0 || prefix === undefined || !query.trim().startsWith(prefix));
+    (attempt > 0 ||
+      exactKey ||
+      prefix === undefined ||
+      !value.startsWith(prefix));
   useEffect(() => {
     if (!searching) return;
     const controller = new AbortController();
     const current = { session, channelId, query, attempt };
-    const value = query.trim();
     exhausted.delete(session);
     setState({ ...current, people: empty, loading: true });
     void session.directMessages.people(query, 1, controller.signal).then(
       ({ people, hasMore }) => {
         if (controller.signal.aborted) return;
-        if (value && !people.length && !hasMore) exhausted.set(session, value);
+        if (value && !exactKey && !people.length && !hasMore)
+          exhausted.set(session, value);
         setState({ ...current, people, loading: false, more: hasMore });
       },
       () => {
@@ -60,7 +66,7 @@ export function useMentionDirectory(
       },
     );
     return () => controller.abort();
-  }, [session, channelId, query, searching, attempt]);
+  }, [session, channelId, query, value, exactKey, searching, attempt]);
   const current =
     searching &&
     state?.session === session &&

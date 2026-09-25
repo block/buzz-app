@@ -126,7 +126,7 @@ export function MentionCompletion({
     const membershipError = !draftRoster && list.error;
     const missing = !draftRoster && members.some((key) => !profiles.has(key));
     // A multi-word query that continues no known name is prose, not a search.
-    if (!admitted && !directory.loading) {
+    if (!admitted && !directory.loading && !directory.error) {
       const withdraw = publish({ items: [] });
       return () => {
         if (withdraw) withdraw();

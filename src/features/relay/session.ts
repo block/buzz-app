@@ -569,6 +569,7 @@ export function createRelaySession(
     requests.reader,
     transport?.archiveAuthority,
     notify,
+    { writer: transport?.identityArchive, viewer: transport?.viewer },
   );
   const channelActivity = createChannelActivity(
     transport?.channelActivity
@@ -990,6 +991,7 @@ export function createRelaySession(
     },
     () => agentChoices.snapshot().identities.map((agent) => agent.pubkey),
     transport?.relayAuthor,
+    { read: (filters, settings) => readVerified(filters, settings, false) },
   );
   const channelKit = createChannelKit({
     host: transport?.channelKit,

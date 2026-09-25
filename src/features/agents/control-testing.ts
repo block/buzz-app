@@ -86,6 +86,15 @@ export function controlFixture() {
       agent.runningRevision = action === "stop" ? null : agent.revision;
       return structuredClone(data);
     },
+    async delete(id, expectedRevision) {
+      calls.push({ action: "delete", payload: { id, expectedRevision } });
+      const index = data.agents.findIndex((item) => item.id === id);
+      if (index < 0) throw "Agent no longer exists";
+      if (data.agents[index]?.revision !== expectedRevision)
+        throw "Agent settings changed. Reload before deleting";
+      data.agents.splice(index, 1);
+      return structuredClone(data);
+    },
     async previewImport(source, destination) {
       calls.push({ action: "preview", payload: { source, destination } });
       importDestination = destination;

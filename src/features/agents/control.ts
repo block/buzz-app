@@ -61,6 +61,8 @@ export interface AgentView {
   launchProviderEnv: string | null;
   /** Empty unless a running process was started with different saved settings. */
   restartDiff: RestartDiffEntry[];
+  /** Native refuses to delete a deployed remote record. */
+  deployedRemote?: boolean;
 }
 export interface ControlSnapshot {
   agents: AgentView[];
@@ -341,7 +343,6 @@ export function createAgentControl(
       command === "stop" ? undefined : id,
     );
   };
-  const deleteAgent = host?.delete;
   return {
     models,
     ...(host?.prepareCreate && host.commitCreate
@@ -424,10 +425,15 @@ export function createAgentControl(
     refresh,
     save: (id, revision, edit) =>
       run((native) => native.save(id, revision, edit), ready),
-    ...(deleteAgent
+    ...(host?.delete
       ? {
+          // Resolve the host method per call, like every other command.
           delete: (id: string, revision: number) =>
-            run(() => deleteAgent(id, revision), ready),
+            run((native) => {
+              if (!native.delete)
+                throw new Error("Agent deletion is unavailable.");
+              return native.delete(id, revision);
+            }, ready),
         }
       : {}),
     action,

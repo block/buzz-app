@@ -50,6 +50,7 @@ pub struct AgentView {
     pub launch_provider_env: Option<&'static str>,
     /// Redacted saved-versus-running differences while the process is alive.
     pub restart_diff: Vec<crate::restart::RestartDiffEntry>,
+    pub deployed_remote: bool,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -153,6 +154,7 @@ impl Agent {
             launch_model_env: launch.model_env,
             launch_provider_env: launch.provider_env,
             restart_diff: Vec::new(),
+            deployed_remote: self.deployed_remote(),
         }
     }
     pub fn starts_on_launch(&self) -> bool {
@@ -171,6 +173,14 @@ impl Agent {
         } else {
             Err("Invalid imported response policy".into())
         }
+    }
+    /// An imported record for an agent hosted by a remote backend.
+    pub fn deployed_remote(&self) -> bool {
+        let record = &self.imported["record"];
+        record["backend"]["type"]
+            .as_str()
+            .is_some_and(|s| s != "local")
+            && !record["backend_agent_id"].is_null()
     }
     pub fn apply(&mut self, edit: AgentEdit) -> Result<()> {
         self.name = edit.name;

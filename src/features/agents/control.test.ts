@@ -91,6 +91,20 @@ it("save leaves running revision alone; omitted environment values stay host-onl
   expect(fixture.calls.filter((call) => call.action === "restart")).toEqual([]);
   await expect(control.save(agent.id, 1, edit)).rejects.toThrow();
 });
+it("delete applies only the native result and reports an unconfirmed delete", async () => {
+  const fixture = controlFixture();
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const deleting = control.delete?.("fixture-agent", 1);
+  expect(control.snapshot().busy).toBe(true);
+  expect(control.snapshot().data?.agents).toHaveLength(1);
+  await deleting;
+  expect(control.snapshot().data?.agents).toEqual([]);
+  expect(control.snapshot().busy).toBe(false);
+  await expect(control.delete?.("fixture-agent", 1)).rejects.toThrow("confirm");
+  expect(control.snapshot().error).toContain("Agent no longer exists");
+  expect(createAgentControl(null).delete).toBeUndefined();
+});
 it("subscription cleanup and disposal never send stop or accept a late snapshot", async () => {
   const fixture = controlFixture();
   const control = createAgentControl(fixture.host);

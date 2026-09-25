@@ -665,6 +665,49 @@ fn stop_reaches_owned_process_when_store_is_malformed_or_row_disappears() {
 
 #[test]
 #[cfg(unix)]
+fn delete_stops_the_listener_and_refuses_deployed_remote_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let a = agent(dir.path());
+    let mut remote = agent(dir.path());
+    remote.relay_url = "wss://remote.example".into();
+    remote.id = agent_id(PUB, &remote.relay_url);
+    remote.imported = serde_json::json!({"record": {"backend": {"type": "provider"}, "backend_agent_id": "deployed"}});
+    store.insert(vec![a.clone(), remote.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then_some(())
+    });
+    controller.delete(&a.id, a.revision).unwrap();
+    assert!(controller.running.is_empty());
+    assert!(controller
+        .delete(&a.id, a.revision)
+        .err()
+        .unwrap()
+        .contains("no longer exists"));
+    // Base Buzz refuses to orphan a deployed remote agent; the view says so
+    // before any caller starts work that depends on deletion.
+    assert!(remote.view().deployed_remote && !a.view().deployed_remote);
+    assert!(controller
+        .delete(&remote.id, remote.revision)
+        .err()
+        .unwrap()
+        .contains("Deployed remote agents can't be deleted"));
+    let remaining = controller.store.agents().unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id, remote.id);
+    assert_eq!(remaining[0].enabled, remote.enabled);
+}
+
+#[test]
+#[cfg(unix)]
 fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();

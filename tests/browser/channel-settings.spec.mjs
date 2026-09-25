@@ -77,7 +77,7 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   const messages = page
     .getByRole("navigation", { name: "Subscribed channels" })
     .locator("summary")
-    .filter({ hasText: /^Messages$/ });
+    .filter({ hasText: /^Direct messages$/ });
   await messages.hover();
   await page
     .getByRole("navigation", { name: "Subscribed channels" })

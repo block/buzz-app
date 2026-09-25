@@ -305,14 +305,8 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   await expect(starred).toHaveCount(0);
   await page.unroute("**/sidebar-star");
   // Failures live in the session, not in a menu or mounted Messages page.
-  await page
-    .getByRole("button", { name: "Projects", exact: true })
-    .first()
-    .click();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Projects");
+  await openPage(page, "Messages");
   await error.getByRole("button", { name: "Retry move" }).click();
   await expect(starred).toBeFocused();
   await expect(error).toHaveCount(0);
@@ -417,7 +411,7 @@ test("dismissing a failed move restores keyboard focus to its placement or a sur
     await expect(error).toHaveCount(0);
   };
   await failMove();
-  await page.locator('[data-sidebar-section="group:work"] > summary').click();
+  await page.locator('[data-sidebar-section="group:work"] summary').click();
   await expect(beta).toBeHidden();
   await dismiss();
   await expect(beta).toBeFocused();
@@ -504,7 +498,7 @@ test("Create new supports cancel, moves before publication, and retries the same
     await started.promise;
     await expect(dialog).toHaveCount(0);
     const createdGroup = sidebar(page)
-      .locator("details")
+      .locator("[data-sidebar-section]")
       .filter({ has: page.locator("summary", { hasText: /^Launch$/ }) });
     await expect(
       createdGroup.locator('[data-channel-id="beta"]'),
@@ -561,7 +555,7 @@ test("Create new supports cancel, moves before publication, and retries the same
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await nextStarted.promise;
     const nextGroup = sidebar(page)
-      .locator("details")
+      .locator("[data-sidebar-section]")
       .filter({
         has: page.locator("summary", { hasText: /^Follow-up$/ }),
       });
@@ -678,7 +672,7 @@ test("Create new retains its draft when preferences fail before submission and r
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await expect(dialog).toHaveCount(0);
     const destination = sidebar(page)
-      .locator("details")
+      .locator("[data-sidebar-section]")
       .filter({
         has: page.locator("summary", { hasText: /^Retained launch$/ }),
       })
@@ -820,10 +814,7 @@ test.describe("new personal schema", () => {
     };
     await page.route("**/sidebar-preferences", failLegacy);
     await page.goto(app.origin);
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Messages");
     await expect.poll(() => personalDecoded).toBe(true);
     const id = "11111111-1111-4111-8111-111111111111";
     const personal = page.locator(
@@ -835,7 +826,7 @@ test.describe("new personal schema", () => {
     await expect(failure).toBeVisible();
     await expect(personal).toBeVisible();
     await expect(
-      page.locator('[data-sidebar-section="group:personal-work"] > summary'),
+      page.locator('[data-sidebar-section="group:personal-work"] summary'),
     ).toContainText("Personal work");
     await personal.focus();
     await page.keyboard.press("Shift+F10");
@@ -923,17 +914,14 @@ test.describe("new personal schema", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Messages");
     const id = "11111111-1111-4111-8111-111111111111";
     const row = () => sidebar(page).locator(`[data-channel-id="${id}"]`);
     const placed = (key) =>
       page.locator(`[data-sidebar-section="${key}"] [data-channel-id="${id}"]`);
     await expect(placed("group:personal-work")).toBeVisible();
     await expect(
-      page.locator('[data-sidebar-section="group:personal-work"] > summary'),
+      page.locator('[data-sidebar-section="group:personal-work"] summary'),
     ).toContainText("Personal work");
     // Legacy beta placement must not leak into the active group.
     await expect(rowIn(page, "channels")).toBeVisible();
@@ -1012,10 +1000,7 @@ test("Move and Create stay available on Projects with Sessions disabled", async 
   const toggle = sessions.getByRole("switch", { name: "Enable Sessions" });
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "false");
-  await page
-    .getByRole("button", { name: "Projects", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Projects");
   const projects = page.getByRole("heading", { name: "Projects", exact: true });
   await expect(projects).toBeVisible();
   const node = await sidebar(page).elementHandle();

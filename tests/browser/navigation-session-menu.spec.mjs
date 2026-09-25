@@ -114,10 +114,10 @@ test.describe("menu placement lifetime", () => {
       includeHidden: true,
     });
     const work = sidebar
-      .locator("details")
+      .locator("[data-sidebar-section]")
       .filter({ has: page.locator("summary", { hasText: /^Work$/ }) });
     const starred = sidebar
-      .locator("details")
+      .locator("[data-sidebar-section]")
       .filter({ has: page.locator("summary", { hasText: /Starred$/ }) });
     const beta = sidebar.locator('[data-channel-id="beta"]');
     const menu = page.getByRole("menu", { name: "Actions for Beta" });

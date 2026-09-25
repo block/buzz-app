@@ -298,10 +298,10 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
   await expect(composer).toBeInViewport();
   await openPage(page, "Projects");
   // Search selection owns the page change; no sidebar destination remains current.
+  // Projects moves focus to its heading once the directory opens.
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
-  ).toBeVisible();
-  await expect(page.locator("#main-content")).toBeFocused();
+  ).toBeFocused();
   const hiddenDestinations = sidebarDestinations(page, { includeHidden: true });
   await expect(hiddenDestinations).toHaveText(destinationTitles);
   await expect(

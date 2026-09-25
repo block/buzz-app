@@ -138,7 +138,9 @@ test("section disclosure toggles content and honors reduced motion", async ({
     .locator("summary")
     .filter({ hasText: /^Channels$/ });
   const section = summary.locator("xpath=ancestor::*[@data-sidebar-section]");
-  const content = section.locator(":scope > div").last();
+  const contentId = await summary.getAttribute("aria-controls");
+  expect(contentId).toBeTruthy();
+  const content = section.locator(`[id="${contentId}"]`);
   const details = section.locator(":scope > div:first-child > details");
   const expanded = await section.evaluate(
     (el) => el.getBoundingClientRect().height,

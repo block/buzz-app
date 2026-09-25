@@ -39,7 +39,6 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     const row = panel.querySelector('[data-channel-id="alpha"]');
     if (!(content instanceof HTMLElement) || !(row instanceof HTMLElement))
       throw new Error("Channel sidebar geometry is unavailable");
-    const panelStyle = getComputedStyle(panel);
     const handle = document.querySelector(
       '[aria-label="Resize channel sidebar"]',
     );
@@ -48,22 +47,24 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     const contentStyle = getComputedStyle(content);
     const rowStyle = getComputedStyle(row);
     return {
-      panelRadius: Number.parseFloat(panelStyle.borderTopLeftRadius),
       panelGap:
         Number.parseFloat(getComputedStyle(handle).width) +
         Number.parseFloat(getComputedStyle(handle).marginLeft) +
         Number.parseFloat(getComputedStyle(handle).marginRight),
-      padding: [
-        contentStyle.paddingTop,
-        contentStyle.paddingRight,
-        contentStyle.paddingBottom,
-        contentStyle.paddingLeft,
-      ].map(Number.parseFloat),
+      // The redesigned sidebar keeps a symmetric inline gutter; rows use the
+      // sidebar's fixed row radius rather than a concentric panel radius.
+      padding: [contentStyle.paddingRight, contentStyle.paddingLeft].map(
+        Number.parseFloat,
+      ),
       rowRadius: Number.parseFloat(rowStyle.borderTopLeftRadius),
+      rowRadiusToken: Number.parseFloat(
+        contentStyle.getPropertyValue("--radius-row"),
+      ),
     };
   });
   expect(new Set(geometry.padding).size).toBe(1);
-  expect(geometry.rowRadius).toBe(geometry.panelRadius - geometry.padding[0]);
+  expect(geometry.padding[0]).toBeGreaterThan(0);
+  expect(geometry.rowRadius).toBe(geometry.rowRadiusToken);
   const conversation = await page
     .getByRole("article", { name: "Conversation" })
     .boundingBox();
@@ -74,8 +75,9 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   );
   expect(grip.width).toBeGreaterThanOrEqual(16);
   expect(grip.height).toBeGreaterThan(500);
+  // The list extends 6px into the 8px inline inset, plus the panel's 1px border.
   expect(before.x + before.width - (listBox.x + listBox.width)).toBeCloseTo(
-    5,
+    3,
     0,
   );
   await expect(handle).not.toHaveAttribute("title");

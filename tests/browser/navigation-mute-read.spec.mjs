@@ -215,7 +215,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     preferences.release();
     await expect(
       sidebar
-        .locator("details")
+        .locator("[data-sidebar-section]")
         .filter({ has: page.locator("summary", { hasText: "Work" }) })
         .locator('[data-channel-id="beta"]'),
     ).toBeVisible();

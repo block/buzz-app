@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
-import { settle, anchor, expectAnchor } from "./timeline.mjs";
+import { settle, wheel, anchor, expectAnchor } from "./timeline.mjs";
 
 // Setup only: callers hold image responses until navigation has finished, then
 // release them and assert stability without any corrective scrolling.
@@ -22,21 +22,7 @@ async function navigate(page, direction) {
     const before = await gap();
     if (reached(before)) break;
     const remaining = direction < 0 ? 6000 - before : before;
-    await page.mouse.wheel(0, direction * Math.min(2000, remaining));
-    // Drain a timed-out DOM read before the caller tears down its page.
-    let pendingRead;
-    try {
-      await expect
-        .poll(
-          () =>
-            (pendingRead = gap().then((after) => direction * (before - after))),
-          { message: "image navigation gesture makes progress" },
-        )
-        .toBeGreaterThan(0);
-    } finally {
-      await pendingRead;
-    }
-    await settle(page);
+    await wheel(page, direction * Math.min(2000, remaining));
     expect(
       direction * (before - (await gap())),
       "image navigation retains progress after settling",
@@ -226,7 +212,7 @@ test("image navigation handles partial gestures and rejects blocked input", asyn
     });
     gestures = 0;
     await expect(navigate(page, 1)).rejects.toThrow(
-      "image navigation gesture makes progress",
+      "timeline wheel gesture completes",
     );
     expect(gestures).toBe(1);
   } finally {

@@ -1,5 +1,13 @@
-import { useId, useRef, useSyncExternalStore } from "react";
+import { formatPublicKey } from "../../shared/identity/public-key";
+import { useRelayConnection } from "../../features/relay/react";
+import { useUserStatus } from "../../features/user-status/useUserStatus";
+import { useStatusEditor } from "../../features/user-status/useStatusEditor";
+import { StatusEmoji } from "../../features/user-status/StatusEmoji";
+import { Button } from "../../shared/design-system/ui/Button";
+import { StatusEditor } from "../../features/user-status/StatusEditor";
+import { useId, useRef, useState, useSyncExternalStore } from "react";
 import {
+  SmileyIcon,
   CheckIcon,
   GearIcon,
   UserIcon,
@@ -29,7 +37,7 @@ export function ProfileButton({
   settingsSelected: boolean;
   onSettings(): void;
 }) {
-  const { profile, viewer } = useSyncExternalStore(
+  const { profile: localProfile, viewer } = useSyncExternalStore(
     communities.subscribe,
     communities.snapshot,
   );
@@ -37,155 +45,233 @@ export function ProfileButton({
     communities.presence.subscribe,
     communities.presence.snapshot,
   );
-  const label = { online: "Active", away: "Away", offline: "Offline" }[
+  const label = { online: "Online", away: "Away", offline: "Offline" }[
     presence.status
   ];
+  const connection = useRelayConnection(communities.relay);
+  const session = connection.session;
+  const name =
+    localProfile.name.trim() ||
+    (viewer ? formatPublicKey(viewer) : undefined) ||
+    "Your profile";
+  const picture = localProfile.picture.startsWith("https://")
+    ? localProfile.picture
+    : undefined;
+  const status = useUserStatus(session?.statuses, viewer ?? "");
+  const statusEditor = useStatusEditor(session, viewer ?? undefined);
+  const profileTrigger = useRef<HTMLButtonElement>(null);
+  const openingStatus = useRef(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const openingSettings = useRef(false);
   const accountLabel = useId();
-  const avatar =
-    viewer || profile.picture.startsWith("https://") || profile.name ? (
-      <Avatar
-        src={
-          profile.picture.startsWith("https://") ? profile.picture : undefined
-        }
-        alt=""
-        fallback={profile.name || "?"}
-        fallbackContent={profile.name ? undefined : <UserIcon size={19} />}
-        size="fill"
-        {...(viewer ? { statusBadge: presence.status } : {})}
-      />
-    ) : (
-      <UserIcon aria-hidden="true" size={19} />
-    );
+  const statusUnavailable = useId();
+  const avatar = (
+    <Avatar
+      src={picture}
+      alt=""
+      fallback={name}
+      fallbackContent={
+        localProfile.name.trim() ? undefined : <UserIcon size={19} />
+      }
+      size="fill"
+      statusBadge={viewer ? presence.status : undefined}
+    />
+  );
   return (
-    <MenuRoot
-      modal={false}
-      onOpenChange={(open) => {
-        if (open) openingSettings.current = false;
-      }}
-      onOpenChangeComplete={(open) => {
-        // Let the menu finish its keyboard handling before handing focus to
-        // the page. Other dismissals retain the shared menu's focus behavior.
-        if (!open && openingSettings.current) {
-          const main = document.getElementById("main-content");
-          // A user may already be editing Settings while the menu animates out.
-          if (!main?.contains(document.activeElement)) main?.focus();
-        }
-      }}
-    >
-      <MenuTrigger
-        render={
-          <IconButton
-            type="button"
-            aria-label="Your profile"
-            title={profile.name || "Your profile"}
-            variant={viewer ? "ghost" : "chrome"}
-            shape="round"
-            icon={
-              <span
-                className="pointer-events-none relative flex size-full items-center justify-center rounded-full"
-                role="img"
-                aria-label={viewer ? `Your status: ${label}` : "Your avatar"}
-              >
-                {avatar}
-              </span>
-            }
-          />
-        }
-      />
-      <MenuPopup
-        align="end"
-        sideOffset={8}
-        aria-labelledby={accountLabel}
-        finalFocus={() => !openingSettings.current}
+    <>
+      <MenuRoot
+        modal={false}
+        open={menuOpen}
+        onOpenChange={(open) => {
+          setMenuOpen(open);
+          if (open) {
+            openingSettings.current = false;
+            openingStatus.current = false;
+          } else {
+            statusEditor.cancelOpening();
+            openingStatus.current = false;
+          }
+        }}
+        onOpenChangeComplete={(open) => {
+          // Let the menu finish its keyboard handling before handing focus to
+          // the page. Other dismissals retain the shared menu's focus behavior.
+          if (!open && openingSettings.current) {
+            const main = document.getElementById("main-content");
+            // A user may already be editing Settings while the menu animates out.
+            if (!main?.contains(document.activeElement)) main?.focus();
+          }
+        }}
       >
-        <span id={accountLabel} className="sr-only">
-          Your account
-        </span>
-        <div className="flex items-center gap-3 px-3 py-2">
-          <span className="relative flex size-9 shrink-0 items-center justify-center">
-            {avatar}
-          </span>
-          <div className="min-w-0">
-            <p className="m-0 truncate text-label-sm">
-              {profile.name || "Your account"}
-            </p>
-            {viewer && (
-              <p className="m-0 text-body-sm text-subtle">
+        <MenuTrigger
+          render={
+            <IconButton
+              type="button"
+              aria-label="Your profile"
+              ref={profileTrigger}
+              title={name}
+              variant="chrome"
+              shape="round"
+              icon={
                 <span
-                  className={styles.statusText}
-                  data-status={presence.status}
+                  className="pointer-events-none relative flex size-full items-center justify-center rounded-full"
+                  role="img"
+                  aria-label={viewer ? `Your status: ${label}` : "Your avatar"}
                 >
-                  {label}
-                </span>{" "}
-                · On this device
-              </p>
-            )}
-          </div>
-        </div>
-        {viewer && (
-          <>
-            <MenuSeparator />
-            <MenuRadioGroup
-              value={presence.preference}
-              onValueChange={(value) =>
-                communities.presence.setPreference(value)
+                  {avatar}
+                </span>
               }
-              aria-label="Presence"
-            >
-              {(
-                [
-                  [
-                    "auto",
-                    presence.preference === "auto" ? presence.status : "online",
-                    "Automatic",
-                  ],
-                  ["away", "away", "Away"],
-                  ["offline", "offline", "Appear offline"],
-                ] as const
-              ).map(([value, status, name]) => (
-                <MenuRadioItem key={value} value={value} closeOnClick={false}>
-                  <span
-                    className={styles.statusDot}
-                    data-status={status}
-                    aria-hidden="true"
-                  />
-                  {name}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-            <p className="mx-3 my-2 max-w-56 text-body-sm text-subtle">
-              Automatic follows activity in Buzz. Other devices may differ.
-            </p>
-            {presence.error && (
-              <p
-                role="alert"
-                className="mx-3 my-2 max-w-56 text-body-sm text-danger"
-              >
-                {presence.error}
-              </p>
-            )}
-          </>
-        )}
-        <MenuSeparator />
-        <MenuItem
-          aria-current={settingsSelected ? "page" : undefined}
-          onClick={() => {
-            openingSettings.current = true;
-            onSettings();
-          }}
+            />
+          }
+        />
+        <MenuPopup
+          align="end"
+          sideOffset={8}
+          aria-labelledby={accountLabel}
+          finalFocus={() => !openingSettings.current && !openingStatus.current}
         >
-          <MenuIcon>
-            <GearIcon aria-hidden="true" size={17} />
-          </MenuIcon>
-          Settings
-          {settingsSelected && (
-            <MenuTrailing>
-              <CheckIcon aria-hidden="true" size={14} />
-            </MenuTrailing>
+          <span id={accountLabel} className="sr-only">
+            {name}
+          </span>
+          <div className={styles.profileHeader}>
+            <span className={styles.profileAvatar}>{avatar}</span>
+            <div className={styles.profileDetails}>
+              <p className="m-0 truncate text-label-sm">{name}</p>
+              {viewer && (
+                <MenuRoot modal={false}>
+                  <MenuTrigger
+                    aria-label={`Availability: ${label}`}
+                    render={
+                      <Button variant="subtle" size="xs">
+                        <span
+                          className={styles.availability}
+                          data-status={presence.status}
+                        >
+                          {label}
+                        </span>
+                      </Button>
+                    }
+                  />
+                  <MenuPopup align="start">
+                    <MenuRadioGroup
+                      value={presence.preference}
+                      onValueChange={(value) =>
+                        communities.presence.setPreference(value)
+                      }
+                      aria-label="Availability"
+                    >
+                      {(
+                        [
+                          ["auto", "Automatic"],
+                          ["online", "Online"],
+                          ["away", "Away"],
+                          ["offline", "Offline"],
+                        ] as const
+                      ).map(([value, name]) => (
+                        <MenuRadioItem key={value} value={value}>
+                          {name}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuPopup>
+                </MenuRoot>
+              )}
+            </div>
+          </div>
+          {presence.error && (
+            <p
+              role="alert"
+              className="mx-3 my-2 max-w-56 text-body-sm text-danger"
+            >
+              {presence.error}
+            </p>
           )}
-        </MenuItem>
-      </MenuPopup>
-    </MenuRoot>
+          {viewer && session?.statuses && (
+            <>
+              <div className={styles.statusCard}>
+                <MenuItem
+                  aria-label={
+                    status
+                      ? `Set a status: ${[status.emoji, status.text].filter(Boolean).join(" ")}`
+                      : "Set a status"
+                  }
+                  aria-describedby={
+                    !session.statuses.writable ? statusUnavailable : undefined
+                  }
+                  closeOnClick={false}
+                  disabled={statusEditor.loading || !session.statuses.writable}
+                  onClick={async () => {
+                    if (await statusEditor.open()) {
+                      openingStatus.current = true;
+                      setMenuOpen(false);
+                    }
+                  }}
+                >
+                  {status ? (
+                    <>
+                      <StatusEmoji session={session} value={status.emoji} />
+                      <span className="min-w-0 truncate text-body-sm">
+                        {status.text}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <MenuIcon>
+                        <SmileyIcon size={17} aria-hidden="true" />
+                      </MenuIcon>
+                      {statusEditor.loading
+                        ? "Loading status…"
+                        : "Set a status"}
+                    </>
+                  )}
+                </MenuItem>
+              </div>
+              {!session.statuses.writable && (
+                <p
+                  id={statusUnavailable}
+                  className="mx-3 my-2 max-w-56 text-body-sm text-muted"
+                >
+                  Status updates are unavailable in this community.
+                </p>
+              )}
+              {statusEditor.error && (
+                <p
+                  role="alert"
+                  className="mx-3 my-2 max-w-56 text-body-sm text-danger"
+                >
+                  {statusEditor.error}
+                </p>
+              )}
+            </>
+          )}
+          <MenuSeparator />
+          <MenuItem
+            aria-current={settingsSelected ? "page" : undefined}
+            onClick={() => {
+              openingSettings.current = true;
+              onSettings();
+            }}
+          >
+            <MenuIcon>
+              <GearIcon aria-hidden="true" size={17} />
+            </MenuIcon>
+            Settings
+            {settingsSelected && (
+              <MenuTrailing>
+                <CheckIcon aria-hidden="true" size={14} />
+              </MenuTrailing>
+            )}
+          </MenuItem>
+        </MenuPopup>
+      </MenuRoot>
+      {statusEditor.editor && session && connection.scope && (
+        <StatusEditor
+          session={session}
+          scope={connection.scope}
+          current={statusEditor.editor.current}
+          close={statusEditor.close}
+          finalFocus={profileTrigger}
+        />
+      )}
+    </>
   );
 }

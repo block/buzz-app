@@ -155,6 +155,12 @@ export async function threadSample(
         assert.deepEqual(first["#h"], ["a"]);
         assert.equal(first.limit, data.headRows.length);
         events = [...data.headRows, data.head];
+      } else if (first?.kinds?.includes(30315)) {
+        assert.equal(filters.length, 1);
+        assert.deepEqual(first["#d"], ["general"]);
+        assert.equal(first.limit, first.authors?.length);
+        assert.ok(first.limit && first.limit <= 100);
+        events = [];
       } else if (first?.kinds?.includes(0)) {
         assert.equal(filters.length, 1);
         assert.ok(

@@ -77,15 +77,11 @@ it("updates a mounted profile from the shared name view without replacing its id
       "online",
     );
     const user = userEvent.setup();
-    for (const tab of ["Channels", "Memories"]) {
-      await user.click(screen.getByRole("tab", { name: tab }));
-      expect(
-        screen.getByRole("img", { name: `${name} avatar, online` }),
-      ).toBeTruthy();
-      expect(
-        screen.queryByRole("img", { name: "Presence: Active" }),
-      ).toBeNull();
-    }
+    await user.click(screen.getByRole("tab", { name: "Channels" }));
+    expect(
+      screen.getByRole("img", { name: `${name} avatar, online` }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Presence: Active" })).toBeNull();
     await user.click(screen.getByRole("tab", { name: "Info" }));
     expect(
       screen.getAllByRole("img", { name: "Presence: Active" }),

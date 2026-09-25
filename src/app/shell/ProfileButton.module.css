@@ -1,27 +1,38 @@
-.statusDot {
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--status-online);
+.profileHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  min-width: 15rem;
+  max-width: min(20rem, calc(100vw - 3rem));
 }
-
-.statusDot[data-status="away"] {
-  background: var(--status-away);
+.profileAvatar {
+  position: relative;
+  display: flex;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: 0 0 2.75rem;
 }
-
-.statusDot[data-status="offline"] {
-  background: var(--status-offline);
+.profileDetails {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
 }
-
-.statusText {
+.profileDetails > p {
+  max-width: 100%;
+}
+.availability {
   color: var(--text-success);
 }
-
-.statusText[data-status="away"] {
+.availability[data-status="away"] {
   color: var(--text-warning);
 }
-
-.statusText[data-status="offline"] {
+.availability[data-status="offline"] {
   color: var(--text-subtle);
+}
+.statusCard {
+  --user-status-emoji-offset: -2px;
+  margin: var(--space-2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
 }

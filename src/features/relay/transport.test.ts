@@ -91,6 +91,7 @@ it("the broker advertises and supplies writes through the same connection", asyn
   vi.stubGlobal("fetch", fetcher);
   const transport = await connectBrokerTransport();
   expect(transport.scope).toBe("https://relay.test");
+  expect(transport.relayHttpUrl).toBe("https://relay.test");
   expect(transport.writer?.kinds).toEqual([9]);
   assert.exists(transport.writer);
   const signedEvent = await transport.writer.sign(
@@ -103,6 +104,44 @@ it("the broker advertises and supplies writes through the same connection", asyn
     "/api/relay/sign",
     "/api/relay/publish",
   ]);
+});
+
+it("exposes the relay HTTP base for display, preferring the broker's explicit value", async () => {
+  const session = (extra: Record<string, unknown>) => async () =>
+    Response.json({ viewer: key.pubkey, relayAuthor: "relay", ...extra });
+  vi.stubGlobal("fetch", session({ relayUrl: "wss://relay.test" }));
+  expect((await connectBrokerTransport()).relayHttpUrl).toBe(
+    "https://relay.test",
+  );
+  vi.stubGlobal(
+    "fetch",
+    session({
+      relayUrl: "wss://relay.test",
+      relayHttpUrl: "https://hooks.relay.test/",
+    }),
+  );
+  expect((await connectBrokerTransport()).relayHttpUrl).toBe(
+    "https://hooks.relay.test",
+  );
+  // Paths, credentials and non-HTTP schemes never become a hook base.
+  for (const relayHttpUrl of [
+    "https://relay.test/path",
+    "https://user@relay.test",
+    "ftp://relay.test",
+    42,
+  ]) {
+    vi.stubGlobal("fetch", session({ relayHttpUrl }));
+    expect((await connectBrokerTransport()).relayHttpUrl).toBeUndefined();
+  }
+  const direct = await connectSignedTransport(
+    {
+      getPublicKey: async () => key.pubkey,
+      signEvent: async (template) => signed(key, template),
+    },
+    "https://relay.test",
+    "relay",
+  );
+  expect(direct.relayHttpUrl).toBe("https://relay.test");
 });
 
 it("requests relay thumbnails only for small media", async () => {

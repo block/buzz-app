@@ -1,4 +1,6 @@
 import { controlFixture } from "../../src/features/agents/control-testing";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 // Real ChannelsPage, thread reader, shared directory, panel registry and plugin lifecycle.
 // Only the transport is synthetic. No dev broker, saved identity or live relay.
 import { StrictMode, useLayoutEffect, useState } from "react";
@@ -57,16 +59,38 @@ const report = {
   memoryReads: [] as string[],
 };
 let failMissing = true;
-const data = [
+let data = [
   profile(viewer, { name: "Viewer", about: "Human profile", picture }),
   profile(mic, { name: "Mic", about: "Mic biography" }),
-  profile(pinky, {
-    name: "Pinky",
-    about: "Agent profile",
-    is_agent: true,
-    picture: pinkyPicture,
+  signed(pinky, {
+    kind: 0,
+    content: JSON.stringify({
+      name: "Pinky",
+      about: "Agent profile",
+      is_agent: true,
+      picture: pinkyPicture,
+    }),
+    tags: [],
   }),
 ];
+async function attestAgentProfile() {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${pinky.pubkey}:`),
+  );
+  const ownerSignature = bytesToHex(
+    schnorr.sign(new Uint8Array(digest), viewer.secret),
+  );
+  data = data.map((head) =>
+    head.pubkey === pinky.pubkey
+      ? signed(pinky, {
+          kind: 0,
+          content: head.content,
+          tags: [["auth", viewer.pubkey, "", ownerSignature]],
+        })
+      : head,
+  );
+}
 function session() {
   return createRelaySession({
     viewer: viewer.pubkey,
@@ -331,6 +355,7 @@ function Fixture() {
     </>
   );
 }
+await attestAgentProfile();
 const element = document.getElementById("root");
 if (!element) throw new Error("Missing root");
 createRoot(element).render(

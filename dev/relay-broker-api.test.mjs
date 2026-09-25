@@ -685,6 +685,11 @@ test("an upstream video stream error closes only that response, not the broker",
       .catch(() => {});
     const session = await fetch(`${h.base}/api/relay/session`);
     expect(session.status).toBe(200);
+    // The HTTP base lets the workflows page display `/hooks/{workflow_id}` addresses.
+    expect(await session.json()).toMatchObject({
+      relayUrl: fixtureRelayUrl,
+      relayHttpUrl: fixtureRelayUrl,
+    });
   } finally {
     await h.close();
   }
@@ -1426,6 +1431,75 @@ test.each([
     });
     expect(response.status).toBe(502);
     expect(await response.json()).not.toHaveProperty("channelId");
+  } finally {
+    await h.close();
+  }
+});
+
+test("status signing and publication preserve scoped replacements and explicit clears", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    for (const input of [
+      {
+        content: "Working remotely",
+        tags: [
+          ["d", "general"],
+          ["emoji", ":party:"],
+          ["expiration", "1700086400"],
+        ],
+      },
+      { content: "", tags: [["d", "general"]] },
+    ]) {
+      const response = await h.post("sign", {
+        kind: 30315,
+        created_at: 1700000000,
+        ...input,
+      });
+      expect(response.status).toBe(200);
+      const event = await response.json();
+      expect(verifyEvent(event)).toBe(true);
+      expect(event).toMatchObject({ kind: 30315, ...input });
+      expect((await h.post("channel-lifecycle-sign", event)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-publish", event)).status).toBe(
+        400,
+      );
+      expect((await h.post("publish", event)).status).toBe(200);
+      expect(h.publications.at(-1)).toEqual(JSON.parse(JSON.stringify(event)));
+    }
+    for (const tags of [
+      [["d", "music"]],
+      [
+        ["d", "general"],
+        ["h", "private"],
+      ],
+    ]) {
+      expect(
+        (
+          await h.post("sign", {
+            kind: 30315,
+            created_at: 1700000000,
+            content: "x",
+            tags,
+          })
+        ).status,
+      ).toBe(400);
+    }
+    const future = {
+      kind: 30315,
+      created_at: Math.floor(Date.now() / 1000) + 3600,
+      content: "Future",
+      tags: [["d", "general"]],
+    };
+    expect((await h.post("sign", future)).status).toBe(400);
+    const secret = new Uint8Array(32);
+    secret[31] = 7;
+    expect(
+      (await h.post("publish", finalizeEvent(future, secret))).status,
+    ).toBe(400);
+    expect(h.publications).toHaveLength(2);
   } finally {
     await h.close();
   }

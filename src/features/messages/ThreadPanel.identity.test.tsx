@@ -60,6 +60,10 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   let traffic!: LiveCallbacks;
   const owner = createRelaySession({
     ...wire.transport,
+    query(filters, signal) {
+      if (filters[0]?.kinds?.includes(30315)) return Promise.resolve([]);
+      return wire.transport.query(filters, signal);
+    },
     subscribe(callbacks) {
       traffic = callbacks;
       return { update() {}, retry() {}, dispose() {} };

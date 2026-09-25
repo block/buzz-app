@@ -489,14 +489,62 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await page.screenshot({
     path: info.outputPath("new-message-recipients.png"),
   });
-  await page.getByRole("button", { name: "Remove Person 03" }).click();
-  await expect.poll(() => page.evaluate(() => window.removalSounds)).toBe(1);
-  await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(1);
-  await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(0);
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await input.press("Backspace");
-  await expect.poll(() => page.evaluate(() => window.removalSounds)).toBe(2);
-  await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(0);
+  // Record the short-lived effect before input. The browser can complete its
+  // entire animation while Playwright is waiting for the audio assertion.
+  const removal = await page.evaluateHandle(() => {
+    const selector = 'img[src$="poof1@3x.png"]';
+    const events = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const [nodes, type] of [
+          [record.addedNodes, "added"],
+          [record.removedNodes, "removed"],
+        ]) {
+          for (const node of nodes) {
+            const image = node.querySelector?.(selector);
+            if (image)
+              events.push({
+                type,
+                display:
+                  type === "added" ? getComputedStyle(image).display : null,
+              });
+          }
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return { events, disconnect: () => observer.disconnect() };
+  });
+  try {
+    await page.getByRole("button", { name: "Remove Person 03" }).click();
+    await expect.poll(() => page.evaluate(() => window.removalSounds)).toBe(1);
+    // Deliberately inspect creation only after cleanup: slow automation must not
+    // miss coverage of either lifecycle boundary.
+    await expect
+      .poll(() =>
+        removal.evaluate(({ events }) => events.map(({ type }) => type)),
+      )
+      .toEqual(["added", "removed"]);
+    expect(await removal.evaluate(({ events }) => events[0].display)).not.toBe(
+      "none",
+    );
+    await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(0);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await input.press("Backspace");
+    await expect.poll(() => page.evaluate(() => window.removalSounds)).toBe(2);
+    await expect
+      .poll(() =>
+        removal.evaluate(({ events }) => events.map(({ type }) => type)),
+      )
+      .toEqual(["added", "removed", "added", "removed"]);
+    expect(await removal.evaluate(({ events }) => events[2].display)).toBe(
+      "none",
+    );
+    await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(0);
+  } finally {
+    await removal.evaluate((observer) => observer.disconnect());
+    await removal.dispose();
+  }
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
   const composer = page.getByRole("textbox", {
     name: "Message Avery Chen",

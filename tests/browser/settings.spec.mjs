@@ -1,3 +1,4 @@
+import { wheel } from "./timeline.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -30,29 +31,6 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "2");
   const bounds = await frame.boundingBox();
   const scroller = frame.locator(":scope > div");
-  const wheel = async (deltaY) => {
-    // A changed scrollTop is only the start of WebKit's animated wheel input.
-    // Arm the completion observer before input, then measure the settled row.
-    const completion = await scroller.evaluateHandle((element) => {
-      const state = { done: false };
-      element.addEventListener(
-        "scrollend",
-        () => {
-          state.done = true;
-        },
-        { once: true },
-      );
-      return state;
-    });
-    try {
-      await page.mouse.wheel(0, deltaY);
-      await expect
-        .poll(() => completion.evaluate((state) => state.done))
-        .toBe(true);
-    } finally {
-      await completion.dispose();
-    }
-  };
   await page.mouse.move(
     bounds.x + bounds.width / 2,
     bounds.y + bounds.height / 2,
@@ -72,7 +50,15 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
       target.y < visibleTop + 8
         ? target.y - visibleTop - 8
         : target.y + target.height - visibleBottom + 8;
-    await wheel(Math.sign(distance) * Math.max(Math.abs(distance), 24));
+    const before = await scroller.evaluate((element) => element.scrollTop);
+    await wheel(
+      page,
+      Math.sign(distance) * Math.max(Math.abs(distance), 24),
+      scroller,
+    );
+    await expect
+      .poll(() => scroller.evaluate((element) => element.scrollTop))
+      .not.toBe(before);
   }
   await expect(row).toBeInViewport({ ratio: 1 });
   await expect(toggle).toBeInViewport({ ratio: 1 });
@@ -138,14 +124,19 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     );
   await page.goto(app.origin);
   const avatar = button(page, "Your profile");
-  const account = page.getByRole("menu", { name: "Your account" });
+  const account = page.getByRole("menu", {
+    name: "Browser Fixture",
+  });
   const settings = account.getByRole("menuitem", {
     name: "Settings",
     exact: true,
   });
-  const automatic = account.getByRole("menuitemradio", {
-    name: "Automatic",
+  const statusEntry = account.getByRole("menuitem", {
+    name: "Set a status",
     exact: true,
+  });
+  const availability = account.getByRole("button", {
+    name: "Availability: Online",
   });
   await expect(avatar).toHaveAttribute("aria-expanded", "false");
   await expect(
@@ -156,8 +147,23 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await avatar.click();
     await expect(account).toBeInViewport();
     await expect(avatar).toHaveAttribute("aria-expanded", "true");
+    await expect(availability).toBeFocused();
     await page.keyboard.press("ArrowDown");
-    await expect(automatic).toBeFocused();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Automatic", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(
+      page.getByRole("menuitemradio", { name: "Online", exact: true }),
+    ).toBeFocused();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Automatic", exact: true }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Online", exact: true }),
+    ).not.toBeChecked();
+    await page.keyboard.press("Escape");
+    await expect(availability).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(account).toBeHidden();
     await expect(avatar).toBeFocused();
@@ -173,20 +179,15 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(account).toBeHidden();
     await avatar.focus();
     await page.keyboard.press("Enter");
-    await expect(automatic).toBeFocused();
-    // Menu navigation moves focus, not the user's status preference.
-    await page.keyboard.press("ArrowDown");
-    const away = account.getByRole("menuitemradio", {
-      name: "Away",
-      exact: true,
-    });
-    await expect(away).toBeFocused();
-    await expect(automatic).toBeChecked();
-    await expect(away).not.toBeChecked();
+    await expect(availability).toBeFocused();
     await page.keyboard.press("End");
     await expect(settings).toBeFocused();
     await page.keyboard.press("Home");
-    await expect(automatic).toBeFocused();
+    await expect(statusEntry).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(settings).toBeFocused();
+    await page.keyboard.press("Home");
+    await expect(statusEntry).toBeFocused();
     await tab(true);
     await expect(account).toBeHidden();
     await expect(avatar).toBeFocused();
@@ -195,7 +196,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   }
   await avatar.focus();
   await page.keyboard.press("Enter");
-  await expect(automatic).toBeFocused();
+  await expect(availability).toBeFocused();
   await page.keyboard.press("End");
   await expect(settings).toBeFocused();
   await page.keyboard.press("Enter");
@@ -330,7 +331,9 @@ test("Settings edits the local profile inline without publishing to a community"
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("menu", { name: "Your account" })).toBeHidden();
+  await expect(
+    page.getByRole("menu", { name: "Browser Fixture" }),
+  ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   const name = page.getByRole("textbox", { name: "Display name", exact: true });
   const picture = page.getByRole("textbox", {
@@ -356,7 +359,9 @@ test("Settings edits the local profile inline without publishing to a community"
     .click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("menu", { name: "Your account" })).toBeHidden();
+  await expect(
+    page.getByRole("menu", { name: "Browser Fixture" }),
+  ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Browser Fixture");
   await name.fill("   ");
@@ -385,7 +390,9 @@ test("Settings edits the local profile inline without publishing to a community"
   await page.reload();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("menu", { name: "Your account" })).toBeHidden();
+  await expect(
+    page.getByRole("menu", { name: "Updated local profile" }),
+  ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Updated local profile");
   expect(writes).toEqual([]);

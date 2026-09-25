@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -46,11 +47,12 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   );
   await expect(menu.getByRole("menuitem")).toHaveText([
     "New session",
+    "Move channel",
     "Mute",
     "Mark as Read",
     "Retry channel permissions",
   ]);
-  await expect(menu.getByRole("separator")).toHaveCount(2);
+  await expect(menu.getByRole("separator")).toHaveCount(3);
   for (const name of ["Mute", "Mark as Read"]) {
     await expect(
       menu
@@ -113,7 +115,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.keyboard.press("Escape");
   await page.unroute("**/sidebar-mute");
   // The persistent sidebar keeps retry UI and actions usable outside Messages.
-  await page.getByRole("button", { name: "Projects", exact: true }).click();
+  await openPage(page, "Projects");
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
@@ -161,10 +163,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     .toBe(true);
   await readStateSettled(page);
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await beta.click({ button: "right" });
   await expect(
     menu.getByRole("menuitem", { name: "Unmute", exact: true }),
@@ -202,10 +201,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await Promise.all([preferences.ready, reads.ready]);
   try {
     await page.reload();
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Messages");
     await Promise.all([preferences.started, reads.started]);
     await expect(localMark).toBeVisible();
     await expect(beta).toContainText("Beta");
@@ -219,7 +215,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     preferences.release();
     await expect(
       sidebar
-        .locator("details")
+        .locator("[data-sidebar-section]")
         .filter({ has: page.locator("summary", { hasText: "Work" }) })
         .locator('[data-channel-id="beta"]'),
     ).toBeVisible();
@@ -263,10 +259,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     });
   await readStateSettled(page);
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await beta.click({ button: "right" });
   await expect(
     menu.getByRole("menuitem", { name: "Mute", exact: true }),
@@ -297,11 +290,12 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await toggleSessions(false);
   await beta.click({ button: "right" });
   await expect(menu.getByRole("menuitem")).toHaveText([
+    "Move channel",
     "Mute",
     "Mark as Unread",
     "Retry channel permissions",
   ]);
-  await expect(menu.getByRole("separator")).toHaveCount(1);
+  await expect(menu.getByRole("separator")).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();

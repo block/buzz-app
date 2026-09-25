@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle, upper, expectAnchor, end, anchor } from "./timeline.mjs";
 
@@ -164,10 +165,7 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   app.relay.emptyRoster();
   app.relay.quotaNextRoster(2);
   await page.goto(app.origin);
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await expect.poll(() => app.relay.rejected.length).toBe(1);
   await expect(
     page

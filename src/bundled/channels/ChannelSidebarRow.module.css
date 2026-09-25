@@ -4,16 +4,34 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  border-radius: var(--channel-row-radius, var(--radius-row));
+  margin-bottom: var(--space-half);
+  border-radius: var(--radius-row);
   background: transparent;
   transition:
     color var(--duration-state) var(--easing-state),
     background-color 90ms cubic-bezier(0.23, 1, 0.32, 1);
 }
-.row:hover:not([data-selected]) {
-  background: var(--affordance-subtle);
+.row::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  right: var(--channel-row-fill-end, 0);
+  border-radius: inherit;
+  background: transparent;
+  content: "";
+  pointer-events: none;
 }
-.row[data-selected] {
+.row > * {
+  position: relative;
+  z-index: 1;
+}
+.row + div > [data-variant="row"] {
+  margin-bottom: var(--space-half);
+}
+.row:hover:not([data-selected])::before {
+  background: var(--affordance-panel-hover);
+}
+.row[data-selected]::before {
   background: var(--affordance-selected);
 }
 .row .select [data-buzz-ui][data-variant="row"] {
@@ -23,43 +41,32 @@
   flex: 1;
   min-width: 0;
 }
-.row .more {
-  opacity: 0;
-  pointer-events: none;
-  flex-shrink: 0;
-  transition: opacity 90ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-.row .remove {
-  position: absolute;
-  inset-block: 0;
-  right: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  width: calc(var(--size-row) + var(--space-control-inset));
-  border-radius: inherit;
-  background-color: inherit;
-}
-.row:is(:hover, :has(:focus-visible)) .more,
-.row .more:has([data-popup-open]) {
-  opacity: 1;
-  pointer-events: auto;
-}
-.row .remove [data-icon-variant] {
-  color: var(--text-subtle);
-  transition-duration: 90ms;
-}
-.row .remove [data-icon-variant]:is(:hover, :focus-visible) {
-  color: var(--text-standard);
+.select [class~="navigation-item-label"],
+.sessions [class~="navigation-item-label"] {
+  text-overflow: clip;
 }
 .iconSpace {
-  width: 17px;
-  flex: 0 0 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: var(--space-6);
+  flex: 0 0 20px;
+}
+.iconSpace[data-dm-cue] {
+  margin-inline-end: var(--space-half);
+}
+.iconSpace[data-dm-avatar] {
+  margin-inline: calc(-1 * (var(--space-1) / 4))
+    calc(var(--space-half) + (var(--space-1) / 4));
+}
+.iconSpace[data-dm-visual] {
+  margin-inline-end: var(--space-half);
 }
 .badges {
   display: inline-flex;
   align-items: center;
+  translate: -12px -1px;
   gap: var(--space-2);
 }
 .nameContent {
@@ -69,19 +76,39 @@
   gap: var(--space-2);
   min-width: 0;
 }
-.label {
+.label,
+.childLabel {
+  display: block;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
+.label[data-overflowing],
+.childLabel[data-overflowing] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black calc(100% - var(--space-5)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    black calc(100% - var(--space-5)),
+    transparent
+  );
+}
 .row:has([data-channel-unread], [data-channel-activity]) .label {
-  color: var(--text-standard);
-  font-weight: var(--type-weight-medium);
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-semibold);
+}
+.menu {
+  width: max-content;
+  max-width: var(--available-width);
 }
 .row .disclosure {
   position: absolute;
-  left: calc(var(--space-control-inset) - (var(--size-row) - 17px) / 2);
-  z-index: 1;
+  left: calc(var(--space-2) - ((var(--space-6) - 15px) / 2) - 1.5px);
+  z-index: 2;
 }
 .hashIcon {
   display: flex;
@@ -95,18 +122,19 @@
 .row:is(:hover, :has(:focus-visible)) .chevronIcon {
   display: block;
 }
-
 .childLabel {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-width: 0;
 }
 .childLabel > [data-channel-unread-title="true"] {
-  color: var(--text-standard);
-  font-weight: var(--type-weight-medium);
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-semibold);
 }
-
+/* Empty badge wrappers must not consume the navigation item's trailing gap. */
+.select span:has(> .badges:empty) {
+  display: none;
+}
 .sessions.sessions [data-buzz-ui][data-variant="row"] {
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-row);
 }

@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -76,7 +77,7 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(activity).toBeVisible();
   await expect(alpha.getByText("Alpha", { exact: true })).toHaveCSS(
     "font-weight",
-    "500",
+    "600",
   );
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
@@ -259,10 +260,7 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
   const beforeReload = app.report.queries.length;
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
   // Restoring a joined conversation waits for initial membership discovery;

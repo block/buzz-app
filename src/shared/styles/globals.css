@@ -7,6 +7,7 @@
 @import "../design-system/styles/materials.css";
 @import "../design-system/styles/components.css";
 @import "../design-system/styles/forms.css";
+@import "../design-system/styles/content-header.css";
 @import "../design-system/styles/overlays.css";
 @import "../design-system/styles/chips.css";
 @import "./tokens.css";
@@ -210,7 +211,7 @@
     display: none;
   }
   .shell-body {
-    @apply relative flex min-h-0 min-w-0 flex-1 px-2 pb-2 sm:px-4 sm:pb-4;
+    @apply relative flex min-h-0 min-w-0 flex-1 pl-0 pr-2 pb-2 sm:pl-0 sm:pr-4 sm:pb-4;
   }
   .shell-sidebar,
   .shell-sidebar-default {

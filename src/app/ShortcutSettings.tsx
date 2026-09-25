@@ -1,3 +1,4 @@
+import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import {
   useEffect,
   useId,
@@ -7,7 +8,6 @@ import {
 } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { Button } from "../shared/design-system/ui/Button";
-import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import {
   sameBinding,
   type KeyBinding,
@@ -247,14 +247,13 @@ export function ShortcutSettings({
 
   return (
     <section aria-labelledby="shortcut-settings-title">
-      <h2 id="shortcut-settings-title" className="mt-0 mb-6 text-label">
-        Shortcuts
-      </h2>
+      <Header id="shortcut-settings-title" title="Shortcuts" />
       <div className="grid gap-5">
         {groups.length ? (
           <div>
             {groups.map((group) => (
-              <NavigationSection key={group.id} label={group.label}>
+              <section key={group.id}>
+                <InlineHeader level={2} title={group.label} />
                 <div className="divide-y divide-standard">
                   {group.rows.map((row) => (
                     <ShortcutRow
@@ -275,7 +274,7 @@ export function ShortcutSettings({
                     />
                   ))}
                 </div>
-              </NavigationSection>
+              </section>
             ))}
           </div>
         ) : (
@@ -353,7 +352,7 @@ function ShortcutRow({
   const primary = row.effective[0];
   return (
     <article
-      className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
+      className="flex flex-wrap items-center justify-between gap-3 px-1 py-3"
       aria-labelledby={titleId}
     >
       <div className="min-w-0 flex-1 basis-[var(--size-navigator)]">

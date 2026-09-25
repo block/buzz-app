@@ -1,16 +1,24 @@
+import { openPage, pageChoices } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 test.use({ pluginFixtures: true, historyCounts: { alpha: 0, beta: 0 } });
+
+async function expectPageRegistered(page, name) {
+  const choices = await pageChoices(page);
+  await expect(
+    choices.getByRole("option", { name, exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),
+  ).toHaveCount(0);
+}
 for (const operation of ["complete", "resolve"]) {
   test(`removed provider cannot ${operation} its old pending request`, async ({
     page,
     app,
   }) => {
     await page.goto(app.origin);
-    await expect(
-      page
-        .getByRole("button", { name: "Pending fixture", exact: true })
-        .first(),
-    ).toBeVisible();
+    await expectPageRegistered(page, "Pending fixture");
     await page.evaluate(() => {
       window.pendingResult = undefined;
       window.fixtureNavigation
@@ -71,11 +79,7 @@ for (const operation of ["complete", "resolve"]) {
     app,
   }) => {
     await page.goto(app.origin);
-    await expect(
-      page
-        .getByRole("button", { name: "Session fixture", exact: true })
-        .first(),
-    ).toBeVisible();
+    await expectPageRegistered(page, "Session fixture");
     await page.evaluate(() => {
       window.fixtureNavigation
         .open({
@@ -143,14 +147,10 @@ for (const lifetime of ["provider", "session"]) {
     await page.goto(app.origin);
     const pluginId =
       lifetime === "provider" ? "fixture.pending" : "fixture.session";
-    await expect(
-      page
-        .getByRole("button", {
-          name: lifetime === "provider" ? "Pending fixture" : "Session fixture",
-          exact: true,
-        })
-        .first(),
-    ).toBeVisible();
+    await expectPageRegistered(
+      page,
+      lifetime === "provider" ? "Pending fixture" : "Session fixture",
+    );
     await page.evaluate((pluginId) => {
       window.pendingResult = undefined;
       window.fixtureNavigation
@@ -224,10 +224,7 @@ test("a static pending page retains authority across a relay reconnect", async (
   app,
 }) => {
   await page.goto(app.origin);
-  await page
-    .getByRole("button", { name: "Pending fixture", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Pending fixture");
   await expect
     .poll(() => page.evaluate(() => window.pendingMounted))
     .toBe(true);
@@ -249,10 +246,7 @@ for (const operation of ["complete", "resolve"]) {
     app,
   }) => {
     await page.goto(app.origin);
-    await page
-      .getByRole("button", { name: "Pending fixture", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Pending fixture");
     await expect
       .poll(() => page.evaluate(() => window.pendingMounted))
       .toBe(true);

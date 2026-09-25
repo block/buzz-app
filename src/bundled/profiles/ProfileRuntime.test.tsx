@@ -97,7 +97,13 @@ it("shows the verified owner saved configuration and persists start on launch", 
   fixture.agent.launchProvider = null;
   fixture.agent.launchProviderEnv = "BUZZ_AGENT_PROVIDER";
   const { user } = await mount({ fixture });
+  expect(screen.queryByRole("region", { name: "Instances" })).toBeNull();
   await user.click(await screen.findByRole("tab", { name: "Runtime" }));
+  const instances = screen.getByRole("region", { name: "Instances" });
+  expect(within(instances).getByText("1 instance")).toBeVisible();
+  expect(within(instances).getByText("Fixture agent")).not.toBeVisible();
+  await user.click(within(instances).getByText("1 instance"));
+  expect(within(instances).getByText("Fixture agent")).toBeVisible();
   const configuration = screen.getByRole("region", {
     name: "Agent configuration",
   });

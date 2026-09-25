@@ -19,6 +19,7 @@ import {
   validCanvas,
 } from "./channel-kit.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
+import { validateUploadResult } from "../src/features/relay/attachments.ts";
 import { validChannelCommand } from "./session-commands.mjs";
 import {
   adminReason,
@@ -31,6 +32,10 @@ import {
   directMessageReceipt,
 } from "./direct-messages.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
+import {
+  assertSidebarStarIntent,
+  mutateSidebarStar,
+} from "./sidebar-stars.mjs";
 import {
   validateWorkflowEvent,
   WORKFLOW_KINDS,
@@ -56,6 +61,8 @@ import { readAgentLibrary } from "./agent-library.mjs";
 import { createBuilderlab } from "./builderlab.mjs";
 import {
   decodeSidebarPreferences,
+  assertSidebarAssignmentIntent,
+  mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
   SIDEBAR_UPLOAD_MS,
   SIDEBAR_UPLOAD_SLOTS,
@@ -282,7 +289,7 @@ async function relayAuthority(fetch, relay) {
     ...(nip11.self === author ? { archiveAuthority: author } : {}),
   };
 }
-export function validProductFeedback(event) {
+export function validProductFeedback(event, mediaOrigin) {
   if (
     event?.kind !== 42000 ||
     typeof event.content !== "string" ||
@@ -292,18 +299,76 @@ export function validProductFeedback(event) {
     !Array.isArray(event.tags)
   )
     return false;
+  const allowed = new Set(["category", "client-id", "imeta"]);
   if (
     !event.tags.every(
       (tag) =>
         Array.isArray(tag) &&
-        tag.length === 2 &&
         tag.every((part) => typeof part === "string") &&
-        ["category", "client-id"].includes(tag[0]),
-    )
+        allowed.has(tag[0]) &&
+        (tag[0] === "imeta" ? tag.length >= 6 : tag.length === 2),
+    ) ||
+    Buffer.byteLength(JSON.stringify(event.tags)) > 64 * 1024
   )
     return false;
   const categories = event.tags.filter((tag) => tag[0] === "category");
+  const imeta = event.tags.filter((tag) => tag[0] === "imeta");
   return (
+    imeta.every((tag) => {
+      const fields = new Map();
+      for (const part of tag.slice(1)) {
+        const split = part.indexOf(" ");
+        if (split <= 0 || fields.has(part.slice(0, split))) return false;
+        fields.set(part.slice(0, split), part.slice(split + 1));
+      }
+      if (
+        !mediaOrigin ||
+        !["url", "m", "size", "x", "filename"].every((name) =>
+          fields.has(name),
+        ) ||
+        !fields.get("filename") ||
+        fields.get("filename").includes("/") ||
+        fields.get("filename").includes("\\") ||
+        Buffer.byteLength(fields.get("filename")) > 255 ||
+        Array.from(fields.get("filename")).some((char) => {
+          const code = char.charCodeAt(0);
+          return code < 32 || code === 127;
+        }) ||
+        !/^[1-9][0-9]*$/.test(fields.get("size")) ||
+        ![
+          "image/jpeg",
+          "image/png",
+          "image/gif",
+          "image/webp",
+          "application/octet-stream",
+          "text/plain",
+        ].includes(fields.get("m"))
+      )
+        return false;
+      try {
+        const result = validateUploadResult(
+          {
+            url: fields.get("url"),
+            sha256: fields.get("x"),
+            size: Number(fields.get("size")),
+            type: fields.get("m"),
+          },
+          mediaOrigin,
+          Number(fields.get("size")),
+          "feedback",
+        );
+        const extension = result.url.match(/\.([a-z0-9]{1,8})$/)?.[1];
+        const imageExtension = {
+          "image/jpeg": "jpg",
+          "image/png": "png",
+          "image/gif": "gif",
+          "image/webp": "webp",
+        }[result.type];
+        return !imageExtension || extension === imageExtension;
+      } catch {
+        return false;
+      }
+    }) &&
     categories.length <= 1 &&
     (!categories.length ||
       ["bug", "praise", "needs-work"].includes(categories[0][1]))
@@ -1126,6 +1191,151 @@ export function relayBrokerPlugin({
                 sidebarMutations.delete(relay);
             }
           }
+          if (
+            [
+              "/api/relay/sidebar-assignment",
+              "/api/relay/sidebar-star",
+            ].includes(route) &&
+            req.method === "POST"
+          ) {
+            const starring = route === "/api/relay/sidebar-star";
+            const chunks = [];
+            let bytes = 0;
+            for await (const part of req) {
+              bytes += part.length;
+              if (bytes > 2048)
+                return json(res, 413, {
+                  error: `Sidebar preference intent is too large`,
+                });
+              chunks.push(part);
+            }
+            let intent;
+            try {
+              intent = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              if (starring) assertSidebarStarIntent(intent);
+              else assertSidebarAssignmentIntent(intent);
+            } catch {
+              return json(res, 400, {
+                error: `Invalid sidebar preference intent`,
+              });
+            }
+            const request = new AbortController();
+            const close = () => request.abort();
+            res.once("close", close);
+            const previous = sidebarMutations.get(relay) ?? Promise.resolve();
+            const mutation = previous
+              .catch(() => {})
+              .then(async () => {
+                request.signal.throwIfAborted();
+                const filter = [
+                  {
+                    kinds: [30078],
+                    authors: [viewer],
+                    "#d": [starring ? "channel-stars" : "channel-sections"],
+                    limit: 1,
+                  },
+                ];
+                const lane = admissions(relay, viewer).api;
+                const requestSignal = AbortSignal.any([
+                  request.signal,
+                  AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+                ]);
+                const dispatch = (path, body) =>
+                  admittedApiRequest(
+                    lane,
+                    () => {
+                      requestSignal.throwIfAborted();
+                      const value = JSON.stringify(body);
+                      const auth = finalizeEvent(
+                        {
+                          kind: 27235,
+                          created_at: Math.floor(Date.now() / 1000),
+                          content: "",
+                          tags: [
+                            ["u", `${relay}${path}`],
+                            ["method", "POST"],
+                            [
+                              "payload",
+                              createHash("sha256").update(value).digest("hex"),
+                            ],
+                            ["nonce", randomBytes(16).toString("hex")],
+                          ],
+                        },
+                        key,
+                      );
+                      return fetchUpstream(`${relay}${path}`, {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization:
+                            "Nostr " +
+                            Buffer.from(JSON.stringify(auth)).toString(
+                              "base64",
+                            ),
+                        },
+                        body: value,
+                        redirect: "error",
+                        signal: requestSignal,
+                      });
+                    },
+                    requestSignal,
+                  );
+                const readHead = async () => {
+                  const response = await dispatch("/query", filter);
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar preference query failed (${response.status})`,
+                    );
+                  return readSidebarHead(response);
+                };
+                const publishEvent = async (event) => {
+                  const response = await dispatch("/events", event);
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar preference publish failed (${response.status})`,
+                    );
+                  const receipt = await readSidebarHead(
+                    response,
+                    "publication",
+                  );
+                  if (
+                    receipt.event_id !== event.id ||
+                    receipt.accepted !== true
+                  )
+                    throw new Error(
+                      "Sidebar preference publication was not accepted",
+                    );
+                };
+                return (starring ? mutateSidebarStar : mutateSidebarAssignment)(
+                  intent,
+                  key,
+                  readHead,
+                  publishEvent,
+                );
+              });
+            sidebarMutations.set(relay, mutation);
+            try {
+              return json(res, 200, await mutation);
+            } catch (error) {
+              if (error instanceof ApiPaused)
+                return json(res, 429, {
+                  error: error.message,
+                  sent: false,
+                  paused: true,
+                  retryAfterMs: error.retryAfterMs,
+                });
+              return json(res, 502, {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : `Sidebar preference failed`,
+              });
+            } finally {
+              res.off("close", close);
+              if (sidebarMutations.get(relay) === mutation)
+                sidebarMutations.delete(relay);
+            }
+          }
           if (route === "/api/relay/agent-library" && req.method === "GET") {
             try {
               // Share concurrent reads, never retain the local snapshot after completion.
@@ -1175,7 +1385,10 @@ export function relayBrokerPlugin({
               sidebarMuteWrites: true,
               channelKit: true,
               readState: true,
+              sidebarPreferenceWrites: true,
+              sidebarStarWrites: true,
               agentLibrary: true,
+              agentLogProof: true,
               agentMemories: true,
               live: true,
               presence: true,
@@ -1637,6 +1850,7 @@ export function relayBrokerPlugin({
               "/api/relay/profile",
               "/api/relay/direct-message",
               "/api/relay/authorize-agent",
+              "/api/relay/agent-log-proof",
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/invite",
@@ -1730,6 +1944,44 @@ export function relayBrokerPlugin({
             } finally {
               gitReads--;
             }
+          }
+          if (route === "/api/relay/agent-log-proof") {
+            // A proof never delegates the broker's key as a general signing API.
+            // Native validates the saved attestation and consumes its challenge.
+            let canonicalRelay;
+            try {
+              canonicalRelay = relayOrigin(filters?.relayUrl);
+            } catch {
+              return json(res, 400, {
+                error: "Invalid harness log authorization",
+              });
+            }
+            const wssRelay = canonicalRelay.replace(/^https:/, "wss:");
+            if (
+              !scoped ||
+              !filters ||
+              Object.keys(filters).length !== 4 ||
+              typeof filters.id !== "string" ||
+              !/^[0-9a-f]{64}-[0-9a-f]{64}$/.test(filters.id) ||
+              !/^[0-9a-f]{64}$/.test(filters.pubkey ?? "") ||
+              filters.id !==
+                `${filters.pubkey}-${createHash("sha256").update(wssRelay).digest("hex")}` ||
+              filters.pubkey === viewer ||
+              canonicalRelay !== relay ||
+              typeof filters.nonce !== "string" ||
+              !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+                filters.nonce,
+              )
+            )
+              return json(res, 400, {
+                error: "Invalid harness log authorization",
+              });
+            cancel.signal.throwIfAborted();
+            const message = `buzz-app:harness-log:v1:${filters.id}:${filters.pubkey}:${wssRelay}:${filters.nonce}`;
+            const signature = Buffer.from(
+              schnorr.sign(createHash("sha256").update(message).digest(), key),
+            ).toString("hex");
+            return json(res, 200, { signature });
           }
           if (route === "/api/relay/authorize-agent") {
             if (
@@ -1964,7 +2216,7 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
             } else if (filters?.kind === 42000) {
-              if (!validProductFeedback(filters))
+              if (!validProductFeedback(filters, relay))
                 return json(res, 400, {
                   error: "Product feedback rejected",
                   sent: false,

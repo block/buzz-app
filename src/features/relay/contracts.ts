@@ -74,8 +74,10 @@ export type ChannelMessage = Readonly<{
   delivery?: Delivery | undefined;
   deliveryError?: string | undefined;
   authorId: string;
-  /** Unix seconds from the signed event. Ordering is (createdAt asc, id desc); no clock inference. */
+  /** Unix seconds from the signed event. */
   createdAt: number;
+  /** Effective send ms (valid `ms` tag, else createdAt * 1000); ordered by `compareMessages`. */
+  createdAtMs?: number;
   content: string;
   /** Unprojected current body when attachment presentation removed Markdown. */
   sourceContent?: string;

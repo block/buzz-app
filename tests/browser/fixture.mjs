@@ -44,6 +44,8 @@ export const test = base.extend({
   initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
   lifecycleVisibility: [{ archived: [], hidden: [] }, { option: true }],
+  sidebarIcons: [false, { option: true }],
+  channelNames: [{}, { option: true }],
   expectedPageFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
@@ -78,6 +80,8 @@ export const test = base.extend({
       initialSidebarSort,
       channelLifecycle,
       lifecycleVisibility,
+      sidebarIcons,
+      channelNames,
       expectedPageFailure,
       largeSidebar,
       iconCongestion,
@@ -122,10 +126,11 @@ export const test = base.extend({
         forged ? userKey : relayKey,
         time,
       );
-    const peerKey =
+    const peerKeys =
       dmLabels || readState || exactMessages || actionProfile
-        ? key(5)
-        : undefined;
+        ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
+        : [];
+    const peerKey = peerKeys[0];
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
       secondary: "11234567-89ab-cdef-0123-456789abcdef",
@@ -156,19 +161,18 @@ export const test = base.extend({
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
         )
-      : peerKey
-        ? [getPublicKey(peerKey)]
-        : [];
+      : peerKeys.map(getPublicKey);
     const dmIds = largeSidebar
       ? Array.from(
           { length: 128 },
           (_, i) => `dm-${i.toString().padStart(3, "0")}`,
         )
       : dmLabels
-        ? ["dm-peer"]
+        ? ["dm-peer", "dm-group"]
         : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
+    const renamedChannels = new Map();
     const lifecycleRows = channelLifecycle
       ? [
           {
@@ -189,10 +193,10 @@ export const test = base.extend({
     const rosterIds = [
       ...new Set([
         ...channels,
+        ...(personalSidebar ? [personalChannel] : []),
         ...dmIds,
         ...sortingIds,
         ...lifecycleRows.map((row) => row.id),
-        ...(personalSidebar ? [personalChannel] : []),
         ...Object.values(sessionParents),
       ]),
     ];
@@ -205,7 +209,25 @@ export const test = base.extend({
             "channel-sections",
             {
               version: 1,
-              sections: [{ id: "work", name: "Work", order: 0 }],
+              sections: [
+                {
+                  id: "work",
+                  name: "Work",
+                  order: 0,
+                  ...(sidebarIcons ? { icon: ":stamp:" } : {}),
+                },
+                ...(sidebarIcons
+                  ? [
+                      {
+                        id: "missing",
+                        name: "Unavailable",
+                        order: 1,
+                        icon: ":unavailable_icon:",
+                      },
+                      { id: "laptop", name: "Laptop", order: 2, icon: "👨‍💻" },
+                    ]
+                  : []),
+              ],
               assignments: { beta: "work" },
             },
           ],
@@ -572,7 +594,6 @@ export const test = base.extend({
         readState,
         sidebarUnread,
         savedSidebar,
-        personalSidebar,
         sortingSidebar,
         initialSidebarSort,
         dmLabels,
@@ -617,6 +638,10 @@ export const test = base.extend({
         expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
+      if (personalSidebar && filter.ids)
+        return [...readEvents.get(community).values()].filter((event) =>
+          filter.ids.includes(event.id),
+        );
       if (filter.kinds?.includes(20001))
         return filter.authors.map((author) =>
           sign(20001, [["p", author]], "online"),
@@ -664,9 +689,13 @@ export const test = base.extend({
                 "",
                 lifecycleRows.some((row) => row.id === id) ? "owner" : "member",
               ],
-              ...participants
-                .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
-                .map((pubkey) => ["p", pubkey, "", "member"]),
+              ...(dmLabels && id === "dm-peer"
+                ? [["p", participants[0], "", "member"]]
+                : dmLabels && id === "dm-group"
+                  ? participants.map((pubkey) => ["p", pubkey, "", "member"])
+                  : participants
+                      .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
+                      .map((pubkey) => ["p", pubkey, "", "member"])),
             ]),
           );
       if (filter.kinds?.includes(39000))
@@ -679,7 +708,9 @@ export const test = base.extend({
                 ["d", id],
                 [
                   "name",
-                  lifecycleRows.find((row) => row.id === id)?.name ??
+                  renamedChannels.get(id) ??
+                    channelNames[id] ??
+                    lifecycleRows.find((row) => row.id === id)?.name ??
                     (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id),
                 ],
                 ...lifecycleRows
@@ -741,7 +772,23 @@ export const test = base.extend({
           "#d": ["buzz:custom-emoji"],
           limit: 500,
         });
-        return [];
+        return sidebarIcons
+          ? [
+              sign(
+                30030,
+                [
+                  ["d", "buzz:custom-emoji"],
+                  [
+                    "emoji",
+                    "stamp",
+                    `https://${community}.example/media/stamp.png`,
+                  ],
+                ],
+                "",
+                userKey,
+              ),
+            ]
+          : [];
       }
       if (filter.kinds?.includes(10100)) {
         expect(filter).toEqual({
@@ -785,16 +832,22 @@ export const test = base.extend({
                 key,
               ),
             ),
-          ...(peerKey && filter.authors?.includes(getPublicKey(peerKey))
-            ? [
-                sign(
-                  0,
-                  [],
-                  JSON.stringify({ display_name: "Alice Fixture" }),
-                  peerKey,
-                ),
-              ]
-            : []),
+          ...peerKeys
+            .filter((key) => filter.authors?.includes(getPublicKey(key)))
+            .map((key) =>
+              sign(
+                0,
+                [],
+                JSON.stringify({
+                  display_name: [
+                    "Alice Fixture",
+                    "Bob Fixture",
+                    "Carol Fixture",
+                  ][peerKeys.indexOf(key)],
+                }),
+                key,
+              ),
+            ),
         ];
       if (filter.search !== undefined)
         return [...histories.entries()]
@@ -1024,8 +1077,22 @@ export const test = base.extend({
       }
       expect(event.kind).toBe(30078);
       const sidebarCoordinate = event.tags.find(([name]) => name === "d")?.[1];
-      if (sidebarCoordinate === "channel-mutes") {
-        expect(event.tags).toContainEqual(["t", sidebarCoordinate]);
+      if (
+        [
+          "channel-mutes",
+          "channel-sections",
+          "channel-stars",
+          "channel-sort",
+        ].includes(sidebarCoordinate) ||
+        (personalSidebar &&
+          sidebarCoordinate?.startsWith("buzz-channel-kit-v1:"))
+      ) {
+        expect(event.tags).toContainEqual([
+          "t",
+          sidebarCoordinate.startsWith("buzz-channel-kit-v1:")
+            ? "buzz-channel-kit-v1"
+            : sidebarCoordinate,
+        ]);
         const blob = JSON.parse(
           nip44.v2.decrypt(
             event.content,
@@ -1116,39 +1183,6 @@ export const test = base.extend({
                       }),
                     }
                   : {}),
-                acceptPublication: (community, event) => {
-                  expect(verifyEvent(event)).toBe(true);
-                  expect(event.pubkey).toBe(viewer);
-                  const coordinate = event.tags.find(
-                    ([key]) => key === "d",
-                  )?.[1];
-                  if (
-                    event.kind === 30078 &&
-                    [
-                      "channel-sections",
-                      "channel-stars",
-                      "channel-sort",
-                    ].includes(coordinate)
-                  ) {
-                    expect(event.tags).toContainEqual(["t", coordinate]);
-                    const blob = JSON.parse(
-                      nip44.v2.decrypt(
-                        event.content,
-                        nip44.v2.utils.getConversationKey(userKey, viewer),
-                      ),
-                    );
-                    readEvents.get(community).set(coordinate, event);
-                    report.sidebarPublications ??= [];
-                    report.sidebarPublications.push({
-                      community,
-                      coordinate,
-                      event,
-                      blob,
-                    });
-                    return;
-                  }
-                  acceptReadPublication(community, event);
-                },
               }
             : {}),
         })
@@ -1505,6 +1539,11 @@ export const test = base.extend({
         },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.
+        renameChannel(id, name) {
+          expect(rosterIds).toContain(id);
+          renamedChannels.set(id, name);
+          lifecycleTime++;
+        },
         hideChannel(id) {
           expect(rosterIds).toContain(id);
           hiddenChannels.add(id);
@@ -1655,6 +1694,9 @@ export const test = base.extend({
         ...(report.sidebarSortFailures ?? []),
         ...(report.sidebarMuteFailures ?? []),
         ...(report.sidebarActivityFailures ?? []),
+        ...(report.sidebarStarFailures ?? []),
+        ...(report.sidebarAssignmentFailures ?? []),
+        ...(report.sidebarPreferenceFailures ?? []),
       ];
       const injectedSidebarFailure = (message, index) => {
         if (

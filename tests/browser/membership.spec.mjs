@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { anchor, expectAnchor, settle } from "./timeline.mjs";
 
@@ -18,10 +19,7 @@ test("Channels renders grouped history and live membership without turning activ
   app,
 }, testInfo) => {
   await page.goto(app.origin);
-  await page
-    .getByLabel("Pages")
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await openPage(page, "Messages");
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   const feed = page.getByRole("region", { name: "Channel message history" });
   const groups = feed.locator("[data-membership-row]");
@@ -111,10 +109,7 @@ keyboardTest(
   "one keyboard scroll leaves bottom follow and live membership preserves the reader",
   async ({ page, app }) => {
     await page.goto(app.origin);
-    await page
-      .getByLabel("Pages")
-      .getByRole("button", { name: "Messages", exact: true })
-      .click();
+    await openPage(page, "Messages");
     // Unread evidence contributes to the accessible name; channel identity does not change.
     const alpha = page.locator('button[data-channel-id="alpha"]');
     await expect(alpha.getByRole("img")).toHaveAccessibleName(
@@ -184,10 +179,7 @@ test("a restored membership anchor follows delayed group growth through resize a
     );
   history.splice(history.indexOf(delayed), 1);
   await page.goto(app.origin);
-  await page
-    .getByLabel("Pages")
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await openPage(page, "Messages");
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   const feed = page.getByRole("region", { name: "Channel message history" });
   await settle(page);

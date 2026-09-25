@@ -722,6 +722,7 @@ function Composer({
             threadRootId={threadRootId}
             inviteAgents={agentChoices && !editing.target}
             replace={replaceCompletion}
+            resolved={value}
           />
         )}
         {dragging && <p role="status">Drop files to attach</p>}

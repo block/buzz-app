@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
+  fireEvent,
   cleanup,
   render,
   screen,
@@ -10,7 +12,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import { npubEncode } from "nostr-tools/nip19";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Communities } from "../features/communities/service";
+import type {
+  PersonalProfile,
+  Communities,
+} from "../features/communities/service";
 import * as communityApi from "../features/communities/api";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { ProfileSettings } from "./ProfileSettings";
@@ -82,7 +87,7 @@ it("loads and publishes the selected community profile before updating the local
   );
   await user.clear(name);
   await user.type(name, "Updated community name");
-  await user.click(screen.getByRole("button", { name: "Save profile" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
 
   await waitFor(() =>
     expect(publish).toHaveBeenCalledWith(
@@ -139,7 +144,7 @@ it("keeps a newer profile seed when an older community publication finishes last
   await user.clear(olderName);
   await user.type(olderName, "Older save");
   await user.click(
-    within(older.container).getByRole("button", { name: "Save profile" }),
+    within(older.container).getByRole("button", { name: "Save" }),
   );
   await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
 
@@ -156,7 +161,7 @@ it("keeps a newer profile seed when an older community publication finishes last
   await user.clear(newerName);
   await user.type(newerName, "Newer save");
   await user.click(
-    within(newer.container).getByRole("button", { name: "Save profile" }),
+    within(newer.container).getByRole("button", { name: "Save" }),
   );
   await waitFor(() =>
     expect(service.saveProfile).toHaveBeenCalledWith({
@@ -205,7 +210,7 @@ it("keeps a community draft when publication fails and retries a failed read", a
   expect(name).toHaveValue("Buzz User");
   await user.clear(name);
   await user.type(name, "Keep this draft");
-  await user.click(screen.getByRole("button", { name: "Save profile" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "publish unavailable",
   );
@@ -216,30 +221,29 @@ it("keeps a community draft when publication fails and retries a failed read", a
   expect(publish).toHaveBeenCalledTimes(1);
 });
 
-it("enables profile actions only while the draft differs from the saved profile", async () => {
+it("shows profile actions for description-only edits and hides them on cancellation", async () => {
   const service = communities();
   const user = userEvent.setup();
   render(<ProfileSettings communities={service} />, { wrapper: ToastProvider });
-
   const description = screen.getByLabelText("Profile description (optional)");
-  const save = screen.getByRole("button", { name: "Save profile" });
-  const cancel = screen.getByRole("button", { name: "Cancel" });
-  expect(save).toBeDisabled();
-  expect(cancel).toBeDisabled();
-
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Cancel" }),
+  ).not.toBeInTheDocument();
   await user.type(description, "Draft");
-  expect(save).toBeEnabled();
-  expect(cancel).toBeEnabled();
-
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   await user.clear(description);
-  expect(save).toBeDisabled();
-  expect(cancel).toBeDisabled();
-
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
   await user.type(description, "Discard me");
-  await user.click(cancel);
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(description).toHaveValue("");
-  expect(save).toBeDisabled();
-  expect(cancel).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
   expect(service.saveProfile).not.toHaveBeenCalled();
 });
 
@@ -282,7 +286,7 @@ it("edits and trims the profile description with a visible limit", async () => {
   expect(screen.getByText("0 of 500 characters")).toBeVisible();
   await user.type(description, "  Building with Buzz  ");
   expect(screen.getByText("22 of 500 characters")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Save profile" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
 
   expect(service.saveProfile).toHaveBeenCalledWith({
     name: "Buzz User",
@@ -322,7 +326,7 @@ it("preserves an over-limit remote description and blocks unrelated saves", asyn
   const name = screen.getByLabelText("Display name");
   await user.clear(name);
   await user.type(name, "Renamed");
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   expect(publish).not.toHaveBeenCalled();
 });
 
@@ -337,8 +341,14 @@ it("rejects profile image URLs with embedded credentials", async () => {
     "https://user:secret@example.test/profile.png",
   );
 
+  expect(
+    screen.getByLabelText("Picture URL (optional)"),
+  ).toHaveAccessibleDescription(/Use an HTTPS image URL without credentials/);
   expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  expect(service.saveProfile).not.toHaveBeenCalled();
 });
 
 it("shows exact public identity formats and copies either value", async () => {
@@ -413,4 +423,145 @@ it("keeps the identity selectable and explains manual recovery when copy fails",
   await user.click(publicKey);
   expect((publicKey as HTMLInputElement).selectionStart).toBe(0);
   expect((publicKey as HTMLInputElement).selectionEnd).toBe(viewer.length);
+});
+
+function setup() {
+  let state = { status: "ready", profile: { name: "Arjun", picture: "" } };
+  const listeners = new Set<() => void>();
+  const saveProfile = vi.fn((profile: PersonalProfile) => {
+    state = { ...state, profile };
+    for (const listener of listeners) listener();
+  });
+  const communities = {
+    snapshot: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    saveProfile,
+    relay: { snapshot: () => ({ status: "unavailable" }) },
+  } as unknown as Communities;
+  render(<ProfileSettings communities={communities} />, {
+    wrapper: ToastProvider,
+  });
+  return {
+    saveProfile,
+    name: screen.getByRole("textbox", { name: "Display name" }),
+  };
+}
+
+it("shows Cancel then Save only for edits, including picture edits, and restores on cancel", () => {
+  const { name, saveProfile } = setup();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  fireEvent.change(name, { target: { value: "Updated" } });
+  const form = name.closest("form");
+  if (!form) throw new Error("Profile form missing");
+  expect(
+    within(form)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Cancel", "Save"]);
+  fireEvent.change(name, { target: { value: "Arjun" } });
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Edit avatar" }));
+  const picture = screen.getByRole("textbox", {
+    name: "Picture URL (optional)",
+  });
+  fireEvent.change(picture, {
+    target: { value: "https://example.com/avatar.png" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit avatar" }));
+  expect(
+    screen.getByRole("textbox", { name: "Picture URL (optional)" }),
+  ).toHaveValue("");
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  expect(saveProfile).not.toHaveBeenCalled();
+});
+
+it("retains edits on failure and hides actions after a successful retry", () => {
+  const { name, saveProfile } = setup();
+  fireEvent.change(name, { target: { value: "Updated" } });
+  saveProfile.mockImplementationOnce(() => {
+    throw new Error("Could not save");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not save");
+  expect(name).toHaveValue("Updated");
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("Profile updated")).toBeVisible();
+});
+
+it("keeps cancel available for invalid edits and refuses unchanged form submission", () => {
+  const { name, saveProfile } = setup();
+  const form = name.closest("form");
+  if (!form) throw new Error("Profile form missing");
+  fireEvent.submit(form);
+  expect(saveProfile).not.toHaveBeenCalled();
+  fireEvent.change(name, { target: { value: "" } });
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+});
+
+it.each(["Cancel", "Save"])(
+  "returns focused %s to Display name when actions retire",
+  async (action) => {
+    const user = userEvent.setup();
+    const { name } = setup();
+    await user.type(name, " updated");
+    screen.getByRole("button", { name: action }).focus();
+    await user.keyboard("{Enter}");
+    expect(
+      screen.queryByRole("button", { name: action }),
+    ).not.toBeInTheDocument();
+    expect(name).toHaveFocus();
+  },
+);
+
+it("keeps the focused Save on failure and hands focus off after retry", async () => {
+  const user = userEvent.setup();
+  const { name, saveProfile } = setup();
+  await user.type(name, " updated");
+  const save = screen.getByRole("button", { name: "Save" });
+  save.focus();
+  saveProfile.mockImplementationOnce(() => {
+    throw new Error("Could not save");
+  });
+  await user.keyboard("{Enter}");
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not save");
+  expect(save).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(name).toHaveFocus();
+});
+
+it("preserves input focus on implicit submit and external profile updates", async () => {
+  const user = userEvent.setup();
+  const { name, saveProfile } = setup();
+  await user.type(name, " updated");
+  await user.keyboard("{Enter}");
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  expect(name).toHaveFocus();
+  await user.type(name, " again");
+  const description = screen.getByRole("textbox", {
+    name: "Profile description (optional)",
+  });
+  description.focus();
+  act(() => saveProfile({ name: "Arjun updated again", picture: "" }));
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  expect(description).toHaveFocus();
 });

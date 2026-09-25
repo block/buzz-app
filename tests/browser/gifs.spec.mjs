@@ -1,34 +1,51 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
+
+const gifResult = (id, title, height) => ({
+  id,
+  type: "gif",
+  slug: title.toLowerCase(),
+  title,
+  file: {
+    md: {
+      gif: {
+        url: `https://gif.fixture.invalid/${id}.gif`,
+        width: 320,
+        height,
+        size: 1200,
+      },
+    },
+    sm: {
+      webp: {
+        url: `https://gif.fixture.invalid/${id}.webp`,
+        width: 160,
+        height: height / 2,
+        size: 600,
+      },
+    },
+  },
+});
+
+const fulfillGifInfo = (route) =>
+  route.fulfill({
+    json: {
+      policy: null,
+      supported_extensions: ["buzz-gif"],
+      gif: { provider: "klipy", search: "/gifs/search" },
+    },
+  });
+
+const fulfillGifImage = (route) =>
+  route.fulfill({
+    contentType: "image/svg+xml",
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120"><rect width="160" height="120" fill="#8aa6b4"/></svg>',
+  });
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   page,
   app,
 }, testInfo) => {
-  const result = (id, title, height) => ({
-    id,
-    type: "gif",
-    slug: title.toLowerCase(),
-    title,
-    file: {
-      md: {
-        gif: {
-          url: `https://gif.fixture.invalid/${id}.gif`,
-          width: 320,
-          height,
-          size: 1200,
-        },
-      },
-      sm: {
-        webp: {
-          url: `https://gif.fixture.invalid/${id}.webp`,
-          width: 160,
-          height: height / 2,
-          size: 600,
-        },
-      },
-    },
-  });
   const requests = [];
   let signRequests = 0;
   await page.route("**/api/relay/*/sign", (route) => {
@@ -43,13 +60,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await page.route("**/api/relay/*/gif-info", async (route) => {
     infoRequests += 1;
     await infoReady;
-    await route.fulfill({
-      json: {
-        policy: null,
-        supported_extensions: ["buzz-gif"],
-        gif: { provider: "klipy", search: "/gifs/search" },
-      },
-    });
+    await fulfillGifInfo(route);
   });
   await page.route("**/api/relay/*/gifs", async (route) => {
     const request = route.request().postDataJSON();
@@ -59,25 +70,17 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
         result: true,
         data: {
           data: [
-            result(1, request.query ? "Hello" : "Trending Hello", 240),
-            result(2, "Celebrate", 320),
+            gifResult(1, request.query ? "Hello" : "Trending Hello", 240),
+            gifResult(2, "Celebrate", 320),
           ],
         },
       },
     });
   });
-  await page.route("https://gif.fixture.invalid/**", (route) =>
-    route.fulfill({
-      contentType: "image/svg+xml",
-      body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120"><rect width="160" height="120" fill="#8aa6b4"/></svg>',
-    }),
-  );
+  await page.route("https://gif.fixture.invalid/**", fulfillGifImage);
 
   await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await openPage(page, "Messages");
   const draft = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -370,20 +373,11 @@ for (const initial of ["invalid response", "unsupported relay"]) {
         });
         return;
       }
-      await route.fulfill({
-        json: {
-          policy: null,
-          supported_extensions: ["buzz-gif"],
-          gif: { provider: "klipy", search: "/gifs/search" },
-        },
-      });
+      await fulfillGifInfo(route);
     });
 
     await page.goto(app.origin);
-    await page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages", exact: true })
-      .click();
+    await openPage(page, "Messages");
     const trigger = page.getByRole("button", {
       name: "Insert emoji",
       exact: true,
@@ -408,3 +402,104 @@ for (const initial of ["invalid response", "unsupported relay"]) {
     await expect(gifTab).toBeVisible();
   });
 }
+
+test.describe("GIF send roundtrip", () => {
+  test.use({
+    productionBroker: true,
+    // The production broker accepts chat publications through the action-profile lane;
+    // that fixture expects thread-unread roots in a populated Alpha history.
+    actionProfile: true,
+    threadUnread: true,
+    historyCounts: { alpha: 20, beta: 0 },
+  });
+
+  test("chosen GIF sends as an image attachment instead of visible markdown body text", async ({
+    page,
+    app,
+  }) => {
+    await page.route("**/api/relay/*/gif-info", fulfillGifInfo);
+    await page.route("**/api/relay/*/gifs", (route) =>
+      route.fulfill({
+        json: {
+          result: true,
+          data: { data: [gifResult(7, "Roundtrip Gif", 240)] },
+        },
+      }),
+    );
+    await page.route("https://gif.fixture.invalid/**", fulfillGifImage);
+    const publishReceipts = [];
+    await page.route("**/api/relay/*/publish", async (route) => {
+      const event = route.request().postDataJSON();
+      const response = await route.fetch();
+      const receipt = await response.json();
+      publishReceipts.push({ event, receipt, status: response.status() });
+      await route.fulfill({ response, json: receipt });
+    });
+
+    await page.goto(app.origin);
+    await page
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: "Messages", exact: true })
+      .click();
+
+    const draft = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    const trigger = page.getByRole("button", {
+      name: "Insert emoji",
+      exact: true,
+    });
+    await trigger.click();
+    const gifTab = page.getByRole("tab", { name: "GIF", exact: true });
+    await expect(gifTab).toBeVisible();
+    await gifTab.click();
+    await page
+      .getByRole("button", { name: "Choose Roundtrip Gif", exact: true })
+      .click();
+    await expect(draft).toHaveJSProperty(
+      "value",
+      "![Roundtrip Gif](https://gif.fixture.invalid/7.gif)",
+    );
+
+    await draft.press("Enter");
+
+    const expectedContent =
+      "![Roundtrip Gif](https://gif.fixture.invalid/7.gif)";
+    const expectedEvent = () =>
+      app.report.publications.find(
+        ({ event }) =>
+          event.kind === 9 &&
+          event.content === expectedContent &&
+          event.tags.some(([name, value]) => name === "h" && value === "alpha"),
+      )?.event;
+    await expect.poll(() => expectedEvent()?.id).toBeTruthy();
+    const sentEvent = expectedEvent();
+    expect(sentEvent).toBeDefined();
+    const receiptForSentEvent = () =>
+      publishReceipts.find(
+        ({ event, receipt }) =>
+          event.id === sentEvent.id && receipt.event_id === sentEvent.id,
+      );
+    await expect.poll(() => receiptForSentEvent()?.receipt.accepted).toBe(true);
+    expect(receiptForSentEvent()?.status).toBe(200);
+
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+      exact: true,
+    });
+    const sent = history.locator(`[data-message-id="${sentEvent.id}"]`);
+    await expect(sent).toBeVisible();
+    const attachment = sent.getByRole("link", {
+      name: "Open image attachment",
+      exact: true,
+    });
+    await expect(attachment).toBeVisible();
+    await expect(attachment).toHaveAttribute(
+      "href",
+      "https://gif.fixture.invalid/7.gif",
+    );
+    await expect(sent.getByText("![Roundtrip Gif]")).toHaveCount(0);
+    expect(app.report.unexpected).toEqual([]);
+  });
+});

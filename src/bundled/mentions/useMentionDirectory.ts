@@ -6,7 +6,8 @@ type Person = Awaited<
   ReturnType<RelaySession["directMessages"]["people"]>
 >["people"][number];
 const empty: readonly Person[] = [];
-// Complete, empty prefix searches; queries extending one cannot match anyone.
+// Last complete, empty word-prefix search; queries strictly extending it
+// cannot match anyone. Re-entering the same query searches afresh.
 const exhausted = new WeakMap<RelaySession, string>();
 
 /** Directory pages belong to this menu and community, not the global profile cache. */
@@ -33,15 +34,15 @@ export function useMentionDirectory(
   }>();
   const channelId = channel?.id ?? "";
   const prefix = exhausted.get(session);
-  const value = query.trim();
   // An exact key is an author lookup, which name-prefix evidence cannot refute.
-  const exactKey = /^[0-9a-f]{64}$/.test(value);
+  const exactKey = /^[0-9a-f]{64}$/.test(query.trim());
   const searching =
     active &&
     (attempt > 0 ||
       exactKey ||
       prefix === undefined ||
-      !value.startsWith(prefix));
+      query.length <= prefix.length ||
+      !query.startsWith(prefix));
   useEffect(() => {
     if (!searching) return;
     const controller = new AbortController();
@@ -51,8 +52,14 @@ export function useMentionDirectory(
     void session.directMessages.people(query, 1, controller.signal).then(
       ({ people, hasMore }) => {
         if (controller.signal.aborted) return;
-        if (value && !exactKey && !people.length && !hasMore)
-          exhausted.set(session, value);
+        // The relay ignores non-word text, so it only refutes word prefixes.
+        if (
+          /[\p{L}\p{N}]/u.test(query) &&
+          !exactKey &&
+          !people.length &&
+          !hasMore
+        )
+          exhausted.set(session, query);
         setState({ ...current, people, loading: false, more: hasMore });
       },
       () => {
@@ -66,7 +73,7 @@ export function useMentionDirectory(
       },
     );
     return () => controller.abort();
-  }, [session, channelId, query, value, exactKey, searching, attempt]);
+  }, [session, channelId, query, exactKey, searching, attempt]);
   const current =
     searching &&
     state?.session === session &&

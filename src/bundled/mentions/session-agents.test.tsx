@@ -1202,3 +1202,37 @@ it("a failed multi-word directory search keeps its error and retry", async () =>
     expect(last()?.items.map((item) => item.label)).toEqual(["Mary Jane"]),
   );
 });
+
+it("a fresh search for a refuted name searches again, and non-word text refutes nothing", async () => {
+  let published = false;
+  const people = vi.fn(async (query: string) => ({
+    people: [
+      ...(published && query.startsWith("Zed")
+        ? [{ pubkey: "9".repeat(64), name: "Zed" }]
+        : []),
+      ...(query.startsWith("🐝 B")
+        ? [{ pubkey: "8".repeat(64), name: "🐝 Buzz Bot" }]
+        : []),
+    ],
+    hasMore: false,
+  }));
+  const { last, complete } = directoryCompletion(people);
+  const view = render(complete("Zed"));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(last()?.items).toEqual([]));
+  view.unmount();
+  published = true;
+  const fresh = render(complete("Zed"));
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Zed"]),
+  );
+  fresh.rerender(complete("🐝"));
+  await waitFor(() =>
+    expect(people).toHaveBeenLastCalledWith("🐝", 1, expect.any(AbortSignal)),
+  );
+  await waitFor(() => expect(last()?.items).toEqual([]));
+  fresh.rerender(complete("🐝 B"));
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["🐝 Buzz Bot"]),
+  );
+});

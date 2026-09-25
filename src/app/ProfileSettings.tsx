@@ -13,6 +13,7 @@ import type {
 import {
   canSaveProfile,
   ProfileFields,
+  profilesEqual,
 } from "../features/communities/ProfileFields";
 import * as communityApi from "../features/communities/api";
 import type { Membership } from "../features/communities/service";
@@ -88,11 +89,7 @@ export function ProfileSettings({
   const persisted =
     community && loaded?.exists ? loaded.profile : client.profile;
   const profile = draft ?? persisted;
-  const hasChanges =
-    draft !== null &&
-    (draft.name !== persisted.name ||
-      draft.picture !== persisted.picture ||
-      (draft.about ?? "") !== (persisted.about ?? ""));
+  const hasChanges = draft !== null && !profilesEqual(draft, persisted);
   const npub = client.viewer ? npubEncode(client.viewer) : "";
   async function copyIdentity(value: string, label: string) {
     const attempt = ++copyAttempt.current;

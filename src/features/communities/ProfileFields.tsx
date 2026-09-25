@@ -14,8 +14,20 @@ function validPicture(value: string) {
   }
 }
 
+export function profilesEqual(left: PersonalProfile, right: PersonalProfile) {
+  return (
+    left.name === right.name &&
+    left.picture === right.picture &&
+    (left.about ?? "") === (right.about ?? "")
+  );
+}
+
 export function canSaveProfile(profile: PersonalProfile) {
-  return !!profile.name.trim() && validPicture(profile.picture);
+  return (
+    !!profile.name.trim() &&
+    validPicture(profile.picture) &&
+    (profile.about?.length ?? 0) <= PROFILE_ABOUT_MAX_LENGTH
+  );
 }
 
 export function ProfileFields({
@@ -44,12 +56,16 @@ export function ProfileFields({
       <Field
         label="Profile description (optional)"
         description={`${profile.about?.length ?? 0} of ${PROFILE_ABOUT_MAX_LENGTH} characters`}
+        error={
+          (profile.about?.length ?? 0) > PROFILE_ABOUT_MAX_LENGTH
+            ? `Shorten the description to ${PROFILE_ABOUT_MAX_LENGTH} characters before saving.`
+            : undefined
+        }
       >
         <Textarea
           rows={3}
           disabled={disabled}
           value={profile.about ?? ""}
-          maxLength={PROFILE_ABOUT_MAX_LENGTH}
           onChange={(event) =>
             onChange({ ...profile, about: event.target.value })
           }

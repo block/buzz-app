@@ -339,6 +339,53 @@ it.each(["escape", "outside", "reopen"])(
   },
 );
 
+it.each(["online", "away", "offline"] as const)(
+  "shares %s presence between trigger and account menu",
+  async (status) => {
+    const user = userEvent.setup();
+    const snapshot = {
+      profile: { name: "Fixture", picture: "" },
+      viewer: "fixture",
+    };
+    const presence = { status, preference: "auto", error: null };
+    const connection = { status: "unavailable", session: undefined, scope: "" };
+    const subscribe = () => () => {};
+    const actions: readonly [] = [];
+    const accountActions = {
+      subscribe,
+      snapshot: () => actions,
+    } as unknown as AccountActionsService;
+    const communities = {
+      subscribe,
+      snapshot: () => snapshot,
+      presence: { subscribe, snapshot: () => presence },
+      relay: { subscribe, snapshot: () => connection },
+    } as unknown as Communities;
+    render(
+      <ProfileButton
+        communities={communities}
+        accountActions={accountActions}
+        settingsSelected={false}
+        onSettings={() => {}}
+      />,
+    );
+    const label = `Your status: ${{ online: "Online", away: "Away", offline: "Offline" }[status]}`;
+    expect(screen.getAllByRole("img", { name: label })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Your profile" }));
+    const menu = await screen.findByRole("menu", { name: "Fixture" });
+    expect(
+      menu.querySelector(
+        `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot[aria-hidden="true"]`,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /^Availability:/ }),
+    ).toHaveTextContent(
+      { online: "Online", away: "Away", offline: "Offline" }[status],
+    );
+  },
+);
+
 it("drops the previous community profile on switching and uses local defaults only in Personal space", async () => {
   const { createRelaySession } = await import("../../features/relay/session");
   const owner = createRelaySession(null);

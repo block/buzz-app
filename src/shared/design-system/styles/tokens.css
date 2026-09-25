@@ -294,7 +294,8 @@
      is a deliberately cool near-neutral, not a warm tint; use it directly
      rather than preserve an exploratory #f9f9f9 stop or recreate it with
      alpha. */
-  --neutral-2: #f0f0f0; /* quiet compact controls, callouts, and grouping */
+  --neutral-quiet-hover: #efeff0; /* hover between quiet fill and selection */
+  --neutral-2: #f5f5f6; /* quiet compact controls, callouts, and grouping */
   --neutral-3: #e8e8e8; /* available for a future, genuinely recessed region; bg-panel in dark */
   --neutral-4: #dadada; /* border-primary in light mode            */
   --neutral-5: #cccccc; /* unused in light; float + selected, dark */
@@ -518,10 +519,10 @@
   --affordance-prominent-hover: var(--neutral-11);
   --affordance-prominent-pressed: var(--neutral-action-pressed);
   --affordance-subtle: var(--neutral-2);
-  --affordance-subtle-hover: var(--neutral-3);
+  --affordance-subtle-hover: var(--neutral-quiet-hover);
   --affordance-subtle-pressed: var(--neutral-4);
   --affordance-navigation-quiet: var(--neutral-navigation-quiet);
-  --affordance-panel-hover: var(--neutral-3);
+  --affordance-panel-hover: var(--neutral-2);
   --affordance-floating-hover: var(--neutral-3);
   --affordance-selected: var(--neutral-3);
   --affordance-disabled: var(--neutral-3);

@@ -12,6 +12,11 @@ test("advanced fields stay raw; opening does not transform source", () => {
   expect(yamlToFormState(`${fixtureYaml}future: retain-me\n`).ok).toBe(false);
   expect(
     yamlToFormState(fixtureYaml.replace("message_posted", "webhook")).ok,
+  ).toBe(true);
+  expect(
+    yamlToFormState(
+      fixtureYaml.replace("on: message_posted", "on: webhook\n  secret: x"),
+    ).ok,
   ).toBe(false);
   expect(
     yamlToFormState(fixtureYaml.replace("    text:", "    if: true\n    text:"))

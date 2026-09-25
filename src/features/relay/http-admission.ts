@@ -76,8 +76,12 @@ export function apiFailure(status: number, value: unknown): ApiFailure {
     ...(body.sent === false ? { sent: false } : {}),
   };
 }
-/** Consumes one bounded error body; success payloads remain their owner's concern. */
-export async function readApiFailure(response: Response): Promise<ApiFailure> {
+/** Consumes one bounded error body; success payloads remain their owner's concern.
+ * `reason` may keep an exact, caller-allowed upstream refusal from that body. */
+export async function readApiFailure(
+  response: Response,
+  reason?: (body: unknown) => string | undefined,
+): Promise<ApiFailure> {
   if (!response.body) return apiFailure(response.status, undefined);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -93,11 +97,15 @@ export async function readApiFailure(response: Response): Promise<ApiFailure> {
       text += decoder.decode(value, { stream: true });
     }
     text += decoder.decode();
+    let body: unknown;
     try {
-      return apiFailure(response.status, JSON.parse(text));
+      body = JSON.parse(text);
     } catch {
       return apiFailure(response.status, undefined);
     }
+    const failure = apiFailure(response.status, body);
+    const allowed = failure.quota ? undefined : reason?.(body);
+    return allowed ? { ...failure, error: allowed } : failure;
   } finally {
     await reader.cancel().catch(() => {});
     reader.releaseLock();
@@ -236,12 +244,13 @@ export async function admittedApiRequest(
   request: () => Promise<Response>,
   signal?: AbortSignal,
   priority: Ticket["priority"] = "foreground",
+  reason?: (body: unknown) => string | undefined,
 ): Promise<Response> {
   return lane.run(
     async () => {
       const response = await request();
       if (response.ok) return response;
-      const failure = await readApiFailure(response);
+      const failure = await readApiFailure(response, reason);
       if (failure.quota === "api" && failure.retryAfterMs !== undefined)
         lane.pause(failure.retryAfterMs);
       const headers = new Headers(response.headers);

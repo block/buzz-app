@@ -104,8 +104,10 @@ export function createWorkflowFixture() {
     delete: 0,
     trigger: 0,
     runs: 0,
+    take: 0,
     dismiss: [] as string[],
   };
+  const secrets = new Map<string, string>();
   const runViews: { disposed(): boolean }[] = [];
   let runCursor: WorkflowRunCursor | undefined;
   const publish = (next: readonly WorkflowOperation[]) => {
@@ -197,6 +199,22 @@ export function createWorkflowFixture() {
       calls.trigger++;
       return start("trigger", workflow);
     },
+    takeWebhookSecret(eventId) {
+      calls.take++;
+      const secret = secrets.get(eventId);
+      if (secret === undefined) return undefined;
+      secrets.delete(eventId);
+      publish(
+        operations.map((operation) => {
+          if (operation.eventId !== eventId) return operation;
+          const { secretHeld: _, ...taken } = operation;
+          return taken;
+        }),
+      );
+      return secret;
+    },
+    webhookUrl: (workflowId) =>
+      `https://relay.example.test/hooks/${workflowId}`,
     operations: {
       snapshot: () => operations,
       subscribe(listener) {
@@ -259,9 +277,19 @@ export function createWorkflowFixture() {
         revision: exact ? operation.eventId : "bb".repeat(32),
       };
     },
-    finish(outcome: WorkflowOperation["outcome"], exact = true) {
+    /** `secret` mimics a save receipt for a workflow that first gained a webhook trigger. */
+    finish(
+      outcome: WorkflowOperation["outcome"],
+      exact = true,
+      secret?: string,
+    ) {
       const operation = operations.at(-1);
       if (!operation) throw new Error("No operation");
+      const withSecret =
+        outcome === "succeeded" &&
+        operation.action === "save" &&
+        secret !== undefined;
+      if (withSecret) secrets.set(operation.eventId, secret);
       if (
         outcome === "succeeded" &&
         operation.action === "save" &&
@@ -297,6 +325,7 @@ export function createWorkflowFixture() {
                 ...(outcome === "rejected"
                   ? { error: "Fixture conflict" }
                   : {}),
+                ...(withSecret ? { secretHeld: true } : {}),
               }
             : item,
         ),

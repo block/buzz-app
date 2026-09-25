@@ -52,6 +52,28 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
     await expect(
       form.getByRole("button", { name: "Attach files", exact: true }),
     ).toBeEnabled();
+    // Rejected selections must announce via the host toast, not stretch the form.
+    await form.getByRole("textbox").evaluate((input) => {
+      const file = new File(["oversized"], "large.pdf", {
+        type: "application/pdf",
+      });
+      Object.defineProperty(file, "size", { value: 501 * 1024 * 1024 });
+      const data = new DataTransfer();
+      data.items.add(file);
+      input.dispatchEvent(
+        new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: data,
+        }),
+      );
+    });
+    const notices = page.getByRole("region", { name: "App notifications" });
+    await expect(
+      notices.getByText("Could not attach file", { exact: true }),
+    ).toBeVisible();
+    await expect(form.getByRole("alert")).toHaveCount(0);
+    await notices.getByRole("button", { name: "Dismiss notification" }).click();
     await form.getByLabel("Choose attachments").setInputFiles({
       name: "picked.txt",
       mimeType: "text/plain",
@@ -60,6 +82,13 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
     await expect(form.getByText(/Queued$/)).toHaveCount(1);
     expect(uploadRequests).toHaveLength(0);
     await expect(form.locator("video")).toHaveCount(0);
+    const remove = form.getByRole("button", {
+      name: "Remove picked.txt",
+      exact: true,
+    });
+    await expect(remove).toHaveCSS("width", "20px");
+    await expect(remove).toHaveCSS("height", "20px");
+    await expect(remove.locator("svg").last()).toHaveCSS("width", "12px");
     const transfer = await page.evaluateHandle(() => {
       const data = new DataTransfer();
       data.items.add(
@@ -92,6 +121,22 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
     });
     await expect(form.getByText(/Queued$/)).toHaveCount(3);
     expect(uploadRequests).toHaveLength(0);
+    // Real layout proves attachment cards stay in one horizontal lane.
+    const cards = form
+      .getByRole("region", { name: "Attachments", exact: true })
+      .getByRole("listitem");
+    const boxes = await cards.evaluateAll((items) =>
+      items.map((item) => {
+        const rect = item.getBoundingClientRect();
+        return { top: rect.top, left: rect.left };
+      }),
+    );
+    expect(boxes.every((box) => box.top === boxes[0].top)).toBe(true);
+    expect(boxes[1].left).toBeGreaterThan(boxes[0].left);
+    await form.screenshot({
+      path: test.info().outputPath("compact-attachments.png"),
+    });
+
     await form.getByRole("button", { name: "Remove dropped.txt" }).click();
     await expect(form.getByText(/Queued$/)).toHaveCount(2);
     expect(uploadRequests).toHaveLength(0);
@@ -150,13 +195,16 @@ test("paperclip follows mentions and recipients, before the remaining tools", as
     await mention.click();
     const pubkey = await page.evaluate(() => window.mentionFixture.first);
     await page
-      .getByRole("region", { name: "Mention a member or agent" })
+      .getByRole("dialog", { name: "Mention a member or agent" })
       .getByRole("button", { name: `Honey ${pubkey}`, exact: true })
       .click();
     const recipient = page
       .getByRole("region", { name: "Explicit mentions" })
       .getByRole("button");
     await expect(recipient).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: "Mention a member or agent" }),
+    ).toHaveCount(0);
     await mention.focus();
     for (const next of [recipient, attach, emoji]) {
       await page.keyboard.press("Tab");

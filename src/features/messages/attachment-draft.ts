@@ -50,7 +50,15 @@ function attachmentDraft(
   };
   const replace = (id: string, change: Partial<DraftAttachment>) => {
     items = items.map((item) =>
-      item.id === id ? { ...item, ...change } : item,
+      item.id === id
+        ? {
+            ...item,
+            ...change,
+            ...("error" in change && change.error === undefined
+              ? { error: undefined }
+              : {}),
+          }
+        : item,
     );
     emit();
   };

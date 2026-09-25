@@ -16,6 +16,9 @@ import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKe
 import "../../src/shared/styles/globals.css";
 
 const fixture = controlFixture();
+// Browser journeys start with an explicitly manual-start agent. The shared
+// control fixture remains explicit-on for the profile preference tests.
+fixture.agent.startOnAppLaunch = false;
 const modelCalls: string[] = [];
 let modelMode = "success";
 let releaseModels: (() => void) | undefined;
@@ -43,6 +46,12 @@ fixture.host.models = {
           : [
               { id: "catalog.schema.real-model", name: "Friendly Model" },
               { id: "endpoint-two", name: "Other Model" },
+              ...(modelMode === "many"
+                ? Array.from({ length: 18 }, (_, index) => ({
+                    id: `endpoint-${index + 3}`,
+                    name: `Catalog Model ${index + 3}`,
+                  }))
+                : []),
             ],
       modelOverridden: false,
       disconnected: request.action === "disconnect",

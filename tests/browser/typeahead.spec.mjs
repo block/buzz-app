@@ -1,7 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
 
 const open = async (page) => {
-  await page.goto("/tests/fixtures/mentions.html");
+  await page.goto("/tests/fixtures/mentions.html?test-controls");
   return page.getByRole("textbox", { name: "Message #General" });
 };
 const expectAvatarShape = async (target, shape) => {
@@ -24,14 +24,17 @@ test("mention completion distinguishes exact agent identity without reshaping a 
     "circle",
   );
   await expectAvatarShape(
-    page.getByRole("option", { name: `Honey ${keys.agent}`, exact: true }),
+    page.getByRole("option", {
+      name: `Honey (agent) ${keys.agent}`,
+      exact: true,
+    }),
     "squircle",
   );
   await input.fill("");
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
-  const picker = page.getByRole("region", {
+  const picker = page.getByRole("dialog", {
     name: "Mention a member or agent",
   });
   await expectAvatarShape(
@@ -39,7 +42,10 @@ test("mention completion distinguishes exact agent identity without reshaping a 
     "circle",
   );
   await expectAvatarShape(
-    picker.getByRole("button", { name: `Honey ${keys.agent}`, exact: true }),
+    picker.getByRole("button", {
+      name: `Honey (agent) ${keys.agent}`,
+      exact: true,
+    }),
     "squircle",
   );
 });
@@ -51,25 +57,28 @@ test("open completion republishes library-only display hints without changing th
     first: window.mentionFixture.first,
     second: window.mentionFixture.second,
   }));
+  // The shared naming provider retains library facts when this fixture mounts.
+  // Opening completion must not create a second load owner.
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.libraryReads()))
+    .toBe(1);
   await input.fill("@Ho");
   const first = page.getByRole("option", {
-    name: `Honey ${keys.first}`,
-    exact: true,
+    name: new RegExp(keys.first),
   });
   const second = page.getByRole("option", {
-    name: `Honey ${keys.second}`,
-    exact: true,
+    name: new RegExp(keys.second),
   });
   await expectAvatarShape(first, "circle");
   await expectAvatarShape(second, "squircle");
-  // Opening completion subscribes to the library; it must not load it.
+  // Completion observes the existing naming demand; it does not reload it.
   expect(await page.evaluate(() => window.mentionFixture.libraryReads())).toBe(
-    0,
+    1,
   );
 
   for (const [included, reads] of [
-    [true, 1],
-    [false, 2],
+    [true, 2],
+    [false, 3],
   ]) {
     await page.evaluate(
       (included) => window.mentionFixture.setLibraryAgent(included),
@@ -104,6 +113,22 @@ for (const mode of ["light", "dark"]) {
       });
       const options = popup.getByRole("option");
       await expect(options.nth(1)).toBeVisible();
+      if (kind === "mention") {
+        await expect(popup).toHaveCSS("border-radius", "24px");
+        await expect(popup).toHaveCSS("padding", "12px");
+        await expect(popup).toHaveCSS("width", "380px");
+        await expect(options.first()).toHaveCSS("padding", "8px");
+        const composer = page.getByRole("form", {
+          name: "Send a message to General",
+        });
+        await expect
+          .poll(async () => {
+            const anchor = await composer.boundingBox();
+            const menu = await popup.boundingBox();
+            return anchor.y - menu.y - menu.height;
+          })
+          .toBe(4);
+      }
       await expect(options.first()).toHaveAttribute("aria-selected", "true");
       await input.press("ArrowDown");
       const selected = options.nth(1);
@@ -168,7 +193,7 @@ test("typeahead replaces only the query and publishes selected namesake identity
     el.dispatchEvent(new Event("select", { bubbles: true }));
   });
   const option = page.getByRole("option", {
-    name: `Honey ${keys.second}`,
+    name: `Honey (agent) ${keys.second}`,
     exact: true,
   });
   await expect(option).toBeVisible();

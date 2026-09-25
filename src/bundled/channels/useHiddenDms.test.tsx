@@ -30,6 +30,7 @@ function fixture() {
     NonNullable<RelaySession["outbox"]>["observeSend"]
   >[0];
   const outgoing = new Set<ObserveSend>();
+  const opened = new Set<(id: string) => void>();
   let onRead = () => {};
   let nextRead: Promise<void> | undefined;
   let historyIds = ["before"];
@@ -52,6 +53,12 @@ function fixture() {
       }),
     },
     read,
+    directMessages: {
+      subscribeOpened(listener: (id: string) => void) {
+        opened.add(listener);
+        return () => opened.delete(listener);
+      },
+    },
     outbox: {
       observeSend(listener: ObserveSend) {
         outgoing.add(listener);
@@ -109,6 +116,9 @@ function fixture() {
             previewContent: "hello",
           },
         ]);
+    },
+    open(channelId: string) {
+      for (const listener of opened) listener(channelId);
     },
     deliver(channelId: string) {
       for (const listener of outgoing)
@@ -438,4 +448,18 @@ it("does not restore a DM hidden again after an older send began", async () => {
   act(() => view.result.current.hide("dm"));
   act(() => finish?.([]));
   expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+});
+
+it("restores a hidden DM when it is opened again", () => {
+  const h = fixture();
+  const view = renderHook(() =>
+    useHiddenDms("community:alice", h.session, h.list),
+  );
+  act(() => view.result.current.hide("dm"));
+  expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+  act(() => h.open("other"));
+  expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+  act(() => h.open("dm"));
+  expect(view.result.current.hiddenIds.has("dm")).toBe(false);
+  expect(readView("community:alice", "hidden-dms", [])).toEqual([]);
 });

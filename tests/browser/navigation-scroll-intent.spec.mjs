@@ -28,30 +28,30 @@ for (const action of [
       element.scrollTop = 900;
       element.dispatchEvent(new Event("scroll"));
     });
-    await button(page, "Projects").first().click();
-    await expect(sidebar).toHaveCount(0);
+    await button(page, "Personal space").click();
+    await expect(button(page, "Personal space")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
     let release;
     const held = new Promise((resolve) => {
       release = resolve;
     });
-    let requested = false;
-    await page.route(
-      "**/api/relay/primary/sidebar-preferences",
-      async (route) => {
-        requested = true;
-        await held;
-        await route.continue();
-      },
-    );
+    const pendingRoutes = [];
+    await page.route("**/api/relay/primary/sidebar-preferences", (route) => {
+      const pending = held.then(() => route.continue());
+      pendingRoutes.push(pending);
+      return pending;
+    });
     try {
       await page.reload();
-      await button(page, "Messages").first().click();
+      await button(page, "Switch to Primary").click();
       await expect
         .poll(() => sidebar.locator("[data-channel-id]").count())
         .toBeGreaterThan(100);
-      await expect.poll(() => requested).toBe(true);
+      await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
       await expect(
-        page.getByText("Loading saved groups and stars…", { exact: true }),
+        page.getByText("Updating sidebar details…", { exact: true }),
       ).toBeVisible();
       expect(await sidebar.evaluate((element) => element.scrollTop)).toBe(0);
       if (action === "scroll event pending") {
@@ -87,13 +87,14 @@ for (const action of [
       }
       release();
       await expect(
-        page.getByText("Loading saved groups and stars…", { exact: true }),
+        page.getByText("Updating sidebar details…", { exact: true }),
       ).toBeHidden();
       expect(await sidebar.evaluate((element) => element.scrollTop)).toBe(
         action === "untouched" ? 900 : action === "returned to top" ? 0 : 1800,
       );
     } finally {
       release();
+      await Promise.all(pendingRoutes);
       await page.unroute("**/api/relay/primary/sidebar-preferences");
     }
   });

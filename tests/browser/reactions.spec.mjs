@@ -61,7 +61,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
       root.getByRole("group", { name: "Message actions" }),
     ).toHaveCSS("opacity", "1");
     const padding = await search.evaluate((input) => {
-      const field = input.getBoundingClientRect();
+      const field = input.parentElement.getBoundingClientRect();
       const picker = input
         .getRootNode()
         .querySelector("#root")
@@ -74,7 +74,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     });
     expect(padding.top).toBeCloseTo(padding.left, 1);
     expect(padding.top).toBeCloseTo(padding.right, 1);
-    await expect(search).toHaveCSS("border-radius", "12px");
+    await expect(search.locator("..")).toHaveCSS("border-radius", "159984px");
     await expect(
       page.getByRole("tab", { name: "GIF", exact: true }),
     ).toHaveCount(0);
@@ -288,6 +288,7 @@ sourceTest(
     await search.press("Escape");
     await expect(search).toHaveCount(0);
     await expect(second).toBeFocused();
+    await expect(second).toHaveAttribute("aria-expanded", "false");
     await first.focus();
     await first.press("Enter");
     await expect(search).toBeVisible();
@@ -298,6 +299,7 @@ sourceTest(
     await search.press("Escape");
     await expect(search).toHaveCount(0);
     await expect(second).toBeFocused();
+    await expect(second).toHaveAttribute("aria-expanded", "false");
     await second.press("Enter");
     await expect(search).toBeVisible();
     await page.evaluate(() => window.emojiFixture.remount());

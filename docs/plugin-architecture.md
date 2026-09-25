@@ -23,7 +23,7 @@ Both experiences use real session capabilities. As AI integrations become availa
 
 | Area | Responsibility |
 | --- | --- |
-| Application host | Startup, plugin installation and activation, page navigation, Settings, and recovery. |
+| Application host | Startup, plugin installation and activation, page navigation, persistent channel sidebar, Settings, and recovery. |
 | Page plugin | Its complete React tree, local interaction state, internal navigation, and arrangement of panels. |
 | Panel plugin | Recognizing a supported target and implementing the content and interactions for that target. |
 | Shared capabilities | Session state, relay access, retained data, local agent controls, and eventually external connections. |
@@ -45,13 +45,21 @@ features/panels/        target resolution, launcher contract and reusable card/f
 features/shortcuts/     in-app binding dispatch, focus rules and plugin ownership
 features/relay/         shared channel data, queries, profiles and durable delivery
 features/messages/      reusable timeline, message, thread and composer UI
-bundled/channels/       Channels navigation, sidebar, page layout and panel placement
-bundled/projects/       title-only Projects page scaffold
+features/channel-navigation/ persistent sidebar, scoped draft handoff, Channels routes
+bundled/channels/       conversation navigation, page layout and panel placement
+bundled/projects/       repository/project pages, issue/PR details and Git views
+features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
 features/agents/        app-owned control capability; separate session-owned library
 bundled/github/         builtin GitHub panel plugin
 bundled/bestie/         builtin companion panel and its snake launcher
 ```
+
+The host composes one channel sidebar beside independently mounted pages. It reuses
+session-owned roster, unread, creation and preferences capabilities; it does not
+retain a hidden Channels page or message reader. Sidebar and page render errors
+have separate boundaries. Sidebar presentation helpers currently remain importable
+from `bundled/channels`; no public sidebar contribution contract is introduced.
 
 Channels is the page-authoring example, not a thin registration wrapper over a
 host-owned product page. Keep page-specific components, styles, interactions and tests
@@ -93,7 +101,11 @@ removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
 The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles, Terminal and Links. Projects
-is an enabled-by-default scaffold with only a centered title and no relay dependency.
+is enabled by default and owns versioned, validated entity page routes. It resolves
+signed metadata through the session reader and reports navigation completion only
+after destination content is presented. Git browsing uses a narrow host-owned,
+authenticated development broker capability; plugins cannot choose a signer or
+remote URL. See [entity links and limits](deep-links.md).
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and
@@ -102,19 +114,31 @@ agent execution remain future shared capabilities.
 ### Optional channel templates and Settings cards
 
 `ctx.settingsCards.register({ id, title, component })` contributes a card under
-Settings → Messages, not a new route. Cards receive `active()` and use ordinary
+Settings → Messages, not a new route. Adding `group` instead gives the card its own
+Settings destination under that labelled navigation group; its section id is the
+contribution key (`plugin/card`) and disappears with the plugin. Cards receive `active()` and use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
 exact registration identity and mounted lifetime revoke callbacks on removal.
 
 Templates & teams (`buzz.channel-templates`) is bundled **off by default** in both
 browser and desktop catalogs. Explicit saved overrides win. Enable it under
-Settings → Plugins, then manage recipes under Settings → Messages. Channels owns
+Settings → Plugins, then manage recipes under Settings → Messages. The host sidebar owns
 personal groups and the existing + creation buttons, independently of this plugin.
+
+Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
+under Settings → Communities. It manages Block-hosted relays through a Builderlab
+account: browser sign-in, binding the local Buzz identity (a locally signed kind
+24243 challenge), and create/archive/unarchive/transfer. Joining stays in the
+existing Add a community dialog; the card only copies the new relay address. Its
+`/api/builderlab/*` routes live in the development broker (`dev/builderlab.mjs`),
+which keeps the session credential and signing key in Node. Packaged builds ship no
+broker, so this plugin cannot sign in or manage communities there until a native
+backend exists.
 
 `ctx.channelTemplates.register({ id, title, editor, groupDefault, saveAs })` supplies
 one optional composition provider. With zero or multiple active providers, no
 optional controls are selected. This host-matched preview is not a workflow API:
-Channels owns form/draft data and final dispatch; the session owns signing,
+The sidebar owns creation form/draft data and final dispatch; the session owns signing,
 membership, Canvas writes, exact receipts and partial-setup recovery. Settings and
 provider components must check `active()` before accepting delayed work or starting
 new writes; this lifecycle fence is not a sandbox or a replacement for access checks.
@@ -148,15 +172,17 @@ thread changes. The accessory remains usable on read-only connections.
 Agent Activity is the first consumer. Plugin activation owns its telemetry lease;
 multiple composers subscribe to the same session capability. No global selected
 channel or activity-specific dependency is added to reusable message components.
-Channels reads the same session activity snapshot for its quiet sidebar marker;
-it owns that page presentation, not capture or an additional activity lease.
+The persistent sidebar reads the same session activity snapshot for its quiet marker;
+it owns presentation, not capture or an additional activity lease.
 This is a host-matched preview addition, not cross-version capability negotiation.
 
 ### Channel-header launchers
 
 A panel may additionally contribute `channelLauncher: ComponentType<ChannelLauncherProps>`.
 Channels renders these in its conversation header with public `context`, `pressed`,
-`available()` and `toggle(target)`. The page owns a single bottom drawer; a launcher
+`available()` and `toggle(target)`. The page owns one selected channel panel, placed
+in the bottom drawer by default or the existing companion column when the contribution
+sets `channelPlacement: "side"`; a launcher
 selects its **exact active contribution**, not target matching. `available()` and
 `toggle()` are revoked when the mounted context or contribution is retired. Optional
 `PanelProps.channelContext` carries the current displayed public context to a channel
@@ -170,6 +196,56 @@ host companion change is required. Disabling/replacing a contribution closes its
 drawer, and re-enabling starts closed. See [Terminal](terminal.md) for native support,
 session behavior and validation limits. This is a host-matched preview addition,
 not cross-version capability negotiation.
+
+### Optional Canvas todos
+
+Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
+it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
+side panel, with add/check/uncheck, one optional assignee per item, automatic
+saving after each action, and explicit Refresh. It uses shared controls and theme
+tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
+
+The source of truth is ordinary Markdown in one root level-two `Todos` section:
+
+```markdown
+## Todos
+
+- [ ] Review the plan
+- [x] Share the preview
+```
+
+Only top-level unordered checkbox items in that section are shown. Nested lists,
+quotes and fenced examples are not tasks in this view. Checkbox edits change one
+source byte; additions insert below the heading without rewriting other content.
+Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
+the convenience UI, not the saved list: Channel settings → Canvas remains editable.
+
+An optional terminal suffix records assignment as ordinary Markdown:
+` · Assignee: [Display name](nostr:npub…)`, using a full valid npub, not the abbreviated
+placeholder shown here. Only that exact structural suffix is assignment metadata;
+other links/prose remain task text. The public key is identity; names are escaped
+presentation. Assign/change/clear edits only the suffix. The selector uses the
+current channel member roster, including that boundary for shared naming policy,
+with public-key qualifiers in the opened choices. Missing rosters disable assignment controls; failed profile reads retain key/name fallbacks
+and offer retry. Profile renames never rewrite saved Canvas. Former members remain
+visible and can be changed or cleared. Assignment sends no notification and grants
+no channel membership or access.
+
+Canvas reads occur on open and explicit Refresh, not on a timer. Missing assignee
+and member profiles use the existing shared background directory. Typing an unfinished
+new item stays local; Add, checkbox and assignment actions save automatically.
+Task actions pause while saving; the new-item input stays editable and retains
+its text when the save finishes. If the loaded Canvas was written in the current second,
+a single cancellable wait respects its timestamp ordering; there is no background
+retry loop. Failures and recovered drafts expose Retry rather than silently publishing
+on reopen. Save uses the existing session Canvas/outbox contract, including its 24 KiB limit, fresh membership check,
+optimistic head comparison and exact confirmation. This is **not atomic concurrency
+control**; simultaneous saves can overwrite edits. Detected conflicts retain the
+local draft and require reviewing the saved Canvas. Refresh confirms before discarding
+edits. Local recovery drafts are partitioned by community/viewer/channel; if browser
+storage is unavailable they survive only while the editor stays open. Save never
+promotes local recovery storage to shared state. Already accepted outbox operations
+remain session-owned if the drawer closes or plugin is disabled.
 
 ### Top-bar launchers and the companion slot
 
@@ -245,8 +321,11 @@ Installation uses the exact captured bytes and retains the existing artifact has
 profile locking, rollback, recovery and safe-mode behavior. An uncertain write retains
 the preview identity for same-artifact retry; it does not refetch or rebuild.
 
-Local discovery skips symlink directories, `node_modules`, `.git` and `target`, and
-uses `cap-std` directory-relative reads to confine descendant path resolution. Files
+Local discovery skips symlink directories, `node_modules`, `target` and dot-prefixed
+directories such as `.git` and `.claude` (Claude Code worktrees) below the selected
+folder; select such a folder itself to import from it. Git discovery does not skip
+dot-prefixed directories. Local discovery uses `cap-std` directory-relative reads to
+confine descendant path resolution. Files
 must be regular, non-symlink UTF-8 text; candidate folder names must be UTF-8 and are
 not lossily normalized. Discovery never evaluates modules. Git is a required local
 tool: a shallow no-checkout clone reads committed blobs, without hooks, filters,
@@ -347,16 +426,20 @@ into versioned route parameters. These are host-matched preview types through
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
 `targetLink`/`parseTargetLink` define a `buzz://open` locator codec that omits the
 sender's viewer; `bindSharedTarget` pins it for an admitted recipient. Messages also
-recognize legacy `buzz://channel/<id>` and
-`buzz://message?channel=<id>&id=<event>&thread=<optional-root>` links. Legacy links
-use the receiving conversation's community and viewer; shared versioned links
-retain their community and use the recipient's viewer. Both pass through existing
-navigation admission and session ownership checks. Message targets open their
+recognize the Buzz link forms `buzz://channel/<id>`, `buzz://channel/<id>/<event>` and
+`buzz://message?channel=<id>&id=<event>&thread=<optional-root>`. Buzz links use the
+receiving conversation's community and viewer; `buzz://open` locators retain their
+community and use the recipient's viewer. Both pass through existing navigation
+admission and session ownership checks. Message targets open their
 verified thread, reveal the exact message after bounded history loading, and only
 then acknowledge navigation. Supplied root hints do not override verified events.
 Missing or unavailable messages report failure. Ingress adapters must reuse this
-validated target/completion lifecycle. Native OS deep-link and notification-click
-ingress remain outside this slice.
+validated target/completion lifecycle; notification clicks
+([notifications](notifications.md)) and OS-delivered deep links on desktop
+([OS deep links](deep-links.md)) do. The OS ingress accepts only the Buzz link
+forms and binds them to the selected community; any other OS link, `buzz://open`
+included, fails `invalid-target` through the same failure notice rather than being
+dropped.
 
 Drafts, reading geometry and sidebar view intent remain domain-owned, outside
 visit history. Saved sidebar preferences live in the relay session, not in the
@@ -525,6 +608,10 @@ capabilities, destination-bound asynchronous work and cancellation; accepted
 material belongs to the draft, not the optional tool. Add these contracts against
 real workflows rather than declaring the toolbar a universal editor API.
 
+
+## Desktop browser
+
+Plugins can render the host-provided [`browser.View` component](browser.md) inside a panel. It opens HTTP(S) pages beside the conversation on macOS desktop. The host owns website rendering, navigation controls, and native session cleanup. Remote pages receive no Buzz IPC bridge; plugin JavaScript remains trusted same-process code. The [capability guide](browser.md#try-the-capability-with-a-local-plugin) includes a complete local-plugin example and installation steps.
 
 ## In-app keyboard shortcuts
 

@@ -1,3 +1,5 @@
+@import "./composer.css" layer(components);
+
 @layer components {
   .buzz-button {
     position: relative;
@@ -35,6 +37,17 @@
   .buzz-button-spinner {
     position: absolute;
     animation: buzz-button-spin 1s linear infinite;
+  }
+  /* Compact capsules sit beneath identity labels without adding a full row. */
+  .buzz-button[data-size="xs"] {
+    @apply text-caption;
+    min-height: var(--space-6);
+    padding: var(--space-1) var(--space-3);
+  }
+  .buzz-button[data-size="xs"] .buzz-button-label > svg,
+  .buzz-button[data-size="xs"] .buzz-button-spinner {
+    width: var(--space-4);
+    height: var(--space-4);
   }
   .buzz-button[data-size="sm"] {
     @apply text-label-sm;
@@ -147,10 +160,15 @@
     width: var(--size-control-sm);
     height: var(--size-control-sm);
   }
-  /* Dense composer formatting options retain the original 28px layout. */
+  /* Compact icon actions: 20px control with 12px artwork. */
   .buzz-button[data-icon-variant][data-icon-size="xs"] {
-    width: calc(var(--size-control-sm) - var(--space-1));
-    height: calc(var(--size-control-sm) - var(--space-1));
+    width: var(--space-5);
+    height: var(--space-5);
+    min-height: var(--space-5);
+  }
+  .buzz-button[data-icon-size="xs"] .buzz-button-label svg {
+    width: var(--space-3);
+    height: var(--space-3);
   }
   .buzz-button[data-icon-variant][data-size="lg"] {
     width: var(--size-control-lg);
@@ -474,11 +492,16 @@
      pill was not — there is no second surface to collide with the first. */
   .buzz-tabs[data-variant="panel"] {
     display: flex;
+    min-width: 0;
     align-items: center;
     gap: var(--space-4);
   }
 
   .buzz-tabs[data-variant="panel"] .buzz-tabs-list {
+    min-width: 0;
+    overflow-x: auto;
+    padding-inline: var(--space-1);
+    scroll-padding-inline: var(--space-1);
     gap: var(--space-5);
   }
 
@@ -491,6 +514,7 @@
      text carries more of the work. Tertiary is a meta role at the Lc 45 target
      and measures 60.6 light / 52.5 dark on these surfaces. */
   .buzz-tabs[data-variant="panel"] .buzz-tabs-tab {
+    flex-shrink: 0;
     height: 2.25rem;
     padding: 0;
     color: var(--text-metadata);
@@ -688,6 +712,17 @@
     color: var(--text-standard);
   }
 
+  .navigation-item[data-variant="option"] {
+    padding: var(--space-2);
+    transition: none;
+  }
+  .navigation-item[data-variant="option"]:focus-visible {
+    background: var(--affordance-floating-hover);
+    --text-metadata: var(--text-standard);
+    --text-subtle: var(--text-standard);
+    outline-offset: -2px;
+  }
+
   .navigation-item[data-inset] {
     padding-left: calc(var(--space-control-inset) + var(--space-4));
   }
@@ -723,33 +758,28 @@
 
 @layer components {
   /* The positioned portal owns the stacking context, not its popup child. */
-  .buzz-menu-positioner {
+  .buzz-menu-positioner,
+  .buzz-popover-positioner {
     z-index: var(--layer-popover);
   }
   .buzz-menu-popup {
     min-width: 11.5rem;
-    max-width: min(20rem, calc(100vw - var(--space-4)));
-    max-height: var(--available-height);
+    max-width: min(20rem, var(--available-width), calc(100vw - var(--space-4)));
+    max-height: min(24rem, var(--available-height));
     overflow-y: auto;
     padding: var(--space-1);
     @apply floating-surface;
     color: var(--text-standard);
-    transform-origin: var(--transform-origin);
-    transition:
-      opacity var(--duration-state) var(--easing-state),
-      transform var(--duration-state) var(--easing-state);
   }
-  .buzz-menu-popup[data-starting-style],
-  .buzz-menu-popup[data-ending-style] {
-    opacity: 0;
-    transform: scale(0.98);
+  .buzz-menu-popup[data-size="wide"] {
+    max-width: min(28rem, var(--available-width), calc(100vw - var(--space-4)));
   }
   .buzz-menu-item {
     display: flex;
     min-height: var(--size-row);
     align-items: center;
     gap: var(--space-row-gap);
-    border-radius: var(--radius-row);
+    border-radius: var(--radius-pill);
     padding: var(--space-1) var(--space-2);
     color: var(--text-standard);
     cursor: default;
@@ -761,8 +791,18 @@
     /* Keep the ring inside the scrollable popup's clipping edge. */
     outline-offset: -2px;
   }
-  .buzz-menu-item[data-highlighted] {
-    background: var(--affordance-subtle-hover);
+  /* Floating rows need more separation than controls on a darker panel.
+     Supporting copy follows the brighter fill so it remains readable. */
+  .buzz-menu-item[data-highlighted],
+  .buzz-menu-item[data-popup-open],
+  .buzz-select-option[data-highlighted],
+  .buzz-popover-popup .navigation-item:hover:not([data-selected]) {
+    --text-subtle: var(--text-standard);
+    --text-metadata: var(--text-standard);
+    background: var(--affordance-floating-hover);
+  }
+  .buzz-menu-item[data-tone="danger"] {
+    color: var(--text-danger);
   }
   .buzz-menu-item[data-disabled] {
     color: var(--text-unavailable);
@@ -777,16 +817,15 @@
     color: var(--text-subtle);
   }
   .buzz-menu-choice-label {
-    display: contents;
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-row-gap);
+    overflow-wrap: anywhere;
   }
   .buzz-menu-item-indicator:not([data-checked]) {
     visibility: hidden;
-  }
-  .buzz-menu-radio-dot {
-    width: 0.375rem;
-    height: 0.375rem;
-    border-radius: var(--radius-pill);
-    background: currentColor;
   }
   .buzz-menu-submenu-arrow,
   .buzz-menu-trailing {
@@ -803,9 +842,144 @@
     margin: var(--space-1) 0;
     background: var(--border-standard);
   }
+  .buzz-menu-note {
+    margin: 0;
+    padding: var(--space-2);
+    color: var(--text-subtle);
+    overflow-wrap: anywhere;
+  }
+  .buzz-popover-popup {
+    /* Persistent navigation selection must remain visible on the raised fill. */
+    --affordance-selected: var(--affordance-subtle-hover);
+    @apply floating-surface;
+    width: 20rem;
+    max-width: min(var(--available-width), calc(100vw - var(--space-4)));
+    max-height: var(--available-height);
+    overflow-y: auto;
+    padding: var(--space-4);
+    color: var(--text-standard);
+  }
+  .buzz-popover-popup[data-size="compact"] {
+    width: 14rem;
+  }
+  /* Short action surfaces pair 10px outer corners with 8px inner rows.
+     Content surfaces keep the panel recipe, regardless of viewport width. */
+  .buzz-menu-popup[data-size="compact"],
+  .buzz-popover-popup[data-size="compact"] {
+    --affordance-floating-hover: var(--affordance-subtle-hover);
+    border-radius: var(--radius-row);
+  }
+  .buzz-menu-popup[data-size="compact"] .buzz-menu-item,
+  .buzz-popover-popup[data-size="compact"] .navigation-item {
+    border-radius: calc(var(--radius-row) * 0.8);
+    transition: none;
+  }
+  .buzz-popover-popup[data-size="compact"] .navigation-item:focus-visible {
+    background: var(--affordance-floating-hover);
+    outline-offset: -2px;
+  }
+  .buzz-popover-popup[data-size="wide"] {
+    width: 24rem;
+  }
+  .buzz-popover-popup[data-padding="list"] {
+    padding: var(--space-1);
+  }
+  .buzz-popover-popup[data-padding="none"] {
+    padding: 0;
+  }
+  .buzz-popover-title {
+    margin: 0;
+  }
+  .buzz-popover-description {
+    margin: var(--space-2) 0 0;
+    color: var(--text-subtle);
+  }
+  .buzz-choice-row {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-row-gap);
+  }
+  .buzz-choice-row-leading {
+    display: flex;
+    flex: 0 0 auto;
+  }
+  .buzz-choice-row-content {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: var(--space-half);
+    overflow-wrap: anywhere;
+  }
+  .buzz-choice-row-description,
+  .buzz-choice-row-trailing {
+    color: var(--text-subtle);
+  }
+  .buzz-choice-row-trailing {
+    flex: 0 0 auto;
+  }
+  .buzz-menu-item[data-disabled]
+    :is(
+      .buzz-choice-row-description,
+      .buzz-choice-row-trailing,
+      .buzz-menu-icon
+    ) {
+    color: inherit;
+  }
+  /* Use the dropdown unblur and offset at half duration and distance. Move from
+     the actual placement side, including flipped popovers and submenus. */
+  .buzz-menu-popup,
+  .buzz-popover-popup {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+    transform-origin: var(--transform-origin);
+    transition:
+      opacity calc(var(--duration-state) / 2) var(--easing-state),
+      transform calc(var(--duration-state) / 2) var(--easing-settle),
+      filter calc(var(--duration-state) / 2) var(--easing-state);
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    opacity: 0;
+    filter: blur(var(--space-half));
+    transform: translateY(calc(-1 * var(--space-half)));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-side="top"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateY(var(--space-half));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-side="right"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateX(calc(-1 * var(--space-half)));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-side="left"]):where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateX(var(--space-half));
+  }
+  :is(.buzz-menu-popup, .buzz-popover-popup):where([data-ending-style]) {
+    transition-duration: calc(var(--duration-fast) / 2);
+  }
+  html[data-keyboard-navigation] :is(.buzz-menu-popup, .buzz-popover-popup) {
+    transition: none;
+    transform: none;
+    filter: none;
+  }
   @media (prefers-reduced-motion: reduce) {
-    .buzz-menu-popup {
-      transition-duration: 0ms;
+    .buzz-menu-popup,
+    .buzz-popover-popup {
+      transition: none;
+      transform: none;
+      filter: none;
     }
   }
 }
@@ -876,7 +1050,6 @@
     cursor: default;
   }
   .buzz-select-option[data-highlighted] {
-    background: var(--affordance-subtle-hover);
     outline: none;
   }
   .buzz-select-option[data-selected] {

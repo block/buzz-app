@@ -3,7 +3,8 @@ import { createRoot } from "react-dom/client";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { Context } from "@deepseek-ai/cordis";
 import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
-import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
+import { ChannelWorkspaceFixture } from "./channel-workspace";
+import { provideNavigation } from "../../src/features/navigation/service";
 import { PanelsService } from "../../src/features/panels/service";
 import { PagesService } from "../../src/features/pages/service";
 import { createRelaySession } from "../../src/features/relay/session";
@@ -140,7 +141,9 @@ Object.assign(window, {
       })),
   },
 });
+const navigationHost = provideNavigation(root);
 const snapshot = Object.freeze({
+  scope: `${attachmentOrigin}:${viewer.pubkey}`,
   status: "ready" as const,
   generation: 0,
   session: owner.session,
@@ -158,7 +161,8 @@ if (!container) throw new Error("Missing fixture root");
 createRoot(container).render(
   <ToastProvider>
     <div style={{ height: "100vh" }}>
-      <ChannelsPage
+      <ChannelWorkspaceFixture
+        host={navigationHost}
         providers={new TemplateProvidersService(root)}
         relay={data}
         panels={new PanelsService(root)}

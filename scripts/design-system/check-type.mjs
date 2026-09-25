@@ -80,6 +80,10 @@ const RETIRED_ROLES = new Map([
  */
 const OVERRIDES = new Map([
   [
+    "styles/search-field.css:font-size:",
+    "The capsule recipe forwards the text-body-sm role into Emoji Mart's shadow root, where Tailwind utilities cannot reach.",
+  ],
+  [
     "styles/flex-workspace.css:font-size:",
     "FlexLayout's public theme variable forwards the existing text-body role; no new text size is authored.",
   ],

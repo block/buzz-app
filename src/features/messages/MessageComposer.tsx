@@ -1,3 +1,5 @@
+import { animate, useReducedMotion } from "motion/react";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { npubEncode } from "nostr-tools/nip19";
 import type { ChannelMessage } from "../relay/contracts";
@@ -22,6 +24,7 @@ import { ComposerAttachments } from "./ComposerAttachments";
 import { useAttachmentDraft } from "./attachment-draft";
 import {
   useEffect,
+  useCallback,
   useId,
   useLayoutEffect,
   useRef,
@@ -85,6 +88,8 @@ export type MessageComposerProps = {
   onOpenLink?: ((target: string) => boolean) | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  replyParentId?: string | undefined;
+  replyContext?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
   focusRequest?: number;
@@ -116,6 +121,7 @@ export function MessageComposer(props: MessageComposerProps) {
     />
   );
 }
+
 function sameAttachmentSelection(
   left: readonly { id: string }[],
   right: readonly { id: string }[],
@@ -139,6 +145,8 @@ function Composer({
   onOpenLink,
   canOpenLink,
   threadRootId,
+  replyParentId,
+  replyContext,
   mediaTimeSeconds,
   clearMediaTime,
   focusRequest,
@@ -166,11 +174,14 @@ function Composer({
     !list.channels.some((channel) => channel.id === channelId);
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
     if (disabled) sendAttempt.current?.abort();
   }, [disabled]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
+  useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
   const inputId = useId();
   const draftKey =
     submission?.draftKey ??
@@ -221,6 +232,7 @@ function Composer({
     return true;
   };
   const [error, setError] = useState<string>();
+  const [attachmentError, setAttachmentError] = useState<string>();
   const focusRestoredDraft = useRef(false);
   const beforeEdit = useRef<
     { value: MentionDraft; restore(): void } | undefined
@@ -252,6 +264,7 @@ function Composer({
     disabled ||
     admitting ||
     sending ||
+    uploadingAttachments ||
     !!submission?.locked ||
     (editing.target && (editing.locked || editDisabled)) ||
     false;
@@ -278,11 +291,11 @@ function Composer({
   function attachFiles(files: readonly File[]) {
     if (editingDisabled || !files.length) return;
     if (editing.target) {
-      setError("Finish editing before attaching new files.");
+      setAttachmentError("Finish editing before attaching new files.");
       return;
     }
     if (!canAttach) {
-      setError(
+      setAttachmentError(
         submission
           ? "Create this conversation before attaching files."
           : "Uploads are unavailable on this connection.",
@@ -291,9 +304,9 @@ function Composer({
     }
     try {
       attachments.store.add(files);
-      setError(undefined);
+      setAttachmentError(undefined);
     } catch (reason) {
-      setError(
+      setAttachmentError(
         reason instanceof Error ? reason.message : "Could not attach files.",
       );
     }
@@ -512,7 +525,7 @@ function Composer({
         return;
       const uploaded = capturedAttachments.length
         ? await (async () => {
-            setSending(true);
+            setUploadingAttachments(true);
             setError(undefined);
             return attachments.store.prepareForSend(attempt.signal);
           })()
@@ -537,6 +550,7 @@ function Composer({
             content,
             recipients,
             uploaded,
+            ...(replyParentId ? [replyParentId] : []),
           )
         : session.messages.send(channelId, content, recipients, uploaded);
       attachments.store.clear();
@@ -570,6 +584,7 @@ function Composer({
         sendAttempt.current = null;
         if (live.current) {
           setSending(false);
+          setUploadingAttachments(false);
           setAdmitting(false);
         }
       }
@@ -721,116 +736,139 @@ function Composer({
           />
         )}
         {sending && <p role="status">Adding agent to this channel…</p>}
+        {uploadingAttachments && <p role="status">Uploading attachments…</p>}
         {dragging && <p role="status">Drop files to attach</p>}
-        <ComposerAttachments
-          media={session.media}
-          items={attachments.items}
-          disabled={editingDisabled}
-          remove={(id) => {
-            attachments.store.remove(id);
-            setError(undefined);
-          }}
-          retry={attachments.store.retry}
-        />
-        <div className={styles.composerInput}>
-          <RichComposerInput
-            ref={input}
-            id={inputId}
+        {attachmentError && (
+          <ToastNotice
+            title="Could not attach file"
+            description={attachmentError}
+            onDismiss={() => setAttachmentError(undefined)}
+          />
+        )}
+        <div className={styles.composerContent}>
+          <ComposerAttachments
+            media={session.media}
+            items={attachments.items}
             disabled={editingDisabled}
-            value={draft}
-            draft={value}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            extensions={extensions}
-            emoji={emojiCatalog.entries}
-            onDraftChange={(next) => {
-              saveDraft(next);
-              completion.observe(true);
+            remove={(id) => {
+              const item = attachments.items.find(
+                (candidate) => candidate.id === id,
+              );
+              attachments.store.remove(id);
+              if (item?.status === "error" && item.error === error)
+                setError(undefined);
             }}
-            onFormatsChange={setActiveFormats}
-            onEditLink={setLinkEdit}
-            data-single-emoji={largeEmojiDraft || undefined}
-            maxLength={16000}
-            aria-label={label}
-            placeholder={placeholder ?? label}
-            onFocus={() => completion.observe(true)}
-            onBlur={() => {
-              completion.invalidate();
-            }}
-            onSelect={() => {
-              completion.observe();
-            }}
-            onCompositionStart={() => {
-              completion.composing.current = true;
-              completion.invalidate();
-            }}
-            onCompositionEnd={() => {
-              completion.composing.current = false;
-              completion.observe(true);
-            }}
-            onKeyDown={(event) => {
-              if (
-                event.nativeEvent.isComposing ||
-                event.nativeEvent.keyCode === 229 ||
-                completion.composing.current
-              )
-                return;
-              if (
-                event.shiftKey &&
-                ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
-              ) {
-                completion.invalidate();
-                return;
-              }
-              if (completion.keys.current?.(event)) return;
-              if (
-                event.key === "ArrowUp" &&
-                !event.shiftKey &&
-                !event.altKey &&
-                !event.ctrlKey &&
-                !event.metaKey &&
-                !event.repeat &&
-                !event.defaultPrevented &&
-                !editingDisabled &&
-                !editDisabled &&
-                !submission &&
-                !editing.target &&
-                event.currentTarget.value === "" &&
-                !valueRef.current.recipients.length &&
-                !attachments.items.length
-              ) {
-                const target = lastEditableMessage(session, editableRows());
-                if (target) {
-                  event.preventDefault();
-                  completion.invalidate();
-                  beforeEdit.current = {
-                    value: valueRef.current,
-                    restore: event.currentTarget.checkpoint(),
-                  };
-                  const next = mentionDraft(editing.start(target));
-                  valueRef.current = next;
-                  updateDraft(next);
-                  event.currentTarget.reset(next);
-                  setLinkEdit(null);
-                  caret.current = next.text.length;
-                  setError(undefined);
-                }
-                return;
-              }
-              if (
-                event.key === "Enter" &&
-                !event.shiftKey &&
-                !event.altKey &&
-                !event.ctrlKey &&
-                !event.metaKey
-              ) {
-                event.preventDefault();
-                if (!event.repeat || !editing.target) send();
-              }
+            retry={(id) => {
+              const item = attachments.items.find(
+                (candidate) => candidate.id === id,
+              );
+              attachments.store.retry(id);
+              if (item?.status === "error" && item.error === error)
+                setError(undefined);
             }}
           />
+          <div className={styles.composerInput}>
+            <RichComposerInput
+              inviteAgents={agentChoices}
+              ref={input}
+              id={inputId}
+              disabled={editingDisabled}
+              value={draft}
+              draft={value}
+              session={session}
+              scope={scope}
+              channelId={channelId}
+              extensions={extensions}
+              emoji={emojiCatalog.entries}
+              onDraftChange={(next) => {
+                saveDraft(next);
+                completion.observe(true);
+              }}
+              onFormatsChange={setActiveFormats}
+              onEditLink={setLinkEdit}
+              data-single-emoji={largeEmojiDraft || undefined}
+              maxLength={16000}
+              aria-label={label}
+              placeholder={placeholder ?? label}
+              onFocus={() => completion.observe(true)}
+              onBlur={() => {
+                completion.invalidate();
+              }}
+              onSelect={() => {
+                completion.observe();
+              }}
+              onCompositionStart={() => {
+                completion.composing.current = true;
+                completion.invalidate();
+              }}
+              onCompositionEnd={() => {
+                completion.composing.current = false;
+                completion.observe(true);
+              }}
+              onKeyDown={(event) => {
+                if (
+                  event.nativeEvent.isComposing ||
+                  event.nativeEvent.keyCode === 229 ||
+                  completion.composing.current
+                )
+                  return;
+                if (
+                  event.shiftKey &&
+                  ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+                ) {
+                  completion.invalidate();
+                  return;
+                }
+                if (completion.keys.current?.(event)) return;
+                if (
+                  event.key === "ArrowUp" &&
+                  !event.shiftKey &&
+                  !event.altKey &&
+                  !event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.repeat &&
+                  !event.defaultPrevented &&
+                  !editingDisabled &&
+                  !editDisabled &&
+                  !submission &&
+                  !editing.target &&
+                  event.currentTarget.value === "" &&
+                  !valueRef.current.recipients.length &&
+                  !attachments.items.length
+                ) {
+                  const target = lastEditableMessage(session, editableRows());
+                  if (target) {
+                    event.preventDefault();
+                    completion.invalidate();
+                    beforeEdit.current = {
+                      value: valueRef.current,
+                      restore: event.currentTarget.checkpoint(),
+                    };
+                    const next = mentionDraft(editing.start(target));
+                    valueRef.current = next;
+                    updateDraft(next);
+                    event.currentTarget.reset(next);
+                    setLinkEdit(null);
+                    caret.current = next.text.length;
+                    setError(undefined);
+                  }
+                  return;
+                }
+                if (
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !event.altKey &&
+                  !event.ctrlKey &&
+                  !event.metaKey
+                ) {
+                  event.preventDefault();
+                  if (!event.repeat || !editing.target) send();
+                }
+              }}
+            />
+          </div>
         </div>
+        {!editing.target && replyContext}
         {!editing.target &&
           threadRootId &&
           mediaTimeSeconds !== undefined &&
@@ -884,13 +922,11 @@ function Composer({
                   onChange={selectAgent}
                   disabled={editingDisabled}
                 />
-              ) : (
-                <span className={styles.composerHint}>
-                  Shift + Enter for a new line
-                </span>
-              )))}
+              ) : null))}
           <IconButton
-            variant="tint"
+            variant={
+              draft.trim() || attachments.items.length ? "primary" : "ghost"
+            }
             size="toolbar"
             shape="round"
             type="submit"
@@ -901,6 +937,7 @@ function Composer({
               (!!editing.target && (editing.locked || editDisabled)) ||
               admitting ||
               sending ||
+              uploadingAttachments ||
               submission?.disabled ||
               attachments.blocked ||
               (!draft.trim() && !attachments.items.length)
@@ -967,6 +1004,24 @@ function RecipientAvatars({
   disabled: boolean;
   remove(pubkey: string): void;
 }) {
+  const reduceMotion = useReducedMotion();
+  const enter = useCallback(
+    (node: HTMLButtonElement | null) => {
+      if (
+        !node ||
+        document.documentElement.hasAttribute("data-keyboard-navigation") ||
+        reduceMotion
+      )
+        return;
+      const animation = animate(
+        node,
+        { transform: ["scale(0.9)", "scale(1)"] },
+        { type: "spring", duration: 0.24, bounce: 0.15 },
+      );
+      return () => animation.stop();
+    },
+    [reduceMotion],
+  );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -988,7 +1043,11 @@ function RecipientAvatars({
             key={recipient.pubkey}
             type="button"
             size="toolbar"
+            ref={enter}
             data-mention-recipient=""
+            data-avatar-shape={
+              agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
+            }
             title={`Remove explicit mention of ${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
             aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
             disabled={disabled}

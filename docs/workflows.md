@@ -9,15 +9,29 @@ See the [capability contract](../src/features/workflows/types.ts).
 ## Scope
 
 - Channel-scoped saved configurations; new drafts start disabled.
-- Form editing for message/reaction triggers and Send Message/Delay actions.
-  Other definitions stay in YAML; opening them does not rewrite their contents.
+- Form editing for message/reaction/diff/schedule/webhook triggers and Send
+  Message/Delay actions. Schedules offer repeat presets, weekday and
+  day-of-month pickers, a UTC run time and a five-field cron editor. Numeric
+  weekdays follow the relay: Sunday=1 through Saturday=7; existing numeric
+  cron fields are not renumbered. Six- and
+  seven-field cron stays in YAML. Other definitions stay in YAML; opening them
+  does not rewrite their contents.
 - Save with the original owner/channel/UUID and signed `expected-revision`.
-  Warn on broad message or schedule activation, not ordinary enabled edits.
+  Warn before enabling an unfiltered message trigger or a schedule that runs
+  hourly or more often, not on ordinary enabled edits.
+- Webhook triggers: the relay issues a secret once, when a workflow first
+  gains the trigger. The save receipt hands it to a one-time dialog with the
+  hook URL, masked value, reveal and copy; leaving before revealing or copying
+  asks for confirmation. Delivery stays mounted across channel/landing navigation;
+  pending secrets are shown sequentially, and session clear/access loss purges
+  any displayed value. The secret is held in memory until that dialog takes
+  it and never enters the outbox journal, operation errors or logs. The hook
+  URL needs the relay HTTP base the host advertises; without it the dialog
+  shows the relative `/hooks/{id}` route only.
 - Confirmed deletion request, manual run, and on-demand run/trace history in
   20-row pages with the relay's exact `(before,beforeId)` cursor.
-- No approval UI, webhook-secret handling, lifecycle negotiation, alternative
-  signed-host adapter or plugin command-replay API. Webhook-trigger saves are
-  blocked at both the editor and signing boundary, including raw YAML.
+- No approval UI, lifecycle negotiation, alternative signed-host adapter,
+  plugin command-replay API or JSON trigger inputs.
 
 ## Recovery and limits
 
@@ -29,12 +43,36 @@ through generic Outbox Retry either; inspection and dismissal remain available.
 **Check saved configuration** resolves an unknown save only when a fresh verified
 head matches its owner, channel, UUID and exact signed revision. Missing/different
 heads retain the draft for review. Dismissal clears the notice and editor lock
-only after durable dismissal; it neither undoes nor repeats a command. Unknown
+only after durable dismissal; it neither undoes nor repeats a command. Exact
+readback does not retire a pending one-time-secret receipt, and a missing receipt
+does not undo verified configuration success. Unknown
 runs stay unknown: only a returned run ID identifies a requested run.
 
 Saving a configured enabled flag does not prove runtime activation or cancellation.
 Legacy deletion can retain a visible definition; accepted delivery is not proof
 of runtime cleanup. These backend limitations are displayed, not repaired here.
+
+The landing discovers workflows in serial batches of up to 128 participating
+channel IDs, including authorized DMs. Each channel keeps its own single-`#h`
+kind-30620 filter and 100-event limit, matching the old app's relay-compatible
+batching. Only this exact filter shape gets the reader/broker exception to the
+generic four-filter limit; request/response byte budgets remain unchanged.
+500 memberships need four requests. Signed event IDs are deduplicated before
+counting/folding, and saturated channels are marked partial; a finished scan is
+not proof of an exhaustive runtime inventory.
+
+Metadata renames/reordering do not restart discovery; new memberships add only
+their missing reads. One stable status replaces
+per-channel loading placeholders, and loaded cards remain visible during refresh.
+Refresh deliberately rereads the current roster; save outcomes request readback
+only for their affected channels. Read failures/interruption stop the queued scan
+and expose one paused status and Retry without erasing already loaded configurations
+or inventing errors for unread channels. Retry resumes only failed/interrupted and
+unread channels; membership additions join that paused queue, not restart it.
+The header Refresh still deliberately rereads the full roster. Global clear
+purges copied results without automatic rereads; a changed membership set
+re-establishes authorized interest. At most two capability views remain live,
+including one invalidation observer when discovery is idle.
 
 Reads begin on UI interest and stop on unmount or access loss; no background poll.
 Transient socket recovery cancels stale reads but retains the draft. Live-session
@@ -49,7 +87,11 @@ fixed upstream paths and bounded history/receipt bodies.
 ## Validation boundary
 
 Offline regressions cover the editor, exact-save recovery, uncertain commands,
-session isolation, broker authorization and history. This is not live acceptance:
+session isolation, broker authorization and history. The real-session browser
+journey covers navigating to the landing, exact readback before a held receipt,
+and subsequent masked secret delivery in Chromium and WebKit. Component tests
+cover sequential secrets, interruption, and purge after the dialog takes a value.
+This is not live acceptance:
 create → edit → run → inspect against an unchanged backend and packaged-native
 acceptance remain unverified. Live credentials, native launch and real workflow
 writes require separate consent; no backend work belongs to this plugin PR.

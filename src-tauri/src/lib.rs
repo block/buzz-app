@@ -1,18 +1,29 @@
+mod browser;
+#[cfg(test)]
+mod browser_permissions_tests;
+use browser::{
+    browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
+    browser_status,
+};
 mod agent_models;
 mod agents;
+mod deep_links;
 mod dock;
 mod notifications;
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
+mod goose_models;
+mod pi_models;
 use agents::{
     agent_control_action, agent_control_create_commit, agent_control_create_prepare,
     agent_control_creation_profile, agent_control_import_commit, agent_control_import_preview,
-    agent_control_save, agent_control_snapshot, AgentHost,
+    agent_control_save, agent_control_snapshot, agent_control_start_on_app_launch, AgentHost,
 };
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
 };
+use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
@@ -338,6 +349,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_snapshot,
         agent_control_save,
         agent_control_action,
+        agent_control_start_on_app_launch,
         agent_control_import_preview,
         agent_control_import_commit,
         agent_models_begin,
@@ -345,6 +357,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_models_run,
         title_bar_double_click,
         notification_show,
+        deep_link_take,
+        deep_link_watch,
         dock_permission,
         unread_indicator_set,
         terminal_create_owner,
@@ -359,9 +373,18 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        // Single instance comes first, as its documentation requires. Its deep-link
+        // feature forwards deep-link argv on Windows/Linux. macOS OS URLs reach
+        // the registered bundle directly; cross-copy URL handoff is unsupported.
+        // This callback only foregrounds the running window.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            deep_links::focus_main(app);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            deep_links::setup(app.handle());
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {
@@ -401,9 +424,30 @@ pub fn run() {
         .manage(Imports::default())
         .manage(Terminals::default())
         .manage(Notifications::default())
+        .manage(DeepLinks::default())
         .manage(PluginManager(Manager::from_env()))
-        .invoke_handler(commands())
-        .build(tauri::generate_context!())
+        .invoke_handler({
+            let application_commands = commands::<tauri::Wry>();
+            let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                browser_attach,
+                browser_set_bounds,
+                browser_detach,
+                browser_navigate,
+                browser_action,
+                browser_status
+            ];
+            // Browser embeds a real native view; existing commands also support MockRuntime.
+            move |request: tauri::ipc::Invoke<tauri::Wry>| {
+                if request.message.command().starts_with("browser_") {
+                    browser_commands(request)
+                } else {
+                    application_commands(request)
+                }
+            }
+        })
+        .on_page_load(browser::page_load)
+        .on_window_event(browser::window_event)
+        .build(app_context())
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
@@ -414,6 +458,7 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                browser::shutdown();
                 if let Err(error) = app.state::<Terminals>().shutdown() {
                     eprintln!("Terminal shutdown failed: {error}");
                 }
@@ -423,6 +468,10 @@ pub fn run() {
                 }
             }
         });
+}
+
+fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
+    tauri::generate_context!()
 }
 
 #[cfg(test)]

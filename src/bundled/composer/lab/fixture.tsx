@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { bindNames } from "../../../features/identity-names/service";
+import { createNameProvider } from "../../../features/identity-names/directory";
+import { resolveIdentityNames } from "../../../features/identity-names/policy";
 import { EmojiPicker } from "../../emoji/EmojiPicker";
 import { MentionPicker } from "../../mentions/MentionPicker";
 import { MentionCompletion } from "../../mentions/MentionCompletion";
@@ -37,12 +40,17 @@ const channelList = {
   ],
 };
 const library = { status: "ready" as const, identities: [] };
-const session = {
+const rawSession = {
   messages: {
     send: () => "preview-send",
     reply: () => "preview-reply",
   },
   typing: { snapshot: () => emptyList, subscribe: empty },
+  names: {
+    snapshot: () => 0,
+    subscribe: empty,
+    resolve: (_pubkey: string, fallback: string) => fallback,
+  },
   profiles: {
     snapshot: () => profiles,
     subscribe: empty,
@@ -54,7 +62,12 @@ const session = {
     ensureList: () => {},
     refreshList: () => {},
   },
-  agentLibrary: { snapshot: () => library, subscribe: empty },
+  agentLibrary: {
+    snapshot: () => library,
+    subscribe: empty,
+    retain: empty,
+    refresh: async () => {},
+  },
   agentChoices: {
     snapshot: () => library,
     subscribe: empty,
@@ -70,6 +83,17 @@ const session = {
   media: (url: string) => url,
   outbox: { supports: () => true },
 } as unknown as RelaySession;
+const provider = createNameProvider({
+  id: "preview",
+  resolve: resolveIdentityNames,
+});
+const session = {
+  ...rawSession,
+  names: bindNames(rawSession, {
+    snapshot: () => [provider],
+    subscribe: empty,
+  }),
+};
 
 const tools: readonly Contribution<ComposerTool>[] = [
   {

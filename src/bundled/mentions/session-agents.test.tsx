@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
@@ -13,7 +20,7 @@ import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
 import type { CompletionResult } from "../../features/conversation/contracts";
 import { bindNames } from "../../features/identity-names/service";
-import { createAgentDirectory } from "../agents/directory";
+import { createAgentDirectory } from "../../features/identity-names/testing";
 import type {
   AgentControlState,
   AgentView,
@@ -27,7 +34,7 @@ import type { Outbox } from "../../features/relay/outbox";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
 afterEach(cleanup);
-function setup(parent: boolean | null = true) {
+function setup(parent: boolean | null = true, archived = false) {
   const key = "b".repeat(64),
     member = "a".repeat(64);
   const library = createAgentLibrary(async () => ({
@@ -44,6 +51,7 @@ function setup(parent: boolean | null = true) {
               id: "parent",
               channelType: parent ? "stream" : "session",
               members: [member],
+              archived,
             },
           ],
   };
@@ -72,7 +80,7 @@ function setup(parent: boolean | null = true) {
     }),
     media: () => undefined,
   } as unknown as RelaySession;
-  return { session, library, key };
+  return { session, library, key, member, profiles };
 }
 it("uses the same alphabetical and prefix ordering for typed and button mentions", async () => {
   const test = setup();
@@ -174,6 +182,204 @@ it("offers outside agents in the session mention picker while ordinary channel p
   view.unmount();
   test.library.dispose();
 });
+it("focuses search on open and supports clear, Escape, and outside dismissal", async () => {
+  const test = setup(),
+    user = userEvent.setup();
+  const view = render(
+    <>
+      <button type="button">Outside picker</button>
+      <MentionPicker
+        scope="scope"
+        session={test.session}
+        channelId="parent"
+        disabled={false}
+        select={() => true}
+      />
+    </>,
+  );
+  const trigger = screen.getByRole("button", { name: "Mention a member" });
+  await user.click(trigger);
+  const search = screen.getByRole("searchbox", {
+    name: "Search members and your agents",
+  });
+  expect(search).toHaveFocus();
+  await user.type(search, "no matching name");
+  expect(screen.getByText("No matching channel members.")).toBeVisible();
+  await user.click(
+    screen.getByRole("button", {
+      name: "Clear search members and your agents",
+    }),
+  );
+  expect(search).toHaveFocus();
+  expect(search).toHaveValue("");
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(screen.getByRole("searchbox")).toHaveFocus());
+  const outside = screen.getByRole("button", { name: "Outside picker" });
+  await user.click(outside);
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  expect(outside).toHaveFocus();
+  view.unmount();
+  test.library.dispose();
+});
+it("navigates namesakes with arrows and selects the focused exact identity with Enter", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    select = vi.fn(() => true);
+  test.profiles.set(test.member, { name: "Outside agent" });
+  render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      select={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const first = await screen.findByRole("button", {
+    name: `Outside agent ${test.member}`,
+  });
+  const last = await screen.findByRole("button", {
+    name: `Outside agent ${test.key}`,
+  });
+  await user.keyboard("{ArrowDown}");
+  expect(first).toHaveFocus();
+  await user.keyboard("{ArrowUp}");
+  expect(last).toHaveFocus();
+  await user.keyboard("{ArrowDown}");
+  expect(first).toHaveFocus();
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(select).toHaveBeenCalledExactlyOnceWith({
+    pubkey: test.key,
+    name: "Outside agent",
+  });
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  test.library.dispose();
+});
+
+it("selects filtered results from search, ignores IME Enter, and keeps rejected selections open", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    select = vi.fn(() => false);
+  render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      select={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const search = screen.getByRole("searchbox");
+  expect(
+    screen.queryByText("Your agents are added to this channel when you send."),
+  ).not.toBeInTheDocument();
+  await user.type(search, "missing");
+  await user.keyboard("{ArrowDown}{ArrowUp}{Enter}");
+  expect(search).toHaveFocus();
+  expect(select).not.toHaveBeenCalled();
+  await user.clear(search);
+  await user.type(search, test.member);
+  fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+  expect(fireEvent.keyDown(search, { key: "Enter", shiftKey: true })).toBe(
+    false,
+  );
+  expect(select).not.toHaveBeenCalled();
+  await user.keyboard("{Enter}");
+  expect(select).toHaveBeenCalledExactlyOnceWith({
+    pubkey: test.member,
+    name: "Member",
+  });
+  expect(search).toHaveFocus();
+  select.mockReturnValue(true);
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  test.library.dispose();
+});
+
+it("does not keyboard-select disabled members", async () => {
+  const test = setup(true, true),
+    user = userEvent.setup(),
+    select = vi.fn(() => true);
+  render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      select={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.keyboard("{ArrowDown}{ArrowUp}{Enter}");
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+  expect(select).not.toHaveBeenCalled();
+  test.library.dispose();
+});
+it.each([true, false])(
+  "session picker discloses history access before selection: parent=%s",
+  async (parent) => {
+    const test = setup(parent);
+    const list: ReturnType<RelaySession["channels"]["list"]> = {
+      status: "ready",
+      channels: [
+        {
+          id: "parent",
+          name: "Session",
+          channelType: "session",
+          members: ["a".repeat(64)],
+          ...(parent ? { parentChannelId: "parent-channel" } : {}),
+        },
+      ],
+    };
+    const session = {
+      ...test.session,
+      channels: { ...test.session.channels, list: () => list },
+    };
+    const user = userEvent.setup();
+    const select = vi.fn(() => true);
+    const view = render(
+      <MentionPicker
+        scope="test"
+        session={session}
+        channelId="parent"
+        disabled={false}
+        inviteAgents
+        select={select}
+      />,
+    );
+    try {
+      await user.click(
+        screen.getByRole("button", { name: "Mention a member" }),
+      );
+      const agent = await screen.findByRole("button", {
+        name: `Outside agent ${test.key}`,
+      });
+      expect(
+        screen.getByText(
+          parent
+            ? "Agents you mention join this session and its parent channel when you send, with access to their history."
+            : "Agents you mention join this session when you send, with access to its history.",
+        ),
+      ).toBeVisible();
+      expect(select).not.toHaveBeenCalled();
+      await user.click(agent);
+      expect(select).toHaveBeenCalledWith({
+        pubkey: test.key,
+        name: "Outside agent",
+      });
+    } finally {
+      view.unmount();
+      test.library.dispose();
+    }
+  },
+);
+
 it.each([true, false, null])(
   "typed @ completion offers outside agents with correct admission: parent=%s",
   async (parent) => {
@@ -500,4 +706,128 @@ it("opening and reopening an ordinary picker does not load the legacy library", 
     view.unmount();
     test.library.dispose();
   }
+});
+
+it("selects the exact recipient behind a context-aware owner label", async () => {
+  const test = setup();
+  const viewer = "1".repeat(64),
+    owner = "2".repeat(64),
+    mine = "c".repeat(64);
+  const profiles = new Map([
+    [viewer, { name: "Logan" }],
+    [owner, { name: "Wes" }],
+    [mine, { name: "Honey", isAgent: true as const, ownerPubkey: viewer }],
+    [test.key, { name: "Honey", isAgent: true as const, ownerPubkey: owner }],
+  ]);
+  const list = {
+    status: "ready" as const,
+    channels: [{ id: "parent", name: "Parent", members: [mine, test.key] }],
+  };
+  const session = {
+    ...test.session,
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: async () => {},
+    },
+    channels: { ...test.session.channels, list: () => list },
+  };
+  const provider = createAgentDirectory();
+  const library = createAgentLibrary(undefined);
+  const names = bindNames(
+    { viewer, profiles: session.profiles, agentLibrary: library.queries },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  const select = vi.fn(() => true);
+  const view = render(
+    <MentionPicker
+      scope="scope"
+      session={{ ...session, names }}
+      channelId="parent"
+      disabled={false}
+      select={select}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.click(
+    await screen.findByRole("button", { name: `Wes’s Honey ${test.key}` }),
+  );
+  expect(select).toHaveBeenCalledWith({ pubkey: test.key, name: "Honey" });
+  view.unmount();
+  names.dispose();
+  library.dispose();
+  test.library.dispose();
+});
+
+it("keeps an outside namesake discoverable and qualifies the actual choice set", async () => {
+  const test = setup();
+  const member = "a".repeat(64),
+    outside = test.key,
+    unrelated = "d".repeat(64);
+  const profiles = new Map(
+    [member, outside, unrelated].map((key) => [
+      key,
+      { name: "Larry", isAgent: true as const },
+    ]),
+  );
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [{ pubkey: outside, name: "Larry" }],
+  }));
+  const session = {
+    ...test.session,
+    agentLibrary: library.queries,
+    agentChoices: createAgentChoices({
+      scope: "scope",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+    profiles: { ...test.session.profiles, snapshot: () => profiles },
+  };
+  const provider = createAgentDirectory();
+  const names = bindNames(
+    { profiles: session.profiles, agentLibrary: library.queries },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  const select = vi.fn(() => true);
+  const view = render(
+    <MentionPicker
+      scope="scope"
+      session={{ ...session, names }}
+      channelId="parent"
+      disabled={false}
+      select={select}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  expect(
+    await screen.findByRole("button", { name: `Larry ${member}` }),
+  ).toBeInTheDocument();
+  view.rerender(
+    <MentionPicker
+      scope="scope"
+      session={{ ...session, names }}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      select={select}
+    />,
+  );
+  const outsideButton = await screen.findByRole("button", {
+    name: new RegExp(`Larry · .+ ${outside}`),
+  });
+  expect(
+    screen.getByRole("button", { name: new RegExp(`Larry · .+ ${member}`) }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: new RegExp(unrelated) }),
+  ).not.toBeInTheDocument();
+  await user.click(outsideButton);
+  expect(select).toHaveBeenCalledWith({ pubkey: outside, name: "Larry" });
+  view.unmount();
+  names.dispose();
+  library.dispose();
+  test.library.dispose();
 });

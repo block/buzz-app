@@ -11,8 +11,33 @@ import { Textarea } from "./Textarea";
 import { Radio, RadioGroup } from "./RadioGroup";
 import { Checkbox } from "./Checkbox";
 import { SearchField } from "./SearchField";
+import { Composer } from "./Composer";
 
 afterEach(cleanup);
+
+test("composer enables submission only for an available non-empty draft", async () => {
+  const user = userEvent.setup();
+  const submit = vi.fn((event) => event.preventDefault());
+  function Example() {
+    const [value, setValue] = useState("");
+    return (
+      <Composer
+        label="New message"
+        value={value}
+        onValueChange={setValue}
+        onSubmit={submit}
+      />
+    );
+  }
+  render(<Example />);
+  const input = screen.getByRole("textbox", { name: "New message" });
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toBeDisabled();
+  await user.type(input, "Hello");
+  expect(send).toBeEnabled();
+  await user.click(send);
+  expect(submit).toHaveBeenCalledTimes(1);
+});
 
 test("a loading action keeps its name and blocks pointer, keyboard and form submission until released", async () => {
   const user = userEvent.setup();
@@ -143,31 +168,35 @@ test("radio and checkbox labels change the actual form values while disabled cho
   ).toEqual({ mode: "light", summary: "yes" });
 });
 
-test("search forwards keyboard events and ref, and clearing restores input focus", async () => {
-  const user = userEvent.setup();
-  const ref = createRef<HTMLElement>();
-  const onKeyDown = vi.fn();
-  function Example() {
-    const [value, setValue] = useState("draft");
-    return (
-      <SearchField
-        label="Notes"
-        value={value}
-        onValueChange={setValue}
-        inputRef={ref}
-        onKeyDown={onKeyDown}
-      />
-    );
-  }
-  render(<Example />);
-  const input = screen.getByRole("searchbox", { name: "Notes" });
-  expect(ref.current).toBe(input);
-  await user.click(screen.getByRole("button", { name: "Clear notes" }));
-  expect(input).toHaveValue("");
-  expect(input).toHaveFocus();
-  await user.keyboard("{Escape}");
-  expect(onKeyDown).toHaveBeenCalled();
-});
+test.each(["default", "capsule"] as const)(
+  "%s search forwards keyboard events and ref, and clearing restores input focus",
+  async (variant) => {
+    const user = userEvent.setup();
+    const ref = createRef<HTMLElement>();
+    const onKeyDown = vi.fn();
+    function Example() {
+      const [value, setValue] = useState("draft");
+      return (
+        <SearchField
+          variant={variant}
+          label="Notes"
+          value={value}
+          onValueChange={setValue}
+          inputRef={ref}
+          onKeyDown={onKeyDown}
+        />
+      );
+    }
+    render(<Example />);
+    const input = screen.getByRole("searchbox", { name: "Notes" });
+    expect(ref.current).toBe(input);
+    await user.click(screen.getByRole("button", { name: "Clear notes" }));
+    expect(input).toHaveValue("");
+    expect(input).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(onKeyDown).toHaveBeenCalled();
+  },
+);
 
 test.each([false, true])(
   "native reset restores uncontrolled choices and form values (external form: %s)",

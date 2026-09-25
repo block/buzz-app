@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+  hookUrl,
   isWorkflowOperation,
   validateWorkflowEvent,
   parseRuns,
@@ -21,12 +22,25 @@ const base = {
   ],
   content: yaml,
 };
-it("strict authoring boundary rejects malformed coordinates/tags and webhook raw bypass, without taking generic deletions", () => {
+it("strict authoring boundary rejects malformed coordinates/tags, accepts webhook saves and skips generic deletions", () => {
   expect(validateWorkflowEvent(base, owner)).toEqual({
     id,
     owner,
     channelId: id,
   });
+  // The relay issues the webhook secret in the receipt; raw YAML saves are ordinary saves.
+  expect(
+    validateWorkflowEvent(
+      { ...base, content: yaml.replace("message_posted", "webhook") },
+      owner,
+    ),
+  ).toEqual({ id, owner, channelId: id });
+  expect(hookUrl("https://relay.test", id)).toBe(
+    `https://relay.test/hooks/${id}`,
+  );
+  expect(() => hookUrl("https://relay.test", "name")).toThrow(
+    "Invalid workflow ID",
+  );
   for (const event of [
     { ...base, pubkey: "c".repeat(64) },
     {
@@ -39,7 +53,6 @@ it("strict authoring boundary rejects malformed coordinates/tags and webhook raw
     { ...base, tags: [...base.tags, ["d", id]] },
     { ...base, tags: [...base.tags, ["client-id", "x"], ["client-id", "y"]] },
     { ...base, tags: [...base.tags, ["expected-revision", "bad"]] },
-    { ...base, content: yaml.replace("message_posted", "webhook") },
     { ...base, kind: 46020 },
     { ...base, created_at: Infinity },
   ])

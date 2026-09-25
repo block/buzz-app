@@ -19,8 +19,13 @@ export default defineConfig(async ({ command, mode }) => {
   const defaultRelay = env.BUZZ_RELAY_URL?.trim();
   const defaultOrigin = defaultRelay ? relayOrigin(defaultRelay) : "";
   // Opt-in seed: a viewer with no saved client record on this dev origin starts
-  // in the default relay's community. Only "1" enables it; builds never see it.
-  const openRelay = live && env.BUZZ_DEV_OPEN_RELAY === "1";
+  // in the default relay's community. The legacy alias is presence-only; an
+  // explicit dev setting wins (only "1" enables it). Builds never see it.
+  const openRelay =
+    live &&
+    (env.BUZZ_DEV_OPEN_RELAY !== undefined
+      ? env.BUZZ_DEV_OPEN_RELAY === "1"
+      : env.BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY !== undefined);
   if (openRelay && !defaultOrigin)
     throw new Error(
       "BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL to name the community to open.",

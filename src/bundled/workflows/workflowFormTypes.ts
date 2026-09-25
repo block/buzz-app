@@ -1,13 +1,33 @@
 // Adapted from block/buzz desktop workflow helpers at b9392d9d.
 import { stringify as yamlStringify, parse as yamlParse } from "yaml";
 
+import { cronExpressionError } from "./cronExpression";
 import {
   formatDurationSeconds,
   parseDurationSeconds,
 } from "./workflowDuration";
 
-export const TRIGGER_TYPES = ["message_posted", "reaction_added"] as const;
+export const TRIGGER_TYPES = [
+  "message_posted",
+  "reaction_added",
+  "diff_posted",
+  "schedule",
+  "webhook",
+] as const;
 export type TriggerType = (typeof TRIGGER_TYPES)[number];
+
+export function isTriggerType(value: string): value is TriggerType {
+  return (TRIGGER_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * The relay accepts reply_in_thread only on message-bearing triggers
+ * (message_posted, reaction_added, diff_posted); a schedule or webhook has no
+ * message to reply to.
+ */
+export function isThreadReplyEligibleTrigger(trigger: TriggerType): boolean {
+  return trigger !== "schedule" && trigger !== "webhook";
+}
 
 export const ACTION_TYPES = ["delay", "send_message"] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
@@ -16,6 +36,8 @@ export type TriggerConfig = {
   on: TriggerType;
   filter?: string | undefined;
   emoji?: string | undefined;
+  cron?: string | undefined;
+  interval?: string | undefined;
 };
 
 export type StepFormState = {
@@ -79,11 +101,36 @@ function actionFieldsForStep(step: StepFormState): Record<string, unknown> {
   return fields;
 }
 
+export function withTriggerType(
+  state: WorkflowFormState,
+  triggerType: TriggerType,
+): WorkflowFormState {
+  return {
+    ...state,
+    trigger: { on: triggerType },
+    // Clear threaded-reply state on every step, not just send_message ones:
+    // a hidden `replyInThread` on a step whose action was changed away from
+    // send_message would otherwise resurrect when the action is switched back.
+    steps: isThreadReplyEligibleTrigger(triggerType)
+      ? state.steps
+      : state.steps.map((step) =>
+          step.replyInThread ? { ...step, replyInThread: false } : step,
+        ),
+  };
+}
+
 export function formStateToYaml(state: WorkflowFormState): string {
   const trigger: Record<string, unknown> = { on: state.trigger.on };
-  if (state.trigger.filter) trigger.filter = state.trigger.filter;
-  if (state.trigger.on === "reaction_added" && state.trigger.emoji) {
-    trigger.emoji = state.trigger.emoji;
+  if (state.trigger.on === "schedule") {
+    // The relay refuses cron and interval together; emit exactly one.
+    if (state.trigger.cron) trigger.cron = state.trigger.cron;
+    else if (state.trigger.interval) trigger.interval = state.trigger.interval;
+  } else if (state.trigger.on !== "webhook") {
+    // A webhook carries nothing but `on`; the relay owns its URL and secret.
+    if (state.trigger.filter) trigger.filter = state.trigger.filter;
+    if (state.trigger.on === "reaction_added" && state.trigger.emoji) {
+      trigger.emoji = state.trigger.emoji;
+    }
   }
 
   const steps = state.steps.map((step) => ({
@@ -125,6 +172,9 @@ const TOP_LEVEL_KEYS = new Set([
 const TRIGGER_KEYS: Record<TriggerType, ReadonlySet<string>> = {
   message_posted: new Set(["on", "filter"]),
   reaction_added: new Set(["on", "emoji", "filter"]),
+  diff_posted: new Set(["on", "filter"]),
+  schedule: new Set(["on", "cron", "interval"]),
+  webhook: new Set(["on"]),
 };
 const COMMON_STEP_KEYS = ["id", "name", "action", "if", "timeout_secs"];
 const ACTION_STEP_KEYS: Record<ActionType, ReadonlySet<string>> = {
@@ -227,13 +277,13 @@ export function yamlToFormState(
     if (!rawTrigger || typeof rawTrigger.on !== "string") {
       return { ok: false, error: "trigger.on is required" };
     }
-    if (!TRIGGER_TYPES.includes(rawTrigger.on as TriggerType)) {
+    if (!isTriggerType(rawTrigger.on)) {
       return {
         ok: false,
         error: `Unsupported trigger type "${rawTrigger.on}" — use the YAML editor`,
       };
     }
-    const triggerOn = rawTrigger.on as TriggerType;
+    const triggerOn = rawTrigger.on;
     const triggerUnknown = unknownKey(rawTrigger, TRIGGER_KEYS[triggerOn]);
     if (triggerUnknown) {
       return {
@@ -241,14 +291,46 @@ export function yamlToFormState(
         error: `Unsupported ${triggerOn} trigger field "${triggerUnknown}" — use the YAML editor`,
       };
     }
-    for (const key of ["filter", "emoji"] as const) {
+    for (const key of ["filter", "emoji", "cron", "interval"] as const) {
       const error = optionalOwnedStringError(rawTrigger, key, `trigger.${key}`);
-      if (error) return { ok: false, error };
+      if (error) {
+        return {
+          ok: false,
+          // Schedule fields stay editable in YAML; say so for type errors too.
+          error:
+            triggerOn === "schedule" && !error.includes("YAML editor")
+              ? `${error} — use the YAML editor`
+              : error,
+        };
+      }
+    }
+    if (triggerOn === "schedule") {
+      const hasCron = rawTrigger.cron !== undefined;
+      const hasInterval = rawTrigger.interval !== undefined;
+      if (hasCron === hasInterval) {
+        return {
+          ok: false,
+          error: hasCron
+            ? "Schedule triggers cannot specify both cron and interval — use the YAML editor"
+            : "Schedule triggers require either cron or interval — use the YAML editor",
+        };
+      }
+      if (typeof rawTrigger.cron === "string") {
+        const error = cronExpressionError(rawTrigger.cron);
+        if (error) {
+          return {
+            ok: false,
+            error: `Unsupported cron expression: ${error} Use the YAML editor`,
+          };
+        }
+      }
     }
     const trigger: TriggerConfig = {
       on: triggerOn,
       filter: rawTrigger.filter as string | undefined,
       emoji: rawTrigger.emoji as string | undefined,
+      cron: rawTrigger.cron as string | undefined,
+      interval: rawTrigger.interval as string | undefined,
     };
 
     if (!Array.isArray(parsed.steps)) {
@@ -346,6 +428,14 @@ export function yamlToFormState(
           return {
             ok: false,
             error: `Step ${number} reply_in_thread must be a boolean — use the YAML editor`,
+          };
+        }
+        // The relay accepts an explicit false on any trigger, so only a true
+        // value on a message-less trigger is refused.
+        if (step.reply_in_thread && !isThreadReplyEligibleTrigger(triggerOn)) {
+          return {
+            ok: false,
+            error: `reply_in_thread is not supported for ${triggerOn} triggers — use the YAML editor`,
           };
         }
       }

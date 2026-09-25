@@ -89,6 +89,11 @@ explicitly retry `refresh()`. Unknown codes in a ready catalog remain literal.
 Retries retain the exact original event and URL even if the palette changes.
 Low-level `outbox.send` remains raw intent; callers supply its tags themselves.
 
+Text edits use `session.messages.edit(row.id, content, row.attachmentSourceId ?? row.id)`
+with the current folded row. Attachment provenance selects the latest surviving
+same-author edit carrying `imeta`, otherwise the original message. A missing
+source fails before enqueueing rather than restoring obsolete attachments.
+
 Message and reaction rendering uses only each event's own emoji tags, never the
 current palette. Tagged edits replace mappings; legacy tagless edits preserve the
 original message's mappings. All thumbnails use the captured session's media

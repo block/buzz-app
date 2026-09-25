@@ -104,7 +104,12 @@ function OwnedCompletion({
 }) {
   const id = useId();
   const compact = provider.pluginId === "buzz.emoji";
-  const popup = useCompletionPosition(input, compact ? 0.375 : 1);
+  const mention = provider.pluginId === "buzz.mentions";
+  const popup = useCompletionPosition(
+    input,
+    compact ? 0.375 : 1,
+    mention ? { preferAbove: true, gap: 4, maxWidth: 380 } : undefined,
+  );
   const list = useRef<HTMLDivElement>(null);
   const [result, setResult] = useState<CompletionResult>();
   const latest = useRef<CompletionResult | undefined>(undefined);
@@ -262,6 +267,7 @@ function OwnedCompletion({
             className={styles.popup}
             aria-label={`${provider.title} suggestions`}
             data-compact={compact || undefined}
+            data-mention={mention || undefined}
           >
             <div
               id={id}
@@ -287,8 +293,8 @@ function OwnedCompletion({
                   onPointerDown={(event) => {
                     if (event.button === 0) event.preventDefault();
                   }}
-                  onPointerEnter={
-                    compact
+                  onPointerMove={
+                    compact || mention
                       ? () => {
                           revealSelection.current = false;
                           setSelected(item.id);
@@ -304,9 +310,20 @@ function OwnedCompletion({
                     </span>
                   )}
                   <span className={styles.label} data-completion-label>
-                    {item.label}
+                    {mention ? (
+                      <span className={styles.name}>{item.label}</span>
+                    ) : (
+                      item.label
+                    )}
                     {item.detail && (
-                      <small aria-hidden={compact || undefined}>
+                      <small
+                        aria-hidden={compact || undefined}
+                        data-recipient-key={
+                          (mention && /^[0-9a-f]{64}$/.test(item.detail)) ||
+                          undefined
+                        }
+                        title={mention ? item.detail : undefined}
+                      >
                         {item.detail}
                       </small>
                     )}
@@ -324,8 +341,8 @@ function OwnedCompletion({
                   onPointerDown={(event) => {
                     if (event.button === 0) event.preventDefault();
                   }}
-                  onPointerEnter={
-                    compact
+                  onPointerMove={
+                    compact || mention
                       ? () => {
                           revealSelection.current = false;
                           setSelected(RETRY);

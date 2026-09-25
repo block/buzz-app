@@ -405,6 +405,29 @@ encrypted publication/readback, reload, cancellation and local manual-unread.
 The reload control holds network content so verified disk-restore wiring is required.
 This is not a deployed-relay, native signer or cross-device integration test.
 
+## Native input and transient effects
+
+Before capturing a reading baseline, `timeline.mjs` arms a passive wheel observer
+and waits for that gesture's `scrollend`, then settles layout. Linux WebKit can
+pause longer than the geometry sampler's quiet window before applying the last
+wheel movement. Geometry-only settlement is not input completion. Settings and
+other baseline setup callers share this barrier with their actual scroll container.
+`edge()` retains boundary input for paging: when already within the existing 4px
+edge tolerance, movement and `scrollend` are not required. Non-boundary movement
+must finish before `upper()` reverses direction.
+
+Helper controls hold completion across a geometry pause, reject blocked input and
+stale completion, drain timed-out DOM reads, and withhold a final edge displacement
+before starting the reading gesture. These do not replace the app's strict same-ID/Y
+and bottom assertions or establish guarantees for arbitrary Safari versions.
+
+The New message journey records removal-effect insertion and cleanup before input,
+then inspects both boundaries after cleanup. It retains real CSS animation and
+reduced-motion checks instead of requiring automation to catch a 400ms DOM window.
+The link-message source fixture imports the app's bundled Inter font and waits for
+its loaded face before comparing native font boxes; a declared CSS family alone
+can silently use platform fallback fonts.
+
 ## Fixture server isolation
 
 Concurrent Vite fixture servers must own separate optimizer caches. Use

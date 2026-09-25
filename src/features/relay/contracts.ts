@@ -16,6 +16,8 @@ export type ChannelSummary = Readonly<{
   id: string;
   name: string;
   preview?: string | undefined;
+  /** Newest verified user-visible activity for sidebar ordering, in Unix seconds. */
+  lastActivityAt?: number | undefined;
   /** Readable public nonmember channel; not part of the joined roster. */
   readOnly?: true;
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
@@ -38,8 +40,12 @@ export type Profile = Readonly<{
   name: string;
   picture?: string;
   about?: string;
+  /** Self-declared NIP-05 identifier; not proof of DNS verification. */
+  nip05?: string;
   /** Self-declared display hint, not proof of ownership, membership or authority. */
   isAgent?: true;
+  /** Owner named by the profile auth tag; display metadata, never authorization. */
+  ownerPubkey?: string;
 }>;
 export type Attachment = Readonly<{
   url: string;
@@ -90,13 +96,18 @@ export type ChannelMessage = Readonly<{
   attachmentContentRemoved?: true;
   /** Pubkeys named by signed `p` tags. Identity never comes from prose. */
   mentions: readonly string[];
+  /** Authorized edit supplying current imeta; absent when sourced from the original. */
+  attachmentSourceId?: string;
   attachments: readonly Attachment[];
   /** Event-local mappings, never the current community palette. */
   emoji?: readonly CustomEmoji[];
   reactions: readonly MessageReaction[];
   /** Canonical thread-opening target from signed reply/root tags; absent on root messages. */
   threadRootId?: string | undefined;
-  /** Relay-signed thread summary for this row; zero when the row has no replies. */
+  /** Immediate signed reply target; separate from the canonical thread root. */
+  replyParentId?: string | undefined;
+  /** Relay-signed whole-thread reply total (including nested replies).
+   * Falls back to direct replies when the summary lacks a valid descendant total. */
   replyCount: number;
   /** Pubkeys the relay reports as thread participants (may be empty even with replies). */
   participants: readonly string[];
@@ -107,6 +118,8 @@ export type ChannelList = Readonly<{
   /** Set when the viewer's roster read hit its cap; omitted channels are then not evidence of removal. */
   coverage?: "partial";
   asOf?: number;
+  /** Initial Recent ordering observation, independent of roster/access readiness. */
+  activityStatus?: "idle" | "loading" | "ready" | "error" | "unavailable";
   channels: readonly ChannelSummary[];
   error?: string;
 }>;

@@ -1,3 +1,17 @@
+import { Calendar } from "../../../../src/shared/design-system/ui/Calendar";
+import { FieldButton } from "../../../../src/shared/design-system/ui/FieldButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+} from "../../../../src/shared/design-system/ui/Menu";
+import {
+  MenuSpecimen,
+  PopoverSpecimen,
+  ChoiceRowSpecimen,
+} from "./MenuSpecimens";
 import {
   InputExamples,
   TextareaExamples,
@@ -7,7 +21,6 @@ import {
 } from "./FormSpecimens";
 import { ToastSpecimens } from "./ToastSpecimens";
 import { ButtonSpecimen, IconButtonSpecimen } from "./ButtonSpecimens";
-import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
 import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
 import { DialogSpecimens } from "./DialogSpecimens";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
@@ -24,8 +37,6 @@ import { PanelSwapPlaygrounds } from "./PanelSwapPlaygrounds";
 import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorkspace";
 import { BentoSpecimen } from "./BentoSpecimen";
 import {
-  BellIcon,
-  CheckIcon,
   DotsThreeIcon,
   HashIcon,
   ChatCircleIcon,
@@ -35,23 +46,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
-import {
-  ContextMenuRoot,
-  ContextMenuTrigger,
-  MenuCheckboxItem,
-  MenuIcon,
-  MenuItem,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuRoot,
-  MenuSeparator,
-  MenuSubmenu,
-  MenuSubmenuPopup,
-  MenuSubmenuTrigger,
-  MenuTrailing,
-  MenuTrigger,
-} from "../../../../src/shared/design-system/ui/Menu";
+
 import { Avatar } from "../../../../src/shared/design-system/ui/Avatar";
 import { InlineChip } from "../../../../src/shared/design-system/ui/InlineChip";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
@@ -67,6 +62,7 @@ import { FullPageSurface } from "../../../../src/shared/design-system/ui/FullPag
 import { PreviewCard } from "../../../../src/shared/design-system/ui/PreviewCard";
 import type { ChipAddress } from "../../../../src/shared/design-system/chips/address";
 import { chipFaces } from "../../../../src/shared/design-system/chips/faceResolver";
+import { ComposerSpecimen } from "./ComposerSpecimen";
 
 const DESTINATIONS = [
   { value: "home", label: "Home" },
@@ -75,6 +71,31 @@ const DESTINATIONS = [
 ] as const;
 
 type Destination = (typeof DESTINATIONS)[number]["value"];
+
+function CalendarSpecimen() {
+  const [date, setDate] = useState(new Date());
+  return <Calendar mode="single" required selected={date} onSelect={setDate} />;
+}
+
+function FieldButtonSpecimen() {
+  const [duration, setDuration] = useState("Today");
+  return (
+    <MenuRoot>
+      <MenuTrigger render={<FieldButton aria-label="Duration" />}>
+        {duration}
+      </MenuTrigger>
+      <MenuPopup>
+        <MenuRadioGroup value={duration} onValueChange={setDuration}>
+          {["Today", "This week", "Custom"].map((item) => (
+            <MenuRadioItem key={item} value={item}>
+              {item}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuPopup>
+    </MenuRoot>
+  );
+}
 
 function SpecimenFrame({
   children,
@@ -215,7 +236,6 @@ function AvatarSpecimen() {
           <IconButton
             aria-label="View Morgan profile"
             size="large"
-            shape="round"
             icon={
               <Avatar src={avatarUrl} alt="" fallback="Morgan" size="fill" />
             }
@@ -223,7 +243,6 @@ function AvatarSpecimen() {
           <IconButton
             aria-label="View Alex profile"
             size="large"
-            shape="round"
             icon={<Avatar alt="" fallback="Alex" size="fill" />}
           />
         </div>
@@ -505,6 +524,21 @@ function NavigationItemSpecimen() {
           />
         </div>
       </SpecimenGroup>
+      <SpecimenGroup label="Picker option — even padding and immediate hover feedback">
+        <div className="component-navigation-section-demo">
+          <NavigationItem
+            variant="option"
+            label="Alex"
+            icon={<Avatar fallback="Alex" alt="" size="default" />}
+          />
+          <NavigationItem
+            variant="option"
+            label="Unavailable"
+            disabled
+            icon={<Avatar fallback="Unavailable" alt="" size="default" />}
+          />
+        </div>
+      </SpecimenGroup>
       <SpecimenGroup label="Inset — one level of nesting under a row">
         <div className="component-navigation-section-demo">
           <NavigationItem
@@ -732,75 +766,6 @@ function SwitchSpecimen() {
   );
 }
 
-function ActionMenuSpecimen() {
-  const [sort, setSort] = useState("recent");
-  const [notifications, setNotifications] = useState(true);
-  return (
-    <MenuRoot>
-      <MenuTrigger
-        render={
-          <IconButton
-            aria-label="More actions"
-            icon={<DotsThreeIcon size={16} aria-hidden="true" />}
-          />
-        }
-      />
-      <MenuPopup>
-        <MenuItem>
-          <MenuIcon>
-            <CheckIcon size={16} />
-          </MenuIcon>
-          Mark all as read
-        </MenuItem>
-        <MenuCheckboxItem
-          checked={notifications}
-          onCheckedChange={setNotifications}
-        >
-          <MenuIcon>
-            <BellIcon size={16} />
-          </MenuIcon>
-          Notifications
-        </MenuCheckboxItem>
-        <MenuSeparator />
-        <MenuSubmenu>
-          <MenuSubmenuTrigger>Sort</MenuSubmenuTrigger>
-          <MenuSubmenuPopup>
-            <MenuRadioGroup value={sort} onValueChange={setSort}>
-              <MenuRadioItem value="recent">Recent</MenuRadioItem>
-              <MenuRadioItem value="alpha">A–Z</MenuRadioItem>
-            </MenuRadioGroup>
-            <MenuSeparator />
-            <MenuItem disabled>
-              Disabled action
-              <MenuTrailing>⌘D</MenuTrailing>
-            </MenuItem>
-          </MenuSubmenuPopup>
-        </MenuSubmenu>
-      </MenuPopup>
-    </MenuRoot>
-  );
-}
-
-function MenuSpecimen() {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="component-specimen-stack">
-      <ActionMenuSpecimen />
-      <ContextMenuRoot>
-        <ContextMenuTrigger render={<Button>Context actions</Button>} />
-        <MenuPopup>
-          <MenuItem>Copy link</MenuItem>
-          <MenuItem disabled>Unavailable action</MenuItem>
-        </MenuPopup>
-      </ContextMenuRoot>
-      <Button onClick={() => setOpen(true)}>Open menu dialog</Button>
-      <Dialog open={open} onOpenChange={setOpen} title="Menu composition">
-        <ActionMenuSpecimen />
-      </Dialog>
-    </div>
-  );
-}
-
 function AlertDialogSpecimen() {
   const [open, setOpen] = useState(false);
   return (
@@ -924,6 +889,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       </Field>
     </SpecimenFrame>
   ),
+  calendar: CalendarSpecimen,
+  "field-button": FieldButtonSpecimen,
   input: InputExamples,
   textarea: TextareaExamples,
   "radio-group": RadioGroupSpecimen,
@@ -946,6 +913,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   panel: PanelSpecimen,
   tabs: TabsSpecimen,
   menu: MenuSpecimen,
+  popover: PopoverSpecimen,
+  "choice-row": ChoiceRowSpecimen,
   select: SelectExamples,
   combobox: ComboboxExamples,
   switch: SwitchSpecimen,
@@ -1005,6 +974,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   ),
   "panel-header": PanelHeaderSpecimen,
   "search-field": SearchExamples,
+  composer: ComposerSpecimen,
   "navigation-section": NavigationSectionSpecimen,
   "navigation-item": NavigationItemSpecimen,
 };

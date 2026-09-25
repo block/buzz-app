@@ -101,7 +101,6 @@ export function workflowYaml(text: string) {
     ids.add(step.id);
   }
   return {
-    webhook: value.trigger.on === "webhook",
     // Match legacy WorkflowDef: omission means enabled; do not rewrite YAML.
     enabled: value.enabled !== false,
     name: value.name,
@@ -145,11 +144,15 @@ export function validateWorkflowEvent(event: EventData, viewer: string) {
     );
     if (revisions.length && !HEX.test(one(event, "expected-revision")))
       throw new Error("Invalid expected workflow revision");
-    if (workflowYaml(event.content).webhook)
-      throw new Error("Webhook saves require secure one-time-secret handling");
+    workflowYaml(event.content);
   } else if (event.tags.some(([name]) => name === "expected-revision"))
     throw new Error("Unexpected workflow revision tag");
   return reference;
+}
+/** The relay's inbound webhook route; the secret travels in an X-Webhook-Secret header. */
+export function hookUrl(relayHttpUrl: string, id: string) {
+  if (!UUID.test(id)) throw new Error("Invalid workflow ID");
+  return `${relayHttpUrl}/hooks/${id}`;
 }
 export function runsPath(id: string, cursor?: WorkflowRunCursor) {
   if (!UUID.test(id)) throw new Error("Invalid workflow ID");

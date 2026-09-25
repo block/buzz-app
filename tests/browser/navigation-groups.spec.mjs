@@ -33,7 +33,7 @@ test("Projects → Messages keeps saved groups, selected channel, and scroll on 
     .getByRole("button", { name: "Projects", exact: true })
     .first()
     .click();
-  await expect(sidebar).toHaveCount(0);
+  await expect(sidebar).toBeVisible();
   let release;
   const held = new Promise((resolve) => {
     release = resolve;
@@ -91,7 +91,7 @@ test("Projects → Messages keeps saved groups, selected channel, and scroll on 
     ).toEqual([]);
     expect(
       decodes,
-      "Remount must reuse the engine snapshot, not fetch/decode again",
+      "Page return must reuse the engine snapshot, not fetch/decode again",
     ).toBe(0);
   } finally {
     release();

@@ -109,12 +109,34 @@ for (const mode of ["light", "dark"]) {
     for (const width of [1280, 900, 390]) {
       await page.setViewportSize({ width, height: 800 });
       await expect(key).toBeVisible();
+      const bounds = await region.boundingBox();
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
       expect(
         await region.evaluate((el) => el.scrollWidth > el.clientWidth),
       ).toBe(false);
       expect(await key.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
         false,
       );
+      // The human profile has no Memories tab; keyboard navigation stays
+      // confined to the available tabs, including at narrow widths.
+      const tabs = region.getByRole("tablist", { name: "Profile sections" });
+      const infoTab = tabs.getByRole("tab", { name: "Info", exact: true });
+      const channels = tabs.getByRole("tab", {
+        name: "Channels",
+        exact: true,
+      });
+      await expect(tabs.getByRole("tab", { name: "Memories" })).toHaveCount(0);
+      await infoTab.focus();
+      await infoTab.press("End");
+      await expect(channels).toBeFocused();
+      await expect(channels).toBeInViewport({ ratio: 1 });
+      await channels.press("Enter");
+      await expect(channels).toHaveAttribute("aria-selected", "true");
+      await channels.press("Home");
+      await infoTab.press("Enter");
+      await expect(infoTab).toHaveAttribute("aria-selected", "true");
+      await copy.scrollIntoViewIfNeeded();
+      await expect(copy).toBeInViewport({ ratio: 1 });
       await panel.screenshot({
         path: info.outputPath(`profile-${mode}-${width}.png`),
       });

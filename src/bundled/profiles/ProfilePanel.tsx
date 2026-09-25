@@ -1,11 +1,17 @@
+import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
+import { ProfileAgentActions } from "./ProfileAgentActions";
+import { ProfileMemories } from "./ProfileMemories";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
+import { ProfileAgentRuntime } from "./ProfileAgentRuntime";
+import { ProfileRuntime, useRuntimeAgent } from "./ProfileRuntime";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
-import { useIdentityNames } from "../../features/identity-names/react";
+import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { PresenceIndicator } from "../../features/presence/react";
 import {
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -17,13 +23,17 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { activityTarget } from "../../features/agents/activity-target";
+import { ProfileActivity } from "./ProfileActivity";
 import type { PanelProps } from "../../features/panels/service";
 import { profileKey, profileTarget } from "../../features/profiles/target";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import {
+  ProfileAgentIdentity,
+  useVerifiedAgentOwner,
+} from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
 
 export function ProfilePanel({
@@ -32,10 +42,12 @@ export function ProfilePanel({
   context,
   navigation,
   control,
+  instanceId,
 }: PanelProps & {
   relay: RelayData;
   navigation?: Navigation;
   control?: AgentControl;
+  instanceId?: string | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const pubkey = profileKey(target);
@@ -44,18 +56,29 @@ export function ProfilePanel({
     return <p>Connect to a community to view this profile.</p>;
   return (
     <ProfileDetails
-      key={`${connection.scope}:${connection.generation}:${pubkey}`}
+      key={`${connection.scope}:${connection.generation}:${pubkey}:${instanceId ?? ""}`}
       session={connection.session}
       pubkey={pubkey}
+      instanceId={instanceId}
       context={context}
       navigation={navigation}
       control={control}
       scope={connection.scope}
       viewer={connection.viewer}
-    />
+    >
+      {control && (
+        <ProfileAgentActions
+          control={control}
+          relay={relay}
+          pubkey={pubkey}
+          instanceId={instanceId}
+        />
+      )}
+    </ProfileDetails>
   );
 }
 function ProfileDetails({
+  children,
   session,
   pubkey,
   context,
@@ -63,7 +86,10 @@ function ProfileDetails({
   control,
   scope,
   viewer,
+  instanceId,
 }: {
+  instanceId?: string | undefined;
+  children?: ReactNode;
   session: RelaySession;
   pubkey: string;
   context: PanelProps["context"];
@@ -87,10 +113,17 @@ function ProfileDetails({
   );
   const [attempt, retry] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
-  const [tab, setTab] = useState<"info" | "channels">("info");
+  const [tab, setTab] = useState<"info" | "runtime" | "channels" | "memories">(
+    "info",
+  );
   const region = useRef<HTMLElement>(null);
+  const messageAttempt = useRef<AbortController>(undefined);
+  const [openingMessage, setOpeningMessage] = useState(false);
+  const [messageError, setMessageError] = useState("");
   useEffect(() => {
     region.current?.focus();
+    // Target, viewer and community changes remount this view (see key above).
+    return () => messageAttempt.current?.abort();
   }, []);
   // Each target/session owns this completion; shared data work remains session-owned.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery.
@@ -110,6 +143,27 @@ function ProfileDetails({
     };
   }, [session, pubkey, attempt]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const knownAgent = agentPubkeys.has(pubkey);
+  const verifiedOwner = useVerifiedAgentOwner(
+    session,
+    knownAgent ? pubkey : undefined,
+  );
+  const isOwner = knownAgent && !!viewer && verifiedOwner === viewer;
+  // Private local configuration needs both native custody and verified ownership.
+  const runtimeAgent = useRuntimeAgent(control, scope, pubkey);
+  const canViewRuntime = isOwner && !!runtimeAgent;
+  const selectedTab =
+    (tab === "memories" && !isOwner) || (tab === "runtime" && !canViewRuntime)
+      ? "info"
+      : tab;
+  useEffect(() => {
+    if (!isOwner)
+      setTab((current) => (current === "memories" ? "info" : current));
+  }, [isOwner]);
+  useEffect(() => {
+    if (!canViewRuntime)
+      setTab((current) => (current === "runtime" ? "info" : current));
+  }, [canViewRuntime]);
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
     try {
@@ -119,12 +173,61 @@ function ProfileDetails({
     }
   }
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
-  const identityName = useIdentityNames(session.names);
+  const identityName = useChannelIdentityNames(session, context?.channelId);
   const name = identityName(pubkey, profile?.name ?? "Unknown profile");
-  const activity = activityTarget(pubkey, context?.channelId);
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
     : null;
+  // As in New message, a known agent needs this community's ready native control.
+  const messageable = () =>
+    !agentPubkeys.has(pubkey) ||
+    session.agentChoices
+      .snapshot()
+      .identities.some((agent) => agent.managed && agent.pubkey === pubkey);
+  const canMessage =
+    session.directMessages.available &&
+    !!navigation &&
+    !!viewer &&
+    !!communityOrigin &&
+    viewer !== pubkey &&
+    messageable();
+  async function openMessage() {
+    if (
+      messageAttempt.current ||
+      !navigation ||
+      !viewer ||
+      !communityOrigin ||
+      !messageable()
+    )
+      return;
+    const controller = new AbortController();
+    messageAttempt.current = controller;
+    setOpeningMessage(true);
+    setMessageError("");
+    try {
+      const channelId = await session.directMessages.open(
+        [pubkey],
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      void navigation.open({
+        version: 1,
+        kind: "conversation",
+        channelId,
+        scope: { viewer, communityOrigin },
+      });
+    } catch (reason) {
+      if (!controller.signal.aborted)
+        setMessageError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not open the conversation. Try again.",
+        );
+    } finally {
+      messageAttempt.current = undefined;
+      if (!controller.signal.aborted) setOpeningMessage(false);
+    }
+  }
   return (
     <section
       ref={region}
@@ -148,11 +251,17 @@ function ProfileDetails({
         <h2 className="text-heading">{name}</h2>
       </div>
       <Tabs
-        value={tab}
+        value={selectedTab}
         onValueChange={setTab}
         items={[
           { value: "info", label: "Info" },
+          ...(canViewRuntime
+            ? [{ value: "runtime" as const, label: "Runtime" }]
+            : []),
           { value: "channels", label: "Channels" },
+          ...(isOwner
+            ? [{ value: "memories" as const, label: "Memories" }]
+            : []),
         ]}
         label="Profile sections"
         variant="panel"
@@ -165,27 +274,59 @@ function ProfileDetails({
                   pubkey={pubkey}
                   profile
                 />
-                {profile?.about && (
-                  <p className={styles.about}>{profile.about}</p>
+                <UserStatusDisplay session={session} userId={pubkey} />
+                {profile?.nip05 && (
+                  <p className={styles.identifier}>
+                    <span>NIP-05 (unverified)</span>{" "}
+                    <span>{profile.nip05}</span>
+                  </p>
                 )}
-                {context?.canOpen(activity) && (
+                {canMessage && (
                   <div>
                     <Button
                       size="compact"
-                      onClick={() => context.open(activity)}
+                      loading={openingMessage}
+                      onClick={() => void openMessage()}
                     >
-                      View activity
+                      Message
                     </Button>
-                    <p className="text-body-sm text-secondary">
-                      Owner-only agent telemetry in this channel, if published.
-                    </p>
+                    {messageError && <p role="alert">{messageError}</p>}
                   </div>
                 )}
+                {profile?.about && (
+                  <p className={styles.about}>{profile.about}</p>
+                )}
+                {control && scope && (
+                  <ProfileAgentRuntime
+                    control={control}
+                    scope={scope}
+                    pubkey={pubkey}
+                    instanceId={instanceId}
+                  />
+                )}
+                {children}
+                {knownAgent && verifiedOwner && (
+                  <ProfileAgentIdentity
+                    session={session}
+                    owner={verifiedOwner}
+                    viewer={viewer}
+                    context={context}
+                  />
+                )}
+                <ProfileActivity
+                  session={session}
+                  pubkey={pubkey}
+                  context={context}
+                />
                 {control && (
                   <ProfileInstances
+                    errorHandledByActions
                     control={control}
                     pubkey={pubkey}
-                    navigation={navigation}
+                    context={context}
+                    session={session}
+                    canOpenPrivate={verifiedOwner === viewer && !!viewer}
+                    selectedId={instanceId}
                     scope={scope}
                     communityOrigin={communityOrigin}
                     viewer={viewer}
@@ -240,6 +381,19 @@ function ProfileDetails({
                     </>
                   ))}
               </>
+            ) : selected === "runtime" &&
+              canViewRuntime &&
+              control &&
+              runtimeAgent &&
+              verifiedOwner ? (
+              <ProfileRuntime
+                control={control}
+                agent={runtimeAgent}
+                session={session}
+                owner={verifiedOwner}
+              />
+            ) : selected === "memories" && isOwner ? (
+              <ProfileMemories session={session} pubkey={pubkey} />
             ) : (
               <ProfileChannels
                 session={session}
@@ -247,6 +401,8 @@ function ProfileDetails({
                 navigation={navigation}
                 communityOrigin={communityOrigin}
                 viewer={viewer}
+                control={control}
+                scope={scope}
               />
             )}
           </div>

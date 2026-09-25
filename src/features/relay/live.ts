@@ -140,7 +140,8 @@ type Route = {
   deadline?: ReturnType<typeof setTimeout>;
 };
 const CHANNEL_KINDS = [
-  9, 40002, 40008, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002, 39005, 20002,
+  9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
+  39005, 20002,
 ];
 /** One authenticated socket, independently established channel routes and two explicit globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
@@ -371,6 +372,12 @@ export function subscribeRelayTraffic(
           : []),
         ...(route.id === "profiles"
           ? [
+              {
+                kinds: [30315],
+                "#d": ["general"],
+                since: route.since,
+                limit: LIVE_REPLAY_LIMIT,
+              },
               {
                 kinds: [30030],
                 "#d": [EMOJI_SET],

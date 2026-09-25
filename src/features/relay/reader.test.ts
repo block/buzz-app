@@ -310,3 +310,32 @@ it("disposal settles paused work and removes lifecycle callbacks and pending ren
   expect(h.pending).toHaveLength(0);
   await expect(h.read(filter("retry"))).rejects.toThrow();
 });
+
+it("admits only the bounded workflow batch exception without relaxing other read budgets", async () => {
+  const { read, next, pending } = setup();
+  const batch = Array.from({ length: 128 }, (_, i) => ({
+    kinds: [30620],
+    "#h": [`00000000-0000-4000-8000-${String(i).padStart(12, "0")}`],
+    limit: 100,
+  }));
+  const result = read(batch);
+  expect(next().filters).toEqual(batch);
+  for (const invalid of [
+    [...batch, ...batch.slice(0, 1)],
+    batch.map((f) => ({ ...f, kinds: [9] })),
+    batch.map((f) => ({ ...f, limit: 500 })),
+    batch.map((f) => ({ ...f, search: "anything" })),
+    batch.map((f) => ({ ...f, "#h": ["invalid"] })),
+    Array(5).fill(batch[0]),
+    batch.map((f) => ({
+      ...f,
+      "#h": [...f["#h"], "00000000-0000-4000-8000-000000000999"],
+    })),
+  ])
+    await expect(read(invalid)).rejects.toThrow("1–4 filters");
+  expect(pending).toHaveLength(0);
+  // Dispose cancels the valid in-flight batch exactly like an ordinary read.
+  const rejected = expect(result).rejects.toMatchObject({ name: "AbortError" });
+  owners.at(-1)?.dispose();
+  await rejected;
+});

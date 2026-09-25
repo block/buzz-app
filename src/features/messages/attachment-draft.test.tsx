@@ -64,6 +64,7 @@ it("queues files without starting network transfer until send preparation", asyn
     work = draft.result.current.store.prepareForSend(send.signal);
   });
   expect(h.calls).toHaveLength(1);
+  expect(h.calls[0]?.channel).toBe("one");
   expect(draft.result.current.items[0]?.status).toBe("uploading");
   await act(async () => {
     h.calls[0]?.result.resolve(uploaded());

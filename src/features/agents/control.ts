@@ -394,7 +394,6 @@ export function createAgentControl(
       command === "stop" ? undefined : id,
     );
   };
-  const deleteAgent = host?.delete;
   const installGoose = host?.installGoose;
   return {
     models,

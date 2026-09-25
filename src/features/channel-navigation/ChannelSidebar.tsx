@@ -570,7 +570,8 @@ function ReadySidebar({
               rows[index - 1] ??
               sidebar.list.current?.querySelector<HTMLElement>(
                 "details > summary",
-              );
+              ) ??
+              undefined;
             hiddenDms.hide(channel.id);
           }}
         >
@@ -729,15 +730,6 @@ function ReadySidebar({
                 </Button>
               </div>
             )}
-            <div className={styles.sidebarBrand}>
-              <span
-                className={styles.sidebarBrandMark}
-                role="img"
-                aria-label="Buzz"
-              />
-            </div>
-            <div className={styles.destinations}>{children}</div>
-
             <SidebarUnread listRef={sidebar.list}>
               <SidebarNavigation
                 agentsEnabled={agentsEnabled}

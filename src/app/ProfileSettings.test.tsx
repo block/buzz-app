@@ -42,6 +42,7 @@ function communities(): Communities {
   return {
     snapshot,
     subscribe: () => () => {},
+    relay: { snapshot: () => ({ status: "unavailable" }) },
     saveProfile: vi.fn(),
   } as unknown as Communities;
 }
@@ -62,7 +63,11 @@ it("loads and publishes the selected community profile before updating the local
       about: "Community bio",
     },
   });
-  const publish = vi.spyOn(communityApi, "publishProfile").mockResolvedValue();
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
   const user = userEvent.setup();
   render(
     <ProfileSettings
@@ -107,15 +112,24 @@ it("loads and publishes the selected community profile before updating the local
 it("keeps a newer profile seed when an older community publication finishes last", async () => {
   const service = communities();
   const olderPublication = deferred();
+  const saved = new Map<
+    string,
+    Parameters<typeof communityApi.publishProfile>[1]
+  >();
   vi.spyOn(communityApi, "inspectProfile").mockImplementation(async (id) => ({
     exists: true,
     existing: { name: id },
-    profile: { name: id === "older" ? "Older" : "Newer", picture: "" },
+    profile: saved.get(id) ?? {
+      name: id === "older" ? "Older" : "Newer",
+      picture: "",
+    },
   }));
   const publish = vi
     .spyOn(communityApi, "publishProfile")
-    .mockImplementationOnce(() => olderPublication.promise)
-    .mockResolvedValueOnce();
+    .mockImplementation(async (id, profile) => {
+      if (id === "older") await olderPublication.promise;
+      saved.set(id, profile);
+    });
   const user = userEvent.setup();
   const older = render(
     <ProfileSettings
@@ -132,7 +146,7 @@ it("keeps a newer profile seed when an older community publication finishes last
   await user.click(
     within(older.container).getByRole("button", { name: "Save" }),
   );
-  expect(publish).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
 
   const newer = render(
     <ProfileSettings
@@ -202,7 +216,8 @@ it("keeps a community draft when publication fails and retries a failed read", a
   );
   expect(name).toHaveValue("Keep this draft");
   expect(service.saveProfile).not.toHaveBeenCalled();
-  expect(inspect).toHaveBeenCalledTimes(2);
+  // Failed initial load, explicit retry, then fresh preflight; no confirmation.
+  expect(inspect).toHaveBeenCalledTimes(3);
   expect(publish).toHaveBeenCalledTimes(1);
 });
 
@@ -247,10 +262,12 @@ it("previews draft profile content and the shared avatar crop before saving", as
     screen.getByLabelText("Profile description (optional)"),
     "Building with Buzz",
   );
+  await user.click(screen.getByRole("button", { name: "Edit avatar" }));
   await user.type(
-    screen.getByLabelText("Picture URL (optional)"),
+    await screen.findByLabelText("Picture URL (optional)"),
     "https://example.test/profile.png",
   );
+  await user.click(screen.getByRole("button", { name: "Done" }));
 
   expect(preview).toHaveTextContent("Clay");
   expect(preview).toHaveTextContent("Building with Buzz");
@@ -318,15 +335,20 @@ it("rejects profile image URLs with embedded credentials", async () => {
   const user = userEvent.setup();
   render(<ProfileSettings communities={service} />, { wrapper: ToastProvider });
 
+  await user.click(screen.getByRole("button", { name: "Edit avatar" }));
   await user.type(
-    screen.getByLabelText("Picture URL (optional)"),
+    await screen.findByLabelText("Picture URL (optional)"),
     "https://user:secret@example.test/profile.png",
   );
 
   expect(
-    screen.getByText("Enter an HTTPS image URL without embedded credentials."),
-  ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    screen.getByLabelText("Picture URL (optional)"),
+  ).toHaveAccessibleDescription(/Use an HTTPS image URL without credentials/);
+  expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  expect(service.saveProfile).not.toHaveBeenCalled();
 });
 
 it("shows exact public identity formats and copies either value", async () => {
@@ -417,6 +439,7 @@ function setup() {
       return () => listeners.delete(listener);
     },
     saveProfile,
+    relay: { snapshot: () => ({ status: "unavailable" }) },
   } as unknown as Communities;
   render(<ProfileSettings communities={communities} />, {
     wrapper: ToastProvider,
@@ -444,14 +467,20 @@ it("shows Cancel then Save only for edits, including picture edits, and restores
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Edit avatar" }));
   const picture = screen.getByRole("textbox", {
     name: "Picture URL (optional)",
   });
   fireEvent.change(picture, {
     target: { value: "https://example.com/avatar.png" },
   });
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(picture).toHaveValue("");
+  fireEvent.click(screen.getByRole("button", { name: "Edit avatar" }));
+  expect(
+    screen.getByRole("textbox", { name: "Picture URL (optional)" }),
+  ).toHaveValue("");
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
@@ -519,21 +548,20 @@ it("keeps the focused Save on failure and hands focus off after retry", async ()
 it("preserves input focus on implicit submit and external profile updates", async () => {
   const user = userEvent.setup();
   const { name, saveProfile } = setup();
-  const picture = screen.getByRole("textbox", {
-    name: "Picture URL (optional)",
-  });
   await user.type(name, " updated");
-  picture.focus();
   await user.keyboard("{Enter}");
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
-  expect(picture).toHaveFocus();
+  expect(name).toHaveFocus();
   await user.type(name, " again");
-  picture.focus();
+  const description = screen.getByRole("textbox", {
+    name: "Profile description (optional)",
+  });
+  description.focus();
   act(() => saveProfile({ name: "Arjun updated again", picture: "" }));
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
-  expect(picture).toHaveFocus();
+  expect(description).toHaveFocus();
 });

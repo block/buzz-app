@@ -22,6 +22,7 @@ process evidence and visible **Start / Stop**. **Edit**, **Duplicate**, and
 settings and a fresh identity; write-only environment values require re-entry.
 Delete stops the local process and removes this app's settings and Keychain key
 after confirmation. It does not archive the relay identity or erase messages.
+Deployed remote records are refused.
 Same-key identities at different destinations have separate
 cards; actions use native ID/revision, never the display name. Managed controls
 remain available when the old library is disconnected, unavailable or archived.
@@ -93,7 +94,9 @@ can open browser sign-in. No separate Connect button is required. Errors/cancell
 need explicit Retry; Refresh in **Advanced model settings** stays headless.
 Choose a result or enter a custom ID (blank is allowed); Enter or leaving the field
 commits typed text, Escape abandons the query. Save, close and reopen to check it.
-If no workspace is configured, set it under **Advanced model settings**.
+If no workspace is configured, edit the agent and set **Databricks workspace (HTTPS origin)**
+under **Advanced → Model**. App maintainers can instead supply the nonsecret
+`DATABRICKS_HOST` build default below and rebuild the app.
 
 ### Nonsecret build defaults
 
@@ -147,6 +150,33 @@ and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
 See [configuration parity](configuration.md) for development routing, release
 flag exclusions and the supported deployment boundary.
 
+## Avatar editing
+
+Edit uses the same draft avatar picker as human Profile settings: upload/drop an
+image, paste an HTTPS URL, choose emoji artwork, or remove the picture. Done changes
+the form; Save first persists the exact native ID/revision, then publishes to that
+agent's saved community without restarting it. Older native hosts without
+`avatarEditingAvailable` retain the display-only avatar.
+
+An omitted picture preserves the saved override; an empty string explicitly removes
+it. A changed picture durably marks `profilePending`, so closing/reloading does not
+lose the Retry action. The native publisher reads and verifies the agent's current
+signed kind-0 profile, changes only picture, and preserves unrelated content and
+non-auth tags. Name/bot initialization is only for a missing profile. A local
+configuration rename is not an implicit published-profile rename.
+
+One native publication per agent can run at a time, including across renderer
+reloads. The host verifies current-profile readback after a matching accepted
+receipt before clearing pending at the same saved revision. Conflicting or failed
+reads/publications keep pending for explicit retry; no automatic broadcast or
+retry loop is introduced. Another client can still replace the profile after this
+confirmation; this is not a cross-client transaction.
+
+Browser tests use synthetic profiles/media and controller fixtures. Rust checks
+use temporary stores, public fixture keys and loopback HTTP. They do not establish
+live relay access, native image rendering or packaged human signing. Camera and
+recording are outside this avatar slice.
+
 ## Runtime boundary
 
 Native startup opens `app_data_dir/agent-controller`, never the old library as a
@@ -179,10 +209,13 @@ containment on non-Unix platforms.
   unavailable capability; no fetch fallback, local storage, signing or runner.
 - `bundled/agents/AgentControlPanel.tsx`: compose with `{ control }` independently
   of selected community or relay connectivity. It owns only observation and UI
-  drafts. Its five-second refresh runs while visible/ready; reads coalesce. A read
+  drafts. Its five-second status refresh runs while visible, including after a
+  read or operation error; reads coalesce and never replay writes. A read
   rejected specifically because native startup is initializing or its lock is busy
-  stays pending for at most twenty 250ms waits. Genuine errors or exhausted retries
-  stop polling and expose explicit Retry; writes are never automatically retried.
+  stays pending for at most twenty 250ms waits. Other errors or exhausted retries
+  remain visible above the cards, with explicit Retry as well as the next periodic
+  read. Successful reads clear the global warning; native per-agent errors remain
+  on the affected agent, and failed Save/Create/Delete details stay in their dialog.
   Unmount clears the timer, not enabled intent or processes.
 - Native host owns persistent state, credential custody, process groups, lock and
   duplicate ownership checks, source import validation and sanitized diagnostics.
@@ -335,8 +368,10 @@ to the same immutable source revision as the native library. The build script us
 and stages binaries plus revision/target/SHA256 manifest in
 `src-tauri/resources/agent-runtime`. Native build copies them to
 `target/debug/agent-runtime`. Generated binaries/manifest are not committed.
-Startup verifies the exact tool set, target, revision and file hashes; required
-launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
+Startup verifies the exact tool set, target, revision and file hashes. Packaged
+macOS apps may accept signing-induced hash changes only when the runtime belongs
+to the running app and its resource seal verifies under Block's Developer ID.
+The final hashes are retained in memory; required launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
 download. The manifest detects corrupt/mixed resources, not a same-user attacker
 who can replace the app and manifest. Inputs are immutable, not a promise of
 bit-identical machine-independent binaries. This build is not a signed installer.

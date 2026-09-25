@@ -1,9 +1,9 @@
 import { Header } from "../shared/design-system/ui/Header";
-import { Avatar } from "../shared/design-system/ui/Avatar";
+import { profileDefault } from "../features/communities/profile-default";
+import { AvatarEditor } from "../features/profiles/AvatarEditor";
 import { Button } from "../shared/design-system/ui/Button";
 import { Input } from "../shared/design-system/ui/Input";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
-import { avatarSource } from "../shared/avatar-source";
 import { npubEncode } from "nostr-tools/nip19";
 import {
   useCallback,
@@ -76,6 +76,14 @@ export function ProfileSettings({
   const [draft, setDraft] = useState<PersonalProfile | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [error, setError] = useState("");
   const [copyStatus, setCopyStatus] = useState<{
     message: string;
@@ -172,14 +180,18 @@ export function ProfileSettings({
         ) : (
           <>
             <section aria-label="Profile preview" className={styles.preview}>
-              <div className={styles.avatar}>
-                <Avatar
-                  src={avatarSource(profile.picture)}
-                  alt=""
-                  fallback={profile.name || "Your profile"}
-                  size="fill"
-                />
-              </div>
+              <AvatarEditor
+                value={profile.picture}
+                name={profile.name}
+                community={community?.id}
+                disabled={saving}
+                onBusyChange={setUploading}
+                onChange={(picture) => {
+                  setDraft({ ...profile, picture });
+                  setSaved(false);
+                  setError("");
+                }}
+              />
               <h3 className="text-label">
                 {profile.name.trim() || "Your profile"}
               </h3>
@@ -194,6 +206,7 @@ export function ProfileSettings({
                 event.preventDefault();
                 if (
                   saving ||
+                  uploading ||
                   !hasChanges ||
                   !canSaveProfile(profile) ||
                   (community && !loaded)
@@ -204,6 +217,19 @@ export function ProfileSettings({
                   name: profile.name.trim(),
                   about: profile.about?.trim() ?? "",
                 };
+                // Capture once before async work: selection may change during Save.
+                const connection = communities.relay.snapshot();
+                const session =
+                  community &&
+                  communities.snapshot().selected === community.id &&
+                  connection.viewer === client.viewer &&
+                  connection.status === "ready"
+                    ? connection.session
+                    : undefined;
+                const inspect = (id: string) =>
+                  session
+                    ? communityApi.inspectProfile(id, session)
+                    : communityApi.inspectProfile(id);
                 const saveGeneration = beginProfileSave(communities);
                 setSaving(true);
                 setSaved(false);
@@ -211,33 +237,51 @@ export function ProfileSettings({
                 void (async () => {
                   try {
                     if (community && loaded) {
+                      // Preserve fields outside this editor even if another client edited them.
+                      const latest = await inspect(community.id);
+                      if (!mounted.current) return;
                       await communityApi.publishProfile(
                         community.id,
                         next,
-                        loaded.existing,
+                        latest.existing,
                       );
-                      setLoaded({
-                        exists: true,
-                        existing: { ...loaded.existing, ...next },
-                        profile: next,
-                      });
+                      // Once dispatched, finish on this session even if Settings closes.
+                      const confirmed = await inspect(community.id);
+                      if (
+                        !confirmed.exists ||
+                        !profilesEqual(confirmed.profile, next)
+                      )
+                        throw new Error(
+                          "Your profile change is not current. Your edits are retained; save again to retry.",
+                        );
+                      setLoaded(confirmed);
                     }
                     if (isCurrentProfileSave(communities, saveGeneration))
-                      communities.saveProfile(next);
+                      communities.saveProfile(
+                        profileDefault(
+                          next,
+                          communities.snapshot().profile,
+                          community?.id,
+                        ),
+                      );
                     setDraft(null);
                     setSaved(true);
                   } catch (reason) {
-                    setError(
-                      reason instanceof Error ? reason.message : String(reason),
-                    );
+                    if (mounted.current)
+                      setError(
+                        reason instanceof Error
+                          ? reason.message
+                          : String(reason),
+                      );
                   } finally {
-                    setSaving(false);
+                    if (mounted.current) setSaving(false);
                   }
                 })();
               }}
             >
               <ProfileFields
                 profile={profile}
+                showAvatar={false}
                 disabled={saving}
                 onChange={(next) => {
                   setDraft(next);
@@ -258,7 +302,7 @@ export function ProfileSettings({
                   <Button
                     size="sm"
                     type="button"
-                    disabled={saving}
+                    disabled={saving || uploading}
                     onClick={() => {
                       setDraft(null);
                       setSaved(false);
@@ -271,7 +315,7 @@ export function ProfileSettings({
                     size="sm"
                     type="submit"
                     loading={saving}
-                    disabled={!canSaveProfile(profile)}
+                    disabled={uploading || !canSaveProfile(profile)}
                     variant="primary"
                   >
                     Save

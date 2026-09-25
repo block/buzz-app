@@ -125,7 +125,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   await page.goto(app.origin);
   const avatar = button(page, "Your profile");
   const account = page.getByRole("menu", {
-    name: "Browser Fixture",
+    name: "Fixture Reader",
   });
   const settings = account.getByRole("menuitem", {
     name: "Settings",
@@ -346,6 +346,8 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await tab();
     await expect(plugins).toBeFocused();
     await tab();
+    await expect(button(page, "Edit avatar")).toBeFocused();
+    await tab();
     await expect(
       page.getByRole("textbox", { name: "Display name", exact: true }),
     ).toBeFocused();
@@ -370,7 +372,8 @@ test("Settings loads and publishes the selected community profile", async ({
       pendingProfile = resolve;
     });
     pendingProfile = undefined;
-    await route.fulfill(response);
+    if (response) await route.fulfill(response);
+    else await route.continue();
   });
   page.on("request", (request) => {
     if (/\/api\/relay\/.*\/(profile|sign|publish)$/.test(request.url()))
@@ -379,9 +382,7 @@ test("Settings loads and publishes the selected community profile", async ({
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(
-    page.getByRole("menu", { name: "Browser Fixture" }),
-  ).toBeHidden();
+  await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   const name = page.getByRole("textbox", { name: "Display name", exact: true });
   const picture = page.getByRole("textbox", {
@@ -407,7 +408,9 @@ test("Settings loads and publishes the selected community profile", async ({
     page.getByRole("textbox", { name: "Profile description (optional)" }),
   ).toBeFocused();
   await page.keyboard.press(tab);
-  await expect(picture).toBeFocused();
+  await expect(
+    page.getByRole("textbox", { name: "Public key (hex)", exact: true }),
+  ).toBeFocused();
   await expect(name).toHaveValue("Fixture Reader");
   await name.fill("Discard when leaving Settings");
   await page
@@ -416,17 +419,17 @@ test("Settings loads and publishes the selected community profile", async ({
     .click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(
-    page.getByRole("menu", { name: "Browser Fixture" }),
-  ).toBeHidden();
+  await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Fixture Reader");
   await name.fill("   ");
   await expect(save).toBeDisabled();
   await name.fill("Updated community profile");
+  await button(page, "Edit avatar").click();
   await picture.fill("http://example.com/avatar.png");
-  await expect(save).toBeDisabled();
+  await expect(button(page, "Done")).toBeDisabled();
   await picture.fill("");
+  await button(page, "Done").click();
   await expect(save).toBeEnabled();
   await name.fill("  Updated community profile  ");
   await save.focus();
@@ -455,7 +458,7 @@ test("Settings loads and publishes the selected community profile", async ({
     await expect(save).toHaveAttribute("aria-busy", "true");
     await expect(save).toBeFocused();
   } finally {
-    pendingProfile?.({ json: { accepted: true, event_id: "ab".repeat(32) } });
+    pendingProfile?.();
   }
   await expect(name).toBeFocused();
   await page.keyboard.press(tab);
@@ -463,7 +466,9 @@ test("Settings loads and publishes the selected community profile", async ({
     page.getByRole("textbox", { name: "Profile description (optional)" }),
   ).toBeFocused();
   await page.keyboard.press(tab);
-  await expect(picture).toBeFocused();
+  await expect(
+    page.getByRole("textbox", { name: "Public key (hex)", exact: true }),
+  ).toBeFocused();
   await expect(name).toHaveValue("Updated community profile");
   await expect(save).toHaveCount(0);
   await expect(
@@ -480,6 +485,13 @@ test("Settings loads and publishes the selected community profile", async ({
   await name.fill("Discard after saving");
   await button(page, "Cancel").click();
   await expect(name).toHaveValue("Updated community profile");
+  // A different local default must not replace the published community profile.
+  await page.evaluate((viewer) => {
+    const key = `buzz-client.v1:${viewer}`;
+    const saved = JSON.parse(localStorage.getItem(key));
+    saved.profile.name = "Local default only";
+    localStorage.setItem(key, JSON.stringify(saved));
+  }, app.viewer);
   await page.reload();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
@@ -487,9 +499,8 @@ test("Settings loads and publishes the selected community profile", async ({
     page.getByRole("menu", { name: "Updated community profile" }),
   ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
-  // The fixture acknowledges publication but deliberately keeps its immutable
-  // relay history; reopening therefore proves Settings re-reads community state.
-  await expect(name).toHaveValue("Fixture Reader");
+  // Both Settings and the header re-read the signed community state after reload.
+  await expect(name).toHaveValue("Updated community profile");
   await button(page, "Your profile").hover();
   await expect(page.getByRole("tooltip")).toHaveText(
     "Updated community profile",
@@ -514,6 +525,12 @@ test("discarding community setup leaves the published profile unchanged", async 
     if (/\/api\/relay\/.*\/(profile|sign|publish)$/.test(request.url()))
       writes.push(request.url());
   });
+  await page.route("https://example.com/avatar.png", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="navy"/></svg>',
+    }),
+  );
   await page.route("**/api/relay/primary/info", (route) =>
     route.fulfill({ json: { name: "Primary", policy: null } }),
   );
@@ -534,14 +551,18 @@ test("discarding community setup leaves the published profile unchanged", async 
   await expect(name).toHaveValue("Fixture Reader");
   await expect(button(page, "Open community")).toBeEnabled();
   await name.fill("Community-only draft");
+  await button(page, "Edit avatar").click();
   await picture.fill("http://example.com/avatar.png");
-  await expect(button(page, "Publish profile & open")).toBeDisabled();
+  await expect(button(page, "Done")).toBeDisabled();
   await picture.fill("https://example.com/avatar.png");
+  await button(page, "Done").click();
   await expect(button(page, "Publish profile & open")).toBeEnabled();
   await button(page, "Close").click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(name).toHaveValue("Fixture Reader");
+  await button(page, "Edit avatar").click();
   await expect(picture).toHaveValue("");
+  await button(page, "Done").click();
   expect(writes).toEqual([]);
 });

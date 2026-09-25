@@ -18,6 +18,7 @@ import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
 import { createRelaySession } from "../src/features/relay/session.ts";
 import { feedbackEvent } from "../src/features/relay/product-feedback.ts";
+import { archiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
 
 // Only wall time is controlled. Real timers/performance.now still exercise HTTP admission.
 let wallClock;
@@ -1288,6 +1289,58 @@ test("member addition works without channel creation, while role elevation remai
   }
 });
 
+test("agent removal publishes only one member's exact 9001 through the outbox", async () => {
+  const h = await harness(success);
+  let traffic;
+  let owner;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    traffic = await openBrokerSocket(transport);
+    expect(transport.writer.kinds).toContain(9001);
+    owner = createOutbox(transport.viewer, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    const tags = [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["p", "a".repeat(64)],
+    ];
+    const id = owner.outbox.send({ kind: 9001, content: "", tags });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === id)?.delivery,
+      ).toBe("accepted"),
+    );
+    expect(h.publications.map((event) => event.kind)).toEqual([9001]);
+    const clientId = ["client-id", "22222222-2222-4222-8222-222222222222"];
+    for (const invalid of [
+      [...tags, clientId, ["reason", "x"]],
+      [tags[0], clientId],
+      [tags[0], ["p", "A".repeat(64)], clientId],
+      [["h", "not-a-channel"], tags[1], clientId],
+    ]) {
+      const denied = await h.post("sign", {
+        kind: 9001,
+        content: "",
+        created_at: 1700000000,
+        tags: invalid,
+      });
+      expect(denied.status).toBe(400);
+    }
+    const content = await h.post("sign", {
+      kind: 9001,
+      content: "reason",
+      created_at: 1700000000,
+      tags: [...tags, clientId],
+    });
+    expect(content.status).toBe(400);
+  } finally {
+    owner?.dispose();
+    traffic?.dispose();
+    await h.close();
+  }
+});
+
 test("edit capability signs and publishes canonical replacements, rejecting malformed edits locally", async () => {
   const h = await harness(success);
   try {
@@ -1969,6 +2022,77 @@ test("relay quota on admin routes stays a quota failure, not a refusal", async (
     expect(await paused.json()).toMatchObject({ paused: true, sent: false });
     expect(h.calls).toHaveLength(1);
   } finally {
+    await h.close();
+  }
+});
+
+test("identity archive requests use dedicated exact-shape routes behind archive authority", async () => {
+  const respond = (call) =>
+    Response.json(
+      call.url.endsWith("/events")
+        ? { accepted: true, event_id: call.body.id }
+        : [],
+    );
+  const target = "b".repeat(64);
+  const auth = ["auth", "c".repeat(64), "", "d".repeat(128)];
+  const template = archiveRequestTemplate("archive", target, auth);
+  const unavailable = await harness(respond);
+  try {
+    expect(
+      (await unavailable.post("identity-archive-sign", template)).status,
+    ).toBe(400);
+  } finally {
+    await unavailable.close();
+  }
+  const h = await harness(respond, {
+    // The harness relay author is its viewer key; NIP-11 self must match it.
+    archiveAuthority: getPublicKey(
+      Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? 7 : 0)),
+    ),
+  });
+  let live;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    expect(transport.writer.kinds).not.toContain(9035);
+    expect(transport.writer.kinds).not.toContain(9036);
+    const invalid = [
+      { ...template, kind: 9037 },
+      { ...template, content: "reason" },
+      { ...template, tags: [["p", target]] },
+      { ...template, tags: [...template.tags, ["reason", "spam"]] },
+      { ...template, tags: [["-"], ["p", target], ["p", target]] },
+      { ...template, tags: [["-"], ["p", "B".repeat(64)]] },
+      {
+        ...template,
+        tags: [["-"], ["p", target], ["auth", target, "", "d".repeat(128)]],
+      },
+      { ...template, tags: [["-"], ["p", target], auth.slice(0, 3)] },
+    ];
+    for (const event of invalid) {
+      expect((await h.post("identity-archive-sign", event)).status).toBe(400);
+      expect((await h.post("identity-archive-publish", event)).status).toBe(
+        400,
+      );
+    }
+    const signal = new AbortController().signal;
+    expect((await h.post("sign", template)).status).toBe(400);
+    const signed = await transport.identityArchive.sign(template, signal);
+    expect(verifyEvent(signed)).toBe(true);
+    expect(signed).toMatchObject(template);
+    expect((await h.post("publish", signed)).status).toBe(400);
+    live = await openBrokerSocket(transport);
+    await transport.identityArchive.publish(signed, signal);
+    expect(h.publications).toHaveLength(1);
+    const foreign = finalizeEvent(
+      { ...template, tags: template.tags.map((tag) => [...tag]) },
+      new Uint8Array(32).fill(5),
+    );
+    expect((await h.post("identity-archive-publish", foreign)).status).toBe(
+      400,
+    );
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    live?.dispose();
     await h.close();
   }
 });

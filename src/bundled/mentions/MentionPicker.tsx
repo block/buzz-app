@@ -7,6 +7,7 @@ import {
 } from "../../shared/design-system/ui/Popover";
 import { availableMentionAgents } from "../../features/agents/mention-choices";
 import { mentionChoices } from "./mention-choices";
+import { useArchivedPredicate } from "../../features/relay/use-archived";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
@@ -48,6 +49,7 @@ export function MentionPicker({
 }) {
   const draftRoster = useContext(DraftMentionRoster);
   const resolveName = useIdentityNames(session.names);
+  const archived = useArchivedPredicate(session);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string>();
@@ -115,6 +117,7 @@ export function MentionPicker({
     members ?? [],
     profiles,
     resolveName,
+    archived,
   )
     .filter(({ recipient, label }) =>
       `${label} ${recipient.pubkey}`

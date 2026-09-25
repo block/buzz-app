@@ -147,7 +147,13 @@ const BOUNDARY_SURFACES = [
   "--surface-inset",
   "--surface-popover",
 ];
-const BOUNDARY_ROLES = ["--border-danger", "--border-warning"];
+const BOUNDARY_ROLES = [
+  "--border-danger",
+  "--border-warning",
+  "--status-online",
+  "--status-away",
+  "--status-offline",
+];
 
 const TINT_PAIRS = [
   ["--text-warning", "--affordance-warning"],

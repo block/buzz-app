@@ -6,11 +6,13 @@ export function Avatar({
   src,
   className = "",
   shape = "circle",
+  statusBadge,
 }: {
   name: string;
   src?: string | undefined;
   className?: string;
   shape?: "circle" | "squircle";
+  statusBadge?: "online" | "away" | "offline" | undefined;
 }) {
   return (
     <span className={`relative inline-grid shrink-0 ${className}`}>
@@ -20,6 +22,7 @@ export function Avatar({
         fallback={name}
         size="fill"
         shape={shape}
+        statusBadge={statusBadge}
       />
     </span>
   );

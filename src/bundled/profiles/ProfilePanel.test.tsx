@@ -55,6 +55,9 @@ it("updates a mounted profile from the shared name view without replacing its id
     clearCache: async () => {},
   };
   try {
+    const presenceStatus = vi
+      .spyOn(owner.session.presence, "status")
+      .mockReturnValue("online");
     render(
       <ProfilePanel
         relay={relay}
@@ -63,11 +66,44 @@ it("updates a mounted profile from the shared name view without replacing its id
       />,
     );
     expect(await screen.findByRole("heading", { name })).toBeTruthy();
+    expect(
+      screen.getAllByRole("img", { name: "Presence: Active" }),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole("img", { name: `${name} avatar, online` }),
+    ).toBeNull();
+    expect(document.querySelector(".buzz-avatar-status")).toHaveAttribute(
+      "data-status",
+      "online",
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Channels" }));
+    expect(
+      screen.getByRole("img", { name: `${name} avatar, online` }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Presence: Active" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Info" }));
+    expect(
+      screen.getAllByRole("img", { name: "Presence: Active" }),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole("img", { name: `${name} avatar, online` }),
+    ).toBeNull();
     act(() => {
       name = "Edited name";
       notify();
     });
     expect(screen.getByRole("heading", { name })).toBeTruthy();
+    presenceStatus.mockReturnValue("unknown");
+    act(() => {
+      name = "Unknown status name";
+      notify();
+    });
+    expect(screen.getByRole("img", { name: `${name} avatar` })).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Presence: Active" })).toBeNull();
+    expect(document.querySelector(".buzz-avatar-status")).not.toHaveAttribute(
+      "data-status",
+    );
     expect(owner.session.profiles.snapshot().size).toBe(0);
   } finally {
     vi.useRealTimers();

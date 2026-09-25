@@ -85,7 +85,13 @@ for (const cold of [false, true]) {
       ).toHaveText("Alice Fixture");
       expect(labelReads()).toHaveLength(before + 1);
       await expect(dm.locator(".buzz-avatar")).toHaveText("A");
-      expect(app.report.presenceSnapshots).toHaveLength(0);
+      await expect
+        .poll(() =>
+          app.report.presenceSnapshots.some((snapshot) =>
+            snapshot.filter.authors.includes(app.participants[0]),
+          ),
+        )
+        .toBe(true);
     } finally {
       app.relay.releaseProfiles();
     }

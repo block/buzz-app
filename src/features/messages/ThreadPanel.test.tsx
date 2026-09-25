@@ -47,6 +47,7 @@ vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   memo: (fn: unknown) => fn,
   useCallback: (fn: unknown) => fn,
+  useId: () => "thread-panel-test-id",
   useRef(initial: unknown) {
     const index = hooks.ref++;
     hooks.refs[index] ??= { current: initial };

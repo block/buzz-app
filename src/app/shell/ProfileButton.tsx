@@ -65,12 +65,18 @@ export function ProfileButton({
   const openingSettings = useRef(false);
   const accountLabel = useId();
   const statusUnavailable = useId();
-  const avatar =
-    picture || name ? (
-      <Avatar src={picture || undefined} alt="" fallback={name} size="fill" />
-    ) : (
-      <UserIcon aria-hidden="true" size={19} />
-    );
+  const avatar = (
+    <Avatar
+      src={picture}
+      alt=""
+      fallback={name}
+      fallbackContent={
+        localProfile.name.trim() ? undefined : <UserIcon size={19} />
+      }
+      size="fill"
+      statusBadge={viewer ? presence.status : undefined}
+    />
+  );
   return (
     <>
       <MenuRoot
@@ -106,16 +112,12 @@ export function ProfileButton({
               variant="chrome"
               shape="round"
               icon={
-                <span className="pointer-events-none relative flex size-full items-center justify-center rounded-full">
+                <span
+                  className="pointer-events-none relative flex size-full items-center justify-center rounded-full"
+                  role="img"
+                  aria-label={viewer ? `Your status: ${label}` : "Your avatar"}
+                >
                   {avatar}
-                  {viewer && (
-                    <span
-                      role="img"
-                      aria-label={`Your status: ${label}`}
-                      className={styles.dot}
-                      data-status={presence.status}
-                    />
-                  )}
                 </span>
               }
             />
@@ -131,16 +133,7 @@ export function ProfileButton({
             {name}
           </span>
           <div className={styles.profileHeader}>
-            <span className={styles.profileAvatar}>
-              {avatar}
-              {viewer && (
-                <span
-                  className={styles.dot}
-                  data-status={presence.status}
-                  aria-hidden="true"
-                />
-              )}
-            </span>
+            <span className={styles.profileAvatar}>{avatar}</span>
             <div className={styles.profileDetails}>
               <p className="m-0 truncate text-label-sm">{name}</p>
               {viewer && (

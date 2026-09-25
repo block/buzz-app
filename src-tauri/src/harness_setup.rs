@@ -16,10 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use tauri::Manager as _;
 
-// Old Buzz's discovery/catalog.rs uses the aaif-goose URL; block/goose is its
-// former name and redirects to the same upstream stable release asset.
+// Same command as old Buzz's discovery/catalog.rs; block/goose redirects here.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-const INSTALL: &str = "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash";
+const INSTALL: &str = "curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash";
 
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 #[derive(Default)]
@@ -117,12 +116,12 @@ where
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-struct InstallerChild(tokio::process::Child);
+struct InstallerChild(tokio::process::Child, Option<u32>);
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl Drop for InstallerChild {
     fn drop(&mut self) {
-        if let Some(pid) = self.0.id() {
-            // A cancelled install must also retire curl and the piped bash.
+        // Child::id() is None once waited, so keep the group id from spawn.
+        if let Some(pid) = self.1 {
             unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
         }
         let _ = self.0.start_kill();
@@ -132,9 +131,32 @@ impl Drop for InstallerChild {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn upstream(log: File) -> Result<bool, String> {
     // pipefail preserves curl failures; the group owns every installer child.
+    // Never pass app, agent or provider credentials to the downloaded script.
+    let home = std::env::var_os("HOME").ok_or("Goose install requires HOME")?;
     let mut command = tokio::process::Command::new("bash");
+    command.env_clear();
+    for name in [
+        "TMPDIR",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
     command
+        .env("HOME", &home)
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .current_dir(&home)
         .args(["-o", "pipefail", "-c", INSTALL])
+        .stdin(Stdio::null())
         .stdout(Stdio::from(
             log.try_clone()
                 .map_err(|_| "Could not open install output")?,
@@ -142,11 +164,11 @@ async fn upstream(log: File) -> Result<bool, String> {
         .stderr(Stdio::from(log))
         .kill_on_drop(true)
         .process_group(0);
-    let mut child = InstallerChild(
-        command
-            .spawn()
-            .map_err(|_| "Could not start the Goose installer".to_owned())?,
-    );
+    let child = command
+        .spawn()
+        .map_err(|_| "Could not start the Goose installer".to_owned())?;
+    let pid = child.id();
+    let mut child = InstallerChild(child, pid);
     let result = tokio::time::timeout(std::time::Duration::from_secs(300), child.0.wait())
         .await
         .map_err(|_| "Goose installer timed out after five minutes".to_owned())?
@@ -177,16 +199,10 @@ fn waiting(enabled: bool, status: ProcessStatus, command: &str, error: Option<&s
     {
         return false;
     }
-    // A stopped enabled agent has not started setup; failed agents must have
-    // explicit missing-executable evidence, not a credential or relay failure.
-    status == ProcessStatus::Stopped
-        || matches!(
-            error,
-            Some(
-                "Required runtime executable is missing"
-                    | "Choose the installed harness's absolute executable path"
-            )
-        )
+    // Only a start that failed on the missing CLI was waiting. Stopped agents are
+    // indistinguishable from ones the person chose not to run this session, and a
+    // relative command still fails after install.
+    status == ProcessStatus::Failed && error == Some("Required runtime executable is missing")
 }
 
 #[tauri::command]

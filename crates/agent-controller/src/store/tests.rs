@@ -392,3 +392,35 @@ fn invalid_avatar_and_stale_save_leave_persistent_bytes_unchanged() {
     assert!(store.save(&a.id, 0, update).is_err());
     assert_eq!(fs::read(store.path()).unwrap(), before);
 }
+
+#[test]
+fn heartbeat_environment_is_explicit_and_bounded() {
+    for value in ["0", "3600", "86400"] {
+        assert!(crate::config::validate_environment(&BTreeMap::from([
+            ("BUZZ_ACP_HEARTBEAT_INTERVAL".into(), value.into()),
+            (
+                "BUZZ_ACP_HEARTBEAT_PROMPT".into(),
+                "Check due work quietly".into()
+            ),
+        ]))
+        .is_ok());
+    }
+    for value in ["-1", "60", "86401", "oops"] {
+        assert!(crate::config::validate_environment(&BTreeMap::from([(
+            "BUZZ_ACP_HEARTBEAT_INTERVAL".into(),
+            value.into()
+        ),]))
+        .is_err());
+    }
+    for key in [
+        "BUZZ_ACP_HEARTBEAT_PROMPT_FILE",
+        "buzz_acp_heartbeat_interval",
+        "BUZZ_ACP_SYSTEM_PROMPT",
+    ] {
+        assert!(crate::config::validate_environment(&BTreeMap::from([(
+            key.into(),
+            "value".into()
+        ),]))
+        .is_err());
+    }
+}

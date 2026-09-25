@@ -16,6 +16,7 @@ export function AgentCreateDialog({
   owner,
   source,
   onClose,
+  preset,
 }: {
   control: AgentControl;
   state: AgentControlState;
@@ -23,6 +24,10 @@ export function AgentCreateDialog({
   owner: string;
   source?: AgentView;
   onClose(): void;
+  preset?: Pick<
+    AgentDraft,
+    "name" | "systemPrompt" | "workspace" | "environment"
+  >;
 }) {
   const [requestId] = useState(() => crypto.randomUUID());
   const [draft, setDraft] = useState<AgentDraft>(() =>
@@ -41,6 +46,7 @@ export function AgentCreateDialog({
           model: "",
           provider: state.data?.agentDefaults?.provider ? "" : "databricks_v2",
           environment: {},
+          ...preset,
         },
   );
   const [dirty, setDirty] = useState(false);

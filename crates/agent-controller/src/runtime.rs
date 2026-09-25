@@ -106,6 +106,13 @@ impl RuntimeBundle {
         )
         .map_err(|_| "Invalid runtime tools path")?;
         command.envs(environment).env("PATH", path);
+        // ACP skips heartbeat ticks while its lazy pool is asleep. Explicit
+        // background operation must keep the pool ready, including after restart.
+        let heartbeat_enabled = agent
+            .environment
+            .get("BUZZ_ACP_HEARTBEAT_INTERVAL")
+            .and_then(|value| value.parse::<u64>().ok())
+            .is_some_and(|value| value > 0);
         let key_hex = key.hex();
         command
             .env("BUZZ_PRIVATE_KEY", &*key_hex)
@@ -116,8 +123,14 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_AGENT_ARGS", args.join(","))
             .env("BUZZ_ACP_SYSTEM_PROMPT", &agent.system_prompt)
             .env("BUZZ_ACP_DISPLAY_NAME", &agent.name)
-            .env("BUZZ_ACP_LAZY_POOL", "true")
-            .env("BUZZ_ACP_IDLE_POOL_SLEEP", "900")
+            .env(
+                "BUZZ_ACP_LAZY_POOL",
+                if heartbeat_enabled { "false" } else { "true" },
+            )
+            .env(
+                "BUZZ_ACP_IDLE_POOL_SLEEP",
+                if heartbeat_enabled { "0" } else { "900" },
+            )
             .env("BUZZ_ACP_SUBSCRIBE", "mentions")
             .env("BUZZ_ACP_RESPOND_TO", respond_to)
             .env("BUZZ_ACP_DEDUP", "queue")

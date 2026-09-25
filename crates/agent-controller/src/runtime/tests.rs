@@ -1517,3 +1517,34 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
             .is_ok());
     }
 }
+
+#[test]
+fn explicit_heartbeat_keeps_acp_pool_ready_across_idle_and_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut a = agent(dir.path());
+    let runtime = bundle(tools.path());
+    let key = Secret::parse(KEY, PUB).unwrap();
+    for (interval, lazy, idle) in [("0", "true", "900"), ("3600", "false", "0")] {
+        a.environment
+            .insert("BUZZ_ACP_HEARTBEAT_INTERVAL".into(), interval.into());
+        a.environment
+            .insert("BUZZ_ACP_HEARTBEAT_PROMPT".into(), "Quiet review".into());
+        let command = runtime.command(&a, &key).unwrap();
+        let env: BTreeMap<_, _> = command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|v| {
+                    (
+                        key.to_string_lossy().to_string(),
+                        v.to_string_lossy().to_string(),
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(env["BUZZ_ACP_LAZY_POOL"], lazy);
+        assert_eq!(env["BUZZ_ACP_IDLE_POOL_SLEEP"], idle);
+        assert_eq!(env["BUZZ_ACP_HEARTBEAT_INTERVAL"], interval);
+        assert_eq!(env["BUZZ_ACP_HEARTBEAT_PROMPT"], "Quiet review");
+    }
+}

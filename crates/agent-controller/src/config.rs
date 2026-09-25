@@ -309,6 +309,14 @@ pub(crate) fn validate_environment(environment: &BTreeMap<String, String>) -> Re
     for (key, value) in environment {
         validate_env_key(key)?;
         text(value, 32 * 1024, "Environment value")?;
+        if key == "BUZZ_ACP_HEARTBEAT_INTERVAL" {
+            let seconds = value
+                .parse::<u64>()
+                .map_err(|_| "Invalid heartbeat interval")?;
+            if seconds != 0 && !(3600..=86400).contains(&seconds) {
+                return Err("Heartbeat interval must be 0 or 3600–86400 seconds".into());
+            }
+        }
     }
     Ok(())
 }
@@ -320,7 +328,11 @@ fn validate_env_key(key: &str) -> Result<()> {
             .bytes()
             .enumerate()
             .all(|(i, c)| c == b'_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit()))
-        || upper.starts_with("BUZZ_ACP_")
+        || (upper.starts_with("BUZZ_ACP_")
+            && !matches!(
+                key,
+                "BUZZ_ACP_HEARTBEAT_INTERVAL" | "BUZZ_ACP_HEARTBEAT_PROMPT"
+            ))
         || upper.starts_with("BUZZ_MANAGED_")
         || upper.starts_with("BUZZ_APP_")
         || upper.starts_with("GIT_CONFIG_")

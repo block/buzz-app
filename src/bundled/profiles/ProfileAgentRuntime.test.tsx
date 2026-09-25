@@ -52,11 +52,19 @@ function relayAt(scope: string, knownAgent = false, owned = true) {
   });
   let latest = head;
   let callbacks!: LiveCallbacks;
+  let failOwner = false;
+  let ownerReadStarted = () => {};
+  let ownerGate = Promise.resolve();
   const owner = createRelaySession({
     viewer: signer.pubkey,
     relayAuthor: signer.pubkey,
-    query: async (filters) =>
-      filters.some((filter) => filter.kinds?.includes(0)) ? [latest] : [],
+    query: async (filters) => {
+      if (!filters.some((filter) => filter.kinds?.includes(0))) return [];
+      ownerReadStarted();
+      await ownerGate;
+      if (failOwner) throw new Error("Fixture ownership unavailable");
+      return [latest];
+    },
     media: () => undefined,
     subscribe(next) {
       callbacks = next;
@@ -64,6 +72,15 @@ function relayAt(scope: string, knownAgent = false, owned = true) {
     },
   });
   owners.push(owner);
+  const ownershipViews: ReturnType<typeof owner.session.observe>[] = [];
+  const observedSession = {
+    ...owner.session,
+    observe: (...args: Parameters<typeof owner.session.observe>) => {
+      const view = owner.session.observe(...args);
+      ownershipViews.push(view);
+      return view;
+    },
+  };
   const listeners = new Set<() => void>();
   // Signed agent metadata makes ProfileInstances a second native reader.
   const profiles = new Map([
@@ -71,10 +88,10 @@ function relayAt(scope: string, knownAgent = false, owned = true) {
   ]);
   const session = knownAgent
     ? ({
-        ...owner.session,
-        profiles: { ...owner.session.profiles, snapshot: () => profiles },
+        ...observedSession,
+        profiles: { ...observedSession.profiles, snapshot: () => profiles },
       } as RelaySnapshot["session"])
-    : owner.session;
+    : observedSession;
   let snapshot: RelaySnapshot = {
     status: "ready",
     generation: 1,
@@ -94,6 +111,22 @@ function relayAt(scope: string, knownAgent = false, owned = true) {
   };
   return {
     relay,
+    holdOwnerRead() {
+      const started = new Promise<void>((resolve) => {
+        ownerReadStarted = resolve;
+      });
+      let releaseOwner = () => {};
+      ownerGate = new Promise<void>((resolve) => {
+        releaseOwner = resolve;
+      });
+      return { started, release: () => releaseOwner() };
+    },
+    refreshOwnership() {
+      return Promise.all(ownershipViews.map((view) => view.refresh()));
+    },
+    failOwner(value: boolean) {
+      failOwner = value;
+    },
     move(next: string) {
       snapshot = {
         ...snapshot,
@@ -475,6 +508,64 @@ it("retires a held log read on auth-only owner loss without native or community 
   await act(async () => complete("late private output"));
   expect(screen.queryByText("late private output")).toBeNull();
   expect(screen.queryByRole("button", { name: "Copy log" })).toBeNull();
+  expect(readLog).toHaveBeenCalledTimes(2);
+});
+
+it("retires the log after a rejected same-head ownership refresh until recovery", async () => {
+  const reads: Array<(content: string) => void> = [];
+  const readLog = vi.fn(
+    () => new Promise<string>((resolve) => reads.push(resolve)),
+  );
+  const { control, settle, data } = heldHost(controlFixture(), readLog);
+  const community = relayAt(home);
+  const intervals = vi.spyOn(window, "setInterval");
+  const cleared = vi.spyOn(window, "clearInterval");
+  mount(control, community.relay);
+  await settle(0, data);
+  await openRuntimeLog();
+  await vi.waitFor(() => expect(readLog).toHaveBeenCalledTimes(2));
+  const logTimers = intervals.mock.results
+    .filter((_, index) => intervals.mock.calls[index]?.[1] === 30_000)
+    .map((result) => result.value);
+  expect(logTimers).toHaveLength(2);
+  const log = screen.getByRole("region", { name: "Harness log" });
+  // The admitted head stays readable during a pending refresh of that same head.
+  const pending = community.holdOwnerRead();
+  const refresh = community.refreshOwnership();
+  try {
+    await pending.started;
+    expect(log).toBeVisible();
+    community.failOwner(true);
+  } finally {
+    pending.release();
+    await act(async () => {
+      await refresh;
+    });
+  }
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("region", { name: "Harness log" })).toBeNull(),
+  );
+  expect(screen.queryByRole("button", { name: "Harness log" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Copy log" })).toBeNull();
+  expect(
+    logTimers.every((timer) => cleared.mock.calls.some(([id]) => id === timer)),
+  ).toBe(true);
+  intervals.mockRestore();
+  cleared.mockRestore();
+  await act(async () => {
+    for (const resolve of reads) resolve("late private output");
+  });
+  expect(screen.queryByText("late private output")).toBeNull();
+  // A settled failed refresh must not keep the view or its polling timer alive.
+  // StrictMode replay accounts for the two initial reads.
+  expect(readLog).toHaveBeenCalledTimes(2);
+  community.failOwner(false);
+  await userEvent.click(screen.getByRole("tab", { name: "Info" }));
+  await userEvent.click(screen.getByRole("button", { name: "Retry profile" }));
+  await userEvent.click(await screen.findByRole("tab", { name: "Runtime" }));
+  expect(
+    await screen.findByRole("button", { name: "Harness log" }),
+  ).toBeVisible();
   expect(readLog).toHaveBeenCalledTimes(2);
 });
 

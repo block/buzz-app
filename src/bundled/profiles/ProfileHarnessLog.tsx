@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   AgentControl,
   AgentLogTarget,
@@ -21,7 +21,11 @@ export function ProfileHarnessLog({
   onBack(): void;
 }) {
   const { id, pubkey, relayUrl, authorize } = target;
+  const back = useRef<HTMLButtonElement>(null);
   const [result, setResult] = useState<{ content: string; error: boolean }>();
+  useEffect(() => {
+    back.current?.focus();
+  }, []);
   useEffect(() => {
     let active = true;
     setResult(undefined);
@@ -53,6 +57,7 @@ export function ProfileHarnessLog({
     <section aria-label="Harness log" className={styles.harnessLog}>
       <div className={styles.logHeader}>
         <Button
+          ref={back}
           size="compact"
           variant="ghost"
           aria-label="Back"

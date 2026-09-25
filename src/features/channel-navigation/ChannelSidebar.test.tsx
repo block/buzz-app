@@ -215,9 +215,10 @@ it.each([undefined, "personal"] as const)(
   async (source) => {
     const h = await failedMoveFixture(source);
     try {
+      const { groupSource: _source, ...data } = h.data;
       h.read.mockResolvedValue({
-        ...h.data,
-        groupSource: source ? undefined : "personal",
+        ...data,
+        ...(source ? {} : { groupSource: "personal" as const }),
       });
       await act(() => h.prefs.refresh());
       fireEvent.click(

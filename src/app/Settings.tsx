@@ -95,7 +95,13 @@ export function Settings({
     [contributed, selectedCommunity],
   );
   const visibleSections = useMemo(
-    () => [...communitySections, ...appSections],
+    () => [
+      ...communitySections,
+      ...appSections,
+      ...(developerMode
+        ? [{ id: "developer", label: "Developer", icon: WrenchIcon }]
+        : []),
+    ],
     [communitySections],
   );
   const defaultSection = selectedCommunity ? "profile" : "appearance";

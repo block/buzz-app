@@ -10,11 +10,15 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 
 // Playwright owns this worker-scoped build. Only compiled assets are shared;
 // each test still owns its server, identities, relay state and browser storage.
-export async function buildApp({ developmentReact, pluginFixtures }, use) {
+export async function buildApp(
+  { developmentMode, developmentReact, pluginFixtures },
+  use,
+) {
   const directory = await mkdtemp(join(tmpdir(), "buzz-browser-build-"));
   try {
     const config = {
       root,
+      mode: developmentMode ? "development" : "production",
       configFile: false,
       envFile: false, // Never read the developer's live identity configuration.
       logLevel: "error",
@@ -33,6 +37,7 @@ export async function buildApp({ developmentReact, pluginFixtures }, use) {
           : []),
       ],
       define: {
+        ...(developmentMode ? { "import.meta.env.DEV": "true" } : {}),
         "import.meta.env.VITE_BUZZ_LIVE": '"1"',
         "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES":
           JSON.stringify(fixtureAliases),

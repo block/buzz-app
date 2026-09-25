@@ -315,6 +315,7 @@ function ProfileDetails({
                     scope={scope}
                     pubkey={pubkey}
                     instanceId={instanceId}
+                    owned={isOwner}
                   />
                 )}
                 {children}
@@ -329,7 +330,6 @@ function ProfileDetails({
                     control={control}
                     pubkey={pubkey}
                     context={context}
-                    navigation={navigation}
                     session={session}
                     canOpenPrivate={verifiedOwner === viewer && !!viewer}
                     selectedId={instanceId}
@@ -337,7 +337,6 @@ function ProfileDetails({
                     communityOrigin={communityOrigin}
                     viewer={viewer}
                     knownAgent={knownAgent}
-                    owned={knownAgent && !!viewer && verifiedOwner === viewer}
                   />
                 )}
                 <div className={styles.publicKey}>

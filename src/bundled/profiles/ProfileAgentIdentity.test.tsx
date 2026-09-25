@@ -2,7 +2,14 @@
 import "@testing-library/jest-dom/vitest";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { bytesToHex } from "nostr-tools/utils";
 import { StrictMode } from "react";
@@ -679,20 +686,49 @@ it("offers instructions only for a signed owner with a unique native instance", 
       const button = await screen.findByRole("button", {
         name: "Agent instructions",
       });
+      expect(screen.queryByText("Instructions")).toBeNull();
+      expect(
+        screen.getAllByRole("button", { name: "Agent instructions" }),
+      ).toHaveLength(1);
       await userEvent.setup().click(button);
-      expect(open).toHaveBeenCalledWith({
-        version: 1,
-        kind: "page",
-        pluginId: "buzz.agents",
-        pageId: "agents",
-        scope: {
-          viewer: viewer.pubkey,
-          communityOrigin: "https://relay.example.test",
-        },
-        route: { version: 1, params: { pubkey: agent.pubkey } },
+      const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+      expect(within(dialog).getByLabelText("Agent instructions")).toHaveValue(
+        "Help with the project.",
+      );
+      expect(open).not.toHaveBeenCalled();
+      await userEvent
+        .setup()
+        .clear(within(dialog).getByLabelText("Agent instructions"));
+      await userEvent
+        .setup()
+        .type(
+          within(dialog).getByLabelText("Agent instructions"),
+          "Updated instructions.",
+        );
+      await userEvent
+        .setup()
+        .click(within(dialog).getByRole("button", { name: "Save changes" }));
+      await waitFor(() =>
+        expect(fixture.calls.some((call) => call.action === "save")).toBe(true),
+      );
+      expect(
+        fixture.calls.find((call) => call.action === "save")?.payload,
+      ).toMatchObject({
+        id: fixture.agent.id,
+        expectedRevision: 1,
+        edit: { systemPrompt: "Updated instructions." },
       });
+      await userEvent
+        .setup()
+        .click(within(dialog).getByRole("button", { name: "Close editor" }));
+      expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+      expect(
+        screen.getByRole("region", { name: "Profile details" }),
+      ).toBeVisible();
+      expect(open).not.toHaveBeenCalled();
     } else {
       await screen.findByRole("region", { name: "Linked agent instances" });
+      expect(screen.queryByText("Instructions")).toBeNull();
       expect(
         screen.queryByRole("button", { name: "Agent instructions" }),
       ).toBeNull();

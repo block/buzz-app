@@ -13,8 +13,10 @@ custody is app-wide: the viewer is not an owner check, so any account in this
 app on the same relay sees the same local record. It
 shows process status (still "relay readiness unverified", not a listening badge),
 saved harness/provider/model/workspace (labelled as saved settings, since
-environment overrides may change what is launched), collapsible instructions,
-saved-vs-running revision drift and diagnostics. Environment keys and
+environment overrides may change what is launched), saved-vs-running revision
+drift and diagnostics. Instructions are no longer displayed in the read-only
+summary; the verified owner opens the existing native editor in place with
+**Agent instructions**, without leaving the profile. Environment keys and
 arguments are not shown. Opening the Info tab requests a status read; concurrent
 requests coalesce. This summary adds no polling and observes the profile actions'
 existing refresh. A failed read keeps the last evidence.
@@ -23,8 +25,8 @@ are shown once, by the profile actions. Browser/unavailable hosts, loading/error
 without evidence, unknown keys and records saved for another community render
 nothing, leaving the public identity. Community switches re-filter immediately.
 Start/Stop/Restart are the separate profile actions above. The owner-only
-**Agent instructions** ingress in Info opens the targeted Agents-page editor
-for a unique native record; harness logs stay on Agents.
+**Agent instructions** ingress in Info requires a unique native record; harness
+logs stay on Agents.
 
 ## Owner runtime tab
 

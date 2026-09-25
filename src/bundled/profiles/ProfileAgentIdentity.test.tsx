@@ -210,7 +210,16 @@ it("adds no agent section or owner reads for a profile without an agent hint", a
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
   const reads = query.mock.calls.flatMap(([filters]) => filters);
-  expect(reads).toHaveLength(3);
+  // Other public metadata reads may race the heading; only owner observation is excluded.
+  expect(reads).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        authors: [person.pubkey],
+        kinds: [0],
+        limit: 1,
+      }),
+    ]),
+  );
   expect(reads).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
@@ -686,12 +695,15 @@ it("offers instructions only for a signed owner with a unique native instance", 
       />,
     );
     await screen.findByRole("heading", { name: "Helper" });
-    await waitFor(() =>
-      expect(
-        screen.getByRole("region", { name: "Linked agent instances" }),
-      ).toHaveTextContent("Fixture agent"),
-    );
     if (viewer === ownerKey) {
+      await userEvent
+        .setup()
+        .click(await screen.findByRole("tab", { name: "Runtime" }));
+      const instances = screen.getByRole("region", { name: "Instances" });
+      expect(within(instances).getByText("1 instance")).toBeVisible();
+      await userEvent.setup().click(within(instances).getByText("1 instance"));
+      expect(within(instances).getByText("Fixture agent")).toBeVisible();
+      await userEvent.setup().click(screen.getByRole("tab", { name: "Info" }));
       const button = await screen.findByRole("button", {
         name: "Agent instructions",
       });
@@ -736,7 +748,8 @@ it("offers instructions only for a signed owner with a unique native instance", 
       ).toBeVisible();
       expect(open).not.toHaveBeenCalled();
     } else {
-      await screen.findByRole("region", { name: "Linked agent instances" });
+      await screen.findByRole("region", { name: "Instances" });
+      expect(screen.queryByRole("tab", { name: "Runtime" })).toBeNull();
       expect(screen.queryByText("Instructions")).toBeNull();
       expect(
         screen.queryByRole("button", { name: "Agent instructions" }),

@@ -279,16 +279,21 @@ it.each([false, true])(
     const runtime = await screen.findByRole("region", { name: "Local agent" });
     expect(within(runtime).getByText("/second")).toBeVisible();
     expect(within(runtime).queryByText("First instructions")).toBeNull();
+    await user.click(await screen.findByRole("tab", { name: "Runtime" }));
+    const rows = screen.getByRole("region", { name: "Instances" });
+    await user.click(within(rows).getByText("2 instances"));
     expect(
-      await screen.findByRole("button", { name: "Second" }),
+      within(rows).getByRole("button", { name: "Second" }),
     ).toHaveAttribute("aria-current", "true");
-    const rows = screen.getByRole("region", { name: "Linked agent instances" });
     expect(within(rows).queryAllByText("Archived")).toHaveLength(
       archived ? 2 : 0,
     );
+    await user.click(screen.getByRole("tab", { name: "Info" }));
     await user.click(screen.getByRole("button", { name: "Start" }));
     await waitFor(() => expect(f.native.agent.status).toBe("stopped"));
     expect(f.native.data.agents[1]?.status).toBe("running");
+    await user.click(screen.getByRole("tab", { name: "Runtime" }));
+    await user.click(screen.getByText("2 instances"));
     await user.click(screen.getByRole("button", { name: "First" }));
     expect(await screen.findByText("/first")).toBeVisible();
     expect(screen.queryByText("/second")).toBeNull();
@@ -296,6 +301,8 @@ it.each([false, true])(
     await user.click(screen.getByRole("button", { name: "Back to profile" }));
     expect(screen.getByRole("heading", { name: "Identity" })).toBeVisible();
     expect(screen.queryByRole("region", { name: "Local agent" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Runtime" }));
+    await user.click(screen.getByText("2 instances"));
     await user.click(screen.getByRole("button", { name: "Second" }));
     expect(await screen.findByText("/second")).toBeVisible();
     await f.move();
@@ -362,9 +369,71 @@ it("revokes mounted private details after an auth-only profile update", async ()
 it("opens each row from the ordinary profile rather than generic Agents", async () => {
   const f = fixture({ initial: "" });
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Second" }));
+  await user.click(await screen.findByRole("tab", { name: "Runtime" }));
+  const instances = screen.getByRole("region", { name: "Instances" });
+  expect(within(instances).getByText("2 instances")).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Agent configuration" }),
+  ).toBeNull();
+  await user.click(within(instances).getByText("2 instances"));
+  await user.click(within(instances).getByRole("button", { name: "Second" }));
   expect(await screen.findByText("/second")).toBeVisible();
   expect(f.opened).toHaveBeenCalledWith(f.target("second"));
+});
+
+it("keeps exact Runtime recovery with multiple siblings after a failed native read", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  await screen.findByText("/second");
+  await user.click(await screen.findByRole("tab", { name: "Runtime" }));
+  expect(
+    screen.getByRole("region", { name: "Agent configuration" }),
+  ).toBeVisible();
+  expect(screen.getByRole("region", { name: "Advanced" })).toHaveTextContent(
+    "/second",
+  );
+  expect(
+    screen.getByRole("region", { name: "Advanced" }),
+  ).not.toHaveTextContent("/first");
+  f.failRead(true);
+  await act(async () => {
+    await f.control.refresh();
+  });
+  expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Retry agents" })).toBeNull();
+  f.failRead(false);
+  await user.click(screen.getByRole("button", { name: "Retry status" }));
+  expect(
+    await screen.findByRole("region", { name: "Instances" }),
+  ).toHaveTextContent("2 instances");
+  expect(
+    screen.getByRole("region", { name: "Agent configuration" }),
+  ).toBeVisible();
+});
+
+it("keeps ambiguous Runtime discovery recoverable after a failed native read", async () => {
+  const f = fixture({ initial: "" });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("tab", { name: "Runtime" }));
+  expect(
+    screen.queryByRole("region", { name: "Agent configuration" }),
+  ).toBeNull();
+  f.failRead(true);
+  await act(async () => {
+    await f.control.refresh();
+  });
+  const instances = screen.getByRole("region", { name: "Instances" });
+  expect(within(instances).getByRole("alert")).toHaveTextContent(
+    "Could not refresh managed agents.",
+  );
+  f.failRead(false);
+  await user.click(
+    within(instances).getByRole("button", { name: "Retry agents" }),
+  );
+  expect(await within(instances).findByText("2 instances")).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Agent configuration" }),
+  ).toBeNull();
 });
 
 it("announces loading while ownership is pending, not unavailable", async () => {

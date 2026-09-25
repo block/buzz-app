@@ -212,9 +212,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await panel.getByRole("tab", { name: "Info" }).click();
   await expect(memories).toHaveCount(0);
 
-  await expect(
-    panel.getByRole("region", { name: "Linked agent instances" }),
-  ).toHaveCount(0);
+  await expect(panel.getByRole("region", { name: "Instances" })).toHaveCount(0);
   await panel.getByRole("button", { name: "Close channel panel" }).click();
   await expect(
     page.getByRole("button", { name: "View thread: 1 reply", exact: true }),

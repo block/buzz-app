@@ -218,6 +218,14 @@ export function createSidebarPreferencesStore(
     });
     return job.promise;
   }
+  function rejectMove(channelId: string, message: string): Promise<never> {
+    const failed = failedMoves.get(channelId);
+    if (failed) {
+      failedMoves.set(channelId, { ...failed, error: message });
+      publish(snapshot);
+    }
+    return Promise.reject(new Error(message));
+  }
   // Optimistic placement is a projection over confirmed data. Persistence keeps
   // assignment/create before Star removal. A failed
   // older intent cannot undo a later move or replace its retry state.
@@ -228,8 +236,9 @@ export function createSidebarPreferencesStore(
     source = confirmed?.groupSource,
   ): Promise<SidebarPreferences> {
     if (!writable() || !snapshot.data || !confirmed || !writeStar || !write)
-      return Promise.reject(
-        new Error("Sidebar group moves are unavailable in this host"),
+      return rejectMove(
+        channelId,
+        "Sidebar group moves are unavailable; refresh saved sidebar preferences before retrying",
       );
     const writeGeneration = generation;
     const writeSignal = AbortSignal.any([
@@ -425,10 +434,9 @@ export function createSidebarPreferencesStore(
       retryMove(channelId: string) {
         const failed = failedMoves.get(channelId);
         if (failed && failed.source !== confirmed?.groupSource)
-          return Promise.reject(
-            new Error(
-              "The active group source changed; dismiss this move and choose its destination again",
-            ),
+          return rejectMove(
+            channelId,
+            "The active group source changed; dismiss this move and choose its destination again",
           );
         return failed
           ? move(channelId, failed.destination, undefined, failed.source)

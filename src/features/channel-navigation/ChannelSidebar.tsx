@@ -1166,8 +1166,15 @@ function ReadySidebar({
                     The previous placement is shown. A partial save may already
                     exist on the relay.
                   </p>
+                  {!preferences.writable && (
+                    <p>
+                      Refresh saved sidebar preferences before retrying this
+                      move.
+                    </p>
+                  )}
                   <button
                     type="button"
+                    disabled={!preferences.writable}
                     onClick={() =>
                       moveChannel(move.channelId, () =>
                         preferences.retryMove(move.channelId),

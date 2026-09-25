@@ -1339,6 +1339,54 @@ test("edit capability signs and publishes canonical replacements, rejecting malf
   }
 });
 
+test("report capability signs and publishes NIP-56 message reports, rejecting other shapes locally", async () => {
+  const h = await harness(success);
+  try {
+    await h.start();
+    expect((await (await h.get("session")).json()).writeKinds).toContain(1984);
+    const template = {
+      kind: 1984,
+      content: "",
+      created_at: h.event.created_at,
+      tags: [
+        ["p", h.event.pubkey],
+        ["e", h.event.id, "spam"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({ kind: 1984, tags: template.tags });
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [["e", h.event.id, "spam"]],
+        [
+          ["p", h.event.pubkey],
+          ["e", h.event.id, "rude"],
+        ],
+        [
+          ["p", h.event.pubkey],
+          ["e", "bad", "spam"],
+        ],
+        [...template.tags, ["h", "c"]],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+      expect(
+        (await h.post(route, { ...event, content: " padded " })).status,
+      ).toBe(400);
+      expect(
+        (await h.post(route, { ...event, content: "x".repeat(32001) })).status,
+      ).toBe(400);
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
 test("message/reaction deletions pass real signing and publication without admitting workflow or arbitrary deletion shapes", async () => {
   const h = await harness((call) =>
     Response.json({ accepted: true, event_id: call.body.id }),

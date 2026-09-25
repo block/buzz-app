@@ -4,10 +4,14 @@ import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { usePresenceStatus } from "../presence/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
+  useId,
   useRef,
+  useState,
+  useEffect,
   useCallback,
   useSyncExternalStore,
   type ReactNode,
@@ -34,6 +38,10 @@ import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import { MessageActionBar } from "./MessageActionBar";
+import { FlagIcon } from "../../shared/design-system/icons";
+import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
 
 const emptySubscribe = () => () => {};
@@ -57,6 +65,8 @@ export type MessageRowProps = {
   onOpenLink(url: string): boolean;
   day: boolean;
   retry: ((id: string) => void) | undefined;
+  /** Pins this row in a virtualized list; returns the release. */
+  keepMounted?: ((messageId: string) => () => void) | undefined;
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
@@ -89,6 +99,7 @@ export const MessageRow = memo(function MessageRow({
   canOpenLink,
   day,
   retry,
+  keepMounted,
   onOpenThread,
   onReply,
   quickControls,
@@ -137,6 +148,8 @@ export const MessageRow = memo(function MessageRow({
     row.agentEnvelope || agentPubkeys?.has(row.authorId)
       ? "squircle"
       : "circle";
+  const presence = usePresenceStatus(session?.presence, row.authorId);
+  const presenceId = useId();
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
@@ -155,6 +168,28 @@ export const MessageRow = memo(function MessageRow({
       ?.readOnly
   );
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  const [reporting, setReporting] = useState<"open" | "sent">();
+  const reportActive = reporting !== undefined;
+  // The dialog, pending submit and notice live in this row; eviction loses them.
+  useEffect(() => {
+    const release = reportActive ? keepMounted?.(row.id) : undefined;
+    // Dialog focus restoration runs in a microtask after unmount; releasing a
+    // task later lets restored focus keep the row mounted instead.
+    return release && (() => void setTimeout(release));
+  }, [reportActive, keepMounted, row.id]);
+  const report =
+    !row.membership &&
+    (!row.delivery || ["accepted", "seen"].includes(row.delivery))
+      ? session?.messages.report
+      : undefined;
+  const reportItem = report && (
+    <MenuItem onClick={() => setReporting("open")}>
+      <MenuIcon>
+        <FlagIcon />
+      </MenuIcon>
+      Report message
+    </MenuItem>
+  );
   const body = row.diff ? (
     <div>
       <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
@@ -214,27 +249,43 @@ export const MessageRow = memo(function MessageRow({
             size={layout === "timeline" ? "default" : "sm"}
             shape="round"
             aria-label={`View ${name} profile`}
+            aria-describedby={presence === "unknown" ? undefined : presenceId}
             onClick={(event) => {
               event.currentTarget.focus();
               onOpenLink(target);
             }}
             icon={
-              <Avatar
-                src={picture}
-                alt=""
-                fallback={name}
-                size="fill"
-                shape={avatarShape}
-              />
+              <>
+                <Avatar
+                  src={picture}
+                  alt=""
+                  fallback={name}
+                  size="fill"
+                  shape={avatarShape}
+                  statusBadge={presence === "unknown" ? undefined : presence}
+                />
+                {presence !== "unknown" && (
+                  <span className="sr-only" id={presenceId}>
+                    Presence: {presence}
+                  </span>
+                )}
+              </>
             }
           />
         ) : (
           <Avatar
             src={picture}
-            alt=""
+            alt={
+              presence === "unknown"
+                ? ""
+                : avatarShape === "squircle"
+                  ? "Agent"
+                  : `${name} avatar`
+            }
             fallback={name}
             size={layout === "timeline" ? "large" : "default"}
             shape={avatarShape}
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         )}
         <div className={styles.messageBody}>
@@ -287,7 +338,31 @@ export const MessageRow = memo(function MessageRow({
                   />
                 ) : undefined)
               }
-              overflowItems={overflowItems}
+              overflowItems={
+                overflowItems || reportItem ? (
+                  <>
+                    {overflowItems}
+                    {reportItem}
+                  </>
+                ) : undefined
+              }
+            />
+          )}
+          {report && reporting === "open" && (
+            <ReportMessageDialog
+              report={(type, note) => report(row.id, type, note)}
+              close={(submitted) =>
+                setReporting(submitted ? "sent" : undefined)
+              }
+              finalFocus={menuTrigger}
+            />
+          )}
+          {reporting === "sent" && (
+            <ToastNotice
+              tone="success"
+              timeout={5000}
+              title="Report submitted to community moderators"
+              onDismiss={() => setReporting(undefined)}
             />
           )}
           <div

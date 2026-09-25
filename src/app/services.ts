@@ -4,6 +4,7 @@ import { TemplateProvidersService } from "../features/channel-templates/provider
 import { IdentityNamesService } from "../features/identity-names/service";
 import { bindAgentMentions } from "../features/agents/mention-wake";
 import { provideAgentControl } from "../features/agents/control-service";
+import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
 import { bindDeepLinks } from "../features/navigation/deep-links";
@@ -12,6 +13,7 @@ import {
   bindMessageNotifications,
   notificationAuthorized,
 } from "../features/notifications/messages";
+import { AccountActionsService } from "../features/account-actions/service";
 import { ShortcutsService } from "../features/shortcuts/service";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
@@ -29,6 +31,7 @@ export function createServices() {
   const appearance = createAppearance();
   const shortcutBindings = createShortcutBindings();
   const ctx = new Context();
+  new HostService(ctx);
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
   });
@@ -39,6 +42,7 @@ export function createServices() {
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
+  const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
   const channelTemplates = new TemplateProvidersService(ctx);
@@ -74,6 +78,7 @@ export function createServices() {
     navigation,
     navigationHost,
     shortcuts,
+    accountActions,
     shortcutBindings,
     conversation,
     settingsCards,

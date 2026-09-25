@@ -72,6 +72,7 @@ export function createAgentChoices({
           pubkey: row.pubkey,
           name: row.name,
           ...choices.get(row.pubkey),
+          ...(row.picture == null ? {} : { avatar: row.picture }),
           managed: true,
         });
       }

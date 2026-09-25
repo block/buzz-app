@@ -2,12 +2,22 @@
 import "@testing-library/jest-dom/vitest";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { bytesToHex } from "nostr-tools/utils";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { attestedOwner } from "../../features/agents/owner-attestation";
+import { controlFixture } from "../../features/agents/control-testing";
+import { createAgentControl } from "../../features/agents/control";
+import type { Navigation } from "../../features/navigation/controller";
 import { profileTarget } from "../../features/profiles/target";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import type { LiveCallbacks } from "../../features/relay/live";
@@ -192,14 +202,23 @@ it("does not trust a well-formed attestation with an invalid signature", async (
   expect(screen.queryByRole("button", { name: /owner profile/ })).toBeNull();
 });
 
-it("adds no agent section or reads for a profile without an agent hint", async () => {
+it("adds no agent section or owner reads for a profile without an agent hint", async () => {
   const person = keypair();
   const { query } = mount(person, (filter) =>
     kind0(filter) ? [profile(person, { name: "Person" })] : [],
   );
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
-  expect(agentReads(query)).toBe(1);
+  const reads = query.mock.calls.flatMap(([filters]) => filters);
+  expect(reads).toHaveLength(3);
+  expect(reads).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
+      expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
+      // Public metadata added on main probes the identity, not an alleged owner.
+      expect.objectContaining({ authors: [person.pubkey], kinds: [10100] }),
+    ]),
+  );
 });
 
 function timedProfile(
@@ -622,3 +641,109 @@ it.each(["remove", "replace", "equal-time removal"])(
     }
   },
 );
+
+it("offers instructions only for a signed owner with a unique native instance", async () => {
+  const agent = keypair();
+  const ownerKey = keypair();
+  const outsider = keypair();
+  for (const viewer of [ownerKey, outsider]) {
+    const head = timedProfile(agent, [auth(agent, ownerKey)], 3);
+    const h = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: relayKey.pubkey,
+      scope: "wss://relay.example.test",
+      media: () => undefined,
+      query: async (filters) =>
+        filters.some((filter) => filter.kinds?.includes(0)) ? [head] : [],
+      subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
+    });
+    owners.push(h);
+    const fixture = controlFixture();
+    fixture.agent.pubkey = agent.pubkey;
+    const control = createAgentControl(fixture.host);
+    const snapshot = {
+      status: "ready" as const,
+      generation: 1,
+      viewer: viewer.pubkey,
+      scope: `https://relay.example.test:${viewer.pubkey}`,
+      session: h.session,
+    };
+    const relay: RelayData = {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      retry() {},
+      disconnect() {},
+      clearCache: async () => {},
+    };
+    const open = vi.fn(async () => ({ status: "opened" as const }));
+    const panel = render(
+      <ProfilePanel
+        relay={relay}
+        control={control}
+        navigation={{ open } as unknown as Navigation}
+        target={profileTarget(agent.pubkey) ?? ""}
+        close={() => {}}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Helper" });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("region", { name: "Linked agent instances" }),
+      ).toHaveTextContent("Fixture agent"),
+    );
+    if (viewer === ownerKey) {
+      const button = await screen.findByRole("button", {
+        name: "Agent instructions",
+      });
+      expect(screen.queryByText("Instructions")).toBeNull();
+      expect(
+        screen.getAllByRole("button", { name: "Agent instructions" }),
+      ).toHaveLength(1);
+      await userEvent.setup().click(button);
+      const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+      expect(within(dialog).getByLabelText("Agent instructions")).toHaveValue(
+        "Help with the project.",
+      );
+      expect(open).not.toHaveBeenCalled();
+      await userEvent
+        .setup()
+        .clear(within(dialog).getByLabelText("Agent instructions"));
+      await userEvent
+        .setup()
+        .type(
+          within(dialog).getByLabelText("Agent instructions"),
+          "Updated instructions.",
+        );
+      await userEvent
+        .setup()
+        .click(within(dialog).getByRole("button", { name: "Save changes" }));
+      await waitFor(() =>
+        expect(fixture.calls.some((call) => call.action === "save")).toBe(true),
+      );
+      expect(
+        fixture.calls.find((call) => call.action === "save")?.payload,
+      ).toMatchObject({
+        id: fixture.agent.id,
+        expectedRevision: 1,
+        edit: { systemPrompt: "Updated instructions." },
+      });
+      await userEvent
+        .setup()
+        .click(within(dialog).getByRole("button", { name: "Close editor" }));
+      expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+      expect(
+        screen.getByRole("region", { name: "Profile details" }),
+      ).toBeVisible();
+      expect(open).not.toHaveBeenCalled();
+    } else {
+      await screen.findByRole("region", { name: "Linked agent instances" });
+      expect(screen.queryByText("Instructions")).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Agent instructions" }),
+      ).toBeNull();
+      expect(open).not.toHaveBeenCalled();
+    }
+    panel.unmount();
+    control.dispose();
+  }
+});

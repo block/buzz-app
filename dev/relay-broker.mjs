@@ -11,6 +11,7 @@ import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
+import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
 import {
   prepareChannelKit,
   decodeChannelKit,
@@ -96,6 +97,16 @@ import dc from "node:diagnostics_channel";
 import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
 import { schnorr } from "@noble/curves/secp256k1.js";
+
+function validProfilePicture(value) {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
 
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
@@ -271,6 +282,34 @@ async function relayAuthority(fetch, relay) {
     ...(nip11.self === author ? { archiveAuthority: author } : {}),
   };
 }
+export function validProductFeedback(event) {
+  if (
+    event?.kind !== 42000 ||
+    typeof event.content !== "string" ||
+    !event.content.trim() ||
+    Buffer.byteLength(event.content) > 32 * 1024 ||
+    !Number.isSafeInteger(event.created_at) ||
+    !Array.isArray(event.tags)
+  )
+    return false;
+  if (
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag.every((part) => typeof part === "string") &&
+        ["category", "client-id"].includes(tag[0]),
+    )
+  )
+    return false;
+  const categories = event.tags.filter((tag) => tag[0] === "category");
+  return (
+    categories.length <= 1 &&
+    (!categories.length ||
+      ["bug", "praise", "needs-work"].includes(categories[0][1]))
+  );
+}
+
 export function validMessageTemplate(event) {
   return (
     event &&
@@ -311,6 +350,40 @@ export function validMessageTemplate(event) {
             canonical(references[1], "reply") &&
             references[0][1] !== references[1][1];
     })()
+  );
+}
+/** NIP-56 message report: exactly one author and one typed message target. */
+export function validReport(event) {
+  if (
+    event?.kind !== 1984 ||
+    typeof event.content !== "string" ||
+    event.content !== event.content.trim() ||
+    Buffer.byteLength(event.content) > 32000 ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length !== 2
+  )
+    return false;
+  const [author, target] = event.tags;
+  return (
+    Array.isArray(author) &&
+    author.length === 2 &&
+    author[0] === "p" &&
+    /^[0-9a-f]{64}$/.test(author[1]) &&
+    Array.isArray(target) &&
+    target.length === 3 &&
+    target[0] === "e" &&
+    /^[0-9a-f]{64}$/.test(target[1]) &&
+    [
+      "spam",
+      "profanity",
+      "nudity",
+      "impersonation",
+      "malware",
+      "illegal",
+      "other",
+    ].includes(target[2])
   );
 }
 /** Channel-local NIP-09 removal; the relay enforces authorship of each target. */
@@ -376,6 +449,27 @@ export function validAgentEnrollment(event) {
         Object.hasOwn(validators, tag[0]) &&
         validators[tag[0]].test(tag[1]),
     )
+  );
+}
+/** Base Buzz agent delete: only removal of one member, relay-authorized. */
+export function validAgentRemoval(event) {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const [h, p, clientId, ...extra] = Array.isArray(event?.tags)
+    ? event.tags
+    : [];
+  return (
+    event?.kind === 9001 &&
+    event.content === "" &&
+    Number.isSafeInteger(event.created_at) &&
+    event.created_at >= 0 &&
+    !extra.length &&
+    [h, p, clientId].every((tag) => Array.isArray(tag) && tag.length === 2) &&
+    h[0] === "h" &&
+    uuid.test(h[1]) &&
+    p[0] === "p" &&
+    /^[0-9a-f]{64}$/.test(p[1]) &&
+    clientId[0] === "client-id" &&
+    uuid.test(clientId[1])
   );
 }
 export function validChannelActivityFilters(filters) {
@@ -1061,13 +1155,17 @@ export function relayBrokerPlugin({
                 7,
                 9,
                 40003,
+                42000,
                 9000,
+                9001,
                 30078,
                 40100,
+                1984,
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               channelLifecycle: true,
+              identityArchives: true,
               workflowReads: true,
               projectGit: true,
               attachmentUploads: true,
@@ -1530,6 +1628,8 @@ export function relayBrokerPlugin({
               "/api/relay/sign",
               "/api/relay/channel-lifecycle-sign",
               "/api/relay/channel-lifecycle-publish",
+              "/api/relay/identity-archive-sign",
+              "/api/relay/identity-archive-publish",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
               "/api/relay/channel-kit-prepare",
@@ -1717,10 +1817,14 @@ export function relayBrokerPlugin({
               filters.name.length > 100 ||
               typeof filters?.picture !== "string" ||
               filters.picture.length > 2048 ||
-              (filters.picture && !/^https:\/\//.test(filters.picture))
+              !validProfilePicture(filters.picture) ||
+              (filters.about !== undefined &&
+                (typeof filters.about !== "string" ||
+                  filters.about.length > 500))
             )
               return json(res, 400, {
-                error: "Profile needs a name and an optional HTTPS picture URL",
+                error:
+                  "Profile needs a name, an optional HTTPS picture URL, and a description of 500 characters or fewer",
               });
             // Preserve fields this small editor does not expose.
             const content = {
@@ -1728,6 +1832,12 @@ export function relayBrokerPlugin({
               name: filters.name.trim(),
               display_name: filters.name.trim(),
               picture: filters.picture,
+              about:
+                filters.about === undefined
+                  ? typeof filters.existing?.about === "string"
+                    ? filters.existing.about
+                    : ""
+                  : filters.about.trim(),
             };
             if (Buffer.byteLength(JSON.stringify(content)) > 16000)
               return json(res, 400, { error: "Profile too large" });
@@ -1794,14 +1904,30 @@ export function relayBrokerPlugin({
           const lifecycle =
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/channel-lifecycle-publish";
+          const archive =
+            route === "/api/relay/identity-archive-sign" ||
+            route === "/api/relay/identity-archive-publish";
           const signing =
             route === "/api/relay/sign" ||
-            route === "/api/relay/channel-lifecycle-sign";
+            route === "/api/relay/channel-lifecycle-sign" ||
+            route === "/api/relay/identity-archive-sign";
           const publishing =
             route === "/api/relay/publish" ||
-            route === "/api/relay/channel-lifecycle-publish";
+            route === "/api/relay/channel-lifecycle-publish" ||
+            route === "/api/relay/identity-archive-publish";
           if (signing || publishing) {
-            if (lifecycle) {
+            if (archive) {
+              try {
+                validateArchiveRequestTemplate(filters);
+                if (!(await getAuthority(relay)).archiveAuthority)
+                  throw new Error("Archive authority unavailable");
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid identity archive request",
+                  sent: false,
+                });
+              }
+            } else if (lifecycle) {
               try {
                 validateLifecycleTemplate(filters);
               } catch {
@@ -1814,6 +1940,12 @@ export function relayBrokerPlugin({
               if (!validStatusTemplate(filters))
                 return json(res, 400, {
                   error: "Status rejected",
+                  sent: false,
+                });
+            } else if (filters?.kind === 9001) {
+              if (!validAgentRemoval(filters))
+                return json(res, 400, {
+                  error: "Agent removal invalid",
                   sent: false,
                 });
             } else if ([9000, 9007].includes(filters?.kind)) {
@@ -1829,6 +1961,12 @@ export function relayBrokerPlugin({
                 return json(res, 400, {
                   error:
                     "Agent enrollment or channel operation unavailable or invalid",
+                  sent: false,
+                });
+            } else if (filters?.kind === 42000) {
+              if (!validProductFeedback(filters))
+                return json(res, 400, {
+                  error: "Product feedback rejected",
                   sent: false,
                 });
             } else if (filters?.kind === 30078 || filters?.kind === 40100) {
@@ -1848,6 +1986,12 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
+            } else if (filters?.kind === 1984) {
+              if (!validReport(filters))
+                return json(res, 400, {
+                  error: "Report rejected",
+                  sent: false,
+                });
             } else if (
               ![7, 9, 40003].includes(filters?.kind) &&
               !validMessageDeletion(filters)

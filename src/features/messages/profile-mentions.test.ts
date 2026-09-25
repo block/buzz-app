@@ -116,3 +116,13 @@ it.each([
     expect(result.map((part) => part.text).join("")).toBe(content);
   },
 );
+
+it("binds signed references without making them notification recipients", () => {
+  const reference = { mentions: [], mentionReferences: [mic] };
+  expect(parts("@Mic", reference)).toEqual([
+    { text: "@Mic", target: profileTarget(mic) },
+  ]);
+  expect(parts("@Mic", { ...reference, edited: true })).toEqual([
+    { text: "@Mic" },
+  ]);
+});

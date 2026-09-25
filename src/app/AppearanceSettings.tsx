@@ -56,31 +56,34 @@ export function AppearanceSettings({
           </RadioGroup>
         </Field>
         <fieldset className="mt-6 min-w-0 border-0 p-0">
-          <legend className="mb-2 text-label">Text size</legend>
-          <p className="mt-0 mb-3 text-body-sm text-muted">
-            Resize text without zooming the window. Saved on this device.
-          </p>
+          <legend className="mb-2 text-label-sm">Text size</legend>
           <div className="flex flex-wrap items-center gap-3">
             <Button
               type="button"
+              size="sm"
               aria-label="Decrease text size"
               disabled={fontScale <= 0.8}
               onClick={() => appearance.setFontScale(fontScale - 0.1)}
             >
               −
             </Button>
-            <output aria-label="Text size">
+            <output aria-label="Text size" className="text-body-sm">
               {Math.round(fontScale * 100)}%
             </output>
             <Button
               type="button"
+              size="sm"
               aria-label="Increase text size"
               disabled={fontScale >= 2}
               onClick={() => appearance.setFontScale(fontScale + 0.1)}
             >
               +
             </Button>
-            <Button type="button" onClick={() => appearance.setFontScale(1)}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => appearance.setFontScale(1)}
+            >
               Reset text size
             </Button>
           </div>

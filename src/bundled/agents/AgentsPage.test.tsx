@@ -15,6 +15,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import * as communityApi from "../../features/communities/api";
 import { AgentsPage } from "./AgentsPage";
+import type { PageNavigation } from "../../features/navigation/service";
+import type { OpenTarget } from "../../features/navigation/targets";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { createRelaySession } from "../../features/relay/session";
@@ -30,6 +32,11 @@ afterEach(() => {
 function setup(
   mode = "ready",
   configure?: (fixture: ReturnType<typeof controlFixture>) => void,
+  navigation?: PageNavigation,
+  open?: (
+    target: OpenTarget,
+    options?: { replace?: boolean },
+  ) => Promise<{ status: "opened" }>,
 ) {
   const f = controlFixture();
   configure?.(f);
@@ -76,7 +83,12 @@ function setup(
         }
       : owned.session;
   let snapshot: RelaySnapshot = {
-    status: mode === "disconnected" ? "disconnected" : "ready",
+    status:
+      mode === "disconnected"
+        ? "disconnected"
+        : mode === "connecting"
+          ? "connecting"
+          : "ready",
     scope:
       mode === "connected"
         ? `wss://relay.example.test:${"de".repeat(32)}`
@@ -104,13 +116,30 @@ function setup(
   });
   snapshot = { ...snapshot, session: { ...session, names } };
   disposals.push(() => names.dispose());
-  render(<AgentsPage relay={relay} control={control} />);
+  render(
+    <AgentsPage
+      relay={relay}
+      control={control}
+      navigation={navigation}
+      {...(open ? { open } : {})}
+    />,
+  );
   return {
     f,
     read,
     control,
     changeScope(scope: string, generation: number) {
       snapshot = { status: "ready", scope, generation, session };
+      for (const listener of listeners) listener();
+    },
+    connect() {
+      snapshot = {
+        status: "ready",
+        scope: `wss://relay.example.test:${"de".repeat(32)}`,
+        viewer: "de".repeat(32),
+        generation: snapshot.generation,
+        session: snapshot.session,
+      };
       for (const listener of listeners) listener();
     },
   };
@@ -426,6 +455,12 @@ it("confirms local deletion, keeps the card on failure, and removes it only afte
       ).getByRole("button", { name: "Delete agent" }),
     ).toBeEnabled(),
   );
+  expect(
+    within(
+      screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
+    ).getByRole("alert"),
+  ).toHaveTextContent("Could not remove the saved credential");
+  expect(remove).toHaveBeenCalledTimes(1);
   fireEvent.click(
     within(
       screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
@@ -524,16 +559,20 @@ it("selects installed Goose with ACP arguments and saves its provider and model"
   );
   await userEvent.click(await screen.findByRole("option", { name: "Goose" }));
   expect(within(dialog).getByLabelText("LLM Provider")).toBeVisible();
-  expect(within(dialog).getByLabelText("Model")).toHaveValue("");
+  expect(within(dialog).getByRole("combobox", { name: "Model" })).toHaveValue(
+    "",
+  );
   await userEvent.click(
     within(dialog).getByRole("combobox", { name: "LLM Provider" }),
   );
   await userEvent.click(
     await screen.findByRole("option", { name: "OpenRouter" }),
   );
-  fireEvent.change(within(dialog).getByLabelText("Model"), {
+  const model = within(dialog).getByRole("combobox", { name: "Model" });
+  fireEvent.change(model, {
     target: { value: "anthropic/claude-sonnet-4" },
   });
+  fireEvent.blur(model);
   fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
   await within(dialog).findByText("Saved. Running work was not restarted.");
   expect(f.calls.find((call) => call.action === "save")?.payload).toMatchObject(
@@ -552,7 +591,7 @@ it("selects installed Goose with ACP arguments and saves its provider and model"
 
 for (const source of ["saved", "draft"] as const) {
   for (const provider of ["", "openai"] as const) {
-    it(`browses Goose models with a ${source} Databricks override and ${provider || "blank"} selector`, async () => {
+    it(`passes a ${source} Goose provider override with a ${provider || "blank"} selector to native discovery`, async () => {
       const run = vi.fn(async () => ({
         host: "",
         models: [{ id: "catalog.schema.model", name: "catalog.schema.model" }],
@@ -589,9 +628,6 @@ for (const source of ["saved", "draft"] as const) {
       fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
       const dialog = screen.getByRole("dialog", { name: "Edit agent" });
       if (source === "draft") {
-        expect(
-          within(dialog).queryByRole("button", { name: "Browse models" }),
-        ).not.toBeInTheDocument();
         fireEvent.click(
           within(dialog).getByRole("button", { name: "Environment" }),
         );
@@ -629,7 +665,7 @@ for (const source of ["saved", "draft"] as const) {
   }
 }
 
-it("uses a draft Goose provider override before the Databricks selector", async () => {
+it("keeps Goose model browsing available after a draft provider override", async () => {
   setup("ready", (fixture) => {
     Object.assign(fixture.agent.harness, {
       command: "/fixture/bin/goose",
@@ -660,9 +696,9 @@ it("uses a draft Goose provider override before the Databricks selector", async 
     { target: { value: "openai" } },
   );
   expect(
-    within(dialog).queryByRole("button", { name: "Browse models" }),
-  ).not.toBeInTheDocument();
-  expect(within(dialog).getByLabelText("Model")).toBeVisible();
+    within(dialog).getByRole("button", { name: "Browse models" }),
+  ).toBeVisible();
+  expect(within(dialog).getByRole("combobox", { name: "Model" })).toBeVisible();
 });
 
 it("creates a stopped Goose agent with the selected provider", async () => {
@@ -711,9 +747,11 @@ it("creates a stopped Goose agent with the selected provider", async () => {
   await userEvent.click(
     await screen.findByRole("option", { name: "OpenRouter" }),
   );
-  fireEvent.change(within(dialog).getByLabelText("Model"), {
+  const model = within(dialog).getByRole("combobox", { name: "Model" });
+  fireEvent.change(model, {
     target: { value: "anthropic/claude-sonnet-4" },
   });
+  fireEvent.blur(model);
   fireEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
   await waitFor(() => expect(commit).toHaveBeenCalledOnce());
   expect(commit.mock.calls[0]?.[1].harness).toMatchObject({
@@ -1096,6 +1134,10 @@ it("retries the same saved profile even if the runtime becomes unavailable", asy
   f.data.runtimeAvailable = false;
   await act(async () => control.refresh());
   const retry = within(dialog).getByRole("button", { name: "Retry profile" });
+  expect(control.snapshot().error).toBeNull();
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Synthetic profile failure",
+  );
   expect(retry).toBeEnabled();
   await user.click(retry);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -1130,7 +1172,7 @@ for (const error of [
     expect(snapshot).toHaveBeenCalledTimes(2);
   });
 }
-it("shows Retry after persistent or genuine read failure without hiding the error", async () => {
+it("keeps persistent read failures visible and recovers on the next periodic read", async () => {
   vi.useFakeTimers();
   const { f } = setup("ready", (f) => {
     vi.spyOn(f.host, "snapshot").mockRejectedValue(
@@ -1143,17 +1185,135 @@ it("shows Retry after persistent or genuine read failure without hiding the erro
   expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
   expect(screen.getByText(/Could not refresh local agents/)).toBeVisible();
   expect(f.host.snapshot).toHaveBeenCalledTimes(21);
+  vi.mocked(f.host.snapshot).mockRejectedValue("Store is unreadable");
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(10000);
+    await vi.advanceTimersByTimeAsync(4999);
   });
   expect(f.host.snapshot).toHaveBeenCalledTimes(21);
-  vi.mocked(f.host.snapshot).mockRejectedValue("Store is unreadable");
-  fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(1);
   });
   expect(f.host.snapshot).toHaveBeenCalledTimes(22);
   expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(23);
+  expect(screen.queryByText("Reading local agent status…")).toBeNull();
+  vi.mocked(f.host.snapshot).mockResolvedValue(structuredClone(f.data));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(24);
+  expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+  expect(screen.queryByText(/Could not refresh local agents/)).toBeNull();
+  expect(
+    screen.getAllByRole("article", { name: "Agent Fixture agent" }),
+  ).toHaveLength(2);
+});
+
+it.each(["running", "failed"] as const)(
+  "recovers Start status to %s without replay or cross-agent errors",
+  async (status) => {
+    vi.useFakeTimers();
+    const { f, control } = setup("ready", (f) => {
+      f.agent.enabled = false;
+      f.agent.status = "stopped";
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const [card] = screen.getAllByRole("article", {
+      name: "Agent Fixture agent",
+    });
+    if (!card) throw Error("Missing managed card");
+    const action = vi
+      .spyOn(f.host, "action")
+      .mockRejectedValueOnce("Synthetic start failure.");
+    fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const error = screen.getByRole("alert");
+    const retry = screen.getByRole("button", { name: "Retry status" });
+    expect(error).toHaveTextContent("Synthetic start failure.");
+    for (const notice of [error, retry]) {
+      expect(
+        notice.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+    expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
+    f.agent.enabled = true;
+    f.agent.status = status;
+    f.agent.error = status === "failed" ? "Synthetic start failure." : null;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(control.snapshot().status).toBe("ready");
+    expect(control.snapshot().error).toBeNull();
+    if (status === "failed") {
+      expect(within(card).getByRole("alert")).toHaveTextContent(
+        "Synthetic start failure.",
+      );
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+    } else {
+      expect(
+        within(card).getByText("Process running · relay readiness unverified"),
+      ).toBeVisible();
+      expect(screen.queryByRole("alert")).toBeNull();
+    }
+    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+    expect(action).toHaveBeenCalledExactlyOnceWith(f.agent.id, "start");
+    const other = screen.getAllByRole("article", {
+      name: "Agent Fixture agent",
+    })[1];
+    if (!other) throw Error("Missing other agent");
+    expect(within(other).queryByRole("alert")).toBeNull();
+    fireEvent.click(
+      within(other).getByRole("button", { name: "Actions for Fixture agent" }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(
+      within(screen.getByRole("dialog", { name: "Edit agent" })).queryByRole(
+        "alert",
+      ),
+    ).toBeNull();
+  },
+);
+
+it("pauses error polling while hidden and clears the timer on unmount", async () => {
+  vi.useFakeTimers();
+  const visibility = vi
+    .spyOn(document, "visibilityState", "get")
+    .mockReturnValue("visible");
+  const { f } = setup("ready", (f) => {
+    vi.spyOn(f.host, "snapshot").mockRejectedValue("Store is unreadable");
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
+  expect(f.host.snapshot).toHaveBeenCalledTimes(1);
+  visibility.mockReturnValue("hidden");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(1);
+  visibility.mockReturnValue("visible");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(2);
+  cleanup();
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(f.host.snapshot).toHaveBeenCalledTimes(2);
 });
 
 for (const mode of ["edit", "create"] as const) {
@@ -1382,5 +1542,199 @@ it("keeps collisions across different cross-community aliases and edits the exac
         }),
       }),
     ),
+  );
+});
+
+function routed(pubkey: string) {
+  const complete = vi.fn(() => true);
+  const target: OpenTarget = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: {
+      viewer: "de".repeat(32),
+      communityOrigin: "https://relay.example.test",
+    },
+    route: { version: 1, params: { pubkey } },
+  };
+  const navigation = {
+    target,
+    signal: new AbortController().signal,
+    complete,
+    forSession() {
+      return this;
+    },
+  } as unknown as PageNavigation;
+  return { navigation, complete };
+}
+
+it("opens the exact native agent editor on the routed page and acknowledges its presentation", async () => {
+  const { navigation, complete } = routed("ab".repeat(32));
+  const { f } = setup("connected", undefined, navigation);
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  expect(within(dialog).getByLabelText("Agent instructions")).toBeVisible();
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({ status: "opened" }),
+  );
+  fireEvent.change(within(dialog).getByLabelText("Name"), {
+    target: { value: "Targeted" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(
+      f.calls.find((call) => call.action === "save")?.payload,
+    ).toMatchObject({ id: "fixture-agent" }),
+  );
+});
+
+it("rejects missing and ambiguous route targets instead of choosing a namesake", async () => {
+  const { navigation, complete } = routed("ab".repeat(32));
+  setup(
+    "connected",
+    (f) => f.data.agents.push({ ...structuredClone(f.agent), id: "duplicate" }),
+    navigation,
+  );
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({
+      status: "failed",
+      reason: "not-found",
+    }),
+  );
+  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+});
+
+it("rejects an edit route for a different community", async () => {
+  const { navigation, complete } = routed("ab".repeat(32));
+  setup(
+    "connected",
+    (f) => {
+      f.agent.relayUrl = "wss://other.example";
+    },
+    navigation,
+  );
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({
+      status: "failed",
+      reason: "not-found",
+    }),
+  );
+  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+});
+
+it("closes a routed editor back to the unrouted Agents page", async () => {
+  const { navigation } = routed("ab".repeat(32));
+  const open = vi.fn(
+    async (_target: OpenTarget, _options?: { replace?: boolean }) => ({
+      status: "opened" as const,
+    }),
+  );
+  setup("connected", undefined, navigation, open);
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  await userEvent
+    .setup()
+    .click(within(dialog).getByRole("button", { name: "Close editor" }));
+  expect(open).toHaveBeenCalledWith(
+    {
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.agents",
+      pageId: "agents",
+      scope: {
+        viewer: "de".repeat(32),
+        communityOrigin: "https://relay.example.test",
+      },
+    },
+    { replace: true },
+  );
+});
+
+it("retains a routed draft and its save error after status recovery only in that editor", async () => {
+  const { navigation } = routed("ab".repeat(32));
+  const { f, control } = setup(
+    "connected",
+    (fixture) => fixture.failSave(true),
+    navigation,
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  fireEvent.change(within(dialog).getByLabelText("Name"), {
+    target: { value: "Unsaved draft" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await within(dialog).findByText(/Your edits are retained/);
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Unsaved draft");
+  await act(() => control.refresh());
+  expect(control.snapshot()).toMatchObject({ status: "ready", error: null });
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "The host could not save settings.",
+  );
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Unsaved draft");
+  expect(f.calls.filter((call) => call.action === "save")).toHaveLength(1);
+  // Include the dialog-inert page so a leaked global banner cannot hide.
+  expect(document.querySelectorAll('[role="alert"]')).toHaveLength(1);
+});
+
+it("waits for a connecting relay before opening a routed editor", async () => {
+  const { navigation, complete } = routed("ab".repeat(32));
+  const page = setup("connecting", undefined, navigation);
+  expect(complete).not.toHaveBeenCalled();
+  await waitFor(() => expect(page.control.snapshot().status).toBe("ready"));
+  expect(complete).not.toHaveBeenCalled();
+  act(() => page.connect());
+  await screen.findByRole("dialog", { name: "Edit agent" });
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({ status: "opened" }),
+  );
+  expect(complete).not.toHaveBeenCalledWith({
+    status: "failed",
+    reason: "unavailable",
+  });
+});
+
+it("acknowledges the unrouted Agents page", async () => {
+  const { navigation, complete } = routed("ab".repeat(32));
+  const target = navigation.target as Extract<OpenTarget, { kind: "page" }>;
+  const unrouted = {
+    ...navigation,
+    target: { ...target, route: undefined },
+  } as unknown as PageNavigation;
+  setup("connected", undefined, unrouted);
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({ status: "opened" }),
+  );
+});
+
+it("clears an obsolete route before editing another card", async () => {
+  const { navigation } = routed("ab".repeat(32));
+  const open = vi.fn(
+    async (_target: OpenTarget, _options?: { replace?: boolean }) => ({
+      status: "opened" as const,
+    }),
+  );
+  setup(
+    "connected",
+    (f) => {
+      f.data.agents.splice(0, 1);
+    },
+    navigation,
+    open,
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull(),
+  );
+  const cards = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  const other = cards.find((card) =>
+    card.textContent?.includes("wss://second.example"),
+  );
+  if (!other) throw Error("Second destination missing");
+  fireEvent.click(
+    within(other).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  expect(open).toHaveBeenCalledWith(
+    expect.not.objectContaining({ route: expect.anything() }),
+    { replace: true },
   );
 });

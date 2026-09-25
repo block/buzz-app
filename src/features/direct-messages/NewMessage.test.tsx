@@ -136,6 +136,7 @@ function setup() {
     },
     media: (url: string) => url,
   } as unknown as RelaySession;
+  const onOpened = vi.fn();
   const onStarted = vi.fn();
   let controlState = {
     status: "ready",
@@ -170,13 +171,19 @@ function setup() {
   });
   const mount = () =>
     render(
-      <NewMessage session={session} scope={scope} onStarted={onStarted} />,
+      <NewMessage
+        session={session}
+        scope={scope}
+        onOpened={onOpened}
+        onStarted={onStarted}
+      />,
     );
   return {
     session,
     directMessages,
     messages,
     outbox,
+    onOpened,
     onStarted,
     mount,
     control,
@@ -298,7 +305,7 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
   expect(screen.getAllByRole("option")).toHaveLength(10);
   await t.user.type(recipient(), "Person 2");
   await screen.findByRole("option", { name: "Person 2, Agent" });
-  await t.user.keyboard("{Enter}");
+  await t.user.keyboard("{ArrowDown}{Enter}");
   expect(recipient()).toHaveValue("");
   expect(recipient()).toHaveFocus();
   expect(screen.getByRole("button", { name: "Remove Person 2" })).toBeVisible();
@@ -306,7 +313,7 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
     await waitFor(() =>
       expect(screen.getAllByRole("option").length).toBeGreaterThan(0),
     );
-    await t.user.keyboard("{Enter}");
+    await t.user.keyboard("{ArrowDown}{Enter}");
   }
   expect(
     screen.getAllByRole("button", { name: /^Remove Person/ }),
@@ -317,6 +324,54 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
     screen.getAllByRole("button", { name: /^Remove Person/ }),
   ).toHaveLength(8);
   expect(t.directMessages.open).not.toHaveBeenCalled();
+});
+
+it("opens the exact conversation without sending a message", async () => {
+  const t = setup();
+  t.mount();
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+
+  await t.user.click(screen.getByRole("button", { name: "Open conversation" }));
+
+  await waitFor(() => expect(t.onOpened).toHaveBeenCalledWith(channel));
+  expect(t.directMessages.open).toHaveBeenCalledWith(
+    [people[0]?.pubkey],
+    expect.any(AbortSignal),
+  );
+  expect(t.messages.send).not.toHaveBeenCalled();
+  expect(t.onStarted).not.toHaveBeenCalled();
+});
+
+it("requires an arrow key before Enter selects a recipient", async () => {
+  const t = setup();
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+
+  await t.user.keyboard("{Enter}");
+  expect(
+    screen.queryByRole("button", { name: "Remove Person 1" }),
+  ).not.toBeInTheDocument();
+
+  await t.user.keyboard("{ArrowDown}{Enter}");
+  expect(screen.getByRole("button", { name: "Remove Person 1" })).toBeVisible();
+});
+
+it("matches an exact public key without exposing short key substrings", async () => {
+  const t = setup();
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+
+  await t.user.type(recipient(), people[0]?.pubkey ?? "");
+  expect(await screen.findByRole("option", { name: "Person 1" })).toBeVisible();
+  for (const length of [8, 40]) {
+    await t.user.clear(recipient());
+    await t.user.type(recipient(), (people[0]?.pubkey ?? "").slice(0, length));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("option", { name: "Person 1" }),
+      ).not.toBeInTheDocument(),
+    );
+  }
 });
 
 it("removes once for pointerdown plus click, then Backspace; effects outlive chips", async () => {
@@ -547,9 +602,8 @@ it("keeps loaded pages when clearing search or returning to New message, scoped 
   expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
     loaded,
   );
-  expect(t.directMessages.people).toHaveBeenCalledTimes(requests);
-  fireEvent.scroll(screen.getByRole("listbox"));
   await screen.findByRole("option", { name: "Person 3" });
+  expect(t.directMessages.people).toHaveBeenCalledTimes(requests + 1);
   expect(t.directMessages.people).toHaveBeenLastCalledWith(
     "",
     3,

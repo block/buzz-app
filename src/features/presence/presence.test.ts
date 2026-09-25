@@ -3,6 +3,7 @@ import { createPresence } from "./presence";
 import type { PresenceActivity } from "./activity";
 import type { ReadTransport } from "../relay/transport";
 import { createRelaySession } from "../relay/session";
+import { createApiAdmission } from "../relay/http-admission";
 import type { LiveCallbacks } from "../relay/live";
 const key = (n: number) => n.toString(16).padStart(64, "0");
 afterEach(() => {
@@ -130,6 +131,58 @@ it.each([false, true])(
       expect(h.read).toHaveBeenCalledTimes(2);
       expect(h.owner.status(key(3))).toBe("online");
     } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
+it.each(["during", "after", "reconnect"])(
+  "paces demand from settlement with first-flight ordering: %s",
+  async (demand) => {
+    const h = setup();
+    const lane = createApiAdmission();
+    let releaseTransit!: () => void;
+    const transit = new Promise<void>((resolve) => {
+      releaseTransit = resolve;
+    });
+    const skipped = vi.fn();
+    let first = true;
+    h.read.mockImplementation(async (authors) => {
+      if (first) {
+        first = false;
+        await transit;
+      }
+      const release = lane.tryPresence();
+      if (!release) {
+        skipped();
+        return null;
+      }
+      release();
+      return new Map(authors.map((author) => [author, "online"]));
+    });
+    try {
+      h.owner.subscribe(key(3), () => {});
+      await vi.advanceTimersByTimeAsync(100);
+      expect(h.read).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(200);
+      if (demand !== "after") h.owner.subscribe(key(4), () => {});
+      if (demand === "reconnect") {
+        h.owner.connected(false);
+        h.owner.connected(true);
+      }
+      releaseTransit();
+      await vi.advanceTimersByTimeAsync(0);
+      if (demand === "after") h.owner.subscribe(key(4), () => {});
+      expect(h.owner.status(key(4))).toBe("unknown");
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(h.read).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(h.read).toHaveBeenCalledTimes(2);
+      expect(skipped).not.toHaveBeenCalled();
+      expect(h.owner.status(key(3))).toBe("online");
+      expect(h.owner.status(key(4))).toBe("online");
+    } finally {
+      releaseTransit();
       h.owner.dispose();
     }
   },

@@ -9,7 +9,10 @@ import type { Navigation } from "../navigation/controller";
 import { ChannelSidebar } from "./ChannelSidebar";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
 
-const { rowRender } = vi.hoisted(() => ({ rowRender: vi.fn() }));
+const { rowRender, menuRender } = vi.hoisted(() => ({
+  rowRender: vi.fn(),
+  menuRender: vi.fn(),
+}));
 // Observe the real row below ChannelSidebarItem's production memo boundary.
 // React hooks, the parent, the item and the row implementation remain real.
 vi.mock("../../bundled/channels/ChannelSidebarRow", async (original) => {
@@ -22,6 +25,22 @@ vi.mock("../../bundled/channels/ChannelSidebarRow", async (original) => {
     ) => {
       rowRender(props);
       return <actual.ChannelSidebarRow {...props} />;
+    },
+  };
+});
+// Observe the real row menu provider and popup the same way.
+vi.mock("../../shared/design-system/ui/Menu", async (original) => {
+  const actual =
+    await original<typeof import("../../shared/design-system/ui/Menu")>();
+  return {
+    ...actual,
+    ContextMenuRoot: (props: Parameters<typeof actual.ContextMenuRoot>[0]) => {
+      menuRender("root", props);
+      return <actual.ContextMenuRoot {...props} />;
+    },
+    MenuPopup: (props: Parameters<typeof actual.MenuPopup>[0]) => {
+      menuRender("popup", props);
+      return <actual.MenuPopup {...props} />;
     },
   };
 });
@@ -111,10 +130,20 @@ it("does not rebuild unchanged rows on channel switches and refreshes session ac
   const mounted = render(h.view("alpha"));
   await screen.findByRole("button", { name: "gamma" });
   rowRender.mockClear();
+  menuRender.mockClear();
   mounted.rerender(h.view("beta"));
   expect(rowRender.mock.calls.map(([props]) => props.channel.id)).not.toContain(
     "gamma",
   );
+  // Unchanged rows keep their menu provider and popup behind the memo too.
+  expect(
+    menuRender.mock.calls.filter(([, props]) =>
+      String(props["aria-label"] ?? "").includes("gamma"),
+    ),
+  ).toEqual([]);
+  expect(
+    menuRender.mock.calls.filter(([kind]) => kind === "root"),
+  ).toHaveLength(rowRender.mock.calls.length);
   expect(screen.getByRole("button", { name: "beta" })).toHaveAttribute(
     "aria-current",
     "page",

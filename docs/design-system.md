@@ -12,13 +12,13 @@ this is shared styling, not a second component registry or a parallel `core/` tr
 
 ## First release contract
 
-Settings → Appearance offers **Light**, **Dark**, and **System**, defaulting to Light. System
+Settings → Appearance offers **Light**, **Dark**, and **System**, defaulting to System. System
 follows the computer's color scheme as it changes. The choice
 is device-local (`buzz-appearance.v1` in browser-origin localStorage), not a community
 profile or relay event. There is no theme marketplace or appearance sync
 between devices. Another same-origin window observes saved changes without rebuilding
-pages or relay services. Failed storage reads open safely in Light; failed saves apply
-for this session and expose a retry in Appearance. Invalid stored values use Light.
+pages or relay services. Failed storage reads open safely in System; failed saves apply
+for this session and expose a retry in Appearance. Invalid stored values use System.
 
 `public/appearance-init.js` runs as a parser-blocking same-origin script in the HTML
 head, before the React bundle. It sets `data-color-mode` on `<html>`; CSS supplies the

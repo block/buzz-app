@@ -83,6 +83,8 @@ import { PaperclipIcon as PhosphorPaperclipIcon } from "@phosphor-icons/react/di
 export const PaperclipIcon = defineIcon("phosphor", PhosphorPaperclipIcon);
 import { FileTextIcon as PhosphorFileTextIcon } from "@phosphor-icons/react/dist/csr/FileText";
 export const FileTextIcon = defineIcon("phosphor", PhosphorFileTextIcon);
+import { FlagIcon as PhosphorFlagIcon } from "@phosphor-icons/react/dist/csr/Flag";
+export const FlagIcon = defineIcon("phosphor", PhosphorFlagIcon);
 import { FolderOpenIcon as PhosphorFolderOpenIcon } from "@phosphor-icons/react/dist/csr/FolderOpen";
 export const FolderOpenIcon = defineIcon("phosphor", PhosphorFolderOpenIcon);
 import { FolderSimpleIcon as PhosphorFolderSimpleIcon } from "@phosphor-icons/react/dist/csr/FolderSimple";
@@ -307,3 +309,6 @@ export const ArrowsDownUpIcon = defineIcon(
   "phosphor",
   PhosphorArrowsDownUpIcon,
 );
+
+import { InfoIcon as PhosphorInfoIcon } from "@phosphor-icons/react/dist/csr/Info";
+export const InfoIcon = defineIcon("phosphor", PhosphorInfoIcon);

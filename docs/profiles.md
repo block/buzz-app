@@ -13,8 +13,10 @@ custody is app-wide: the viewer is not an owner check, so any account in this
 app on the same relay sees the same local record. It
 shows process status (still "relay readiness unverified", not a listening badge),
 saved harness/provider/model/workspace (labelled as saved settings, since
-environment overrides may change what is launched), collapsible instructions,
-saved-vs-running revision drift and diagnostics. Environment keys and
+environment overrides may change what is launched), saved-vs-running revision
+drift and diagnostics. Instructions are no longer displayed in the read-only
+summary; the verified owner opens the existing native editor in place with
+**Agent instructions**, without leaving the profile. Environment keys and
 arguments are not shown. Opening the Info tab requests a status read; concurrent
 requests coalesce. This summary adds no polling and observes the profile actions'
 existing refresh. A failed read keeps the last evidence.
@@ -22,8 +24,9 @@ The host error, runtime-unavailable reason, unconfirmed-status notice and Retry
 are shown once, by the profile actions. Browser/unavailable hosts, loading/error
 without evidence, unknown keys and records saved for another community render
 nothing, leaving the public identity. Community switches re-filter immediately.
-Start/Stop/Restart are the separate profile actions above; harness logs stay on
-Agents.
+Start/Stop/Restart are the separate profile actions above. The owner-only
+**Agent instructions** ingress in Info requires a unique native record; harness
+logs stay on Agents.
 
 ## Owner runtime tab
 
@@ -110,8 +113,36 @@ absent:
   not trusted; reopening the profile retries. The existing `isAgent` shape
   check, avatar shape and local library never supply an owner.
 
-Agent type and capabilities are not shown: buzz-app has no reader or contract
-for their source (old Buzz kind 10100). This row has no controls.
+Public metadata follows base Buzz's profile order: **Public key**, **Managed by**,
+**NIP-05**, **Agent type**, **Capabilities**. The existing npub copy control keeps
+its exact value and feedback. The other public fields are whole-row copy buttons,
+with hover/keyboard indicators, a 1.5-second success check and base Buzz's copy
+feedback. Runtime names use the base labels (Goose, Claude Code, Codex, Aider),
+while copying the raw agent type; capabilities display/copy comma-separated values.
+NIP-05 remains self-declared: the row matches base Buzz without a verification
+claim or badge. Display/copy never performs DNS verification.
+
+The typed `features/agents/public-metadata` projection consumes signature-verified
+session views scoped to the exact kind-10100 author. The newest event wins (lower
+id on timestamp ties), including removal/malformed replacements. Base's sparse
+legacy defaults apply. If the existing NIP-OA verifier establishes an owner, an
+exact owner-authored kind-30177 coordinate takes precedence: valid managed content
+shows type `agent` with no legacy capabilities; malformed winning policy suppresses
+legacy fallback. Owner verification and policy reads must settle before displaying
+that projection, including when the pane first opens.
+This is public presentation, not custody, runtime configuration or permission.
+
+The existing live profile route includes kinds 10100/30177; the panel adds no socket,
+polling loop or independent cache. Views refresh on reconnect/purge and dispose on
+profile/session replacement. The owner view acquires capacity before optional public
+enrichment; failed reads/view admission share one Retry profile control with the
+profile directory. Optional enrichment failure preserves the loaded profile without
+a whole-profile error. Completed copy toasts belong to the host stack and survive
+row replacement/navigation; late clipboard completions from retired rows are ignored.
+Runtime/actions/Activity/Instances retain their position before the public fields.
+Ordinary human
+profiles without agent metadata have no agent fields. A self-authored kind 10100
+supplies agent display metadata, not management authority.
 
 ## Boundaries
 
@@ -248,7 +279,10 @@ unambiguous native match; an instance view selects that record by ID.
 Archive labels come from `session.archives`, keyed by identity, rather than native
 process status. Archived rows use the same explicit target and remain navigable.
 The existing public profile tabs and actions are reused, not replaced by an Agents
-page or a second editor. Browser fixtures exercise live/archived selection,
+page or a second editor. The owner-only ingress requires a verified NIP-OA
+owner and a ready, unique native match in this community; the versioned
+agent-identity route opens the existing editor, never a guessed sibling.
+Browser fixtures exercise live/archived selection,
 tabs, back, keyboard close/focus and deletion through the real plugin/Channels
 host in Chromium and WebKit. React tests cover exact actions, failed-read recovery,
 non-owner denial and scope changes with synthetic native data.
@@ -308,8 +342,9 @@ Retired relay
 presentations cannot dispatch commands. The separate runtime child owns badges
 and runtime detail; actions do not infer relay readiness.
 
-Info adds no edit ingress; the owner Runtime tab reuses the Agents editor
-dialog rather than a route or second editor. Mounted React regression tests exercise exact dispatch, pending/failure/
+Info adds an owner-gated route to the Agents editor for a unique native match;
+the owner Runtime tab also reuses the editor dialog. Mounted React regression
+tests exercise exact dispatch, pending/failure/
 recovery and profile/community lifecycle through the real controller projection
 with a synthetic native host. Live process/credential handover and rendered native
 acceptance remain attended checks, not established by these tests.

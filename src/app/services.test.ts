@@ -1,19 +1,28 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import type { Host } from "../features/host/service";
 import { createServices, type AppServices } from "./services";
 
 const plugin = vi.hoisted(() => ({
   cleanup: vi.fn<() => void | Promise<void>>(),
+  host: undefined as Host | undefined,
 }));
-// Only the installed plugin is a fixture. Exercise the real app composition,
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  isTauri: vi.fn(() => false),
+  invoke: vi.fn(),
+}));
+// Only the plugin module is a fixture. Exercise the real app composition,
 // manager, runtime, Cordis root and community/relay services.
 vi.mock("../bundled", () => ({
   bundledPlugins: [
     {
       manifest: { id: "test.page", name: "Test", apiVersion: 1 },
       module: {
-        inject: ["pages"],
+        inject: ["pages", "host"],
         apply(ctx: Context) {
+          plugin.host = ctx.host;
           ctx.pages.register({
             id: "main",
             title: "Test",
@@ -38,6 +47,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
   plugin.cleanup.mockReset();
+  plugin.host = undefined;
+  vi.mocked(isTauri).mockReturnValue(false);
+  vi.mocked(invoke).mockReset();
   values = new Map<string, string>();
   storageReads = vi.fn((key: string) => values.get(key) ?? null);
   vi.stubGlobal("localStorage", {
@@ -140,6 +152,21 @@ function expectHostStopped() {
   expect(services.pages.snapshot()).toHaveLength(0);
 }
 
+it("provides the host command service to plugins", async () => {
+  await vi.advanceTimersByTimeAsync(0);
+  expect(plugin.host).toBeDefined();
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(invoke).mockResolvedValue("sample-output\n");
+  await expect(plugin.host?.runCommand("token")).resolves.toBe(
+    "sample-output\n",
+  );
+  expect(invoke).toHaveBeenCalledWith("plugin_host_run_command", {
+    id: "test.page",
+    revision: expect.any(String),
+    commandId: "token",
+  });
+});
+
 it("disposes the real host services and plugins once", async () => {
   await openCommunities();
   const appearanceDisposal = vi.spyOn(services.appearance, "dispose");
@@ -227,7 +254,7 @@ it("seeds and persists the configured relay through the real app composition", a
     "/api/relay/https%3A%2F%2Fthird.example/session",
   );
   expect(JSON.parse(values.get(`buzz-client.v1:${viewer}`) ?? "null")).toEqual({
-    profile: { name: "", picture: "" },
+    profile: { name: "", picture: "", about: "" },
     memberships: [membership],
     selected: membership.id,
   });

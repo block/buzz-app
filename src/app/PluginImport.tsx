@@ -9,6 +9,19 @@ import {
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview } from "../plugins/types";
+import type { PluginManifest } from "../plugins/api";
+
+function hostGrants(manifest: PluginManifest): string[] {
+  return [
+    ...(manifest.host?.commands ?? []).map(
+      (command) =>
+        `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])}`,
+    ),
+    ...(manifest.host?.networkOrigins ?? []).map(
+      (origin) => `HTTPS origin: ${origin}`,
+    ),
+  ];
+}
 
 export function PluginImport({
   plugins,
@@ -86,6 +99,8 @@ export function PluginImport({
   const existing = catalog.plugins.find(
     (p) => p.manifest.id === candidate?.manifest.id,
   );
+  const declaredGrants = candidate ? hostGrants(candidate.manifest) : [];
+  const previousGrants = existing ? hostGrants(existing.manifest) : [];
   return (
     <div className="mb-4">
       <div className="flex flex-wrap gap-2">
@@ -218,10 +233,40 @@ export function PluginImport({
             </details>
           )}
           {candidate && (
+            <section aria-label="Declared host access" className="text-body-sm">
+              <p className="m-0 font-medium">Declared host access</p>
+              {declaredGrants.length ? (
+                <ul className="m-0 break-all">
+                  {declaredGrants.map((grant) => (
+                    <li key={grant}>
+                      {grant}
+                      {existing && !previousGrants.includes(grant)
+                        ? " (new or changed)"
+                        : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="m-0">No commands or HTTPS origins declared.</p>
+              )}
+              {existing &&
+                previousGrants.filter(
+                  (grant) => !declaredGrants.includes(grant),
+                ).length > 0 && (
+                  <p className="m-0 break-all">
+                    Removed:{" "}
+                    {previousGrants
+                      .filter((grant) => !declaredGrants.includes(grant))
+                      .join(", ")}
+                  </p>
+                )}
+            </section>
+          )}
+          {candidate && (
             <p className="m-0 text-body-sm">
               {existing
-                ? `This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays enabled and may run immediately unless this launch is in safe mode." : "It stays disabled."} Roll back remains available.`
-                : "This plugin will be installed disabled. Enable it in the list when you’re ready."}
+                ? `This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} You can still roll back.`
+                : "This plugin starts off. Turn it on in the list when you’re ready."}
             </p>
           )}
           <div className="flex flex-wrap gap-2">

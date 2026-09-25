@@ -446,7 +446,7 @@ it("opens the configured relay for an identity without a saved record and rememb
   const persisted = localStorage.getItem(`buzz-client.v1:${viewer}`);
   assert.exists(persisted);
   expect(JSON.parse(persisted)).toEqual({
-    profile: { name: "", picture: "" },
+    profile: { name: "", picture: "", about: "" },
     memberships: [membership],
     selected: membership.id,
   });

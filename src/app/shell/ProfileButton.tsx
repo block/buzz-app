@@ -1,11 +1,19 @@
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { useRelayConnection } from "../../features/relay/react";
+import { avatarSource } from "../../shared/avatar-source";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { StatusEmoji } from "../../features/user-status/StatusEmoji";
 import { Button } from "../../shared/design-system/ui/Button";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
-import { useId, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   SmileyIcon,
   CheckIcon,
@@ -25,22 +33,32 @@ import {
   MenuSeparator,
   MenuTrailing,
 } from "../../shared/design-system/ui/Menu";
+import type {
+  AccountActionsService,
+  RegisteredAccountAction,
+} from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
 import styles from "./ProfileButton.module.css";
 
+const noSubscription = () => () => {};
+const noLiveSnapshot = () => undefined;
+
 export function ProfileButton({
   communities,
+  accountActions,
   settingsSelected,
   onSettings,
 }: {
   communities: Communities;
+  accountActions: AccountActionsService;
   settingsSelected: boolean;
   onSettings(): void;
 }) {
-  const { profile: localProfile, viewer } = useSyncExternalStore(
-    communities.subscribe,
-    communities.snapshot,
-  );
+  const {
+    profile: localProfile,
+    viewer,
+    selected,
+  } = useSyncExternalStore(communities.subscribe, communities.snapshot);
   const presence = useSyncExternalStore(
     communities.presence.subscribe,
     communities.presence.snapshot,
@@ -50,27 +68,81 @@ export function ProfileButton({
   ];
   const connection = useRelayConnection(communities.relay);
   const session = connection.session;
+  // The selected session owns community identity; never copy it into local defaults.
+  const profiles =
+    selected && connection.viewer === viewer ? session?.profiles : undefined;
+  const readProfile = useCallback(
+    () => (viewer ? profiles?.snapshot().get(viewer) : undefined),
+    [profiles, viewer],
+  );
+  const communityProfile = useSyncExternalStore(
+    profiles?.subscribe ?? noSubscription,
+    readProfile,
+    readProfile,
+  );
+  const live = useSyncExternalStore(
+    session?.live.subscribe ?? noSubscription,
+    session?.live.snapshot ?? noLiveSnapshot,
+    session?.live.snapshot ?? noLiveSnapshot,
+  );
+  const roster = live?.roster;
+  const liveStatus = live?.status;
+  useEffect(() => {
+    if (
+      !profiles ||
+      !viewer ||
+      connection.status !== "ready" ||
+      roster?.state !== "verified" ||
+      (liveStatus !== "connected" && liveStatus !== "unavailable")
+    )
+      return;
+    // Roster setup can cancel earlier reads, and disk hydration can hold an old
+    // profile. Refresh once at this authority boundary through the same session.
+    const controller = new AbortController();
+    void session
+      .read([{ kinds: [0], authors: [viewer], limit: 5 }], {
+        priority: "background",
+        fresh: true,
+        signal: controller.signal,
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [profiles, viewer, connection.status, session, roster, liveStatus]);
+  const profile = selected ? communityProfile : localProfile;
+  const displayName = profile?.name.trim();
   const name =
-    localProfile.name.trim() ||
+    displayName ||
     (viewer ? formatPublicKey(viewer) : undefined) ||
     "Your profile";
-  const picture = localProfile.picture.startsWith("https://")
-    ? localProfile.picture
-    : undefined;
+  const source = avatarSource(profile?.picture);
+  const picture = selected ? source && session?.media(source, "small") : source;
   const status = useUserStatus(session?.statuses, viewer ?? "");
   const statusEditor = useStatusEditor(session, viewer ?? undefined);
   const profileTrigger = useRef<HTMLButtonElement>(null);
   const openingStatus = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const openingSettings = useRef(false);
+  const actions = useSyncExternalStore(
+    accountActions.subscribe,
+    accountActions.snapshot,
+  );
+  const [selectedAction, setSelectedAction] =
+    useState<RegisteredAccountAction | null>(null);
+  const ActionDialog = actions.find(
+    (action) => action === selectedAction,
+  )?.component;
   const accountLabel = useId();
   const statusUnavailable = useId();
-  const avatar =
-    picture || name ? (
-      <Avatar src={picture || undefined} alt="" fallback={name} size="fill" />
-    ) : (
-      <UserIcon aria-hidden="true" size={19} />
-    );
+  const avatar = (
+    <Avatar
+      src={picture}
+      alt=""
+      fallback={name}
+      fallbackContent={displayName ? undefined : <UserIcon size={19} />}
+      size="fill"
+      statusBadge={viewer ? presence.status : undefined}
+    />
+  );
   return (
     <>
       <MenuRoot
@@ -106,16 +178,12 @@ export function ProfileButton({
               variant="chrome"
               shape="round"
               icon={
-                <span className="pointer-events-none relative flex size-full items-center justify-center rounded-full">
+                <span
+                  className="pointer-events-none relative flex size-full items-center justify-center rounded-full"
+                  role="img"
+                  aria-label={viewer ? `Your status: ${label}` : "Your avatar"}
+                >
                   {avatar}
-                  {viewer && (
-                    <span
-                      role="img"
-                      aria-label={`Your status: ${label}`}
-                      className={styles.dot}
-                      data-status={presence.status}
-                    />
-                  )}
                 </span>
               }
             />
@@ -131,16 +199,7 @@ export function ProfileButton({
             {name}
           </span>
           <div className={styles.profileHeader}>
-            <span className={styles.profileAvatar}>
-              {avatar}
-              {viewer && (
-                <span
-                  className={styles.dot}
-                  data-status={presence.status}
-                  aria-hidden="true"
-                />
-              )}
-            </span>
+            <span className={styles.profileAvatar}>{avatar}</span>
             <div className={styles.profileDetails}>
               <p className="m-0 truncate text-label-sm">{name}</p>
               {viewer && (
@@ -250,6 +309,14 @@ export function ProfileButton({
               )}
             </>
           )}
+          {actions.map((action) => (
+            <MenuItem
+              key={action.key}
+              onClick={() => setSelectedAction(action)}
+            >
+              {action.title}
+            </MenuItem>
+          ))}
           <MenuSeparator />
           <MenuItem
             aria-current={settingsSelected ? "page" : undefined}
@@ -270,6 +337,14 @@ export function ProfileButton({
           </MenuItem>
         </MenuPopup>
       </MenuRoot>
+      {ActionDialog && (
+        <ActionDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setSelectedAction(null);
+          }}
+        />
+      )}
       {statusEditor.editor && session && connection.scope && (
         <StatusEditor
           session={session}

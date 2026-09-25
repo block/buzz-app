@@ -72,6 +72,7 @@ export function AgentCreateDialog({
         (await control.create(requestId, destination, owner, agentEdit(draft)));
       // Closing leaves native creation alone; the saved card owns profile retry.
       if (!mounted.current) return;
+      setDraft((current) => ({ ...current, environment: {} }));
       setSaved(agent); // Durable local success survives a failed profile publication.
       const current = state.data?.agents.find((item) => item.id === agent.id);
       if (saved && current && !current.profilePending) {

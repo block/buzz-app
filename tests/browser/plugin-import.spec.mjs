@@ -165,8 +165,10 @@ test("Settings text buttons contain enlarged labels without resizing icon button
           const bounds = root.getBoundingClientRect();
           for (const button of root.querySelectorAll("button.buzz-button")) {
             const box = button.getBoundingClientRect();
-            // Shared md controls are 40px at 100%; enlarged labels may grow.
-            if (scale === 100 && box.height !== 40)
+            // Shared controls retain their authored 32px small or 40px default
+            // minimum at 100%; enlarged labels may grow.
+            const minimum = button.dataset.size === "sm" ? 32 : 40;
+            if (scale === 100 && box.height !== minimum)
               failures.push(`${button.textContent}: default height changed`);
             const text = document.createRange();
             text.selectNodeContents(button);
@@ -290,7 +292,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
   await expect(
     page.getByText(
-      "This plugin will be installed disabled. Enable it in the list when you’re ready.",
+      "This plugin starts off. Turn it on in the list when you’re ready.",
     ),
   ).toBeVisible();
   await button(page, "Install plugin").click();
@@ -313,7 +315,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await enabled.click();
   await expect(button(page, "Reload")).toHaveCount(0);
   await expect(
-    page.getByText(/It stays enabled and may run immediately/),
+    page.getByText(/It stays on and may run immediately/),
   ).toBeVisible();
   await expect(button(page, "Update plugin")).toBeVisible();
   await button(page, "Close preview").click();

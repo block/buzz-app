@@ -118,7 +118,7 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
         const artwork = pictures
           ? [255, 0, 255, 255]
           : await avatar
-              .locator("span")
+              .locator(".buzz-avatar")
               .first()
               .evaluate((el) => {
                 const rgb = getComputedStyle(el)

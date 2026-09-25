@@ -55,3 +55,17 @@ it("does not persist build suggestions on untouched save; explicit blanks stay e
   saved.databricks.host = "https://edited.example";
   expect(agent.harness.databricks.host).toBe("");
 });
+
+it("avatar edits preserve an omitted picture, retain managed artwork, and serialize explicit removal", () => {
+  const agent = controlFixture().agent;
+  expect(
+    JSON.parse(JSON.stringify(agentEdit(agentDraft(agent)))),
+  ).not.toHaveProperty("picture");
+  agent.picture = "https://images.example/a.png";
+  const draft = agentDraft(agent);
+  expect(agentEdit(draft)).not.toHaveProperty("picture"); // An unchanged field is omitted, even with saved artwork.
+  expect(
+    agentEdit({ ...draft, picture: "https://images.example/new.png" }).picture,
+  ).toBe("https://images.example/new.png");
+  expect(agentEdit({ ...draft, picture: "" }).picture).toBe("");
+});

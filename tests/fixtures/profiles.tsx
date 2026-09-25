@@ -73,6 +73,7 @@ let data = [
     kind: 0,
     content: JSON.stringify({
       name: "Pinky",
+      nip05: "pinky@example.test",
       about: "Agent profile",
       is_agent: true,
       picture: pinkyPicture,
@@ -165,6 +166,20 @@ function session() {
                 ["name", "Two"],
                 ["t", "stream"],
               ],
+            }),
+          ];
+        if (
+          filter.kinds?.includes(10100) &&
+          filter.authors?.includes(pinky.pubkey)
+        )
+          return [
+            signed(pinky, {
+              kind: 10100,
+              content: JSON.stringify({
+                agent_type: "codex-acp",
+                capabilities: ["code", "review"],
+              }),
+              tags: [],
             }),
           ];
         if (filter.kinds?.includes(30315))

@@ -328,6 +328,39 @@
     opacity: 1;
   }
 
+  .buzz-avatar-status {
+    position: relative;
+    display: inline-grid;
+    flex: 0 0 auto;
+    width: max-content;
+    height: max-content;
+  }
+
+  .buzz-avatar-status[data-size="fill"] {
+    width: 100%;
+    height: 100%;
+  }
+
+  .buzz-avatar-status-dot {
+    position: absolute;
+    top: 85%;
+    left: 85%;
+    width: 25%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: var(--status-online);
+    pointer-events: none;
+  }
+
+  .buzz-avatar-status[data-status="away"] .buzz-avatar-status-dot {
+    background: var(--status-away);
+  }
+
+  .buzz-avatar-status[data-status="offline"] .buzz-avatar-status-dot {
+    background: var(--status-offline);
+  }
+
   /* A panel is the default opaque reading surface over the atmospheric
      backdrop. Its border and threshold shadow arrive together: taking only
      bg-panel would lose the boundary that lets it sit above the gradient. */
@@ -1158,6 +1191,34 @@
   html[data-keyboard-navigation] .buzz-switch-control:focus-visible {
     outline: 2px solid var(--text-standard);
     outline-offset: 2px;
+  }
+
+  .buzz-preference-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-4);
+    min-width: 0;
+    padding: var(--space-3) 0;
+  }
+  .buzz-preference-row-content {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .buzz-preference-row-label {
+    @apply text-label-sm;
+    color: var(--text-standard);
+    cursor: pointer;
+  }
+  .buzz-preference-row-description {
+    @apply text-body-sm;
+    color: var(--text-subtle);
+  }
+  .buzz-preference-row:has(.buzz-switch-control[data-disabled])
+    :is(.buzz-preference-row-label, .buzz-preference-row-description) {
+    color: var(--text-unavailable);
+    cursor: not-allowed;
   }
 }
 

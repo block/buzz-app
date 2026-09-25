@@ -1,6 +1,6 @@
 import "../../src/shared/styles/globals.css";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
-import { MessageSettings } from "../../src/app/MessageSettings";
+import { AgentSettings } from "../../src/app/AgentSettings";
 import { StrictMode, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
@@ -271,7 +271,7 @@ function Fixture() {
         />
       </div>
       {new URLSearchParams(location.search).has("settings") && (
-        <MessageSettings />
+        <AgentSettings />
       )}
     </main>
   );

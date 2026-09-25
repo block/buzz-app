@@ -106,6 +106,11 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
       .find((sample) => sample.stage === "send.publish" && sample.id === first);
     expect(pending).toMatchObject({ outcome: "pending" });
     expect(uploaded).toBe(1);
+    // Hold the first publish long enough that it is slow by construction, not
+    // by comparison with a second publish on a loaded runner.
+    const heldAt = performance.now();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const heldMs = performance.now() - heldAt;
     release();
     await vi.waitFor(() => expect(outbox.snapshot()).toHaveLength(0), {
       timeout: 3000,
@@ -124,7 +129,7 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
       (sample) => sample.id === second && sample.stage === "send.publish",
     );
     assert.exists(secondUpstream);
-    expect(firstUpstream.duration).toBeGreaterThan(0);
+    expect(firstUpstream.duration).toBeGreaterThanOrEqual(heldMs);
     expect(secondUpstream.duration).toBeLessThan(firstUpstream.duration);
     expect(events.get(first)).toMatchObject({
       content: `first\n\n[report.pdf](<${fixtureRelayUrl}/media/${hash}.pdf>)`,

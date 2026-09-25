@@ -1407,12 +1407,6 @@ html[data-keyboard-navigation] .replyBranchRail:focus-visible {
     opacity: 1;
   }
 }
-/* The root rail uses the panel gutter, without adding another indent level. */
-.replyBranch[data-depth="-1"] {
-  --reply-indent: 0px;
-  --reply-spine-offset: calc(0px - var(--space-3));
-}
-
 /* The picker retains every reaction when the shortcut strip cannot fit. */
 @container message-row (max-width: 260px) {
   .quickReaction {

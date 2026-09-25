@@ -8,6 +8,7 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
+import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import {
   DotsThreeIcon,
   UsersIcon,
@@ -16,6 +17,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { avatarSource } from "../../shared/avatar-source";
+import { usePresenceStatus } from "../../features/presence/react";
 import type { AgentLibrary } from "../../features/agents/library";
 import type { AgentView } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
@@ -44,12 +46,24 @@ export function AgentCard({
   onDelete?: ((agent: AgentView) => void) | undefined;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
-  const source = avatarSource(avatar);
-  const picture = source?.startsWith("data:")
-    ? source
-    : source
-      ? session?.media(source, "small")
-      : undefined;
+  const presence = usePresenceStatus(
+    session?.presence,
+    identities.length === 1 ? identities[0]?.pubkey : undefined,
+  );
+  const managed = editable.length === 1 ? editable[0] : undefined;
+  const source = avatarSource(managed?.picture ?? avatar);
+  const managedPicture = useAvatarPreview(
+    managed?.picture ?? "",
+    managed?.relayUrl,
+  );
+  const picture =
+    managed?.picture != null
+      ? managedPicture
+      : source?.startsWith("data:")
+        ? source
+        : source
+          ? session?.media(source, "small")
+          : undefined;
   return (
     <article
       aria-label={`Agent ${name}`}
@@ -76,7 +90,7 @@ export function AgentCard({
                       onClick={() => {
                         // The menu item unmounts; return from the dialog to the card.
                         trigger.current?.focus();
-                        onEdit(agent, picture);
+                        onEdit(agent, source);
                       }}
                     >
                       {editable.length === 1 ? (
@@ -161,6 +175,7 @@ export function AgentCard({
             src={picture ?? null}
             size="large"
             shape="squircle"
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         </div>
         <h3 className="m-0 min-w-0 truncate text-label" title={name}>

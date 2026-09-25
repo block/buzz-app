@@ -1,13 +1,18 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { ContextMenuTrigger } from "../../shared/design-system/ui/Menu";
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuPopup,
+} from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
+import { usePresenceStatus } from "../../features/presence/react";
 import { UnreadBadge } from "./UnreadBadge";
 import styles from "./Channels.module.css";
 
@@ -33,6 +38,11 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   menuEnabled,
   sectionKey,
   onOpenMenu,
+  menuOpen = false,
+  menuAnchor,
+  menuContent,
+  onCloseMenu,
+  menuFinalFocus,
 }: {
   channel: ChannelSummary;
   profile?: Profile | undefined;
@@ -55,10 +65,26 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
     sectionKey: string,
     anchor?: HTMLElement,
   ) => void;
+  menuOpen?: boolean;
+  menuAnchor?: HTMLElement | undefined;
+  /** Only the open row receives content, so closed rows keep equal props. */
+  menuContent?: ReactNode;
+  onCloseMenu?: () => void;
+  menuFinalFocus?: (channelId: string) => HTMLElement | false;
 }) {
+  const peer =
+    channel.channelType === "dm" && channel.participants?.length === 1
+      ? channel.participants[0]
+      : undefined;
+  const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
+  // Keep the closing row's items through the popup's exit transition.
+  const lastMenuContent = useRef<ReactNode>(undefined);
+  useLayoutEffect(() => {
+    if (menuContent !== undefined) lastMenuContent.current = menuContent;
+  }, [menuContent]);
   const Icon =
     channel.channelType === "dm" ? ChatCircleIcon : channelIcon(channel);
-  return (
+  const row = (
     <ChannelSidebarRow
       channel={channel}
       icon={
@@ -73,6 +99,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
             fallback={channel.name}
             size="small"
             shape={profile?.isAgent ? "squircle" : "circle"}
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         ) : channel.channelType === "dm" &&
           (channel.participants?.length ?? 0) > 1 ? (
@@ -148,6 +175,9 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         );
       }}
       selected={selected}
+      presenceDescription={
+        presence === "unknown" ? undefined : `Presence: ${presence}`
+      }
       collapsed={collapsed}
       onToggle={(open) => onToggle(`session-children:${channel.id}`, open)}
       draft={draft}
@@ -165,5 +195,28 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       onNewSession={onNewSession}
       {...(onHideDm ? { onHideDm } : {})}
     />
+  );
+  if (!menuEnabled) return row;
+  return (
+    <ContextMenuRoot
+      open={menuOpen}
+      onOpenChange={(open) => {
+        if (open) {
+          if (sectionKey) onOpenMenu?.(channel, sectionKey);
+        } else if (menuOpen) onCloseMenu?.();
+      }}
+      onOpenChangeComplete={(open) => {
+        if (!open) lastMenuContent.current = undefined;
+      }}
+    >
+      {row}
+      <MenuPopup
+        aria-label={`Actions for ${channel.name}`}
+        anchor={menuOpen ? menuAnchor : undefined}
+        finalFocus={() => menuFinalFocus?.(channel.id) ?? false}
+      >
+        {menuContent ?? lastMenuContent.current}
+      </MenuPopup>
+    </ContextMenuRoot>
   );
 });

@@ -231,7 +231,6 @@ it.each([false, true])(
       <StrictMode>
         <OuterComposer attach={other}>
           <MediaReviewViewer
-            onOpenLink={() => false}
             attachment={image}
             session={session}
             scope={h.scope}
@@ -240,6 +239,7 @@ it.each([false, true])(
             messageId={h.root.id}
             initialTime={0}
             close={() => {}}
+            onOpenLink={() => false}
           />
         </OuterComposer>
       </StrictMode>,

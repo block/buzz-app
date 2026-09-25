@@ -11,9 +11,10 @@ export function useAgentControl(control: AgentControl) {
   useEffect(() => {
     void control.refresh();
     const timer = setInterval(() => {
+      const status = control.snapshot().status;
       if (
         document.visibilityState !== "hidden" &&
-        control.snapshot().status === "ready"
+        (status === "ready" || status === "error")
       )
         void control.refresh();
     }, 5000);

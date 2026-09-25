@@ -1,5 +1,10 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
+import {
+  ProfilePublicMetadata,
+  usePublicAgentMetadata,
+} from "./ProfilePublicMetadata";
 import { ProfileAgentActions } from "./ProfileAgentActions";
+import { ProfileAgentArchive } from "./ProfileAgentArchive";
 import { ProfileMemories } from "./ProfileMemories";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
@@ -9,7 +14,10 @@ import { ProfileRuntime, useRuntimeAgent } from "./ProfileRuntime";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
-import { PresenceIndicator } from "../../features/presence/react";
+import {
+  PresenceIndicator,
+  usePresenceStatus,
+} from "../../features/presence/react";
 import {
   type ReactNode,
   useEffect,
@@ -32,7 +40,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
   ProfileAgentIdentity,
-  useVerifiedAgentOwner,
+  useAgentOwnerEvidence,
 } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
 
@@ -43,6 +51,7 @@ export function ProfilePanel({
   navigation,
   control,
   instanceId,
+  close,
 }: PanelProps & {
   relay: RelayData;
   navigation?: Navigation;
@@ -65,6 +74,7 @@ export function ProfilePanel({
       control={control}
       scope={connection.scope}
       viewer={connection.viewer}
+      close={close}
     >
       {control && (
         <ProfileAgentActions
@@ -87,6 +97,7 @@ function ProfileDetails({
   scope,
   viewer,
   instanceId,
+  close,
 }: {
   instanceId?: string | undefined;
   children?: ReactNode;
@@ -97,6 +108,7 @@ function ProfileDetails({
   control: AgentControl | undefined;
   scope: string | undefined;
   viewer: string | undefined;
+  close(): void;
 }) {
   const selection = useMemo(
     () => selectProfiles(session.profiles, [pubkey]),
@@ -143,10 +155,19 @@ function ProfileDetails({
     };
   }, [session, pubkey, attempt]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const presence = usePresenceStatus(session.presence, pubkey, true);
   const knownAgent = agentPubkeys.has(pubkey);
-  const verifiedOwner = useVerifiedAgentOwner(
+  const ownership = useAgentOwnerEvidence(
     session,
     knownAgent ? pubkey : undefined,
+    attempt,
+  );
+  const verifiedOwner = ownership.owner;
+  const publicMetadata = usePublicAgentMetadata(
+    session,
+    pubkey,
+    verifiedOwner,
+    (status === "ready" || !!profile) && ownership.settled,
   );
   const isOwner = knownAgent && !!viewer && verifiedOwner === viewer;
   // Private local configuration needs both native custody and verified ownership.
@@ -242,10 +263,13 @@ function ProfileDetails({
         <div className={picture ? styles.portrait : undefined}>
           <Avatar
             src={picture}
-            alt={`${name} avatar`}
+            alt={
+              tab === "info" && presence !== "unknown" ? "" : `${name} avatar`
+            }
             fallback={name}
             size={picture ? "fill" : "large"}
             shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         </div>
         <h2 className="text-heading">{name}</h2>
@@ -275,12 +299,6 @@ function ProfileDetails({
                   profile
                 />
                 <UserStatusDisplay session={session} userId={pubkey} />
-                {profile?.nip05 && (
-                  <p className={styles.identifier}>
-                    <span>NIP-05 (unverified)</span>{" "}
-                    <span>{profile.nip05}</span>
-                  </p>
-                )}
                 {canMessage && (
                   <div>
                     <Button
@@ -302,15 +320,17 @@ function ProfileDetails({
                     scope={scope}
                     pubkey={pubkey}
                     instanceId={instanceId}
+                    owned={isOwner}
                   />
                 )}
                 {children}
-                {knownAgent && verifiedOwner && (
-                  <ProfileAgentIdentity
+                {knownAgent && (
+                  <ProfileAgentArchive
                     session={session}
-                    owner={verifiedOwner}
-                    viewer={viewer}
-                    context={context}
+                    pubkey={pubkey}
+                    control={control}
+                    scope={scope}
+                    onDeleted={close}
                   />
                 )}
                 <ProfileActivity
@@ -330,7 +350,7 @@ function ProfileDetails({
                     scope={scope}
                     communityOrigin={communityOrigin}
                     viewer={viewer}
-                    knownAgent={agentPubkeys.has(pubkey)}
+                    knownAgent={knownAgent}
                   />
                 )}
                 <div className={styles.publicKey}>
@@ -362,24 +382,42 @@ function ProfileDetails({
                     {copyStatus}
                   </span>
                 </div>
+                {knownAgent && verifiedOwner && (
+                  <ProfileAgentIdentity
+                    session={session}
+                    owner={verifiedOwner}
+                    viewer={viewer}
+                    context={context}
+                  />
+                )}
+                <ProfilePublicMetadata
+                  key={verifiedOwner ?? "unowned"}
+                  source={publicMetadata}
+                  nip05={profile?.nip05}
+                />
                 {!profile &&
                   (status === "loading" ? (
                     <p role="status">Loading profile…</p>
                   ) : (
-                    <>
-                      <p role={status === "error" ? "alert" : undefined}>
-                        {status === "error"
-                          ? "Could not load this profile."
-                          : "No profile metadata is available in this community."}
-                      </p>
-                      <Button
-                        size="compact"
-                        onClick={() => retry((value) => value + 1)}
-                      >
-                        Retry profile
-                      </Button>
-                    </>
+                    <p role={status === "error" ? "alert" : undefined}>
+                      {status === "error"
+                        ? "Could not load this profile."
+                        : "No profile metadata is available in this community."}
+                    </p>
                   ))}
+                {((!profile && status !== "loading") ||
+                  publicMetadata.failed ||
+                  ownership.failed) && (
+                  <Button
+                    size="compact"
+                    onClick={() => {
+                      retry((value) => value + 1);
+                      publicMetadata.retry();
+                    }}
+                  >
+                    Retry profile
+                  </Button>
+                )}
               </>
             ) : selected === "runtime" &&
               canViewRuntime &&

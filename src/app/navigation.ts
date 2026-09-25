@@ -88,15 +88,15 @@ export function useAppNavigation(services: AppServices) {
       "plugins",
       "appearance",
       "shortcuts",
-      "messages",
+      "agents",
       "notifications",
     ].includes(target.section) &&
     !(developerMode && target.section === "developer")
   ) {
-    // Grouped plugin cards are addressed by contribution key.
+    // Plugin cards are addressed by contribution key.
     const section = target.section;
     const owner = section.split("/")[0] ?? "";
-    if (!settingsCards.some((card) => card.group && card.key === section)) {
+    if (!settingsCards.some((card) => card.key === section)) {
       if (
         startup === "loading" ||
         plugins.activation[owner]?.status === "starting"
@@ -152,9 +152,11 @@ export function useAppNavigation(services: AppServices) {
         subscribe(listener) {
           const stopPages = services.pages.subscribe(listener);
           const stopClient = services.communities.subscribe(listener);
+          const stopSettingsCards = services.settingsCards.subscribe(listener);
           return () => {
             stopPages();
             stopClient();
+            stopSettingsCards();
           };
         },
       },
@@ -192,7 +194,20 @@ export function useAppNavigation(services: AppServices) {
   const select = (key: string) => {
     const selectedClient = services.communities.snapshot();
     let destination: OpenTarget;
-    if (key === "settings") destination = { version: 1, kind: "settings" };
+    if (key === "settings")
+      destination = {
+        version: 1,
+        kind: "settings",
+        ...(selectedClient.viewer && selectedClient.selected
+          ? {
+              scope: {
+                viewer: selectedClient.viewer,
+                communityOrigin: communityDestination(selectedClient.selected)
+                  .url,
+              },
+            }
+          : { scope: null }),
+      };
     else {
       const selected = pages.find((page) => page.key === key);
       if (!selected) return;
@@ -228,7 +243,9 @@ export function useAppNavigation(services: AppServices) {
       // Retrying presentation must also repair its failed dependency. Only touch the
       // selected, authorized destination; never reconnect an unrelated community.
       if (
-        (pageKey === channelsKey || pageKey === "buzz.projects/projects") &&
+        (pageKey === channelsKey ||
+          pageKey === "buzz.projects/projects" ||
+          pageKey === "buzz.agents/agents") &&
         !state.ingress &&
         !failure &&
         !waiting

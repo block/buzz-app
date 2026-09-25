@@ -1,5 +1,7 @@
 import type { useIdentityNames } from "../../features/identity-names/react";
 import { useAgentControl } from "../../features/agents/control-react";
+import { sameCommunityAgents } from "../../features/agents/choices";
+import type { PageNavigation } from "../../features/navigation/service";
 import { useEffect, useState, type ReactNode } from "react";
 import type {
   AgentControl,
@@ -23,11 +25,17 @@ export function AgentControlPanel({
   createOwner,
   resolveName,
   children,
+  editTarget,
+  editRequest,
+  onCloseTarget,
 }: {
   resolveName?: ReturnType<typeof useIdentityNames>;
   control: AgentControl;
   importDestination?: string;
   createOwner?: string | undefined;
+  editTarget?: string | null;
+  editRequest?: PageNavigation;
+  onCloseTarget?: () => void;
   children?: (
     state: AgentControlState,
     edit: (agent: AgentView, avatar?: string) => void,
@@ -49,8 +57,10 @@ export function AgentControlPanel({
     avatar?: string;
   } | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
-  const edit = (agent: AgentView, avatar?: string) =>
+  const edit = (agent: AgentView, avatar?: string) => {
     setSelected({ id: agent.id, ...(avatar ? { avatar } : {}) });
+    if (editTarget) onCloseTarget?.();
+  };
   const duplicate = (agent: AgentView) =>
     setAdding({
       destination: agent.relayUrl,
@@ -81,7 +91,36 @@ export function AgentControlPanel({
       ...facts,
       { pubkey: agent.pubkey, name: agent.name, isAgent: true },
     ]) ?? agent.name;
-  const editing = state.data?.agents.find((agent) => agent.id === selected?.id);
+  // Route selection takes precedence over card-local editing. Never guess among
+  // multiple native records for the same public identity in this community.
+  const routed =
+    editTarget && importDestination && createOwner
+      ? sameCommunityAgents(
+          state.data?.agents ?? [],
+          `${importDestination}:${createOwner}`,
+        ).filter((agent) => agent.pubkey === editTarget)
+      : [];
+  const editing = editTarget
+    ? routed.length === 1
+      ? routed[0]
+      : undefined
+    : state.data?.agents.find((agent) => agent.id === selected?.id);
+  useEffect(() => {
+    if (
+      !editRequest ||
+      editRequest.signal.aborted ||
+      state.status === "loading" ||
+      state.status === "idle"
+    )
+      return;
+    if (state.status !== "ready") {
+      editRequest.complete({ status: "failed", reason: "unavailable" });
+    } else if (editing) {
+      editRequest.complete({ status: "opened" });
+    } else {
+      editRequest.complete({ status: "failed", reason: "not-found" });
+    }
+  }, [editRequest, editing, state.status]);
   const deletion = state.data?.agents.find((agent) => agent.id === deleting);
   return (
     <section
@@ -112,6 +151,25 @@ export function AgentControlPanel({
           </Button>
         )}
       </header>
+      {(state.status === "idle" || state.status === "loading") && (
+        <p role="status">Reading local agent status…</p>
+      )}
+      {state.error && (
+        <p role={state.status === "unavailable" ? "status" : "alert"}>
+          {state.error}
+        </p>
+      )}
+      {state.status === "error" && state.data && (
+        <p className="text-body-sm text-secondary">
+          Showing the last host snapshot. Current process state and durable
+          enabled intent are unconfirmed. Status retries automatically while
+          this page is visible; actions are never repeated automatically.
+        </p>
+      )}
+      {state.status === "error" && (
+        <Button onClick={() => void control.refresh()}>Retry status</Button>
+      )}
+      {state.busy && <p role="status">Waiting for the host to confirm…</p>}
       {children ? (
         children(state, edit, duplicate, remove, importedId, label)
       ) : (
@@ -169,24 +227,6 @@ export function AgentControlPanel({
           onClose={() => setAdding(null)}
         />
       )}
-      {(state.status === "idle" || state.status === "loading") && (
-        <p role="status">Reading local agent status…</p>
-      )}
-      {state.error && (
-        <p role={state.status === "unavailable" ? "status" : "alert"}>
-          {state.error}
-        </p>
-      )}
-      {state.status === "error" && state.data && (
-        <p className="text-body-sm text-secondary">
-          Showing the last host snapshot. Current process state and durable
-          enabled intent are unconfirmed.
-        </p>
-      )}
-      {state.status === "error" && (
-        <Button onClick={() => void control.refresh()}>Retry status</Button>
-      )}
-      {state.busy && <p role="status">Waiting for the host to confirm…</p>}
       {editing && (
         <AgentEditor
           key={editing.id}
@@ -194,8 +234,10 @@ export function AgentControlPanel({
           displayName={label(editing)}
           control={control}
           state={state}
-          avatar={selected?.avatar}
-          onClose={() => setSelected(null)}
+          avatar={editTarget ? undefined : selected?.avatar}
+          onClose={
+            editTarget ? (onCloseTarget ?? (() => {})) : () => setSelected(null)
+          }
         />
       )}
       {deletion && control.delete && (

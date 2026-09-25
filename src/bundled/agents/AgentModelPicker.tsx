@@ -12,6 +12,8 @@ import { CircleNotchIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentEdit, isGoose, type AgentDraft } from "./agent-edit";
 
+const VISIBLE_MODEL_LIMIT = 10;
+
 export function AgentModelPicker({
   id,
   draft,
@@ -136,9 +138,11 @@ export function AgentModelPicker({
           ? "Disconnected from this workspace in Foundation."
           : data.models.length
             ? ""
-            : external
-              ? `No ${pi ? "Pi" : "Goose"} models found. Check local configuration or enter a custom ID.`
-              : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
+            : goose
+              ? "No models found for this Goose provider. Check its configuration or enter a custom ID."
+              : pi
+                ? "No Pi models found. Check local configuration or enter a custom ID."
+                : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
       );
     } catch (error) {
       if (!abort.signal.aborted && currentKey.current === key)
@@ -187,6 +191,12 @@ export function AgentModelPicker({
     !items.some((model) => model.id === custom || model.name === custom)
   )
     items.push({ id: custom, name: custom });
+  const matchingItems =
+    query === null
+      ? items
+      : items.filter((item) =>
+          `${item.name} ${item.id}`.toLowerCase().includes(query.toLowerCase()),
+        );
   const commitQuery = () => {
     if (query === null) return;
     const match = entries.find(
@@ -201,15 +211,13 @@ export function AgentModelPicker({
         <div>
           <Combobox.Root<ModelCatalog["models"][number]>
             disabled={disabled}
-            items={items}
+            items={goose && busy ? [] : items}
             filteredItems={
-              query === null
-                ? items
-                : items.filter((item) =>
-                    `${item.name} ${item.id}`
-                      .toLowerCase()
-                      .includes(query.toLowerCase()),
-                  )
+              goose && busy
+                ? []
+                : goose
+                  ? matchingItems.slice(0, VISIBLE_MODEL_LIMIT)
+                  : matchingItems
             }
             value={selected}
             inputValue={query ?? selected?.name ?? ""}
@@ -275,6 +283,7 @@ export function AgentModelPicker({
               }}
             />
             <Combobox.Popup
+              className={goose ? "agent-model-popup" : undefined}
               empty={busy ? null : "Type a model ID to use a custom model."}
             >
               {busy && (
@@ -297,25 +306,49 @@ export function AgentModelPicker({
                   overflowY: "auto",
                 }}
               >
-                {(model: ModelCatalog["models"][number]) => (
-                  <Combobox.Item
-                    key={model.id}
-                    value={model}
-                    description={`${model.id}${!entries.some((entry) => entry.id === model.id) ? " · Custom ID" : ""}`}
-                  >
-                    {model.name}
-                  </Combobox.Item>
-                )}
+                {(model: ModelCatalog["models"][number]) => {
+                  const custom = !entries.some(
+                    (entry) => entry.id === model.id,
+                  );
+                  return (
+                    <Combobox.Item
+                      key={model.id}
+                      value={model}
+                      description={
+                        goose && model.name === model.id
+                          ? custom
+                            ? "Custom ID"
+                            : undefined
+                          : `${model.id}${custom ? " · Custom ID" : ""}`
+                      }
+                    >
+                      {model.name}
+                    </Combobox.Item>
+                  );
+                }}
               </Combobox.List>
             </Combobox.Popup>
           </Combobox.Root>
         </div>
+        {goose && fresh && entries.length > VISIBLE_MODEL_LIMIT && (
+          <p className="text-body-sm text-secondary">
+            Showing up to {VISIBLE_MODEL_LIMIT} models. Type to search all{" "}
+            {entries.length}.
+          </p>
+        )}
         {status && (
           <p
             id={statusId}
             role="status"
-            className="text-body-sm text-secondary"
+            className={`text-body-sm ${busy && goose ? "flex items-center gap-2 text-primary" : "text-secondary"}`}
           >
+            {busy && goose && (
+              <CircleNotchIcon
+                size={16}
+                className="motion-safe:animate-spin"
+                aria-hidden="true"
+              />
+            )}
             {status}
           </p>
         )}
@@ -373,14 +406,14 @@ export function AgentModelPicker({
           draft.model &&
           !entries.some((model) => model.id === draft.model) && (
             <p className="text-body-sm text-warning">
-              This model ID is not in Goose’s current Databricks v2 list. Select
-              a listed model or confirm the custom ID before starting.
+              This model ID is not in Goose’s current provider list. Select a
+              listed model or confirm the custom ID before starting.
             </p>
           )}
         {goose && (
           <p className="text-body-sm text-secondary">
-            Models come from your Goose Databricks connection. If sign-in is
-            needed, run goose configure before browsing.
+            Browse to check this Goose provider’s models using the credentials
+            entered above or already configured in Goose.
           </p>
         )}
       </div>

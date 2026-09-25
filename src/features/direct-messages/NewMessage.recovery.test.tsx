@@ -585,8 +585,7 @@ it.each(["picker", "completion"])(
     expect(
       second.queryByRole(choiceRole, { name: new RegExp(another.pubkey) }),
     ).not.toBeInTheDocument();
-    if (path === "picker") await t.user.keyboard("{Escape}");
-    else await t.user.keyboard(" ");
+    await t.user.keyboard("{Escape}");
     expect(t.openDirectMessage).not.toHaveBeenCalled();
     await t.user.click(send());
     expect(await screen.findByRole("alert")).toHaveTextContent(

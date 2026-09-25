@@ -31,13 +31,17 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     const root = page
       .locator("[data-message-id]")
       .filter({ hasText: "Historic" });
-    const plus = root.getByRole("button", {
-      name: "Add reaction",
-      exact: true,
-    });
+    const plus = root
+      .getByRole("group", { name: "Message actions" })
+      .getByRole("button", {
+        name: "Add reaction",
+        exact: true,
+      });
     // Every message exposes first-reaction controls, not just previously reacted rows.
     await expect(
-      page.getByRole("button", { name: "Add reaction", exact: true }),
+      page
+        .getByRole("group", { name: "Message actions" })
+        .getByRole("button", { name: "Add reaction", exact: true }),
     ).toHaveCount(6);
     await root.hover();
     const shortcut = root.getByRole("button", {
@@ -267,14 +271,18 @@ sourceTest(
     // Open the lower row first so its popup does not cover the next trigger.
     const firstRow = rows.nth(1);
     const secondRow = rows.nth(0);
-    const first = firstRow.getByRole("button", {
-      name: "Add reaction",
-      exact: true,
-    });
-    const second = secondRow.getByRole("button", {
-      name: "Add reaction",
-      exact: true,
-    });
+    const first = firstRow
+      .getByRole("group", { name: "Message actions" })
+      .getByRole("button", {
+        name: "Add reaction",
+        exact: true,
+      });
+    const second = secondRow
+      .getByRole("group", { name: "Message actions" })
+      .getByRole("button", {
+        name: "Add reaction",
+        exact: true,
+      });
     const search = page.locator('em-emoji-picker input[type="search"]');
     await firstRow.hover();
     await first.click();

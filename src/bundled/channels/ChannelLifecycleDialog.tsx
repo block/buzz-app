@@ -111,6 +111,7 @@ export function ChannelLifecycleDialog({
             value={confirmation}
             disabled={busy}
             onChange={(event) => setConfirmation(event.target.value)}
+            autoCapitalize="none"
             autoComplete="off"
           />
         </label>

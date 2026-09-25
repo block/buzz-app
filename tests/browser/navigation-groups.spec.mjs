@@ -383,6 +383,66 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   await expect(beta).toHaveCount(0); // Never restore the remembered Work assignment.
 });
 
+// Native keyboard activation and focus after disclosure/roster changes need a browser.
+test("dismissing a failed move restores keyboard focus to its placement or a surviving row", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const beta = rowIn(page, "group:work");
+  const error = page
+    .getByRole("alert")
+    .filter({ hasText: "Couldn’t save the move" });
+  await page.route("**/sidebar-star", async (route) => {
+    app.report.sidebarStarFailures ??= [];
+    app.report.sidebarStarFailures.push(route.request().url());
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Star save failed; retry" }),
+    });
+  });
+  const failMove = async () => {
+    const menu = await openMove(page, beta);
+    await menu
+      .getByRole("menuitemradio", { name: "Starred", exact: true })
+      .click();
+    await expect(error).toContainText("Relay request failed (502)");
+    await expect(beta).toBeVisible();
+  };
+  const dismiss = async () => {
+    await error.getByRole("button", { name: "Dismiss", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(error).toHaveCount(0);
+  };
+  await failMove();
+  await page.locator('[data-sidebar-section="group:work"] > summary').click();
+  await expect(beta).toBeHidden();
+  await dismiss();
+  await expect(beta).toBeFocused();
+  await expect(beta).toBeVisible();
+
+  await failMove();
+  // Upstream roster omission, not direct client-state injection.
+  app.omitChannel("beta");
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await page.getByText("Diagnostics", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Refresh channels", exact: true })
+    .click();
+  await expect(beta).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await dismiss();
+  await expect(
+    sidebar(page).locator('[data-channel-id="alpha"]'),
+  ).toBeFocused();
+  expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+});
+
 // Menu → native dialog → optimistic new-section focus must be checked in browsers.
 test("Create new supports cancel, moves before publication, and retries the same section after partial failure", async ({
   page,

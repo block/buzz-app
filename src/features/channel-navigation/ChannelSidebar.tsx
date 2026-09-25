@@ -676,11 +676,19 @@ function ReadySidebar({
   );
   useLayoutEffect(() => {
     if (!rowFocus) return;
-    sidebar.list.current
-      ?.querySelector<HTMLButtonElement>(
+    (
+      sidebar.list.current?.querySelector<HTMLButtonElement>(
         `[data-channel-id="${CSS.escape(rowFocus)}"]`,
-      )
-      ?.focus({ preventScroll: true });
+      ) ??
+      [
+        ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
+          "[data-channel-id]",
+        ) ?? []),
+      ].find((row) => row.getClientRects().length) ??
+      sidebar.list.current
+        ?.closest("aside")
+        ?.querySelector<HTMLButtonElement>("button")
+    )?.focus({ preventScroll: true });
     setRowFocus(undefined);
   }, [rowFocus, sidebar.list]);
   const runReadAction = async (
@@ -1185,7 +1193,10 @@ function ReadySidebar({
                   </button>
                   <button
                     type="button"
-                    onClick={() => preferences.dismissMoveError(move.channelId)}
+                    onClick={() => {
+                      preferences.dismissMoveError(move.channelId);
+                      focusChannelPlacement(move.channelId);
+                    }}
                   >
                     Dismiss
                   </button>

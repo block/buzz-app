@@ -1,5 +1,8 @@
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
-import { newSessionParent } from "../../features/channel-navigation/routes";
+import {
+  channelPlaceholder,
+  newSessionParent,
+} from "../../features/channel-navigation/routes";
 import { personalGroups } from "../../features/channel-templates/setup";
 import type { TemplateProviders } from "../../features/channel-templates/provider";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
@@ -170,6 +173,10 @@ function ChannelWorkspace({
   const composingMessage =
     navigation?.target.kind === "page" &&
     navigation.target.route?.params === "new-message";
+  const placeholder =
+    navigation?.target.kind === "page"
+      ? channelPlaceholder(navigation.target.route?.params)
+      : undefined;
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const kitState = useSyncExternalStore(
@@ -319,7 +326,7 @@ function ChannelWorkspace({
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
-    if (composingMessage) {
+    if (composingMessage || placeholder) {
       navigation?.complete({ status: "opened" });
       return;
     }
@@ -341,6 +348,7 @@ function ChannelWorkspace({
     }
   }, [
     composingMessage,
+    placeholder,
     requestedChannel,
     resolving,
     current,
@@ -496,7 +504,7 @@ function ChannelWorkspace({
     setOpened(next);
   }, []);
   useLayoutEffect(() => {
-    if (draftParent || composingMessage || requestedMessage) {
+    if (draftParent || composingMessage || placeholder || requestedMessage) {
       setThread(undefined);
       open(undefined);
     }
@@ -512,6 +520,7 @@ function ChannelWorkspace({
   }, [
     draftParent,
     composingMessage,
+    placeholder,
     requestedMessage,
     requestedChannel,
     requestedThread,
@@ -797,7 +806,7 @@ function ChannelWorkspace({
   );
   return (
     <div
-      className={`${styles.board} ${!composingMessage && (showingSettings || panel || showingThread || companion || drawer.side) ? styles.withPanel : ""}`}
+      className={`${styles.board} ${!composingMessage && !placeholder && (showingSettings || panel || showingThread || companion || drawer.side) ? styles.withPanel : ""}`}
     >
       {current && !current.readOnly && canvasOpen && (
         <ChannelCanvasDialog
@@ -829,6 +838,13 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
+          ) : placeholder ? (
+            <>
+              <PanelHeader title={placeholder} />
+              <div className={styles.placeholder}>
+                <p>Content coming soon</p>
+              </div>
+            </>
           ) : drafting && current ? (
             <NewSessionView parentName={current.name}>
               <NewSessionComposer

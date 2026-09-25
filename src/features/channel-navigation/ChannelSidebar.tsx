@@ -16,6 +16,7 @@ import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { Panel } from "../../shared/design-system/ui/Panel";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   ContextMenuRoot,
@@ -25,6 +26,7 @@ import {
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { BellIcon, RobotIcon } from "../../shared/design-system/icons";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
 import { SidebarSection } from "../../bundled/channels/SidebarSection";
@@ -42,7 +44,7 @@ import {
 } from "../../bundled/channels/CreateChannelDialog";
 import { writeView } from "../../shared/view-state";
 import { useChannelNavigation } from "./ChannelNavigationState";
-import { newSessionParent } from "./routes";
+import { channelPlaceholder, newSessionParent } from "./routes";
 import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
 import styles from "../../bundled/channels/Channels.module.css";
 
@@ -52,14 +54,23 @@ type Props = {
   providers: TemplateProviders;
   target: OpenTarget;
   sessionsEnabled: boolean;
-  children: ReactNode;
+  agentsEnabled: boolean;
 };
 export function ChannelSidebar(props: Props) {
   const connection = useRelayConnection(props.relay);
+  const navigation = (
+    <SidebarNavigation
+      agentsEnabled={props.agentsEnabled}
+      navigator={props.navigator}
+      scope={connection.scope ?? "disconnected"}
+      target={props.target}
+      viewer={connection.viewer}
+    />
+  );
   return (
     <SidebarBoundary
       key={`${connection.scope}:${connection.generation}`}
-      fallback={props.children}
+      fallback={navigation}
     >
       {connection.status === "ready" ? (
         <ReadySidebar
@@ -73,7 +84,7 @@ export function ChannelSidebar(props: Props) {
         <div className="shell-sidebar-default">
           <Panel as="aside" aria-label="Channel sidebar">
             <div className={styles.sidebar}>
-              {props.children}
+              {navigation}
               <p className={styles.empty}>
                 {connection.status === "connecting"
                   ? "Connecting to your relay…"
@@ -87,6 +98,98 @@ export function ChannelSidebar(props: Props) {
         </div>
       )}
     </SidebarBoundary>
+  );
+}
+
+type SidebarNavigationProps = Pick<
+  Props,
+  "agentsEnabled" | "navigator" | "target"
+> & {
+  scope: string;
+  viewer?: string | undefined;
+};
+
+function SidebarNavigation({
+  agentsEnabled,
+  navigator,
+  scope,
+  target,
+  viewer,
+}: SidebarNavigationProps) {
+  const placeholder =
+    target.kind === "page" && target.pluginId === "buzz.channels"
+      ? channelPlaceholder(target.route?.params)
+      : undefined;
+  const communityOrigin = viewer
+    ? scope.slice(0, -(viewer.length + 1))
+    : undefined;
+  const openChannelDestination = (destination: "Inbox" | "Bestie") => {
+    if (!viewer || communityOrigin === undefined) return;
+    void navigator.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      scope: { viewer, communityOrigin },
+      route: { version: 1, params: destination },
+    });
+  };
+  const destinations = [
+    {
+      title: "Inbox",
+      icon: <BellIcon weight="bold" size={15} />,
+      selected: placeholder === "Inbox",
+      open: () => openChannelDestination("Inbox"),
+    },
+    {
+      title: "Bestie",
+      icon: <img src="/bestie.png" alt="" width={17} height={17} />,
+      selected: placeholder === "Bestie",
+      open: () => openChannelDestination("Bestie"),
+    },
+    ...(agentsEnabled
+      ? [
+          {
+            title: "Agents",
+            icon: <RobotIcon weight="bold" size={15} />,
+            selected:
+              target.kind === "page" && target.pluginId === "buzz.agents",
+            open: () =>
+              void navigator.open({
+                version: 1,
+                kind: "page",
+                pluginId: "buzz.agents",
+                pageId: "agents",
+                scope:
+                  viewer && communityOrigin !== undefined
+                    ? { viewer, communityOrigin }
+                    : null,
+              }),
+          },
+        ]
+      : []),
+  ];
+  return (
+    <>
+      <div className={styles.sidebarBrand}>
+        <span
+          className={styles.sidebarBrandMark}
+          role="img"
+          aria-label="Buzz"
+        />
+      </div>
+      <div className={styles.destinations}>
+        {destinations.map(({ title, icon, selected, open }) => (
+          <NavigationItem
+            key={title}
+            label={title}
+            selected={selected}
+            icon={<span className={styles.sidebarIcon}>{icon}</span>}
+            onClick={open}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 class SidebarBoundary extends Component<
@@ -121,7 +224,7 @@ function ReadySidebar({
   providers,
   target,
   sessionsEnabled,
-  children,
+  agentsEnabled,
   queries,
   scope,
   viewer,
@@ -436,15 +539,14 @@ function ReadySidebar({
                 )}
               </div>
             )}
-            <div className={styles.sidebarBrand}>
-              <span
-                className={styles.sidebarBrandMark}
-                role="img"
-                aria-label="Buzz"
-              />
-            </div>
-            <div className={styles.destinations}>{children}</div>
             <SidebarUnread listRef={sidebar.list}>
+              <SidebarNavigation
+                agentsEnabled={agentsEnabled}
+                navigator={navigator}
+                scope={scope}
+                target={target}
+                viewer={viewer}
+              />
               {sections.map((section) => (
                 <SidebarSection
                   key={section.key}

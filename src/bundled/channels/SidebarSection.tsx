@@ -14,6 +14,7 @@ import styles from "./Channels.module.css";
 
 export function SidebarSection({
   title,
+  hideTitle = false,
   icon,
   session,
   open,
@@ -23,6 +24,7 @@ export function SidebarSection({
   children,
 }: {
   title: string;
+  hideTitle?: boolean;
   icon?: string | undefined;
   session?: RelaySession | undefined;
   open: boolean;
@@ -34,6 +36,28 @@ export function SidebarSection({
   children: ReactNode;
 }) {
   const id = useId();
+  if (hideTitle)
+    return (
+      <div className={`${styles.channelSection} ${styles.untitledSection}`}>
+        <div
+          id={id}
+          className={`${styles.sectionContent} ${styles.untitledSectionContent}`}
+        >
+          <div>{children}</div>
+        </div>
+        <div className={styles.sectionActions}>
+          {newMessage && (
+            <IconButton
+              size="compact"
+              aria-label="New message"
+              title="New message"
+              onClick={newMessage}
+              icon={<PlusIcon weight="bold" size={15} />}
+            />
+          )}
+        </div>
+      </div>
+    );
   return (
     <div className={styles.channelSection}>
       <details open={open}>

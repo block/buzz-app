@@ -8,6 +8,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
+import { SettingsSidebar } from "./SettingsSidebar";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
 import { useAppNavigation } from "./navigation";
@@ -59,19 +60,38 @@ export function App({ services }: { services: AppServices }) {
     <ToastProvider>
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
-          sidebar={(pageNavigation) => (
-            <ChannelSidebar
-              relay={services.relay}
-              navigator={services.navigation}
-              providers={services.channelTemplates}
-              target={route.target}
-              sessionsEnabled={route.pages.some(
-                (page) => page.pluginId === "buzz.sessions",
-              )}
-            >
-              <div className="shell-page-navigation-slot">{pageNavigation}</div>
-            </ChannelSidebar>
-          )}
+          sidebar={() =>
+            settings ? (
+              <SettingsSidebar
+                selected={
+                  route.target.kind === "settings"
+                    ? (route.target.section ?? "profile")
+                    : "profile"
+                }
+                onBack={route.leaveSettings}
+                onSection={(section) =>
+                  void services.navigation.open({
+                    version: 1,
+                    kind: "settings",
+                    section,
+                  })
+                }
+              />
+            ) : (
+              <ChannelSidebar
+                relay={services.relay}
+                navigator={services.navigation}
+                providers={services.channelTemplates}
+                target={route.target}
+                sessionsEnabled={route.pages.some(
+                  (page) => page.pluginId === "buzz.sessions",
+                )}
+                agentsEnabled={route.pages.some(
+                  (page) => page.key === "buzz.agents/agents",
+                )}
+              />
+            )
+          }
           navigationControls={
             <NavigationControls navigation={services.navigation} />
           }
@@ -131,13 +151,6 @@ export function App({ services }: { services: AppServices }) {
               shortcutBindings={services.shortcutBindings}
               notifications={services.notifications}
               navigation={route.request}
-              onSection={(section) =>
-                void services.navigation.open({
-                  version: 1,
-                  kind: "settings",
-                  section,
-                })
-              }
             />
           ) : route.waiting || startup === "loading" ? (
             <p role="status">Opening destination…</p>

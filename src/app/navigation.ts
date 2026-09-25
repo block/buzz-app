@@ -2,6 +2,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -30,6 +31,8 @@ export function useAppNavigation(services: AppServices) {
   );
   const startup = plugins.configuration.status;
   const target = state.entry.target;
+  const lastNonSettings = useRef<OpenTarget | undefined>(undefined);
+  if (target.kind !== "settings") lastNonSettings.current = target;
   const scope = "scope" in target ? target.scope : undefined;
   const pageKey =
     target.kind === "page"
@@ -209,6 +212,31 @@ export function useAppNavigation(services: AppServices) {
     waiting,
     failure,
     selected: pageKey ?? target.kind,
+    leaveSettings() {
+      const previous = lastNonSettings.current;
+      if (previous) {
+        void navigation.open(previous);
+        return;
+      }
+      const selectedClient = services.communities.snapshot();
+      if (!selectedClient.viewer) return;
+      void navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        ...(selectedClient.selected
+          ? {
+              scope: {
+                viewer: selectedClient.viewer,
+                communityOrigin: communityDestination(selectedClient.selected)
+                  .url,
+              },
+            }
+          : { scope: null }),
+        route: { version: 1, params: "Inbox" },
+      });
+    },
     retry() {
       // Retrying presentation must also repair its failed dependency. Only touch the
       // selected, authorized destination; never reconnect an unrelated community.

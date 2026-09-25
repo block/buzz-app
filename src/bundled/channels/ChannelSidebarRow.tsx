@@ -5,9 +5,48 @@ import {
   CaretRightIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
-import { useId, type ReactElement, type ReactNode } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import styles from "./ChannelSidebarRow.module.css";
+
+function FadingLabel({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string | undefined;
+}) {
+  const label = useRef<HTMLSpanElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  useLayoutEffect(() => {
+    const element = label.current;
+    if (!element) return;
+    const measure = () =>
+      setOverflowing(element.scrollWidth > element.clientWidth);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  if (!children) return null;
+  return (
+    <span
+      ref={label}
+      className={className}
+      data-overflowing={overflowing || undefined}
+    >
+      {children}
+    </span>
+  );
+}
 
 export function ChannelSidebarRow({
   channel,
@@ -56,7 +95,7 @@ export function ChannelSidebarRow({
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
       selected={selected === channel.id && !draftSelected}
-      label={<span className={styles.label}>{channel.name}</span>}
+      label={<FadingLabel className={styles.label}>{channel.name}</FadingLabel>}
       icon={
         hasChildren ? (
           <span className={styles.iconSpace} aria-hidden="true" />
@@ -155,9 +194,9 @@ export function ChannelSidebarRow({
             onClick={() => onSelect(child.id)}
             selected={selected === child.id}
             label={
-              <span className={styles.childLabel}>
+              <FadingLabel className={styles.childLabel}>
                 {childContent?.(child) ?? child.name}
-              </span>
+              </FadingLabel>
             }
           />
         ))}

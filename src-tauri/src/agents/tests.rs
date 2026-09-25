@@ -116,7 +116,8 @@ fn goose_install_restart_does_not_reenable_an_agent_stopped_during_download() {
     let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     saved["agents"][0]["harness"]["command"] = json!("/missing/goose");
     std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
-    assert_eq!(host.waiting_for_goose().unwrap(), vec![id.clone()]);
+    // Enabled but not started this session is not missing-CLI evidence.
+    assert!(host.waiting_for_goose().unwrap().is_empty());
     host.with(|state| state.action(&id, Action::Stop)).unwrap();
     let result =
         tauri::async_runtime::block_on(start(host, id, Action::Restart, false, None, true));

@@ -70,14 +70,15 @@ async fn failure_records_combined_output_and_error() {
 #[test]
 fn only_enabled_goose_waiting_for_a_missing_cli_restarts() {
     use ProcessStatus::{Failed, Running, Stopped};
-    assert!(waiting(true, Stopped, "goose", None));
     assert!(waiting(
         true,
         Failed,
         "/home/user/.local/bin/goose",
         Some("Required runtime executable is missing")
     ));
-    assert!(waiting(
+    // Enabled but never started this session is not evidence of waiting.
+    assert!(!waiting(true, Stopped, "goose", None));
+    assert!(!waiting(
         true,
         Failed,
         "goose",

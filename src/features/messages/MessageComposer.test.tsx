@@ -1225,7 +1225,7 @@ for (const threadRootId of [undefined, "f".repeat(64)])
       fireEvent.submit(screen.getByRole("form"));
       await act(async () => {});
       expect(add).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Add to channel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
       await act(async () => {});
       expect(add).toHaveBeenCalledWith(
         {
@@ -1330,7 +1330,7 @@ it.each([false, true])(
       fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
       fireEvent.submit(screen.getByRole("form"));
       await act(async () => {});
-      fireEvent.click(screen.getByRole("button", { name: "Add to channel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
       await act(async () => {});
       expect(screen.getByRole("alert")).toHaveTextContent(
         expired ? "addition expired" : "Cannot add agent",
@@ -1341,7 +1341,7 @@ it.each([false, true])(
       ).toBe("@Honey ");
       expect(h.messages.send).not.toHaveBeenCalled();
       if (expired) expect(add).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
       await act(async () => {});
       expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
     } finally {
@@ -2457,7 +2457,7 @@ it("uses the full channel choice set for one selected chip and follows membershi
 
 for (const channelType of ["stream", "forum"] as const)
   it.each([undefined, "f".repeat(64)])(
-    `keeps mixed nonmember mentions as references after Do nothing in ${channelType}, root=%s`,
+    `keeps mixed nonmember mentions as references after Send anyway in ${channelType}, root=%s`,
     async (threadRootId) => {
       const h = mount(threadRootId ? { threadRootId } : {});
       const add = vi.fn();
@@ -2482,11 +2482,13 @@ for (const channelType of ["stream", "forum"] as const)
       });
       fireEvent.submit(screen.getByRole("form"));
       expect(screen.getByRole("dialog")).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Add to channel" }),
-      ).toBeDisabled();
+      // block/buzz parity: without permission, Invite is absent, not disabled.
+      expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        "Honey is not in this channel. You cannot add people to this channel. You can still send without inviting them.",
+      );
       expect(add).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Do nothing" }));
+      fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
       await act(async () => {});
       const send = threadRootId ? h.messages.reply : h.messages.send;
       expect(send).toHaveBeenCalledOnce();
@@ -2498,7 +2500,7 @@ for (const channelType of ["stream", "forum"] as const)
     },
   );
 
-it.each(["cancel", "escape"])(
+it.each(["close", "escape"])(
   "%s preserves the captured draft and returns focus without adding or sending",
   async (action) => {
     const h = mount();
@@ -2519,8 +2521,16 @@ it.each(["cancel", "escape"])(
     });
     const input = h.input();
     fireEvent.submit(screen.getByRole("form"));
-    if (action === "cancel")
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    // block/buzz parity: one send action, one invite action, and no Cancel.
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
+    );
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Do nothing" })).toHaveFocus(),
+    );
+    if (action === "close")
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
     else await userEvent.setup().keyboard("{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -2560,14 +2570,15 @@ it.each(["retry", "unmount", "retarget", "disabled"])(
       h.commands().insertMention(first);
     });
     fireEvent.submit(screen.getByRole("form"));
-    fireEvent.click(screen.getByRole("button", { name: "Add to channel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
     try {
       if (outcome === "retry") {
         await screen.findByRole("alert");
         expect(h.messages.send).not.toHaveBeenCalled();
-        fireEvent.click(screen.getByRole("button", { name: "Add to channel" }));
+        fireEvent.click(screen.getByRole("button", { name: "Invite" }));
       }
       expect(screen.getByRole("button", { name: "Do nothing" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Inviting…" })).toBeDisabled();
       if (outcome === "unmount") h.unmount();
       else if (outcome === "retarget") h.retarget({ channelId: "other" });
       else if (outcome === "disabled") h.retarget({ disabled: true });

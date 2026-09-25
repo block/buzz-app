@@ -50,12 +50,13 @@ To use an agent, open a channel and select it from **@ mentions**. Both mention
 menus include the selected community’s people directory alongside channel members
 and managed agents. Directory reads are bounded; narrow the search for more people.
 A nonmember is labeled **Not in channel · Choose whether to add when you send**.
-Selection alone does nothing. Send offers **Add to channel** or **Do nothing**.
-Add uses the existing durable member-add operation and confirms membership before
-addressed delivery. It does not start an agent before the outgoing message.
-Do nothing sends nonmembers as reference mentions, without granting access or
-notifying them; channel-member mentions remain addressed. Cancel or Escape keeps
-the draft. Add requires permission; references remain available without it.
+Selection alone does nothing. Send asks, as block/buzz desktop does: **Invite**
+or **Do nothing**. Without add permission, the only action is **Send anyway**.
+Invite uses the existing durable member-add operation and confirms membership
+before addressed delivery. It does not start an agent before the outgoing message.
+Do nothing and Send anyway send nonmembers as reference mentions, without granting
+access or notifying them; channel-member mentions remain addressed. Close or
+Escape keeps the draft.
 Failed additions keep the draft and allow retry of the same pending operation.
 A definitively failed addition older than 15 minutes must be dismissed in Outbox
 before a new add; unknown outcomes are never silently replaced. Channel, thread,

@@ -22,6 +22,7 @@ export function useNonmemberMentions(
 ) {
   const [pending, setPending] = useState<Pending>();
   const adding = useRef(false);
+  const safeAction = useRef<HTMLButtonElement>(null);
   const channel = session.channels
     .list()
     .channels.find((item) => item.id === channelId);
@@ -81,8 +82,9 @@ export function useNonmemberMentions(
           if (!open) pending?.finish(null);
         }}
         title="Mention people outside this channel?"
-        description="Add them to give them access to channel history and notify them. Do nothing sends a reference without adding or notifying them."
+        description={pending && describe(pending.people, canAdd)}
         preventClose={!!pending?.busy}
+        initialFocus={safeAction}
         finalFocus={() => {
           restoreFocus();
           return false;
@@ -90,50 +92,46 @@ export function useNonmemberMentions(
         actions={
           <>
             <Button
-              type="button"
-              disabled={pending?.busy}
-              onClick={() => pending?.finish(null)}
-            >
-              Cancel
-            </Button>
-            <Button
+              ref={safeAction}
               type="button"
               disabled={pending?.busy}
               onClick={() =>
                 pending?.finish(pending.people.map((person) => person.pubkey))
               }
             >
-              Do nothing
+              {canAdd ? "Do nothing" : "Send anyway"}
             </Button>
-            <Button
-              type="button"
-              disabled={!canAdd || pending?.busy}
-              onClick={() => void add()}
-            >
-              Add to channel
-            </Button>
+            {canAdd && (
+              <Button
+                type="button"
+                variant="prominent"
+                disabled={pending?.busy}
+                onClick={() => void add()}
+              >
+                {pending?.busy ? "Inviting…" : "Invite"}
+              </Button>
+            )}
           </>
         }
       >
-        <ul>
-          {pending?.people.map((person) => (
-            <li key={person.pubkey}>{person.name}</li>
-          ))}
-        </ul>
-        {!canAdd && (
-          <p>
-            You cannot add people to this channel. You can still send
-            references.
-          </p>
-        )}
-        {pending?.busy && <p role="status">Adding people to this channel…</p>}
-        {pending?.error && (
+        {pending?.error ? (
           <p role="alert">
             {pending.error} Your draft is kept. Some people may already have
             been added.
           </p>
-        )}
+        ) : null}
       </Dialog>
     ),
   };
+}
+
+/** Match block/buzz desktop: name the people, then the available outcome. */
+function describe(people: readonly MentionRecipient[], canAdd: boolean) {
+  const names = people.map((person) => person.name).join(", ");
+  const verb = people.length === 1 ? "is" : "are";
+  return `${names} ${verb} not in this channel. ${
+    canAdd
+      ? "Invite them to the channel, or send without inviting them."
+      : "You cannot add people to this channel. You can still send without inviting them."
+  }`;
 }

@@ -145,6 +145,30 @@ it("allows confirmed local discard after an unknown retry is rejected", async ()
   }
 });
 
+it("keeps saved feedback available when local dismissal fails", async () => {
+  const user = userEvent.setup();
+  const saved = pending("unknown");
+  const h = fixture([saved]);
+  const close = vi.fn();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  h.dismiss.mockRejectedValueOnce(new Error("Storage unavailable"));
+  try {
+    render(<FeedbackDialog open onOpenChange={close} relay={h.relay} />);
+    await user.click(screen.getByRole("button", { name: "Discard locally" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Storage unavailable",
+    );
+    expect(screen.getByText("Saved earlier")).toBeInTheDocument();
+    expect(close).not.toHaveBeenCalled();
+    expect(h.dismiss).toHaveBeenCalledWith(saved.event.id);
+    expect(
+      screen.getByRole("button", { name: "Retry same feedback" }),
+    ).toBeEnabled();
+  } finally {
+    confirm.mockRestore();
+  }
+});
+
 it("keeps accepted intent on close and clears it only after explicit Done", async () => {
   const user = userEvent.setup();
   const h = fixture([pending("accepted")]);

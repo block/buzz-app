@@ -208,6 +208,14 @@ it("uses a masked OpenAI key for Goose model lookup and discards unsaved keys on
         }),
       }),
     );
+    await screen.findByRole("option", { name: "gpt-4o" });
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      ),
+    );
     await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
     await user.click(await screen.findByRole("option", { name: "Anthropic" }));
     expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute(

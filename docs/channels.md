@@ -150,6 +150,9 @@ conversation content and unmount when leaving Messages.
 ## Sidebar sort persistence
 
 Each sidebar section can independently select **A–Z** (the default) or **Recent**.
+The Sort menu requires both host write support and a usable preference snapshot.
+An initial preference-read failure leaves Retry available without offering a no-op
+Sort control; later refresh failures retain the snapshot and keep sorting usable.
 The development broker saves these choices in the desktop-compatible encrypted
 kind-30078 `channel-sort` record: `{ version: 1, groups: { ... } }`. A–Z removes
 that group's override. Saving preserves unrelated fields and choices present in

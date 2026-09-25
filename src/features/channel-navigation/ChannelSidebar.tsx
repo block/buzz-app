@@ -736,7 +736,7 @@ function ReadySidebar({
                           />
                         </span>
                       )}
-                      {preferences.sortWritable && (
+                      {preferences.sortWritable && !!preferences.data && (
                         <MenuRoot
                           open={sectionMenu?.key === section.key}
                           onOpenChange={(open) => {

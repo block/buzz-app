@@ -1552,6 +1552,7 @@ export const test = base.extend({
       // each exact URL once, not every 502 or every console error in the test.
       const sidebarFailures = [
         ...(report.sidebarSortFailures ?? []),
+        ...(report.sidebarPreferenceFailures ?? []),
         ...(report.sidebarMuteFailures ?? []),
         ...(report.sidebarActivityFailures ?? []),
       ];

@@ -609,3 +609,64 @@ test.describe("sorting with lifecycle visibility", () => {
     expect(app.report.unexpected).toEqual([]);
   });
 });
+
+// Built-app wiring: the failed broker decode must hide the real section popup,
+// Retry must restore it, and a later failure must retain the usable snapshot.
+test("sort requires an initial preference snapshot and survives later refresh failures", async ({
+  page,
+  app,
+}) => {
+  const failPreferences = (route) => {
+    app.report.sidebarPreferenceFailures ??= [];
+    app.report.sidebarPreferenceFailures.push(route.request().url());
+    return route.fulfill({
+      status: 502,
+      json: { error: "preferences unavailable" },
+    });
+  };
+  await page.route("**/sidebar-preferences", failPreferences);
+  await open(page, app);
+  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  const notice = page.getByRole("dialog", {
+    name: "Saved sidebar preferences couldn’t refresh",
+  });
+  const trigger = sidebar.getByRole("button", {
+    name: "More actions for Channels",
+  });
+  await expect(notice).toBeVisible();
+  await expect(trigger).toHaveCount(0);
+  expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+  await page.unroute("**/sidebar-preferences", failPreferences);
+  await notice.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(notice).toHaveCount(0);
+  await expect(trigger).toBeVisible();
+
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await page.getByText("Diagnostics", { exact: true }).click();
+  await page.route("**/sidebar-preferences", failPreferences);
+  await page
+    .getByRole("button", { name: "Refresh groups and stars", exact: true })
+    .click();
+  await expect(notice).toBeVisible();
+  // Keep the failed read in place: writing uses the retained snapshot and its
+  // independent broker path, not a successful hidden preference refresh.
+  await trigger.click();
+  await page
+    .getByRole("menu", { name: "More actions for Channels", exact: true })
+    .getByRole("menuitem", { name: "Sort", exact: true })
+    .focus();
+  await page.keyboard.press("ArrowRight");
+  const menu = page.getByRole("menu", { name: "Sort", exact: true });
+  const saved = page.waitForResponse("**/sidebar-sort");
+  await menu.getByRole("menuitemradio", { name: "Recent" }).click();
+  expect((await saved).ok()).toBe(true);
+  await (await saved).finished();
+  await expect(menu).not.toBeVisible();
+  expect(app.report.sidebarPublications.at(-1)).toMatchObject({
+    coordinate: "channel-sort",
+    blob: { groups: { channels: "recent" } },
+  });
+  expect(app.report.unexpected).toEqual([]);
+});

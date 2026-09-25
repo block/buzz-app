@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { RelayEvent } from "./events";
 import { createRelaySession } from "./session";
 import { feedbackEvent } from "./product-feedback";
-import { flush, keypair, signed } from "./testing";
+import { flush, keypair, roster, signed } from "./testing";
 import { PublishRejected, type OutgoingEvent } from "./outbox";
 import type { LiveCallbacks } from "./live";
 
@@ -154,6 +154,80 @@ it.each(["rejected", "unknown"])(
     expect(publish.mock.calls[1]?.[0]).toEqual(publish.mock.calls[0]?.[0]);
   },
 );
+
+it("keeps channel-less feedback uploads alive across channel revocation and cache clearing", async () => {
+  let release!: (value: {
+    name: string;
+    url: string;
+    type: string;
+    size: number;
+    sha256: string;
+  }) => void;
+  let started!: () => void;
+  const began = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let supplied!: AbortSignal;
+  const uploadAttachment = vi.fn((_file: File, signal: AbortSignal) => {
+    supplied = signal;
+    started();
+    return new Promise<{
+      name: string;
+      url: string;
+      type: string;
+      size: number;
+      sha256: string;
+    }>((resolve) => {
+      release = resolve;
+    });
+  });
+  let members = [viewer.pubkey];
+  let revision = 1700000000;
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    scope: "https://relay.test",
+    media: () => undefined,
+    async query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(39002)))
+        return [roster(relay, "c", members, revision)];
+      return [] as RelayEvent[];
+    },
+    uploadAttachment,
+    writer: {
+      kinds: [42000],
+      sign: async (template: Parameters<typeof signed>[1]) =>
+        signed(viewer, template),
+      publish: async () => {},
+    },
+  });
+  owners.push(owner);
+  const capability = owner.session.feedbackUpload;
+  if (!capability) throw new Error("Feedback upload unavailable");
+  // Admit a channel first: losing it must cancel channel uploads, not feedback.
+  await owner.session.read([{ kinds: [39002], "#d": ["c"], limit: 10 }]);
+  const caller = new AbortController();
+  const file = new File(["image"], "feedback.png", { type: "image/png" });
+  const pending = capability.upload(file, caller.signal);
+  await began;
+  members = [];
+  revision++;
+  await owner.session.read([{ kinds: [39002], "#d": ["c"], limit: 10 }]);
+  expect(supplied.aborted).toBe(false);
+  await owner.clearCache();
+  expect(supplied.aborted).toBe(false);
+  release({
+    name: file.name,
+    url: `https://relay.test/media/${"a".repeat(64)}.png`,
+    type: file.type,
+    size: file.size,
+    sha256: "a".repeat(64),
+  });
+  await expect(pending).resolves.toMatchObject({ name: file.name });
+  expect(uploadAttachment).toHaveBeenCalledTimes(1);
+  owner.dispose();
+  await expect(capability.upload(file, caller.signal)).rejects.toThrow();
+});
 
 it("offers ordinary media feedback uploads only for a scoped writable session", async () => {
   const uploadAttachment = vi.fn(async () => ({

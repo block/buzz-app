@@ -1316,11 +1316,7 @@ export function createRelaySession(
               file: File,
               signal: AbortSignal,
             ): Promise<UploadedAttachment> {
-              const combined = AbortSignal.any([
-                signal,
-                lifetime.signal,
-                uploadLifetime.signal,
-              ]);
+              const combined = AbortSignal.any([signal, lifetime.signal]);
               combined.throwIfAborted();
               if (closed) throw new UploadError("denied");
               const result = await uploadAttachment(file, combined);

@@ -1,4 +1,4 @@
-import { finalizeEvent, getPublicKey, nip44 } from "nostr-tools";
+import { getPublicKey, nip44 } from "nostr-tools";
 import { decodeSidebarPreferences } from "./sidebar-preferences.mjs";
 
 const COORDINATE = "channel-stars";
@@ -17,7 +17,14 @@ export function assertSidebarStarIntent(intent) {
 }
 
 /** One explicit star intent against a fresh signed head; keep unstar tombstones. */
-export function prepareSidebarStar(events, intent, secret, now = Date.now()) {
+export async function prepareSidebarStar(
+  events,
+  intent,
+  secret,
+  signer,
+  signal,
+  now = Date.now(),
+) {
   assertSidebarStarIntent(intent);
   // The shared bounded decoder verifies signature, own author, schema and budgets.
   decodeSidebarPreferences(events, secret);
@@ -54,7 +61,7 @@ export function prepareSidebarStar(events, intent, secret, now = Date.now()) {
         },
       },
     };
-    const event = finalizeEvent(
+    const event = await signer.signEvent(
       {
         kind: 30078,
         content: nip44.v2.encrypt(JSON.stringify(stars), key),
@@ -67,7 +74,7 @@ export function prepareSidebarStar(events, intent, secret, now = Date.now()) {
           ["t", COORDINATE],
         ],
       },
-      secret,
+      signal,
     );
     // Refuse over-budget changes rather than silently trimming other channels.
     decodeSidebarPreferences([event], secret);
@@ -77,12 +84,33 @@ export function prepareSidebarStar(events, intent, secret, now = Date.now()) {
   }
 }
 
-export async function mutateSidebarStar(intent, secret, readHead, publish) {
+export async function mutateSidebarStar(
+  intent,
+  secret,
+  signer,
+  signal,
+  readHead,
+  publish,
+) {
   assertSidebarStarIntent(intent);
-  const draft = prepareSidebarStar(await readHead(), intent, secret);
+  const draft = await prepareSidebarStar(
+    await readHead(),
+    intent,
+    secret,
+    signer,
+    signal,
+  );
+  signal?.throwIfAborted();
   if (!draft.event) return draft.stars;
   await publish(draft.event);
-  const confirmation = prepareSidebarStar(await readHead(), intent, secret);
+  const confirmation = await prepareSidebarStar(
+    await readHead(),
+    intent,
+    secret,
+    signer,
+    signal,
+  );
+  signal?.throwIfAborted();
   if (confirmation.event)
     throw new Error(
       "Sidebar stars changed on another device; reload and try again",

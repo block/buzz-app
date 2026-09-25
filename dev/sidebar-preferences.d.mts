@@ -3,6 +3,11 @@ import type {
   SidebarGroups,
 } from "../src/features/relay/sidebar-preferences";
 import type { RelayEvent } from "../src/features/relay/events";
+import type { EventTemplate } from "nostr-tools";
+
+type SidebarSigner = {
+  signEvent(template: EventTemplate, signal?: AbortSignal): Promise<RelayEvent>;
+};
 
 export function decodeSidebarPreferences(
   events: readonly RelayEvent[],
@@ -15,11 +20,15 @@ export function prepareSidebarAssignment(
   events: readonly RelayEvent[],
   intent: SidebarAssignmentIntent,
   secret: Uint8Array,
+  signer: SidebarSigner,
+  signal?: AbortSignal,
   now?: number,
-): { groups: SidebarGroups; event?: RelayEvent };
+): Promise<{ groups: SidebarGroups; event?: RelayEvent }>;
 export function mutateSidebarAssignment(
   intent: SidebarAssignmentIntent,
   secret: Uint8Array,
+  signer: SidebarSigner,
+  signal: AbortSignal | undefined,
   readHead: () => Promise<readonly RelayEvent[]>,
   publish: (event: RelayEvent) => Promise<void>,
 ): Promise<SidebarGroups>;

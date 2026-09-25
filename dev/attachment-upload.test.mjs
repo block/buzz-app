@@ -1,3 +1,4 @@
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
@@ -376,7 +377,13 @@ test("declared and streamed request budgets reject before signing or forwarding"
       ? { "content-length": String(UPLOAD_MAX_BYTES + 1) }
       : {};
     await expect(
-      uploadAttachment(req, relay, key, forward, new AbortController().signal),
+      uploadAttachment(
+        req,
+        relay,
+        createLocalSigningDelegate(key),
+        forward,
+        new AbortController().signal,
+      ),
     ).rejects.toMatchObject({ code: "size" });
     req.destroy();
   }
@@ -395,7 +402,7 @@ test("the whole-operation timeout aborts a stalled body without forwarding", asy
     const result = uploadAttachment(
       req,
       relay,
-      key,
+      createLocalSigningDelegate(key),
       forward,
       new AbortController().signal,
     );

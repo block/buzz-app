@@ -3,7 +3,7 @@ import {
   nextSidebarSectionOrder,
   projectSidebarRecord,
 } from "../src/features/relay/sidebar-registers.ts";
-import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
+import { getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import {
   projectSidebarPreferences,
   SIDEBAR_COORDINATES,
@@ -142,10 +142,12 @@ function parseSectionsEvent(events, secret) {
   }
 }
 /** Narrow host command: mutate one assignment against the latest encrypted head. */
-export function prepareSidebarAssignment(
+export async function prepareSidebarAssignment(
   events,
   intent,
   secret,
+  signer,
+  signal,
   now = Date.now(),
 ) {
   assertSidebarAssignmentIntent(intent);
@@ -202,7 +204,7 @@ export function prepareSidebarAssignment(
   }
   return {
     groups,
-    event: finalizeEvent(
+    event: await signer.signEvent(
       {
         kind: 30078,
         content,
@@ -212,7 +214,7 @@ export function prepareSidebarAssignment(
           ["t", SECTION_COORDINATE],
         ],
       },
-      secret,
+      signal,
     ),
   };
 }
@@ -221,18 +223,30 @@ export function prepareSidebarAssignment(
 export async function mutateSidebarAssignment(
   intent,
   secret,
+  signer,
+  signal,
   readHead,
   publish,
 ) {
   assertSidebarAssignmentIntent(intent);
-  const draft = prepareSidebarAssignment(await readHead(), intent, secret);
-  if (!draft.event) return draft.groups;
-  await publish(draft.event);
-  const confirmation = prepareSidebarAssignment(
+  const draft = await prepareSidebarAssignment(
     await readHead(),
     intent,
     secret,
+    signer,
+    signal,
   );
+  signal?.throwIfAborted();
+  if (!draft.event) return draft.groups;
+  await publish(draft.event);
+  const confirmation = await prepareSidebarAssignment(
+    await readHead(),
+    intent,
+    secret,
+    signer,
+    signal,
+  );
+  signal?.throwIfAborted();
   if (confirmation.event)
     throw new Error(
       "Sidebar groups changed on another device; reload and try again",

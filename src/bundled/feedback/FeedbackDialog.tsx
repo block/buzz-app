@@ -70,12 +70,13 @@ function FeedbackForConnection({
   isCurrent(): boolean;
 }) {
   const active = useRef(false);
-  const dialogEpoch = useRef(0);
+  const attempt = useRef(0);
   useEffect(() => {
     active.current = true;
     return () => {
       active.current = false;
-      dialogEpoch.current++;
+      attempt.current++;
+      uploadController.current?.abort();
     };
   }, []);
   const outbox = connection.session.outbox;
@@ -94,24 +95,8 @@ function FeedbackForConnection({
   const [uploadedDiagnostics, setUploadedDiagnostics] =
     useState<UploadedAttachment>();
   const [includeDiagnostics, setIncludeDiagnostics] = useState(false);
+  // close and unmount invalidate the same async attempt, including dismissal.
   const uploadController = useRef<AbortController | null>(null);
-  const uploadAttempt = useRef(0);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      uploadController.current?.abort();
-    };
-  }, []);
-  useEffect(() => {
-    if (!open) {
-      uploadAttempt.current++;
-      uploadController.current?.abort();
-      uploadController.current = null;
-      setBusy(false);
-    }
-  }, [open]);
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     let active = true;
@@ -142,7 +127,7 @@ function FeedbackForConnection({
     event.target.value = "";
     if (!file || !connection.session.feedbackUpload || !available || busy)
       return;
-    const attempt = ++uploadAttempt.current;
+    const currentAttempt = ++attempt.current;
     const controller = new AbortController();
     uploadController.current = controller;
     setBusy(true);
@@ -155,14 +140,14 @@ function FeedbackForConnection({
         controller.signal,
       );
       controller.signal.throwIfAborted();
-      if (!mounted.current || attempt !== uploadAttempt.current) return;
+      if (!active.current || currentAttempt !== attempt.current) return;
       if (result.type !== checked.type) throw new UploadError("invalid");
       setImage(result);
     } catch (reason) {
       if (
         !controller.signal.aborted &&
-        mounted.current &&
-        attempt === uploadAttempt.current
+        active.current &&
+        currentAttempt === attempt.current
       )
         setError(
           reason instanceof Error ? reason.message : "Image upload failed.",
@@ -170,14 +155,14 @@ function FeedbackForConnection({
     } finally {
       if (uploadController.current === controller)
         uploadController.current = null;
-      if (mounted.current && attempt === uploadAttempt.current) setBusy(false);
+      if (active.current && currentAttempt === attempt.current) setBusy(false);
     }
   }
   async function submit() {
     if (!outbox || !available || pending || busy) return;
     setBusy(true);
     setError("");
-    const attempt = ++uploadAttempt.current;
+    const currentAttempt = ++attempt.current;
     try {
       const attachments = image ? [image] : [];
       const upload = connection.session.feedbackUpload;
@@ -191,7 +176,7 @@ function FeedbackForConnection({
           uploadController.current = controller;
           diagnostics = await feedbackDiagnostics();
           controller.signal.throwIfAborted();
-          if (!mounted.current || attempt !== uploadAttempt.current) return;
+          if (!active.current || currentAttempt !== attempt.current) return;
           // validateUploadResult confines the URL to this origin, a 64-hex
           // hash and at most eight extension characters. Reserve that maximum
           // (and the longer allowed MIME) before storing diagnostics bytes.
@@ -209,10 +194,10 @@ function FeedbackForConnection({
         const controller = uploadController.current;
         if (!controller) return;
         controller.signal.throwIfAborted();
-        if (!mounted.current || attempt !== uploadAttempt.current) return;
+        if (!active.current || currentAttempt !== attempt.current) return;
         const result = await upload.upload(diagnostics, controller.signal);
         controller.signal.throwIfAborted();
-        if (!mounted.current || attempt !== uploadAttempt.current) return;
+        if (!active.current || currentAttempt !== attempt.current) return;
         if (
           result.type !== "application/octet-stream" &&
           result.type !== "text/plain"
@@ -222,7 +207,7 @@ function FeedbackForConnection({
         attachments[attachments.length - 1] = result;
         uploadController.current = null;
       }
-      if (!mounted.current || attempt !== uploadAttempt.current) return;
+      if (!active.current || currentAttempt !== attempt.current) return;
       outbox.send(
         feedbackEvent(
           message,
@@ -233,15 +218,15 @@ function FeedbackForConnection({
       );
     } catch (reason) {
       if (
-        mounted.current &&
-        attempt === uploadAttempt.current &&
+        active.current &&
+        currentAttempt === attempt.current &&
         !uploadController.current?.signal.aborted
       )
         setError(
           reason instanceof Error ? reason.message : "Could not send feedback.",
         );
     } finally {
-      if (mounted.current && attempt === uploadAttempt.current) {
+      if (active.current && currentAttempt === attempt.current) {
         uploadController.current = null;
         setBusy(false);
       }
@@ -250,11 +235,10 @@ function FeedbackForConnection({
   async function clearPending() {
     if (!outbox || !pending || busy) return;
     setBusy(true);
-    const epoch = dialogEpoch.current;
+    const epoch = attempt.current;
     try {
       await outbox.dismiss(pending.event.id);
-      if (!active.current || !isCurrent() || epoch !== dialogEpoch.current)
-        return;
+      if (!active.current || !isCurrent() || epoch !== attempt.current) return;
       setMessage("");
       setCategory(null);
       setImage(undefined);
@@ -263,13 +247,12 @@ function FeedbackForConnection({
       setError("");
       close();
     } catch (reason) {
-      if (!active.current || !isCurrent() || epoch !== dialogEpoch.current)
-        return;
+      if (!active.current || !isCurrent() || epoch !== attempt.current) return;
       setError(
         reason instanceof Error ? reason.message : "Could not clear feedback.",
       );
     } finally {
-      if (active.current && isCurrent() && epoch === dialogEpoch.current)
+      if (active.current && isCurrent() && epoch === attempt.current)
         setBusy(false);
     }
   }
@@ -296,8 +279,7 @@ function FeedbackForConnection({
     }
   }
   function close() {
-    dialogEpoch.current++;
-    uploadAttempt.current++;
+    attempt.current++;
     uploadController.current?.abort();
     uploadController.current = null;
     setBusy(false);

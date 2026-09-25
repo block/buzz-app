@@ -12,9 +12,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelayData } from "../../features/relay/service";
 import type { OutgoingEvent } from "../../features/relay/outbox";
+import { byteSize, OUTBOX_INPUT_MAX_BYTES } from "../../features/relay/budget";
 import { feedbackEvent } from "../../features/relay/product-feedback";
 import { keypair, signed } from "../../features/relay/testing";
 import { FeedbackDialog } from "./FeedbackDialog";
+import { feedbackDiagnostics } from "./prepare-feedback";
 
 const subscribe = () => () => {};
 const author = keypair();
@@ -575,7 +577,7 @@ it("uploads diagnostics only on explicit opt-in and sends a text-file descriptor
   );
 });
 
-it("preflights diagnostics descriptor overhead at the content boundary", async () => {
+it("preflights serialized diagnostics input before uploading", async () => {
   const user = userEvent.setup();
   const h = fixture();
   const descriptor = uploaded(
@@ -585,21 +587,58 @@ it("preflights diagnostics descriptor overhead at the content boundary", async (
   );
   h.upload.mockResolvedValue(descriptor);
   render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  await user.click(screen.getByRole("button", { name: "Bug" }));
   await user.click(
     screen.getByRole("checkbox", { name: "Attach diagnostics" }),
   );
-  const remaining =
-    32 * 1024 -
-    feedbackEvent("a", null, [descriptor], "https://relay.test").content
-      .length +
-    1;
+  // The placeholder reserves the longest URL and MIME with the generated file size.
+  const diagnostics = await feedbackDiagnostics();
+  const placeholder = {
+    ...descriptor,
+    size: diagnostics.size,
+    sha256: "0".repeat(64),
+    url: `https://relay.test/media/${"0".repeat(64)}.abcdefgh`,
+  };
+  let low = 1;
+  let high = OUTBOX_INPUT_MAX_BYTES;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    try {
+      feedbackEvent(
+        '"'.repeat(middle),
+        "bug",
+        [placeholder],
+        "https://relay.test",
+      );
+      low = middle;
+    } catch {
+      high = middle - 1;
+    }
+  }
+  const boundary = '"'.repeat(low);
   fireEvent.change(screen.getByRole("textbox", { name: "Your feedback" }), {
-    target: { value: "x".repeat(remaining) },
+    target: { value: `${boundary}"` },
+  });
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Feedback must contain text and fit within relay limits.",
+  );
+  expect(h.upload).not.toHaveBeenCalled();
+  expect(h.send).not.toHaveBeenCalled();
+  expect(
+    byteSize(
+      feedbackEvent(boundary, "bug", [placeholder], "https://relay.test"),
+    ),
+  ).toBeLessThanOrEqual(OUTBOX_INPUT_MAX_BYTES);
+  fireEvent.change(screen.getByRole("textbox", { name: "Your feedback" }), {
+    target: { value: boundary },
   });
   await user.click(screen.getByRole("button", { name: "Send feedback" }));
   await waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
   expect(h.upload).toHaveBeenCalledTimes(1);
-  expect(h.send.mock.calls[0]?.[0].content.length).toBe(32 * 1024);
+  expect(byteSize(h.send.mock.calls[0]?.[0])).toBeLessThanOrEqual(
+    OUTBOX_INPUT_MAX_BYTES,
+  );
 });
 
 it("rejects diagnostics content overflow before uploading", async () => {

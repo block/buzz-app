@@ -96,6 +96,8 @@ export type ChannelMessage = Readonly<{
   attachmentContentRemoved?: true;
   /** Pubkeys named by signed `p` tags. Identity never comes from prose. */
   mentions: readonly string[];
+  /** Signed two-field mention tags bind display only; never notification recipients. */
+  mentionReferences?: readonly string[];
   /** Authorized edit supplying current imeta; absent when sourced from the original. */
   attachmentSourceId?: string;
   attachments: readonly Attachment[];

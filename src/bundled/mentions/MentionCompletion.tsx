@@ -1,3 +1,4 @@
+import { useMentionDirectory } from "./useMentionDirectory";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { availableMentionAgents } from "../../features/agents/mention-choices";
 import { mentionChoices } from "./mention-choices";
@@ -42,6 +43,12 @@ export function MentionCompletion({
   const agents = useAgentChoices(session, !!inviteAgents);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
+  const directory = useMentionDirectory(
+    session,
+    channel,
+    query.query,
+    true && !draftRoster && !inviteAgents,
+  );
   const available = useMemo(
     () =>
       availableMentionAgents(
@@ -82,7 +89,11 @@ export function MentionCompletion({
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
     const candidates = mentionChoices(
-      draftRoster ?? [...(inviteAgents ? agents.identities : []), ...available],
+      draftRoster ?? [
+        ...(inviteAgents ? agents.identities : []),
+        ...available,
+        ...directory.people,
+      ],
       members,
       profiles,
       resolveName,
@@ -119,19 +130,26 @@ export function MentionCompletion({
           ? recipient.pubkey
           : inviteAgents
             ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
-            : "Adds to channel when you send",
+            : "Not in channel · Choose whether to add when you send",
         preview: (
           <Avatar
             alt=""
             fallback={label}
             src={session.media(
-              profiles.get(recipient.pubkey)?.picture ?? "",
+              profiles.get(recipient.pubkey)?.picture ??
+                directory.people.find(
+                  (person) => person.pubkey === recipient.pubkey,
+                )?.picture ??
+                "",
               "small",
             )}
             size="default"
             shape={
               agentPubkeys.has(recipient.pubkey) ||
-              !members.includes(recipient.pubkey)
+              directory.people.some(
+                (person) =>
+                  person.pubkey === recipient.pubkey && person.isAgent,
+              )
                 ? "squircle"
                 : "circle"
             }
@@ -139,21 +157,26 @@ export function MentionCompletion({
         ),
         edit: { mention: recipient },
       })),
-      ...(agents.status === "error" || agents.error
-        ? { status: "Could not load agents. Retry to refresh." }
-        : admitted && membershipMissing
-          ? { status: "Channel membership unavailable." }
-          : admitted && membershipError
-            ? { status: "Could not refresh channel membership." }
-            : error || missing
-              ? {
-                  status:
-                    "Some names unavailable. Exact public keys still identify recipients.",
-                }
-              : matching.length > 20
-                ? { status: "Narrow your search to see more members." }
-                : {}),
-      ...(agents.status === "error" ||
+      ...(directory.error
+        ? { status: directory.error }
+        : directory.loading
+          ? { status: "Searching community…" }
+          : agents.status === "error" || agents.error
+            ? { status: "Could not load agents. Retry to refresh." }
+            : admitted && membershipMissing
+              ? { status: "Channel membership unavailable." }
+              : admitted && membershipError
+                ? { status: "Could not refresh channel membership." }
+                : error || missing
+                  ? {
+                      status:
+                        "Some names unavailable. Exact public keys still identify recipients.",
+                    }
+                  : directory.more || matching.length > 20
+                    ? { status: "Narrow your search to see more members." }
+                    : {}),
+      ...(directory.error ||
+      agents.status === "error" ||
       agents.error ||
       membershipMissing ||
       membershipError ||
@@ -161,6 +184,7 @@ export function MentionCompletion({
       missing
         ? {
             retry: () => {
+              directory.retry();
               void session.agentChoices.refresh();
               setError(false);
               retry((value) => value + 1);
@@ -197,6 +221,11 @@ export function MentionCompletion({
       revoke();
     };
   }, [
+    directory.retry,
+    directory.people,
+    directory.error,
+    directory.loading,
+    directory.more,
     draftRoster,
     resolveName,
     session,

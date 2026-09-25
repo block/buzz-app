@@ -311,6 +311,40 @@ export function validMessageTemplate(event) {
     })()
   );
 }
+/** NIP-56 message report: exactly one author and one typed message target. */
+export function validReport(event) {
+  if (
+    event?.kind !== 1984 ||
+    typeof event.content !== "string" ||
+    event.content !== event.content.trim() ||
+    Buffer.byteLength(event.content) > 32000 ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length !== 2
+  )
+    return false;
+  const [author, target] = event.tags;
+  return (
+    Array.isArray(author) &&
+    author.length === 2 &&
+    author[0] === "p" &&
+    /^[0-9a-f]{64}$/.test(author[1]) &&
+    Array.isArray(target) &&
+    target.length === 3 &&
+    target[0] === "e" &&
+    /^[0-9a-f]{64}$/.test(target[1]) &&
+    [
+      "spam",
+      "profanity",
+      "nudity",
+      "impersonation",
+      "malware",
+      "illegal",
+      "other",
+    ].includes(target[2])
+  );
+}
 /** Channel-local NIP-09 removal; the relay enforces authorship of each target. */
 export function validMessageDeletion(event) {
   if (
@@ -1062,6 +1096,7 @@ export function relayBrokerPlugin({
                 9000,
                 30078,
                 40100,
+                1984,
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
@@ -1846,6 +1881,12 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
+            } else if (filters?.kind === 1984) {
+              if (!validReport(filters))
+                return json(res, 400, {
+                  error: "Report rejected",
+                  sent: false,
+                });
             } else if (
               ![7, 9, 40003].includes(filters?.kind) &&
               !validMessageDeletion(filters)

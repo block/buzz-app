@@ -1,7 +1,20 @@
 import { attachmentMessage, type UploadedAttachment } from "./attachments";
 import { validReactionContent, type CustomEmoji } from "./emoji";
+import type { EventTemplate } from "nostr-tools";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
+
+/** NIP-56 types accepted by the Buzz relay for message reports. */
+export const REPORT_TYPES = [
+  "spam",
+  "profanity",
+  "nudity",
+  "impersonation",
+  "malware",
+  "illegal",
+  "other",
+] as const;
+export type ReportType = (typeof REPORT_TYPES)[number];
 
 /** Domain convenience only. Delivery and read reconciliation remain session-owned. */
 export function createMessages(
@@ -12,6 +25,8 @@ export function createMessages(
   validateMentions: (channelId: string, pubkeys: readonly string[]) => void,
   canParticipate: (channelId: string) => boolean = () => true,
   relayOrigin?: string,
+  /** Resolves on relay OK. Reports are never echoed, so they bypass the outbox. */
+  publishReport?: (template: EventTemplate) => Promise<void>,
 ) {
   const writer = (kind: number, channelId: string) => {
     if (!canParticipate(channelId))
@@ -177,6 +192,27 @@ export function createMessages(
         ],
       });
     },
+    /** Undefined when this connection cannot publish reports. */
+    report: publishReport
+      ? (messageId: string, type: ReportType, note = "") => {
+          const original = find(messageId);
+          if (!original || ![9, 40002, 40008].includes(original.kind))
+            return Promise.reject(
+              new Error("Load the message before reporting it"),
+            );
+          if (!REPORT_TYPES.includes(type))
+            return Promise.reject(new Error("Choose a report reason"));
+          return publishReport({
+            kind: 1984,
+            content: note.trim(),
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [
+              ["p", original.pubkey],
+              ["e", messageId, type],
+            ],
+          });
+        }
+      : undefined,
     reactionTarget(event: Pick<EventData, "kind" | "tags">) {
       const target = event.tags.find(([name]) => name === "e")?.[1];
       if (event.kind === 7) return target;

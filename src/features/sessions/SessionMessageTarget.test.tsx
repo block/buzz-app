@@ -75,6 +75,7 @@ function setup() {
       ensure: async () => {},
     },
     channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
     media: () => undefined,
   } as unknown as RelaySession;
   function request(id: string) {

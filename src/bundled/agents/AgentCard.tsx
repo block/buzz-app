@@ -8,6 +8,7 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
+import { avatarPreview } from "../../features/profiles/avatar-upload";
 import {
   DotsThreeIcon,
   UsersIcon,
@@ -45,16 +46,20 @@ export function AgentCard({
   onDelete?: ((agent: AgentView) => void) | undefined;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
-  const source = avatarSource(avatar);
   const presence = usePresenceStatus(
     session?.presence,
     identities.length === 1 ? identities[0]?.pubkey : undefined,
   );
-  const picture = source?.startsWith("data:")
-    ? source
-    : source
-      ? session?.media(source, "small")
-      : undefined;
+  const managed = editable.length === 1 ? editable[0] : undefined;
+  const source = avatarSource(managed?.picture ?? avatar);
+  const picture =
+    managed?.picture != null
+      ? avatarPreview(managed.picture, managed.relayUrl)
+      : source?.startsWith("data:")
+        ? source
+        : source
+          ? session?.media(source, "small")
+          : undefined;
   return (
     <article
       aria-label={`Agent ${name}`}
@@ -81,7 +86,7 @@ export function AgentCard({
                       onClick={() => {
                         // The menu item unmounts; return from the dialog to the card.
                         trigger.current?.focus();
-                        onEdit(agent, picture);
+                        onEdit(agent, source);
                       }}
                     >
                       {editable.length === 1 ? (

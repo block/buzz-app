@@ -1,5 +1,6 @@
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
+import { AvatarEditor } from "../profiles/AvatarEditor";
 import type { PersonalProfile } from "./service";
 import { PROFILE_ABOUT_MAX_LENGTH } from "./service";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -34,13 +35,29 @@ export function ProfileFields({
   profile,
   onChange,
   disabled = false,
+  community,
+  onBusyChange,
+  showAvatar = true,
 }: {
   profile: PersonalProfile;
   onChange(profile: PersonalProfile): void;
   disabled?: boolean;
+  community?: string | undefined;
+  onBusyChange?(busy: boolean): void;
+  showAvatar?: boolean;
 }) {
   return (
     <div className="grid gap-4">
+      {showAvatar && (
+        <AvatarEditor
+          value={profile.picture}
+          name={profile.name}
+          community={community}
+          disabled={disabled}
+          onBusyChange={onBusyChange}
+          onChange={(picture) => onChange({ ...profile, picture })}
+        />
+      )}
       <Field label="Display name">
         <Input
           autoComplete="nickname"
@@ -68,26 +85,6 @@ export function ProfileFields({
           value={profile.about ?? ""}
           onChange={(event) =>
             onChange({ ...profile, about: event.target.value })
-          }
-        />
-      </Field>
-      <Field
-        label="Picture URL (optional)"
-        description="Buzz centers and crops the image to fit each avatar."
-        error={
-          profile.picture && !validPicture(profile.picture)
-            ? "Enter an HTTPS image URL without embedded credentials."
-            : undefined
-        }
-      >
-        <Input
-          type="url"
-          placeholder="https://…"
-          disabled={disabled}
-          value={profile.picture}
-          maxLength={2048}
-          onChange={(event) =>
-            onChange({ ...profile, picture: event.target.value })
           }
         />
       </Field>

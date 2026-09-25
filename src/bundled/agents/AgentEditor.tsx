@@ -1,6 +1,9 @@
+import { AvatarEditor } from "../../features/profiles/AvatarEditor";
+import { avatarPreview } from "../../features/profiles/avatar-upload";
+import { avatarSource } from "../../shared/avatar-source";
 import { XIcon } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -35,13 +38,22 @@ export function AgentEditor({
   avatar?: string | undefined;
   onClose(): void;
 }) {
+  const [uploading, setUploading] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [draft, setDraft] = useState<AgentDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const current = draft ?? agentDraft(agent);
   const dirty = draft !== null;
   const stale = current.revision !== agent.revision;
-  const blocked = state.busy || state.status !== "ready";
+  const blocked = state.busy || uploading || state.status !== "ready";
+  const picture = current.picture ?? agent.picture ?? avatar ?? "";
   const canClose =
     !state.busy || !!(state.pendingLaunch || state.pendingCredentialWrite);
   const launchBlocked = !!agentLaunchBlock(state, agent) || dirty;
@@ -65,7 +77,7 @@ export function AgentEditor({
     <Dialog.Root
       open
       onOpenChange={(open) => {
-        if (!open && !dirty && canClose) onClose();
+        if (!open && !dirty && !uploading && canClose) onClose();
       }}
     >
       <Dialog.Portal>
@@ -88,26 +100,19 @@ export function AgentEditor({
             Edit {displayName}. Save updates settings without restarting the
             agent.
           </Dialog.Description>
-          <div className="flex flex-col items-start gap-3 min-w-0">
-            <Avatar
-              alt=""
-              fallback={displayName}
-              src={avatar ?? null}
-              shape="squircle"
-              size="large"
-            />
-            <div className="min-w-0 space-y-1">
-              <p className="text-label break-words">{displayName}</p>
-              <p className="text-body-sm text-subtle break-all">
-                {agent.relayUrl}
-              </p>
-            </div>
-          </div>
           <form
             className="buzz-dialog-body space-y-section-gap"
             onSubmit={(event) => {
               event.preventDefault();
               if (blocked || !dirty || stale) return;
+              if (
+                current.picture &&
+                (!current.picture.startsWith("https://") ||
+                  !avatarSource(current.picture))
+              ) {
+                setError("Use an HTTPS image URL without credentials.");
+                return;
+              }
               let edit: ReturnType<typeof agentEdit>;
               try {
                 edit = agentEdit(current);
@@ -117,15 +122,57 @@ export function AgentEditor({
               }
               void control
                 .save(agent.id, current.revision, edit)
-                .then(() => {
+                .then(async (saved) => {
+                  if (!mounted.current) return;
                   setDraft(null);
                   setError(null);
-                  setNotice("Saved. Running work was not restarted.");
+                  const pending = saved.agents.find(
+                    (item) => item.id === agent.id,
+                  )?.profilePending;
+                  if (pending && control.publishProfile) {
+                    setNotice("Settings saved. Publishing avatar…");
+                    try {
+                      await control.publishProfile(agent.id);
+                    } catch {
+                      if (mounted.current)
+                        setNotice(
+                          "Settings saved; profile publication is unconfirmed. Refresh status, then retry publication below or on the agent card.",
+                        );
+                      return;
+                    }
+                  }
+                  if (mounted.current)
+                    setNotice("Saved. Running work was not restarted.");
                 })
                 .catch(() => {});
             }}
           >
-            <div className="min-w-0">
+            <div className="min-w-0 space-y-4">
+              <div className="space-y-3 text-center">
+                {state.data?.avatarEditingAvailable ? (
+                  <AvatarEditor
+                    value={picture}
+                    name={current.name}
+                    community={agent.relayUrl}
+                    shape="squircle"
+                    disabled={state.busy}
+                    onBusyChange={setUploading}
+                    onChange={(picture) => change({ picture })}
+                  />
+                ) : (
+                  <Avatar
+                    src={avatarPreview(picture, agent.relayUrl)}
+                    alt=""
+                    fallback={displayName}
+                    size="large"
+                    shape="squircle"
+                  />
+                )}
+                <p className="text-label">{displayName}</p>
+                <p className="text-body-sm text-subtle break-all">
+                  {agent.relayUrl}
+                </p>
+              </div>
               <AgentSettingsFields
                 id={agent.id}
                 savedRevision={agent.revision}
@@ -240,6 +287,29 @@ export function AgentEditor({
               <p role="alert" className="text-danger">
                 {state.error}
               </p>
+            )}
+            {agent.profilePending && (
+              <Button
+                disabled={
+                  state.busy ||
+                  state.status !== "ready" ||
+                  !control.publishProfile
+                }
+                onClick={() => {
+                  setNotice(null);
+                  void control
+                    .publishProfile?.(agent.id)
+                    .then(() => {
+                      if (mounted.current)
+                        setNotice(
+                          "Profile published. Running work was not restarted.",
+                        );
+                    })
+                    .catch(() => {});
+                }}
+              >
+                Retry profile publication
+              </Button>
             )}
             {state.status === "error" && (
               <Button onClick={() => void control.refresh()}>

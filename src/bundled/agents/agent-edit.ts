@@ -3,6 +3,7 @@ import type { AgentEdit, AgentView } from "../../features/agents/control";
 export interface AgentDraft {
   revision: number;
   name: string;
+  picture?: string;
   systemPrompt: string;
   workspace: string;
   command: string;
@@ -55,6 +56,7 @@ export function agentEdit(
   }
   return {
     name: draft.name,
+    ...(draft.picture === undefined ? {} : { picture: draft.picture }),
     systemPrompt: draft.systemPrompt,
     workspace: draft.workspace,
     harness: {

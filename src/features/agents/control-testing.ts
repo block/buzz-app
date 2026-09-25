@@ -35,6 +35,7 @@ export function controlFixture() {
   };
   const data: ControlSnapshot = {
     runtimeAvailable: true,
+    avatarEditingAvailable: true,
     agents: [agent],
     // Simulates the native snapshot; never imported by production UI.
     harnessOptions: [
@@ -48,8 +49,15 @@ export function controlFixture() {
   const calls: { action: string; payload?: unknown }[] = [];
   let failSave = false;
   let failStartOnAppLaunch = false;
+  let failProfile = false;
   let importDestination = "";
   const host: AgentControlHost = {
+    async publishProfile(id) {
+      calls.push({ action: "profile", payload: { id } });
+      if (failProfile) throw "The fixture could not publish the profile.";
+      agent.profilePending = false;
+      return structuredClone(data);
+    },
     async snapshot() {
       calls.push({ action: "snapshot" });
       return structuredClone(data);
@@ -66,6 +74,9 @@ export function controlFixture() {
       }
       Object.assign(agent, {
         name: edit.name,
+        ...(edit.picture === undefined || edit.picture === agent.picture
+          ? {}
+          : { picture: edit.picture, profilePending: true }),
         systemPrompt: edit.systemPrompt,
         workspace: edit.workspace,
         harness: { ...edit.harness, environmentKeys: [...keys] },
@@ -122,6 +133,9 @@ export function controlFixture() {
     agent,
     data,
     calls,
+    failProfile(value: boolean) {
+      failProfile = value;
+    },
     failSave(value: boolean) {
       failSave = value;
     },

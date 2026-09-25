@@ -325,6 +325,7 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
         record.remove("private_key_nsec");
     }
     Ok(Agent {
+        picture: None,
         id: id.clone(),
         pubkey,
         relay_url,

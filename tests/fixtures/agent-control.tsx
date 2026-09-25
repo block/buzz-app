@@ -1,3 +1,11 @@
+import { finalizeEvent, getPublicKey } from "nostr-tools";
+import { Context } from "@deepseek-ai/cordis";
+import { createCommunities } from "../../src/features/communities/service";
+import { ProfileButton } from "../../src/app/shell/ProfileButton";
+import { ProfileSettings } from "../../src/app/ProfileSettings";
+import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
+import { communityDestination } from "../../src/features/communities/destination";
+import { avatarMediaFixture } from "./avatar-media";
 import { useState, useSyncExternalStore } from "react";
 import { createNavigationController } from "../../src/features/navigation/controller";
 import { createMemoryHistory } from "../../src/features/navigation/history";
@@ -15,6 +23,108 @@ import { Button } from "../../src/shared/design-system/ui/Button";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import "../../src/shared/styles/globals.css";
 
+const avatarPreviewMode = new URLSearchParams(location.search).has("avatars");
+// Deliberately public test key, never an account credential.
+const profileKey = new Uint8Array(32).fill(7);
+const profileViewer = getPublicKey(profileKey);
+const profiles = new Map<string, ReturnType<typeof finalizeEvent>>();
+for (const id of ["https://relay.example.test", "https://other.example.test"]) {
+  profiles.set(
+    id,
+    finalizeEvent(
+      {
+        kind: 0,
+        tags: [],
+        created_at: 1,
+        content: JSON.stringify({
+          name: "Fixture human",
+          about: "This field must survive avatar editing.",
+          picture: "",
+        }),
+      },
+      profileKey,
+    ),
+  );
+}
+if (avatarPreviewMode)
+  localStorage.setItem(
+    `buzz-client.v1:${profileViewer}`,
+    JSON.stringify({
+      profile: { name: "Local default", picture: "" },
+      memberships: [
+        { id: "https://relay.example.test", name: "Fixture community" },
+        { id: "https://other.example.test", name: "Other community" },
+      ],
+      selected: "https://relay.example.test",
+    }),
+  );
+const media = avatarMediaFixture();
+window.fetch = async (input, init) => {
+  const url = String(input);
+  const upload = await media.request(url, init);
+  if (upload) return upload;
+  if (url.endsWith("/register"))
+    return Response.json(
+      communityDestination(JSON.parse(String(init?.body)).url),
+    );
+  const id = decodeURIComponent(url.split("/")[3] ?? "");
+  if (url.endsWith("/identity"))
+    return Response.json({ viewer: profileViewer });
+  if (url.endsWith("/info")) return Response.json({ name: id, policy: null });
+  if (url.endsWith("/session"))
+    return Response.json({
+      viewer: profileViewer,
+      relayAuthor: "ef".repeat(32),
+      relayUrl: id,
+      attachmentUploads: true,
+    });
+  if (url.endsWith("/query")) {
+    const filters = JSON.parse(String(init?.body)) as { kinds?: number[] }[];
+    return Response.json(
+      filters.some((filter) => filter.kinds?.includes(0)) && profiles.has(id)
+        ? [profiles.get(id)]
+        : [],
+    );
+  }
+  if (url.endsWith("/profile")) {
+    const { name, picture, about, existing } = JSON.parse(String(init?.body));
+    const event = finalizeEvent(
+      {
+        kind: 0,
+        tags: [],
+        created_at: (profiles.get(id)?.created_at ?? 0) + 1,
+        content: JSON.stringify({
+          ...existing,
+          name,
+          display_name: name,
+          picture,
+          about,
+        }),
+      },
+      profileKey,
+    );
+    profiles.set(id, event);
+    return Response.json({ accepted: true, event_id: event.id });
+  }
+  throw new Error(`Unexpected fixture request: ${url}`);
+};
+// Only this fixture rewrites image display to local blobs; production stores raw URLs.
+const imageObserver = new MutationObserver(() => {
+  for (const image of document.querySelectorAll("img")) {
+    const src = image.getAttribute("src") ?? "";
+    if (!src.startsWith("/api/relay/")) continue;
+    const file = media.display(
+      new URL(src, location.origin).searchParams.get("url") ?? "",
+    );
+    if (file) image.src = URL.createObjectURL(file);
+  }
+});
+imageObserver.observe(document.documentElement, {
+  subtree: true,
+  childList: true,
+  attributes: true,
+  attributeFilter: ["src"],
+});
 const fixture = controlFixture();
 // Browser journeys start with an explicitly manual-start agent. The shared
 // control fixture remains explicit-on for the profile preference tests.
@@ -59,6 +169,10 @@ fixture.host.models = {
   },
 };
 const control = createAgentControl(fixture.host);
+const communities = avatarPreviewMode
+  ? createCommunities(new Context(), true)
+  : undefined;
+Object.assign(window, { avatarProfileFixture: { profiles, communities } });
 const viewer = "de".repeat(32);
 const scope = `https://relay.example.test:${viewer}`;
 const channelId = "11111111-1111-4111-8111-111111111111";
@@ -157,12 +271,15 @@ navigationHost.navigation.subscribe(() => {
 function Fixture() {
   useKeyboardFocusVisibility();
   const [shown, setShown] = useState(true);
+  const [human, setHuman] = useState(false);
   const route = useSyncExternalStore(
     navigationHost.navigation.subscribe,
     navigationHost.navigation.snapshot,
   );
   const inChannel = route.entry.target.kind === "conversation";
   const [failure, setFailure] = useState(false);
+  const [uploadFailure, setUploadFailure] = useState(false);
+  const [profileFailure, setProfileFailure] = useState(false);
   const [browser, setBrowser] = useState(false);
   const [unavailable] = useState(() => createAgentControl(null));
   return (
@@ -171,6 +288,13 @@ function Fixture() {
       className="mx-auto max-w-4xl space-y-4 p-4 text-body text-primary"
     >
       <header className="space-y-3 rounded-xl bg-panel p-4">
+        {communities && (
+          <ProfileButton
+            communities={communities}
+            settingsSelected={human}
+            onSettings={() => setHuman(true)}
+          />
+        )}
         <h1 className="text-heading">Agent editor · Isolated fixture</h1>
         <p className="text-secondary">
           Temporary, in-memory identities only. No Keychain, real libraries,
@@ -180,6 +304,27 @@ function Fixture() {
         </p>
         <div className="flex flex-wrap gap-2">
           <Button onClick={() => setShown(!shown)}>Toggle page</Button>
+          {communities && (
+            <Button onClick={() => setHuman(!human)}>
+              {human ? "Edit agents" : "Edit human profile"}
+            </Button>
+          )}
+          <Button
+            onClick={() => {
+              media.reject(!uploadFailure);
+              setUploadFailure(!uploadFailure);
+            }}
+          >
+            {uploadFailure ? "Allow uploads" : "Reject uploads"}
+          </Button>
+          <Button
+            onClick={() => {
+              fixture.failProfile(!profileFailure);
+              setProfileFailure(!profileFailure);
+            }}
+          >
+            {profileFailure ? "Allow publication" : "Reject publication"}
+          </Button>
           <Button
             onClick={() => {
               fixture.failSave(!failure);
@@ -218,7 +363,19 @@ function Fixture() {
           </Button>
         </div>
       </header>
-      {shown && inChannel ? (
+      {human && communities ? (
+        <section className="rounded-xl bg-surface-panel p-6">
+          <ProfileSettings
+            key={communities.snapshot().selected ?? "local"}
+            communities={communities}
+            community={communities
+              .snapshot()
+              .memberships.find(
+                (item) => item.id === communities.snapshot().selected,
+              )}
+          />
+        </section>
+      ) : shown && inChannel ? (
         <section aria-label="Fixture channel" className="space-y-3 p-4">
           <Button
             onClick={() =>
@@ -249,4 +406,9 @@ function Fixture() {
   );
 }
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<Fixture />);
+if (root)
+  createRoot(root).render(
+    <ToastProvider>
+      <Fixture />
+    </ToastProvider>,
+  );

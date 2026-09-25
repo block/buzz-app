@@ -136,27 +136,38 @@ it.each([false, true])(
   },
 );
 
-it("keeps the local default identity even when the community profile changes", async () => {
+it("shows the selected community name and authenticated avatar without saving a local default", async () => {
   const { createRelaySession } = await import("../../features/relay/session");
   const owner = createRelaySession(null);
   const user = userEvent.setup();
   const viewer = "a".repeat(64);
-  let profiles = new Map<string, { name: string }>();
+  let profiles = new Map<string, { name: string; picture?: string }>();
   const listeners = new Set<() => void>();
+  const media = vi.fn(
+    (url: string) => `/community-media?url=${encodeURIComponent(url)}`,
+  );
+  const ensure = vi.fn(async () => {});
   const connection = {
+    viewer,
+    status: "ready",
     session: {
       ...owner.session,
+      media,
       profiles: {
         snapshot: () => profiles,
         subscribe: (listener: () => void) => {
           listeners.add(listener);
           return () => listeners.delete(listener);
         },
-        ensure: vi.fn(async () => {}),
+        ensure,
       },
     },
   };
-  const snapshot = { profile: { name: "Local name", picture: "" }, viewer };
+  const snapshot = {
+    profile: { name: "Local name", picture: "" },
+    viewer,
+    selected: "https://community.test",
+  };
   const presence = { status: "online", preference: "auto", error: null };
   const subscribe = () => () => {};
   const communities = {
@@ -177,16 +188,42 @@ it("keeps the local default identity even when the community profile changes", a
       screen.getByRole("button", { name: "Your profile" }),
     ).toBeInTheDocument();
     act(() => {
-      profiles = new Map([[viewer, { name: "Community name" }]]);
+      profiles = new Map([
+        [
+          viewer,
+          {
+            name: "Community name",
+            picture: "https://community.test/media/avatar.png",
+          },
+        ],
+      ]);
       for (const listener of listeners) listener();
     });
     await user.click(screen.getByRole("button", { name: "Your profile" }));
     expect(
-      await screen.findByRole("menu", { name: "Local name" }),
+      await screen.findByRole("menu", { name: "Community name" }),
     ).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Availability: Online" }),
     ).toBeVisible();
+    expect(ensure).toHaveBeenCalledWith([viewer], "background");
+    expect(media).toHaveBeenCalledWith(
+      "https://community.test/media/avatar.png",
+      "small",
+    );
+    const button = screen.getByRole("button", { name: "Your profile" });
+    expect(button).toHaveAttribute("title", "Community name");
+    expect(button.querySelector("img")).toHaveAttribute(
+      "src",
+      "/community-media?url=https%3A%2F%2Fcommunity.test%2Fmedia%2Favatar.png",
+    );
+    act(() => {
+      profiles = new Map([[viewer, { name: "Updated name" }]]);
+      for (const listener of listeners) listener();
+    });
+    expect(button).toHaveAttribute("title", "Updated name");
+    expect(button.querySelector("img")).toBeNull();
+    expect(snapshot.profile).toEqual({ name: "Local name", picture: "" });
     expect(screen.queryByText("Your profile")).not.toBeInTheDocument();
     expect(screen.queryByText("Your account")).not.toBeInTheDocument();
     expect(
@@ -277,3 +314,94 @@ it.each(["escape", "outside", "reopen"])(
     }
   },
 );
+
+it("drops the previous community profile on switching and uses local defaults only in Personal space", async () => {
+  const { createRelaySession } = await import("../../features/relay/session");
+  const owner = createRelaySession(null);
+  const viewer = "a".repeat(64);
+  const listeners = new Set<() => void>();
+  const oldListeners = new Set<() => void>();
+  let oldProfile = { name: "Alpha", picture: "https://alpha.test/avatar.png" };
+  const alphaProfiles = {
+    snapshot: () => new Map([[viewer, oldProfile]]),
+    subscribe: (listener: () => void) => {
+      oldListeners.add(listener);
+      return () => oldListeners.delete(listener);
+    },
+    ensure: vi.fn(async () => {}),
+  };
+  let state = {
+    viewer,
+    selected: "https://alpha.test" as string | null,
+    profile: {
+      name: "Personal name",
+      picture: "https://public.test/local.png",
+    },
+  };
+  let connection = {
+    viewer,
+    status: "ready",
+    session: {
+      ...owner.session,
+      profiles: alphaProfiles,
+      media: (url: string) => url,
+    },
+  };
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const presence = { status: "online", preference: "auto", error: null };
+  const communities = {
+    subscribe,
+    snapshot: () => state,
+    presence: { subscribe, snapshot: () => presence },
+    relay: { subscribe, snapshot: () => connection },
+  } as unknown as Communities;
+  const view = render(
+    <ProfileButton
+      communities={communities}
+      settingsSelected={false}
+      onSettings={() => {}}
+    />,
+  );
+  try {
+    const button = screen.getByRole("button", { name: "Your profile" });
+    expect(button).toHaveAttribute("title", "Alpha");
+    act(() => {
+      state = { ...state, selected: "https://beta.test" };
+      connection = {
+        ...connection,
+        session: {
+          ...connection.session,
+          profiles: {
+            ...alphaProfiles,
+            snapshot: () => new Map(),
+            subscribe: () => () => {},
+          },
+        },
+      };
+      for (const listener of listeners) listener();
+    });
+    expect(button).not.toHaveAttribute("title", "Alpha");
+    expect(button).not.toHaveAttribute("title", "Personal name");
+    expect(button.querySelector("img")).toBeNull();
+    act(() => {
+      oldProfile = { ...oldProfile, name: "Late Alpha" };
+      for (const listener of oldListeners) listener();
+    });
+    expect(button).not.toHaveAttribute("title", "Late Alpha");
+    act(() => {
+      state = { ...state, selected: null };
+      for (const listener of listeners) listener();
+    });
+    expect(button).toHaveAttribute("title", "Personal name");
+    expect(button.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://public.test/local.png",
+    );
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});

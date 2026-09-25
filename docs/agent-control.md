@@ -147,6 +147,33 @@ and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
 See [configuration parity](configuration.md) for development routing, release
 flag exclusions and the supported deployment boundary.
 
+## Avatar editing
+
+Edit uses the same draft avatar picker as human Profile settings: upload/drop an
+image, paste an HTTPS URL, choose emoji artwork, or remove the picture. Done changes
+the form; Save first persists the exact native ID/revision, then publishes to that
+agent's saved community without restarting it. Older native hosts without
+`avatarEditingAvailable` retain the display-only avatar.
+
+An omitted picture preserves the saved override; an empty string explicitly removes
+it. A changed picture durably marks `profilePending`, so closing/reloading does not
+lose the Retry action. The native publisher reads and verifies the agent's current
+signed kind-0 profile, changes only picture, and preserves unrelated content and
+non-auth tags. Name/bot initialization is only for a missing profile. A local
+configuration rename is not an implicit published-profile rename.
+
+One native publication per agent can run at a time, including across renderer
+reloads. The host verifies current-profile readback after a matching accepted
+receipt before clearing pending at the same saved revision. Conflicting or failed
+reads/publications keep pending for explicit retry; no automatic broadcast or
+retry loop is introduced. Another client can still replace the profile after this
+confirmation; this is not a cross-client transaction.
+
+Browser tests use synthetic profiles/media and controller fixtures. Rust checks
+use temporary stores, public fixture keys and loopback HTTP. They do not establish
+live relay access, native image rendering or packaged human signing. Camera and
+recording are outside this avatar slice.
+
 ## Runtime boundary
 
 Native startup opens `app_data_dir/agent-controller`, never the old library as a

@@ -1,11 +1,19 @@
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { useRelayConnection } from "../../features/relay/react";
+import { avatarSource } from "../../shared/avatar-source";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { StatusEmoji } from "../../features/user-status/StatusEmoji";
 import { Button } from "../../shared/design-system/ui/Button";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
-import { useId, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   SmileyIcon,
   CheckIcon,
@@ -28,6 +36,8 @@ import {
 import type { Communities } from "../../features/communities/service";
 import styles from "./ProfileButton.module.css";
 
+const noSubscription = () => () => {};
+
 export function ProfileButton({
   communities,
   settingsSelected,
@@ -37,10 +47,11 @@ export function ProfileButton({
   settingsSelected: boolean;
   onSettings(): void;
 }) {
-  const { profile: localProfile, viewer } = useSyncExternalStore(
-    communities.subscribe,
-    communities.snapshot,
-  );
+  const {
+    profile: localProfile,
+    viewer,
+    selected,
+  } = useSyncExternalStore(communities.subscribe, communities.snapshot);
   const presence = useSyncExternalStore(
     communities.presence.subscribe,
     communities.presence.snapshot,
@@ -50,13 +61,30 @@ export function ProfileButton({
   ];
   const connection = useRelayConnection(communities.relay);
   const session = connection.session;
+  // The selected session owns community identity; never copy it into local defaults.
+  const profiles =
+    selected && connection.viewer === viewer ? session?.profiles : undefined;
+  const readProfile = useCallback(
+    () => (viewer ? profiles?.snapshot().get(viewer) : undefined),
+    [profiles, viewer],
+  );
+  const communityProfile = useSyncExternalStore(
+    profiles?.subscribe ?? noSubscription,
+    readProfile,
+    readProfile,
+  );
+  useEffect(() => {
+    if (profiles && viewer && connection.status === "ready")
+      void profiles.ensure([viewer], "background").catch(() => {});
+  }, [profiles, viewer, connection.status]);
+  const profile = selected ? communityProfile : localProfile;
+  const displayName = profile?.name.trim();
   const name =
-    localProfile.name.trim() ||
+    displayName ||
     (viewer ? formatPublicKey(viewer) : undefined) ||
     "Your profile";
-  const picture = localProfile.picture.startsWith("https://")
-    ? localProfile.picture
-    : undefined;
+  const source = avatarSource(profile?.picture);
+  const picture = selected ? source && session?.media(source, "small") : source;
   const status = useUserStatus(session?.statuses, viewer ?? "");
   const statusEditor = useStatusEditor(session, viewer ?? undefined);
   const profileTrigger = useRef<HTMLButtonElement>(null);
@@ -70,9 +98,7 @@ export function ProfileButton({
       src={picture}
       alt=""
       fallback={name}
-      fallbackContent={
-        localProfile.name.trim() ? undefined : <UserIcon size={19} />
-      }
+      fallbackContent={displayName ? undefined : <UserIcon size={19} />}
       size="fill"
       statusBadge={viewer ? presence.status : undefined}
     />

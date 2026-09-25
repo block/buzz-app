@@ -10,6 +10,7 @@ mod import;
 mod ownership;
 pub mod pi;
 mod process;
+mod profile;
 mod restart;
 mod runtime;
 mod secret;

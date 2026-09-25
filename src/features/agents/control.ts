@@ -27,6 +27,8 @@ export interface AgentView {
   pubkey: string;
   relayUrl: string;
   name: string;
+  /** Missing preserves existing artwork; empty removes it. */
+  picture?: string | null;
   systemPrompt: string;
   workspace: string;
   harness: {
@@ -77,6 +79,7 @@ export interface ControlSnapshot {
   /** False while native credential/import acceptance is outstanding. */
   importAvailable?: boolean;
   createAvailable?: boolean;
+  avatarEditingAvailable?: boolean;
   defaultWorkspace?: string;
   runtimeMessage?: string | null;
   databricksDefaults?: { host: string; filter: string };
@@ -84,6 +87,8 @@ export interface ControlSnapshot {
 }
 export interface AgentEdit {
   name: string;
+  /** Omitted preserves artwork; empty removes it. */
+  picture?: string;
   systemPrompt: string;
   workspace: string;
   harness: Omit<AgentView["harness"], "environmentKeys">;

@@ -37,6 +37,7 @@ function communities(): Communities {
   return {
     snapshot,
     subscribe: () => () => {},
+    relay: { snapshot: () => ({ status: "unavailable" }) },
     saveProfile: vi.fn(),
   } as unknown as Communities;
 }
@@ -57,7 +58,11 @@ it("loads and publishes the selected community profile before updating the local
       about: "Community bio",
     },
   });
-  const publish = vi.spyOn(communityApi, "publishProfile").mockResolvedValue();
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
   const user = userEvent.setup();
   render(
     <ProfileSettings
@@ -102,15 +107,24 @@ it("loads and publishes the selected community profile before updating the local
 it("keeps a newer profile seed when an older community publication finishes last", async () => {
   const service = communities();
   const olderPublication = deferred();
+  const saved = new Map<
+    string,
+    Parameters<typeof communityApi.publishProfile>[1]
+  >();
   vi.spyOn(communityApi, "inspectProfile").mockImplementation(async (id) => ({
     exists: true,
     existing: { name: id },
-    profile: { name: id === "older" ? "Older" : "Newer", picture: "" },
+    profile: saved.get(id) ?? {
+      name: id === "older" ? "Older" : "Newer",
+      picture: "",
+    },
   }));
   const publish = vi
     .spyOn(communityApi, "publishProfile")
-    .mockImplementationOnce(() => olderPublication.promise)
-    .mockResolvedValueOnce();
+    .mockImplementation(async (id, profile) => {
+      if (id === "older") await olderPublication.promise;
+      saved.set(id, profile);
+    });
   const user = userEvent.setup();
   const older = render(
     <ProfileSettings
@@ -127,7 +141,7 @@ it("keeps a newer profile seed when an older community publication finishes last
   await user.click(
     within(older.container).getByRole("button", { name: "Save profile" }),
   );
-  expect(publish).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
 
   const newer = render(
     <ProfileSettings
@@ -243,10 +257,12 @@ it("previews draft profile content and the shared avatar crop before saving", as
     screen.getByLabelText("Profile description (optional)"),
     "Building with Buzz",
   );
+  await user.click(screen.getByRole("button", { name: "Edit avatar" }));
   await user.type(
-    screen.getByLabelText("Picture URL (optional)"),
+    await screen.findByLabelText("Picture URL (optional)"),
     "https://example.test/profile.png",
   );
+  await user.click(screen.getByRole("button", { name: "Done" }));
 
   expect(preview).toHaveTextContent("Clay");
   expect(preview).toHaveTextContent("Building with Buzz");
@@ -314,14 +330,13 @@ it("rejects profile image URLs with embedded credentials", async () => {
   const user = userEvent.setup();
   render(<ProfileSettings communities={service} />, { wrapper: ToastProvider });
 
+  await user.click(screen.getByRole("button", { name: "Edit avatar" }));
   await user.type(
-    screen.getByLabelText("Picture URL (optional)"),
+    await screen.findByLabelText("Picture URL (optional)"),
     "https://user:secret@example.test/profile.png",
   );
 
-  expect(
-    screen.getByText("Enter an HTTPS image URL without embedded credentials."),
-  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
 });
 

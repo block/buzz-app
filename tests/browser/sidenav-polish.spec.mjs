@@ -137,9 +137,9 @@ test("section disclosure toggles content and honors reduced motion", async ({
     .getByRole("navigation", { name: "Subscribed channels" })
     .locator("summary")
     .filter({ hasText: /^Channels$/ });
-  const section = summary.locator("../..");
+  const section = summary.locator("xpath=ancestor::*[@data-sidebar-section]");
   const content = section.locator(":scope > div").last();
-  const details = section.locator(":scope > details");
+  const details = section.locator(":scope > div:first-child > details");
   const expanded = await section.evaluate(
     (el) => el.getBoundingClientRect().height,
   );

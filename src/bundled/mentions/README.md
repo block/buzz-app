@@ -148,13 +148,15 @@ These rules keep a row from moving under the user's pointer or keyboard.
 ## 7. Sending to people outside the channel
 
 When a draft addresses an outside key in a stream or forum, the client MUST ask
-before it sends. The user chooses one of:
+before it sends. The prompt names the outside people. It offers these actions,
+like block/buzz desktop:
 
-| Choice | Result |
-| --- | --- |
-| Add to channel | Add each outside key (only with add-member permission). Wait until the relay confirms membership. Then send with those keys as recipients. |
-| Do nothing | Send. Outside keys become references. Nobody is added or notified. |
-| Cancel | Do not send. Keep the draft. |
+| Action | Shown | Result |
+| --- | --- | --- |
+| Invite | With add-member permission | Add each outside key. Wait until the relay confirms membership. Then send with those keys as recipients. |
+| Do nothing | With add-member permission | Send. Outside keys become references. Nobody is added or notified. |
+| Send anyway | Without add-member permission | The same as Do nothing. |
+| Close or Escape | Always | Do not send. Keep the draft. |
 
 Adding a member from this prompt MUST NOT start an agent. The sent message is
 what notifies it. If the draft or its attachments change while adding runs, the
@@ -234,6 +236,9 @@ bin/pnpm exec vitest run src/bundled/mentions/mention-ranking.test.ts \
   [message_tags.rs](https://github.com/block/buzz/blob/20131488528e35e6c50f4ccdb0490a9135c28edf/desktop/src-tauri/src/events/message_tags.rs)
   writes two-field `mention` reference tags and the three-field `agent-address`
   form. This contract uses the same shapes.
+- block/buzz, inspected at `930b8bb800d8149ce29a881ba4c5d9f424580434`:
+  [NonMemberMentionDialog.tsx](https://github.com/block/buzz/blob/930b8bb800d8149ce29a881ba4c5d9f424580434/desktop/src/features/messages/ui/NonMemberMentionDialog.tsx)
+  is the source of the section 7 actions.
 
 Keep one canonical spec and fixture set. Other clients can link here or vendor a
 pinned version.

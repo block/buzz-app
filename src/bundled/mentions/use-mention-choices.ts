@@ -21,7 +21,12 @@ import {
   rankMentions,
   type MentionChoice,
 } from "./mention-ranking";
-/** One installed key list per opening/query. Evidence stays live, order does not. */
+type Person = ReturnType<typeof useMentionDirectory>["people"][number];
+const none: readonly Person[] = [];
+/**
+ * One installed key list per opening/query. Evidence stays live, order does not.
+ * Local rows install first; directory rows only append after them.
+ */
 export function useMentionChoices(
   session: RelaySession,
   channelId: string,
@@ -51,13 +56,31 @@ export function useMentionChoices(
   );
   const archives = useMentionArchives(session, open);
   const resolve = useIdentityNames(session.names);
+  const [installed, install] = useState<{
+    session: RelaySession;
+    key: string;
+    rows: MentionChoice[];
+    /** Directory people behind installed outside rows, kept while later pages load. */
+    people: readonly Person[];
+  }>();
+  const key = JSON.stringify([channelId, invite, query, open, !!roster]);
+  const same = installed?.session === session && installed.key === key;
+  const carried = same ? installed.people : none;
+  const people = useMemo(() => {
+    if (!carried.length) return directory.people;
+    const known = new Set(directory.people.map((person) => person.pubkey));
+    return [
+      ...directory.people,
+      ...carried.filter((person) => !known.has(person.pubkey)),
+    ];
+  }, [directory.people, carried]);
   const current = useCallback(() => {
     const candidates = mentionCandidates(
       session,
       channelId,
       invite,
       roster,
-      directory.people,
+      people,
     );
     const keys = [
       ...new Set([
@@ -68,7 +91,7 @@ export function useMentionChoices(
     // Directory pages are menu-local, not cached profiles. Name them only when no
     // other source knows the key, so namesakes in this choice set are qualified.
     const facts = [
-      ...directory.people
+      ...people
         .filter((person) => !session.names?.resolve(person.pubkey))
         .map(({ pubkey, name, isAgent }) => ({
           pubkey,
@@ -87,51 +110,93 @@ export function useMentionChoices(
           facts,
         ) ?? choice.recipient.name,
     }));
-  }, [session, channelId, invite, roster, selected, directory.people]);
-  const candidates = useMemo(() => {
+  }, [session, channelId, invite, roster, selected, people]);
+  const { candidates, local } = useMemo(() => {
     // Source revisions invalidate the projection; selection reads them again synchronously.
     void profiles;
     void list;
     void agents;
     void archives;
     void resolve;
-    return current();
-  }, [current, profiles, list, agents, archives, resolve]);
+    return {
+      candidates: current(),
+      // Keys known without the directory search: members and agent choices.
+      local: new Set(
+        mentionCandidates(session, channelId, invite, roster).map(
+          (c) => c.recipient.pubkey,
+        ),
+      ),
+    };
+  }, [
+    current,
+    session,
+    channelId,
+    invite,
+    roster,
+    profiles,
+    list,
+    agents,
+    archives,
+    resolve,
+  ]);
+  // Only local sources gate the list. Directory results append below it.
   const pending =
     !roster &&
-    (directory.loading ||
-      ((list.status === "idle" || list.status === "loading") &&
-        !channel?.members) ||
+    (((list.status === "idle" || list.status === "loading") &&
+      !channel?.members) ||
       (!!invite && agents.pending && agents.status !== "ready"));
-  const [installed, install] = useState<{
-    session: RelaySession;
-    key: string;
-    rows: MentionChoice[];
-  }>();
-  const key = JSON.stringify([channelId, invite, query, open, !!roster]);
-  const same = installed?.session === session && installed.key === key;
   let rows = same ? installed.rows : undefined;
   if (!same && installed) install(undefined);
-  if (open && !rows && !pending) {
-    const ranked = rankMentions(
-      candidates,
+  const rank = (choices: MentionChoice[]) =>
+    rankMentions(
+      choices,
       query,
       mentionHistory(session, channelId),
       (key) => session.presence?.status(key) ?? "unknown",
+    );
+  const outside = open
+    ? rank(candidates.filter((c) => !local.has(c.recipient.pubkey)))
+    : [];
+  if (open && !rows && !pending) {
+    const ranked = rank(
+      candidates.filter((c) => local.has(c.recipient.pubkey)),
     ).slice(0, 50);
     const missingNames = channel?.members?.some((key) => !profiles.has(key));
     if (
       ranked.length ||
-      (!pending &&
-        !missingNames &&
-        !directory.error &&
+      outside.length ||
+      (!missingNames &&
         (!invite || !agents.pending) &&
         list.status === "ready" &&
         !agents.error &&
         agents.status !== "error")
     ) {
       rows = ranked;
-      install({ session, key, rows });
+      install({ session, key, rows, people: none });
+    }
+  }
+  if (rows && outside.length && rows.length < 50) {
+    // Append-only: rows already shown never move when directory pages arrive.
+    const shown = new Set(rows.map((row) => row.recipient.pubkey));
+    const added = outside
+      .filter((c) => !shown.has(c.recipient.pubkey))
+      .slice(0, 50 - rows.length);
+    if (added.length) {
+      const addedKeys = new Set(added.map((c) => c.recipient.pubkey));
+      rows = [...rows, ...added];
+      install({
+        session,
+        key,
+        rows,
+        people: [
+          ...carried,
+          ...people.filter(
+            (person) =>
+              addedKeys.has(person.pubkey) &&
+              !carried.some((kept) => kept.pubkey === person.pubkey),
+          ),
+        ],
+      });
     }
   }
   return useMemo(() => {
@@ -153,7 +218,7 @@ export function useMentionChoices(
     });
     return {
       choices,
-      directory,
+      directory: { ...directory, people },
       profiles,
       list,
       agents,
@@ -180,6 +245,7 @@ export function useMentionChoices(
   }, [
     rows,
     directory,
+    people,
     candidates,
     archives,
     profiles,

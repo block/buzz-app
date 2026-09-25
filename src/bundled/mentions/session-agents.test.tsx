@@ -1002,6 +1002,103 @@ it.each(["dm", "session"] as const)(
   },
 );
 
+it("shows local rows before the directory, appends outside rows, and reuses settled pages", async () => {
+  const t = setup();
+  const lara = { pubkey: "e".repeat(64), name: "Lara" };
+  const larry = { pubkey: "f".repeat(64), name: "Larry Outside" };
+  const pages = new Map<
+    string,
+    (value: {
+      people: { pubkey: string; name: string }[];
+      hasMore: boolean;
+    }) => void
+  >();
+  const people = vi.fn(
+    (query: string) =>
+      new Promise<{
+        people: { pubkey: string; name: string }[];
+        hasMore: boolean;
+      }>((resolve) => pages.set(query, resolve)),
+  );
+  const profiles = new Map([[t.member, { name: "Larkin" }]]);
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    profiles: { ...t.session.profiles, snapshot: () => profiles },
+  };
+  const publish = vi.fn();
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@La", start: 3, end: 3 },
+    publish,
+  };
+  const last = () => publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const labels = () => last()?.items.map((item) => item.label);
+  const view = render(
+    <MentionCompletion {...props} query={{ start: 0, end: 3, query: "La" }} />,
+  );
+  // The member is usable before the network search starts or settles.
+  await waitFor(() => expect(labels()).toEqual(["Larkin"]));
+  expect(last()?.status).toBe("Searching community…");
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await act(async () =>
+    pages.get("La")?.({ people: [lara, larry], hasMore: false }),
+  );
+  expect(labels()).toEqual(["Larkin", "Lara", "Larry Outside"]);
+  expect(last()?.status).toBeUndefined();
+  // A new query keeps still-matching people from the last page while it loads.
+  view.rerender(
+    <MentionCompletion
+      {...props}
+      query={{ start: 0, end: 4, query: "Larr" }}
+    />,
+  );
+  await waitFor(() => expect(labels()).toEqual(["Larry Outside"]));
+  expect(last()?.status).toBe("Searching community…");
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(2));
+  const newer = { pubkey: "d".repeat(64), name: "Larry Newer" };
+  await act(async () =>
+    pages.get("Larr")?.({ people: [newer, larry], hasMore: false }),
+  );
+  // Appended below, never inserted above a visible row.
+  expect(labels()).toEqual(["Larry Outside", "Larry Newer"]);
+  // Returning to a settled query is instant and does not read again.
+  view.rerender(
+    <MentionCompletion {...props} query={{ start: 0, end: 3, query: "La" }} />,
+  );
+  expect(labels()).toEqual(["Larkin", "Lara", "Larry Outside"]);
+  expect(last()?.status).toBeUndefined();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(people).toHaveBeenCalledTimes(2);
+});
+
+it("waits for a typing pause before reading the directory", async () => {
+  const t = setup();
+  const people = vi.fn(async () => ({ people: [], hasMore: false }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  };
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@Out", start: 4, end: 4 },
+    publish: vi.fn(),
+  };
+  const view = render(
+    <MentionCompletion {...props} query={{ start: 0, end: 2, query: "O" }} />,
+  );
+  for (const query of ["Ou", "Out"])
+    view.rerender(
+      <MentionCompletion {...props} query={{ start: 0, end: 4, query }} />,
+    );
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  expect(people).toHaveBeenCalledWith("Out", 1, expect.any(AbortSignal));
+});
+
 it("ignores a late directory result after the query changes and retries the current failure", async () => {
   const t = setup();
   let release = (_result: {
@@ -1037,6 +1134,8 @@ it("ignores a late directory result after the query changes and retries the curr
   const view = render(
     <MentionCompletion {...props} query={{ start: 0, end: 4, query: "Old" }} />,
   );
+  // Directory reads wait for a typing pause, so let the old query start first.
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
   view.rerender(
     <MentionCompletion {...props} query={{ start: 0, end: 4, query: "New" }} />,
   );

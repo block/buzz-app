@@ -121,9 +121,11 @@ export function MentionCompletion({
                         status:
                           "Some names unavailable. Exact public keys still identify recipients.",
                       }
-                    : model.directory.more || model.truncated
-                      ? { status: "Narrow your search to see more members." }
-                      : {}),
+                    : model.directory.loading
+                      ? { status: "Searching community…" }
+                      : model.directory.more || model.truncated
+                        ? { status: "Narrow your search to see more members." }
+                        : {}),
       ...(model.directory.error ||
       model.archives.status === "error" ||
       agents.status === "error" ||

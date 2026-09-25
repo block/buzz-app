@@ -692,7 +692,7 @@ it("offers instructions only for a signed owner with a unique native instance", 
         route: { version: 1, params: { pubkey: agent.pubkey } },
       });
     } else {
-      await screen.findByRole("button", { name: "View in Agents" });
+      await screen.findByRole("region", { name: "Linked agent instances" });
       expect(
         screen.queryByRole("button", { name: "Agent instructions" }),
       ).toBeNull();

@@ -98,6 +98,7 @@ it("uses native exact identity and community, never library display links", () =
       scope={`https://relay.example.test:${viewer}`}
       communityOrigin="https://relay.example.test"
       knownAgent={true}
+      owned
     />,
   );
   expect(f.refresh).toHaveBeenCalledOnce();

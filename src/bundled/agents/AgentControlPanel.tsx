@@ -233,8 +233,10 @@ export function AgentControlPanel({
           displayName={label(editing)}
           control={control}
           state={state}
-          avatar={selected?.avatar}
-          onClose={() => setSelected(null)}
+          avatar={editTarget ? undefined : selected?.avatar}
+          onClose={
+            editTarget ? (onCloseTarget ?? (() => {})) : () => setSelected(null)
+          }
         />
       )}
       {deletion && control.delete && (

@@ -46,16 +46,22 @@ identities are excluded. Each remaining row says **Not imported** and has its ow
 Import options. Import focuses the imported card and says **Imported, not started**.
 It does not start a listener, invite an agent or change the old library.
 
-To use an agent, open a channel and select it from **@ mentions**. The chooser
-includes this app's managed agents in that same community. A nonmember is labeled
-**Adds to channel when you send**. Selection alone does nothing; Send adds the agent
-through the existing outbox, verifies membership, then sends the message. Failed or
-unconfirmed additions keep the draft and expose the error; Send retries the same
-pending enrollment. A definitively failed addition older than 15 minutes directs
-the person to remove its labeled **Add agent** item from Outbox before sending
-again; an unknown outcome is never silently replaced. Channel and thread composers
-share this behavior. DMs and
-other-community agents are excluded. No Agents-page channel picker is needed.
+To use an agent, open a channel and select it from **@ mentions**. Both mention
+menus include the selected community’s people directory alongside channel members
+and managed agents. Directory reads are bounded; narrow the search for more people.
+A nonmember is labeled **Not in channel · Choose whether to add when you send**.
+Selection alone does nothing. Send asks, as block/buzz desktop does: **Invite**
+or **Do nothing**. Without add permission, the only action is **Send anyway**.
+Invite uses the existing durable member-add operation and confirms membership
+before addressed delivery. It does not start an agent before the outgoing message.
+Do nothing and Send anyway send nonmembers as reference mentions, without granting
+access or notifying them; channel-member mentions remain addressed. Close or
+Escape keeps the draft.
+Failed additions keep the draft and allow retry of the same pending operation.
+A definitively failed addition older than 15 minutes must be dismissed in Outbox
+before a new add; unknown outcomes are never silently replaced. Channel, thread,
+and forum-channel composers share this behavior. DM participants and session
+admission rules are unchanged.
 
 A confirmed outgoing channel or thread mention now starts an exact imported local
 agent (public key + community), without a separate Start click. Import itself

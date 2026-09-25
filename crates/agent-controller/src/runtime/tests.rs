@@ -860,6 +860,7 @@ fn deployment_defaults() -> crate::BuildDefaults {
         model: "build-model".into(),
         provider: "databricks_v2".into(),
         owner_only: true,
+        session_policy: "thread".into(),
     }
 }
 
@@ -887,6 +888,7 @@ fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_age
     assert_eq!(env["BUZZ_ACP_MODEL"], Some("build-model"));
     assert_eq!(env["BUZZ_ACP_RESPOND_TO"], Some("owner-only"));
     assert_eq!(env["BUZZ_ACP_ALLOWED_RESPOND_TO"], Some("owner-only"));
+    assert_eq!(env["BUZZ_ACP_SESSION_POLICY"], Some("thread"));
     assert_eq!(
         env.get("BUZZ_ACP_RESPOND_TO_ALLOWLIST").copied().flatten(),
         None

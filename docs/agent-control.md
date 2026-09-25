@@ -97,6 +97,8 @@ BUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2
 BUZZ_BUILD_AGENT_ENV='DATABRICKS_HOST=https://workspace.example.com
 DATABRICKS_MODEL=your-model-id
 DATABRICKS_MODEL_FILTER=team-*'
+# Optional: isolate ACP sessions by channel thread; DMs stay conversation-scoped.
+BUZZ_BUILD_ACP_SESSION_POLICY=thread
 # Optional capability: any present value, even empty/0/false, enables it.
 BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1
 ```
@@ -107,6 +109,9 @@ tokens, unknown/duplicate keys and malformed HTTPS origins fail the build withou
 echoing values. These are **public, nonsecret defaults** compiled into the binary
 and available in the native editor snapshot. Never put credentials here. No
 organization-specific host, provider or model is supplied by the app.
+`BUZZ_BUILD_ACP_SESSION_POLICY` accepts `channel` or `thread`; when absent, the
+ACP runtime keeps its channel-scoped default. Changing it requires rebuilding
+and restarting the native app and its agents.
 
 - Blank saved provider/model selectors inherit the build floor for `buzz-agent`
   only (including its absolute executable path); other harnesses do not. Saved

@@ -29,9 +29,14 @@ fn main() {
         .unwrap_or("");
     build_config::selector(provider, 128).expect("Invalid agent provider default");
     let owner_only = values.contains_key("BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY");
+    let session_policy = values
+        .get("BUZZ_BUILD_ACP_SESSION_POLICY")
+        .map(String::as_str)
+        .unwrap_or("");
+    build_config::session_policy(session_policy).expect("Invalid ACP session policy default");
     let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     // Always overwrite: removing local/process inputs clears a warm build too.
     std::fs::write(output.join("agent_defaults.rs"), format!(
-        "pub fn build_defaults() -> BuildDefaults {{ BuildDefaults {{ host: {host:?}.into(), filter: {filter:?}.into(), model: {model:?}.into(), provider: {provider:?}.into(), owner_only: {owner_only} }} }}"
+        "pub fn build_defaults() -> BuildDefaults {{ BuildDefaults {{ host: {host:?}.into(), filter: {filter:?}.into(), model: {model:?}.into(), provider: {provider:?}.into(), owner_only: {owner_only}, session_policy: {session_policy:?}.into() }} }}"
     )).expect("Could not write native build defaults");
 }

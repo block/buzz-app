@@ -1,9 +1,10 @@
 use std::{collections::BTreeMap, path::Path};
 
-pub const KEYS: [&str; 3] = [
+pub const KEYS: [&str; 4] = [
     "BUZZ_BUILD_AGENT_ENV",
     "BUZZ_BUILD_BUZZ_AGENT_PROVIDER",
     "BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY",
+    "BUZZ_BUILD_ACP_SESSION_POLICY",
 ];
 
 // Parse without mutating the process environment. Never propagate dotenv errors:
@@ -117,6 +118,14 @@ pub fn selector(value: &str, limit: usize) -> Result<(), &'static str> {
         Err("Invalid native build provider/model default")
     } else {
         Ok(())
+    }
+}
+
+pub fn session_policy(value: &str) -> Result<(), &'static str> {
+    if matches!(value, "" | "channel" | "thread") {
+        Ok(())
+    } else {
+        Err("Invalid ACP session policy default")
     }
 }
 

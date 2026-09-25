@@ -11,6 +11,7 @@ pub struct BuildDefaults {
     pub model: String,
     pub provider: String,
     pub owner_only: bool,
+    pub session_policy: String,
 }
 include!(concat!(env!("OUT_DIR"), "/agent_defaults.rs"));
 

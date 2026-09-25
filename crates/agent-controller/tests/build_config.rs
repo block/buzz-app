@@ -1,6 +1,6 @@
 #[path = "../build_config.rs"]
 mod build_config;
-use build_config::{load, parse, selector};
+use build_config::{load, parse, selector, session_policy};
 
 #[test]
 fn local_multiline_defaults_are_allowlisted_and_process_wins_including_empty() {
@@ -38,7 +38,13 @@ fn errors_never_echo_local_values_and_unknown_agent_keys_fail_closed() {
     std::fs::write(&path, "BUZZ_BUILD_AGENT_ENV='NEVER_PRINT").unwrap();
     assert!(!load(&path, |_| None).unwrap_err().contains("NEVER_PRINT"));
     // A fully supplied CI environment does not depend on an unrelated local file.
-    assert_eq!(load(&path, |_| Some(String::new())).unwrap().len(), 3);
+    assert_eq!(load(&path, |_| Some(String::new())).unwrap().len(), 4);
+    for value in ["", "channel", "thread"] {
+        assert!(session_policy(value).is_ok());
+    }
+    for value in ["THREAD", "other", "thread\nBUZZ_PRIVATE_KEY=NEVER_PRINT"] {
+        assert!(!session_policy(value).unwrap_err().contains("NEVER_PRINT"));
+    }
     for raw in [
         "DATABRICKS_TOKEN=NEVER_PRINT",
         "OTHER=NEVER_PRINT",
@@ -213,7 +219,7 @@ fn backtick_delimited_values_contain_multiline_text_and_reject_unclosed_framing(
             load(&path, |_| None).unwrap_err(),
             "Invalid native build .env.local"
         );
-        assert_eq!(load(&path, |_| Some(String::new())).unwrap().len(), 3);
+        assert_eq!(load(&path, |_| Some(String::new())).unwrap().len(), 4);
     }
 }
 

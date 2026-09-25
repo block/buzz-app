@@ -11,6 +11,8 @@ import { eventDto, type RelayEvent } from "./events";
 // Test the real host codec with ephemeral identities, never a bypass signer.
 // @ts-expect-error Node-only host module
 import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+// @ts-expect-error Node-only host module
+import { createLocalSigningDelegate } from "../../../dev/signing-delegate.mjs";
 import type { ReadStateSigning } from "./read-state-host";
 
 const owners: ReturnType<typeof createReadState>[] = [];
@@ -34,7 +36,13 @@ function fixture() {
       decodeReadState(events, key.secret),
     ),
     sign: vi.fn(async (intent: ReadStateSigning) =>
-      signReadState(intent, key.secret, 100),
+      signReadState(
+        intent,
+        key.secret,
+        createLocalSigningDelegate(key.secret),
+        undefined,
+        100,
+      ),
     ),
     publish: vi.fn(async (event: RelayEvent) => {
       remote = [event];
@@ -393,7 +401,7 @@ describe("durable read-state owner", () => {
     expect(f.journal()?.state.frontiers[id(0)]).toBeUndefined();
     expect(published()[id(1599)]).toBe(1);
   }, 15000);
-  it("rejects saved corruption and changed signatures without overwriting it", () => {
+  it("rejects saved corruption and changed signatures without overwriting it", async () => {
     const f = fixture();
     expect(() =>
       readJournal(
@@ -405,13 +413,15 @@ describe("durable read-state owner", () => {
       ),
     ).toThrow();
     const event = eventDto(
-      signReadState(
+      await signReadState(
         {
           slot: "a".repeat(32),
           createdAt: 100,
           blob: { v: 1, client_id: "x", contexts: {} },
         },
         f.key.secret,
+        createLocalSigningDelegate(f.key.secret),
+        undefined,
         100,
       ),
     );

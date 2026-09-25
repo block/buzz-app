@@ -1,6 +1,5 @@
 import { createReadStream } from "node:fs";
 import { finished } from "node:stream/promises";
-import { finalizeEvent } from "nostr-tools";
 import { receiveAttachment } from "./attachment-file.mjs";
 import {
   imageType,
@@ -20,7 +19,13 @@ export class UploadError extends Error {
 
 // The relay owns content sniffing, metadata rejection and membership admission.
 // Never trust a browser MIME hint or a relay-provided URL as proof of safe content.
-export async function uploadAttachment(req, relay, key, fetchUpstream, signal) {
+export async function uploadAttachment(
+  req,
+  relay,
+  signer,
+  fetchUpstream,
+  signal,
+) {
   const type = req.headers["content-type"] || "application/octet-stream";
   if (!/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(type))
     throw new UploadError("rejected");
@@ -45,7 +50,7 @@ export async function uploadAttachment(req, relay, key, fetchUpstream, signal) {
       (videoDemuxer(spool.header) ? "video/mp4" : "application/octet-stream");
     if (size > mediaByteLimit(detected)) throw new UploadError("size", 413);
     const now = Math.floor(Date.now() / 1000);
-    const event = finalizeEvent(
+    const event = await signer.signEvent(
       {
         kind: 24242,
         created_at: now,
@@ -60,8 +65,9 @@ export async function uploadAttachment(req, relay, key, fetchUpstream, signal) {
           ],
         ],
       },
-      key,
+      bounded,
     );
+    bounded.throwIfAborted();
     body = createReadStream(spool.path, { signal: bounded });
     // Attach before fetch: cancellation can race stream opening.
     const closed = finished(body).catch(() => {});

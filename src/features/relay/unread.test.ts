@@ -10,6 +10,8 @@ import type { RelayEvent } from "./events";
 import type { ThreadActivitySnapshot } from "./unread";
 import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
+// @ts-expect-error Node-only host module
+import { createLocalSigningDelegate } from "../../../dev/signing-delegate.mjs";
 import type { ReadStateSigning } from "./read-state-host";
 import {
   keypair,
@@ -61,7 +63,11 @@ function setup(options: ChannelStoreOptions = {}) {
       decodeReadState(events, viewer.secret),
     ),
     sign: vi.fn(async (intent: ReadStateSigning) =>
-      signReadState(intent, viewer.secret),
+      signReadState(
+        intent,
+        viewer.secret,
+        createLocalSigningDelegate(viewer.secret),
+      ),
     ),
     publish: vi.fn(async () => {}),
   };

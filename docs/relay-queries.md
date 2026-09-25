@@ -502,6 +502,31 @@ connection isolation, eviction and actual HTTP wiring. `events.ts` also belongs
 to the dev broker's native-config import graph: new runtime imports there must
 retain explicit extensions and pass `dev/vite-config.test.mjs`.
 
+## Host signing delegates
+
+The development broker selects a signing delegate with the request's canonical
+`{ relay, identity }` through `selectSigningDelegate`. The default is the local
+nsec implementation in `dev/signing-delegate.mjs`. Selection captures the request's
+destination and public viewer; changing communities does not retarget pending work.
+
+The delegate exposes asynchronous `signEvent(template, signal)`,
+`authorizeAgent(pubkey, signal)` (the existing NIP-OA digest), and
+`publishEvent(event, send, signal)`. `send()` is bound to the already validated
+event, destination and cancellation signal. The local delegate calls it once and
+returns its original receipt: a socket receipt string or the HTTP response for
+profile/DM setup, community member commands and sidebar sorting. Validation, admission, socket ownership, receipt checking and
+outbox retry remain with their existing owners. HTTP authentication rechecks
+cancellation, freshness and admission after signing; live traffic retains its
+connection-generation checks.
+
+Uploads, media, Git authentication and encrypted read-state/sidebar events use the same
+signing delegate. Builderlab account binding uses its fixed account-service origin
+and viewer, independently of the selected community, and checks session lifetime
+after signing. Keys remain host-local, with their existing loading/zeroing and
+NIP-44 encryption owners. Native agent-creation signing is a separate owner.
+This refactor supplies only the local delegate; NIP-46, remote identity loading
+and remote encryption capabilities are future work.
+
 ## WebSocket-first publication
 
 The matched development frontend/broker publishes signed events on its

@@ -68,7 +68,13 @@ it("passes real broker admission and JSON into the advertised client Git capabil
     const call = readProjectGit.mock.calls[0][0];
     expect(call.input).toEqual({ owner: h.viewer, dtag: "repo" });
     expect(call.relay).toBe("https://project.test");
-    expect(getPublicKey(call.key)).toBe(h.viewer);
+    const event = await call.signer.signEvent({
+      kind: 1,
+      content: "test",
+      tags: [],
+      created_at: 1,
+    });
+    expect(event.pubkey).toBe(h.viewer);
   } finally {
     await h.close();
   }

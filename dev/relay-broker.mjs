@@ -52,7 +52,8 @@ import {
   readSnapshotCommunity,
 } from "../src/features/relay/read-state-snapshot.ts";
 import { readAgentLibrary } from "./agent-library.mjs";
-import { createBuilderlab } from "./builderlab.mjs";
+import { createBuilderlab, BUILDERLAB_ORIGIN } from "./builderlab.mjs";
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import {
   decodeSidebarPreferences,
   SIDEBAR_REQUEST_BYTES,
@@ -79,6 +80,7 @@ import {
   admittedApiRequest,
   ApiPaused,
   ApiCapacity,
+  ApiNotSent,
   apiFailure,
   presenceFilter,
   presenceText,
@@ -93,9 +95,8 @@ import {
   UPLOAD_TIMEOUT_MS,
 } from "../src/features/relay/attachment-limits.ts";
 import dc from "node:diagnostics_channel";
-import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
+import { getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
-import { schnorr } from "@noble/curves/secp256k1.js";
 
 function validProfilePicture(value) {
   if (!value) return true;
@@ -521,6 +522,7 @@ export function relayBrokerPlugin({
   relayUrl,
   communityAliases,
   identity = () => loadIdentity(authorizedViewer),
+  selectSigningDelegate,
   authority = relayAuthority,
   upstreamFetch,
   socketFactory,
@@ -534,6 +536,10 @@ export function relayBrokerPlugin({
     async configureServer(server) {
       const key = identity();
       const viewer = getPublicKey(key);
+      const localDelegate = createLocalSigningDelegate(key);
+      const selectDelegate = selectSigningDelegate ?? (() => localDelegate);
+      const delegateFor = (relay) =>
+        selectDelegate({ relay, identity: viewer });
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
@@ -608,7 +614,7 @@ export function relayBrokerPlugin({
       const streams = new Map();
       const admissions = createHostAdmission();
       const builderlab = createBuilderlab({
-        key: () => key,
+        signer: () => delegateFor(BUILDERLAB_ORIGIN),
         ...builderlabOptions,
       });
       server.httpServer?.once("close", () => {
@@ -735,6 +741,7 @@ export function relayBrokerPlugin({
                 : "Select a community or configure BUZZ_RELAY_URL for unscoped requests",
             });
           const route = scoped ? `/api/relay/${parts[3]}` : url.pathname;
+          const delegate = delegateFor(relay);
           if (route === "/api/relay/identity" && req.method === "GET")
             return json(res, 200, { viewer });
           if (route === "/api/relay/gif-info" && req.method === "GET") {
@@ -887,45 +894,57 @@ export function relayBrokerPlugin({
                   AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
                 ]);
                 const dispatch = (path, body) =>
-                  admittedApiRequest(
-                    lane,
-                    () => {
-                      requestSignal.throwIfAborted();
-                      const value = JSON.stringify(body);
-                      const auth = finalizeEvent(
-                        {
-                          kind: 27235,
-                          created_at: Math.floor(Date.now() / 1000),
-                          content: "",
-                          tags: [
-                            ["u", `${relay}${path}`],
-                            ["method", "POST"],
-                            [
-                              "payload",
-                              createHash("sha256").update(value).digest("hex"),
-                            ],
-                            ["nonce", randomBytes(16).toString("hex")],
+                  lane.prepare(async () => {
+                    requestSignal.throwIfAborted();
+                    const value = JSON.stringify(body);
+                    const auth = await delegate.signEvent(
+                      {
+                        kind: 27235,
+                        created_at: Math.floor(Date.now() / 1000),
+                        content: "",
+                        tags: [
+                          ["u", `${relay}${path}`],
+                          ["method", "POST"],
+                          [
+                            "payload",
+                            createHash("sha256").update(value).digest("hex"),
                           ],
-                        },
-                        key,
-                      );
-                      return fetchUpstream(`${relay}${path}`, {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                          Authorization:
-                            "Nostr " +
-                            Buffer.from(JSON.stringify(auth)).toString(
-                              "base64",
-                            ),
-                        },
-                        body: value,
-                        redirect: "error",
-                        signal: requestSignal,
-                      });
-                    },
-                    requestSignal,
-                  );
+                          ["nonce", randomBytes(16).toString("hex")],
+                        ],
+                      },
+                      requestSignal,
+                    );
+                    requestSignal.throwIfAborted();
+                    return admittedApiRequest(
+                      lane,
+                      () => {
+                        requestSignal.throwIfAborted();
+                        if (
+                          Math.abs(
+                            Math.floor(Date.now() / 1000) - auth.created_at,
+                          ) > 45
+                        )
+                          throw new ApiNotSent(
+                            "Request authentication expired before dispatch",
+                          );
+                        return fetchUpstream(`${relay}${path}`, {
+                          method: "POST",
+                          headers: {
+                            "Content-Type": "application/json",
+                            Authorization:
+                              "Nostr " +
+                              Buffer.from(JSON.stringify(auth)).toString(
+                                "base64",
+                              ),
+                          },
+                          body: value,
+                          redirect: "error",
+                          signal: requestSignal,
+                        });
+                      },
+                      requestSignal,
+                    );
+                  });
                 const readHead = async () => {
                   const response = await dispatch("/query", filter);
                   if (!response.ok)
@@ -935,7 +954,11 @@ export function relayBrokerPlugin({
                   return readSidebarHead(response);
                 };
                 const publishEvent = async (event) => {
-                  const response = await dispatch("/events", event);
+                  const response = await delegate.publishEvent(
+                    event,
+                    () => dispatch("/events", event),
+                    requestSignal,
+                  );
                   if (!response.ok)
                     throw new Error(
                       `Sidebar preference publish failed (${response.status})`,
@@ -956,6 +979,8 @@ export function relayBrokerPlugin({
                   groups: await mutateSidebarSort(
                     intent,
                     key,
+                    delegate,
+                    requestSignal,
                     readHead,
                     publishEvent,
                   ),
@@ -972,6 +997,8 @@ export function relayBrokerPlugin({
                   paused: true,
                   retryAfterMs: error.retryAfterMs,
                 });
+              if (error instanceof ApiNotSent)
+                return json(res, 503, { error: error.message, sent: false });
               return json(res, 502, {
                 error:
                   error instanceof Error
@@ -1030,45 +1057,57 @@ export function relayBrokerPlugin({
                   AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
                 ]);
                 const dispatch = (path, body) =>
-                  admittedApiRequest(
-                    lane,
-                    () => {
-                      requestSignal.throwIfAborted();
-                      const value = JSON.stringify(body);
-                      const auth = finalizeEvent(
-                        {
-                          kind: 27235,
-                          created_at: Math.floor(Date.now() / 1000),
-                          content: "",
-                          tags: [
-                            ["u", `${relay}${path}`],
-                            ["method", "POST"],
-                            [
-                              "payload",
-                              createHash("sha256").update(value).digest("hex"),
-                            ],
-                            ["nonce", randomBytes(16).toString("hex")],
+                  lane.prepare(async () => {
+                    requestSignal.throwIfAborted();
+                    const value = JSON.stringify(body);
+                    const auth = await delegate.signEvent(
+                      {
+                        kind: 27235,
+                        created_at: Math.floor(Date.now() / 1000),
+                        content: "",
+                        tags: [
+                          ["u", `${relay}${path}`],
+                          ["method", "POST"],
+                          [
+                            "payload",
+                            createHash("sha256").update(value).digest("hex"),
                           ],
-                        },
-                        key,
-                      );
-                      return fetchUpstream(`${relay}${path}`, {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                          Authorization:
-                            "Nostr " +
-                            Buffer.from(JSON.stringify(auth)).toString(
-                              "base64",
-                            ),
-                        },
-                        body: value,
-                        redirect: "error",
-                        signal: requestSignal,
-                      });
-                    },
-                    requestSignal,
-                  );
+                          ["nonce", randomBytes(16).toString("hex")],
+                        ],
+                      },
+                      requestSignal,
+                    );
+                    requestSignal.throwIfAborted();
+                    return admittedApiRequest(
+                      lane,
+                      () => {
+                        requestSignal.throwIfAborted();
+                        if (
+                          Math.abs(
+                            Math.floor(Date.now() / 1000) - auth.created_at,
+                          ) > 45
+                        )
+                          throw new ApiNotSent(
+                            "Request authentication expired before dispatch",
+                          );
+                        return fetchUpstream(`${relay}${path}`, {
+                          method: "POST",
+                          headers: {
+                            "Content-Type": "application/json",
+                            Authorization:
+                              "Nostr " +
+                              Buffer.from(JSON.stringify(auth)).toString(
+                                "base64",
+                              ),
+                          },
+                          body: value,
+                          redirect: "error",
+                          signal: requestSignal,
+                        });
+                      },
+                      requestSignal,
+                    );
+                  });
                 const readHead = async () => {
                   const response = await dispatch("/query", filter);
                   if (!response.ok)
@@ -1078,8 +1117,19 @@ export function relayBrokerPlugin({
                   return readSidebarHead(response);
                 };
                 const publishEvent = (event) =>
-                  stream.traffic.publish(event, requestSignal);
-                return mutateSidebarMute(intent, key, readHead, publishEvent);
+                  delegate.publishEvent(
+                    event,
+                    () => stream.traffic.publish(event, requestSignal),
+                    requestSignal,
+                  );
+                return mutateSidebarMute(
+                  intent,
+                  key,
+                  delegate,
+                  requestSignal,
+                  readHead,
+                  publishEvent,
+                );
               });
             sidebarMutations.set(relay, mutation);
             try {
@@ -1092,6 +1142,8 @@ export function relayBrokerPlugin({
                   paused: true,
                   retryAfterMs: error.retryAfterMs,
                 });
+              if (error instanceof ApiNotSent)
+                return json(res, 503, { error: error.message, sent: false });
               return json(res, 502, {
                 error:
                   error instanceof Error
@@ -1365,7 +1417,7 @@ export function relayBrokerPlugin({
             };
             const traffic = subscribeRelayTraffic(
               relay.replace(/^http/, "ws"),
-              async (event) => finalizeEvent(event, key),
+              (event) => delegate.signEvent(event, cancel.signal),
               viewer,
               {
                 receive: (events, provenance) => {
@@ -1419,6 +1471,7 @@ export function relayBrokerPlugin({
             const close = () => {
               if (closed) return;
               closed = true;
+              cancel.abort();
               principal.streams--;
               pendingState = undefined;
               res.off("drain", flushState);
@@ -1463,7 +1516,7 @@ export function relayBrokerPlugin({
               const result = await uploadAttachment(
                 req,
                 relay,
-                key,
+                delegate,
                 fetchUpstream,
                 cancel.signal,
               );
@@ -1490,7 +1543,7 @@ export function relayBrokerPlugin({
             )
               return json(res, 403, { error: "Media target rejected" });
             const now = Math.floor(Date.now() / 1000);
-            const auth = finalizeEvent(
+            const auth = await delegate.signEvent(
               {
                 kind: 24242,
                 created_at: now,
@@ -1504,8 +1557,9 @@ export function relayBrokerPlugin({
                   ["server", new URL(relay).host],
                 ],
               },
-              key,
+              cancel.signal,
             );
+            cancel.signal.throwIfAborted();
             const range = req.headers.range;
             if (
               range !== undefined &&
@@ -1685,7 +1739,7 @@ export function relayBrokerPlugin({
                   readProjectGit({
                     input,
                     relay,
-                    key,
+                    signer: delegate,
                     signal: AbortSignal.any([
                       cancel.signal,
                       AbortSignal.timeout(12000),
@@ -1717,12 +1771,11 @@ export function relayBrokerPlugin({
                 error: "Invalid agent owner authorization",
               });
             cancel.signal.throwIfAborted();
-            const digest = createHash("sha256")
-              .update(`nostr:agent-auth:${filters.pubkey}:`)
-              .digest();
-            const signature = Buffer.from(schnorr.sign(digest, key)).toString(
-              "hex",
+            const signature = await delegate.authorizeAgent(
+              filters.pubkey,
+              cancel.signal,
             );
+            cancel.signal.throwIfAborted();
             return json(res, 200, { auth: ["auth", viewer, "", signature] });
           }
           if (presence && !presenceFilter(filters))
@@ -1745,7 +1798,13 @@ export function relayBrokerPlugin({
           const directMessage = route === "/api/relay/direct-message";
           if (directMessage) {
             try {
-              filters = directMessageEvent(filters, viewer, key);
+              filters = await directMessageEvent(
+                filters,
+                viewer,
+                delegate,
+                cancel.signal,
+              );
+              cancel.signal.throwIfAborted();
             } catch {
               return json(res, 400, {
                 error: "Choose between one and eight other people.",
@@ -1768,7 +1827,11 @@ export function relayBrokerPlugin({
             try {
               filters = invite
                 ? inviteRequest(filters)
-                : finalizeEvent(memberCommand(filters), key);
+                : await delegate.signEvent(
+                    memberCommand(filters),
+                    cancel.signal,
+                  );
+              cancel.signal.throwIfAborted();
             } catch (error) {
               return json(res, 400, { error: error.message, sent: false });
             }
@@ -1815,15 +1878,16 @@ export function relayBrokerPlugin({
             };
             if (Buffer.byteLength(JSON.stringify(content)) > 16000)
               return json(res, 400, { error: "Profile too large" });
-            filters = finalizeEvent(
+            filters = await delegate.signEvent(
               {
                 kind: 0,
                 content: JSON.stringify(content),
                 tags: [],
                 created_at: Math.floor(Date.now() / 1000),
               },
-              key,
+              cancel.signal,
             );
+            cancel.signal.throwIfAborted();
           }
           if (claim || policy) {
             if (
@@ -1845,7 +1909,11 @@ export function relayBrokerPlugin({
           if (readSigning || readPublishing) {
             try {
               if (readSigning)
-                return json(res, 200, signReadState(filters, key));
+                return json(
+                  res,
+                  200,
+                  await signReadState(filters, key, delegate, cancel.signal),
+                );
               // A valid own signature alone is not permission to publish arbitrary kind-30078 data.
               // Receive-only compatibility must not widen publication admission.
               decodeReadState([filters], key, READ_STATE_EVENT_BYTES);
@@ -1969,15 +2037,16 @@ export function relayBrokerPlugin({
             cancel.signal.throwIfAborted();
             if (signing) {
               const started = performance.now();
-              const event = finalizeEvent(
+              const event = await delegate.signEvent(
                 {
                   kind: filters.kind,
                   content: filters.content,
                   created_at: filters.created_at,
                   tags: filters.tags,
                 },
-                key,
+                cancel.signal,
               );
+              cancel.signal.throwIfAborted();
               res.setHeader(
                 "Server-Timing",
                 `sign;dur=${(performance.now() - started).toFixed(2)}`,
@@ -2002,15 +2071,18 @@ export function relayBrokerPlugin({
           )
             return json(res, 400, { error: "Read filter rejected" });
           if (publishing || readPublishing) {
-            const stream = streams.get(req.headers["x-buzz-live-id"]);
-            if (!stream || stream.relay !== relay)
-              return json(res, 503, {
-                error: "Publication socket unavailable",
-                sent: false,
-              });
+            const unavailable = new SocketRequestError(
+              "Publication socket unavailable",
+              false,
+            );
             try {
-              const message = await stream.traffic.publish(
+              const message = await delegate.publishEvent(
                 filters,
+                () => {
+                  const stream = streams.get(req.headers["x-buzz-live-id"]);
+                  if (!stream || stream.relay !== relay) throw unavailable;
+                  return stream.traffic.publish(filters, cancel.signal);
+                },
                 cancel.signal,
               );
               return json(res, 200, {
@@ -2020,7 +2092,10 @@ export function relayBrokerPlugin({
               });
             } catch (error) {
               return json(res, 503, {
-                error: "Socket publication could not be confirmed",
+                error:
+                  error === unavailable
+                    ? unavailable.message
+                    : "Socket publication could not be confirmed",
                 ...(error instanceof SocketRequestError && !error.sent
                   ? { sent: false }
                   : {}),
@@ -2075,14 +2150,11 @@ export function relayBrokerPlugin({
                 presence || memory ? 10000 : UPSTREAM_TIMEOUT_MS,
               ),
             ]);
-            const request = () => {
-              // Auth freshness and network timings begin at dispatch, not queue entry.
+            const request = async () => {
+              // Signing can yield; final dispatch rechecks cancellation and admission.
               requestSignal.throwIfAborted();
-              timings.push(
-                `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
-              );
               const authStart = performance.now();
-              const auth = finalizeEvent(
+              const auth = await delegate.signEvent(
                 {
                   kind: 27235,
                   created_at: Math.floor(Date.now() / 1000),
@@ -2101,44 +2173,62 @@ export function relayBrokerPlugin({
                     ["nonce", randomBytes(16).toString("hex")],
                   ],
                 },
-                key,
+                requestSignal,
               );
+              requestSignal.throwIfAborted();
               timings.push(
                 `auth;dur=${(performance.now() - authStart).toFixed(2)}`,
               );
-              connectsBefore = upstream.connects();
-              upstreamStart = performance.now();
-              return fetchUpstream(`${relay}${upstreamPath}`, {
-                method,
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization:
-                    "Nostr " +
-                    Buffer.from(JSON.stringify(auth)).toString("base64"),
-                },
-                body,
-                redirect: "error",
-                signal: requestSignal,
-              }).then((response) => {
+              const dispatch = () => {
                 timings.push(
-                  `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
+                  `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
                 );
-                return response;
-              });
+                requestSignal.throwIfAborted();
+                if (
+                  Math.abs(Math.floor(Date.now() / 1000) - auth.created_at) > 45
+                )
+                  throw new ApiNotSent(
+                    "Request authentication expired before dispatch",
+                  );
+                connectsBefore = upstream.connects();
+                upstreamStart = performance.now();
+                return fetchUpstream(`${relay}${upstreamPath}`, {
+                  method,
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization:
+                      "Nostr " +
+                      Buffer.from(JSON.stringify(auth)).toString("base64"),
+                  },
+                  body,
+                  redirect: "error",
+                  signal: requestSignal,
+                }).then((response) => {
+                  timings.push(
+                    `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
+                  );
+                  return response;
+                });
+              };
+              return presence
+                ? dispatch()
+                : admittedApiRequest(
+                    lane,
+                    dispatch,
+                    requestSignal,
+                    channelActivity ||
+                      (route === "/api/relay/query" &&
+                        req.headers["x-buzz-read-priority"] === "background")
+                      ? "background"
+                      : "foreground",
+                    refusal,
+                  );
             };
-            response = presence
-              ? await request()
-              : await admittedApiRequest(
-                  lane,
-                  request,
-                  requestSignal,
-                  channelActivity ||
-                    (route === "/api/relay/query" &&
-                      req.headers["x-buzz-read-priority"] === "background")
-                    ? "background"
-                    : "foreground",
-                  refusal,
-                );
+            const send = () => (presence ? request() : lane.prepare(request));
+            response =
+              profile || directMessage || member
+                ? await delegate.publishEvent(filters, send, requestSignal)
+                : await send();
             const text = memory
               ? await memoryResponseText(response)
               : presence
@@ -2153,12 +2243,18 @@ export function relayBrokerPlugin({
               response.headers.get("x-envoy-upstream-service-time"),
             );
             timings.push(
-              ...upstream.connectTiming(connectsBefore),
+              ...(connectsBefore === undefined
+                ? []
+                : upstream.connectTiming(connectsBefore)),
               ...(Number.isFinite(relayMs) &&
               response.headers.has("x-envoy-upstream-service-time")
                 ? [`relay;dur=${relayMs}`]
                 : []),
-              `upstream;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
+              ...(upstreamStart === undefined
+                ? []
+                : [
+                    `upstream;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
+                  ]),
             );
             res.setHeader("Server-Timing", timings.join(", "));
             stats.queries++;
@@ -2240,6 +2336,8 @@ export function relayBrokerPlugin({
               error: "Query concurrency limit",
               sent: false,
             });
+          if (error instanceof ApiNotSent && !res.headersSent)
+            return json(res, 503, { error: error.message, sent: false });
           server.config.logger.error(
             `[relay-broker] ${error instanceof Error ? error.message : String(error)}`,
           );

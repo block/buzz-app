@@ -4,7 +4,6 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { finalizeEvent } from "nostr-tools";
 
 const API = "https://app.builderlab.xyz/api/goose";
 // Builderlab checks Origin on identity binding; it also seeds the challenge origin.
@@ -30,7 +29,7 @@ const ROUTES = {
 };
 
 /** Signs the kind 24243 challenge exactly as block/buzz desktop does, after the same checks. */
-export function bindingEvent(key, challenge, now = Date.now()) {
+export async function bindingEvent(signer, challenge, now = Date.now()) {
   const { challenge_id, nonce, verification_code, origin, expires_at } =
     challenge ?? {};
   if (
@@ -47,25 +46,22 @@ export function bindingEvent(key, challenge, now = Date.now()) {
     !(Date.parse(expires_at) > now)
   )
     throw new Error("Invalid Nostr identity challenge");
-  return finalizeEvent(
-    {
-      kind: 24243,
-      content: "",
-      created_at: Math.floor(now / 1000),
-      tags: [
-        ["challenge_id", challenge_id],
-        ["nonce", nonce],
-        ["verification_code", verification_code],
-        ["audience", "buzz:nostr-identity"],
-        ["action", "bind_nostr_identity"],
-        ["protocol", "buzz-nostr-identity"],
-        ["version", "1"],
-        ["origin", origin],
-        ["expires_at", expires_at],
-      ],
-    },
-    key,
-  );
+  return signer.signEvent({
+    kind: 24243,
+    content: "",
+    created_at: Math.floor(now / 1000),
+    tags: [
+      ["challenge_id", challenge_id],
+      ["nonce", nonce],
+      ["verification_code", verification_code],
+      ["audience", "buzz:nostr-identity"],
+      ["action", "bind_nostr_identity"],
+      ["protocol", "buzz-nostr-identity"],
+      ["version", "1"],
+      ["origin", origin],
+      ["expires_at", expires_at],
+    ],
+  });
 }
 
 const openBrowser = (url) =>
@@ -143,7 +139,7 @@ function awaitCallback(signal, open) {
 }
 
 export function createBuilderlab({
-  key,
+  signer,
   fetch = globalThis.fetch,
   open = openBrowser,
 }) {
@@ -253,7 +249,8 @@ export function createBuilderlab({
       // A sign-out or new sign-in while the challenge was pending must not let the
       // old credential claim this device's key.
       if (started !== generation) throw new Error("Builderlab session changed");
-      const event = bindingEvent(key(), challenge);
+      const event = await bindingEvent(signer(), challenge);
+      if (started !== generation) throw new Error("Builderlab session changed");
       return request(
         "/v1/buzz/nostr-identities/verify",
         {

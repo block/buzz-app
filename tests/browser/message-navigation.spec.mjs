@@ -430,7 +430,9 @@ const readingTest = test.extend({ tallMessages: true });
 readingTest(
   "exact thread navigation leaves the ordinary channel reading anchor unchanged",
   async ({ page, app }, testInfo) => {
-    const { settle, anchor, expectAnchor } = await import("./timeline.mjs");
+    const { settle, wheel, anchor, expectAnchor } = await import(
+      "./timeline.mjs"
+    );
     await open(page, app);
     const history = page.getByRole("region", {
       name: "Channel message history",
@@ -499,29 +501,7 @@ readingTest(
     });
     try {
       await history.hover();
-      await page.mouse.wheel(0, -650);
-      // Linux WebKit can pause mid-gesture longer than settle's stable-frame
-      // window. Capture the reading baseline only after the native scroll ends;
-      // otherwise the wheel's remaining motion looks like navigation drift.
-      await expect
-        .poll(
-          () =>
-            page.evaluate(() => {
-              const events = window.navigationScrollTrace;
-              const wheel = events.findLastIndex(
-                (event) => event.kind === "wheel",
-              );
-              return (
-                wheel >= 0 &&
-                events
-                  .slice(wheel + 1)
-                  .some((event) => event.kind === "scrollend")
-              );
-            }),
-          { message: "wheel gesture completes before reading baseline" },
-        )
-        .toBe(true);
-      await settle(page);
+      await wheel(page, -650);
       const reading = await anchor(page);
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
       await page

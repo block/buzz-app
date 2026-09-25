@@ -19,6 +19,7 @@ function Example({
   intro,
   action = "Save",
   informational = false,
+  height,
   children,
 }: {
   label: string;
@@ -27,6 +28,7 @@ function Example({
   intro?: string;
   action?: string;
   informational?: boolean;
+  height?: "content" | "stable";
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -49,6 +51,7 @@ function Example({
         open={open}
         onOpenChange={setOpen}
         title={title}
+        {...(height ? { height } : {})}
         {...(intro ? { description: intro } : {})}
         actions={
           informational ? (
@@ -97,6 +100,27 @@ export function DialogSpecimens() {
           Keep project notes, conversations, and shared decisions together in
           one workspace.
         </p>
+      </Example>
+      <Example
+        label="Stable height"
+        description="Reserve space when content changes. The body scrolls while the title and actions stay in place."
+        title="Browse options"
+        height="stable"
+        informational
+      >
+        <Accordion
+          items={[
+            {
+              value: "details",
+              title: "More details",
+              content: (
+                <p className="text-body">
+                  Expanding content does not resize this dialog.
+                </p>
+              ),
+            },
+          ]}
+        />
       </Example>
       <Example
         label="Single field"

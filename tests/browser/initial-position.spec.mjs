@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, settle, anchor, expectAnchor } from "./timeline.mjs";
+import { wheel, open, settle, anchor, expectAnchor } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -92,7 +92,7 @@ readingTest(
     await open(page, app);
     await bottom(page, app, "initial bottom");
     await history(page).hover();
-    await page.mouse.wheel(0, -650);
+    await wheel(page, -650);
     await expect
       .poll(() =>
         history(page).evaluate(

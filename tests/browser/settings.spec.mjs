@@ -1,3 +1,4 @@
+import { wheel } from "./timeline.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -30,29 +31,6 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "2");
   const bounds = await frame.boundingBox();
   const scroller = frame.locator(":scope > div");
-  const wheel = async (deltaY) => {
-    // A changed scrollTop is only the start of WebKit's animated wheel input.
-    // Arm the completion observer before input, then measure the settled row.
-    const completion = await scroller.evaluateHandle((element) => {
-      const state = { done: false };
-      element.addEventListener(
-        "scrollend",
-        () => {
-          state.done = true;
-        },
-        { once: true },
-      );
-      return state;
-    });
-    try {
-      await page.mouse.wheel(0, deltaY);
-      await expect
-        .poll(() => completion.evaluate((state) => state.done))
-        .toBe(true);
-    } finally {
-      await completion.dispose();
-    }
-  };
   await page.mouse.move(
     bounds.x + bounds.width / 2,
     bounds.y + bounds.height / 2,
@@ -73,7 +51,11 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
         ? target.y - visibleTop - 8
         : target.y + target.height - visibleBottom + 8;
     const before = await scroller.evaluate((element) => element.scrollTop);
-    await wheel(Math.sign(distance) * Math.max(Math.abs(distance), 24));
+    await wheel(
+      page,
+      Math.sign(distance) * Math.max(Math.abs(distance), 24),
+      scroller,
+    );
     await expect
       .poll(() => scroller.evaluate((element) => element.scrollTop))
       .not.toBe(before);

@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { parse } from "yaml";
 import config from "../browser/playwright.config.mjs";
+import { nativeFixtureRequired } from "../../scripts/ci-browser-setup.mjs";
 import { run } from "../browser/run-command.mjs";
 
 const read = (file) =>
@@ -53,13 +54,33 @@ test("six independent browser jobs retain isolated measurements and native setup
     preparation >= 0 && journey > preparation,
     "native fixture must build before the browser journeys",
   );
-  // Setup must run on misses too, not merely when a cache is present.
-  const step = browser.slice(
-    browser.lastIndexOf("- name:", preparation),
-    preparation,
+  const steps = parse(workflow).jobs.browser.steps;
+  const discovery = steps.find((step) => step.id === "browser-setup");
+  const build = steps.find(
+    (step) => step.name === "Build native browser fixture",
   );
-  assert.doesNotMatch(step, /\bif:/);
-  assert.doesNotMatch(step, /continue-on-error/);
+  const cache = steps.find((step) => step.with?.key === "browser-fixture");
+  const toolchain = steps.find(
+    (step) => step.name === "Cache native fixture toolchain",
+  );
+  assert.ok(discovery, "discover native setup from the selected journeys");
+  assert.ok(steps.indexOf(discovery) < steps.indexOf(toolchain));
+  assert.ok(steps.indexOf(toolchain) < steps.indexOf(cache));
+  assert.equal(toolchain.with.path, "~/.cache/hermit/pkg/rust-*");
+  assert.equal(
+    toolchain.with.key,
+    `hermit-browser-fixture-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('bin/**') }}`,
+  );
+  assert.ok(steps.indexOf(cache) < steps.indexOf(build));
+  assert.equal(discovery.if, undefined);
+  // Cache misses must build too; only actual test selection controls setup.
+  for (const step of [toolchain, cache, build]) {
+    assert.equal(
+      step.if,
+      "steps.browser-setup.outputs.native-fixture == 'true'",
+    );
+    assert.equal(step["continue-on-error"], undefined);
+  }
   const functional = browser
     .split("      - name: Functional journeys\n")[1]
     ?.split("      - name:")[0];
@@ -91,10 +112,7 @@ test("workflow shards discover every functional test/project exactly once", (t) 
     /^ {8}run: .+ -- (pnpm test:browser:ci .+)$/m,
   )?.[1];
   assert.ok(command, "functional invocation must exist");
-  const discover = (args) => {
-    const report = JSON.parse(
-      run("pnpm", ["--silent", ...args, "--list", "--reporter=json"]),
-    );
+  const selectedIds = (report) => {
     assert.deepEqual(report.errors, []);
     const collect = (suites) =>
       suites.flatMap((suite) => [
@@ -111,14 +129,28 @@ test("workflow shards discover every functional test/project exactly once", (t) 
       ]);
     return collect(report.suites);
   };
-  const expected = discover([
-    "test:browser:ci",
-    "--project",
-    "chromium",
-    "--project",
-    "webkit",
-    "--no-deps",
-  ]);
+  const expected = selectedIds(
+    JSON.parse(
+      run("pnpm", [
+        "--silent",
+        "test:browser:ci",
+        "--project",
+        "chromium",
+        "--project",
+        "webkit",
+        "--no-deps",
+        "--list",
+        "--reporter=json",
+      ]),
+    ),
+  );
+  const discovery = parse(workflow).jobs.browser.steps.find(
+    (step) => step.id === "browser-setup",
+  );
+  const directory = mkdtempSync(join(tmpdir(), "buzz-browser-selection-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const output = join(directory, "output");
+  const nativeProjects = [];
   assert.ok(expected.length > 0);
   const actual = [];
   for (const engine of matrixValues("engine")) {
@@ -127,13 +159,43 @@ test("workflow shards discover every functional test/project exactly once", (t) 
       const expanded = command
         .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
         .replaceAll(/\$\{\{ matrix\.shard \}\}/g, shard);
-      const selected = discover(expanded.split(/\s+/).slice(1));
+      const script = discovery.run
+        .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
+        .replaceAll(/\$\{\{ matrix\.shard \}\}/g, shard);
+      assert.equal(
+        script.split("\n")[0].split(" --list")[0],
+        expanded
+          .replace("pnpm ", "pnpm --silent ")
+          .replace(" --reporter=list,json", ""),
+        "discovery and execution must use identical test selection",
+      );
+      writeFileSync(output, "");
+      const result = spawnSync("bash", ["-e", "-c", script], {
+        env: { ...process.env, RUNNER_TEMP: directory, GITHUB_OUTPUT: output },
+        encoding: "utf8",
+        timeout: 30000,
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const report = JSON.parse(
+        readFileSync(join(directory, "browser-selection.json"), "utf8"),
+      );
+      const selected = selectedIds(report);
+      // Assert against the actual native owner, independently of its setup tag.
+      const includesNative = report.suites.some(
+        (suite) => suite.file === "conversation.spec.mjs",
+      );
+      assert.equal(
+        readFileSync(output, "utf8"),
+        `native-fixture=${includesNative}\n`,
+      );
+      if (includesNative) nativeProjects.push(engine);
       assert.ok(selected.length > 0, `${engine}/${shard} must select tests`);
       assert.ok(selected.every((id) => id.startsWith(`${engine}:`)));
       actual.push(...selected);
       t.diagnostic(`${engine}/${shard}: ${selected.length} functional tests`);
     }
   }
+  assert.deepEqual(nativeProjects, ["chromium", "webkit"]);
   assert.equal(
     new Set(actual).size,
     actual.length,
@@ -226,14 +288,11 @@ test("browser cache follows the installed Playwright version, not unrelated depe
   assert.ok(steps.indexOf(version) < steps.indexOf(cache));
   assert.ok(steps.indexOf(cache) < steps.indexOf(install));
   for (const step of [version, cache, install])
-    assert.equal(step.if, "inputs.browsers == 'true'");
-  assert.equal(
-    install.run,
-    "pnpm exec playwright install --with-deps chromium webkit",
-  );
+    assert.equal(step.if, "inputs.browsers != ''");
+  assert.equal(install.env.BROWSERS, `\${{ inputs.browsers }}`);
   assert.equal(
     cache.with.key,
-    `playwright-\${{ runner.os }}-\${{ runner.arch }}-\${{ steps.playwright.outputs.version }}-chromium-webkit`,
+    `playwright-\${{ runner.os }}-\${{ runner.arch }}-\${{ steps.playwright.outputs.version }}-\${{ inputs.browsers }}`,
   );
   assert.equal(cache.with["restore-keys"], undefined);
 
@@ -267,4 +326,85 @@ test("browser cache follows the installed Playwright version, not unrelated depe
     "missing installation must fail, not cache an empty version",
   );
   assert.equal(readFileSync(output, "utf8"), "");
+});
+
+test("browser provisioning installs exactly the requested engines", (t) => {
+  const setup = parse(read(".github/actions/setup/action.yml"));
+  const { jobs } = parse(workflow);
+  assert.equal(setup.inputs.browsers.default, "");
+  const inputs = (job) =>
+    job.steps.find((step) => step.uses === "./.github/actions/setup").with;
+  assert.equal(inputs(jobs.browser).browsers, `\${{ matrix.engine }}`);
+  assert.equal(inputs(jobs.measurements).browsers, "chromium webkit");
+  for (const name of ["javascript", "native"])
+    assert.equal(inputs(jobs[name]), undefined);
+
+  const install = setup.runs.steps.find(
+    (step) => step.name === "Install pinned browser engines and libraries",
+  );
+  const directory = mkdtempSync(join(tmpdir(), "buzz-browser-install-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const args = join(directory, "args");
+  writeFileSync(
+    join(directory, "pnpm"),
+    '#!/bin/sh\nprintf "%s\\n" "$@" > "$ARGS"\n',
+    { mode: 0o755 },
+  );
+  for (const browsers of [
+    "chromium",
+    "webkit",
+    "chromium webkit",
+    "",
+    "firefox",
+    "chromium --force",
+  ]) {
+    rmSync(args, { force: true });
+    const result = spawnSync("bash", ["-e", "-c", install.run], {
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BROWSERS: browsers,
+        ARGS: args,
+      },
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    if (["chromium", "webkit", "chromium webkit"].includes(browsers)) {
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(
+        readFileSync(args, "utf8"),
+        [
+          "exec",
+          "playwright",
+          "install",
+          "--with-deps",
+          ...browsers.split(" "),
+          "",
+        ].join("\n"),
+      );
+    } else {
+      assert.notEqual(result.status, 0);
+      assert.throws(() => readFileSync(args), { code: "ENOENT" });
+    }
+  }
+});
+
+test("native setup follows nested discovered tags and rejects incomplete discovery", () => {
+  const spec = { tests: [{}], tags: [] };
+  const report = { suites: [{ specs: [spec], suites: [] }], errors: [] };
+  assert.equal(nativeFixtureRequired(report), false);
+  report.suites[0].suites.push({
+    specs: [{ ...spec, tags: ["native-fixture"] }],
+  });
+  assert.equal(nativeFixtureRequired(report), true);
+  for (const invalid of [
+    {},
+    { suites: [], errors: [] },
+    { ...report, errors: [{ message: "import failed" }] },
+    {
+      suites: [{ specs: [{ tests: [], tags: ["native-fixture"] }] }],
+      errors: [],
+    },
+  ])
+    assert.throws(() => nativeFixtureRequired(invalid));
 });

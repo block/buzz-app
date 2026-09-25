@@ -8,9 +8,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-test("independent packed author consumer and native-installed contribution survive removal, replacement and retarget", async ({
-  page,
-}) => {
+test("independent packed author consumer and native-installed contribution survive removal, replacement and retarget", {
+  tag: "@native-fixture",
+}, async ({ page }) => {
   test.setTimeout(240000);
   const temp = await mkdtemp(join(tmpdir(), "buzz-conversation-proof-"));
   let server;

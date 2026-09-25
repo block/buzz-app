@@ -84,12 +84,13 @@ pagination, anchor and measurement datasets unchanged unless their behavior is
 revalidated at the new size. The legacy large default remains for unaudited cases;
 new tests should explicitly choose their data rather than inherit it accidentally.
 
-Source-only diagnostic pages can import `test` and `expect` from
-`source-fixture.mjs` and navigate to `/tests/fixtures/example.html`. That fixture
-shares a stateless Vite server and its isolated optimizer cache per worker, with
-fresh browser contexts/storage for every test. Do not use it for custom mutable
-server middleware or a different Vite configuration. The existing `vite-server.mjs`
-helper keeps independently configured servers' caches isolated.
+Source-only diagnostic pages, including agent-control and shared-message journeys,
+can import `test` and `expect` from `source-fixture.mjs` and navigate to
+`/tests/fixtures/example.html`. That fixture shares a stateless Vite server and its isolated optimizer cache per worker, with
+fresh browser contexts/storage for every test. The worker-scoped `sourcePlugins`
+option supports stateless middleware, such as the messages fixture's static media
+responses. Do not use it for mutable server middleware or a different Vite
+configuration. The existing `vite-server.mjs` helper keeps independently configured servers' caches isolated.
 
 Results go to ignored `test-results/browser/`: each built-app test writes `evidence.json`
 with runtime versions, HEAD/dirty status, request ledger, runtime errors and
@@ -112,9 +113,15 @@ separate measurement runner. Each job selects its engine with `--no-deps` and
 This preserves measurement isolation while spending more setup/runner minutes,
 including when measurements fail. Local same-runner dependencies remain unchanged.
 Artifacts include engine and shard so parallel jobs never overwrite one another.
+Each functional runner installs only its selected browser engine; measurements
+still provision both. Before native setup, Playwright discovers that runner's
+actual selection with `--list`. Only shards containing a test tagged
+`@native-fixture` restore the Rust toolchain/fixture caches and build `fixture-bridge`.
+Discovery errors or an empty selection fail the job; cache misses still build.
+Tag any new journey that needs this native bridge rather than assuming its shard.
 
 The Node integration gate lists tests without launching browsers and checks that
-the workflow's four selections cover every discovered functional test/project
+the workflow's six selections cover every discovered functional test/project
 exactly once, with no measurements included. It also exercises the required
 check's shell against failed, skipped, cancelled and missing lane results.
 These safeguards must change with the matrix; do not maintain feature allowlists

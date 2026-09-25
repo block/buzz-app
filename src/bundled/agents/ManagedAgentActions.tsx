@@ -17,6 +17,7 @@ export function ManagedAgentActions({
   imported,
   destination = "",
   owner = "",
+  onUseHere,
 }: {
   agent: AgentView;
   state: AgentControlState;
@@ -24,6 +25,7 @@ export function ManagedAgentActions({
   imported: boolean;
   destination?: string;
   owner?: string;
+  onUseHere?: ((pubkey: string) => void) | undefined;
 }) {
   const [settingUp, setSettingUp] = useState(false);
   const details = useRef<HTMLDivElement>(null);
@@ -57,7 +59,14 @@ export function ManagedAgentActions({
         </p>
       )}
       {agent.configured === false &&
-        (state.data?.localInventoryActions && control.configureHere ? (
+        (onUseHere ? (
+          <Button
+            disabled={state.busy || state.status !== "ready"}
+            onClick={() => onUseHere(agent.pubkey)}
+          >
+            Use here
+          </Button>
+        ) : state.data?.localInventoryActions && control.configureHere ? (
           <LocalInventoryAction
             control={control}
             agent={agent}

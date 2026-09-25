@@ -122,7 +122,15 @@ export function AgentsPage({
                       : undefined
                   }
                 >
-                  {(state, edit, duplicate, remove, importedId, label) =>
+                  {(
+                    state,
+                    edit,
+                    duplicate,
+                    remove,
+                    importedId,
+                    label,
+                    onUseHere,
+                  ) =>
                     state.status === "unavailable" ? (
                       library
                     ) : state.data?.parked !== undefined ? (
@@ -135,9 +143,11 @@ export function AgentsPage({
                         importedId={importedId}
                         control={control}
                         connection={connection}
+                        onUseHere={onUseHere}
                       />
                     ) : (
                       <ManagedAgents
+                        onUseHere={onUseHere}
                         key={`${connection.scope}:${connection.generation}`}
                         state={state}
                         label={label}
@@ -178,6 +188,7 @@ function ManagedAgents({
   connection,
   label,
   destination,
+  onUseHere,
 }: {
   label(agent: AgentView): string;
   state: AgentControlState;
@@ -188,6 +199,7 @@ function ManagedAgents({
   control: AgentControl;
   connection: RelaySnapshot;
   destination: string;
+  onUseHere(pubkey: string): void;
 }) {
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(
@@ -230,6 +242,7 @@ function ManagedAgents({
             >
               <ManagedAgentActions
                 agent={agent}
+                onUseHere={onUseHere}
                 state={state}
                 control={control}
                 imported={agent.id === importedId}

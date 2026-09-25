@@ -1,3 +1,6 @@
+import { Dialog } from "@base-ui/react/dialog";
+import { relayOrigin } from "../../features/communities/destination";
+import { LocalInventoryAction } from "./LocalInventoryAction";
 import type { useIdentityNames } from "../../features/identity-names/react";
 import { useAgentControl } from "../../features/agents/control-react";
 import { sameCommunityAgents } from "../../features/agents/choices";
@@ -44,6 +47,7 @@ export function AgentControlPanel({
     remove: (agent: AgentView) => void,
     importedId: string | null,
     label: (agent: AgentView) => string,
+    onUseHere: (pubkey: string) => void,
   ) => ReactNode;
 }) {
   const [adding, setAdding] = useState<{
@@ -52,6 +56,17 @@ export function AgentControlPanel({
     source?: AgentView;
     initialSettings?: CloneSettings;
   } | null>(null);
+  const [localPending, setLocalPending] = useState(false);
+  const [handover, setHandover] = useState<{
+    pubkey: string;
+    destination: string;
+  } | null>(null);
+  useEffect(() => {
+    // A handover belongs to the community in which its action was selected.
+    setHandover((current) =>
+      current?.destination === importDestination ? current : null,
+    );
+  }, [importDestination]);
   const [importSections, setImportSections] = useState<string[]>([]);
   const [importedId, setImportedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<{
@@ -70,7 +85,10 @@ export function AgentControlPanel({
       source: agent,
     });
   const remove = (agent: AgentView) => setDeleting(agent.id);
-  const state = useAgentControl(control);
+  const nativeState = useAgentControl(control);
+  const state = localPending
+    ? { ...nativeState, busy: true, pendingCredentialWrite: true }
+    : nativeState;
   useEffect(() => {
     if (
       state.data?.agents.some(
@@ -93,6 +111,16 @@ export function AgentControlPanel({
       ...facts,
       { pubkey: agent.pubkey, name: agent.name, isAgent: true },
     ]) ?? agent.name;
+  const localSource =
+    handover &&
+    (state.data?.agents.find(
+      (agent) =>
+        agent.pubkey === handover.pubkey &&
+        !!agent.relayUrl &&
+        !!handover.destination &&
+        relayOrigin(agent.relayUrl) === relayOrigin(handover.destination),
+    ) ??
+      state.data?.agents.find((agent) => agent.pubkey === handover.pubkey));
   // Route selection takes precedence over card-local editing. Never guess among
   // multiple native records for the same public identity in this community.
   const routed =
@@ -135,6 +163,7 @@ export function AgentControlPanel({
           <Button
             variant="primary"
             aria-haspopup="dialog"
+            disabled={localPending}
             onClick={() =>
               setAdding({
                 destination: importDestination,
@@ -167,7 +196,9 @@ export function AgentControlPanel({
       )}
       {state.busy && <p role="status">Waiting for the host to confirm…</p>}
       {children ? (
-        children(state, edit, duplicate, remove, importedId, label)
+        children(state, edit, duplicate, remove, importedId, label, (pubkey) =>
+          setHandover({ pubkey, destination: importDestination }),
+        )
       ) : (
         <div className="agent-grid">
           {state.data?.agents.map((agent) => (
@@ -226,6 +257,50 @@ export function AgentControlPanel({
             },
           ]}
         />
+      )}
+      {state.data && handover && handover.destination === importDestination && (
+        <Dialog.Root
+          open
+          modal={false}
+          onOpenChange={(open) => {
+            if (!open && !state.busy) setHandover(null);
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Popup
+              data-buzz-ui=""
+              className="agent-controls agent-dialog text-body"
+            >
+              <Dialog.Title className="text-heading">
+                Set up agent here
+              </Dialog.Title>
+              <Dialog.Description className="text-body-sm text-secondary">
+                Set up the imported agent in this community. It will not start
+                yet.
+              </Dialog.Description>
+              {localSource && state.data.localInventoryActions ? (
+                <LocalInventoryAction
+                  key={`${handover.pubkey}:${handover.destination}:${createOwner}`}
+                  control={control}
+                  agent={localSource || undefined}
+                  destination={handover.destination}
+                  owner={createOwner ?? ""}
+                  disabled={nativeState.busy || state.status !== "ready"}
+                  onPending={setLocalPending}
+                  onUsed={() => setHandover(null)}
+                />
+              ) : (
+                <p>
+                  This app cannot set up this agent yet. Import it first. If it
+                  is already imported, update and restart the desktop app.
+                </p>
+              )}
+              <Button disabled={state.busy} onClick={() => setHandover(null)}>
+                Close
+              </Button>
+            </Dialog.Popup>
+          </Dialog.Portal>
+        </Dialog.Root>
       )}
       {adding && (
         <AgentCreateDialog

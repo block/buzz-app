@@ -41,10 +41,12 @@ export function ProfilePanel({
   context,
   navigation,
   control,
+  instanceId,
 }: PanelProps & {
   relay: RelayData;
   navigation?: Navigation;
   control?: AgentControl;
+  instanceId?: string | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const pubkey = profileKey(target);
@@ -53,9 +55,10 @@ export function ProfilePanel({
     return <p>Connect to a community to view this profile.</p>;
   return (
     <ProfileDetails
-      key={`${connection.scope}:${connection.generation}:${pubkey}`}
+      key={`${connection.scope}:${connection.generation}:${pubkey}:${instanceId ?? ""}`}
       session={connection.session}
       pubkey={pubkey}
+      instanceId={instanceId}
       context={context}
       navigation={navigation}
       control={control}
@@ -63,7 +66,12 @@ export function ProfilePanel({
       viewer={connection.viewer}
     >
       {control && (
-        <ProfileAgentActions control={control} relay={relay} pubkey={pubkey} />
+        <ProfileAgentActions
+          control={control}
+          relay={relay}
+          pubkey={pubkey}
+          instanceId={instanceId}
+        />
       )}
     </ProfileDetails>
   );
@@ -77,7 +85,9 @@ function ProfileDetails({
   control,
   scope,
   viewer,
+  instanceId,
 }: {
+  instanceId?: string | undefined;
   children?: ReactNode;
   session: RelaySession;
   pubkey: string;
@@ -275,6 +285,7 @@ function ProfileDetails({
                     control={control}
                     scope={scope}
                     pubkey={pubkey}
+                    instanceId={instanceId}
                   />
                 )}
                 {children}
@@ -296,7 +307,10 @@ function ProfileDetails({
                     errorHandledByActions
                     control={control}
                     pubkey={pubkey}
-                    navigation={navigation}
+                    context={context}
+                    session={session}
+                    canOpenPrivate={verifiedOwner === viewer && !!viewer}
+                    selectedId={instanceId}
                     scope={scope}
                     communityOrigin={communityOrigin}
                     viewer={viewer}

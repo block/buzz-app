@@ -27,6 +27,18 @@ export function useVerifiedAgentOwner(
   session: RelaySession,
   pubkey: string | undefined,
 ): string | undefined {
+  return useAgentOwnerEvidence(session, pubkey).owner;
+}
+
+/** Private admission must inspect readiness as well as signed-head ownership.
+ * Public identity attribution may still display its retained signed evidence. */
+export function useAgentOwnerEvidence(
+  session: RelaySession,
+  pubkey: string | undefined,
+): {
+  status: "loading" | "ready" | "error" | "unavailable";
+  owner: string | undefined;
+} {
   // A session-owned view: live events, reconnect refresh and purge, no polling.
   // Capacity or a closed session leaves no view; reopening the profile retries.
   const [view, setView] = useState<ProfileView | null>();
@@ -83,9 +95,51 @@ export function useVerifiedAgentOwner(
   useEffect(() => {
     if (events.status === "idle") void view?.refresh();
   }, [view, events.status]);
-  return verified && latest && verified.id === latest.id
-    ? verified.owner
-    : undefined;
+  const owner =
+    verified && latest && verified.id === latest.id
+      ? verified.owner
+      : undefined;
+  // Only an already admitted result from this observation may survive a
+  // background read. New heads, purges and failed reads must establish it anew.
+  const [admitted, setAdmitted] = useState<{
+    view: ProfileView;
+    id: string;
+  }>();
+  useEffect(() => {
+    setAdmitted((previous) => {
+      if (
+        events.status === "ready" &&
+        view &&
+        latest &&
+        latest.id === verified?.id
+      ) {
+        return previous?.view === view && previous.id === latest.id
+          ? previous
+          : { view, id: latest.id };
+      }
+      return events.status === "loading" &&
+        previous?.view === view &&
+        previous?.id === latest?.id
+        ? previous
+        : undefined;
+    });
+  }, [events.status, view, latest, verified]);
+  const refreshingAdmittedHead =
+    !!admitted &&
+    events.status === "loading" &&
+    admitted?.view === view &&
+    admitted?.id === latest?.id;
+  const status =
+    view === null
+      ? "unavailable"
+      : events.status === "error"
+        ? "error"
+        : !view ||
+            (events.status !== "ready" && !refreshingAdmittedHead) ||
+            (latest && verified?.id !== latest.id)
+          ? "loading"
+          : "ready";
+  return { status, owner };
 }
 
 export function ProfileAgentIdentity({

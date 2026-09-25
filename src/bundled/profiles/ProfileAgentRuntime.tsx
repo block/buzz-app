@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { AgentControl } from "../../features/agents/control";
-import { sameCommunityAgents } from "../../features/agents/choices";
+import { exactProfileAgent } from "../../features/profiles/instance-target";
 import { agentProcessLabel } from "../agents/agent-edit";
 import styles from "./Profiles.module.css";
 
@@ -11,10 +11,12 @@ export function ProfileAgentRuntime({
   control,
   scope,
   pubkey,
+  instanceId,
 }: {
   control: AgentControl;
   scope: string;
   pubkey: string;
+  instanceId?: string | undefined;
 }) {
   const state = useSyncExternalStore(
     control.subscribe,
@@ -26,9 +28,7 @@ export function ProfileAgentRuntime({
   }, [control]);
   const data = state.data;
   const agent = data
-    ? sameCommunityAgents(data.agents, scope).find(
-        (candidate) => candidate.pubkey === pubkey,
-      )
+    ? exactProfileAgent(data.agents, scope, pubkey, instanceId)
     : undefined;
   if (!data || !agent) return null;
   const drift =

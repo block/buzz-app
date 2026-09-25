@@ -4,6 +4,7 @@ import {
   usePublicAgentMetadata,
 } from "./ProfilePublicMetadata";
 import { ProfileAgentActions } from "./ProfileAgentActions";
+import { ProfileAgentArchive } from "./ProfileAgentArchive";
 import { ProfileMemories } from "./ProfileMemories";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
@@ -50,6 +51,7 @@ export function ProfilePanel({
   navigation,
   control,
   instanceId,
+  close,
 }: PanelProps & {
   relay: RelayData;
   navigation?: Navigation;
@@ -72,6 +74,7 @@ export function ProfilePanel({
       control={control}
       scope={connection.scope}
       viewer={connection.viewer}
+      close={close}
     >
       {control && (
         <ProfileAgentActions
@@ -94,6 +97,7 @@ function ProfileDetails({
   scope,
   viewer,
   instanceId,
+  close,
 }: {
   instanceId?: string | undefined;
   children?: ReactNode;
@@ -104,6 +108,7 @@ function ProfileDetails({
   control: AgentControl | undefined;
   scope: string | undefined;
   viewer: string | undefined;
+  close(): void;
 }) {
   const selection = useMemo(
     () => selectProfiles(session.profiles, [pubkey]),
@@ -319,6 +324,15 @@ function ProfileDetails({
                   />
                 )}
                 {children}
+                {knownAgent && (
+                  <ProfileAgentArchive
+                    session={session}
+                    pubkey={pubkey}
+                    control={control}
+                    scope={scope}
+                    onDeleted={close}
+                  />
+                )}
                 <ProfileActivity
                   session={session}
                   pubkey={pubkey}

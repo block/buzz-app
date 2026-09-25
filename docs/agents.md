@@ -184,7 +184,7 @@ reply and packaged desktop acceptance are not established by these tests.
 
 ## Relay-scoped archive display
 
-`session.archives` is a lazy read-only NIP-IA snapshot capability, independent of
+`session.archives` is a lazy NIP-IA snapshot capability, independent of
 page/plugin lifetime. The dev broker passes `archiveAuthority` only when the
 community's NIP-11 advertises a valid explicit `self`; the legacy contact `pubkey`
 fallback continues to serve existing reads but cannot authenticate archive state.
@@ -202,10 +202,46 @@ Access purge, disconnect, cache clear and disposal clear evidence and cancel wor
 No startup request, periodic poll, event-union seeding or history filtering is added.
 
 This is finite evidence, not a live archive directory.
-My agents consumes it for display; the member mention picker relies on actual
-channel membership, not identity archive filtering. `not-archived` means absent from the read snapshot, not online,
-owned, authorized or guaranteed current at a later write. Archive/unarchive writes,
-delta processing, native discovery and packaged/live acceptance remain separate.
+My agents consumes it for display. As in base Buzz, mention autocomplete, the
+mention picker and member-add omit archived identities: fail-open while the
+snapshot is unknown, never hiding the viewer from themself, and never touching
+history or channel membership. `not-archived` means absent from the read snapshot, not online,
+owned, authorized or guaranteed current at a later write. Delta processing, native
+discovery and packaged/live acceptance remain separate.
+
+The profile pane's **Archive agent / Unarchive agent** actions (base Buzz copy) send
+exact 9035/9036 requests (`["-"]`, one `p`, optional `auth`) through dedicated broker
+sign/publish routes, never the outbox writer. The render guard and a fresh pre-sign
+check accept only the target itself (NIP-IA self request, no `auth`), a verified
+NIP-OA owner, or a relay owner/admin in the relay-signed 13534 roster; the relay
+re-verifies consent. An owner request copies the target's single live `auth` tag,
+verified against the target with `kind=` clauses ignored and `created_at` bounds
+checked against the request time. Success requires a fresh 13535 re-read showing
+the new state; a publish with an unknown outcome is reconciled by that re-read, and
+only a definitive relay rejection skips it. Rows are withheld while state is
+unknown; failed checks retry in the background and on window focus, as base Buzz
+does, and a mounted profile re-reads after a disconnect or cache reset.
+
+**Delete agent** (base Buzz `delete_managed_agent` copy) is shown only to the
+verified NIP-OA owner, for an agent with exactly one native record in this
+community. Base Buzz removes the record first and queues the archive in its native
+retention store; this app has no such store, so the irreversible step runs last:
+
+1. An exact one-member 9001 (`h`, `p`, `client-id`) goes through the outbox for every
+   channel whose relay-signed 39002 roster lists the agent, plus the viewer's loaded
+   channels. Each channel's own fresh roster must then omit the agent; a roster the
+   viewer cannot read leaves that channel unconfirmed.
+2. A fresh archive read runs; unless it already lists the identity, it is archived
+   through the request path above and confirmed.
+3. `agent_control_delete` (shared with **Agents → My agents**) checks the record
+   revision, stops the listener, then deletes this app's saved key before removing
+   the record; a key-deletion failure fails the delete and leaves it retryable.
+   Deployed remote records, which native refuses, get no Delete action.
+
+Any failure before step 3 leaves the record and Delete in place for retry. Closing
+or retargeting the profile admits no new removal, archive or native request; work
+already dispatched settles, and a native removal in flight completes without
+closing whatever profile is shown next.
 Protocol source: old Buzz `b9392d9` `docs/nips/NIP-IA.md`, especially relay identity,
 snapshot format and snapshot/delta consistency. Tests use the actual session and
 HTTP broker/verified transport, including corrupted signature rejection.

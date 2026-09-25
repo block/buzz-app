@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { validProductFeedback } from "../../../dev/relay-broker.mjs";
 import { createOutbox } from "./outbox";
@@ -45,6 +46,54 @@ describe("product feedback protocol", () => {
     ])
       expect(validProductFeedback(event(overrides))).toBe(false);
   });
+});
+
+const origin = "https://relay.test";
+const hash = "a".repeat(64);
+const image = {
+  name: "capture.png",
+  url: `${origin}/media/${hash}.png`,
+  type: "image/png",
+  size: 64,
+  sha256: hash,
+};
+
+it("bounds feedback attachments to local validated media metadata", () => {
+  const submitted = feedbackEvent("Issue", "bug", [image], origin);
+  expect(submitted.content).toContain(image.url);
+  // JS broker inference omits optional mediaOrigin without a declaration.
+  const validate = validProductFeedback as (
+    event: unknown,
+    origin?: string,
+  ) => boolean;
+  expect(validate(event({ ...submitted }), origin)).toBe(true);
+  for (const mutated of [
+    { ...image, url: `https://attacker.test/media/${hash}.png` },
+    { ...image, size: 0 },
+    { ...image, sha256: "b".repeat(64) },
+  ])
+    expect(() => feedbackEvent("Issue", null, [mutated], origin)).toThrow();
+  const imeta = submitted.tags.at(-1);
+  if (!imeta) throw new Error("Missing image metadata");
+  expect(validate(event({ tags: [[...imeta, "dim 100x100"]] }), origin)).toBe(
+    true,
+  );
+  for (const tag of [
+    imeta.slice(0, -1),
+    [...imeta, "m image/jpeg"],
+    imeta.map((part) => (part.startsWith("size ") ? "size NaN" : part)),
+    imeta.map((part) => (part.startsWith("size ") ? "size 1e3" : part)),
+    imeta.map((part) =>
+      part.startsWith("url ") ? `url ${origin}/media/${hash}.jpg` : part,
+    ),
+    imeta.map((part) =>
+      part.startsWith("filename ") ? "filename ../secret" : part,
+    ),
+    imeta.map((part) =>
+      part.startsWith("url ") ? "url https://attacker.test/media/evil" : part,
+    ),
+  ])
+    expect(validate(event({ tags: [tag] }), origin)).toBe(false);
 });
 
 it("preflights the same serialized input the production outbox admits", async () => {

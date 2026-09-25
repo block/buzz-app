@@ -286,6 +286,7 @@ export function Settings({
             )}
             <div hidden={selected !== "profile"}>
               <ProfileSettings
+                key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
                 communities={communities}
                 community={selectedCommunity}
               />

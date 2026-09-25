@@ -3,8 +3,8 @@
 `pnpm test` and therefore `just scan` now run the checked-in Chromium and WebKit
 journeys in `tests/browser/`. `just iterate` remains the fast, browser-free loop.
 [GitHub Actions](../.github/workflows/ci.yml) runs these gates on PRs and main
-pushes: an isolated serial measurement job runs alongside four functional jobs
-(two file-level shards per engine, two workers per runner). Both engines remain
+pushes: an isolated serial measurement job runs alongside six functional jobs
+(three file-level shards per engine, two workers per runner). Both engines remain
 mandatory for the [CI-selected coverage](#ci-coverage-and-local-only-webkit-checks);
 `CI required` fails if any lane or shard fails, is cancelled, or is skipped.
 Owner-specific tests are colocated in `src/` and `dev/`; separate manual diagnostic
@@ -106,9 +106,9 @@ instances and every untagged WebKit case remain required. Both engines, serial
 measurement order, zero retries, the documented functional assertions and
 measurement ceilings, and the strict `CI required` aggregate remain in place.
 
-CI shards each functional engine across two runners, without waiting for the
+CI shards each functional engine across three runners, without waiting for the
 separate measurement runner. Each job selects its engine with `--no-deps` and
-`--shard=N/2`; measurement success is enforced by `CI required`, not job ordering.
+`--shard=N/3`; measurement success is enforced by `CI required`, not job ordering.
 This preserves measurement isolation while spending more setup/runner minutes,
 including when measurements fail. Local same-runner dependencies remain unchanged.
 Artifacts include engine and shard so parallel jobs never overwrite one another.

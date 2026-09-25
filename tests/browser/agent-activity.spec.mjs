@@ -33,6 +33,36 @@ const activity = (kind, channelId, turnId, payload) => ({
   ...(payload === undefined ? {} : { payload }),
 });
 
+test("mention picker demands the relay's protected archive snapshot", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page
+    .getByRole("button", { name: "Mention a member", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Mention a member or agent" }),
+  ).toBeVisible();
+  await expect
+    .poll(
+      () =>
+        app.report.queries.filter(({ filter }) => filter.kinds?.includes(13535))
+          .length,
+    )
+    .toBeGreaterThan(0);
+  expect(
+    app.report.queries
+      .filter(({ filter }) => filter.kinds?.includes(13535))
+      .every(
+        ({ filter }) =>
+          filter.authors?.length === 1 &&
+          filter.limit === 1 &&
+          Object.keys(filter).length === 3,
+      ),
+  ).toBe(true);
+});
+
 // The composer entry is the only channel launcher. Profile activity remains the
 // durable fallback after fresh working evidence disappears (covered below).
 test("channel activity consumes telemetry, isolates mixed batches, selects agents, and resets on disable", async ({

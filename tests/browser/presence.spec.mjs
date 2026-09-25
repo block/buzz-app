@@ -458,7 +458,7 @@ test("avatar choices publish through the existing socket and persist across relo
     exact: true,
   });
   const badge = avatar.locator(".buzz-avatar-status-dot");
-  const account = page.getByRole("menu", { name: "Browser Fixture" });
+  const account = page.getByRole("menu", { name: "Fixture Reader" });
   const published = (status) =>
     app.report.presencePublications.filter(
       ({ event }) => event.content === status,

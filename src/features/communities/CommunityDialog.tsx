@@ -1,3 +1,4 @@
+import { profileDefault } from "./profile-default";
 import { useEffect, useRef, useState } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -52,6 +53,7 @@ export function CommunityDialog({
   const [code, setCode] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [adult, setAdult] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const mounted = useRef(true);
@@ -78,6 +80,7 @@ export function CommunityDialog({
     (!policy?.age_attestation_required || adult) &&
     (!(policy?.terms_markdown || policy?.privacy_markdown) || agreed);
   async function submit() {
+    if (uploading) return;
     if (step === "destination") {
       await work(async () => {
         const next = communityDestination(relayOrigin(url));
@@ -149,7 +152,7 @@ export function CommunityDialog({
                 ? { icon: info.icon }
                 : {}),
             },
-            profile,
+            profileDefault(profile, communities.snapshot().profile, id),
           );
           onJoined?.(id);
         }
@@ -301,6 +304,8 @@ export function CommunityDialog({
                       : "Start with your local profile, or choose how you appear in this community."}
                 </p>
                 <ProfileFields
+                  community={mode === "profile" ? undefined : id}
+                  onBusyChange={setUploading}
                   profile={profile}
                   onChange={setProfile}
                   disabled={busy}
@@ -315,7 +320,7 @@ export function CommunityDialog({
             <footer className="buzz-dialog-actions justify-between">
               <Button
                 type="button"
-                disabled={busy}
+                disabled={busy || uploading}
                 onClick={() => {
                   if (step === "destination" || mode === "profile") close();
                   else {
@@ -333,6 +338,7 @@ export function CommunityDialog({
                 type="submit"
                 disabled={
                   busy ||
+                  uploading ||
                   (step === "access" && !allowed) ||
                   (step === "profile" &&
                     (keepsProfile

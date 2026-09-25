@@ -13,6 +13,7 @@ export function mentionChoices(
     candidates?: readonly string[],
     displayFacts?: readonly NamingIdentity[],
   ) => string,
+  archived: (pubkey: string) => boolean = () => false,
 ) {
   const choices = new Map(
     agents.map(({ pubkey, name }) => [pubkey, { pubkey, name }]),
@@ -25,6 +26,9 @@ export function mentionChoices(
         choices.get(pubkey)?.name ??
         pubkey.slice(0, 12),
     });
+  // Base Buzz hides archived identities from autocomplete and member-add.
+  for (const pubkey of choices.keys())
+    if (archived(pubkey)) choices.delete(pubkey);
   const candidates = [...choices.keys()];
   // Directory people may have no cached profile. Supply their names so namesakes
   // in this choice set are qualified; known names keep their own sources.

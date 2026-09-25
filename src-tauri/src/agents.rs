@@ -16,6 +16,7 @@ pub(crate) struct Snapshot {
     data: ControlSnapshot,
     import_available: bool,
     create_available: bool,
+    avatar_editing_available: bool,
     default_workspace: String,
     harness_options: Vec<HarnessOption>,
     databricks_defaults: crate::agent_models::Defaults,
@@ -27,6 +28,7 @@ impl Snapshot {
             data,
             import_available,
             create_available: import_available,
+            avatar_editing_available: true,
             default_workspace: workspace.to_string_lossy().into_owned(),
             harness_options: harness_options(),
             databricks_defaults: crate::agent_models::defaults(),
@@ -187,6 +189,7 @@ struct Host {
     next_start: u64,
     /// Agents with an explicit Start/Stop since open; queued restore skips them.
     acted: BTreeSet<String>,
+    profiles: BTreeMap<String, Arc<tokio::sync::Mutex<()>>>,
     creating: Option<(String, Arc<NewAgent>)>,
     legacy_check: fn() -> Result<(), String>,
 }
@@ -215,6 +218,7 @@ impl Host {
             starts: BTreeMap::new(),
             next_start: 0,
             acted: BTreeSet::new(),
+            profiles: BTreeMap::new(),
             creating: None,
             legacy_check: refuse_legacy,
         })
@@ -242,6 +246,12 @@ impl Host {
         self.controller.shutdown()
     }
 }
+
+type ProfilePublication = (
+    tokio::sync::OwnedMutexGuard<()>,
+    buzz_agent_controller::CreationProfile,
+    Arc<dyn Credentials>,
+);
 
 #[derive(Clone)]
 pub(crate) struct AgentHost(Arc<Mutex<Result<Host, String>>>, Arc<AtomicBool>);
@@ -293,6 +303,21 @@ impl AgentHost {
             return Err("Agent host is shutting down".into());
         }
         operation(host)
+    }
+    fn begin_profile(&self, id: &str) -> Result<ProfilePublication, String> {
+        self.with(|host| {
+            let profile = host.controller.creation_profile(id)?;
+            let guard = host
+                .profiles
+                .entry(id.to_owned())
+                .or_default()
+                .clone()
+                .try_lock_owned()
+                .map_err(|_| {
+                    "Profile publication is already in progress; refresh status before retrying"
+                })?;
+            Ok((guard, profile, host.credentials.clone()))
+        })
     }
     pub(crate) async fn restore(&self) {
         let ids = self
@@ -594,75 +619,55 @@ pub(crate) async fn agent_control_creation_profile(
     state: tauri::State<'_, AgentHost>,
     id: String,
 ) -> Result<Snapshot, String> {
-    use base64::Engine;
-    let owner = state.inner().clone();
-    let (profile, credentials) = owner.with(|host| {
-        Ok((
-            host.controller.creation_profile(&id)?,
-            host.credentials.clone(),
-        ))
-    })?;
-    let (profile, body, authorization, event_id) =
-        tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
-            let key = credentials
-                .read(&profile.credential_id, &profile.pubkey)?
-                .ok_or("Agent key unavailable")?;
-            let event = profile.event(&key)?;
-            let event_id = event
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .ok_or("Invalid profile")?
-                .to_owned();
-            let body = serde_json::to_vec(&event).map_err(|_| "Could not encode profile")?;
-            let authorization = base64::engine::general_purpose::STANDARD.encode(
-                serde_json::to_vec(&profile.authenticate(&key, &body)?)
-                    .map_err(|_| "Could not authorize profile")?,
-            );
-            Ok((profile, body, authorization, event_id))
-        })
-        .await
-        .map_err(|_| "Native credential operation failed")??;
+    publish_profile(state.inner().clone(), id).await
+}
+
+async fn publish_profile(owner: AgentHost, id: String) -> Result<Snapshot, String> {
+    // Native ownership survives renderer reloads. Refuse overlapping publication,
+    // while allowing settings Save to advance the revision and retain pending.
+    let (publication, profile, credentials) = owner.begin_profile(&id)?;
+    let (profile, key) = tauri::async_runtime::spawn_blocking(move || {
+        credentials
+            .read(&profile.credential_id, &profile.pubkey)
+            .map(|key| (profile, key))
+    })
+    .await
+    .map_err(|_| "Native credential operation failed")??;
+    let key = key.ok_or("Agent key unavailable")?;
     owner.ensure_open()?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|_| "Profile client unavailable")?;
-    let mut response = client
-        .post(&profile.url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Nostr {authorization}"))
-        .header("x-auth-tag", &profile.auth)
-        .body(body)
-        .send()
-        .await
-        .map_err(|_| "Agent saved; profile publication unconfirmed. Retry this saved agent.")?;
-    if !response.status().is_success() {
-        return Err("Agent saved; relay refused its profile. Check community access, then retry this saved agent.".into());
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| "Profile receipt unavailable; retry this saved agent")?
-    {
-        if bytes.len() + chunk.len() > 16 * 1024 {
-            return Err("Profile receipt too large".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    let receipt: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|_| "Invalid profile receipt; retry this saved agent")?;
-    if receipt.get("accepted").and_then(serde_json::Value::as_bool) != Some(true)
-        || receipt.get("event_id").and_then(serde_json::Value::as_str) != Some(event_id.as_str())
-    {
-        return Err("Agent saved; profile was not accepted. Retry this saved agent.".into());
-    }
+    publish_acquired(&owner, &id, &profile, &key, &client, publication).await
+}
+
+async fn publish_acquired(
+    owner: &AgentHost,
+    id: &str,
+    profile: &buzz_agent_controller::CreationProfile,
+    key: &buzz_agent_controller::Secret,
+    client: &reqwest::Client,
+    _publication: tokio::sync::OwnedMutexGuard<()>,
+) -> Result<Snapshot, String> {
+    profile_http::publish(client, profile, key, || {
+        owner.with(|host| {
+            let current = host.controller.creation_profile(id)?;
+            if current.revision != profile.revision {
+                return Err("Saved profile changed; retry publication".into());
+            }
+            Ok(())
+        })
+    })
+    .await?;
     owner.with(|host| {
-        host.controller.profile_published(&id, profile.revision)?;
+        host.controller.profile_published(id, profile.revision)?;
         host.snapshot()
     })
 }
+
+mod profile_http;
 
 #[cfg(test)]
 pub(crate) mod tests;

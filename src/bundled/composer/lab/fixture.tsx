@@ -29,6 +29,7 @@ const profiles = new Map([
 ]);
 const emptyList: readonly never[] = [];
 const emojiSnapshot = { status: "ready" as const, entries: emptyList };
+const archiveSnapshot = { status: "unavailable" as const, archived: emptyList };
 const channelList = {
   status: "ready" as const,
   channels: [
@@ -73,6 +74,10 @@ const rawSession = {
     subscribe: empty,
     retain: empty,
     refresh: async () => {},
+  },
+  archives: {
+    snapshot: () => archiveSnapshot,
+    subscribe: empty,
   },
   emoji: {
     snapshot: () => emojiSnapshot,

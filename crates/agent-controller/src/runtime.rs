@@ -468,6 +468,9 @@ impl Controller {
         if agent.revision != revision {
             return Err("Agent settings changed. Reload before deleting".into());
         }
+        if agent.deployed_remote() {
+            return Err("Deployed remote agents can't be deleted from this app".into());
+        }
         // Stop must be confirmed before removing custody or durable settings.
         self.stop(id)?;
         self.store.enabled(id, false)?;

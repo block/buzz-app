@@ -25,6 +25,7 @@ impl Credentials for Memory {
 fn agent(workspace: &Path) -> Agent {
     let relay_url = "wss://relay.example".to_owned();
     Agent {
+        picture: None,
         id: agent_id(PUB, &relay_url),
         pubkey: PUB.into(),
         relay_url,
@@ -215,6 +216,7 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     controller.action(&a.id, Action::Start).unwrap();
     assert_eq!(controller.running.len(), 1);
     let edit = AgentEdit {
+        picture: None,
         name: "Edited".into(),
         system_prompt: "changed prompt".into(),
         workspace: a.workspace.clone(),
@@ -298,6 +300,7 @@ fn new_records_launch_preference_is_independent_of_start_and_stop() {
     );
     let edit = AgentEdit {
         name: a.name.clone(),
+        picture: None,
         system_prompt: a.system_prompt.clone(),
         workspace: a.workspace.clone(),
         harness: a.harness.clone(),
@@ -665,6 +668,49 @@ fn stop_reaches_owned_process_when_store_is_malformed_or_row_disappears() {
 
 #[test]
 #[cfg(unix)]
+fn delete_stops_the_listener_and_refuses_deployed_remote_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let a = agent(dir.path());
+    let mut remote = agent(dir.path());
+    remote.relay_url = "wss://remote.example".into();
+    remote.id = agent_id(PUB, &remote.relay_url);
+    remote.imported = serde_json::json!({"record": {"backend": {"type": "provider"}, "backend_agent_id": "deployed"}});
+    store.insert(vec![a.clone(), remote.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then_some(())
+    });
+    controller.delete(&a.id, a.revision).unwrap();
+    assert!(controller.running.is_empty());
+    assert!(controller
+        .delete(&a.id, a.revision)
+        .err()
+        .unwrap()
+        .contains("no longer exists"));
+    // Base Buzz refuses to orphan a deployed remote agent; the view says so
+    // before any caller starts work that depends on deletion.
+    assert!(remote.view().deployed_remote && !a.view().deployed_remote);
+    assert!(controller
+        .delete(&remote.id, remote.revision)
+        .err()
+        .unwrap()
+        .contains("Deployed remote agents can't be deleted"));
+    let remaining = controller.store.agents().unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id, remote.id);
+    assert_eq!(remaining[0].enabled, remote.enabled);
+}
+
+#[test]
+#[cfg(unix)]
 fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
@@ -793,6 +839,7 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
     let cache = config.join("buzz-agent/oauth/databricks");
     assert!(cache.is_dir());
     let edit = AgentEdit {
+        picture: None,
         name: a.name.clone(),
         system_prompt: a.system_prompt.clone(),
         workspace: a.workspace.clone(),
@@ -1035,6 +1082,46 @@ fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_age
 }
 
 #[test]
+fn databricks_workspace_errors_distinguish_missing_configuration_from_invalid_origins() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = agent(dir.path());
+    agent.harness.provider = "databricks_v2".into();
+    let defaults = crate::BuildDefaults::default();
+    let error = databricks_with_defaults(&agent, &defaults).err().unwrap();
+    assert!(error.contains("Databricks workspace is not configured"));
+    assert!(error.contains("Edit the agent, open Advanced → Model"));
+    assert!(error.contains("Databricks workspace (HTTPS origin)"));
+    // Empty offline drafts remain saveable; runtime validation supplies guidance.
+    crate::connection::DatabricksSettings::default()
+        .validate()
+        .unwrap();
+    for host in [
+        "http://workspace.example",
+        "https://user:SYNTHETIC@workspace.example",
+        "https://workspace.example/path",
+    ] {
+        agent
+            .environment
+            .insert("DATABRICKS_HOST".into(), host.into());
+        let error = databricks_with_defaults(&agent, &defaults).err().unwrap();
+        assert!(error.contains("Enter a Databricks HTTPS workspace origin"));
+        assert!(!error.contains("SYNTHETIC"));
+        assert!(!error.contains("not configured"));
+    }
+    agent.environment.insert(
+        "DATABRICKS_HOST".into(),
+        "https://WORKSPACE.example:443/".into(),
+    );
+    assert_eq!(
+        databricks_with_defaults(&agent, &defaults)
+            .unwrap()
+            .unwrap()
+            .host,
+        "https://workspace.example"
+    );
+}
+
+#[test]
 fn saved_selectors_and_environment_override_build_floor_including_empty() {
     let dir = tempfile::tempdir().unwrap();
     let mut agent = agent(dir.path());
@@ -1151,6 +1238,7 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
     fs::write(&goose, "#!/bin/sh\nexit 0\n").unwrap();
     fs::set_permissions(&goose, fs::Permissions::from_mode(0o700)).unwrap();
     let edit = |override_provider: Option<&str>| AgentEdit {
+        picture: None,
         name: "Goose".into(),
         system_prompt: String::new(),
         workspace: dir.path().display().to_string(),
@@ -1297,6 +1385,7 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
     );
     let edit = AgentEdit {
         name: a.name.clone(),
+        picture: None,
         system_prompt: a.system_prompt.clone(),
         workspace: a.workspace.clone(),
         harness: a.harness.clone(),

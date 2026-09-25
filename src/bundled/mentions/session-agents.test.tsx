@@ -56,9 +56,26 @@ function setup(parent: boolean | null = true, archived = false) {
           ],
   };
   const profiles = new Map([[member, { name: "Member" }]]);
+  const listeners = new Set<() => void>();
+  let archiveSnapshot: ReturnType<RelaySession["archives"]["snapshot"]> = {
+    status: "ready",
+    archived: [],
+  };
+  const setArchived = (archived: string[]) => {
+    archiveSnapshot = { status: "ready", archived };
+    for (const listener of listeners) listener();
+  };
   const session = {
     directMessages: {
       people: vi.fn(async () => ({ people: [], hasMore: false })),
+    },
+    archives: {
+      snapshot: () => archiveSnapshot,
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      ensure: async () => {},
     },
     channels: {
       list: () => list,
@@ -83,7 +100,7 @@ function setup(parent: boolean | null = true, archived = false) {
     }),
     media: () => undefined,
   } as unknown as RelaySession;
-  return { session, library, key, member, profiles };
+  return { session, library, key, member, profiles, setArchived };
 }
 it("uses the same alphabetical and prefix ordering for typed and button mentions", async () => {
   const test = setup();
@@ -1034,4 +1051,35 @@ it("ignores a late directory result after the query changes and retries the curr
       ),
     ).toEqual(["New person"]),
   );
+});
+
+it("archived identities leave completion and return on unarchive; the viewer is never hidden from themself", async () => {
+  const test = setup();
+  const publish = vi.fn();
+  const labels = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.label,
+    );
+  const props = {
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@", start: 1, end: 1 },
+    query: { start: 0, end: 1, query: "" },
+    publish,
+  };
+  const view = render(<MentionCompletion session={test.session} {...props} />);
+  expect(labels()).toEqual(["Member"]);
+  act(() => test.setArchived([test.member]));
+  expect(labels()).toEqual([]);
+  act(() => test.setArchived([]));
+  expect(labels()).toEqual(["Member"]);
+  act(() => test.setArchived([test.member]));
+  view.rerender(
+    <MentionCompletion
+      session={{ ...test.session, viewer: test.member }}
+      {...props}
+    />,
+  );
+  expect(labels()).toEqual(["Member"]);
+  test.library.dispose();
 });

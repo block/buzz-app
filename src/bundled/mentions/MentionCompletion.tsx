@@ -2,6 +2,7 @@ import { useMentionDirectory } from "./useMentionDirectory";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { availableMentionAgents } from "../../features/agents/mention-choices";
 import { mentionChoices } from "./mention-choices";
+import { useArchivedPredicate } from "../../features/relay/use-archived";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import {
@@ -30,6 +31,7 @@ export function MentionCompletion({
 }: ComposerCompletionProps) {
   const draftRoster = useContext(DraftMentionRoster);
   const resolveName = useIdentityNames(session.names);
+  const archived = useArchivedPredicate(session);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -97,6 +99,7 @@ export function MentionCompletion({
       members,
       profiles,
       resolveName,
+      archived,
     );
     const needle = query.query.toLowerCase();
     // Source names close completed mentions; display labels still admit multi-word searches.
@@ -228,6 +231,7 @@ export function MentionCompletion({
     directory.more,
     draftRoster,
     resolveName,
+    archived,
     session,
     agents,
     inviteAgents,

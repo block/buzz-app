@@ -2,7 +2,6 @@ import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
-  developmentMode: true,
   developmentReact: true,
   historyCounts: { alpha: 1, beta: 0 },
 });

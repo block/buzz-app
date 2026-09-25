@@ -205,9 +205,21 @@ function Composer({
   const valueRef = useRef(value);
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
-  const focusOnMount = useRef(autoFocus && !disabled);
+  const focusOnMount = useRef(
+    autoFocus && !disabled && typeof document !== "undefined"
+      ? document.activeElement
+      : undefined,
+  );
   useEffect(() => {
-    if (focusOnMount.current) input.current?.focus();
+    // A navigation/dialog owner may restore focus during this commit. Let that
+    // explicit handoff win over the conversation's default initial focus.
+    const previous = focusOnMount.current;
+    if (
+      previous &&
+      (previous === document.activeElement ||
+        (!previous.isConnected && document.activeElement === document.body))
+    )
+      input.current?.focus();
   }, []);
   const nonmembers = useNonmemberMentions(session, channelId, () =>
     input.current?.focus(),

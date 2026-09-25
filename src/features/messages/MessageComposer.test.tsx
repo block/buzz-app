@@ -391,8 +391,38 @@ it("autofocuses each selected conversation once without stealing focus on update
     expect(other).toHaveFocus();
     h.retarget({ channelId: "another-channel" });
     expect(h.input()).toHaveFocus();
+    h.retarget({ channelId: "keyboard-navigation" });
+    expect(h.input()).toHaveFocus();
   } finally {
     other.remove();
+  }
+});
+
+it("lets an explicit focus restoration in the mount commit win", () => {
+  const h = mount();
+  h.unmount();
+  const target = document.createElement("button");
+  document.body.append(target);
+  function RestoreFocus() {
+    useLayoutEffect(() => target.focus(), []);
+    return null;
+  }
+  try {
+    render(
+      <>
+        <MessageComposer
+          session={h.session}
+          scope="scope"
+          channelId="channel"
+          channelName="General"
+          autoFocus
+        />
+        <RestoreFocus />
+      </>,
+    );
+    expect(target).toHaveFocus();
+  } finally {
+    target.remove();
   }
 });
 

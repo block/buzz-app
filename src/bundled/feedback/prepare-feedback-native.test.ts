@@ -5,7 +5,7 @@ const native = vi.hoisted(() => ({ getVersion: vi.fn(async () => "3.2.1") }));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: native.getVersion }));
 
-import { feedbackDiagnostics } from "./product-feedback";
+import { feedbackDiagnostics } from "./prepare-feedback";
 
 it("includes the native app version only after diagnostics opt-in", async () => {
   expect(native.getVersion).not.toHaveBeenCalled();

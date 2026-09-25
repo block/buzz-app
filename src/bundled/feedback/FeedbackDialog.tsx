@@ -7,12 +7,11 @@ import {
 } from "../../features/relay/attachments";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import {
-  feedbackDiagnostics,
-  feedbackImage,
   feedbackEvent,
   PRODUCT_FEEDBACK_KIND,
   type FeedbackCategory,
 } from "../../features/relay/product-feedback";
+import { feedbackDiagnostics, feedbackImage } from "./prepare-feedback";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Textarea } from "../../shared/design-system/ui/Textarea";

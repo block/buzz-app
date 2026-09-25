@@ -212,7 +212,7 @@ it("shows the selected community name and authenticated avatar without saving a 
       "small",
     );
     const button = screen.getByRole("button", { name: "Your profile" });
-    expect(button).toHaveAttribute("title", "Community name");
+    expect(screen.getByRole("menu", { name: "Community name" })).toBeVisible();
     expect(button.querySelector("img")).toHaveAttribute(
       "src",
       "/community-media?url=https%3A%2F%2Fcommunity.test%2Fmedia%2Favatar.png",
@@ -221,7 +221,7 @@ it("shows the selected community name and authenticated avatar without saving a 
       profiles = new Map([[viewer, { name: "Updated name" }]]);
       for (const listener of listeners) listener();
     });
-    expect(button).toHaveAttribute("title", "Updated name");
+    expect(screen.getByRole("menu", { name: "Updated name" })).toBeVisible();
     expect(button.querySelector("img")).toBeNull();
     expect(snapshot.profile).toEqual({ name: "Local name", picture: "" });
     expect(screen.queryByText("Your profile")).not.toBeInTheDocument();
@@ -369,7 +369,12 @@ it("drops the previous community profile on switching and uses local defaults on
   );
   try {
     const button = screen.getByRole("button", { name: "Your profile" });
-    expect(button).toHaveAttribute("title", "Alpha");
+    fireEvent.click(button);
+    expect(await screen.findByRole("menu", { name: "Alpha" })).toBeVisible();
+    expect(button.querySelector("img")).toHaveAttribute(
+      "src",
+      oldProfile.picture,
+    );
     act(() => {
       state = { ...state, selected: "https://beta.test" };
       connection = {
@@ -385,19 +390,21 @@ it("drops the previous community profile on switching and uses local defaults on
       };
       for (const listener of listeners) listener();
     });
-    expect(button).not.toHaveAttribute("title", "Alpha");
-    expect(button).not.toHaveAttribute("title", "Personal name");
+    expect(screen.getByRole("menu")).not.toHaveAccessibleName("Alpha");
+    expect(screen.getByRole("menu")).not.toHaveAccessibleName("Personal name");
     expect(button.querySelector("img")).toBeNull();
     act(() => {
       oldProfile = { ...oldProfile, name: "Late Alpha" };
       for (const listener of oldListeners) listener();
     });
-    expect(button).not.toHaveAttribute("title", "Late Alpha");
+    expect(oldListeners.size).toBe(0);
+    expect(screen.getByRole("menu")).not.toHaveAccessibleName("Late Alpha");
+    expect(button.querySelector("img")).toBeNull();
     act(() => {
       state = { ...state, selected: null };
       for (const listener of listeners) listener();
     });
-    expect(button).toHaveAttribute("title", "Personal name");
+    expect(screen.getByRole("menu", { name: "Personal name" })).toBeVisible();
     expect(button.querySelector("img")).toHaveAttribute(
       "src",
       "https://public.test/local.png",

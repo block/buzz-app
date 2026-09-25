@@ -40,7 +40,7 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function setup(selected: string | null = a) {
+function setup(selected: string | null = a, picture = "") {
   let state: ClientSnapshot = {
     status: "ready",
     viewer: "a".repeat(64),
@@ -49,7 +49,7 @@ function setup(selected: string | null = a) {
       { id: a, name: "Alpha" },
       { id: b, name: "Beta" },
     ],
-    profile: { name: "Local default", picture: "" },
+    profile: { name: "Local default", picture },
   };
   const listeners = new Set<() => void>();
   const saveProfile = vi.fn();
@@ -105,8 +105,8 @@ function setup(selected: string | null = a) {
       />
     );
   }
-  render(<CapturedProfile />, { wrapper: ToastProvider });
-  return { select, saveProfile };
+  const view = render(<CapturedProfile />, { wrapper: ToastProvider });
+  return { select, saveProfile, view, communities, profiles };
 }
 async function editName(name = "Changed") {
   await screen.findByDisplayValue("Alpha human");
@@ -170,7 +170,14 @@ it("a dispatched save remains bound to A and its late completion cannot clear B'
   const fixture = setup();
   await editName();
   const late = deferred<void>();
-  vi.mocked(api.publishProfile).mockReturnValueOnce(late.promise);
+  vi.mocked(api.publishProfile).mockImplementationOnce(async (id, profile) => {
+    await late.promise;
+    fixture.profiles.set(id, {
+      profile,
+      existing: { ...profile },
+      exists: true,
+    });
+  });
   save();
   await act(async () => {});
   await waitFor(() => expect(api.publishProfile).toHaveBeenCalledTimes(1));
@@ -182,6 +189,12 @@ it("a dispatched save remains bound to A and its late completion cannot clear B'
   await act(async () => {
     late.resolve();
     await late.promise;
+  });
+  expect(api.inspectProfile).toHaveBeenLastCalledWith(a);
+  expect(fixture.saveProfile).toHaveBeenCalledWith({
+    name: "Changed",
+    picture: "",
+    about: "Keep this",
   });
   expect(screen.getByLabelText("Display name")).toHaveValue("Beta draft");
   expect(screen.queryByText("Profile updated")).not.toBeInTheDocument();
@@ -336,3 +349,75 @@ it("late confirmation after switching cannot replace the next community draft", 
   expect(screen.queryByText("Profile updated")).not.toBeInTheDocument();
   expect(api.publishProfile).toHaveBeenCalledTimes(1);
 });
+
+it("confirms a dispatched save through its captured session after leaving Settings", async () => {
+  const { createRelaySession } = await import("../features/relay/session");
+  const owner = createRelaySession(null);
+  const fixture = setup();
+  vi.spyOn(fixture.communities.relay, "snapshot").mockReturnValue({
+    status: "ready",
+    viewer: "a".repeat(64),
+    generation: 1,
+    scope: a,
+    session: owner.session,
+  });
+  await editName();
+  const late = deferred<void>();
+  vi.mocked(api.publishProfile).mockImplementationOnce(async (id, profile) => {
+    await late.promise;
+    fixture.profiles.set(id, {
+      profile,
+      existing: { ...profile },
+      exists: true,
+    });
+  });
+  try {
+    save();
+    await waitFor(() => expect(api.publishProfile).toHaveBeenCalledTimes(1));
+    fixture.view.unmount();
+    await act(async () => {
+      late.resolve();
+      await late.promise;
+    });
+    expect(api.inspectProfile).toHaveBeenLastCalledWith(a, owner.session);
+    expect(fixture.saveProfile).toHaveBeenCalledExactlyOnceWith({
+      name: "Changed",
+      picture: "",
+      about: "Keep this",
+    });
+  } finally {
+    late.resolve();
+    owner.dispose();
+  }
+});
+
+it.each([
+  ["https://a.example/media/upload.png", "https://public.example/previous.png"],
+  ["https://public.example/new.png", "https://public.example/new.png"],
+  ["", ""],
+])(
+  "publishes %s only to its community and seeds the portable default correctly",
+  async (picture, expected) => {
+    const fixture = setup(a, "https://public.example/previous.png");
+    await editName();
+    if (picture) {
+      fireEvent.click(screen.getByRole("button", { name: "Edit avatar" }));
+      fireEvent.change(await screen.findByLabelText("Picture URL (optional)"), {
+        target: { value: picture },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    }
+    save();
+    await screen.findByText("Profile updated");
+    expect(api.publishProfile).toHaveBeenCalledExactlyOnceWith(
+      a,
+      { name: "Changed", picture, about: "Keep this" },
+      original("Alpha human").existing,
+    );
+    expect(fixture.saveProfile).toHaveBeenCalledExactlyOnceWith({
+      name: "Changed",
+      picture: expected,
+      about: "Keep this",
+    });
+  },
+);

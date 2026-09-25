@@ -211,7 +211,8 @@ it("keeps a community draft when publication fails and retries a failed read", a
   );
   expect(name).toHaveValue("Keep this draft");
   expect(service.saveProfile).not.toHaveBeenCalled();
-  expect(inspect).toHaveBeenCalledTimes(2);
+  // Failed initial load, explicit retry, then fresh preflight; no confirmation.
+  expect(inspect).toHaveBeenCalledTimes(3);
   expect(publish).toHaveBeenCalledTimes(1);
 });
 

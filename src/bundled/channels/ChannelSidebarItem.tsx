@@ -1,5 +1,5 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
-import { memo, type ReactNode } from "react";
+import { memo, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   ContextMenuRoot,
@@ -77,6 +77,11 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       ? channel.participants[0]
       : undefined;
   const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
+  // Keep the closing row's items through the popup's exit transition.
+  const lastMenuContent = useRef<ReactNode>(undefined);
+  useLayoutEffect(() => {
+    if (menuContent !== undefined) lastMenuContent.current = menuContent;
+  }, [menuContent]);
   const Icon =
     channel.channelType === "dm" ? ChatCircleIcon : channelIcon(channel);
   const row = (
@@ -200,6 +205,9 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
           if (sectionKey) onOpenMenu?.(channel, sectionKey);
         } else if (menuOpen) onCloseMenu?.();
       }}
+      onOpenChangeComplete={(open) => {
+        if (!open) lastMenuContent.current = undefined;
+      }}
     >
       {row}
       <MenuPopup
@@ -207,7 +215,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         anchor={menuOpen ? menuAnchor : undefined}
         finalFocus={() => menuFinalFocus?.(channel.id) ?? false}
       >
-        {menuContent}
+        {menuContent ?? lastMenuContent.current}
       </MenuPopup>
     </ContextMenuRoot>
   );

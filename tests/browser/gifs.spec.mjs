@@ -437,10 +437,7 @@ test.describe("GIF send roundtrip", () => {
     });
 
     await page.goto(app.origin);
-    await page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages", exact: true })
-      .click();
+    await openPage(page, "Messages");
 
     const draft = page.getByRole("textbox", {
       name: "Message #Alpha",

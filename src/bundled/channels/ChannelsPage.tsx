@@ -1004,6 +1004,9 @@ function ChannelWorkspace({
                     scope={scope}
                     channelId={current.id}
                     channelName={current.name}
+                    autoFocus={
+                      !current.readOnly && !requestedMessage && !requestedThread
+                    }
                     onOpenLink={openLink}
                     canOpenLink={canOpenLink}
                     label={

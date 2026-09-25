@@ -21,10 +21,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
       version: 1,
       validate: (params) => editAgentRoute(params) !== null,
     },
-    component: ({ companion, ...props }) => (
+    component: (props = {}) => (
       <AgentsPage
         {...props}
-        companion={companion}
         relay={relay}
         control={control}
         panels={ctx.panels}

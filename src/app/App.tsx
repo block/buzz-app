@@ -4,6 +4,7 @@ import { ChannelNavigationProvider } from "../features/channel-navigation/Channe
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { AgentWakeNotice } from "../features/agents/AgentWakeNotice";
+import { AgentUpdateReview } from "../bundled/agents/AgentUpdateReview";
 import { useEffect, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
@@ -101,6 +102,10 @@ export function App({ services }: { services: AppServices }) {
           workspace={startup === "ready" && route.page?.layout === "workspace"}
         >
           <AgentWakeNotice control={services.agentControl} />
+          <AgentUpdateReview
+            relay={services.relay}
+            control={services.agentControl}
+          />
           {startup === "recovery" && !settings ? (
             <RecoveryScreen plugins={plugins} />
           ) : (!route.state.ingress && route.failure) ||

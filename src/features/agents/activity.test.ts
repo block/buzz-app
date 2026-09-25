@@ -5,6 +5,7 @@ import {
   ACTIVITY_TURN_LIMIT,
   createAgentActivity,
 } from "./activity";
+import { parseAgentManagementRequest } from "./management-request";
 import type { LiveSnapshot } from "../relay/live";
 const agent = "a".repeat(64);
 const connected: LiveSnapshot = {
@@ -383,4 +384,97 @@ it("notifies the working-channel subscriber only on set changes, including timer
   expect(listener).toHaveBeenCalledTimes(4);
   unsubscribe();
   f.release();
+});
+it("delivers each valid owner-reviewed agent update once without adding it to activity", () => {
+  const f = fixture();
+  const receive = vi.fn();
+  f.activity.management.subscribe(receive);
+  const request = {
+    type: "agent_management_request",
+    action: "update",
+    requestId: "311e92f4-d948-40ed-af0d-3c9a02803ffc",
+    request: {
+      channelId: "34aeaccc-c83b-4422-beac-a4b8661f9f59",
+      agentName: "Sol",
+      model: "gpt-6-sol",
+    },
+  };
+  const raw = f.item("agent_management_request", "draft", {
+    channelId: request.request.channelId,
+    payload: request,
+  });
+
+  f.send(raw);
+  f.send(raw);
+
+  expect(receive).toHaveBeenCalledOnce();
+  expect(receive).toHaveBeenCalledWith(agent, request);
+  expect(f.snapshot().records).toEqual([]);
+  f.activity.dispose();
+});
+
+it("rejects unknown and secret-shaped agent-management fields", () => {
+  const request = {
+    type: "agent_management_request",
+    action: "update",
+    requestId: "request-1",
+    request: {
+      channelId: "34aeaccc-c83b-4422-beac-a4b8661f9f59",
+      agentName: "Sol",
+      model: "gpt-6-sol",
+    },
+  };
+  expect(parseAgentManagementRequest(request)).toEqual(request);
+  expect(
+    parseAgentManagementRequest({
+      ...request,
+      action: "create",
+      request: {
+        channelId: request.request.channelId,
+        displayName: "New agent",
+        systemPrompt: "Help.",
+      },
+    }),
+  ).toBeNull();
+  expect(
+    parseAgentManagementRequest({
+      ...request,
+      request: { ...request.request, apiKey: "never" },
+    }),
+  ).toBeNull();
+  expect(
+    parseAgentManagementRequest({
+      ...request,
+      request: { ...request.request, respondTo: "anyone" },
+    }),
+  ).toBeNull();
+});
+
+it("bounds retained management request IDs", () => {
+  const f = fixture();
+  const receive = vi.fn();
+  f.activity.management.subscribe(receive);
+  const request = {
+    type: "agent_management_request",
+    action: "update",
+    requestId: "request-0",
+    request: {
+      channelId: "34aeaccc-c83b-4422-beac-a4b8661f9f59",
+      agentName: "Sol",
+      model: "gpt-6-sol",
+    },
+  };
+  const send = (requestId: string) =>
+    f.send(
+      f.item("agent_management_request", requestId, {
+        channelId: request.request.channelId,
+        payload: { ...request, requestId },
+      }),
+    );
+
+  for (let index = 0; index <= 200; index++) send(`request-${index}`);
+  send("request-0");
+
+  expect(receive).toHaveBeenCalledTimes(202);
+  f.activity.dispose();
 });

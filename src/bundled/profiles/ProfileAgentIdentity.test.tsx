@@ -209,9 +209,15 @@ it("adds no agent section or owner reads for a profile without an agent hint", a
   );
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
-  const reads = query.mock.calls.flatMap(([filters]) => filters);
-  expect(reads).toHaveLength(3);
-  expect(reads).toEqual(
+  const profileReads = query.mock.calls
+    .flatMap(([filters]) => filters)
+    .filter((filter) =>
+      filter.kinds?.some(
+        (kind) => kind === 0 || kind === 10100 || kind === 30315,
+      ),
+    );
+  expect(profileReads).toHaveLength(3);
+  expect(profileReads).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
       expect.objectContaining({ authors: [person.pubkey], kinds: [10100] }),

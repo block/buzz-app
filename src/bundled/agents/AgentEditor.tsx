@@ -27,6 +27,8 @@ export function AgentEditor({
   state,
   avatar,
   onClose,
+  initialDraft,
+  notice: initialNotice,
 }: {
   agent: AgentView;
   displayName?: string;
@@ -34,10 +36,12 @@ export function AgentEditor({
   state: AgentControlState;
   avatar?: string | undefined;
   onClose(): void;
+  initialDraft?: AgentDraft;
+  notice?: string;
 }) {
-  const [draft, setDraft] = useState<AgentDraft | null>(null);
+  const [draft, setDraft] = useState<AgentDraft | null>(initialDraft ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(initialNotice ?? null);
   const current = draft ?? agentDraft(agent);
   const dirty = draft !== null;
   const stale = current.revision !== agent.revision;

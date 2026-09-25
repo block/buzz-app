@@ -1,4 +1,8 @@
 import type { EventData } from "../relay/events";
+import {
+  parseAgentManagementRequest,
+  type AgentManagementRequest,
+} from "./management-request";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
 import { observerFrame, type ObserverFrame } from "./observer";
@@ -6,6 +10,7 @@ import { observerFrame, type ObserverFrame } from "./observer";
 export const ACTIVITY_RECORD_LIMIT = 200;
 export const ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
 export const ACTIVITY_TURN_LIMIT = 512;
+export const MANAGEMENT_REQUEST_LIMIT = 200;
 export const ACTIVITY_FRESH_MS = 30_000;
 type RawRecord = ObserverFrame &
   Readonly<{
@@ -67,6 +72,7 @@ export function createAgentActivity(
 ) {
   let closed = false,
     leases = 0,
+    managementLeases = 0,
     generation = 0,
     epoch = 0;
   let status: Snapshot["status"] = available ? "disabled" : "unavailable";
@@ -79,6 +85,10 @@ export function createAgentActivity(
   const typing = new Map<string, Typing>();
   const listeners = new Set<() => void>();
   const workingListeners = new Set<() => void>();
+  const managementListeners = new Set<
+    (agent: string, request: AgentManagementRequest) => void
+  >();
+  const managementIds = new Set<string>();
   let workingChannels = "[]";
   let snapshot: Snapshot = Object.freeze({
     status,
@@ -159,7 +169,7 @@ export function createAgentActivity(
   function restart() {
     generation++;
     reset();
-    if (available && !closed && leases) {
+    if (available && !closed && leases + managementLeases > 0) {
       status = "connecting";
       observe(generation);
     } else status = closed || !available ? "unavailable" : "disabled";
@@ -211,6 +221,28 @@ export function createAgentActivity(
     }
   }
   return {
+    management: Object.freeze({
+      activate() {
+        if (closed || !available) return () => {};
+        if (++managementLeases === 1 && leases === 0) restart();
+        let released = false;
+        return () => {
+          if (released || closed) return;
+          released = true;
+          if (--managementLeases === 0 && leases === 0) {
+            observe(null);
+            restart();
+          }
+        };
+      },
+      subscribe(
+        listener: (agent: string, request: AgentManagementRequest) => void,
+      ) {
+        if (closed) return () => {};
+        managementListeners.add(listener);
+        return () => managementListeners.delete(listener);
+      },
+    }),
     queries: Object.freeze({
       snapshot: () => snapshot,
       workingSnapshot: () => workingChannels,
@@ -245,7 +277,13 @@ export function createAgentActivity(
       },
     }),
     receive(input: ObserverFrame, current: number) {
-      if (closed || !available || !leases || current !== generation) return;
+      if (
+        closed ||
+        !available ||
+        leases + managementLeases === 0 ||
+        current !== generation
+      )
+        return;
       let frame: ObserverFrame, raw: unknown;
       try {
         frame = observerFrame(input);
@@ -268,7 +306,26 @@ export function createAgentActivity(
         })
       )
         return;
-      for (const item of items) fold(frame.agent, item);
+      const management =
+        envelope?.kind === "agent_management_request"
+          ? parseAgentManagementRequest(envelope.payload)
+          : null;
+      if (management) {
+        if (!managementIds.has(management.requestId)) {
+          managementIds.add(management.requestId);
+          if (managementIds.size > MANAGEMENT_REQUEST_LIMIT) {
+            const oldest = managementIds.values().next().value;
+            if (oldest) managementIds.delete(oldest);
+          }
+          for (const listener of managementListeners)
+            notify(() => listener(frame.agent, management));
+        }
+        return;
+      }
+      for (const item of items) {
+        if (leases > 0) fold(frame.agent, item);
+      }
+      if (leases === 0) return;
       const record = Object.freeze({
         ...frame,
         receivedAt: Date.now(),
@@ -375,11 +432,13 @@ export function createAgentActivity(
       if (closed) return;
       closed = true;
       leases = 0;
+      managementLeases = 0;
       observe(null);
       clearInterval(timer);
       restart();
       listeners.clear();
       workingListeners.clear();
+      managementListeners.clear();
     },
   };
 }

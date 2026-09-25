@@ -593,7 +593,7 @@ export const test = base.extend({
         readState,
         sidebarUnread,
         savedSidebar,
-          sortingSidebar,
+        sortingSidebar,
         initialSidebarSort,
         dmLabels,
         tallMessages,
@@ -1066,8 +1066,14 @@ export const test = base.extend({
       expect(event.kind).toBe(30078);
       const sidebarCoordinate = event.tags.find(([name]) => name === "d")?.[1];
       if (
-        ["channel-mutes", "channel-sections", "channel-stars", "channel-sort"].includes(sidebarCoordinate) ||
-        (personalSidebar && sidebarCoordinate?.startsWith("buzz-channel-kit-v1:"))
+        [
+          "channel-mutes",
+          "channel-sections",
+          "channel-stars",
+          "channel-sort",
+        ].includes(sidebarCoordinate) ||
+        (personalSidebar &&
+          sidebarCoordinate?.startsWith("buzz-channel-kit-v1:"))
       ) {
         expect(event.tags).toContainEqual([
           "t",

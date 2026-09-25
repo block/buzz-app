@@ -114,12 +114,14 @@ preferences relocated it during the transaction. Read actions require
 Packaged hosts gain no speculative native preference writer.
 
 Move channel, Create new, exclusive Starred placement and startup presentation also
-belong to this persistent sidebar. The session serializes placement and mute writes
-through one queue. It retains confirmed preferences separately from pending Move
-projections: mute confirmation updates only confirmed mutes, then reapplies pending
-placement. A failed Move cannot roll back a confirmed mute, and mute completion
-cannot promote an unconfirmed placement. Mute optimism remains presentation-only;
-notification policy continues to use confirmed mutes.
+belong to this persistent sidebar. The session serializes placement, sort and mute
+writes through one queue, retaining one confirmed preferences snapshot beneath
+pending Move and Sort projections. Each confirmation updates only its owned fields
+before reapplying pending intent; failure cannot roll back unrelated confirmed
+state. Field-only confirmations cannot recover a failed full preference read or
+hide its Retry. Move stays gated until that read succeeds. Mute optimism remains
+presentation-only; notification policy continues to use confirmed mutes. This
+composition does not change the whole-record cross-device limitation below.
 
 Collapsed section keys and sidebar scroll remain separate, scoped view intent.
 They survive page switches in the same mounted sidebar, are saved when that

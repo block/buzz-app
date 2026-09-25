@@ -175,6 +175,61 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   await page.reload();
   await expect(rowIn(page, "channels")).toBeVisible();
   await expect(beta).toHaveCount(0);
+
+  // The built sidebar and broker share one queue: a pending section sort must
+  // not conceal an optimistic Move, and both must survive confirmed reload.
+  const openSort = async () => {
+    await page
+      .getByRole("button", { name: "More actions for Channels" })
+      .click();
+    await page.getByRole("menuitem", { name: "Sort", exact: true }).focus();
+    await page.keyboard.press("ArrowRight");
+    return page.getByRole("menu", { name: "Sort", exact: true });
+  };
+  const sortHeld = gate(),
+    sortStarted = gate();
+  await page.route("**/sidebar-sort", async (route) => {
+    sortStarted.resolve();
+    await sortHeld.promise;
+    await route.continue();
+  });
+  const sorted = page.waitForResponse("**/sidebar-sort");
+  const moved = page.waitForResponse("**/sidebar-star");
+  try {
+    const sortMenu = await openSort();
+    await sortMenu.getByRole("menuitemradio", { name: "Recent" }).click();
+    await sortStarted.promise;
+    const moveMenu = await openMove(page, rowIn(page, "channels"));
+    await moveMenu
+      .getByRole("menuitemradio", { name: "Work", exact: true })
+      .click();
+    await expect(beta).toBeFocused();
+    await expect(rowIn(page, "channels")).toHaveCount(0);
+    const pendingSort = await openSort();
+    await expect(
+      pendingSort.getByRole("menuitemradio", { name: "Recent" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+  } finally {
+    sortHeld.resolve();
+  }
+  for (const response of [await sorted, await moved]) {
+    expect(response.ok()).toBe(true);
+    await response.finished();
+  }
+  expect(
+    app.report.sidebarPublications.find(
+      ({ coordinate }) => coordinate === "channel-sort",
+    ).blob.groups,
+  ).toEqual({ channels: "recent" });
+  await page.unroute("**/sidebar-sort");
+  await page.reload();
+  await expect(beta).toBeVisible();
+  const restoredSort = await openSort();
+  await expect(
+    restoredSort.getByRole("menuitemradio", { name: "Recent" }),
+  ).toHaveAttribute("aria-checked", "true");
 });
 
 test("optimistic Star moves close the menu before the write, roll back with visible retry, and remove to Channels after reload", async ({

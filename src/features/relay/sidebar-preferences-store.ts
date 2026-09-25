@@ -55,7 +55,11 @@ export function createSidebarPreferencesStore(
   let confirmed: SidebarPreferences | undefined;
   let readFailure: string | undefined;
   const writable = () =>
-    !closed && !!confirmed && readFailure === undefined && !!write && !!writeStar;
+    !closed &&
+    !!confirmed &&
+    readFailure === undefined &&
+    !!write &&
+    !!writeStar;
   let nextMove = 0;
   const pendingMoves = new Map<number, MoveIntent>();
   const failedMoves = new Map<string, MoveFailure>();
@@ -154,16 +158,18 @@ export function createSidebarPreferencesStore(
       ...(readFailure === undefined
         ? { status: "ready" as const }
         : { status: "error" as const, error: readFailure }),
-      data: retained(withPendingMoves(
-        pendingSorts.size
-          ? { ...confirmed, sort: withPendingSorts(confirmed.sort ?? {}) }
-          : confirmed,
-      )),
+      data: retained(
+        withPendingMoves(
+          pendingSorts.size
+            ? { ...confirmed, sort: withPendingSorts(confirmed.sort ?? {}) }
+            : confirmed,
+        ),
+      ),
     });
   };
   function refresh(): Promise<void> {
     if (closed || !available) return Promise.resolve();
-    if (pendingMoves.size || pendingSorts.size) {
+    if (pendingMoves.size) {
       const refreshGeneration = generation;
       return writeQueue.then(() => {
         if (!closed && generation === refreshGeneration) return refresh();
@@ -221,13 +227,7 @@ export function createSidebarPreferencesStore(
     signal?: AbortSignal,
     source = confirmed?.groupSource,
   ): Promise<SidebarPreferences> {
-    if (
-      !writable() ||
-      !snapshot.data ||
-      !confirmed ||
-      !writeStar ||
-      !write
-    )
+    if (!writable() || !snapshot.data || !confirmed || !writeStar || !write)
       return Promise.reject(
         new Error("Sidebar group moves are unavailable in this host"),
       );
@@ -340,7 +340,10 @@ export function createSidebarPreferencesStore(
         project();
         const settle = (sort?: Readonly<Record<string, SidebarSortMode>>) => {
           if (closed || generation !== writeGeneration || !confirmed) return;
-          confirmed = { ...confirmed, sort: { ...(sort ?? confirmed.sort ?? {}) } };
+          confirmed = {
+            ...confirmed,
+            sort: { ...(sort ?? confirmed.sort ?? {}) },
+          };
           pendingSorts.delete(id);
           project();
         };

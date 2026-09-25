@@ -521,7 +521,13 @@ it.each(["mute-first", "sort-first"] as const)(
       sortStarted.resolve();
       return sortGate.promise;
     });
-    const { wire, owner, preferences } = setup(undefined, undefined, undefined, mute, sort);
+    const { wire, owner, preferences } = setup(
+      undefined,
+      undefined,
+      undefined,
+      mute,
+      sort,
+    );
     try {
       const initial = preferences.ensure();
       await flush();
@@ -593,7 +599,13 @@ it.each(["clearCache", "dispose"] as const)(
     const sort = vi.fn<SidebarSortMutator>(async () => ({
       channels: "recent",
     }));
-    const { wire, owner, preferences } = setup(undefined, undefined, undefined, mute, sort);
+    const { wire, owner, preferences } = setup(
+      undefined,
+      undefined,
+      undefined,
+      mute,
+      sort,
+    );
     try {
       const initial = preferences.ensure();
       await flush();

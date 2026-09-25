@@ -4,6 +4,7 @@ import type {
   SidebarAssignmentIntent,
   SidebarMuteMutator,
   SidebarPreferences,
+  SidebarSortMutator,
 } from "./sidebar-preferences";
 import { flush } from "./testing";
 
@@ -56,6 +57,13 @@ async function setup() {
     data = { ...data, muted: [...mutes] };
     return data.muted;
   });
+  const sort = vi.fn<SidebarSortMutator>(async (group, mode) => {
+    const next = { ...data.sort };
+    if (mode === "alpha") delete next[group];
+    else next[group] = mode;
+    data = { ...data, sort: next };
+    return next;
+  });
   const owner = createSidebarPreferencesStore(
     read,
     true,
@@ -63,9 +71,10 @@ async function setup() {
     star,
     undefined,
     mute,
+    sort,
   );
   await owner.queries.ensure();
-  return { owner, prefs: owner.queries, assignment, star, read, mute };
+  return { owner, prefs: owner.queries, assignment, star, read, mute, sort };
 }
 
 it("moves immediately, keeps later intent through older failure, and serializes both records", async () => {
@@ -370,6 +379,181 @@ it.each([false, true])(
         assignments: { alpha: "later" },
         muted: ["alpha"],
       });
+    } finally {
+      gate.resolve(before);
+      h.owner.dispose();
+    }
+  },
+);
+
+// Exercise the shared owner, not separate mock projections: both optimistic
+// families must survive each other's confirmation and rollback in either order.
+it.each([
+  ["move-first", "success"],
+  ["move-first", "move-fails"],
+  ["move-first", "sort-fails"],
+  ["sort-first", "success"],
+  ["sort-first", "move-fails"],
+  ["sort-first", "sort-fails"],
+] as const)(
+  "%s preserves unrelated intent through %s",
+  async (order, outcome) => {
+    const h = await setup();
+    const moveGate = deferred<readonly string[]>();
+    const sortGate = deferred<Awaited<ReturnType<SidebarSortMutator>>>();
+    const moveStarted = deferred<void>();
+    const sortStarted = deferred<void>();
+    h.star.mockImplementationOnce(() => {
+      moveStarted.resolve();
+      return moveGate.promise;
+    });
+    h.sort.mockImplementationOnce(() => {
+      sortStarted.resolve();
+      return sortGate.promise;
+    });
+    try {
+      const move = () => h.prefs.assign("alpha", "later");
+      const sort = () =>
+        h.prefs.setSort("channels", "recent", ["work", "later"]);
+      const first = order === "move-first" ? move() : sort();
+      const firstResult = Promise.allSettled([first]);
+      await (order === "move-first" ? moveStarted : sortStarted).promise;
+      const second = order === "move-first" ? sort() : move();
+      const secondResult = Promise.allSettled([second]);
+      expect(
+        order === "move-first" ? h.sort : h.assignment,
+      ).not.toHaveBeenCalled();
+      expect(h.prefs.snapshot().data).toMatchObject({
+        assignments: { alpha: "later" },
+        starred: [],
+        sort: { channels: "recent" },
+        muted: [],
+      });
+      const finishMove = () =>
+        outcome === "move-fails"
+          ? moveGate.reject(new Error("move failed"))
+          : moveGate.resolve([]);
+      const finishSort = () =>
+        outcome === "sort-fails"
+          ? sortGate.reject(new Error("sort failed"))
+          : sortGate.resolve({ channels: "recent" });
+      if (order === "move-first") {
+        finishMove();
+        await firstResult;
+        await sortStarted.promise;
+        expect(h.prefs.snapshot().data?.sort).toEqual({ channels: "recent" });
+        finishSort();
+      } else {
+        finishSort();
+        await firstResult;
+        await moveStarted.promise;
+        expect(h.prefs.snapshot().data?.assignments.alpha).toBe("later");
+        expect(h.prefs.snapshot().data?.starred).toEqual([]);
+        finishMove();
+      }
+      const results = [...(await firstResult), ...(await secondResult)];
+      expect(
+        results.filter(({ status }) => status === "rejected"),
+      ).toHaveLength(outcome === "success" ? 0 : 1);
+      await h.prefs.setMute("beta", true);
+      expect(h.prefs.snapshot().data).toMatchObject({
+        assignments: { alpha: outcome === "move-fails" ? "work" : "later" },
+        starred: outcome === "move-fails" ? ["alpha"] : [],
+        sort: outcome === "sort-fails" ? {} : { channels: "recent" },
+        muted: ["beta"],
+      });
+      expect(h.prefs.snapshot().moves?.[0]?.error).toBe(
+        outcome === "move-fails" ? "move failed" : undefined,
+      );
+      expect(h.prefs.snapshot().sortErrors?.[0]?.error).toBe(
+        outcome === "sort-fails" ? "sort failed" : undefined,
+      );
+    } finally {
+      moveGate.resolve([]);
+      sortGate.resolve({});
+      h.owner.dispose();
+    }
+  },
+);
+
+it.each(["clear", "dispose", "cancel"] as const)(
+  "%s fences an active sort, queued move and deferred catalog refresh",
+  async (action) => {
+    const h = await setup();
+    const gate = deferred<Awaited<ReturnType<SidebarSortMutator>>>();
+    const started = deferred<AbortSignal>();
+    const caller = new AbortController();
+    h.sort.mockImplementationOnce((_group, _mode, _ids, signal) => {
+      started.resolve(signal);
+      return gate.promise;
+    });
+    const before = h.prefs.snapshot().data;
+    try {
+      const sorting = h.prefs.setSort("channels", "recent", [], caller.signal);
+      const signal = await started.promise;
+      const moving = h.prefs.assign("alpha", "later", caller.signal);
+      const results = Promise.allSettled([sorting, moving]);
+      const refresh = h.prefs.refresh();
+      if (action === "cancel") caller.abort();
+      else h.owner[action]();
+      expect(signal.aborted).toBe(true);
+      gate.resolve({ channels: "recent" });
+      expect((await results).map(({ status }) => status)).toEqual([
+        "rejected",
+        "rejected",
+      ]);
+      await refresh;
+      expect(h.assignment).not.toHaveBeenCalled();
+      expect(h.star).not.toHaveBeenCalled();
+      expect(h.read).toHaveBeenCalledTimes(action === "cancel" ? 2 : 1);
+      expect(h.prefs.snapshot().data).toEqual(
+        action === "cancel" ? before : undefined,
+      );
+      expect(h.prefs.snapshot().moves).toBeUndefined();
+      expect(h.prefs.snapshot().sortErrors).toBeUndefined();
+    } finally {
+      gate.resolve({});
+      h.owner.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  "Sort preserves failed full-read recovery (retry pending: %s)",
+  async (retryPending) => {
+    const h = await setup();
+    const gate = deferred<SidebarPreferences>();
+    const started = deferred<void>();
+    const before = h.prefs.snapshot().data;
+    if (!before) throw new Error("Initial preferences missing");
+    try {
+      h.read.mockRejectedValueOnce(new Error("preferences unavailable"));
+      await h.prefs.refresh();
+      let retry: Promise<void> | undefined;
+      if (retryPending) {
+        h.read.mockImplementationOnce(() => {
+          started.resolve();
+          return gate.promise;
+        });
+        retry = h.prefs.refresh();
+        await started.promise;
+      }
+      await h.prefs.setSort("channels", "recent", []);
+      gate.resolve(before);
+      await retry;
+      expect(h.prefs.snapshot()).toMatchObject({
+        status: "error",
+        error: "preferences unavailable",
+        data: { sort: { channels: "recent" } },
+      });
+      expect(h.prefs.writable).toBe(false);
+      await expect(h.prefs.assign("alpha", "later")).rejects.toThrow(
+        "unavailable",
+      );
+      await h.prefs.refresh();
+      expect(h.prefs.snapshot().status).toBe("ready");
+      expect(h.prefs.writable).toBe(true);
+      expect(h.prefs.snapshot().data?.sort).toEqual({ channels: "recent" });
     } finally {
       gate.resolve(before);
       h.owner.dispose();

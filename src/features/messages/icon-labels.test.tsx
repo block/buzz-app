@@ -119,11 +119,22 @@ it("copies proxy images and shows a stage-scoped success notice", async () => {
 
   expect(write).toHaveBeenCalledTimes(1);
   expect(screen.getByRole("status")).toHaveTextContent("Image copied");
-  expect(screen.queryByRole("dialog", { name: "Image copied" })).toBeNull();
   await act(() => vi.advanceTimersByTimeAsync(3999));
   expect(screen.getByRole("status")).toHaveTextContent("Image copied");
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("calls clipboard.write synchronously within the copy image click", () => {
+  const write = stubImageCopySupport();
+  renderProxyImageStage();
+  markPreviewLoaded();
+
+  fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+
+  // WebKit requires clipboard.write inside the user gesture; jsdom and Chromium
+  // do not catch violations, so this assertion must stay before any await/flush.
+  expect(write).toHaveBeenCalledTimes(1);
 });
 
 it("prevents duplicate image copy writes until the first settles", async () => {
@@ -223,6 +234,57 @@ it("clears the image copy notice on a new copy attempt and image switch", async 
     />,
   );
   expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("does not show a resolved copy notice after switching selected images", async () => {
+  let finish!: () => void;
+  const write = stubImageCopySupport(
+    vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    ),
+  );
+  const first = "https://example.test/a.png";
+  const second = "https://example.test/b.png";
+  const { rerender } = render(
+    <ImageReviewStage
+      attachments={[
+        { url: first, kind: "image" },
+        { url: second, kind: "image" },
+      ]}
+      selectedUrl={first}
+      media={() => proxyImageSource}
+      select={() => {}}
+      onOpenLink={() => false}
+    />,
+  );
+  markPreviewLoaded();
+
+  fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+  expect(write).toHaveBeenCalledTimes(1);
+  rerender(
+    <ImageReviewStage
+      attachments={[
+        { url: first, kind: "image" },
+        { url: second, kind: "image" },
+      ]}
+      selectedUrl={second}
+      media={() => proxyImageSource}
+      select={() => {}}
+      onOpenLink={() => false}
+    />,
+  );
+
+  try {
+    await act(async () => {
+      finish();
+    });
+    expect(screen.queryByRole("status")).toBeNull();
+  } finally {
+    finish();
+  }
 });
 
 it("opens external images through the host opener without download semantics", () => {

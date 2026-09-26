@@ -1833,3 +1833,51 @@ it("keeps still-matching directory people across the inline host's per-keystroke
   vi.unstubAllGlobals();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
+
+it("the persistent toolbar picker reads an empty search again after close and reopen", async () => {
+  let published = false;
+  const people = vi.fn(async () => ({
+    people: published ? [{ pubkey: "9".repeat(64), name: "Zed" }] : [],
+    hasMore: false,
+  }));
+  const t = setup();
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  };
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Mention a member" });
+  await user.click(trigger);
+  await user.type(screen.getByRole("searchbox"), "Zed");
+  await waitFor(() =>
+    expect(people).toHaveBeenCalledWith("Zed", 1, expect.any(AbortSignal)),
+  );
+  const calls = people.mock.calls.length;
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  published = true;
+  // The picker stays mounted while closed, so this is the same hook instance.
+  await user.click(trigger);
+  const search = screen.getByRole("searchbox");
+  if ((search as HTMLInputElement).value !== "Zed") {
+    await user.clear(search);
+    await user.type(search, "Zed");
+  }
+  await waitFor(() => expect(people.mock.calls.length).toBeGreaterThan(calls));
+  expect(people).toHaveBeenLastCalledWith("Zed", 1, expect.any(AbortSignal));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: `Zed ${"9".repeat(64)}` }),
+    ).toBeTruthy(),
+  );
+  t.library.dispose();
+});

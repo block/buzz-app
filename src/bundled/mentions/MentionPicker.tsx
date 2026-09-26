@@ -39,7 +39,9 @@ export function MentionPicker({
   const controls = useRef<HTMLFieldSetElement>(null);
   const accepted = useRef(false);
   const searchInput = useRef<HTMLElement>(null);
-  const lifetime = `picker:${useId()}`;
+  // The picker stays mounted while closed; each opening is its own lifetime.
+  const [opening, setOpening] = useState(0);
+  const lifetime = `picker:${useId()}:${opening}`;
   const model = useMentionChoices(
     session,
     channelId,
@@ -83,6 +85,7 @@ export function MentionPicker({
       onOpenChange={(next) => {
         setOpen(next);
         if (next) {
+          setOpening((value) => value + 1);
           accepted.current = false;
           if (!draftRoster) session.channels.ensureList();
         }

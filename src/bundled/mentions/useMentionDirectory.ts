@@ -75,14 +75,17 @@ export function useMentionDirectory(
     session: RelaySession;
     query: string;
     attempt: number;
-    /** A settled page that is not cached (an empty result). */
+    /** The chooser opening this result belongs to. */
+    lifetime: string;
+    /** A settled page that is not cached (an empty result), for this opening only. */
     page?: Page;
     error?: string;
   }>();
   const own =
     state?.session === session &&
     state.query === query &&
-    state.attempt === attempt
+    state.attempt === attempt &&
+    state.lifetime === lifetime
       ? state
       : undefined;
   // An exact key is an author lookup, which name-prefix evidence cannot refute.
@@ -103,7 +106,7 @@ export function useMentionDirectory(
   useEffect(() => {
     if (!searching) return;
     const controller = new AbortController();
-    const current = { session, query, attempt };
+    const current = { session, query, attempt, lifetime };
     const timer = setTimeout(() => {
       exhausted.delete(session);
       void session.directMessages.people(query, 1, controller.signal).then(
@@ -133,7 +136,7 @@ export function useMentionDirectory(
       clearTimeout(timer);
       controller.abort();
     };
-  }, [session, query, searching, exactKey, attempt]);
+  }, [session, query, searching, exactKey, attempt, lifetime]);
   if (hit) settle(session, lifetime, hit);
   const error = active && !hit ? own?.error : undefined;
   const shown = hit ?? settled.get(session)?.get(lifetime);

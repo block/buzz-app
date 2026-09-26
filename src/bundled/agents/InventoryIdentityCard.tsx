@@ -6,13 +6,16 @@ import type {
 } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
+import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 import { ManagedAgentActions } from "./ManagedAgentActions";
+import { localHereGroup, type inventoryDecision } from "./inventory-decisions";
 import type { AgentInventoryIdentity } from "./inventory-model";
 
 /** One complete inventory identity; source selection belongs to the enclosing inventory. */
 export function InventoryIdentityCard({
   row,
+  decision,
   state,
   control,
   session,
@@ -22,8 +25,10 @@ export function InventoryIdentityCard({
   duplicate,
   remove,
   importedId,
+  onUseHere,
 }: {
   row: AgentInventoryIdentity;
+  decision: ReturnType<typeof inventoryDecision>;
   state: AgentControlState;
   control: AgentControl;
   session: RelaySession;
@@ -33,10 +38,12 @@ export function InventoryIdentityCard({
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   importedId: string | null;
+  onUseHere(pubkey: string): void;
 }) {
   const data = state.data;
   if (!data) return null;
   const avatar = row.avatar ?? publicProfiles.get(row.pubkey)?.picture;
+  const tile = decision.group === localHereGroup;
   const setupHere = row.localSetups.get(destination);
   return (
     <AgentCard
@@ -59,16 +66,46 @@ export function InventoryIdentityCard({
         />
       )}
       {row.unconfiguredSetups.map((agent) => (
-        <ManagedAgentActions
-          key={agent.id}
-          agent={agent}
-          state={state}
-          control={control}
-          imported={agent.id === importedId}
-          destination={destination}
-          owner={session.viewer ?? ""}
-        />
+        <p key={agent.id} role="status" className="m-0 break-all text-body-sm">
+          Earlier import needs setup: {agent.relayUrl || "No saved community"}.
+          Connect to the intended community and choose Use here. It stays
+          stopped.
+        </p>
       ))}
+      <div
+        className={
+          tile ? "flex min-w-0 flex-wrap items-center gap-2" : "contents"
+        }
+      >
+        {decision.action === "use" && (
+          <>
+            <Button
+              size="compact"
+              disabled={
+                state.busy ||
+                state.status !== "ready" ||
+                !!decision.blocked ||
+                !data.localInventoryActions ||
+                !control.configureHere
+              }
+              onClick={() => onUseHere(row.pubkey)}
+            >
+              Use here
+            </Button>
+            {decision.blocked && <p role="status">{decision.blocked}</p>}
+            {!data.localInventoryActions && (
+              <p>
+                Restart an updated desktop build to use local inventory actions.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+      {decision.action === "wait" && (
+        <p role="status" className="m-0 text-body-sm text-secondary">
+          {decision.blocked}
+        </p>
+      )}
       <details className="min-w-0 text-body-sm text-secondary">
         <summary className="cursor-pointer">Identity &amp; sources</summary>
         <div className="flex min-w-0 flex-col gap-2 pt-2">

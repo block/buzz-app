@@ -827,3 +827,42 @@ it("preserves interleaved file order and counts unavailable images but not unsaf
     html.indexOf('href="https://image.test/last.png"'),
   );
 });
+
+it("keeps audio and video players between their original image runs", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { kind: "image", url: "https://image.test/first.png" },
+          {
+            kind: "audio",
+            url: "https://files.test/voice.mp3",
+            name: "voice.mp3",
+          },
+          {
+            kind: "video",
+            url: "https://files.test/demo.mp4",
+            name: "demo.mp4",
+          },
+          { kind: "image", url: "https://image.test/last.png" },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html.match(/role="group" aria-label="1 image"/g)).toHaveLength(2);
+  expect(html).toContain("<audio");
+  expect(html).toContain("<video");
+  expect(html.indexOf('href="https://image.test/first.png"')).toBeLessThan(
+    html.indexOf("<audio"),
+  );
+  expect(html.indexOf("<audio")).toBeLessThan(html.indexOf("<video"));
+  expect(html.indexOf("<video")).toBeLessThan(
+    html.indexOf('href="https://image.test/last.png"'),
+  );
+});

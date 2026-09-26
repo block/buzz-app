@@ -1,4 +1,4 @@
-import { byteSize } from "./budget";
+import { byteSize, HEAD_MAX_AGE } from "./budget";
 import type { SidebarPreferences } from "./sidebar-preferences";
 /** Device-local resume data, never proof of current access or permission to write. */
 export type SavedStartup = {
@@ -31,9 +31,14 @@ export interface HeadPersistence {
 const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
 const STARTUP = "startup";
-const MAX_BYTES = 8 * 1024 * 1024;
-const MAX_HEADS = 64;
-const MAX_AGE = 24 * 60 * 60 * 1000;
+// Key-only head indexes: budget checks and purges never deserialize saved windows.
+const BY_SCOPE = "scope";
+const BY_BUDGET = "budget";
+// Sized for a full roster of opened windows (~40 KB each), below the store's 24 MiB
+// in-memory head budget. Cached heads never prove freshness or membership.
+const MAX_BYTES = 16 * 1024 * 1024;
+const MAX_HEADS = 256;
+const MAX_STARTUP_BYTES = 8 * 1024 * 1024;
 type Record = SavedHead & { key: string; scope: string; bytes: number };
 
 export function createHeadPersistence(
@@ -47,7 +52,7 @@ export function createHeadPersistence(
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
     opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB, 2);
+      const request = indexedDB.open(DB, 3);
       let expired = false;
       const timeout = setTimeout(() => {
         expired = true;
@@ -57,6 +62,12 @@ export function createHeadPersistence(
         for (const name of [STORE, STARTUP])
           if (!request.result.objectStoreNames.contains(name))
             request.result.createObjectStore(name, { keyPath: "key" });
+        // Version 3 indexes existing head records in place; no saved window is lost.
+        const heads = request.transaction?.objectStore(STORE);
+        if (heads && !heads.indexNames.contains(BY_SCOPE))
+          heads.createIndex(BY_SCOPE, "scope");
+        if (heads && !heads.indexNames.contains(BY_BUDGET))
+          heads.createIndex(BY_BUDGET, ["savedAt", "bytes"]);
       };
       request.onerror = () => {
         clearTimeout(timeout);
@@ -124,7 +135,7 @@ export function createHeadPersistence(
           request.onsuccess = () => {
             const data = { ...request.result?.data, ...patch };
             const bytes = byteSize(data);
-            if (bytes <= MAX_BYTES) {
+            if (bytes <= MAX_STARTUP_BYTES) {
               store.put({ key: scope, data, bytes, savedAt: Date.now() });
               const all = store.getAll();
               all.onsuccess = () => {
@@ -133,7 +144,7 @@ export function createHeadPersistence(
                   (a, b) => b.savedAt - a.savedAt,
                 )) {
                   total += row.bytes;
-                  if (total > MAX_BYTES) store.delete(row.key);
+                  if (total > MAX_STARTUP_BYTES) store.delete(row.key);
                 }
               };
             }
@@ -144,14 +155,11 @@ export function createHeadPersistence(
       ),
     read: () =>
       transact("readonly", (store, done) => {
-        const request = store.getAll();
+        const request = store.index(BY_SCOPE).getAll(scope);
         request.onsuccess = () =>
           done(
             (request.result as Record[])
-              .filter(
-                (row) =>
-                  row.scope === scope && Date.now() - row.savedAt < MAX_AGE,
-              )
+              .filter((row) => Date.now() - row.savedAt < HEAD_MAX_AGE)
               .sort((a, b) => b.savedAt - a.savedAt)
               .slice(0, MAX_HEADS),
           );
@@ -170,24 +178,26 @@ export function createHeadPersistence(
           bytes,
         };
         store.put(row);
-        const request = store.getAll();
+        // Global disk budget across identities, newest first; scope is still required for every read.
+        const request = store.index(BY_BUDGET).openKeyCursor(null, "prev");
+        let total = 0,
+          count = 0;
         request.onsuccess = () => {
-          // Global disk budget across identities; scope is still required for every read.
-          let total = 0,
-            count = 0;
-          for (const entry of (request.result as Record[]).sort(
-            (a, b) => b.savedAt - a.savedAt,
-          )) {
-            total += entry.bytes;
-            count++;
-            if (
-              total > MAX_BYTES ||
-              count > MAX_HEADS ||
-              Date.now() - entry.savedAt >= MAX_AGE
-            )
-              store.delete(entry.key);
+          const cursor = request.result;
+          if (!cursor) {
+            done(undefined);
+            return;
           }
-          done(undefined);
+          const [savedAt, size] = cursor.key as [number, number];
+          total += size;
+          count++;
+          if (
+            total > MAX_BYTES ||
+            count > MAX_HEADS ||
+            Date.now() - savedAt >= HEAD_MAX_AGE
+          )
+            store.delete(cursor.primaryKey);
+          cursor.continue();
         };
       }),
     remove: (channelId) =>
@@ -198,11 +208,10 @@ export function createHeadPersistence(
     retain: (ids) =>
       transact("readwrite", (store, done) => {
         const allowed = new Set(ids),
-          request = store.getAll();
+          request = store.index(BY_SCOPE).getAllKeys(scope);
         request.onsuccess = () => {
-          for (const row of request.result as Record[])
-            if (row.scope === scope && !allowed.has(row.channelId))
-              store.delete(row.key);
+          for (const key of request.result as string[])
+            if (!allowed.has(key.slice(scope.length + 1))) store.delete(key);
           done(undefined);
         };
       }),
@@ -216,10 +225,9 @@ export function createHeadPersistence(
         STARTUP,
       );
       await transact("readwrite", (store, done) => {
-        const request = store.getAll();
+        const request = store.index(BY_SCOPE).getAllKeys(scope);
         request.onsuccess = () => {
-          for (const row of request.result as Record[])
-            if (row.scope === scope) store.delete(row.key);
+          for (const key of request.result) store.delete(key);
           done(undefined);
         };
       });

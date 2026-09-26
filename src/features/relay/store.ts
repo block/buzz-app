@@ -16,7 +16,7 @@ import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
 import { readSessionWindow } from "./session-window";
-import { ByteLru, byteSize } from "./budget";
+import { ByteLru, byteSize, HEAD_MAX_AGE } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
 import { relayDebug } from "./debug";
@@ -110,8 +110,8 @@ export function createChannelStore(
     unavailableReason,
     prepared = false,
     persistence,
-    maxHeadBytes = 4 * 1024 * 1024,
-    maxHeads = 64,
+    maxHeadBytes = 24 * 1024 * 1024,
+    maxHeads = 256,
     maxHistoryRows = 2400,
     maxHistoryBytes = 8 * 1024 * 1024,
     now = Date.now,
@@ -666,7 +666,7 @@ export function createChannelStore(
         heads.peek(record.channelId) ||
         !Number.isFinite(record.savedAt) ||
         record.savedAt > now() ||
-        now() - record.savedAt > 86_400_000
+        now() - record.savedAt >= HEAD_MAX_AGE
       ) {
         if (initial) reveal?.();
         continue;
@@ -714,6 +714,14 @@ export function createChannelStore(
           savedAt: record.savedAt,
           cached: true,
         };
+        // Records arrive newest first; only the intended channel may evict a newer head.
+        const bytes = byteSize(head);
+        const held = heads.stats();
+        if (
+          record.channelId !== intent &&
+          (held.entries >= maxHeads || held.bytes + bytes > maxHeadBytes)
+        )
+          continue;
         const verifiedProfiles: RelayEvent[] = [];
         for (let index = 0; index < record.profiles.length; index += 8) {
           for (const value of record.profiles.slice(index, index + 8)) {
@@ -745,7 +753,7 @@ export function createChannelStore(
         // Evidence subscribers can synchronously revoke access or clear caches too.
         if (disposed || generation !== epoch || !authorized(record.channelId))
           return;
-        heads.set(record.channelId, head);
+        heads.set(record.channelId, head, bytes);
         const state = windows.get(record.channelId);
         if (
           state &&

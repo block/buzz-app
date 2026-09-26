@@ -281,6 +281,75 @@ it("byte LRU enforces both budgets and rejects a single oversize object", () => 
   expect(cache.set("d", "D", 20)).toBe(false);
   expect(cache.keys()).toEqual(["a", "c"]);
 });
+it("restores a disk head saved days ago as cached, then revalidates it", async () => {
+  const disk = memoryDisk([
+    {
+      channelId: "a",
+      savedAt: Date.now() - 3 * 86_400_000,
+      events: head("a", "from last week"),
+      profiles: [],
+    },
+  ]);
+  const { queries, next, store } = setup({ persistence: disk });
+  queries.ensureList();
+  next().respond(discovery(["a"]));
+  await vi.waitFor(() => expect(store.diagnostics().heads.entries).toBe(1));
+  queries.ensure("a");
+  expect(queries.window("a")).toMatchObject({
+    freshness: "cached",
+    rows: [{ content: "from last week" }],
+  });
+  next().respond(head("a", "current"));
+  await flush();
+  expect(queries.window("a")).toMatchObject({
+    freshness: "verified",
+    rows: [{ content: "current" }],
+  });
+  store.dispose();
+});
+it("does not restore a disk head past the retention backstop", async () => {
+  const disk = memoryDisk([
+    {
+      channelId: "a",
+      savedAt: Date.now() - 31 * 86_400_000,
+      events: head("a", "abandoned"),
+      profiles: [],
+    },
+    { channelId: "b", savedAt: Date.now(), events: head("b"), profiles: [] },
+  ]);
+  const { queries, next, store } = setup({ persistence: disk });
+  queries.ensureList();
+  next().respond(discovery(["a", "b"]));
+  await vi.waitFor(() => expect(store.diagnostics().heads.entries).toBe(1));
+  await flush();
+  queries.ensure("a");
+  expect(queries.window("a")).toMatchObject({ status: "loading", rows: [] });
+  store.dispose();
+});
+it("restoring from disk never evicts a newer head for an older one", async () => {
+  const disk = memoryDisk([
+    {
+      channelId: "a",
+      savedAt: Date.now() - 1000,
+      events: head("a", "newer"),
+      profiles: [],
+    },
+    {
+      channelId: "b",
+      savedAt: Date.now() - 5000,
+      events: head("b", "older"),
+      profiles: [],
+    },
+  ]);
+  const { queries, next, store } = setup({ persistence: disk, maxHeads: 1 });
+  queries.ensureList();
+  next().respond(discovery(["a", "b"]));
+  await vi.waitFor(() => expect(store.diagnostics().heads.entries).toBe(1));
+  await flush();
+  queries.ensure("a");
+  expect(queries.window("a").rows).toMatchObject([{ content: "newer" }]);
+  store.dispose();
+});
 it("storage failure does not block foreground reads", async () => {
   const disk = memoryDisk();
   disk.read = async () => {

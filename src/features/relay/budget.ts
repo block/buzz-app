@@ -1,4 +1,7 @@
 export const OUTBOX_INPUT_MAX_BYTES = 32 * 1024;
+/** Saved channel-head retention backstop for records no access-loss purge reaches,
+ * e.g. a signed-out identity. A restored head is still revalidated on open. */
+export const HEAD_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 
 /** Deterministic UTF-8 budget, used for both warm data and persisted records. */
 export const byteSize = (value: unknown) =>

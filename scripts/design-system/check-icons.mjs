@@ -38,6 +38,7 @@ const nonIconDependencies = new Set([
   "consola", // Runtime logging, not an icon catalog.
   "dockview-react",
   "emoji-mart",
+  "fake-indexeddb", // Test-only IndexedDB for the channel head cache adapter.
   "flexlayout-react",
   "jsdom",
   "mdast", // Type-only module supplied by @types/mdast.

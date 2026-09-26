@@ -67,6 +67,10 @@ export interface AgentView {
   deployedRemote?: boolean;
   /** Older imports need an explicit snapshot of their legacy team instructions. */
   needsTeamImport?: boolean;
+  /** Provider plugin (`plugin/provider`) that handles mentions; no ACP process runs. */
+  provider?: string | null;
+  /** Non-secret provider settings chosen at creation. */
+  providerConfig?: Record<string, string>;
 }
 export interface ControlSnapshot {
   agents: AgentView[];
@@ -99,6 +103,28 @@ export interface AgentEdit {
   /** Missing preserves the native value; null removes it; string replaces it. */
   environment: Record<string, string | null>;
 }
+/** Chosen once at creation; the native store keeps it beside the identity. */
+export interface ProviderBinding {
+  provider: string;
+  config: Record<string, string>;
+}
+/** One process run as a provider-backed agent, with only its own credential. */
+export interface InvokeRequest {
+  id: string;
+  provider: string;
+  /** A bundled tool name (such as `buzz`) or an absolute executable path. */
+  program: string;
+  args?: string[];
+  /** Written to the process's stdin. */
+  input?: string;
+  timeoutSeconds?: number;
+}
+export interface InvokeResult {
+  exitCode: number | null;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+}
 export interface AgentImportPreview {
   token: string;
   sourcePath: string;
@@ -124,7 +150,9 @@ export interface AgentControlHost {
     requestId: string,
     edit: AgentEdit,
     auth: string,
+    provider?: ProviderBinding,
   ): Promise<ControlSnapshot>;
+  invoke?(request: InvokeRequest): Promise<InvokeResult>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
@@ -165,7 +193,10 @@ export interface AgentControl {
     destination: string,
     owner: string,
     edit: AgentEdit,
+    provider?: ProviderBinding,
   ): Promise<AgentView>;
+  /** Concurrent and outside the busy lane: provider work is not a control operation. */
+  invoke?(request: InvokeRequest): Promise<InvokeResult>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
@@ -380,6 +411,7 @@ export function createAgentControl(
             destination: string,
             owner: string,
             edit: AgentEdit,
+            provider?: ProviderBinding,
           ) => {
             let id = "";
             const data = await run(
@@ -401,6 +433,7 @@ export function createAgentControl(
                   requestId,
                   edit,
                   JSON.stringify(result.auth),
+                  ...(provider ? [provider] : []),
                 );
               },
               ready,
@@ -414,6 +447,15 @@ export function createAgentControl(
                 "Creation was not confirmed; refresh agents before trying again.",
               );
             return agent;
+          },
+        }
+      : {}),
+    ...(host?.invoke
+      ? {
+          invoke: (request: InvokeRequest) => {
+            if (disposed || !host.invoke)
+              return Promise.reject(new Error(agentControlUnavailable));
+            return host.invoke(request);
           },
         }
       : {}),
@@ -484,6 +526,7 @@ export function createAgentControl(
         const agents =
           state.data?.agents.filter(
             (agent) =>
+              !agent.provider &&
               pubkeys.includes(agent.pubkey) &&
               relayOrigin(agent.relayUrl) === relayOrigin(relayUrl),
           ) ?? [];

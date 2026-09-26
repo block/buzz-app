@@ -14,6 +14,7 @@ import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { AgentCard } from "./AgentCard";
 import { AgentEditor } from "./AgentEditor";
 import { AgentImport } from "./AgentImport";
+import type { AgentProviders } from "../../features/agents/providers";
 import { AgentCreateDialog } from "./AgentCreateDialog";
 import { AgentDeleteDialog } from "./AgentDeleteDialog";
 import "./AgentControls.css";
@@ -28,7 +29,9 @@ export function AgentControlPanel({
   editTarget,
   editRequest,
   onCloseTarget,
+  providers,
 }: {
+  providers?: AgentProviders;
   resolveName?: ReturnType<typeof useIdentityNames>;
   control: AgentControl;
   importDestination?: string;
@@ -220,6 +223,7 @@ export function AgentControlPanel({
           destination={adding.destination}
           owner={adding.owner}
           {...(adding.source ? { source: adding.source } : {})}
+          {...(providers ? { providers } : {})}
           onClose={() => setAdding(null)}
         />
       )}

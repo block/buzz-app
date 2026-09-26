@@ -235,6 +235,8 @@ export async function startAddedAgent(
       "Added, but the local agent could not be checked. Retry to start it.",
     );
   if (agent.status === "running" || agent.status === "starting") return;
+  // Provider-backed agents have no process; their plugin runs on each mention.
+  if (agent.provider) return;
   try {
     const result = await control.action(agent.id, "start");
     const started = result.agents.find((item) => item.id === agent.id);

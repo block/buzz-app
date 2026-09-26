@@ -1762,3 +1762,73 @@ fn import_and_repair_deliver_team_instructions_to_a_started_process() {
         assert!(controller.running.is_empty());
     }
 }
+#[test]
+#[cfg(unix)]
+fn provider_agents_never_start_and_invoke_only_as_their_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let plain = agent(dir.path());
+    let mut bound = plain.clone();
+    crate::ProviderBinding {
+        provider: "buzz.ackbot/ackbot".into(),
+        config: BTreeMap::from([("reply".into(), "hi".into())]),
+    }
+    .bind(&mut bound)
+    .unwrap();
+    bound.enabled = true;
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![bound.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let view = controller.snapshot().unwrap().agents.remove(0);
+    assert_eq!(view.provider.as_deref(), Some("buzz.ackbot/ackbot"));
+    assert_eq!(view.provider_config["reply"], "hi");
+    let started = controller.action(&bound.id, Action::Start).unwrap();
+    assert!(controller.running.is_empty());
+    assert!(started.agents[0]
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("provider plugin")));
+    for (provider, program) in [
+        ("other.plugin/x", "buzz"),
+        ("buzz.ackbot/ackbot", "relative/buzz"),
+        ("buzz.ackbot/ackbot", "not-bundled"),
+    ] {
+        assert!(controller.invocation(&bound.id, provider, program).is_err());
+    }
+    let invocation = controller
+        .invocation(&bound.id, "buzz.ackbot/ackbot", "buzz")
+        .unwrap();
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let (command, temporary) = invocation.command(&key, &["messages".into()]).unwrap();
+    assert_eq!(command.get_program(), tools.path().join("buzz").as_os_str());
+    assert_eq!(command.get_current_dir(), Some(dir.path()));
+    let env: BTreeMap<_, _> = command
+        .get_envs()
+        .filter_map(|(k, v)| Some((k.to_str()?.to_owned(), v?.to_str()?.to_owned())))
+        .collect();
+    assert_eq!(env["BUZZ_PRIVATE_KEY"], KEY);
+    assert_eq!(env["BUZZ_RELAY_URL"], "wss://relay.example");
+    assert_eq!(env["BUZZ_AUTH_TAG"], bound.auth_tag.clone().unwrap());
+    assert_eq!(env["TMPDIR"], temporary.path().to_str().unwrap());
+    assert!(env["PATH"].starts_with(tools.path().to_str().unwrap()));
+    // Saved harness environment and ACP settings are not provider inputs.
+    assert!(!env.contains_key("PROVIDER_TEST_SETTING"));
+    assert!(!env.keys().any(|k| k.starts_with("BUZZ_ACP_")));
+    // Ordinary agents cannot be driven through a provider.
+    let mut store = Store::open(dir.path().join("plain")).unwrap();
+    store.insert(vec![plain.clone()]).unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    assert!(controller
+        .invocation(&plain.id, "buzz.ackbot/ackbot", "buzz")
+        .is_err());
+}

@@ -308,7 +308,7 @@ pub struct GooseModelContext {
 pub struct Controller {
     pub(crate) store: Store,
     credentials: Arc<dyn Credentials>,
-    bundle: Result<RuntimeBundle>,
+    pub(crate) bundle: Result<RuntimeBundle>,
     running: BTreeMap<String, Running>,
     errors: BTreeMap<String, String>,
     ownership_root: PathBuf,
@@ -657,6 +657,12 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        if agent.provider().is_some() {
+            return Err(
+                "This agent runs through its provider plugin when mentioned; it has no process to start"
+                    .into(),
+            );
+        }
         if !agent.enabled {
             return Err("Agent is disabled".into());
         }

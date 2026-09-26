@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import {
   canStopAgent,
   agentLaunchBlock,
@@ -8,13 +8,16 @@ import {
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentProcessLabel } from "./agent-edit";
+import type { AgentProviders } from "../../features/agents/providers";
 
 export function ManagedAgentActions({
   agent,
   state,
   control,
   imported,
+  providers,
 }: {
+  providers?: AgentProviders | undefined;
   agent: AgentView;
   state: AgentControlState;
   control: AgentControl;
@@ -27,6 +30,15 @@ export function ManagedAgentActions({
       details.current?.focus();
     }
   }, [imported]);
+  if (agent.provider)
+    return (
+      <ProviderAgentStatus
+        agent={agent}
+        providers={providers}
+        state={state}
+        control={control}
+      />
+    );
   const startBlock = agentLaunchBlock(state, agent);
   const act = (action: "start" | "stop") => {
     void control.action(agent.id, action).catch(() => {});
@@ -91,6 +103,55 @@ export function ManagedAgentActions({
       </div>
       {startBlock && agent.status !== "running" && (
         <p className="text-body-sm text-secondary">{startBlock}</p>
+      )}
+    </div>
+  );
+}
+
+const none: ReturnType<AgentProviders["snapshot"]> = [];
+const noProviders = () => none;
+const noSubscription = () => () => {};
+
+/** No process to start or stop: the provider plugin runs on each admitted mention. */
+function ProviderAgentStatus({
+  agent,
+  providers,
+  state,
+  control,
+}: {
+  agent: AgentView;
+  providers?: AgentProviders | undefined;
+  state: AgentControlState;
+  control: AgentControl;
+}) {
+  const active = useSyncExternalStore(
+    providers?.subscribe ?? noSubscription,
+    providers?.snapshot ?? noProviders,
+    providers?.snapshot ?? noProviders,
+  );
+  const provider = active.find((entry) => entry.key === agent.provider);
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="m-0 break-all text-body-sm text-secondary">
+        {agent.relayUrl}
+      </p>
+      <p className="m-0 text-body-sm">
+        {provider
+          ? `Runs with ${provider.title} when mentioned.`
+          : `Its provider (${agent.provider}) is not enabled. Mentions wait until it is.`}
+      </p>
+      {agent.profilePending && (
+        <Button
+          size="compact"
+          disabled={
+            state.busy || state.status !== "ready" || !control.publishProfile
+          }
+          onClick={() =>
+            void control.publishProfile?.(agent.id).catch(() => {})
+          }
+        >
+          Retry profile
+        </Button>
       )}
     </div>
   );

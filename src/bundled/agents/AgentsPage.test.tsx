@@ -15,6 +15,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import * as communityApi from "../../features/communities/api";
 import { AgentsPage } from "./AgentsPage";
+import type { AgentProviders } from "../../features/agents/providers";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { createAgentControl } from "../../features/agents/control";
@@ -37,6 +38,7 @@ function setup(
     target: OpenTarget,
     options?: { replace?: boolean },
   ) => Promise<{ status: "opened" }>,
+  providers?: AgentProviders,
 ) {
   const f = controlFixture();
   configure?.(f);
@@ -122,6 +124,7 @@ function setup(
       control={control}
       navigation={navigation}
       {...(open ? { open } : {})}
+      {...(providers ? { providers } : {})}
     />,
   );
   return {
@@ -1935,3 +1938,96 @@ it.each([
     expect(commit).toHaveBeenCalledTimes(1);
   },
 );
+
+it("creates a provider-backed agent with the provider's own setup instead of harness fields", async () => {
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+  const commit = vi.fn(
+    async (
+      _requestId: string,
+      edit: { name: string },
+      _auth?: string,
+      _provider?: unknown,
+    ) => {
+      fixture.data.agents.push({
+        ...structuredClone(fixture.agent),
+        id: "new-agent",
+        name: edit.name,
+        enabled: false,
+        status: "stopped",
+        provider: "buzz.ackbot/ackbot",
+      });
+      return structuredClone(fixture.data);
+    },
+  );
+  const providers: AgentProviders = {
+    snapshot: () => entries,
+    subscribe: () => () => {},
+    register() {},
+  };
+  const entries = [
+    {
+      id: "ackbot",
+      key: "buzz.ackbot/ackbot",
+      pluginId: "buzz.ackbot",
+      revision: "1",
+      title: "Ackbot",
+      description: "Replies when mentioned.",
+      defaultConfig: { reply: "ack" },
+      setup: ({
+        value,
+        onChange,
+      }: {
+        value: Record<string, string>;
+        onChange(v: Record<string, string>): void;
+      }) => (
+        <label>
+          Reply
+          <input
+            value={value.reply ?? ""}
+            onChange={(event) => onChange({ reply: event.target.value })}
+          />
+        </label>
+      ),
+      handle: async () => {},
+    },
+  ];
+  let fixture!: ReturnType<typeof controlFixture>;
+  setup(
+    "connected",
+    (f) => {
+      fixture = f;
+      f.data.createAvailable = true;
+      f.host.prepareCreate = async () => ({
+        id: "new-agent",
+        pubkey: "cd".repeat(32),
+      });
+      f.host.commitCreate = commit;
+      f.host.publishProfile = async () => structuredClone(f.data);
+    },
+    undefined,
+    undefined,
+    providers,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  expect(within(dialog).getByLabelText("Agent instructions")).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("radio", { name: /Ackbot/ }));
+  expect(within(dialog).queryByLabelText("Agent instructions")).toBeNull();
+  expect(within(dialog).getByLabelText("Reply")).toHaveValue("ack");
+  fireEvent.change(within(dialog).getByLabelText("Name"), {
+    target: { value: "Acky" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("Reply"), {
+    target: { value: "got it" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
+  await waitFor(() => expect(commit).toHaveBeenCalled());
+  expect(commit.mock.calls[0]?.[1]).toMatchObject({
+    name: "Acky",
+    harness: { command: "buzz.ackbot/ackbot" },
+  });
+  expect(commit.mock.calls[0]?.[3]).toEqual({
+    provider: "buzz.ackbot/ackbot",
+    config: { reply: "got it" },
+  });
+});

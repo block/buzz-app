@@ -27,8 +27,14 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     },
     prepareCreate: (requestId, destination, owner) =>
       invoke("agent_control_create_prepare", { requestId, destination, owner }),
-    commitCreate: (requestId, edit, auth) =>
-      invoke("agent_control_create_commit", { requestId, edit, auth }),
+    commitCreate: (requestId, edit, auth, provider) =>
+      invoke("agent_control_create_commit", {
+        requestId,
+        edit,
+        auth,
+        ...(provider ? { provider } : {}),
+      }),
+    invoke: (request) => invoke("agent_control_invoke", { request }),
     publishProfile: (id) => invoke("agent_control_creation_profile", { id }),
     setStartOnAppLaunch: (id, enabled) =>
       invoke("agent_control_start_on_app_launch", { id, enabled }),

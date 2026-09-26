@@ -54,6 +54,9 @@ pub struct AgentView {
     pub restart_diff: Vec<crate::restart::RestartDiffEntry>,
     pub deployed_remote: bool,
     pub needs_team_import: bool,
+    /// Provider plugin that handles this agent's mentions; no ACP process runs.
+    pub provider: Option<String>,
+    pub provider_config: BTreeMap<String, String>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -164,6 +167,8 @@ impl Agent {
             restart_diff: Vec::new(),
             deployed_remote: self.deployed_remote(),
             needs_team_import: self.needs_team_import(),
+            provider: self.provider().map(str::to_owned),
+            provider_config: self.provider_config(),
         }
     }
     pub fn needs_team_import(&self) -> bool {

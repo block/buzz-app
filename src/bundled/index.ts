@@ -37,6 +37,8 @@ import hostedManifest from "./hosted-communities/manifest.json";
 import * as hosted from "./hosted-communities";
 import sessionsManifest from "./sessions/manifest.json";
 import * as sessions from "./sessions";
+import ackbotManifest from "./ackbot/manifest.json";
+import * as ackbot from "./ackbot";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
@@ -69,4 +71,5 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...sessionsManifest, apiVersion: 1 }, module: sessions },
   { manifest: { ...hostedManifest, apiVersion: 1 }, module: hosted },
   { manifest: { ...moderationManifest, apiVersion: 1 }, module: moderation },
+  { manifest: { ...ackbotManifest, apiVersion: 1 }, module: ackbot },
 ];

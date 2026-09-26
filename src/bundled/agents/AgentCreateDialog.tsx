@@ -1,13 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import type {
   AgentControl,
   AgentControlState,
   AgentView,
 } from "../../features/agents/control";
+import type { AgentProviders } from "../../features/agents/providers";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
+import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { AgentSettingsFields } from "./AgentSettingsFields";
 import { agentDraft, agentEdit, type AgentDraft } from "./agent-edit";
+
+const none: ReturnType<AgentProviders["snapshot"]> = [];
+const noProviders: AgentProviders = {
+  snapshot: () => none,
+  subscribe: () => () => {},
+  register: () => {},
+};
 
 export function AgentCreateDialog({
   control,
@@ -15,9 +26,11 @@ export function AgentCreateDialog({
   destination,
   owner,
   source,
+  providers = noProviders,
   onClose,
 }: {
   control: AgentControl;
+  providers?: AgentProviders;
   state: AgentControlState;
   destination: string;
   owner: string;
@@ -43,6 +56,19 @@ export function AgentCreateDialog({
           environment: {},
         },
   );
+  const providerChoices = useSyncExternalStore(
+    providers.subscribe,
+    providers.snapshot,
+    providers.snapshot,
+  );
+  // "" keeps the ACP harness path; otherwise the chosen provider's contribution key.
+  const [providerKey, setProviderKey] = useState("");
+  const [providerConfig, setProviderConfig] = useState<Record<string, string>>(
+    {},
+  );
+  const provider = source
+    ? undefined
+    : providerChoices.find((entry) => entry.key === providerKey);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<AgentView | null>(null);
   const [error, setError] = useState<string>();
@@ -64,12 +90,41 @@ export function AgentCreateDialog({
   const blocked = busy || state.busy || state.status !== "ready";
   const create = async () => {
     if (blocked || runtimeBlocked || !available || !control.create) return;
+    if (provider && !saved && !draft.name.trim()) {
+      setError("Enter an agent name.");
+      return;
+    }
     setError(undefined);
     setBusy(true);
     try {
       const agent =
         saved ??
-        (await control.create(requestId, destination, owner, agentEdit(draft)));
+        (provider
+          ? await control.create(
+              requestId,
+              destination,
+              owner,
+              {
+                name: draft.name,
+                systemPrompt: "",
+                workspace: draft.workspace,
+                // Never launched: native refuses to start provider-backed agents.
+                harness: {
+                  command: provider.key,
+                  args: [],
+                  model: "",
+                  provider: "",
+                },
+                environment: {},
+              },
+              { provider: provider.key, config: providerConfig },
+            )
+          : await control.create(
+              requestId,
+              destination,
+              owner,
+              agentEdit(draft),
+            ));
       // Closing leaves native creation alone; the saved card owns profile retry.
       if (!mounted.current) return;
       setDraft((current) => ({ ...current, environment: {} }));
@@ -124,17 +179,78 @@ export function AgentCreateDialog({
               void create();
             }}
           >
-            <AgentSettingsFields
-              draft={draft}
-              control={control}
-              state={state}
-              disabled={blocked || !!saved}
-              onChange={(patch) => {
-                setDraft({ ...draft, ...patch });
-                setDirty(true);
-                setError(undefined);
-              }}
-            />
+            {!source && providerChoices.length > 0 && (
+              <Field label="Runs with">
+                <RadioGroup
+                  value={providerKey}
+                  disabled={blocked || !!saved}
+                  onValueChange={(value) => {
+                    const key = String(value);
+                    setProviderKey(key);
+                    setProviderConfig({
+                      ...(providerChoices.find((entry) => entry.key === key)
+                        ?.defaultConfig ?? {}),
+                    });
+                    setDirty(true);
+                    setError(undefined);
+                  }}
+                >
+                  <Radio
+                    value=""
+                    variant="card"
+                    label="Agent harness"
+                    description="Runs a local harness through the bundled ACP runtime."
+                  />
+                  {providerChoices.map((entry) => (
+                    <Radio
+                      key={entry.key}
+                      value={entry.key}
+                      variant="card"
+                      label={entry.title}
+                      description={entry.description}
+                    />
+                  ))}
+                </RadioGroup>
+              </Field>
+            )}
+            {provider ? (
+              <>
+                <Field label="Name">
+                  <Input
+                    disabled={blocked || !!saved}
+                    value={draft.name}
+                    onChange={(event) => {
+                      setDraft({ ...draft, name: event.target.value });
+                      setDirty(true);
+                      setError(undefined);
+                    }}
+                  />
+                </Field>
+                {provider.setup && (
+                  <provider.setup
+                    value={providerConfig}
+                    disabled={blocked || !!saved}
+                    onChange={(value) => {
+                      setProviderConfig({ ...value });
+                      setDirty(true);
+                      setError(undefined);
+                    }}
+                  />
+                )}
+              </>
+            ) : (
+              <AgentSettingsFields
+                draft={draft}
+                control={control}
+                state={state}
+                disabled={blocked || !!saved}
+                onChange={(patch) => {
+                  setDraft({ ...draft, ...patch });
+                  setDirty(true);
+                  setError(undefined);
+                }}
+              />
+            )}
             {source?.harness.environmentKeys.length ? (
               <p role="status" className="text-body-sm text-secondary">
                 Re-enter environment values for{" "}

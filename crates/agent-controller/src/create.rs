@@ -1,6 +1,6 @@
 //! Native-only key creation. Retrying a prepared identity never generates a second key.
 use crate::config::{agent_id, canonical_key, canonical_relay, Agent, HarnessEdit};
-use crate::{AgentEdit, Controller, Credentials, Result, Secret};
+use crate::{AgentEdit, Controller, Credentials, ProviderBinding, Result, Secret};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -27,7 +27,12 @@ impl NewAgent {
     pub fn matches(&self, destination: &str, owner: &str) -> Result<bool> {
         Ok(self.relay == canonical_relay(destination)? && self.owner == owner)
     }
-    fn agent(&self, edit: AgentEdit, auth: &str) -> Result<Agent> {
+    fn agent(
+        &self,
+        edit: AgentEdit,
+        auth: &str,
+        binding: Option<&ProviderBinding>,
+    ) -> Result<Agent> {
         crate::secret::validate_attestation(auth, self.key.pubkey())?;
         let tag: Vec<String> =
             serde_json::from_str(auth).map_err(|_| "Invalid owner authorization")?;
@@ -59,10 +64,18 @@ impl NewAgent {
             extra: BTreeMap::from([("nativeCreated".into(), Value::Bool(true))]),
         };
         agent.apply(edit)?;
+        if let Some(binding) = binding {
+            binding.bind(&mut agent)?;
+        }
         Ok(agent)
     }
-    pub fn validate(&self, edit: AgentEdit, auth: &str) -> Result<()> {
-        self.agent(edit, auth).map(|_| ())
+    pub fn validate(
+        &self,
+        edit: AgentEdit,
+        auth: &str,
+        binding: Option<&ProviderBinding>,
+    ) -> Result<()> {
+        self.agent(edit, auth, binding).map(|_| ())
     }
     pub fn save_key(&self, credentials: &dyn Credentials) -> Result<()> {
         if credentials.read(&self.id, self.key.pubkey())?.is_none() {
@@ -76,7 +89,17 @@ impl NewAgent {
 }
 impl Controller {
     pub fn create(&mut self, prepared: &NewAgent, edit: AgentEdit, auth: &str) -> Result<()> {
-        let mut agent = prepared.agent(edit, auth)?;
+        self.create_with_provider(prepared, edit, auth, None)
+    }
+    /// A provider-backed agent keeps the same identity/custody path as any other.
+    pub fn create_with_provider(
+        &mut self,
+        prepared: &NewAgent,
+        edit: AgentEdit,
+        auth: &str,
+        binding: Option<&ProviderBinding>,
+    ) -> Result<()> {
+        let mut agent = prepared.agent(edit, auth, binding)?;
         if self.store.agents()?.iter().any(|a| a.id == agent.id) {
             return Ok(());
         }

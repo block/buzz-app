@@ -1,7 +1,7 @@
 //! App lifetime, not page/plugin lifetime. Native startup uses app-owned resources.
 use buzz_agent_controller::{
     Action, AgentEdit, ControlSnapshot, Controller, Credentials, ImportPreview, Imports,
-    LegacySource, NewAgent, PlatformCredentials, RuntimeBundle, Store,
+    LegacySource, NewAgent, PlatformCredentials, ProviderBinding, RuntimeBundle, Store,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -676,6 +676,7 @@ pub(crate) async fn agent_control_create_commit(
     request_id: String,
     edit: AgentEdit,
     auth: String,
+    provider: Option<ProviderBinding>,
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
     let (prepared, credentials) = owner.with(|host| {
@@ -684,7 +685,7 @@ pub(crate) async fn agent_control_create_commit(
             .as_ref()
             .filter(|(id, _)| id == &request_id)
             .ok_or("Create request expired; reopen Add agent")?;
-        prepared.validate(edit.clone(), &auth)?;
+        prepared.validate(edit.clone(), &auth, provider.as_ref())?;
         Ok((prepared.clone(), host.credentials.clone()))
     })?;
     let saved = prepared.clone();
@@ -695,7 +696,8 @@ pub(crate) async fn agent_control_create_commit(
         if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
             return Err("Create request was replaced".into());
         }
-        host.controller.create(&prepared, edit, &auth)?;
+        host.controller
+            .create_with_provider(&prepared, edit, &auth, provider.as_ref())?;
         host.snapshot()
     })
 }
@@ -752,7 +754,9 @@ async fn publish_acquired(
     })
 }
 
+mod invoke;
 mod profile_http;
+pub(crate) use invoke::agent_control_invoke;
 
 #[cfg(test)]
 pub(crate) mod tests;

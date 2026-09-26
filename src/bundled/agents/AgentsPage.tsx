@@ -19,15 +19,18 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 import { AgentControlPanel } from "./AgentControlPanel";
 import { ManagedAgentActions } from "./ManagedAgentActions";
+import type { AgentProviders } from "../../features/agents/providers";
 
 export function AgentsPage({
   relay,
   control,
   navigation,
   open,
+  providers,
 }: PageProps & {
   relay: RelayData;
   control?: AgentControl;
+  providers?: AgentProviders;
   open?: (
     target: OpenTarget,
     options?: { replace?: boolean },
@@ -94,6 +97,7 @@ export function AgentsPage({
               {control ? (
                 <AgentControlPanel
                   control={control}
+                  {...(providers ? { providers } : {})}
                   editTarget={editTarget}
                   {...(editTarget && request && connection.status === "ready"
                     ? { editRequest: request }
@@ -135,6 +139,7 @@ export function AgentsPage({
                         importedId={importedId}
                         control={control}
                         connection={connection}
+                        providers={providers}
                       />
                     )
                   }
@@ -164,7 +169,9 @@ function ManagedAgents({
   control,
   connection,
   label,
+  providers,
 }: {
+  providers?: AgentProviders | undefined;
   label(agent: AgentView): string;
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
@@ -220,6 +227,7 @@ function ManagedAgents({
                 state={state}
                 control={control}
                 imported={agent.id === importedId}
+                providers={providers}
               />
             </AgentCard>
           );

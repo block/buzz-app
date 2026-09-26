@@ -196,6 +196,8 @@ for (const change of ["switch", "stop", "disconnect", "dispose"] as const) {
 
 it("plain mention text does not acquire local agent execution", async () => {
   const session = await open();
+  // Connecting reads the inventory once for provider-agent catch-up; the send must not.
+  vi.mocked(invoke).mockClear();
   session.messages.send("room", "@Fixture agent hello");
   await vi.advanceTimersByTimeAsync(0);
   release?.();

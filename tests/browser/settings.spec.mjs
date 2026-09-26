@@ -346,6 +346,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await tab();
     await expect(plugins).toBeFocused();
     await tab();
+    await expect(
+      sections.getByRole("button", { name: "Updates", exact: true }),
+    ).toBeFocused();
+    await tab();
     await expect(button(page, "Edit avatar")).toBeFocused();
     await tab();
     await expect(

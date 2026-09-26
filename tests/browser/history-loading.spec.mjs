@@ -139,9 +139,8 @@ test.describe("quota retry without threshold-driven continuation", () => {
     await settle(page);
     expect(cursors()).toHaveLength(count);
     expect(browserCursors).toHaveLength(count);
-    await expect
-      .poll(() => performance.now())
-      .toBeGreaterThan(app.relay.rejected[0].until + 50);
+    // Only the broker lane holds older-page retries; it reopens at this bound.
+    await expect.poll(() => app.relay.brokerCooldownOver()).toBe(true);
     await history(page)
       .getByRole("button", { name: "Load older messages", exact: true })
       .click();

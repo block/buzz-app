@@ -77,20 +77,15 @@ it.each([undefined, "debug"] as const)(
     }
   },
 );
-it("reconnect accepts a restarted server and fences pre-reconnect requests", async () => {
+it("refreshes when the initial HMR socket opens after a missed save", async () => {
   const c = await client();
   try {
-    c.handlers.get(c.LOG_LEVEL_EVENT)?.({ logLevel: "trace", revision: 9 });
-    const old = c.developerSettings();
-    c.handlers.get("vite:ws:connect")?.();
-    const refreshed = c.developerSettings();
-    c.reply(3, "warn", 0);
-    expect(await refreshed).toBe("warn");
-    c.reply(1, "trace", 9);
-    await old;
-    expect(c.logLevel()).toBe("warn");
     c.reply(0, "info", 0);
-    c.reply(2, "warn", 0);
+    // The save happened while the socket was not open; no event was received.
+    c.handlers.get("vite:ws:connect")?.();
+    expect(c.fetcher).toHaveBeenCalledTimes(2);
+    c.reply(1, "warn", 1);
+    await vi.waitFor(() => expect(c.logLevel()).toBe("warn"));
   } finally {
     c.dispose();
   }

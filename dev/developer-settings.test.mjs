@@ -234,3 +234,31 @@ it("makes no unsupported settings request and retains JSON fallback protection",
     await server.close();
   }
 });
+
+it("the real serving plugin advertises settings capability to Vite modules", async () => {
+  const root = directory();
+  writeFileSync(
+    join(root, "capability.js"),
+    "export default import.meta.env.BUZZ_DEV_SETTINGS;",
+  );
+  const server = await createViteServer({
+    root,
+    configFile: false,
+    envDir: false,
+    plugins: [developerSettingsPlugin(root)],
+    optimizeDeps: { noDiscovery: true },
+    logLevel: "silent",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  try {
+    await server.listen();
+    expect((await server.ssrLoadModule("/capability.js")).default).toBe("1");
+    const base = `http://127.0.0.1:${server.httpServer.address().port}`;
+    expect(await (await fetch(`${base}/api/dev/settings`)).json()).toEqual({
+      logLevel: "info",
+      revision: 0,
+    });
+  } finally {
+    await server.close();
+  }
+});

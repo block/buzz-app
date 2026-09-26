@@ -50,7 +50,6 @@ export function getLogger(tag: string) {
 export const hasDeveloperSettings = () =>
   import.meta.env?.DEV && import.meta.env.BUZZ_DEV_SETTINGS === "1";
 let revision = -1;
-let connection = 0;
 function applySettings(value: unknown) {
   if (
     !value ||
@@ -71,7 +70,6 @@ function applySettings(value: unknown) {
 export async function developerSettings(next?: LogLevel): Promise<LogLevel> {
   if (!hasDeveloperSettings())
     throw new Error("Development settings are unavailable.");
-  const started = connection;
   const response = await fetch(DEVELOPER_SETTINGS_PATH, {
     cache: "no-store",
     // Missing APIs must return 404, not Vite's HTML fallback (and its warmup).
@@ -91,7 +89,7 @@ export async function developerSettings(next?: LogLevel): Promise<LogLevel> {
       "Development settings are unavailable or could not be saved.",
     );
   const value: unknown = await response.json();
-  if (started === connection) applySettings(value);
+  applySettings(value);
   return logLevel();
 }
 
@@ -106,16 +104,14 @@ export function connectDeveloperSettings(hot: ViteHotContext) {
     }
   };
   const refresh = () => {
-    // A restarted server owns a new revision sequence. Discard old HTTP replies.
-    connection++;
-    revision = -1;
+    // Catch saves made before the initial HMR socket opened. Vite reloads the
+    // page after a server restart, so a new server gets fresh module state.
     void developerSettings().catch(() => {});
   };
   hot.on(LOG_LEVEL_EVENT, changed);
   hot.on("vite:ws:connect", refresh);
   refresh();
   hot.dispose(() => {
-    connection++;
     hot.off(LOG_LEVEL_EVENT, changed);
     hot.off("vite:ws:connect", refresh);
   });

@@ -2551,17 +2551,17 @@ test("server-wide stats work without a default community and do not start upstre
   const h = await harness(success, {}, "");
   try {
     // Use node:http: Undici diagnostics also count the test client's own socket.
-    const body = await new Promise((resolve, reject) => {
+    const result = await new Promise((resolve, reject) => {
       get(`${h.base}/api/relay/stats`, (response) => {
-        expect(response.statusCode).toBe(200);
         let raw = "";
         response.on("data", (chunk) => {
           raw += chunk;
         });
-        response.on("end", () => resolve(JSON.parse(raw)));
+        response.on("end", () => resolve({ status: response.statusCode, raw }));
       }).on("error", reject);
     });
-    expect(body).toEqual({
+    expect(result.status).toBe(200);
+    expect(JSON.parse(result.raw)).toEqual({
       queries: 0,
       errors: 0,
       media: 0,

@@ -160,7 +160,7 @@ by other worktrees or communities on other installations. It works even without 
 configured relay broker. Only servers with the settings plugin advertise this
 capability; standalone fixtures and production clients never request the endpoint.
 Responses and tab updates carry a server revision so delayed responses cannot
-replace a newer saved choice. Reconnecting refreshes the current server sequence.
+replace a newer saved choice. Vite reloads the page after a server restart, resetting the sequence.
 
 - **Info** (default): connection lifecycle, warnings and errors.
 - **Debug**: every completed broker HTTP request and each relay application

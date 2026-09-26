@@ -123,6 +123,7 @@ test("update checks recover from failure, download, and restart from the toast",
 
   await page.evaluate(() => window.finishDownload());
   await expect(status).toHaveText("Update downloaded. Click to apply.");
+  await button(page, "Appearance").click();
   await expect(notices.getByText("Ready to update!")).toBeVisible();
   await expect(notices.getByText("Click to update")).toBeVisible();
   await notices
@@ -156,10 +157,12 @@ test("retry after a failed install releases native update resources before check
   const status = await openUpdates(page, app);
   await expect(status).toHaveText("Downloading update...");
   await page.evaluate(() => window.finishDownload());
+  await button(page, "Appearance").click();
   await page
     .getByRole("region", { name: "App notifications" })
     .getByRole("button", { name: "Update now", exact: true })
     .click();
+  await button(page, "Updates").click();
   await expect(status).toHaveText("Update failed: read-only location");
 
   await button(page, "Retry").click();
@@ -171,4 +174,35 @@ test("retry after a failed install releases native update resources before check
     ["plugin:updater|check", { headers: [["cache-control", "no-cache"]] }],
     ["plugin:updater|download", expect.objectContaining({ rid: 103 })],
   ]);
+});
+
+test("the ready toast yields to Settings → Updates, which offers the same action", async ({
+  page,
+  app,
+}) => {
+  // Default main window size (src-tauri/tauri.conf.json).
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await nativeUpdater(page, { checkResults: [true] });
+  const status = await openUpdates(page, app);
+  const toast = page
+    .getByRole("region", { name: "App notifications" })
+    .getByText("Ready to update!");
+  await page.evaluate(() => window.finishDownload());
+  await expect(status).toHaveText("Update downloaded. Click to apply.");
+  await expect(toast).toHaveCount(0);
+
+  await button(page, "Appearance").click();
+  await expect(toast).toBeVisible();
+  await button(page, "Updates").click();
+  await expect(toast).toHaveCount(0);
+
+  await button(page, "Update Now").click();
+  await expect
+    .poll(() => commands(page))
+    .toEqual([
+      "plugin:updater|check",
+      "plugin:updater|download",
+      "plugin:updater|install",
+      "plugin:process|restart",
+    ]);
 });

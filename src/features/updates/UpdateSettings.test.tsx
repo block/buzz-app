@@ -24,7 +24,7 @@ function renderSettings(platform: Partial<UpdatePlatform>) {
     relaunch: async () => {},
     ...platform,
   });
-  render(<UpdateSettings updates={updates} />);
+  render(<UpdateSettings updates={updates} active />);
   return updates;
 }
 

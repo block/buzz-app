@@ -58,10 +58,14 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
   let downloadInFlight = false;
   let installInFlight = false;
   let manualResultRequested = false;
+  let inlineViews = 0;
   const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
   const setStatus = (next: UpdateStatus) => {
     status = next;
-    for (const listener of listeners) listener();
+    notify();
   };
 
   const closeUpdate = async () => {
@@ -155,6 +159,16 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       return () => listeners.delete(listener);
     },
     snapshot: () => status,
+    /** Settings shows the same action inline; the toast yields while it is on screen. */
+    showInline() {
+      inlineViews++;
+      notify();
+      return () => {
+        inlineViews--;
+        notify();
+      };
+    },
+    inlineVisible: () => inlineViews > 0,
     checkForUpdate: () => runCheck(false),
     installAndRelaunch,
     dispose() {

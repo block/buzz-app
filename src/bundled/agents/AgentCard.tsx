@@ -30,9 +30,13 @@ export function AgentCard({
   onDelete,
   children,
   identityLabel = (identity) => identity.name,
+  layout = "tile",
+  headingLevel = 3,
 }: {
   children?: ReactNode;
   identityLabel?: (identity: { pubkey: string; name: string }) => string;
+  layout?: "tile" | "row";
+  headingLevel?: 3 | 4;
   name: string;
   avatar?: string | undefined;
   identities: AgentLibrary["identities"];
@@ -42,6 +46,7 @@ export function AgentCard({
   onDuplicate?: ((agent: AgentView) => void) | undefined;
   onDelete?: ((agent: AgentView) => void) | undefined;
 }) {
+  const Heading = headingLevel === 4 ? "h4" : "h3";
   const trigger = useRef<HTMLButtonElement>(null);
   const presence = usePresenceStatus(
     session?.presence,
@@ -64,7 +69,7 @@ export function AgentCard({
   return (
     <article
       aria-label={`Agent ${name}`}
-      className="relative min-w-0 flex flex-col gap-3 rounded-2xl border border-primary p-4"
+      className={`relative min-w-0 ${layout === "row" ? "agent-inventory-row" : "flex flex-col gap-3 rounded-2xl border border-primary p-4"}`}
     >
       {onEdit && (
         <div className="absolute right-2 top-2">
@@ -170,17 +175,25 @@ export function AgentCard({
             alt={name}
             fallback={name}
             src={picture ?? null}
-            size="large"
+            size={layout === "row" ? "default" : "large"}
             shape="squircle"
             statusBadge={presence === "unknown" ? undefined : presence}
           />
         </div>
-        <h3 className="m-0 min-w-0 truncate text-label" title={name}>
+        <Heading className="m-0 min-w-0 truncate text-label" title={name}>
           {name}
-        </h3>
+        </Heading>
       </div>
       {children && (
-        <div className="flex min-w-0 flex-col gap-3">{children}</div>
+        <div
+          className={
+            layout === "row"
+              ? `flex min-w-0 flex-wrap items-center gap-2 ${onEdit ? "pr-8" : ""}`
+              : "flex min-w-0 flex-col gap-3"
+          }
+        >
+          {children}
+        </div>
       )}
       {identities.length && !children ? (
         <Accordion

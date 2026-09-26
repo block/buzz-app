@@ -281,7 +281,16 @@ impl CredentialedImport {
         {
             return Err("Selected identity is already imported".into());
         }
-        store.import(self.agents, self.repairs)
+        let agents = self
+            .agents
+            .into_iter()
+            .map(|mut agent| {
+                agent.extra.insert("configured".into(), Value::Bool(true));
+                agent.enabled = false;
+                agent
+            })
+            .collect();
+        store.import(agents, self.repairs)
     }
 }
 fn string<'a>(value: &'a Value, key: &str) -> &'a str {

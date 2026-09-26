@@ -104,6 +104,8 @@ fn preview_is_keyless_commit_resolves_preserves_and_never_enables_or_mutates_sou
     assert!(!saved.enabled);
     // Source `start_on_app_launch: true` does not auto-start an imported record.
     assert_eq!(saved.start_on_app_launch, Some(false));
+    assert!(saved.configured());
+    assert_eq!(saved.relay_url, "wss://relay.example");
     assert_eq!(saved.system_prompt, "definition-prompt");
     assert_eq!(saved.harness.model, "definition-model");
     assert_eq!(saved.harness.provider, "global-provider");

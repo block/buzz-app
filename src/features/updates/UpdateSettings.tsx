@@ -1,14 +1,24 @@
 import type { ReactNode } from "react";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
 import type { Updates } from "./updates";
 
-export function UpdateSettings({ updates }: { updates: Updates }) {
+export function UpdateSettings({
+  updates,
+  active,
+}: {
+  updates: Updates;
+  active: boolean;
+}) {
   const status = useSyncExternalStore(
     updates.subscribe,
     updates.snapshot,
     updates.snapshot,
+  );
+  useEffect(
+    () => (active ? updates.showInline() : undefined),
+    [active, updates],
   );
   const check = () => void updates.checkForUpdate();
   const row = (message: ReactNode, action?: ReactNode) => (

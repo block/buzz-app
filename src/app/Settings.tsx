@@ -275,7 +275,10 @@ export function Settings({
               <AgentSettings active={selected === "agents"} />
             </div>
             <div hidden={selected !== "updates"}>
-              <UpdateSettings updates={updates} />
+              <UpdateSettings
+                updates={updates}
+                active={selected === "updates"}
+              />
             </div>
             {communityCards.map((card) => (
               <div key={card.key} hidden={selected !== card.key}>

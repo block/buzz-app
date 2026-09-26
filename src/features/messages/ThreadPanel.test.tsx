@@ -390,6 +390,7 @@ it("bounds enlarged emoji presentation on sent messages", () => {
 });
 
 it("the actual message row rejects attachment URLs outside the shared safe-link policy", () => {
+  const media = vi.fn(() => undefined);
   const tree = MessageRow({
     row: {
       ...row,
@@ -400,7 +401,7 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
       ],
     },
     profile: undefined,
-    media: () => undefined,
+    media,
     onOpenLink: () => false,
     day: false,
     retry: undefined,
@@ -416,7 +417,7 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
       .filter((element) => element.props.role === "group")
       .map((element) => element.props["aria-label"]),
   ).toEqual(["1 image"]);
-  expect(JSON.stringify(tree)).not.toContain("unsafe.test");
+  expect(media).toHaveBeenCalledExactlyOnceWith("https://safe.test/a.png");
 });
 
 it("seeks the media timecode while passing the stripped body to Markdown", () => {

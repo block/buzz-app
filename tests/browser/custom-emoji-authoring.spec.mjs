@@ -425,7 +425,9 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     await expect(
       page.getByText("You haven't added any emoji yet. Add one above."),
     ).toBeVisible();
-    await draft.fill(":party_par");
+    // With no custom matches, only the settled Unicode search lists options.
+    await draft.fill(":party");
+    await expect(page.getByRole("option").first()).toBeVisible();
     await expect(searching).toHaveCount(0);
     await expect(
       page.getByRole("option", { name: ":party_parrot:" }),

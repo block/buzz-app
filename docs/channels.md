@@ -27,9 +27,15 @@ the app-owned sidebar or session data.
 
 The broker uses the existing authorized Buzz identity in the OS secret store (macOS
 Keychain, Linux secret service) and
-signs authenticated reads and channel messages in Node. No private key reaches browser JavaScript; there is
-a bounded message-signing and publishing endpoint. The broker is restricted to loopback hosts, same-origin
-POSTs, valid Nostr kinds/event IDs, and bounded filters. Without a configured `BUZZ_DEV_VIEWER` pin, the shell and Messages empty state remain available, while the live identity/join flow explains that it needs the development broker. Packaged builds do not include the development broker.
+signs authenticated reads and channel messages in Node. In this broker mode no
+private key reaches browser JavaScript; there is a bounded message-signing and
+publishing endpoint. The broker is restricted to loopback hosts, same-origin
+POSTs, valid Nostr kinds/event IDs, and bounded filters. Without a configured
+`BUZZ_DEV_VIEWER` pin, native macOS offers [identity setup](identity.md); web and
+unsupported native platforms retain the unavailable shell. The separate native
+import/reveal/copy UI deliberately passes private strings through JavaScript.
+Packaged builds do not include the development broker. A saved native identity
+does not enable relay access: join and community profile editing stay unavailable.
 The broker supports explicitly scoped typed relay origins;
 see [destination routing and trust limits](communities.md#development-broker-boundary).
 This is not a new native login.
@@ -89,7 +95,7 @@ survive. Invalid, unreadable, or over-budget heads fail closed; only a successfu
 can seed a record. Same-host writes serialize per relay. This is confirmed
 whole-record replacement, not atomic cross-device merging or a durable outbox;
 simultaneous writers on different hosts can still race. Failure requires explicit
-retry. No group/star mutation or alternate menu implementation is included;
+retry. Group/star writes use their separate narrow commands;
 [section sorting](#sidebar-sort-persistence) uses its separate preference coordinate.
 
 Rows expose mute/read actions through right-click/long-press, Shift+F10, or the
@@ -112,6 +118,16 @@ for explicit retry. Focus resolves the current row by identity even if saved
 preferences relocated it during the transaction. Read actions require
 `frontier-sync`; hosts lacking mute writes keep read-only preference projection.
 Packaged hosts gain no speculative native preference writer.
+
+Move channel, Create new, exclusive Starred placement and startup presentation also
+belong to this persistent sidebar. The session serializes placement, sort and mute
+writes through one queue, retaining one confirmed preferences snapshot beneath
+pending Move and Sort projections. Each confirmation updates only its owned fields
+before reapplying pending intent; failure cannot roll back unrelated confirmed
+state. Field-only confirmations cannot recover a failed full preference read or
+hide its Retry. Move stays gated until that read succeeds. Mute optimism remains
+presentation-only; notification policy continues to use confirmed mutes. This
+composition does not change the whole-record cross-device limitation below.
 
 Collapsed section keys and sidebar scroll remain separate, scoped view intent.
 They survive page switches in the same mounted sidebar, are saved when that
@@ -257,8 +273,9 @@ New session and the mute/read group. Lifecycle items use shared leading icons an
 a separator only when they resolve and earlier actions exist. Right-click
 and keyboard access reuse the existing row trigger; no ⋮ control or second popup
 is added. Session creation, attention actions and child-session navigation keep
-their existing owners; sessions do not receive lifecycle actions. This slice adds
-no Move/Star/grouping controls or shared-menu restyling.
+their existing owners; sessions do not receive lifecycle actions. Move/Star/grouping
+controls share this popup with independent eligibility; lifecycle actions do not
+change shared-menu styling.
 
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering

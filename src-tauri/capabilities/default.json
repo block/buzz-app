@@ -3,6 +3,10 @@
   "identifier": "main-window",
   "description": "Allow the main application commands, title bar controls and external HTTP(S) links.",
   "permissions": [
+    "allow-identity-restore",
+    "allow-identity-import",
+    "allow-identity-create",
+    "allow-identity-export",
     "allow-plugin-import-folder",
     "allow-plugin-import-git",
     "allow-plugin-import-install",
@@ -18,6 +22,8 @@
     "allow-agent-control-create-commit",
     "allow-agent-control-creation-profile",
     "allow-agent-control-snapshot",
+    "allow-agent-control-log-challenge",
+    "allow-agent-control-read-log",
     "allow-agent-control-save",
     "allow-agent-control-start-on-app-launch",
     "allow-agent-control-delete",
@@ -44,6 +50,7 @@
     "allow-browser-navigate",
     "allow-browser-action",
     "allow-browser-status",
+    "core:app:allow-version",
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     {

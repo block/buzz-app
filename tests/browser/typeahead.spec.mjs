@@ -138,7 +138,7 @@ for (const mode of ["light", "dark"]) {
       await expect(selected).toBeInViewport({ ratio: 1 });
       await expect(selected).toHaveCSS(
         "background-color",
-        mode === "dark" ? "rgb(64, 64, 64)" : "rgb(232, 232, 232)",
+        mode === "dark" ? "rgb(64, 64, 64)" : "rgb(239, 239, 240)",
       );
       const surface = await popup.evaluate(
         (element) => getComputedStyle(element).backgroundColor,
@@ -588,7 +588,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   await expect(selectedParty).not.toHaveAttribute("aria-selected", "true");
   await expect(hoveredParty).toHaveCSS(
     "background-color",
-    "rgb(232, 232, 232)",
+    "rgb(239, 239, 240)",
   );
   const partyList = page.getByRole("listbox", {
     name: "Emoji suggestions",

@@ -11,7 +11,9 @@ mod deep_links;
 mod dock;
 mod host_command;
 mod host_request;
+mod identity;
 mod notifications;
+use identity::{identity_create, identity_export, identity_import, identity_restore, IdentityHost};
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 mod goose_models;
@@ -19,8 +21,8 @@ mod pi_models;
 use agents::{
     agent_control_action, agent_control_create_commit, agent_control_create_prepare,
     agent_control_creation_profile, agent_control_delete, agent_control_import_commit,
-    agent_control_import_preview, agent_control_save, agent_control_snapshot,
-    agent_control_start_on_app_launch, AgentHost,
+    agent_control_import_preview, agent_control_log_challenge, agent_control_read_log,
+    agent_control_save, agent_control_snapshot, agent_control_start_on_app_launch, AgentHost,
 };
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
@@ -339,6 +341,10 @@ async fn plugin_recover(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        identity_restore,
+        identity_import,
+        identity_create,
+        identity_export,
         plugin_import_folder,
         plugin_import_git,
         plugin_import_install,
@@ -354,6 +360,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_create_commit,
         agent_control_creation_profile,
         agent_control_snapshot,
+        agent_control_log_challenge,
+        agent_control_read_log,
         agent_control_save,
         agent_control_delete,
         agent_control_action,
@@ -429,6 +437,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.manage(TitleBarFillFrames::default());
     builder
+        .manage(IdentityHost::default())
         .manage(Imports::default())
         .manage(Terminals::default())
         .manage(Notifications::default())

@@ -202,26 +202,38 @@ it("does not trust a well-formed attestation with an invalid signature", async (
   expect(screen.queryByRole("button", { name: /owner profile/ })).toBeNull();
 });
 
-it("adds no agent section or owner reads for a profile without an agent hint", async () => {
+it("adds no agent section or owner read for a profile without an agent hint", async () => {
   const person = keypair();
   const { query } = mount(person, (filter) =>
     kind0(filter) ? [profile(person, { name: "Person" })] : [],
   );
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
-  // Public metadata discovery is independent of an agent hint. It must stay
-  // scoped to this profile, without owner-profile or managed-policy reads.
-  const expectedReads = [
-    expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
-    expect.objectContaining({ authors: [person.pubkey], kinds: [10100] }),
-    expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
-  ];
+  // Public metadata discovery can race the heading. Wait for those reads,
+  // then ensure they did not start observing an owner profile.
   await waitFor(() =>
     expect(query.mock.calls.flatMap(([filters]) => filters)).toEqual(
-      expect.arrayContaining(expectedReads),
+      expect.arrayContaining([
+        expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
+        expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
+        expect.objectContaining({
+          authors: [person.pubkey],
+          kinds: [10100],
+          limit: 1,
+        }),
+      ]),
     ),
   );
-  expect(query.mock.calls.flatMap(([filters]) => filters)).toHaveLength(3);
+  const reads = query.mock.calls.flatMap(([filters]) => filters);
+  expect(reads).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        authors: [person.pubkey],
+        kinds: [0],
+        limit: 1,
+      }),
+    ]),
+  );
 });
 
 function timedProfile(
@@ -689,12 +701,15 @@ it("offers instructions only for a signed owner with a unique native instance", 
       />,
     );
     await screen.findByRole("heading", { name: "Helper" });
-    await waitFor(() =>
-      expect(
-        screen.getByRole("region", { name: "Linked agent instances" }),
-      ).toHaveTextContent("Fixture agent"),
-    );
     if (viewer === ownerKey) {
+      await userEvent
+        .setup()
+        .click(await screen.findByRole("tab", { name: "Runtime" }));
+      const instances = screen.getByRole("region", { name: "Instances" });
+      expect(within(instances).getByText("1 instance")).toBeVisible();
+      await userEvent.setup().click(within(instances).getByText("1 instance"));
+      expect(within(instances).getByText("Fixture agent")).toBeVisible();
+      await userEvent.setup().click(screen.getByRole("tab", { name: "Info" }));
       const button = await screen.findByRole("button", {
         name: "Agent instructions",
       });
@@ -739,7 +754,8 @@ it("offers instructions only for a signed owner with a unique native instance", 
       ).toBeVisible();
       expect(open).not.toHaveBeenCalled();
     } else {
-      await screen.findByRole("region", { name: "Linked agent instances" });
+      await screen.findByRole("region", { name: "Instances" });
+      expect(screen.queryByRole("tab", { name: "Runtime" })).toBeNull();
       expect(screen.queryByText("Instructions")).toBeNull();
       expect(
         screen.queryByRole("button", { name: "Agent instructions" }),

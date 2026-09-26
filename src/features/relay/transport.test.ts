@@ -380,3 +380,47 @@ it.each(["busy", '{"status":"busy"}', "{custom-status", '{"status":42}'])(
     await expect(read()).rejects.toThrow();
   },
 );
+
+it.each(["relay", "https://relay.test"])(
+  "binds agent-log proof to broker session origin for community %s",
+  async (community) => {
+    const fetcher = vi.fn(async (url: string) =>
+      Response.json(
+        url.endsWith("/session")
+          ? {
+              viewer: key.pubkey,
+              relayAuthor: key.pubkey,
+              relayUrl: "https://relay.test",
+              agentLogProof: true,
+            }
+          : { signature: "a".repeat(128) },
+      ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const transport = await connectBrokerTransport("", undefined, community);
+    assert.exists(transport.authorizeAgentLog);
+    const target = {
+      id: "fixture-id",
+      pubkey: key.pubkey,
+      relayUrl: "wss://relay.test",
+    };
+    expect(await transport.authorizeAgentLog(target, "nonce")).toBe(
+      "a".repeat(128),
+    );
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/relay/${encodeURIComponent(community)}/agent-log-proof`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ ...target, nonce: "nonce" }),
+      }),
+    );
+    const before = fetcher.mock.calls.length;
+    await expect(
+      transport.authorizeAgentLog(
+        { ...target, relayUrl: "wss://different.test" },
+        "nonce",
+      ),
+    ).rejects.toThrow("Log authorization unavailable");
+    expect(fetcher).toHaveBeenCalledTimes(before);
+  },
+);

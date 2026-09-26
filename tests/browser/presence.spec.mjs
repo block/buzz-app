@@ -458,13 +458,13 @@ test("avatar choices publish through the existing socket and persist across relo
     exact: true,
   });
   const badge = avatar.locator(".buzz-avatar-status-dot");
-  const account = page.getByRole("menu", { name: "Browser Fixture" });
+  const account = page.getByRole("menu", { name: "Fixture Reader" });
   const published = (status) =>
     app.report.presencePublications.filter(
       ({ event }) => event.content === status,
     ).length;
   await expect(
-    page.getByRole("img", { name: "Your status: Online" }),
+    avatar.getByRole("img", { name: "Your status: Online" }),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -490,7 +490,7 @@ test("avatar choices publish through the existing socket and persist across relo
   await page.getByRole("button", { name: /^Availability:/ }).click();
   await page.getByRole("menuitemradio", { name: "Away", exact: true }).click();
   await expect(
-    page.getByRole("img", { name: "Your status: Away" }),
+    avatar.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
   await expect(badge).toHaveCSS("background-color", "rgb(171, 100, 0)");
   await expect(badge).toHaveCSS("background-image", "none");
@@ -504,7 +504,7 @@ test("avatar choices publish through the existing socket and persist across relo
   await editor.click();
   await editor.fill("Still away while typing");
   await expect(
-    page.getByRole("img", { name: "Your status: Away" }),
+    avatar.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
   await avatar.click();
   await page.getByRole("button", { name: /^Availability:/ }).click();
@@ -514,7 +514,7 @@ test("avatar choices publish through the existing socket and persist across relo
   await expect.poll(() => published("offline")).toBeGreaterThan(0);
   await page.reload();
   await expect(
-    page.getByRole("img", { name: "Your status: Offline" }),
+    avatar.getByRole("img", { name: "Your status: Offline" }),
   ).toBeVisible();
   await expect(badge).toHaveCSS("background-color", "rgb(128, 128, 128)");
   await expect(badge).toHaveCSS("background-image", "none");
@@ -532,7 +532,7 @@ test("avatar choices publish through the existing socket and persist across relo
     .getByRole("menuitemradio", { name: "Automatic", exact: true })
     .click();
   await expect(
-    page.getByRole("img", { name: "Your status: Online" }),
+    avatar.getByRole("img", { name: "Your status: Online" }),
   ).toBeVisible();
   await expect.poll(() => published("online")).toBeGreaterThan(before);
   await account.screenshot({

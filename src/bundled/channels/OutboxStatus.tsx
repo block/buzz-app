@@ -3,6 +3,7 @@ import { isWorkflowOperation } from "../../features/workflows/protocol";
 import { useState, useSyncExternalStore } from "react";
 import type { RelayProfiler } from "../../features/relay/profiling";
 import { RelayTimings } from "./RelayTimings";
+import { PRODUCT_FEEDBACK_KIND } from "../../features/relay/product-feedback";
 import type { Outbox } from "../../features/relay/outbox";
 
 /** Delivery belongs to the session, including messages from other pages or a previous launch. */
@@ -17,7 +18,7 @@ export function OutboxStatus({
     outbox.subscribe,
     outbox.snapshot,
     outbox.snapshot,
-  );
+  ).filter((item) => item.event.kind !== PRODUCT_FEEDBACK_KIND);
   const [error, setError] = useState<string>();
 
   return (

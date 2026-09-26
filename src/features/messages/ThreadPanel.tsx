@@ -255,7 +255,13 @@ function ThreadMessages({
     [snapshot.root, snapshot.replies],
   );
   const authors = [
-    ...new Set(rows.flatMap((row) => [row.authorId, ...row.mentions])),
+    ...new Set(
+      rows.flatMap((row) => [
+        row.authorId,
+        ...row.mentions,
+        ...(row.mentionReferences ?? []),
+      ]),
+    ),
   ]
     .sort()
     .join(":");

@@ -1,7 +1,12 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
+import { connect } from "node:net";
+import { once } from "node:events";
 
 test.use({ pluginFixtures: true, historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
+const companionLauncher = (page, name) =>
+  button(page, name).and(page.locator("button[aria-expanded]"));
 const card = (page, name) =>
   page.getByRole("complementary", { name, exact: true });
 
@@ -10,10 +15,7 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   app,
 }) => {
   await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Legacy" })
-    .click();
+  await openPage(page, "Legacy");
   const draft = page.getByRole("textbox", { name: "Legacy page draft" });
   await draft.fill("Keep the page instance");
   await button(page, "Notes").click();
@@ -29,7 +31,7 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   await expect(draft).toHaveValue("Keep the page instance");
   await button(page, "Notes").click();
   await expect(note).toHaveValue("");
-  await button(page, "Bestie").click();
+  await companionLauncher(page, "Bestie").click();
   await expect(card(page, "Notes")).toHaveCount(0);
   await expect(card(page, "Bestie")).toHaveCount(1);
   await page.evaluate(() => window.stalePanelClose());
@@ -46,7 +48,7 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
   await expect(button(page, "Notes")).toBeVisible();
   await expect(card(page, "Notes")).toHaveCount(0);
-  await button(page, "Bestie").click();
+  await companionLauncher(page, "Bestie").click();
   await page.evaluate(() => window.stalePanelClose());
   await expect(card(page, "Bestie")).toHaveCount(1);
 });
@@ -55,21 +57,33 @@ test("the launched card works with an empty Channels roster", async ({
   page,
   app,
 }) => {
-  await page.route("**/api/relay/primary/query", async (route) => {
-    const filters = route.request().postDataJSON();
-    if (filters.some((filter) => filter.kinds?.includes(39002)))
-      return route.fulfill({ json: [] });
-    return route.continue();
-  });
+  // Exercise the actual fixture middleware, not just its body-reader helper.
+  // 100 Continue proves Node accepted the headers before the client disconnects.
+  const socket = connect(Number(new URL(app.origin).port), "127.0.0.1");
+  try {
+    await once(socket, "connect");
+    const accepted = once(socket, "data");
+    socket.write(
+      'POST /api/relay/primary/query HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 100\r\n\r\n[{"kinds":',
+    );
+    expect(String((await accepted)[0])).toContain("100 Continue");
+  } finally {
+    socket.destroy();
+  }
+  await expect
+    .poll(() => app.report.cancelledRequests)
+    .toEqual([{ method: "POST", url: "/api/relay/primary/query" }]);
+  expect(app.report.unexpected).toEqual([]);
+  expect(app.report.queries).toEqual([]);
+  // Model the empty roster before startup; leave query routing to the fixture.
+  app.omitChannel("alpha");
+  app.omitChannel("beta");
   await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages" })
-    .click();
+  await openPage(page, "Messages");
   await expect(
     page.getByText("No channels yet.", { exact: true }),
   ).toBeVisible();
-  await button(page, "Bestie").click();
+  await companionLauncher(page, "Bestie").click();
   await expect(card(page, "Bestie")).toHaveCount(1);
   await button(page, "Notes").click();
   await expect(card(page, "Notes")).toHaveCount(1);
@@ -90,7 +104,7 @@ test("old close cannot dismiss a later opening of the same contribution", async 
   await page.evaluate(() => {
     window.firstNotesClose = window.stalePanelClose;
   });
-  await button(page, "Bestie").click();
+  await companionLauncher(page, "Bestie").click();
   await expect(card(page, "Notes")).toHaveCount(0);
   await button(page, "Notes").click();
   await page.getByRole("textbox", { name: "Panel note" }).fill("A new opening");
@@ -115,10 +129,7 @@ test("companion remains usable while Channels connection is pending", async ({
   });
   try {
     await page.goto(app.origin);
-    await page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages" })
-      .click();
+    await openPage(page, "Messages");
     await expect(
       page.getByText("Connecting to your relay…", { exact: true }),
     ).toBeVisible();
@@ -126,7 +137,7 @@ test("companion remains usable while Channels connection is pending", async ({
     await expect(card(page, "Notes")).toHaveCount(1);
     await button(page, "Close Notes panel").click();
     await expect(button(page, "Notes")).toBeFocused();
-    await button(page, "Bestie").click();
+    await companionLauncher(page, "Bestie").click();
     release();
     await expect(
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),

@@ -85,15 +85,13 @@ export function metadata(
   channelId: string,
   name: string,
   created_at = 1_700_000_000,
+  extra: readonly string[][] = [],
 ): RelayEvent {
   return signed(relay, {
     kind: 39000,
     content: JSON.stringify({ name }),
     created_at,
-    tags: [
-      ["d", channelId],
-      ["name", name],
-    ],
+    tags: [["d", channelId], ["name", name], ...extra],
   });
 }
 export function profile(
@@ -149,3 +147,143 @@ export function scriptedTransport(viewer: string, relayAuthor: string) {
 }
 export const flush = () =>
   new Promise<void>((resolve) => setTimeout(resolve, 0));
+/** Fixture relay for NIP-IA requests: applies accepted 9035/9036 events to its
+ * relay-signed 13535 snapshot. `hold`/`fail`/`apply` script the publish outcome.
+ * `channels` maps channel IDs to relay-signed 39002 members; `removal` scripts
+ * accepted 9001 removals the same way. */
+export function archiveRelay(
+  viewer: Key,
+  relay: Key,
+  profiles: readonly RelayEvent[] = [],
+  roles: Readonly<Record<string, string>> = {},
+  channels: Record<string, string[]> = {},
+) {
+  const archived = new Set<string>();
+  const published: RelayEvent[] = [];
+  const signedBy: string[] = [];
+  const script: { hold?: Promise<void>; fail?: Error; apply: boolean } = {
+    apply: true,
+  };
+  const removal: { hold?: Promise<void>; fail?: Error; apply: boolean } = {
+    apply: true,
+  };
+  let time = 1;
+  const roster = (id: string) =>
+    signed(relay, {
+      kind: 39002,
+      created_at: time,
+      content: "",
+      tags: [["d", id], ...(channels[id] ?? []).map((key) => ["p", key])],
+    });
+  const snapshot = () =>
+    signed(relay, {
+      kind: 13535,
+      created_at: time,
+      content: "",
+      tags: [["-"], ...[...archived].map((key) => ["p", key])],
+    });
+  const transport: ReadTransport = {
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    archiveAuthority: relay.pubkey,
+    media: () => undefined,
+    query: async (filters) =>
+      filters.flatMap((filter) => {
+        if (filter.kinds?.includes(13535)) return [snapshot()];
+        if (filter.kinds?.includes(13534))
+          return [
+            signed(relay, {
+              kind: 13534,
+              content: "",
+              tags: Object.entries(roles).map(([key, role]) => [
+                "member",
+                key,
+                role,
+              ]),
+            }),
+          ];
+        if (filter.kinds?.includes(0))
+          return profiles.filter((event) =>
+            filter.authors?.includes(event.pubkey),
+          );
+        if (filter.kinds?.includes(39000))
+          return Object.keys(channels)
+            .filter((id) => !filter["#d"] || filter["#d"].includes(id))
+            .map((id) =>
+              signed(relay, {
+                kind: 39000,
+                created_at: time,
+                content: "",
+                tags: [
+                  ["d", id],
+                  ["name", id.slice(0, 8)],
+                ],
+              }),
+            );
+        if (filter.kinds?.includes(39002))
+          return Object.keys(channels)
+            .filter(
+              (id) =>
+                (!filter["#d"] || filter["#d"].includes(id)) &&
+                (!filter["#p"] ||
+                  filter["#p"].some((key) => channels[id]?.includes(key))),
+            )
+            .map(roster);
+        return [];
+      }),
+    writer: {
+      kinds: [9001],
+      async sign(template) {
+        return finalizeEvent({ ...template }, viewer.secret);
+      },
+      async publish(event) {
+        await removal.hold;
+        if (removal.fail) throw removal.fail;
+        published.push(event);
+        if (!removal.apply) return;
+        const tag = (name: string) =>
+          event.tags.find(([key]) => key === name)?.[1] ?? "";
+        channels[tag("h")] = (channels[tag("h")] ?? []).filter(
+          (key) => key !== tag("p"),
+        );
+        time += 1;
+      },
+    },
+    identityArchive: {
+      async sign(template) {
+        signedBy.push(viewer.pubkey);
+        return finalizeEvent(template, viewer.secret);
+      },
+      async publish(event) {
+        await script.hold;
+        if (script.fail) throw script.fail;
+        published.push(event);
+        if (!script.apply) return;
+        const target = event.tags.find(([name]) => name === "p")?.[1] ?? "";
+        if (event.kind === 9035) archived.add(target);
+        else archived.delete(target);
+        time += 1;
+      },
+    },
+  };
+  /** An out-of-band relay change publishes a newer snapshot, never a same-time fork. */
+  const archiveExternally = (target: string) => {
+    archived.add(target);
+    time += 1;
+  };
+  const unarchiveExternally = (target: string) => {
+    archived.delete(target);
+    time += 1;
+  };
+  return {
+    transport,
+    archived,
+    archiveExternally,
+    unarchiveExternally,
+    published,
+    signedBy,
+    script,
+    channels,
+    removal,
+  };
+}

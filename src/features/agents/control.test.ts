@@ -91,6 +91,20 @@ it("save leaves running revision alone; omitted environment values stay host-onl
   expect(fixture.calls.filter((call) => call.action === "restart")).toEqual([]);
   await expect(control.save(agent.id, 1, edit)).rejects.toThrow();
 });
+it("delete applies only the native result and reports an unconfirmed delete", async () => {
+  const fixture = controlFixture();
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const deleting = control.delete?.("fixture-agent", 1);
+  expect(control.snapshot().busy).toBe(true);
+  expect(control.snapshot().data?.agents).toHaveLength(1);
+  await deleting;
+  expect(control.snapshot().data?.agents).toEqual([]);
+  expect(control.snapshot().busy).toBe(false);
+  await expect(control.delete?.("fixture-agent", 1)).rejects.toThrow("confirm");
+  expect(control.snapshot().error).toContain("Agent no longer exists");
+  expect(createAgentControl(null).delete).toBeUndefined();
+});
 it("subscription cleanup and disposal never send stop or accept a late snapshot", async () => {
   const fixture = controlFixture();
   const control = createAgentControl(fixture.host);
@@ -118,6 +132,36 @@ it("failed refresh exposes retry while retaining the last snapshot", async () =>
   await control.refresh();
   expect(control.snapshot().status).toBe("error");
   expect(control.snapshot().data?.agents).toHaveLength(1);
+});
+it("keeps read errors visible during recovery and clears global operation errors on success", async () => {
+  const fixture = controlFixture();
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const action = vi
+    .spyOn(fixture.host, "action")
+    .mockRejectedValueOnce("Start was not confirmed.");
+  await expect(control.action(fixture.agent.id, "start")).rejects.toThrow(
+    "confirm",
+  );
+  const snapshot = vi
+    .spyOn(fixture.host, "snapshot")
+    .mockRejectedValueOnce("read failure");
+  await control.refresh();
+  expect(control.snapshot().error).toContain(
+    "Current host status is unconfirmed",
+  );
+  const late = deferred<typeof fixture.data>();
+  snapshot.mockReturnValueOnce(late.promise);
+  const before = control.snapshot();
+  const recovering = control.refresh();
+  expect(control.snapshot()).toBe(before);
+  late.resolve(structuredClone(fixture.data));
+  await recovering;
+  expect(control.snapshot()).toMatchObject({
+    status: "ready",
+    error: null,
+  });
+  expect(action).toHaveBeenCalledExactlyOnceWith(fixture.agent.id, "start");
 });
 it("status failure admits only Stop for a retained identity and still serializes it", async () => {
   const fixture = controlFixture();

@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { createMemberAdditions } from "../channel-members/operations";
+import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
@@ -376,6 +378,64 @@ function mount(
     },
   };
 }
+
+it("autofocuses each selected conversation once without stealing focus on updates", () => {
+  const h = mount({ autoFocus: true });
+  expect(h.input()).toHaveFocus();
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    other.focus();
+    h.retarget({ channelName: "Renamed", autoFocus: false });
+    h.retarget({ autoFocus: true });
+    expect(other).toHaveFocus();
+    h.retarget({ channelId: "another-channel" });
+    expect(h.input()).toHaveFocus();
+    h.retarget({ channelId: "keyboard-navigation" });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    other.remove();
+  }
+});
+
+it("lets an explicit focus restoration in the mount commit win", () => {
+  const h = mount();
+  h.unmount();
+  const target = document.createElement("button");
+  document.body.append(target);
+  function RestoreFocus() {
+    useLayoutEffect(() => target.focus(), []);
+    return null;
+  }
+  try {
+    render(
+      <>
+        <MessageComposer
+          session={h.session}
+          scope="scope"
+          channelId="channel"
+          channelName="General"
+          autoFocus
+        />
+        <RestoreFocus />
+      </>,
+    );
+    expect(target).toHaveFocus();
+  } finally {
+    target.remove();
+  }
+});
+
+it("leaves focus alone unless an enabled composer opts into mount focus", () => {
+  const h = mount();
+  expect(h.input()).not.toHaveFocus();
+  h.retarget({
+    channelId: "disabled-channel",
+    disabled: true,
+    autoFocus: true,
+  });
+  expect(h.input()).not.toHaveFocus();
+});
 
 it("keeps unpublished completions invisible but lets Escape revoke pending work", () => {
   const h = mount();
@@ -1145,8 +1205,9 @@ for (const threadRootId of [undefined, "f".repeat(64)])
       members: ["d".repeat(64)],
     };
     const listeners = new Set<() => void>();
-    // A Sessions parent invitation is a different operation, even for the same recipient.
+    // An acknowledged old invitation does not replace this explicit addition.
     const invitation: OutgoingEvent = {
+      acknowledged: true,
       delivery: "failed",
       event: {
         id: "c".repeat(64),
@@ -1169,7 +1230,7 @@ for (const threadRootId of [undefined, "f".repeat(64)])
             ...input,
             pubkey: "d".repeat(64),
             id: "e".repeat(64),
-            created_at: 1,
+            created_at: Math.floor(Date.now() / 1000),
           },
           delivery: "sending",
         },
@@ -1179,15 +1240,22 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     const list = { status: "ready", channels: [channel] };
     Object.assign(h.session, {
       channels: { list: () => list, subscribeList: () => () => {} },
-      read: vi.fn(async () => {
-        if (operations[0]?.delivery === "accepted")
-          channel.members = [...channel.members, first.pubkey];
-        return [];
-      }),
+      viewer: "d".repeat(64),
+      archives: { state: () => "not-archived" },
+      workSessions: {
+        refreshMembership: vi.fn(async () => {
+          if (operations[0]?.delivery === "accepted")
+            channel.members = [...channel.members, first.pubkey];
+          return channel;
+        }),
+      },
       outbox: {
         supports: () => true,
         send: add,
         retry,
+        ready: async () => {},
+        recover: async () => {},
+        acknowledge: async () => {},
         snapshot: () => operations,
         subscribe: (fn: () => void) => {
           listeners.add(fn);
@@ -1195,20 +1263,40 @@ for (const threadRootId of [undefined, "f".repeat(64)])
         },
       },
     });
+    Object.assign(h.session, {
+      memberAdditions: createMemberAdditions(
+        new AbortController().signal,
+        (channelId, key, intent) =>
+          addChannelMember(
+            h.session,
+            channelId,
+            key,
+            new AbortController().signal,
+            intent,
+          ),
+        vi.fn(),
+      ),
+    });
     try {
       fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
       expect(add).not.toHaveBeenCalled();
       fireEvent.submit(screen.getByRole("form"));
       await act(async () => {});
-      expect(add).toHaveBeenCalledWith({
-        kind: 9000,
-        content: "",
-        tags: [
-          ["h", "channel"],
-          ["p", first.pubkey],
-          ["role", "bot"],
-        ],
-      });
+      expect(add).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+      await act(async () => {});
+      expect(add).toHaveBeenCalledWith(
+        {
+          kind: 9000,
+          content: "",
+          tags: [
+            ["h", "channel"],
+            ["p", first.pubkey],
+            ["role", "bot"],
+          ],
+        },
+        { key: `member-add:channel:${first.pubkey}`, value: "1" },
+      );
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(h.messages.reply).not.toHaveBeenCalled();
       await act(async () => {
@@ -1270,19 +1358,49 @@ it.each([false, true])(
       : [];
     Object.assign(h.session, {
       channels: { list: () => list, subscribeList: () => () => {} },
-      read: async () => [],
-      outbox: { supports: () => true, send: add, snapshot: () => operations },
+      viewer: "d".repeat(64),
+      archives: { state: () => "not-archived" },
+      workSessions: { refreshMembership: async () => list.channels[0] },
+      outbox: {
+        supports: () => true,
+        send: add,
+        snapshot: () => operations,
+        ready: async () => {},
+        recover: async () => {},
+        acknowledge: async () => {},
+      },
+    });
+    Object.assign(h.session, {
+      memberAdditions: createMemberAdditions(
+        new AbortController().signal,
+        (channelId, key, intent) =>
+          addChannelMember(
+            h.session,
+            channelId,
+            key,
+            new AbortController().signal,
+            intent,
+          ),
+        vi.fn(),
+      ),
     });
     try {
       fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
       fireEvent.submit(screen.getByRole("form"));
       await act(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+      await act(async () => {});
       expect(screen.getByRole("alert")).toHaveTextContent(
-        expired ? "Open Outbox" : "Cannot add agent",
+        expired ? "addition expired" : "Cannot add agent",
       );
-      expect(h.input().value).toBe("@Honey ");
+      expect(
+        (screen.getByRole("textbox", { hidden: true }) as HTMLInputElement)
+          .value,
+      ).toBe("@Honey ");
       expect(h.messages.send).not.toHaveBeenCalled();
       if (expired) expect(add).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      await act(async () => {});
       expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
     } finally {
       control.dispose();
@@ -2394,3 +2512,138 @@ it("uses the full channel choice set for one selected chip and follows membershi
   h.unmount();
   names.dispose();
 });
+
+for (const channelType of ["stream", "forum"] as const)
+  it.each([undefined, "f".repeat(64)])(
+    `keeps mixed nonmember mentions as references after Send anyway in ${channelType}, root=%s`,
+    async (threadRootId) => {
+      const h = mount(threadRootId ? { threadRootId } : {});
+      const add = vi.fn();
+      const list = {
+        status: "ready",
+        channels: [
+          {
+            id: "channel",
+            channelType,
+            members: ["d".repeat(64), second.pubkey],
+          },
+        ],
+      };
+      Object.assign(h.session, {
+        channels: { list: () => list, subscribeList: () => () => {} },
+        memberAdditions: { add },
+        outbox: { ...h.session.outbox, supports: (kind: number) => kind === 9 },
+      });
+      act(() => {
+        h.commands().insertMention(first);
+        h.commands().insertMention(second);
+      });
+      fireEvent.submit(screen.getByRole("form"));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      // block/buzz parity: without permission, Invite is absent, not disabled.
+      expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        "Honey is not in this channel. You cannot add people to this channel. You can still send without inviting them.",
+      );
+      expect(add).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+      await act(async () => {});
+      const send = threadRootId ? h.messages.reply : h.messages.send;
+      expect(send).toHaveBeenCalledOnce();
+      expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([
+        second.pubkey,
+      ]);
+      expect(send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+      expect(add).not.toHaveBeenCalled();
+    },
+  );
+
+it.each(["close", "escape"])(
+  "%s preserves the captured draft and returns focus without adding or sending",
+  async (action) => {
+    const h = mount();
+    const add = vi.fn();
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+    });
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    const input = h.input();
+    fireEvent.submit(screen.getByRole("form"));
+    // block/buzz parity: one send action, one invite action, and no Cancel.
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
+    );
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Do nothing" })).toHaveFocus(),
+    );
+    if (action === "close")
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    else await userEvent.setup().keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(input).toHaveValue("@Honey ");
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(add).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["retry", "unmount", "retarget", "disabled"])(
+  "waits for confirmed addition and handles %s without duplicate sends",
+  async (outcome) => {
+    const h = mount();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    const add = vi.fn(async () => {
+      await gate;
+    });
+    if (outcome === "retry")
+      add.mockRejectedValueOnce(new Error("Membership not confirmed"));
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+    });
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    fireEvent.submit(screen.getByRole("form"));
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    try {
+      if (outcome === "retry") {
+        await screen.findByRole("alert");
+        expect(h.messages.send).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+      }
+      expect(screen.getByRole("button", { name: "Do nothing" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Inviting…" })).toBeDisabled();
+      if (outcome === "unmount") h.unmount();
+      else if (outcome === "retarget") h.retarget({ channelId: "other" });
+      else if (outcome === "disabled") h.retarget({ disabled: true });
+    } finally {
+      await act(async () => release());
+    }
+    expect(add).toHaveBeenCalledTimes(outcome === "retry" ? 2 : 1);
+    expect(h.messages.send).toHaveBeenCalledTimes(outcome === "retry" ? 1 : 0);
+  },
+);

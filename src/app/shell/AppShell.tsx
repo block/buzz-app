@@ -5,6 +5,7 @@ import { SidebarIcon } from "../../shared/design-system/icons";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
+import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
 import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
@@ -24,6 +25,7 @@ export function AppShell({
   workspace,
   sidebar,
   communities,
+  accountActions,
   searchServices,
   navigationControls,
   onCommunitySelect,
@@ -38,6 +40,7 @@ export function AppShell({
   workspace?: boolean;
   sidebar?: (pages: ReactNode) => ReactNode;
   communities: Communities;
+  accountActions: AccountActionsService;
   searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
@@ -129,6 +132,7 @@ export function AppShell({
           />
           <ProfileButton
             communities={communities}
+            accountActions={accountActions}
             settingsSelected={selected === "settings"}
             onSettings={() => onSelect("settings")}
           />

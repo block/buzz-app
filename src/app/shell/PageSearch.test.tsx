@@ -251,3 +251,33 @@ it("renders a restored prototype-named search key and remains resettable", async
     await root.fiber.dispose();
   }
 });
+
+it.each(["pointer", "keyboard"])(
+  "hands %s page selection to main, not its first control",
+  async (method) => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const user = userEvent.setup();
+    const select = vi.fn();
+    render(
+      <>
+        <PageSearch pages={[]} onSelect={select} />
+        <main id="main-content" tabIndex={-1}>
+          <button type="button">First control</button>
+        </main>
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Search Buzz" });
+    await user.click(trigger);
+    if (method === "pointer")
+      await user.click(screen.getByRole("option", { name: "Settings" }));
+    else await user.keyboard("{ArrowDown}{Enter}");
+    expect(select).toHaveBeenCalledExactlyOnceWith("settings");
+    await vi.waitFor(() => expect(screen.getByRole("main")).toHaveFocus());
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(trigger).toHaveFocus());
+  },
+);

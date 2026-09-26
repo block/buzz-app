@@ -13,8 +13,11 @@ Configure `BUZZ_DEV_VIEWER` with your existing Buzz public key in `.env.local`
 `just web` and open the Local URL it prints, or use `just desktop` instead. The
 development broker runs on macOS and Linux and refuses an OS-store identity
 that does not match your explicit public pin.
-Click the avatar → **Settings → Profile** to edit and save a local default
-directly in the page, then use **Add a community** in the left rail and type a **Relay URL**. There
+Click the avatar → **Settings → Profile**. With a community selected in the left
+rail, Save updates only your profile in that community; there is no separate
+profile-destination selector. In Personal space, Save edits the local default for
+new communities without publishing. Use **Add a community** in the left rail and
+type a **Relay URL**. There
 is no destination dropdown. Accepts `wss://` or `https://` origins, for example
 `wss://relay.example.com` or `wss://other.example.com`, and other
 Buzz-compatible community relays. No community is pre-joined.
@@ -37,10 +40,29 @@ and does not replace the currently selected community. An admitted invite is a
 remote side effect and is not undone if later profile setup fails or is cancelled.
 
 Profile editing preserves existing fields that this editor does not expose.
-Changing a community profile does not change the local default. The first
-completed community setup seeds the local default only when it is still empty.
-Picture setup currently accepts HTTPS URLs, not uploads; a protected media URL
-from one community is not a portable public avatar for another.
+After a confirmed Settings save, the profile also becomes the device-local
+default used in Personal space and new-community setup; other existing community
+profiles are not changed. Media under the current community's `/media/` path is
+not copied into that default:
+its previous picture is kept, while public URLs and explicit removal still update
+it. First-join seeding follows the same rule. URLs hosted by another community and
+URLs entered in Personal space are not classified by this guard; user-supplied HTTPS
+URLs are not guaranteed portable. The top-right button and menu show the selected
+community's name and avatar through its existing profile/media session. Pending
+or unavailable community profiles show an identity fallback, not another
+community's avatar. Personal space uses the local default. Merely loading a
+community profile does not replace that local default. The first completed community setup seeds
+the local default only when it is still empty.
+The shared avatar editor supports image upload/drop, HTTPS URLs, emoji artwork
+and removal. Done changes the form draft; Save applies it. Uploads use the selected
+community's existing media transport. Personal space accepts a public HTTPS URL
+without uploading. A protected media URL from one community is not a portable
+public avatar for another. Switching communities retires the editor: a save not
+yet dispatched is cancelled, while an already dispatched save remains bound to
+its original community and cannot alter the next community's draft. Settings Save
+re-reads the effective name/picture/description after the accepted receipt; a failed read or
+conflicting current profile retains the draft for explicit Save retry instead of
+reporting success. This confirmation is not a transaction against other clients.
 
 Use the persistent left community rail to select a saved community or Personal
 space. Personal space
@@ -67,13 +89,18 @@ publishing, media and live traffic, uses that session's destination path. A send
 started in A continues in A even after B becomes selected. Connection generations
 still fence obsolete work within a session; they are not persistent storage keys.
 Channel-head persistence now includes community origin as well as viewer, rather
-than relying solely on the relay signing key. Identity keys never enter browser
-JavaScript; local preferences contain the public viewer ID only.
+than relying solely on the relay signing key. In development broker mode signing keys never enter browser
+JavaScript; local preferences contain the public viewer ID only. The app-owned
+[native identity UI](identity.md) has deliberate import/reveal/copy interactions,
+not a plugin key service.
 
 This is the development integration, not a native identity/join implementation.
-Packaged builds do not include the broker. Account import, community
-creation/removal, agent enrollment, avatar uploads and background connection
-eviction are not implemented. Agents should eventually have local
+Packaged builds do not include the broker. Native macOS [identity import/create](identity.md)
+is available as a separate first slice, without packaged relay transport. Community
+creation/removal and background connection eviction are not implemented. Native
+agent enrollment has its own [local control contract](agent-control.md). Avatar
+uploads reuse the development media host; packaged human-profile publication is
+not established by this frontend slice. Agents have local
 configuration plus separately scoped participation; selecting a community must
 not become a deployment or enrollment command.
 
@@ -119,8 +146,9 @@ This establishes **trusted-app-origin intent, not a human gesture**; same-origin
 plugins and local processes remain trusted, not sandboxed. User-directed HTTPS
 networking may reach internal/private destinations. This is not a public-only
 network policy or DNS-rebinding defense; TLS verification remains enabled.
-No CSP widening, private key exposure to JavaScript, or native identity adapter
-is included.
+This broker integration does not expose private keys to JavaScript or widen CSP.
+The separate [native identity adapter](identity.md) deliberately exports keys for
+backup; same-origin plugin JavaScript is trusted and can invoke that IPC too.
 
 ## Verification
 

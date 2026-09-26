@@ -6,6 +6,7 @@ import type { LocalEvents } from "./outbox";
 import type { RelayReader } from "./reader";
 import { byteSize } from "./budget";
 import { foldMessages } from "./fold";
+import { compareMessages, MessageClock } from "./message-order";
 import { shareMessageRows } from "./row-identity";
 
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
@@ -17,6 +18,7 @@ const contentKind = (event: EventData) =>
   [9, 40002, 40008].includes(event.kind);
 const inChannel = (event: EventData, channelId: string) =>
   event.tags.some(([name, value]) => name === "h" && value === channelId);
+/** Relay thread-cursor order (seconds, id); rendered order is `compareMessages`. */
 const compare = (a: EventData, b: EventData) =>
   a.created_at - b.created_at || a.id.localeCompare(b.id);
 
@@ -53,6 +55,7 @@ export function createThreadView({
   notify,
   exact = false,
   admit = (events) => events,
+  clock = new MessageClock(),
 }: {
   channelId: string;
   messageId: string;
@@ -64,6 +67,8 @@ export function createThreadView({
   visible(events: readonly RelayEvent[]): readonly RelayEvent[];
   notify(listener: () => void): void;
   exact?: boolean;
+  /** The session's send clock; rendered replies raise its channel watermark. */
+  clock?: MessageClock;
   /** Exact finite reads enter session reconciliation only after a complete fold. */
   admit?:
     | ((events: readonly RelayEvent[]) => readonly RelayEvent[])
@@ -178,7 +183,6 @@ export function createThreadView({
           : row;
       }),
     );
-    // Thread forward order differs from channel-history's descending-ID tiebreak.
     const target =
       targetStatus === "ready"
         ? rows.find((row) => row.id === messageId)
@@ -192,7 +196,9 @@ export function createThreadView({
         (row) =>
           row.id !== rootId && (!rootUnavailable || row.id === messageId),
       )
-      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+      .sort(compareMessages);
+    for (const row of nextReplies)
+      clock.observe(channelId, row.createdAtMs ?? row.createdAt * 1000);
     const replies =
       snapshot.replies.length === nextReplies.length &&
       snapshot.replies.every((row, index) => row === nextReplies[index])

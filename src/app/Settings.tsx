@@ -1,3 +1,4 @@
+import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
@@ -20,6 +21,7 @@ import {
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
 
 import type { Appearance } from "../shared/theme/service";
@@ -36,6 +38,9 @@ import { OwnedContribution } from "../plugins/OwnedContribution";
 
 type Section = { id: string; label: string; icon: typeof UserIcon };
 
+const personalProfile: readonly Section[] = [
+  { id: "profile", label: "Profile", icon: UserIcon },
+];
 const appSections: readonly Section[] = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "notifications", label: "Notifications", icon: BellIcon },
@@ -53,6 +58,7 @@ export function Settings({
   cards,
   plugins,
   communities,
+  identity,
   appearance,
   shortcuts,
   shortcutBindings,
@@ -63,6 +69,7 @@ export function Settings({
   cards: SettingsCards;
   plugins: PluginManager;
   communities: Communities;
+  identity?: Identity | undefined;
   appearance: Appearance;
   shortcuts: ShortcutsService;
   shortcutBindings: ShortcutBindings;
@@ -111,6 +118,7 @@ export function Settings({
   const visibleSections = useMemo(
     () => [
       ...communitySections,
+      ...(!selectedCommunity ? personalProfile : []),
       ...contributedGroups.flatMap((group) =>
         group.cards.map((card) => ({
           id: card.key,
@@ -123,7 +131,7 @@ export function Settings({
         ? [{ id: "developer", label: "Developer", icon: WrenchIcon }]
         : []),
     ],
-    [communitySections, contributedGroups],
+    [communitySections, contributedGroups, selectedCommunity],
   );
   const defaultSection = selectedCommunity ? "profile" : "appearance";
   const [selected, setSelected] = useState(defaultSection);
@@ -137,9 +145,11 @@ export function Settings({
       visibleSections.some((section) => section.id === requestedSection)
     )
       setSelected(requestedSection);
-    else if (!visibleSections.some((section) => section.id === selected))
+    else if (!visibleSections.some((section) => section.id === selected)) {
       setSelected(defaultSection);
-  }, [defaultSection, requestedSection, selected, visibleSections]);
+      if (requestedSection === selected) onSection?.(defaultSection);
+    }
+  }, [defaultSection, onSection, requestedSection, selected, visibleSections]);
   useEffect(() => {
     if (requestedSection === selected)
       navigation?.complete({ status: "opened" });
@@ -198,7 +208,10 @@ export function Settings({
                 </NavigationSection>
               ))}
               <NavigationSection label="App">
-                {appSections.map(({ id, label, icon: Icon }) => (
+                {[
+                  ...(!selectedCommunity ? personalProfile : []),
+                  ...appSections,
+                ].map(({ id, label, icon: Icon }) => (
                   <NavigationItem
                     label={label}
                     icon={<Icon aria-hidden="true" size={18} />}
@@ -286,8 +299,11 @@ export function Settings({
             )}
             <div hidden={selected !== "profile"}>
               <ProfileSettings
+                key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
                 communities={communities}
                 community={selectedCommunity}
+                identity={identity}
+                active={selected === "profile"}
               />
             </div>
             {developerMode && (
@@ -297,9 +313,15 @@ export function Settings({
             )}
             <div hidden={selected !== "plugins"}>
               <section aria-labelledby="plugin-settings-title">
-                <h2 id="plugin-settings-title" className="mt-0 mb-6 text-label">
-                  Plugins
-                </h2>
+                <Header
+                  id="plugin-settings-title"
+                  title="Plugins"
+                  subtitle={
+                    !plugins.imports
+                      ? "Open the desktop app to load plugins from a folder or Git repository."
+                      : undefined
+                  }
+                />
                 {catalog ? (
                   <PluginImport
                     plugins={plugins}
@@ -349,7 +371,7 @@ export function Settings({
                           : null);
                       return (
                         <article
-                          className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
+                          className="flex flex-wrap items-center justify-between gap-3 px-1 py-3"
                           key={id}
                         >
                           <div className="flex min-w-0 flex-1 items-center gap-3">

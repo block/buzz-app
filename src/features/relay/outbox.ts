@@ -3,8 +3,10 @@ import { yieldToHost } from "./yield";
 import { getEventHash, type EventTemplate } from "nostr-tools";
 import { eventDto, type EventData, type RelayEvent } from "./events";
 import type { RelayWriter } from "./transport";
-import { ByteLru, byteSize } from "./budget";
+import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
+import { channelRowKind } from "./membership";
+import { MessageClock } from "./message-order";
 
 export type Delivery = "sending" | "accepted" | "unknown" | "failed" | "seen";
 /** Durable, caller-owned recovery state committed with the operation. */
@@ -83,7 +85,10 @@ export function createOutbox(
     preparePublish,
     needsReceipt = () => false,
     onReceipt = (_event: EventData, _message: string | undefined) => {},
+    clock = new MessageClock(),
   }: {
+    /** The session's send clock, shared with its rendered views. */
+    clock?: MessageClock;
     timeoutMs?: number;
     /** Commands await their receipt even after a verified echo. Never persisted. */
     needsReceipt?: (event: EventData) => boolean;
@@ -645,20 +650,27 @@ export function createOutbox(
         throw new Error("This relay connection cannot publish that event kind");
       if (
         (input.kind === 9 && !input.content.trim()) ||
-        byteSize(input) > 32 * 1024
+        byteSize(input) > OUTBOX_INPUT_MAX_BYTES
       )
         throw new Error("Message is empty or too large");
       if (snapshot.length >= MAX_PENDING)
         throw new Error(
           "Too many outstanding operations; resolve or dismiss a pending operation",
         );
+      // Rendered messages carry send order within their second; the optimistic
+      // row and the signed event share this exact ms and created_at.
+      const channelId = channelRowKind(input.kind)
+        ? input.tags.find(([name]) => name === "h")?.[1]
+        : undefined;
+      const ms = channelId ? clock.next(channelId) : Date.now();
       const template = {
         ...input,
         pubkey: viewer,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: Math.floor(ms / 1000),
         tags: [
           ...input.tags.map((tag) => [...tag]),
           ["client-id", crypto.randomUUID()],
+          ...(channelId ? [["ms", String(ms % 1000)]] : []),
         ],
       };
       const event = Object.freeze({

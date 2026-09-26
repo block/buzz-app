@@ -56,7 +56,27 @@ function setup(parent: boolean | null = true, archived = false) {
           ],
   };
   const profiles = new Map([[member, { name: "Member" }]]);
+  const listeners = new Set<() => void>();
+  let archiveSnapshot: ReturnType<RelaySession["archives"]["snapshot"]> = {
+    status: "ready",
+    archived: [],
+  };
+  const setArchived = (archived: string[]) => {
+    archiveSnapshot = { status: "ready", archived };
+    for (const listener of listeners) listener();
+  };
   const session = {
+    directMessages: {
+      people: vi.fn(async () => ({ people: [], hasMore: false })),
+    },
+    archives: {
+      snapshot: () => archiveSnapshot,
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      ensure: async () => {},
+    },
     channels: {
       list: () => list,
       subscribeList: () => () => {},
@@ -80,7 +100,7 @@ function setup(parent: boolean | null = true, archived = false) {
     }),
     media: () => undefined,
   } as unknown as RelaySession;
-  return { session, library, key, member, profiles };
+  return { session, library, key, member, profiles, setArchived };
 }
 it("uses the same alphabetical and prefix ordering for typed and button mentions", async () => {
   const test = setup();
@@ -200,14 +220,14 @@ it("focuses search on open and supports clear, Escape, and outside dismissal", a
   const trigger = screen.getByRole("button", { name: "Mention a member" });
   await user.click(trigger);
   const search = screen.getByRole("searchbox", {
-    name: "Search members and your agents",
+    name: "Search community people and agents",
   });
   expect(search).toHaveFocus();
   await user.type(search, "no matching name");
   expect(screen.getByText("No matching channel members.")).toBeVisible();
   await user.click(
     screen.getByRole("button", {
-      name: "Clear search members and your agents",
+      name: "Clear search community people and agents",
     }),
   );
   expect(search).toHaveFocus();
@@ -830,4 +850,389 @@ it("keeps an outside namesake discoverable and qualifies the actual choice set",
   names.dispose();
   library.dispose();
   test.library.dispose();
+});
+
+it("discovers outside humans from the selected directory in both menus, not cached profiles", async () => {
+  const t = setup();
+  const outsider = { pubkey: "e".repeat(64), name: "Outside human" };
+  const cached = "f".repeat(64);
+  const people = vi.fn(async () => ({ people: [outsider], hasMore: false }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    profiles: { ...t.session.profiles, snapshot: () => profiles },
+  };
+  const profiles = new Map([[cached, { name: "Cache only" }]]);
+  const publish = vi.fn();
+  const view = render(
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@Outside", start: 8, end: 8 }}
+      query={{ start: 0, end: 8, query: "Outside" }}
+      publish={publish}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+        (item) => item.id,
+      ),
+    ).toEqual([outsider.pubkey]),
+  );
+  expect(people).toHaveBeenCalledWith("Outside", 1, expect.any(AbortSignal));
+  view.unmount();
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Mention a member" }));
+  const row = await screen.findByRole("button", {
+    name: `${outsider.name} ${outsider.pubkey}`,
+  });
+  expect(row).toHaveTextContent("Choose whether to add");
+  expect(
+    screen.queryByRole("button", { name: new RegExp(cached) }),
+  ).not.toBeInTheDocument();
+});
+
+it("qualifies outside directory namesakes that have no cached profile", async () => {
+  const t = setup();
+  const member = "a".repeat(64);
+  const people = vi.fn(async () => ({
+    people: [
+      { pubkey: "e".repeat(64), name: "Larry" },
+      { pubkey: "f".repeat(64), name: "Larry", isAgent: true as const },
+    ],
+    hasMore: false,
+  }));
+  const profiles = new Map([[member, { name: "Larry" }]]);
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    profiles: { ...t.session.profiles, snapshot: () => profiles },
+  };
+  const provider = createAgentDirectory();
+  const names = bindNames(
+    { profiles: session.profiles, agentLibrary: t.library.queries },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  const publish = vi.fn();
+  render(
+    <MentionCompletion
+      session={{ ...session, names }}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@Larr", start: 5, end: 5 }}
+      query={{ start: 0, end: 5, query: "Larr" }}
+      publish={publish}
+    />,
+  );
+  const labels = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.label,
+    ) ?? [];
+  await waitFor(() => expect(labels()).toHaveLength(3));
+  expect(new Set(labels()).size).toBe(3);
+  expect(labels()).not.toContain("Larry");
+  names.dispose();
+});
+
+it.each(["dm", "session"] as const)(
+  "never expands %s candidates from the community directory",
+  async (channelType) => {
+    const t = setup();
+    const people = vi.fn(async () => ({
+      people: [{ pubkey: "e".repeat(64), name: "Outside" }],
+      hasMore: false,
+    }));
+    const list = {
+      status: "ready" as const,
+      channels: [
+        {
+          id: "parent",
+          name: "Conversation",
+          channelType,
+          members: ["a".repeat(64)],
+        },
+      ],
+    };
+    const session = {
+      ...t.session,
+      directMessages: { ...t.session.directMessages, people },
+      channels: { ...t.session.channels, list: () => list },
+    };
+    render(
+      <MentionPicker
+        session={session}
+        scope="test"
+        channelId="parent"
+        disabled={false}
+        select={() => true}
+      />,
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Mention a member" }));
+    expect(people).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: /Outside/ }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+it("ignores a late directory result after the query changes and retries the current failure", async () => {
+  const t = setup();
+  let release = (_result: {
+    people: { pubkey: string; name: string }[];
+    hasMore: boolean;
+  }) => {};
+  const old = new Promise<{
+    people: { pubkey: string; name: string }[];
+    hasMore: boolean;
+  }>((resolve) => {
+    release = resolve;
+  });
+  const people = vi
+    .fn()
+    .mockReturnValueOnce(old)
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce({
+      people: [{ pubkey: "e".repeat(64), name: "New person" }],
+      hasMore: false,
+    });
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  };
+  const publish = vi.fn();
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@Old", start: 4, end: 4 },
+    publish,
+  };
+  const view = render(
+    <MentionCompletion {...props} query={{ start: 0, end: 4, query: "Old" }} />,
+  );
+  view.rerender(
+    <MentionCompletion {...props} query={{ start: 0, end: 4, query: "New" }} />,
+  );
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.status,
+    ).toMatch(/Could not search community/),
+  );
+  await act(async () =>
+    release({
+      people: [{ pubkey: "f".repeat(64), name: "Old person" }],
+      hasMore: false,
+    }),
+  );
+  expect(
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items,
+  ).toEqual([]);
+  act(() => {
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.retry?.();
+  });
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+        (item) => item.label,
+      ),
+    ).toEqual(["New person"]),
+  );
+});
+
+it("archived identities leave completion and return on unarchive; the viewer is never hidden from themself", async () => {
+  const test = setup();
+  const publish = vi.fn();
+  const labels = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.label,
+    );
+  const props = {
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@", start: 1, end: 1 },
+    query: { start: 0, end: 1, query: "" },
+    publish,
+  };
+  const view = render(<MentionCompletion session={test.session} {...props} />);
+  expect(labels()).toEqual(["Member"]);
+  act(() => test.setArchived([test.member]));
+  expect(labels()).toEqual([]);
+  act(() => test.setArchived([]));
+  expect(labels()).toEqual(["Member"]);
+  act(() => test.setArchived([test.member]));
+  view.rerender(
+    <MentionCompletion
+      session={{ ...test.session, viewer: test.member }}
+      {...props}
+    />,
+  );
+  expect(labels()).toEqual(["Member"]);
+  test.library.dispose();
+});
+
+it("closes prose after an unknown name without status or recovery, and skips searches a complete empty prefix refutes", async () => {
+  const t = setup();
+  const people = vi.fn(async (query: string) => ({
+    people: query.startsWith("Ou")
+      ? [{ pubkey: "e".repeat(64), name: "Outside" }]
+      : [],
+    hasMore: false,
+  }));
+  const uncached = new Map();
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    profiles: { ...t.session.profiles, snapshot: () => uncached },
+  };
+  const publish = vi.fn();
+  const last = () => publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const complete = (query: string) => (
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{
+        revision: 1,
+        text: `@${query}`,
+        start: query.length + 1,
+        end: query.length + 1,
+      }}
+      query={{ start: 0, end: query.length + 1, query }}
+      publish={publish}
+    />
+  );
+  const view = render(complete("Zed"));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(last()?.retry).toBeDefined());
+  for (const prose of ["Zed ", "Zed is", "Zed is typing"]) {
+    view.rerender(complete(prose));
+    await waitFor(() => expect(last()).toEqual({ items: [] }));
+  }
+  expect(people).toHaveBeenCalledTimes(1);
+  view.rerender(complete("Out"));
+  await waitFor(() =>
+    expect(people).toHaveBeenLastCalledWith("Out", 1, expect.any(AbortSignal)),
+  );
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Outside"]),
+  );
+  view.rerender(complete("Outside "));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(3));
+});
+
+function directoryCompletion(people: RelaySessionPeople) {
+  const t = setup();
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  };
+  const publish = vi.fn();
+  const last = () => publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const complete = (query: string) => (
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{
+        revision: 1,
+        text: `@${query}`,
+        start: query.length + 1,
+        end: query.length + 1,
+      }}
+      query={{ start: 0, end: query.length + 1, query }}
+      publish={publish}
+    />
+  );
+  return { last, complete };
+}
+type RelaySessionPeople = (
+  query: string,
+) => Promise<{ people: { pubkey: string; name: string }[]; hasMore: boolean }>;
+
+it("an exact public key still looks up its author after an empty partial-key search", async () => {
+  const key = "9".repeat(64);
+  const people = vi.fn(async (query: string) => ({
+    people: query === key ? [{ pubkey: key, name: "Keyholder" }] : [],
+    hasMore: false,
+  }));
+  const { last, complete } = directoryCompletion(people);
+  const view = render(complete("9".repeat(10)));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(last()?.items).toEqual([]));
+  view.rerender(complete(key));
+  await waitFor(() =>
+    expect(people).toHaveBeenLastCalledWith(key, 1, expect.any(AbortSignal)),
+  );
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Keyholder"]),
+  );
+});
+
+it("a failed multi-word directory search keeps its error and retry", async () => {
+  const people = vi
+    .fn<RelaySessionPeople>()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue({
+      people: [{ pubkey: "f".repeat(64), name: "Mary Jane" }],
+      hasMore: false,
+    });
+  const { last, complete } = directoryCompletion(people);
+  render(complete("Mary J"));
+  await waitFor(() =>
+    expect(last()?.status).toBe(
+      "Could not search community people. Retry to refresh.",
+    ),
+  );
+  act(() => last()?.retry?.());
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Mary Jane"]),
+  );
+});
+
+it("a fresh search for a refuted name searches again, and non-word text refutes nothing", async () => {
+  let published = false;
+  const people = vi.fn(async (query: string) => ({
+    people: [
+      ...(published && query.startsWith("Zed")
+        ? [{ pubkey: "9".repeat(64), name: "Zed" }]
+        : []),
+      ...(query.startsWith("🐝 B")
+        ? [{ pubkey: "8".repeat(64), name: "🐝 Buzz Bot" }]
+        : []),
+    ],
+    hasMore: false,
+  }));
+  const { last, complete } = directoryCompletion(people);
+  const view = render(complete("Zed"));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(last()?.items).toEqual([]));
+  view.unmount();
+  published = true;
+  const fresh = render(complete("Zed"));
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Zed"]),
+  );
+  fresh.rerender(complete("🐝"));
+  await waitFor(() =>
+    expect(people).toHaveBeenLastCalledWith("🐝", 1, expect.any(AbortSignal)),
+  );
+  await waitFor(() => expect(last()?.items).toEqual([]));
+  fresh.rerender(complete("🐝 B"));
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["🐝 Buzz Bot"]),
+  );
 });

@@ -23,15 +23,41 @@ impl Secret {
             }
         }
     }
-    /// Only the native creation/profile path constructs this event, never arbitrary input.
-    pub(crate) fn profile(&self, name: &str, auth: &str) -> Result<serde_json::Value> {
+    /// Merge only after verifying the exact agent's current kind-0 event.
+    pub(crate) fn profile(
+        &self,
+        name: &str,
+        picture: Option<&str>,
+        auth: &str,
+        existing: &[serde_json::Value],
+    ) -> Result<serde_json::Value> {
         use serde_json::json;
+        let existing = crate::profile::current(existing, &self.pubkey)?;
+        let (mut content, mut tags, previous) = match existing {
+            Some(profile) => (profile.content, profile.tags, Some(profile.created_at)),
+            None => (
+                serde_json::from_value(json!({"name": name, "display_name": name, "bot": true}))
+                    .map_err(|_| "Could not initialize profile")?,
+                vec![],
+                None,
+            ),
+        };
+        if let Some(picture) = picture {
+            if picture.is_empty() {
+                content.remove("picture");
+            } else {
+                content.insert("picture".into(), json!(picture));
+            }
+        }
         let auth: Vec<String> =
             serde_json::from_str(auth).map_err(|_| "Invalid owner authorization")?;
-        self.sign_event(
+        tags.retain(|tag| tag.first().map(String::as_str) != Some("auth"));
+        tags.push(auth);
+        self.sign_event_after(
             0,
-            json!({"name": name, "display_name": name, "bot": true}).to_string(),
-            vec![auth],
+            serde_json::Value::Object(content).to_string(),
+            tags,
+            previous,
         )
     }
     pub(crate) fn profile_auth(&self, url: &str, body: &[u8]) -> Result<serde_json::Value> {
@@ -58,6 +84,15 @@ impl Secret {
         content: String,
         tags: Vec<Vec<String>>,
     ) -> Result<serde_json::Value> {
+        self.sign_event_after(kind, content, tags, None)
+    }
+    fn sign_event_after(
+        &self,
+        kind: u16,
+        content: String,
+        tags: Vec<Vec<String>>,
+        previous: Option<u64>,
+    ) -> Result<serde_json::Value> {
         use secp256k1::Keypair;
         use serde_json::json;
         use sha2::{Digest, Sha256};
@@ -65,6 +100,8 @@ impl Secret {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "System clock is unavailable")?
             .as_secs();
+        // NIP-01 ties choose the lower event ID. A replacement must be newer.
+        let created_at = previous.map_or(created_at, |at| created_at.max(at.saturating_add(1)));
         let serialized =
             serde_json::to_vec(&json!([0, self.pubkey, created_at, kind, tags, content]))
                 .map_err(|_| "Could not encode agent event")?;

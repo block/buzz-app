@@ -17,6 +17,8 @@ export function createWorkSessions(
   confirmCreation?: (id: string) => Promise<boolean>,
   agentKeys?: () => readonly string[],
   relayAuthor?: string,
+  /** Signed roster discovery, including channels this viewer cannot open. */
+  discovery: RelayReader = reader,
 ) {
   const available = !!outbox?.supports(9007);
   function writer(addition = false) {
@@ -41,7 +43,12 @@ export function createWorkSessions(
         throw new DOMException("Channel addition cancelled", "AbortError");
     };
     check();
-    const source = writer(addition);
+    // Recipe and Canvas saves share delivery, not channel-creation authority.
+    if (signal.aborted || !outbox)
+      throw new Error(
+        "The community connection cannot confirm this operation.",
+      );
+    const source = addition ? writer(true) : outbox;
     const journal = receipts ?? source;
     const existing = journal.snapshot().find((item) => item.event.id === id);
     if (!existing) {
@@ -227,6 +234,60 @@ export function createWorkSessions(
       );
     return channel;
   }
+  /** Channel IDs whose relay-signed roster lists `pubkey`, as far as this viewer
+   * may read. Throws rather than return a possibly truncated set. */
+  async function memberChannels(pubkey: string, caller: AbortSignal) {
+    if (!relayAuthor) throw new Error("Channel membership is unavailable.");
+    const limit = 500;
+    const events = await discovery.read(
+      [{ kinds: [39002], authors: [relayAuthor], "#p": [pubkey], limit }],
+      {
+        signal: AbortSignal.any([signal, caller]),
+        fresh: true,
+        priority: "foreground",
+      },
+    );
+    if (events.length >= limit)
+      throw new Error("Too many channels to confirm. Retry later.");
+    const ids = new Set<string>();
+    for (const event of events) {
+      const id = event.tags.find(([name]) => name === "d")?.[1];
+      if (
+        id &&
+        event.kind === 39002 &&
+        event.pubkey === relayAuthor &&
+        event.tags.some(([name, value]) => name === "p" && value === pubkey)
+      )
+        ids.add(id);
+    }
+    return [...ids];
+  }
+  /** Whether this channel's current relay-signed roster lists `pubkey`. Throws
+   * when no roster is readable, so missing evidence never counts as absence. */
+  async function listsMember(id: string, pubkey: string, caller: AbortSignal) {
+    if (!relayAuthor) throw new Error("Channel membership is unavailable.");
+    const events = await discovery.read(
+      [{ kinds: [39002], authors: [relayAuthor], "#d": [id], limit: 1 }],
+      {
+        signal: AbortSignal.any([signal, caller]),
+        fresh: true,
+        priority: "foreground",
+      },
+    );
+    const roster = events.find(
+      (event) =>
+        event.kind === 39002 &&
+        event.pubkey === relayAuthor &&
+        event.tags.some(([name, value]) => name === "d" && value === id),
+    );
+    if (!roster)
+      throw new Error(
+        "Could not refresh channel membership. Retry to continue.",
+      );
+    return roster.tags.some(
+      ([name, value]) => name === "p" && value === pubkey,
+    );
+  }
   async function addAgents(
     id: string,
     keys: readonly string[],
@@ -323,6 +384,8 @@ export function createWorkSessions(
     available,
     addAgents,
     refreshMembership,
+    memberChannels,
+    listsMember,
     createChannel(
       id: string,
       title: string,

@@ -1,4 +1,5 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
+import { IdentitySetup } from "../features/identity/IdentitySetup";
 import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -21,6 +22,16 @@ import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 
 export function App({ services }: { services: AppServices }) {
+  return services.identity ? (
+    <IdentitySetup identity={services.identity}>
+      <ConnectedApp services={services} />
+    </IdentitySetup>
+  ) : (
+    <ConnectedApp services={services} />
+  );
+}
+
+function ConnectedApp({ services }: { services: AppServices }) {
   const { plugins } = services;
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
   const route = useAppNavigation(services);
@@ -60,7 +71,7 @@ export function App({ services }: { services: AppServices }) {
     <ToastProvider>
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
-          sidebar={(pageNavigation) => (
+          sidebar={() => (
             <ChannelSidebar
               relay={services.relay}
               navigator={services.navigation}
@@ -69,9 +80,10 @@ export function App({ services }: { services: AppServices }) {
               sessionsEnabled={route.pages.some(
                 (page) => page.pluginId === "buzz.sessions",
               )}
-            >
-              <div className="shell-page-navigation-slot">{pageNavigation}</div>
-            </ChannelSidebar>
+              agentsEnabled={route.pages.some(
+                (page) => page.key === "buzz.agents/agents",
+              )}
+            />
           )}
           navigationControls={
             <NavigationControls navigation={services.navigation} />
@@ -84,6 +96,7 @@ export function App({ services }: { services: AppServices }) {
             if (!recovering) select("buzz.channels/channels");
           }}
           communities={services.communities}
+          accountActions={services.accountActions}
           searchServices={services}
           launchers={
             <PanelLaunchers
@@ -127,6 +140,7 @@ export function App({ services }: { services: AppServices }) {
               plugins={plugins}
               cards={services.settingsCards}
               communities={services.communities}
+              identity={services.identity}
               appearance={services.appearance}
               shortcuts={services.shortcuts}
               shortcutBindings={services.shortcutBindings}

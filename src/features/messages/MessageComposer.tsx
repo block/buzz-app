@@ -7,7 +7,7 @@ import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { enrollMentionedAgents } from "../agents/mention-enrollment";
+import { useNonmemberMentions } from "./useNonmemberMentions";
 import { knownAgentPubkeys } from "../agents/known";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberAgentsPreference } from "./mention-preferences";
@@ -92,6 +92,8 @@ export type MessageComposerProps = {
   replyContext?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
+  /** Focus once when this conversation mounts, not when overlays close. */
+  autoFocus?: boolean;
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
@@ -138,6 +140,7 @@ function Composer({
   replyContext,
   mediaTimeSeconds,
   clearMediaTime,
+  autoFocus = false,
   focusRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
@@ -202,6 +205,30 @@ function Composer({
   const valueRef = useRef(value);
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const focusOnMount = useRef(
+    autoFocus && !disabled && typeof document !== "undefined"
+      ? document.activeElement
+      : undefined,
+  );
+  useEffect(() => {
+    // A navigation/dialog owner may restore focus during this commit. Let that
+    // explicit handoff win over the conversation's default initial focus.
+    const previous = focusOnMount.current;
+    if (
+      previous &&
+      (previous === document.activeElement ||
+        (!previous.isConnected && document.activeElement === document.body))
+    ) {
+      const editor = input.current;
+      if (!editor) return;
+      const end = editor.value.length;
+      editor.setSelectionRange(end, end);
+      editor.focus();
+    }
+  }, []);
+  const nonmembers = useNonmemberMentions(session, channelId, () =>
+    input.current?.focus(),
+  );
   useEffect(() => {
     if (focusRequest) input.current?.focus();
   }, [focusRequest]);
@@ -467,6 +494,7 @@ function Composer({
         submission.submit(captured);
         return;
       }
+      let references: readonly string[] = [];
       let recipients = captured.recipients.length
         ? captured.recipients.map((item) => item.pubkey)
         : selectedAgent
@@ -477,28 +505,32 @@ function Composer({
         setAdmitting(true);
         recipients = await prepareRecipients(recipients);
       } else if (recipients.length) {
-        const members = session.channels
+        const channel = session.channels
           .list()
-          .channels.find((item) => item.id === channelId)?.members;
-        const missing = recipients.filter((key) => !members?.includes(key));
-        // Removed people/legacy members go straight to session validation,
-        // without entering the asynchronous enrollment lock or making writes.
-        const managed = session.agentChoices.snapshot().identities;
+          .channels.find((item) => item.id === channelId);
         if (
-          missing.length &&
-          missing.every((key) =>
-            managed.some((agent) => agent.managed && agent.pubkey === key),
-          )
+          (channel?.channelType === "stream" ||
+            channel?.channelType === "forum") &&
+          channel.members
         ) {
-          setSending(true);
-          setError(undefined);
-          await enrollMentionedAgents(
-            session,
-            scope,
-            channelId,
-            recipients,
-            attempt.signal,
+          const missing = captured.recipients.filter(
+            (person) => !channel.members?.includes(person.pubkey),
           );
+          if (missing.length) {
+            setSending(true);
+            setError(undefined);
+            const decision = await nonmembers.prepare(
+              missing,
+              attempt.signal,
+              () =>
+                valueRef.current === captured &&
+                attachments.store.snapshot() === capturedAttachments &&
+                permitted.current,
+            );
+            if (decision === null) return;
+            references = decision;
+            recipients = recipients.filter((key) => !references.includes(key));
+          }
         }
       }
       attempt.signal.throwIfAborted();
@@ -521,9 +553,19 @@ function Composer({
             content,
             recipients,
             uploaded,
-            ...(replyParentId ? [replyParentId] : []),
+            ...(replyParentId || references.length ? [replyParentId] : []),
+            ...(references.length ? [references] : []),
           )
-        : session.messages.send(channelId, content, recipients, uploaded);
+        : references.length
+          ? session.messages.send(
+              channelId,
+              content,
+              recipients,
+              uploaded,
+              undefined,
+              references,
+            )
+          : session.messages.send(channelId, content, recipients, uploaded);
       attachments.store.clear();
       onSend?.(id);
       completion.invalidate();
@@ -627,6 +669,7 @@ function Composer({
   return (
     <>
       {accessories}
+      {nonmembers.dialog}
       <form
         ref={form}
         className={styles.composer}
@@ -703,9 +746,9 @@ function Composer({
             threadRootId={threadRootId}
             inviteAgents={agentChoices && !editing.target}
             replace={replaceCompletion}
+            resolved={value}
           />
         )}
-        {sending && <p role="status">Adding agent to this channel…</p>}
         {dragging && <p role="status">Drop files to attach</p>}
         {attachmentError && (
           <ToastNotice

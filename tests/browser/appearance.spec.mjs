@@ -16,11 +16,11 @@ async function expectMode(page, mode) {
   await expect(page.locator("html")).toHaveCSS("color-scheme", mode);
   await expect(page.locator("html")).toHaveCSS(
     "background-color",
-    mode === "dark" ? "rgb(0, 0, 0)" : "rgb(240, 240, 240)",
+    mode === "dark" ? "rgb(0, 0, 0)" : "rgb(245, 245, 246)",
   );
   await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
     "content",
-    mode === "dark" ? /^#(?:000|000000)$/ : /^#f0f0f0$/,
+    mode === "dark" ? /^#(?:000|000000)$/ : /^#f5f5f6$/,
   );
   await expect(page.locator(".shell-background")).toHaveCSS(
     "background-image",
@@ -32,8 +32,8 @@ async function expectMode(page, mode) {
   await expect(
     page
       .getByRole("complementary", { name: "Channel sidebar", exact: true })
-      .getByRole("navigation", { name: "Pages", exact: true }),
-  ).toHaveCSS("flex-direction", "column");
+      .getByRole("navigation", { name: "Subscribed channels", exact: true }),
+  ).toBeVisible();
   if (collapsed) await button(page, "Hide navigation").click();
 }
 
@@ -62,10 +62,19 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await expectMode(page, "dark");
   await expect(
     page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button")
-      .first(),
-  ).toHaveCSS("color", "rgb(255, 255, 255)");
+      .getByRole("navigation", { name: "Subscribed channels", exact: true })
+      .getByRole("button", { name: "Inbox", exact: true }),
+  ).toHaveCSS(
+    "color",
+    await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--text-navigation)";
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    }),
+  );
   await expect(button(page, "Appearance")).toHaveCSS(
     "background-color",
     "rgb(51, 51, 51)",

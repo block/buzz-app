@@ -25,6 +25,7 @@ impl Credentials for Memory {
 fn agent(workspace: &Path) -> Agent {
     let relay_url = "wss://relay.example".to_owned();
     Agent {
+        picture: None,
         id: agent_id(PUB, &relay_url),
         pubkey: PUB.into(),
         relay_url,
@@ -121,7 +122,9 @@ fn bundle(directory: &Path) -> RuntimeBundle {
         let path = directory.join(name);
         fs::write(&path, r#"#!/bin/sh
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
+printf '%s' "$BUZZ_ACP_TEAM_INSTRUCTIONS" > team-instructions
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
+printf 'harness fixture output\n'
 trap 'exit 0' TERM INT
 while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 0.1; done
 "#).unwrap();
@@ -193,6 +196,107 @@ impl Drop for FixtureWorkerCleanup {
 }
 #[test]
 #[cfg(unix)]
+fn log_reads_require_exact_instance_and_verified_owner_and_survive_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let agent = agent(dir.path());
+    store.insert(vec![agent.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let nonce = "12345678-1234-1234-1234-123456789abc";
+    let sign = |id: &str, pubkey: &str, relay: &str, nonce: &str| {
+        use secp256k1::{Keypair, Secp256k1, SecretKey};
+        use sha2::{Digest, Sha256};
+        let secp = Secp256k1::new();
+        let mut bytes = [0; 32];
+        bytes[31] = 2; // owner key used by test_attestation
+        let pair = Keypair::from_secret_key(&secp, &SecretKey::from_byte_array(bytes).unwrap());
+        let digest = Sha256::digest(crate::logs::proof_message(id, pubkey, relay, nonce));
+        secp.sign_schnorr_no_aux_rand(&digest, &pair).to_string()
+    };
+    let signature = sign(&agent.id, PUB, &agent.relay_url, nonce);
+    let read = |controller: &Controller| {
+        controller.read_log(&agent.id, PUB, &agent.relay_url, nonce, &signature)
+    };
+    assert_eq!(read(&controller).unwrap(), "");
+    assert!(controller
+        .log_target(&agent.id, PUB, &agent.relay_url)
+        .is_ok());
+    assert!(controller
+        .log_target(&agent.id, PUB, "wss://another.example")
+        .is_err());
+    assert!(controller
+        .read_log(&agent.id, PUB, &agent.relay_url, nonce, &"f".repeat(128))
+        .is_err());
+    assert!(controller
+        .read_log(
+            &agent.id,
+            PUB,
+            &agent.relay_url,
+            "22345678-1234-1234-1234-123456789abc",
+            &signature
+        )
+        .is_err());
+    assert!(controller
+        .read_log(&agent.id, PUB, "wss://another.example", nonce, &signature)
+        .is_err());
+    assert!(controller
+        .read_log(
+            &agent.id,
+            &"f".repeat(64),
+            &agent.relay_url,
+            nonce,
+            &signature
+        )
+        .is_err());
+    let mut other = agent.clone();
+    other.relay_url = "wss://another.example".into();
+    other.id = agent_id(PUB, &other.relay_url);
+    controller.store.insert(vec![other.clone()]).unwrap();
+    assert!(controller
+        .read_log(&other.id, PUB, &other.relay_url, nonce, &signature)
+        .is_err());
+    let cross_community = sign(&agent.id, PUB, &other.relay_url, nonce);
+    assert!(controller
+        .read_log(&agent.id, PUB, &agent.relay_url, nonce, &cross_community)
+        .is_err());
+    // An otherwise well-formed proof from the agent key is not an owner proof.
+    use secp256k1::{Keypair, Secp256k1, SecretKey};
+    use sha2::{Digest, Sha256};
+    let secp = Secp256k1::new();
+    let mut wrong_bytes = [0; 32];
+    wrong_bytes[31] = 1;
+    let wrong_key =
+        Keypair::from_secret_key(&secp, &SecretKey::from_byte_array(wrong_bytes).unwrap());
+    let wrong_digest = Sha256::digest(crate::logs::proof_message(
+        &agent.id,
+        PUB,
+        &agent.relay_url,
+        nonce,
+    ));
+    let wrong_signature = secp
+        .sign_schnorr_no_aux_rand(&wrong_digest, &wrong_key)
+        .to_string();
+    assert!(controller
+        .read_log(&agent.id, PUB, &agent.relay_url, nonce, &wrong_signature)
+        .is_err());
+    controller.action(&agent.id, Action::Start).unwrap();
+    let log_path = crate::logs::path(dir.path().join("config").as_path(), &agent.id).unwrap();
+    wait_for_contents(&log_path, |text| (!text.is_empty()).then_some(()));
+    controller.action(&agent.id, Action::Stop).unwrap();
+    assert!(!read(&controller).unwrap().is_empty());
+    controller.action(&agent.id, Action::Start).unwrap();
+    controller.action(&agent.id, Action::Stop).unwrap();
+    assert!(!read(&controller).unwrap().is_empty());
+}
+
+#[test]
+#[cfg(unix)]
 fn actual_spawn_save_restart_stop_and_restore_contract() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
@@ -215,6 +319,7 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     controller.action(&a.id, Action::Start).unwrap();
     assert_eq!(controller.running.len(), 1);
     let edit = AgentEdit {
+        picture: None,
         name: "Edited".into(),
         system_prompt: "changed prompt".into(),
         workspace: a.workspace.clone(),
@@ -298,6 +403,7 @@ fn new_records_launch_preference_is_independent_of_start_and_stop() {
     );
     let edit = AgentEdit {
         name: a.name.clone(),
+        picture: None,
         system_prompt: a.system_prompt.clone(),
         workspace: a.workspace.clone(),
         harness: a.harness.clone(),
@@ -665,6 +771,49 @@ fn stop_reaches_owned_process_when_store_is_malformed_or_row_disappears() {
 
 #[test]
 #[cfg(unix)]
+fn delete_stops_the_listener_and_refuses_deployed_remote_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let a = agent(dir.path());
+    let mut remote = agent(dir.path());
+    remote.relay_url = "wss://remote.example".into();
+    remote.id = agent_id(PUB, &remote.relay_url);
+    remote.imported = serde_json::json!({"record": {"backend": {"type": "provider"}, "backend_agent_id": "deployed"}});
+    store.insert(vec![a.clone(), remote.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&a.id, Action::Start).unwrap();
+    wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then_some(())
+    });
+    controller.delete(&a.id, a.revision).unwrap();
+    assert!(controller.running.is_empty());
+    assert!(controller
+        .delete(&a.id, a.revision)
+        .err()
+        .unwrap()
+        .contains("no longer exists"));
+    // Base Buzz refuses to orphan a deployed remote agent; the view says so
+    // before any caller starts work that depends on deletion.
+    assert!(remote.view().deployed_remote && !a.view().deployed_remote);
+    assert!(controller
+        .delete(&remote.id, remote.revision)
+        .err()
+        .unwrap()
+        .contains("Deployed remote agents can't be deleted"));
+    let remaining = controller.store.agents().unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id, remote.id);
+    assert_eq!(remaining[0].enabled, remote.enabled);
+}
+
+#[test]
+#[cfg(unix)]
 fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
@@ -793,6 +942,7 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
     let cache = config.join("buzz-agent/oauth/databricks");
     assert!(cache.is_dir());
     let edit = AgentEdit {
+        picture: None,
         name: a.name.clone(),
         system_prompt: a.system_prompt.clone(),
         workspace: a.workspace.clone(),
@@ -1035,6 +1185,46 @@ fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_age
 }
 
 #[test]
+fn databricks_workspace_errors_distinguish_missing_configuration_from_invalid_origins() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = agent(dir.path());
+    agent.harness.provider = "databricks_v2".into();
+    let defaults = crate::BuildDefaults::default();
+    let error = databricks_with_defaults(&agent, &defaults).err().unwrap();
+    assert!(error.contains("Databricks workspace is not configured"));
+    assert!(error.contains("Edit the agent, open Advanced → Model"));
+    assert!(error.contains("Databricks workspace (HTTPS origin)"));
+    // Empty offline drafts remain saveable; runtime validation supplies guidance.
+    crate::connection::DatabricksSettings::default()
+        .validate()
+        .unwrap();
+    for host in [
+        "http://workspace.example",
+        "https://user:SYNTHETIC@workspace.example",
+        "https://workspace.example/path",
+    ] {
+        agent
+            .environment
+            .insert("DATABRICKS_HOST".into(), host.into());
+        let error = databricks_with_defaults(&agent, &defaults).err().unwrap();
+        assert!(error.contains("Enter a Databricks HTTPS workspace origin"));
+        assert!(!error.contains("SYNTHETIC"));
+        assert!(!error.contains("not configured"));
+    }
+    agent.environment.insert(
+        "DATABRICKS_HOST".into(),
+        "https://WORKSPACE.example:443/".into(),
+    );
+    assert_eq!(
+        databricks_with_defaults(&agent, &defaults)
+            .unwrap()
+            .unwrap()
+            .host,
+        "https://workspace.example"
+    );
+}
+
+#[test]
 fn saved_selectors_and_environment_override_build_floor_including_empty() {
     let dir = tempfile::tempdir().unwrap();
     let mut agent = agent(dir.path());
@@ -1151,6 +1341,7 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
     fs::write(&goose, "#!/bin/sh\nexit 0\n").unwrap();
     fs::set_permissions(&goose, fs::Permissions::from_mode(0o700)).unwrap();
     let edit = |override_provider: Option<&str>| AgentEdit {
+        picture: None,
         name: "Goose".into(),
         system_prompt: String::new(),
         workspace: dir.path().display().to_string(),
@@ -1175,13 +1366,19 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
     };
     let context = Controller::draft_goose_model_context(edit(None)).unwrap();
     assert_eq!(context.command, goose);
+    assert_eq!(context.provider_id, "databricks_v2");
     assert!(context.model_overridden);
     assert_eq!(
         context.environment["DATABRICKS_HOST"],
         "https://workspace.example"
     );
     assert!(!context.environment.contains_key("GOOSE_PROVIDER"));
-    assert!(Controller::draft_goose_model_context(edit(Some("openai"))).is_err());
+    assert_eq!(
+        Controller::draft_goose_model_context(edit(Some("openai")))
+            .unwrap()
+            .provider_id,
+        "openai"
+    );
 }
 
 #[test]
@@ -1291,6 +1488,7 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
     );
     let edit = AgentEdit {
         name: a.name.clone(),
+        picture: None,
         system_prompt: a.system_prompt.clone(),
         workspace: a.workspace.clone(),
         harness: a.harness.clone(),
@@ -1420,5 +1618,147 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
             .unwrap()
             .command(&configured, &key)
             .is_ok());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn imported_team_reaches_acp_without_weakening_remote_mesh_or_owner_guards() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = bundle(dir.path());
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let mut a = agent(dir.path());
+    a.imported["record"]["team_id"] = json!("crew");
+    a.imported["record"]["persona_team_dir"] = json!("/old/pack");
+    assert!(runtime
+        .command(&a, &key)
+        .err()
+        .unwrap()
+        .contains("Repair team import"));
+    for text in ["", "review carefully"] {
+        a.imported["teamInstructions"] = json!(text);
+        let command = runtime.command(&a, &key).unwrap();
+        let env: BTreeMap<_, _> = command.get_envs().collect();
+        assert_eq!(
+            env[std::ffi::OsStr::new("BUZZ_ACP_TEAM_INSTRUCTIONS")],
+            Some(std::ffi::OsStr::new(text))
+        );
+        assert_eq!(
+            env[std::ffi::OsStr::new("BUZZ_ACP_SYSTEM_PROMPT")],
+            Some(std::ffi::OsStr::new("test prompt"))
+        );
+    }
+    for (field, value) in [
+        ("backend", json!({"type":"provider"})),
+        ("relay_mesh", json!({})),
+    ] {
+        let mut unsupported = a.clone();
+        unsupported.imported["record"][field] = value;
+        assert!(runtime
+            .command(&unsupported, &key)
+            .err()
+            .unwrap()
+            .contains("remote/mesh"));
+    }
+    let mut mesh = a.clone();
+    mesh.harness.provider = "relay-mesh".into();
+    assert!(runtime
+        .command(&mesh, &key)
+        .err()
+        .unwrap()
+        .contains("remote/mesh"));
+    a.auth_tag = None;
+    assert!(runtime
+        .command(&a, &key)
+        .err()
+        .unwrap()
+        .contains("owner attestation"));
+}
+
+#[test]
+#[cfg(unix)]
+fn import_and_repair_deliver_team_instructions_to_a_started_process() {
+    for repairing in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = tempfile::tempdir().unwrap();
+        let old = tempfile::tempdir().unwrap();
+        let source = old
+            .path()
+            .join(crate::LegacySource::Installed.app_directory())
+            .join("agents");
+        fs::create_dir_all(&source).unwrap();
+        let mut saved = agent(dir.path());
+        saved.imported["record"]["team_id"] = json!("crew");
+        let record = json!({"pubkey":PUB,"private_key_nsec":KEY,"name":"Old name","team_id":"crew","auth_tag":saved.auth_tag,"system_prompt":"Old prompt"});
+        fs::write(
+            source.join("managed-agents.json"),
+            serde_json::to_vec(&json!([record])).unwrap(),
+        )
+        .unwrap();
+        let instructions = "Team instructions\nKeep the deployment contract.";
+        fs::write(
+            source.join("teams.json"),
+            serde_json::to_vec(&json!([{"id":"crew","instructions":instructions}])).unwrap(),
+        )
+        .unwrap();
+        let mut store = Store::open(dir.path().join("config")).unwrap();
+        if repairing {
+            store.insert(vec![saved.clone()]).unwrap();
+        }
+        let mut controller = Controller::new(
+            store,
+            Arc::new(Memory),
+            Ok(bundle(tools.path())),
+            dir.path().join("ownership"),
+        );
+        if repairing {
+            let blocked = controller.action(&saved.id, Action::Start).unwrap();
+            assert!(blocked.agents[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Repair team import"));
+            assert!(controller.running.is_empty());
+            controller.action(&saved.id, Action::Stop).unwrap();
+        }
+        let mut imports = crate::Imports::default();
+        let preview = imports
+            .preview(
+                crate::LegacySource::Installed,
+                old.path().into(),
+                dir.path().into(),
+                &saved.relay_url,
+            )
+            .unwrap();
+        let prepared = controller
+            .prepare_import(&mut imports, &preview.token, &[saved.id.clone()])
+            .unwrap();
+        imports.discard();
+        controller
+            .commit_import(prepared.acquire(&Memory).unwrap())
+            .unwrap();
+        let snapshot = controller.snapshot().unwrap();
+        assert!(!snapshot.agents[0].enabled);
+        assert!(!snapshot.agents[0].needs_team_import);
+        assert!(controller.running.is_empty());
+        assert!(!dir.path().join("team-instructions").exists());
+        if repairing {
+            assert_eq!(snapshot.agents[0].name, saved.name);
+            assert_eq!(snapshot.agents[0].revision, saved.revision + 1);
+        }
+        let started = controller.action(&saved.id, Action::Start).unwrap();
+        assert!(
+            matches!(started.agents[0].status, ProcessStatus::Running),
+            "{:?}",
+            started.agents[0].error
+        );
+        wait_for_contents(&dir.path().join("team-instructions"), |text| {
+            (text == instructions).then_some(())
+        });
+        assert!(matches!(
+            controller.action(&saved.id, Action::Stop).unwrap().agents[0].status,
+            ProcessStatus::Stopped
+        ));
+        assert!(controller.running.is_empty());
     }
 }

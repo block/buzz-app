@@ -17,3 +17,16 @@ it("Today ends at local midnight and This week ends next Monday", () => {
   );
   expect(statusDuration(thursday + 5000, thursday)).toBe("custom");
 });
+
+it("chooses the closest preset when two deadlines are within tolerance", () => {
+  const midnight = new Date(2026, 8, 25).getTime() / 1000;
+  const before = midnight - 28800 - 60;
+  const after = midnight - 28800 + 60;
+  expect(statusDuration(midnight, before)).toBe("today");
+  expect(statusDuration(midnight, after)).toBe("today");
+  expect(statusDuration(before + 28800, before)).toBe("28800");
+  expect(statusDuration(after + 28800 + 1, after)).toBe("28800");
+  const lateEvening = midnight - 3600 - 30;
+  expect(statusDuration(midnight, lateEvening)).toBe("today");
+  expect(statusDuration(lateEvening + 3600, lateEvening)).toBe("3600");
+});

@@ -84,31 +84,31 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await button(page, "Profile").click();
   await expect(button(page, "Profile")).toHaveAttribute("aria-current", "page");
 
-  // Narrow Settings has the full content width, but the same navigation remains
-  // reachable by disclosure and keyboard. Desktop keeps it permanently visible.
+  // Narrow Settings keeps its own navigation reachable without replacing the
+  // persistent app sidebar or moving focus out of the selected settings section.
   const pages = page.getByRole("navigation", { name: "Pages" });
-  await expect(pages).toBeHidden();
+  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  await expect(pages).toHaveCount(0);
   const showNavigation = button(page, "Show navigation");
   await expect(showNavigation).toHaveAttribute("aria-expanded", "false");
   await showNavigation.click();
-  await expect(pages).toBeVisible();
-  const messages = pages.getByRole("button", { name: "Messages", exact: true });
-  await messages.focus();
+  await expect(sidebar).toBeVisible();
+  const inbox = sidebar.getByRole("button", { name: "Inbox", exact: true });
+  await inbox.focus();
   await page.keyboard.press("Escape");
-  await expect(pages).toBeHidden();
+  await expect(sidebar).toBeHidden();
   await expect(showNavigation).toBeFocused();
   await page.setViewportSize({ width: 1280, height: 900 });
-  await expect(pages).toBeVisible();
+  await expect(sidebar).toBeVisible();
   await expect(showNavigation).toBeHidden();
   await page.setViewportSize({ width: 480, height: 400 });
-  await expect(pages).toBeHidden();
+  await expect(sidebar).toBeHidden();
   await showNavigation.click();
-  await messages.click();
-  await expect(page.getByRole("main")).toBeFocused();
+  await inbox.click();
   await expect(
     page.getByRole("region", { name: "Channels", exact: true }),
   ).toBeVisible();
-  await expect(pages).toBeVisible();
+  await expect(sidebar).toBeVisible();
 });
 
 test("avatar Settings access dismisses cleanly and exposes Profile and Plugins", async ({
@@ -125,7 +125,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   await page.goto(app.origin);
   const avatar = button(page, "Your profile");
   const account = page.getByRole("menu", {
-    name: "Browser Fixture",
+    name: "Fixture Reader",
   });
   const settings = account.getByRole("menuitem", {
     name: "Settings",
@@ -133,6 +133,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   });
   const statusEntry = account.getByRole("menuitem", {
     name: "Set a status",
+    exact: true,
+  });
+  const feedback = account.getByRole("menuitem", {
+    name: "Send feedback",
     exact: true,
   });
   const availability = account.getByRole("button", {
@@ -184,6 +188,8 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(settings).toBeFocused();
     await page.keyboard.press("Home");
     await expect(statusEntry).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(feedback).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(settings).toBeFocused();
     await page.keyboard.press("Home");
@@ -340,6 +346,8 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await tab();
     await expect(plugins).toBeFocused();
     await tab();
+    await expect(button(page, "Edit avatar")).toBeFocused();
+    await tab();
     await expect(
       page.getByRole("textbox", { name: "Display name", exact: true }),
     ).toBeFocused();
@@ -349,14 +357,23 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
 test("Settings loads and publishes the selected community profile", async ({
   page,
   app,
+  browserName,
 }) => {
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
   const writes = [];
   const profiles = [];
+  let pendingProfile;
   await page.route("**/api/relay/primary/profile", async (route) => {
     profiles.push(route.request().postDataJSON());
-    await route.fulfill({
-      json: { accepted: true, event_id: "ab".repeat(32) },
+    const response = await new Promise((resolve) => {
+      pendingProfile = resolve;
     });
+    pendingProfile = undefined;
+    if (response) await route.fulfill(response);
+    else await route.continue();
   });
   page.on("request", (request) => {
     if (/\/api\/relay\/.*\/(profile|sign|publish)$/.test(request.url()))
@@ -365,16 +382,15 @@ test("Settings loads and publishes the selected community profile", async ({
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(
-    page.getByRole("menu", { name: "Browser Fixture" }),
-  ).toBeHidden();
+  await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   const name = page.getByRole("textbox", { name: "Display name", exact: true });
   const picture = page.getByRole("textbox", {
     name: "Picture URL (optional)",
     exact: true,
   });
-  const save = button(page, "Save profile");
+  const save = button(page, "Save");
+  await expect(save).toHaveCount(0);
   await expect(name).toHaveValue("Fixture Reader");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(button(page, "Edit profile")).toHaveCount(0);
@@ -384,29 +400,75 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(name).toBeHidden();
   await button(page, "Profile").click();
   await expect(name).toHaveValue("Do not save");
-  await button(page, "Cancel").click();
+  await button(page, "Cancel").focus();
+  await page.keyboard.press("Enter");
+  await expect(name).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(
+    page.getByRole("textbox", { name: "Profile description (optional)" }),
+  ).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(
+    page.getByRole("textbox", { name: "Public key (hex)", exact: true }),
+  ).toBeFocused();
   await expect(name).toHaveValue("Fixture Reader");
   await name.fill("Discard when leaving Settings");
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
+  await button(page, "Inbox").click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(
-    page.getByRole("menu", { name: "Browser Fixture" }),
-  ).toBeHidden();
+  await expect(page.getByRole("menu", { name: "Fixture Reader" })).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
   await expect(name).toHaveValue("Fixture Reader");
   await name.fill("   ");
   await expect(save).toBeDisabled();
   await name.fill("Updated community profile");
+  await button(page, "Edit avatar").click();
   await picture.fill("http://example.com/avatar.png");
-  await expect(save).toBeDisabled();
+  await expect(button(page, "Done")).toBeDisabled();
   await picture.fill("");
+  await button(page, "Done").click();
   await expect(save).toBeEnabled();
   await name.fill("  Updated community profile  ");
-  await save.click();
+  await save.focus();
+  await page.keyboard.press("Enter");
+  try {
+    await expect.poll(() => profiles.length).toBe(1);
+    await expect(save).toHaveAttribute("aria-busy", "true");
+    await expect(save).toBeFocused();
+    await expect(name).toBeDisabled();
+    await expect(button(page, "Cancel")).toBeDisabled();
+    // Loading blocks repeated submission without dropping keyboard focus.
+    await page.keyboard.press("Enter");
+  } finally {
+    pendingProfile?.({
+      json: { accepted: false, message: "Publication unavailable" },
+    });
+  }
+  await expect(page.getByRole("alert")).toContainText(
+    "Publication unavailable",
+  );
+  await expect(save).toBeFocused();
+  await expect(save).toBeEnabled();
+  await page.keyboard.press("Enter");
+  try {
+    await expect.poll(() => profiles.length).toBe(2);
+    await expect(save).toHaveAttribute("aria-busy", "true");
+    await expect(save).toBeFocused();
+  } finally {
+    pendingProfile?.();
+  }
+  await expect(name).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(
+    page.getByRole("textbox", { name: "Profile description (optional)" }),
+  ).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(
+    page.getByRole("textbox", { name: "Public key (hex)", exact: true }),
+  ).toBeFocused();
+  await expect(name).toHaveValue("Updated community profile");
+  await expect(save).toHaveCount(0);
   await expect(
     page.getByRole("dialog", { name: "Profile updated" }),
   ).toBeVisible();
@@ -421,28 +483,35 @@ test("Settings loads and publishes the selected community profile", async ({
   await name.fill("Discard after saving");
   await button(page, "Cancel").click();
   await expect(name).toHaveValue("Updated community profile");
+  // A different local default must not replace the published community profile.
+  await page.evaluate((viewer) => {
+    const key = `buzz-client.v1:${viewer}`;
+    const saved = JSON.parse(localStorage.getItem(key));
+    saved.profile.name = "Local default only";
+    localStorage.setItem(key, JSON.stringify(saved));
+  }, app.viewer);
   await page.reload();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
-    page.getByRole("menu", { name: "Updated local profile" }),
+    page.getByRole("menu", { name: "Updated community profile" }),
   ).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();
-  // The fixture acknowledges publication but deliberately keeps its immutable
-  // relay history; reopening therefore proves Settings re-reads community state.
-  await expect(name).toHaveValue("Fixture Reader");
+  // Both Settings and the header re-read the signed community state after reload.
+  await expect(name).toHaveValue("Updated community profile");
   await button(page, "Your profile").hover();
   await expect(page.getByRole("tooltip")).toHaveText(
     "Updated community profile",
   );
-  expect(writes.filter((url) => url.endsWith("/profile"))).toHaveLength(1);
-  expect(profiles).toEqual([
-    expect.objectContaining({
-      name: "Updated community profile",
-      picture: "",
-      existing: expect.objectContaining({ name: "Fixture Reader" }),
-    }),
-  ]);
+  expect(writes.filter((url) => url.endsWith("/profile"))).toHaveLength(2);
+  for (const profile of profiles)
+    expect(profile).toEqual(
+      expect.objectContaining({
+        name: "Updated community profile",
+        picture: "",
+        existing: expect.objectContaining({ name: "Fixture Reader" }),
+      }),
+    );
 });
 
 test("discarding community setup leaves the published profile unchanged", async ({
@@ -454,6 +523,12 @@ test("discarding community setup leaves the published profile unchanged", async 
     if (/\/api\/relay\/.*\/(profile|sign|publish)$/.test(request.url()))
       writes.push(request.url());
   });
+  await page.route("https://example.com/avatar.png", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="navy"/></svg>',
+    }),
+  );
   await page.route("**/api/relay/primary/info", (route) =>
     route.fulfill({ json: { name: "Primary", policy: null } }),
   );
@@ -474,14 +549,18 @@ test("discarding community setup leaves the published profile unchanged", async 
   await expect(name).toHaveValue("Fixture Reader");
   await expect(button(page, "Open community")).toBeEnabled();
   await name.fill("Community-only draft");
+  await button(page, "Edit avatar").click();
   await picture.fill("http://example.com/avatar.png");
-  await expect(button(page, "Publish profile & open")).toBeDisabled();
+  await expect(button(page, "Done")).toBeDisabled();
   await picture.fill("https://example.com/avatar.png");
+  await button(page, "Done").click();
   await expect(button(page, "Publish profile & open")).toBeEnabled();
   await button(page, "Close").click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(name).toHaveValue("Fixture Reader");
+  await button(page, "Edit avatar").click();
   await expect(picture).toHaveValue("");
+  await button(page, "Done").click();
   expect(writes).toEqual([]);
 });

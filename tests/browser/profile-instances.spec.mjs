@@ -21,6 +21,8 @@ for (const archived of [false, true]) {
       name: "Profile",
       exact: true,
     });
+    await panel.getByRole("tab", { name: "Runtime", exact: true }).click();
+    await panel.getByText("2 instances").click();
     await panel
       .getByRole("button", { name: "Second instance", exact: true })
       .click();
@@ -30,12 +32,14 @@ for (const archived of [false, true]) {
     await expect(
       panel.getByText("/fixture/first", { exact: true }),
     ).toHaveCount(0);
+    await panel.getByRole("tab", { name: "Runtime", exact: true }).click();
+    await panel.getByText("2 instances").click();
     await expect(
       panel.getByRole("button", { name: "Second instance", exact: true }),
     ).toHaveAttribute("aria-current", "true");
     if (archived)
       await expect(
-        panel.getByRole("region", { name: "Linked agent instances" }),
+        panel.getByRole("region", { name: "Instances" }),
       ).toContainText("Archived");
     await panel.getByRole("tab", { name: "Channels", exact: true }).click();
     await panel.getByRole("tab", { name: "Info", exact: true }).click();
@@ -46,6 +50,8 @@ for (const archived of [false, true]) {
     await expect(
       panel.getByRole("region", { name: "Local agent", exact: true }),
     ).toHaveCount(0);
+    await panel.getByRole("tab", { name: "Runtime", exact: true }).click();
+    await panel.getByText("2 instances").click();
     await panel
       .getByRole("button", { name: "First instance", exact: true })
       .click();
@@ -61,6 +67,8 @@ for (const archived of [false, true]) {
     await page
       .getByRole("button", { name: "View Pinky profile", exact: true })
       .click();
+    await panel.getByRole("tab", { name: "Runtime", exact: true }).click();
+    await panel.getByText("2 instances").click();
     await panel
       .getByRole("button", { name: "Second instance", exact: true })
       .click();

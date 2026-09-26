@@ -1,3 +1,4 @@
+import { useMentionDirectory } from "./useMentionDirectory";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import {
   PopoverRoot,
@@ -6,6 +7,7 @@ import {
 } from "../../shared/design-system/ui/Popover";
 import { availableMentionAgents } from "../../features/agents/mention-choices";
 import { mentionChoices } from "./mention-choices";
+import { useArchivedPredicate } from "../../features/relay/use-archived";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
@@ -47,6 +49,7 @@ export function MentionPicker({
 }) {
   const draftRoster = useContext(DraftMentionRoster);
   const resolveName = useIdentityNames(session.names);
+  const archived = useArchivedPredicate(session);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string>();
@@ -67,6 +70,12 @@ export function MentionPicker({
   const agents = useAgentChoices(session, !!inviteAgents && open);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
+  const directory = useMentionDirectory(
+    session,
+    channel,
+    search,
+    open && !disabled && !draftRoster && !inviteAgents,
+  );
   const available = useMemo(
     () =>
       availableMentionAgents(
@@ -100,10 +109,15 @@ export function MentionPicker({
   }, [session, open, memberKey, draftRoster]);
   const order = peopleOrder(search);
   const candidates = mentionChoices(
-    draftRoster ?? [...(inviteAgents ? agents.identities : []), ...available],
+    draftRoster ?? [
+      ...(inviteAgents ? agents.identities : []),
+      ...available,
+      ...directory.people,
+    ],
     members ?? [],
     profiles,
     resolveName,
+    archived,
   )
     .filter(({ recipient, label }) =>
       `${label} ${recipient.pubkey}`
@@ -214,7 +228,7 @@ export function MentionPicker({
                   ? "Search recipients"
                   : inviteAgents
                     ? "Search members and agents"
-                    : "Search members and your agents"
+                    : "Search community people and agents"
               }
               value={search}
               onValueChange={setSearch}
@@ -239,6 +253,16 @@ export function MentionPicker({
                 onClick={() => void session.agentChoices.refresh()}
               >
                 Retry agent list
+              </Button>
+            )}
+            {directory.loading && <p role="status">Searching community…</p>}
+            {directory.more && (
+              <p>Narrow your search to find more community people.</p>
+            )}
+            {directory.error && <p role="status">{directory.error}</p>}
+            {directory.error && (
+              <Button type="button" onClick={directory.retry}>
+                Retry community search
               </Button>
             )}
             {error && <p role="status">{error}</p>}
@@ -281,7 +305,7 @@ export function MentionPicker({
                             ? parentAdmission
                               ? "Adds to session and parent channel when you send"
                               : "Adds to session when you send"
-                            : "Adds to channel when you send"}
+                            : "Not in channel · Choose whether to add when you send"}
                         </small>
                       )}
                     </span>
@@ -293,13 +317,21 @@ export function MentionPicker({
                       alt=""
                       fallback={label}
                       src={session.media(
-                        profiles.get(recipient.pubkey)?.picture ?? "",
+                        profiles.get(recipient.pubkey)?.picture ??
+                          directory.people.find(
+                            (person) => person.pubkey === recipient.pubkey,
+                          )?.picture ??
+                          "",
                         "small",
                       )}
                       size="large"
                       shape={
                         agentPubkeys.has(recipient.pubkey) ||
-                        !members?.includes(recipient.pubkey)
+                        directory.people.some(
+                          (person) =>
+                            person.pubkey === recipient.pubkey &&
+                            person.isAgent,
+                        )
                           ? "squircle"
                           : "circle"
                       }

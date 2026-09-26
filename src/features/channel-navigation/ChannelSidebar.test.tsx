@@ -1,15 +1,28 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createRelaySession } from "../relay/session";
+import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
+import type { SidebarPreferences } from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
 import type { Navigation } from "../navigation/controller";
 import { ChannelSidebar } from "./ChannelSidebar";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
 
-const { rowRender } = vi.hoisted(() => ({ rowRender: vi.fn() }));
+const { rowRender, menuRender } = vi.hoisted(() => ({
+  rowRender: vi.fn(),
+  menuRender: vi.fn(),
+}));
 // Observe the real row below ChannelSidebarItem's production memo boundary.
 // React hooks, the parent, the item and the row implementation remain real.
 vi.mock("../../bundled/channels/ChannelSidebarRow", async (original) => {
@@ -22,6 +35,22 @@ vi.mock("../../bundled/channels/ChannelSidebarRow", async (original) => {
     ) => {
       rowRender(props);
       return <actual.ChannelSidebarRow {...props} />;
+    },
+  };
+});
+// Observe the real row menu provider and popup the same way.
+vi.mock("../../shared/design-system/ui/Menu", async (original) => {
+  const actual =
+    await original<typeof import("../../shared/design-system/ui/Menu")>();
+  return {
+    ...actual,
+    ContextMenuRoot: (props: Parameters<typeof actual.ContextMenuRoot>[0]) => {
+      menuRender("root", props);
+      return <actual.ContextMenuRoot {...props} />;
+    },
+    MenuPopup: (props: Parameters<typeof actual.MenuPopup>[0]) => {
+      menuRender("popup", props);
+      return <actual.MenuPopup {...props} />;
     },
   };
 });
@@ -50,7 +79,12 @@ const providers = {
   register: () => {},
 };
 
-function fixture() {
+function fixture(
+  sidebarPreferences?: ReturnType<
+    typeof createSidebarPreferencesStore
+  >["queries"],
+  status: RelaySnapshot["status"] = "ready",
+) {
   const owner = createRelaySession(null);
   owners.push(owner);
   const list: ChannelList = {
@@ -67,13 +101,15 @@ function fixture() {
   };
   const session = {
     ...owner.session,
+    ...(sidebarPreferences ? { sidebarPreferences } : {}),
     live: { ...owner.session.live, snapshot: () => live },
     channels: { ...owner.session.channels, list: () => list, ensureList() {} },
   };
   const snapshot: RelaySnapshot = {
-    status: "ready",
-    scope: "https://relay.test:viewer",
-    viewer: "viewer",
+    status,
+    ...(status === "ready"
+      ? { scope: "https://relay.test:viewer", viewer: "viewer" }
+      : {}),
     generation: 1,
     session,
   };
@@ -98,9 +134,8 @@ function fixture() {
           scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
         }}
         sessionsEnabled={sessionsEnabled}
-      >
-        {null}
-      </ChannelSidebar>
+        agentsEnabled={true}
+      />
     </ChannelNavigationProvider>
   );
   return { view, navigator, snapshot, list };
@@ -111,10 +146,20 @@ it("does not rebuild unchanged rows on channel switches and refreshes session ac
   const mounted = render(h.view("alpha"));
   await screen.findByRole("button", { name: "gamma" });
   rowRender.mockClear();
+  menuRender.mockClear();
   mounted.rerender(h.view("beta"));
   expect(rowRender.mock.calls.map(([props]) => props.channel.id)).not.toContain(
     "gamma",
   );
+  // Unchanged rows keep their menu provider and popup behind the memo too.
+  expect(
+    menuRender.mock.calls.filter(([, props]) =>
+      String(props["aria-label"] ?? "").includes("gamma"),
+    ),
+  ).toEqual([]);
+  expect(
+    menuRender.mock.calls.filter(([kind]) => kind === "root"),
+  ).toHaveLength(rowRender.mock.calls.length);
   expect(screen.getByRole("button", { name: "beta" })).toHaveAttribute(
     "aria-current",
     "page",
@@ -140,4 +185,116 @@ it("does not rebuild unchanged rows on channel switches and refreshes session ac
   expect(h.navigator.open).toHaveBeenCalledWith(
     expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
   );
+});
+
+async function failedMoveFixture(groupSource?: "personal") {
+  const data: SidebarPreferences = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { beta: "work" },
+    starred: [],
+    muted: [],
+    ...(groupSource ? { groupSource } : {}),
+  };
+  const read = vi.fn(async () => data);
+  const write = vi.fn(async () => {
+    throw new Error("offline");
+  });
+  const star = vi.fn(async () => []);
+  const owner = createSidebarPreferencesStore(read, true, write, star);
+  const prefs = owner.queries;
+  await prefs.ensure();
+  await expect(prefs.assign("beta")).rejects.toThrow("offline");
+  const h = fixture(prefs);
+  const mounted = render(h.view("alpha"), { wrapper: ToastProvider });
+  const notice = await screen.findByRole("alert");
+  expect(notice).toHaveTextContent("Couldn’t save the move for beta. offline");
+  return { ...h, owner, prefs, read, write, star, data, notice, mounted };
+}
+
+it.each([undefined, "personal"] as const)(
+  "updates the move notice when retry is rejected after group source %s changes",
+  async (source) => {
+    const h = await failedMoveFixture(source);
+    try {
+      const { groupSource: _source, ...data } = h.data;
+      h.read.mockResolvedValue({
+        ...data,
+        ...(source ? {} : { groupSource: "personal" as const }),
+      });
+      await act(() => h.prefs.refresh());
+      fireEvent.click(
+        within(h.notice).getByRole("button", { name: "Retry move" }),
+      );
+      expect(h.notice).toHaveTextContent(
+        "The active group source changed; dismiss this move and choose its destination again",
+      );
+      expect(h.notice).not.toHaveTextContent("offline");
+      expect(h.write).toHaveBeenCalledOnce();
+      expect(h.star).not.toHaveBeenCalled();
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
+it("explains and disables unavailable move retries, then enables them after preference recovery", async () => {
+  const h = await failedMoveFixture();
+  try {
+    h.read.mockRejectedValueOnce(new Error("refresh failed"));
+    await act(() => h.prefs.refresh());
+    const retry = within(h.notice).getByRole("button", { name: "Retry move" });
+    expect(retry).toBeDisabled();
+    expect(h.notice).toHaveTextContent(
+      "Refresh saved sidebar preferences before retrying this move.",
+    );
+    // Direct/stale callers also publish their rejection, not just a rejected promise.
+    await act(async () => {
+      await expect(h.prefs.retryMove("beta")).rejects.toThrow(
+        "refresh saved sidebar preferences before retrying",
+      );
+    });
+    expect(h.notice).not.toHaveTextContent("offline");
+    expect(h.notice).toHaveTextContent("Sidebar group moves are unavailable");
+    expect(h.write).toHaveBeenCalledOnce();
+    expect(h.star).not.toHaveBeenCalled();
+    await act(() => h.prefs.refresh());
+    expect(retry).toBeEnabled();
+    expect(h.notice).not.toHaveTextContent(
+      "Refresh saved sidebar preferences before retrying this move.",
+    );
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it.each(["connecting", "disconnected", "error"] as const)(
+  "explicitly disables Inbox and Bestie while the relay is %s",
+  (status) => {
+    const h = fixture(undefined, status);
+    render(h.view("alpha"));
+    for (const name of ["Inbox", "Bestie"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(h.navigator.open).not.toHaveBeenCalled();
+  },
+);
+
+it("opens Inbox and Bestie in the ready community", () => {
+  const h = fixture();
+  render(h.view("alpha"));
+  for (const name of ["Inbox", "Bestie"]) {
+    const button = screen.getByRole("button", { name });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(h.navigator.open).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
+      route: { version: 1, params: name },
+    });
+  }
 });

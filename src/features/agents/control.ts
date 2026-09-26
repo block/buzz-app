@@ -27,6 +27,8 @@ export interface AgentView {
   pubkey: string;
   relayUrl: string;
   name: string;
+  /** Missing preserves existing artwork; empty removes it. */
+  picture?: string | null;
   systemPrompt: string;
   workspace: string;
   harness: {
@@ -61,6 +63,10 @@ export interface AgentView {
   launchProviderEnv: string | null;
   /** Empty unless a running process was started with different saved settings. */
   restartDiff: RestartDiffEntry[];
+  /** Native refuses to delete a deployed remote record. */
+  deployedRemote?: boolean;
+  /** Older imports need an explicit snapshot of their legacy team instructions. */
+  needsTeamImport?: boolean;
 }
 export interface ControlSnapshot {
   agents: AgentView[];
@@ -77,6 +83,7 @@ export interface ControlSnapshot {
   /** False while native credential/import acceptance is outstanding. */
   importAvailable?: boolean;
   createAvailable?: boolean;
+  avatarEditingAvailable?: boolean;
   defaultWorkspace?: string;
   runtimeMessage?: string | null;
   databricksDefaults?: { host: string; filter: string };
@@ -84,6 +91,8 @@ export interface ControlSnapshot {
 }
 export interface AgentEdit {
   name: string;
+  /** Omitted preserves artwork; empty removes it. */
+  picture?: string;
   systemPrompt: string;
   workspace: string;
   harness: Omit<AgentView["harness"], "environmentKeys">;
@@ -96,7 +105,15 @@ export interface AgentImportPreview {
   candidates: Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name">[];
   warnings: string[];
 }
+export type AgentLogTarget = Pick<AgentView, "id" | "pubkey" | "relayUrl"> & {
+  /** Scoped signer; never a caller-supplied identity or public key. */
+  authorize(
+    target: Pick<AgentView, "id" | "pubkey" | "relayUrl">,
+    nonce: string,
+  ): Promise<string>;
+};
 export interface AgentControlHost {
+  readLog?(target: AgentLogTarget): Promise<string>;
   models?: ModelHost;
   prepareCreate?(
     requestId: string,
@@ -140,6 +157,8 @@ export interface AgentControlState {
   error: string | null;
 }
 export interface AgentControl {
+  /** Sensitive local output. Native custody and exact community are rechecked per read. */
+  readLog?(target: AgentLogTarget): Promise<string>;
   models?: AgentModels;
   create?(
     requestId: string,
@@ -231,7 +250,8 @@ export function createAgentControl(
     if (!host || disposed || state.busy) return Promise.resolve();
     if (read) return read;
     const current = generation;
-    if (!state.data) update({ status: "loading", error: null });
+    if (!state.data && state.status === "idle")
+      update({ status: "loading", error: null });
     const pending = Promise.resolve()
       .then(async () => {
         // Only read-only native startup/contention failures are transient. Keep
@@ -260,7 +280,7 @@ export function createAgentControl(
             update({
               status: "error",
               error:
-                "Could not refresh local agents. Retry to get current host status.",
+                "Could not refresh local agents. Current host status is unconfirmed.",
             });
         },
       )
@@ -302,12 +322,10 @@ export function createAgentControl(
     } catch (error) {
       // Host rejects with sanitized user-facing strings, never raw child output.
       const detail = typeof error === "string" ? `${error} ` : "";
-      if (current === generation)
-        update({
-          status: "error",
-          error: `${detail}Could not confirm the operation. Refresh status before other operations; Stop remains available for known agents. Your edits are retained.`,
-        });
-      throw new Error("Could not confirm the agent operation.");
+      const message = `${detail}Could not confirm the operation. Check current status and saved settings before retrying; the operation will not be repeated automatically. Your edits are retained.`;
+      if (current === generation) update({ status: "error", error: message });
+      // Dialogs own failed-write details after a successful status read.
+      throw new Error(message);
     } finally {
       // A superseded credential wait still owns its busy lane, but never the
       // newer Stop's result/error. Credential writes may commit; refresh recovers them.
@@ -341,9 +359,20 @@ export function createAgentControl(
       command === "stop" ? undefined : id,
     );
   };
-  const deleteAgent = host?.delete;
   return {
     models,
+    ...(host?.readLog
+      ? {
+          readLog: async (target: AgentLogTarget) => {
+            if (disposed) throw new Error(agentControlUnavailable);
+            const readLog = host.readLog;
+            if (!readLog) throw new Error(agentControlUnavailable);
+            const content = await readLog(target);
+            if (disposed) throw new Error(agentControlUnavailable);
+            return content;
+          },
+        }
+      : {}),
     ...(host?.prepareCreate && host.commitCreate
       ? {
           create: async (
@@ -424,10 +453,15 @@ export function createAgentControl(
     refresh,
     save: (id, revision, edit) =>
       run((native) => native.save(id, revision, edit), ready),
-    ...(deleteAgent
+    ...(host?.delete
       ? {
+          // Resolve the host method per call, like every other command.
           delete: (id: string, revision: number) =>
-            run(() => deleteAgent(id, revision), ready),
+            run((native) => {
+              if (!native.delete)
+                throw new Error("Agent deletion is unavailable.");
+              return native.delete(id, revision);
+            }, ready),
         }
       : {}),
     action,

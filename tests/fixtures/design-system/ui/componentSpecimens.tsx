@@ -13,6 +13,10 @@ import {
   ChoiceRowSpecimen,
 } from "./MenuSpecimens";
 import {
+  Header,
+  InlineHeader,
+} from "../../../../src/shared/design-system/ui/Header";
+import {
   InputExamples,
   TextareaExamples,
   SearchExamples,
@@ -1070,6 +1074,16 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
         ]}
       />
     </>
+  ),
+  header: () => (
+    <div>
+      <Header
+        title="Profile"
+        eyebrow="Account"
+        subtitle="Your local default for new communities."
+      />
+      <InlineHeader title="Preferences" subtitle="Choose what works for you." />
+    </div>
   ),
   "panel-header": PanelHeaderSpecimen,
   "search-field": SearchExamples,

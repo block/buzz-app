@@ -29,7 +29,14 @@ export function createMemberAdditions(
 ) {
   let snapshot: readonly Addition[] = [];
   const listeners = new Set<() => void>();
-  const pending = new Map<string, Promise<void>>();
+  const pending = new Map<
+    string,
+    {
+      promise: Promise<void>;
+      startAgent: boolean;
+      control: AgentControl | undefined;
+    }
+  >();
   const intents = new Map<string, MemberAdditionIntent>();
   const deliveries = new WeakMap<MemberAdditionIntent, Delivery>();
   const stopReceipts = receipts?.subscribe(() => {
@@ -77,12 +84,20 @@ export function createMemberAdditions(
       channelId: string,
       pubkey: string,
       control?: AgentControl,
+      options: { startAgent?: boolean } = {},
     ): Promise<void> {
       if (signal.aborted)
         return Promise.reject(new Error("The community connection closed."));
       const key = JSON.stringify([channelId, pubkey]);
       const existing = pending.get(key);
-      if (existing) return existing;
+      if (existing) {
+        if (options.startAgent !== false) {
+          existing.startAgent = true;
+          existing.control = control ?? existing.control;
+        }
+        return existing.promise;
+      }
+      const request = { startAgent: options.startAgent !== false, control };
       const matches = (item: Addition) =>
         item.channelId === channelId && item.pubkey === pubkey;
       const previous = snapshot.find(matches);
@@ -105,7 +120,9 @@ export function createMemberAdditions(
             confirmed = true;
           }
           signal.throwIfAborted();
-          await start(channelId, pubkey, control, retryStart);
+          // Mention sends wake agents through the confirmed outgoing message.
+          if (request.startAgent)
+            await start(channelId, pubkey, request.control, retryStart);
           update();
         })
         .catch((error: unknown) => {
@@ -125,7 +142,8 @@ export function createMemberAdditions(
         .finally(() => {
           pending.delete(key);
         });
-      pending.set(key, operation);
+      const entry = Object.assign(request, { promise: operation });
+      pending.set(key, entry);
       update({ channelId, pubkey, pending: true, confirmed });
       return operation;
     },

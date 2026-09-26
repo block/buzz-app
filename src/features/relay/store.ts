@@ -20,6 +20,7 @@ import { ByteLru, byteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
 import { relayDebug } from "./debug";
+import { MessageClock } from "./message-order";
 
 type Listener = () => void;
 type WindowState = {
@@ -55,6 +56,8 @@ export type ChannelStoreOptions = {
   maxHistoryBytes?: number;
   now?: () => number;
   local?: Pick<Outbox, "snapshot" | "subscribe">;
+  /** The session's send clock; rendered windows raise its channel watermarks. */
+  clock?: MessageClock;
   notifyListener?: (listener: () => void) => void;
 };
 const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
@@ -108,6 +111,7 @@ export function createChannelStore(
     maxHistoryBytes = 8 * 1024 * 1024,
     now = Date.now,
     local,
+    clock = new MessageClock(),
     notifyListener = (listener: () => void) => listener(),
     profiling = createRelayProfiler(),
   } = options;
@@ -316,6 +320,7 @@ export function createChannelStore(
         transport?.relayAuthor ?? "",
         profiling,
         () => discovery?.isSession(channelId) ?? false,
+        clock,
       ),
       channelId,
       snapshot: idleWindow(channelId),

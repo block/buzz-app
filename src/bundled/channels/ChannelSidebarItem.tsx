@@ -1,7 +1,11 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { ContextMenuTrigger } from "../../shared/design-system/ui/Menu";
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuPopup,
+} from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
@@ -34,6 +38,12 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   menuEnabled,
   sectionKey,
   onOpenMenu,
+  menuOpen = false,
+  menuAnchor,
+  menuContent,
+  onCloseMenu,
+  onMenuClosed,
+  menuFinalFocus,
 }: {
   channel: ChannelSummary;
   profile?: Profile | undefined;
@@ -56,42 +66,59 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
     sectionKey: string,
     anchor?: HTMLElement,
   ) => void;
+  menuOpen?: boolean;
+  menuAnchor?: HTMLElement | undefined;
+  /** Only the open row receives content, so closed rows keep equal props. */
+  menuContent?: ReactNode;
+  onCloseMenu?: () => void;
+  onMenuClosed?: (channelId: string) => void;
+  menuFinalFocus?: (channelId: string) => HTMLElement | false;
 }) {
   const peer =
     channel.channelType === "dm" && channel.participants?.length === 1
       ? channel.participants[0]
       : undefined;
   const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
+  // Keep the closing row's items through the popup's exit transition.
+  const lastMenuContent = useRef<ReactNode>(undefined);
+  useLayoutEffect(() => {
+    if (menuContent !== undefined) lastMenuContent.current = menuContent;
+  }, [menuContent]);
   const Icon =
     channel.channelType === "dm" ? ChatCircleIcon : channelIcon(channel);
-  return (
+  const row = (
     <ChannelSidebarRow
       channel={channel}
+      dmVisualSpacing={channel.channelType === "dm"}
       icon={
         channel.channelType === "dm" && channel.participants?.length === 1 ? (
-          <Avatar
-            src={
-              profile?.picture
-                ? session.media(profile.picture, "small")
-                : undefined
-            }
-            alt=""
-            fallback={channel.name}
-            size="small"
-            shape={profile?.isAgent ? "squircle" : "circle"}
-            statusBadge={presence === "unknown" ? undefined : presence}
-          />
+          <span className={styles.dmAvatar} data-dm-identity="">
+            <Avatar
+              src={
+                profile?.picture
+                  ? session.media(profile.picture, "small")
+                  : undefined
+              }
+              alt=""
+              fallback={channel.name}
+              size="fill"
+              shape={profile?.isAgent ? "squircle" : "circle"}
+              statusBadge={presence === "unknown" ? undefined : presence}
+            />
+          </span>
         ) : channel.channelType === "dm" &&
           (channel.participants?.length ?? 0) > 1 ? (
           <span
             className={styles.dmCount}
+            data-dm-identity=""
+            data-dm-participant-count=""
             title={`${channel.participants?.length} other participants`}
             aria-hidden="true"
           >
             {channel.participants?.length}
           </span>
         ) : (
-          <Icon size={17} />
+          <Icon size={16} />
         )
       }
       nameAccessory={
@@ -106,21 +133,25 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         )
       }
       badge={
-        <>
+        <span className={styles.indicatorStack} data-channel-indicators="">
+          <span className={styles.indicatorLayer}>
+            <UnreadBadge
+              session={session}
+              channelId={channel.id}
+              dm={channel.channelType === "dm"}
+            />
+          </span>
           {working && (
             <span
               className={styles.working}
+              data-channel-working=""
+              data-indicator-layer="working"
               role="img"
               aria-label="Agent working"
               title="Agent working in this channel"
             />
           )}
-          <UnreadBadge
-            session={session}
-            channelId={channel.id}
-            dm={channel.channelType === "dm"}
-          />
-        </>
+        </span>
       }
       wrapSelect={(trigger) => {
         const activity = (
@@ -175,5 +206,31 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       onNewSession={onNewSession}
       {...(onHideDm ? { onHideDm } : {})}
     />
+  );
+  if (!menuEnabled) return row;
+  return (
+    <ContextMenuRoot
+      open={menuOpen}
+      onOpenChange={(open) => {
+        if (open) {
+          if (sectionKey) onOpenMenu?.(channel, sectionKey);
+        } else if (menuOpen) onCloseMenu?.();
+      }}
+      onOpenChangeComplete={(open) => {
+        if (!open) {
+          lastMenuContent.current = undefined;
+          onMenuClosed?.(channel.id);
+        }
+      }}
+    >
+      {row}
+      <MenuPopup
+        aria-label={`Actions for ${channel.name}`}
+        anchor={menuOpen ? menuAnchor : undefined}
+        finalFocus={() => menuFinalFocus?.(channel.id) ?? false}
+      >
+        {menuContent ?? lastMenuContent.current}
+      </MenuPopup>
+    </ContextMenuRoot>
   );
 });

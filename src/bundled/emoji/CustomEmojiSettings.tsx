@@ -63,6 +63,7 @@ function Editor({
     session.emoji.snapshot,
   );
   const { add, upload } = session.emoji;
+  const canAuthor = Boolean(add && upload);
   const [name, setName] = useState("");
   const [image, setImage] = useState<{ url: string; filename: string }>();
   const [uploading, setUploading] = useState(false);
@@ -136,7 +137,7 @@ function Editor({
   return (
     <div className="grid gap-6">
       {/* Authoring needs both the uploader and kind-30030 publishing; the reference has no copy for its absence. */}
-      {add && upload && (
+      {canAuthor && (
         <form
           aria-labelledby="custom-emoji-add-title"
           className="grid gap-4"
@@ -271,9 +272,12 @@ function Editor({
         ) : catalog.status !== "ready" ? (
           <p className="text-body-sm text-muted">Loading…</p>
         ) : !catalog.mine.length ? (
-          <p className="text-body-sm text-muted">
-            You haven&apos;t added any emoji yet. Add one above.
-          </p>
+          // Its prompt points at the add form; the reference has no copy for an empty list without one.
+          canAuthor && (
+            <p className="text-body-sm text-muted">
+              You haven&apos;t added any emoji yet. Add one above.
+            </p>
+          )
         ) : (
           <ul className="grid gap-2">
             {catalog.mine.map((emoji) => (

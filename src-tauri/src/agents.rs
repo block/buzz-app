@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 pub(crate) struct Snapshot {
     #[serde(flatten)]
     data: ControlSnapshot,
+    inventory_warnings: Vec<String>,
     import_available: bool,
     create_available: bool,
     avatar_editing_available: bool,
@@ -27,6 +28,7 @@ impl Snapshot {
     fn from(data: ControlSnapshot, import_available: bool, workspace: &std::path::Path) -> Self {
         Self {
             data,
+            inventory_warnings: Vec::new(),
             import_available,
             create_available: import_available,
             avatar_editing_available: true,
@@ -189,6 +191,7 @@ struct LogChallenge {
 }
 
 struct Host {
+    inventory_warnings: Vec<String>,
     controller: Controller,
     imports: Imports,
     legacy_parent: PathBuf,
@@ -212,7 +215,8 @@ impl Host {
         bundle: Result<RuntimeBundle, String>,
         credentials: Arc<dyn Credentials>,
     ) -> Result<Self, String> {
-        let store = Store::open(root)?;
+        let mut store = Store::open(root)?;
+        let inventory_warnings = store.migrate_legacy(&legacy_parent);
         let controller = Controller::new(
             store,
             credentials.clone(),
@@ -220,6 +224,7 @@ impl Host {
             legacy_parent.join("dev.local.buzz.agent-ownership"),
         );
         Ok(Self {
+            inventory_warnings,
             controller,
             imports: Imports::default(),
             legacy_parent,
@@ -236,9 +241,11 @@ impl Host {
         })
     }
     fn snapshot(&mut self) -> Result<Snapshot, String> {
-        self.controller
-            .snapshot()
-            .map(|data| Snapshot::from(data, cfg!(target_os = "macos"), &self.workspace))
+        self.controller.snapshot().map(|data| {
+            let mut snapshot = Snapshot::from(data, cfg!(target_os = "macos"), &self.workspace);
+            snapshot.inventory_warnings = self.inventory_warnings.clone();
+            snapshot
+        })
     }
     fn action(&mut self, id: &str, action: Action) -> Result<Snapshot, String> {
         self.starts.remove(id);

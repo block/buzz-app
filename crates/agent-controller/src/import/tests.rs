@@ -920,6 +920,69 @@ fn clone_settings_projects_only_reviewed_text_without_source_or_credential_write
 }
 
 #[test]
+fn parked_migration_is_keyless_idempotent_and_survives_source_removal() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let before = source(old.path());
+    let source_path = old.path().join(LegacySource::Installed.app_directory());
+    let mut store = Store::open(dest.path().into()).unwrap();
+    assert!(store.migrate_legacy(old.path()).is_empty());
+    let saved = fs::read(dest.path().join("agents.json")).unwrap();
+    assert!(store.migrate_legacy(old.path()).is_empty());
+    assert_eq!(saved, fs::read(dest.path().join("agents.json")).unwrap());
+    assert!(!dest.path().join("agents.previous.json").exists());
+    let snapshot = store.snapshot().unwrap();
+    assert!(snapshot.agents.is_empty()); // Nothing can be started/restored.
+    assert_eq!(snapshot.parked.len(), 1);
+    assert_eq!(snapshot.parked[0].pubkey, PUB);
+    assert_eq!(snapshot.parked[0].sources, vec![LegacySource::Installed]);
+    let text = String::from_utf8(saved).unwrap();
+    for hidden in [
+        "never-project",
+        "definition-prompt",
+        "attestation",
+        "relay.example",
+        "start_on_app_launch",
+    ] {
+        assert!(!text.contains(hidden));
+    }
+    assert_eq!(
+        fs::read(source_path.join("agents/managed-agents.json")).unwrap(),
+        before
+    );
+    drop(store);
+    fs::remove_dir_all(source_path).unwrap();
+    let mut reopened = Store::open(dest.path().into()).unwrap();
+    assert!(reopened.migrate_legacy(old.path()).is_empty());
+    assert_eq!(reopened.snapshot().unwrap().parked[0].name, "Brain");
+}
+
+#[test]
+fn parked_migration_merges_sources_and_preserves_inventory_on_bad_source() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let bytes = source(old.path());
+    let development = old
+        .path()
+        .join(LegacySource::Development.app_directory())
+        .join("agents");
+    fs::create_dir_all(&development).unwrap();
+    fs::write(development.join("managed-agents.json"), &bytes).unwrap();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    assert!(store.migrate_legacy(old.path()).is_empty());
+    let snapshot = store.snapshot().unwrap();
+    assert_eq!(snapshot.parked.len(), 1);
+    assert_eq!(snapshot.parked[0].sources.len(), 2);
+    fs::write(development.join("managed-agents.json"), b"broken").unwrap();
+    assert_eq!(store.migrate_legacy(old.path()).len(), 1);
+    assert_eq!(store.snapshot().unwrap().parked[0].sources.len(), 2);
+    assert_eq!(
+        fs::read(development.join("managed-agents.json")).unwrap(),
+        b"broken"
+    );
+}
+
+#[test]
 fn import_excludes_overlapping_destinations_before_credentials_through_commit() {
     let old = tempfile::tempdir().unwrap();
     let dest = tempfile::tempdir().unwrap();

@@ -20,6 +20,7 @@ import { ByteLru, byteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
 import { relayDebug } from "./debug";
+import { clientMetrics } from "../developer/client-metrics";
 import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
 
@@ -101,10 +102,14 @@ export function createChannelStore(
     channelId: string,
     author: string,
     events: readonly import("./events").EventData[],
-  ) =>
-    foldMessages(channelId, author, events, {
+  ) => {
+    const started = performance.now();
+    const rows = foldMessages(channelId, author, events, {
       includeReplies: discovery?.isSession(channelId) ?? false,
     });
+    clientMetrics.cpu("fold", performance.now() - started, events.length);
+    return rows;
+  };
   const {
     maxWindows = 3,
     unavailableReason,
@@ -679,9 +684,14 @@ export function createChannelStore(
           eventDto(JSON.parse(JSON.stringify(value)));
         const events: RelayEvent[] = [];
         for (let index = 0; index < record.events.length; index += 8) {
-          events.push(
-            ...record.events.slice(index, index + 8).map(verifySaved),
+          const started = performance.now();
+          const batch = record.events.slice(index, index + 8).map(verifySaved);
+          clientMetrics.cpu(
+            "verify.restore",
+            performance.now() - started,
+            batch.length,
           );
+          events.push(...batch);
           await yieldToHost();
           if (
             disposed ||
@@ -910,7 +920,11 @@ export function createChannelStore(
     // Network heads belong to explicit demand/intent and retained live catch-up.
     if (prepared && !hydration) {
       const reveal = revealHydration;
-      hydration = hydrate().finally(() => reveal?.());
+      const restored = clientMetrics.background();
+      hydration = hydrate().finally(() => {
+        restored();
+        reveal?.();
+      });
     }
     if (!cached) {
       saveDiscovery();
@@ -1327,6 +1341,14 @@ export function createChannelStore(
         state.atHead = true;
         setWindow(state, patchFromHead(retained));
       }
+      clientMetrics.channelEnsured(
+        channelId,
+        !state.snapshot.rows.length
+          ? "network"
+          : state.snapshot.freshness === "cached"
+            ? "disk"
+            : "memory",
+      );
       if (!canReadRemote(channelId)) {
         revalidateCached(channelId);
         return;

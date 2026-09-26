@@ -9,6 +9,7 @@ import {
   subscribeLogLevel,
 } from "../features/developer/logging";
 import type { RelayData } from "../features/relay/service";
+import { clientMetrics } from "../features/developer/client-metrics";
 
 type BrokerStats = {
   queries: number;
@@ -18,6 +19,101 @@ type BrokerStats = {
 };
 
 const STATS_POLL_MS = 5000;
+const METRICS_POLL_MS = 2000;
+const ms = (value: number | undefined) =>
+  value === undefined ? "–" : `${Math.round(value)} ms`;
+
+function ClientMetrics() {
+  const [summary, setSummary] = useState(clientMetrics.summary);
+  useEffect(() => {
+    const timer = setInterval(
+      () => setSummary(clientMetrics.summary()),
+      METRICS_POLL_MS,
+    );
+    return () => clearInterval(timer);
+  }, []);
+  function download() {
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(clientMetrics.export(), null, 2)], {
+        type: "application/json",
+      }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `buzz-client-metrics-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    link.click();
+    // WebKit may still be reading the blob when click() returns.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  const { opens, mainThread, phases } = summary;
+  const cells = [
+    ["Channel opens", String(opens.n)],
+    [
+      "Cache hits",
+      opens.cacheHitRate === undefined
+        ? "–"
+        : `${Math.round(opens.cacheHitRate * 100)}%`,
+    ],
+    ["Open p50 / p90", `${ms(opens.p50)} / ${ms(opens.p90)}`],
+    ["Not timed", String(opens.skipped)],
+    ...Object.entries(opens.bySource).map(([source, value]) => [
+      `From ${source}`,
+      `${value.n} · p50 ${ms(value.p50)}`,
+    ]),
+    ["Long tasks", `${mainThread.longTasks} · ${ms(mainThread.longTaskMs)}`],
+    ["During background work", ms(mainThread.backgroundLongTaskMs)],
+    ...Object.entries(mainThread.cpu).map(([stage, value]) => [
+      stage,
+      `${ms(value.ms)} · ${value.count}`,
+    ]),
+  ];
+  return (
+    <div className="space-y-2">
+      <h3 className="m-0 text-label-sm">Client performance</h3>
+      <p className="m-0 text-body-sm text-muted">
+        Measured in this window since it loaded. Nothing is sent anywhere.
+      </p>
+      <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-1 text-body-sm sm:grid-cols-3">
+        {cells.map(([label, value]) => (
+          <div key={label}>
+            <dt className="text-muted">{label}</dt>
+            <dd className="m-0 tabular-nums">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {phases.map((phase, index) => (
+        <p
+          // Phases are append-only; the index is their identity.
+          // biome-ignore lint/suspicious/noArrayIndexKey: see above
+          key={index}
+          className="m-0 text-body-sm tabular-nums"
+        >
+          {phase.kind === "open" ? "App open" : `Reconnect ${index}`}: auth{" "}
+          {ms(phase.authMs)}, {phase.routes} channel subscriptions live in{" "}
+          {ms(phase.coverageMs)} (each p50 {ms(phase.routeMs.p50)}, max{" "}
+          {ms(phase.routeMs.max)}
+          {phase.routeErrors ? `, ${phase.routeErrors} failed` : ""}),{" "}
+          {phase.queries} reads ({phase.background} background),{" "}
+          {Math.round(phase.bytes / 1024)} KB
+        </p>
+      ))}
+      <div className="flex gap-2">
+        <Button type="button" onClick={download}>
+          Export JSON
+        </Button>
+        <Button
+          type="button"
+          onClick={() => {
+            clientMetrics.reset();
+            setSummary(clientMetrics.summary());
+          }}
+        >
+          Reset
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /** Only the dev broker serves /api/relay/*. Packaged builds and proxied
  * deployments have no such endpoint, so absence is normal, not an error. */
@@ -162,6 +258,7 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
             </p>
           )}
         </div>
+        {clientMetrics.enabled && <ClientMetrics />}
         <div className="space-y-2">
           <h3 className="m-0 text-label-sm">Caches</h3>
           <p className="m-0 text-body-sm text-muted">

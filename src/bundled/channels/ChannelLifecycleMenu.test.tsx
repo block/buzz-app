@@ -253,10 +253,11 @@ it("confirmation, pending lockout and failed-write recovery stay in the actual d
     name: "Delete channel",
   }) as HTMLButtonElement;
   expect(confirm.disabled).toBe(true);
-  await user.type(
-    screen.getByRole("textbox", { name: "Channel name confirmation" }),
-    "Fixture",
-  );
+  const confirmationInput = screen.getByRole("textbox", {
+    name: "Channel name confirmation",
+  });
+  expect(confirmationInput.getAttribute("autocapitalize")).toBe("none");
+  await user.type(confirmationInput, "Fixture");
   await user.click(confirm);
   await waitFor(() => expect(lifecycle.run).toHaveBeenCalledOnce());
   expect(confirm.disabled).toBe(true);

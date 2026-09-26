@@ -98,8 +98,9 @@ choices come from the selected harness; model discovery uses the current draft.
 Existing/custom values remain intact when another field changes. Workspace,
 arguments and write-only environment patches remain under **Advanced**;
 Start/Stop/Restart and exact identity are under **Runtime and identity**. Save uses
-native ID/revision and does not restart. Dirty drafts resist backdrop/Escape;
-explicit Cancel/Close discards. Page navigation/reload still discards page-local drafts.
+native ID/revision; the planned restart-on-save flow is described below. Dirty
+drafts resist backdrop/Escape; explicit Cancel/Close discards. Page
+navigation/reload still discards page-local drafts.
 
 **Browse models** requests the current Databricks catalog on explicit button
 activation, including when typing has already opened the local popup. Typing,
@@ -164,6 +165,62 @@ and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
 
 See [configuration parity](configuration.md) for development routing, release
 flag exclusions and the supported deployment boundary.
+
+## Planned: Harnesses and agent defaults
+
+This is the approved Settings → Agents contract for the next implementation
+slices, not a description of controls already shipped. The current desktop still
+requires a restart to discover newly installed CLIs, and Save currently leaves
+running agents unchanged. Individual-agent configuration stays on the Agents
+page; Settings → Agents owns installation guidance and device-wide defaults.
+
+### Harnesses
+
+The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
+
+- **Buzz Agent** is bundled and shows **Ready**.
+- **Goose** shows **Ready** or **CLI needed**, with **Install** when needed.
+  Install runs upstream `download_cli.sh` with `CONFIGURE=false`, as old Buzz
+  did; Goose then uses built-in `goose acp`. One install runs at a time.
+  Afterward Buzz re-detects, writes an install log, and restarts agents that
+  were waiting for Goose.
+- **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. V1 shows a hint
+  and copyable commands (Node.js required); one-click Pi install comes later:
+
+  ```sh
+  npm install -g @earendil-works/pi-coding-agent
+  npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#86b201e'
+  ```
+
+**Check again** re-detects installed Harnesses without reopening Buzz. Status
+is executable detection, not a guarantee of sign-in, ACP readiness or inference.
+Add/Edit links to Settings → Agents for setup instead of telling people to reopen
+the app. The ACP tooltip says:
+
+> Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.
+
+### Global agent defaults and saving
+
+Settings → Agents provides a default harness, provider, model, effort and
+environment variables. The default harness is **copied into each new agent** at
+creation; changing it later does not switch existing agents. Provider, model,
+effort and environment defaults are **looked up at each start** only for fields
+an agent leaves blank; per-agent values win. Per-agent effort is not yet an
+editable field. Changing the default harness clears the default model and effort.
+
+These mutable defaults live in a native store under app-data
+`agent-controller/`, not localStorage. Native files use owner-only permissions
+(0600); environment values are write-only and never read back into the UI, as
+with per-agent API keys. This layer sits above
+[`BuildDefaults::resolve()`](../crates/agent-controller/src/defaults.rs): global
+defaults win over the [nonsecret build floor](#nonsecret-build-defaults), which
+stays compiled and is not the editable store.
+
+Saving an agent or defaults restarts **running agents whose effective settings
+changed** through the native supervisor and reports **“Saved. Restarted N
+agents.”** Unchanged and stopped agents are not restarted. Effective settings
+include inherited defaults, so today's `restartDiff` (raw saved configs) is not
+enough on its own. This supersedes the current Save-without-restart rule.
 
 ## Avatar editing
 
@@ -255,7 +312,9 @@ containment on non-Unix platforms.
 - `running` is **process-alive evidence only**, labeled “Process running · relay
   readiness unverified.” It is not a Listening/Working badge or proof a mention
   can be received. Native wake/readiness acceptance is separate.
-- Save uses `expectedRevision`, updates only editable fields and never restarts.
+- Save uses `expectedRevision` and updates only editable fields. The planned
+  flow restarts running agents whose effective settings change (see
+  [Global agent defaults and saving](#global-agent-defaults-and-saving)).
   Saved/running revisions remain distinct. Dirty drafts survive refresh and save
   failure. A newer saved revision blocks overwrite and offers explicit discard;
   the person can copy their edits before discarding. Drafts are page-local and
@@ -263,13 +322,15 @@ containment on non-Unix platforms.
 - Arguments use a JSON string array rather than splitting shell text, preserving
   spaces and literal quoting. Empty/comma-containing arguments are rejected because
   the current ACP transport cannot represent them faithfully. The executable is a per-agent
-  harness choice, not a new installation/catalog system. The host must validate
-  launch configuration and unsupported imported semantics before execution.
+  harness choice; Settings → Agents owns the planned Harnesses setup card. The
+  host must validate launch configuration and unsupported imported semantics
+  before execution.
 - Harness and Provider choices come from native `harnessOptions` through the
   injected Core snapshot. Buzz Agent offers Databricks v2. Goose appears with an
   absolute executable path when the local CLI is installed, and offers common
-  Goose providers plus a custom ID. A missing CLI leaves Goose disabled until
-  installation and desktop restart. Switching into or out of Goose supplies ACP
+  Goose providers plus a custom ID. A missing CLI leaves Goose disabled; the
+  planned **Check again** action re-detects it after installation without an app
+  restart. Switching into or out of Goose supplies ACP
   arguments and clears the previous provider/model; selecting a Goose provider clears the
   previous model. For Goose, an explicit Browse asks Goose ACP for the selected
   provider's supported-model list and searches it in the existing picker. The
@@ -408,8 +469,8 @@ bin/node --test tests/integration/agent-runtime.test.mjs
 
 These checks use isolated fixtures, including the staged binaries; they do not
 launch the app or access live credentials. Exercise upstream behavior changes
-with relevant bundled-tool smoke checks. Do not commit generated resources or
-restart running agents implicitly; live handover remains a separate step below.
+with relevant bundled-tool smoke checks. Do not commit generated resources;
+live handover remains a separate step below.
 
 ## Handover and rollback
 
@@ -438,7 +499,8 @@ restart running agents implicitly; live handover remains a separate step below.
 
 `control.test.ts`, `control-native.test.ts`, `agent-edit.test.ts` cover projection
 races, unavailable browser, exact IPC payloads, uncertain result handling,
-save/restart distinction, literal arguments and environment patch semantics.
+the current save/restart distinction, literal arguments and environment patch
+semantics.
 `tests/browser/agent-control.spec.mjs` drives the real editor and capability over
 the isolated fake host in Chromium/WebKit: dirty refresh, save failure, revisions,
 write-only replacement, Stop, unmount without control actions, selected import,
@@ -477,9 +539,11 @@ forced native quit, signed packaging or other-platform behavior.
 
 ## Pi harness
 
-Install Pi, Node.js, and the `buzz-pi-acp` adapter, then reopen the desktop app.
-Pi appears alongside Buzz Agent and Goose. Availability means the executables
-were found, not that authentication or inference has been verified. This
+Install Pi, Node.js, and the `buzz-pi-acp` adapter. In the planned Harnesses
+card, choose **Check again** to re-detect without reopening the app; until that
+ships, reopen the current desktop app. Pi appears alongside Buzz Agent and Goose.
+Availability means the executables were found, not that authentication or
+inference has been verified. This
 integration uses the adapter's Pi argument forwarding after `--` (verified with
 buzz-pi-acp 0.0.33) and Pi's `get_available_models` RPC (verified with Pi 0.86.1).
 
@@ -495,8 +559,9 @@ The Advanced model field preserves text literally, including IDs that themselves
 start with the provider name. After Browse, an unlisted ID carries a warning;
 manual IDs remain allowed and an available catalog is not inference validation.
 Clear both fields to keep Pi's own defaults. Choosing a provider requires a model
-before Start; Pi otherwise silently ignores a provider-only flag. Save does not restart a running agent;
-use Restart explicitly to apply changes.
+before Start; Pi otherwise silently ignores a provider-only flag. Until the
+planned restart-on-save flow ships, use Restart explicitly to apply a saved
+change to a running Pi agent.
 
 Discovery launches the same locally resolved Pi used by the ACP adapter, in the
 agent's workspace, with the same explicit environment and extension arguments.

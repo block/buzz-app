@@ -590,27 +590,27 @@ export function createUnread({
   }
   // Names/previews do not affect unread. Read membership once, without a
   // roster scan for every channel, and retain only the invalidation inputs.
-  const types = () =>
+  const types = (list: ReturnType<ChannelQueries["list"]>) =>
     new Map(
-      channels
-        .list()
-        .channels.filter(
+      list.channels
+        .filter(
           (channel) => !channel.cached && channel.members?.includes(viewer),
         )
         .map((channel) => [channel.id, channel.channelType]),
     );
-  const cachedIds = () =>
+  const cachedIds = (list: ReturnType<ChannelQueries["list"]>) =>
     new Set(
-      channels
-        .list()
-        .channels.filter((channel) => channel.cached)
+      list.channels
+        .filter((channel) => channel.cached)
         .map((channel) => channel.id),
     );
-  let cachedChannels = cachedIds();
-  let channelTypes = types();
+  const initialList = channels.list();
+  let cachedChannels = cachedIds(initialList);
+  let channelTypes = types(initialList);
   let accessKey = [...channelTypes.keys()].sort().join(",");
   const stopChannels = channels.subscribeList(() => {
-    const nextTypes = types();
+    const list = channels.list();
+    const nextTypes = types(list);
     const next = [...nextTypes.keys()].sort().join(",");
     const changed = new Set(
       [...nextTypes].flatMap(([id, type]) =>
@@ -620,7 +620,7 @@ export function createUnread({
     const confirmed = [...nextTypes.keys()].some((id) =>
       cachedChannels.has(id),
     );
-    cachedChannels = cachedIds();
+    cachedChannels = cachedIds(list);
     channelTypes = nextTypes;
     if (next === accessKey) {
       if (changed.size) publish(changed);

@@ -10,7 +10,11 @@ export function AttachmentImage({
   source,
   onOpenLink,
   onOpenReview,
+  thumbnail = false,
+  label = "Open image attachment",
 }: {
+  thumbnail?: boolean;
+  label?: string;
   attachment: Attachment;
   url: string;
   source: string;
@@ -20,8 +24,9 @@ export function AttachmentImage({
   return (
     <a
       className={styles.attachmentImage}
+      data-thumbnail={thumbnail || undefined}
       style={
-        attachment.dimensions
+        !thumbnail && attachment.dimensions
           ? {
               width: Math.min(
                 360,
@@ -36,7 +41,7 @@ export function AttachmentImage({
       href={url}
       target="_blank"
       rel="noreferrer"
-      aria-label="Open image attachment"
+      aria-label={label}
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey) return;
         if (onOpenReview) {

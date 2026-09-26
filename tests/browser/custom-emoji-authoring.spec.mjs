@@ -128,7 +128,10 @@ function localRelay(relayKey, viewer) {
         });
       }
       if (pathname.startsWith("/media/")) {
-        const bytes = blobs.get(`${origin}${pathname}`);
+        // Blossom serves a thumbnail beside each blob; model it with the original bytes.
+        const bytes = blobs.get(
+          `${origin}${pathname.replace(/\.thumb\.jpg$/, ".png")}`,
+        );
         return bytes
           ? new Response(bytes, { headers: { "Content-Type": "image/png" } })
           : new Response("missing", { status: 404 });
@@ -358,8 +361,15 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
         .tags,
     ).toContainEqual(["emoji", "party_parrot", first]);
     await expect(
-      row.getByRole("button", { name: /^:party_parrot:: 1 person/ }),
-    ).toBeVisible();
+      row
+        .getByRole("button", { name: /^:party_parrot:: 1 person/ })
+        .locator("img"),
+    ).toHaveJSProperty("complete", true);
+    await expect(
+      row
+        .getByRole("button", { name: /^:party_parrot:: 1 person/ })
+        .locator("img"),
+    ).not.toHaveJSProperty("naturalWidth", 0);
 
     // Replace the image under the same name.
     await upload.setInputFiles({
@@ -388,8 +398,7 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     ]);
     await expect(page.getByText("My emoji (1)")).toBeVisible();
     // Sent messages and reactions keep their original image; the palette offers the replacement.
-    const media = (url) =>
-      new RegExp(encodeURIComponent(url.split("/").at(-1)));
+    const media = (url) => new RegExp(url.match(/[0-9a-f]{64}/)[0]);
     await expect(
       row.locator('p[data-single-emoji] img[alt=":party_parrot:"]'),
     ).toHaveAttribute("src", media(first));

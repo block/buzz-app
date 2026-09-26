@@ -74,7 +74,9 @@ export function logSocketFrame(
   if (log.level < 4) return;
   const size =
     typeof raw === "string"
-      ? new TextEncoder().encode(raw).byteLength
+      ? raw.length > 1024 * 1024
+        ? undefined
+        : new TextEncoder().encode(raw).byteLength
       : raw instanceof ArrayBuffer
         ? raw.byteLength
         : ArrayBuffer.isView(raw)
@@ -91,7 +93,11 @@ export function logSocketFrame(
     const event = direction === "←" ? data[2] : data[1];
     detail = `${direction === "←" ? ` sub=${shortId(data[1])}` : ""} id=${shortId(event?.id)} kind=${Number.isSafeInteger(event?.kind) ? event.kind : "?"}`;
   }
-  log.debug(`${peer} ${direction} ${type}${detail} (${size ?? "?"} B)`);
+  const length =
+    typeof raw === "string" && raw.length > 1024 * 1024
+      ? `${raw.length} code units; oversized`
+      : `${size ?? "?"} B`;
+  log.debug(`${peer} ${direction} ${type}${detail} (${length})`);
   if (log.level >= 5 && type === "REQ")
-    log.trace(`${peer} filters ${filterSummary(data.slice(2))}`);
+    log.debug(`${peer} filters ${filterSummary(data.slice(2))}`);
 }

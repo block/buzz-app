@@ -17,6 +17,7 @@ import {
 afterEach(() => {
   setLogLevel("info");
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 it("updates existing/future tags and never coalesces the firehose", () => {
   const log = getLogger("test");
@@ -39,9 +40,12 @@ it("updates existing/future tags and never coalesces the firehose", () => {
   expect(isLogLevel(4)).toBe(false);
 });
 it("applies only valid saved responses and leaves the previous level on failure", async () => {
+  vi.stubEnv("BUZZ_DEV_SETTINGS", "1");
   const fetcher = vi
     .fn()
-    .mockImplementation(async () => Response.json({ logLevel: "trace" }));
+    .mockImplementation(async () =>
+      Response.json({ logLevel: "trace", revision: 1 }),
+    );
   vi.stubGlobal("fetch", fetcher);
   await developerSettings("trace");
   expect(fetcher).toHaveBeenCalledWith(
@@ -114,4 +118,21 @@ it("allows only traffic metadata, never bodies, auth challenges or URL secrets",
   setLogLevel("info");
   logSocketFrame("relay.test", "←", "[]", ["EVENT", "live-1", event]);
   expect(lines).toHaveLength(8);
+});
+
+it("does not encode rejected oversized text frames, but counts ordinary UTF-8 bytes", () => {
+  const logger = getLogger("relay-ws");
+  const lines: string[] = [];
+  logger.setReporters([{ log: (value) => lines.push(value.args.join(" ")) }]);
+  setLogLevel("debug");
+  const encode = vi.spyOn(TextEncoder.prototype, "encode");
+  try {
+    logSocketFrame("relay.test", "←", "x".repeat(1024 * 1024 + 1));
+    expect(encode).not.toHaveBeenCalled();
+    expect(lines[0]).toContain("1048577 code units; oversized");
+    logSocketFrame("relay.test", "←", "é");
+    expect(lines[1]).toContain("(2 B)");
+  } finally {
+    encode.mockRestore();
+  }
 });

@@ -1,8 +1,10 @@
+import { createConsola } from "consola";
+import { logSocketFrame } from "../src/features/developer/traffic.ts";
 import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
-import { createServer } from "node:http";
+import { createServer, get } from "node:http";
 import { createHash, createHmac } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { ReadableStream } from "node:stream/web";
@@ -31,7 +33,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 // Real browser HTTP -> production broker. Ephemeral key; upstream I/O is entirely local.
-async function harness(respond, capabilities = {}) {
+async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   const key = new Uint8Array(32);
   key[31] = 7;
   const viewer = getPublicKey(key);
@@ -48,7 +50,7 @@ async function harness(respond, capabilities = {}) {
     handler?.(req, res);
   });
   const plugin = relayBrokerPlugin({
-    relayUrl: fixtureRelayUrl,
+    relayUrl,
     communityAliases: fixtureAliases,
     identity: () => key,
     socketFactory: socket.factory,
@@ -2498,3 +2500,75 @@ test.each([
     }
   },
 );
+
+test("Trace metadata uses the real Node reporter without fabricated stacks", async () => {
+  const logger = getLogger("relay-broker");
+  const socket = getLogger("relay-ws");
+  const originals = [logger, socket].map((log) => ({
+    log,
+    reporters: [...log.options.reporters],
+    stdout: log.options.stdout,
+    stderr: log.options.stderr,
+  }));
+  const lines = [];
+  const output = {
+    write: (line) => {
+      lines.push(String(line));
+      return true;
+    },
+  };
+  const fancy = createConsola({ fancy: true, stdout: output, stderr: output });
+  for (const { log } of originals) {
+    log.setReporters(fancy.options.reporters);
+    log.options.stdout = output;
+    log.options.stderr = output;
+  }
+  const h = await harness(success);
+  try {
+    lines.length = 0; // Exclude the harness startup lifecycle message.
+    setLogLevel("trace");
+    expect((await h.post("query", filters)).status).toBe(200);
+    logSocketFrame("relay.test", "→", "[]", ["REQ", "live-1", { kinds: [9] }]);
+    expect(lines.join("")).toContain("filters");
+    expect(lines.join("")).toContain("query");
+    expect(lines.join("")).not.toMatch(/\n\s+at |FancyReporter|formatLogObj/);
+    expect(lines).toHaveLength(4); // HTTP summary + metadata, frame summary + metadata.
+    expect(lines.every((line) => line.trim().split("\n").length === 1)).toBe(
+      true,
+    );
+  } finally {
+    await h.close();
+    for (const { log, reporters, stdout, stderr } of originals) {
+      log.setReporters(reporters);
+      log.options.stdout = stdout;
+      log.options.stderr = stderr;
+    }
+    setLogLevel("info");
+  }
+});
+
+test("server-wide stats work without a default community and do not start upstream I/O", async () => {
+  const h = await harness(success, {}, "");
+  try {
+    // Use node:http: Undici diagnostics also count the test client's own socket.
+    const body = await new Promise((resolve, reject) => {
+      get(`${h.base}/api/relay/stats`, (response) => {
+        expect(response.statusCode).toBe(200);
+        let raw = "";
+        response.on("data", (chunk) => {
+          raw += chunk;
+        });
+        response.on("end", () => resolve(JSON.parse(raw)));
+      }).on("error", reject);
+    });
+    expect(body).toEqual({
+      queries: 0,
+      errors: 0,
+      media: 0,
+      connects: 0,
+    });
+    expect(h.calls).toEqual([]);
+  } finally {
+    await h.close();
+  }
+});

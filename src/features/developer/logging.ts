@@ -1,4 +1,5 @@
 import { createConsola } from "consola";
+import type { ViteHotContext } from "vite/types/hot.d.ts";
 
 export const LOG_LEVELS = {
   silent: -999,
@@ -46,7 +47,31 @@ export function getLogger(tag: string) {
   return logger;
 }
 
+export const hasDeveloperSettings = () =>
+  import.meta.env?.DEV && import.meta.env.BUZZ_DEV_SETTINGS === "1";
+let revision = -1;
+let connection = 0;
+function applySettings(value: unknown) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("logLevel" in value) ||
+    !isLogLevel(value.logLevel) ||
+    !("revision" in value) ||
+    typeof value.revision !== "number" ||
+    !Number.isSafeInteger(value.revision) ||
+    value.revision < 0
+  )
+    throw new Error("Invalid development settings response.");
+  if (value.revision > revision) {
+    revision = value.revision;
+    setLogLevel(value.logLevel);
+  }
+}
 export async function developerSettings(next?: LogLevel): Promise<LogLevel> {
+  if (!hasDeveloperSettings())
+    throw new Error("Development settings are unavailable.");
+  const started = connection;
   const response = await fetch(DEVELOPER_SETTINGS_PATH, {
     cache: "no-store",
     // Missing APIs must return 404, not Vite's HTML fallback (and its warmup).
@@ -65,26 +90,34 @@ export async function developerSettings(next?: LogLevel): Promise<LogLevel> {
     throw new Error(
       "Development settings are unavailable or could not be saved.",
     );
-  const value: unknown = (await response.json()).logLevel;
-  if (!isLogLevel(value))
-    throw new Error("Invalid development settings response.");
-  setLogLevel(value);
-  return value;
+  const value: unknown = await response.json();
+  if (started === connection) applySettings(value);
+  return logLevel();
 }
 
-// Only Vite development clients subscribe. Production never contacts this endpoint.
-if (import.meta.hot) {
+// The serving plugin advertises support; HMR alone does not imply an API exists.
+export function connectDeveloperSettings(hot: ViteHotContext) {
+  if (!hasDeveloperSettings()) return;
   const changed = (value: unknown) => {
-    if (isLogLevel(value)) setLogLevel(value);
+    try {
+      applySettings(value);
+    } catch {
+      /* Ignore malformed custom events. */
+    }
   };
   const refresh = () => {
+    // A restarted server owns a new revision sequence. Discard old HTTP replies.
+    connection++;
+    revision = -1;
     void developerSettings().catch(() => {});
   };
-  import.meta.hot.on(LOG_LEVEL_EVENT, changed);
-  import.meta.hot.on("vite:ws:connect", refresh);
+  hot.on(LOG_LEVEL_EVENT, changed);
+  hot.on("vite:ws:connect", refresh);
   refresh();
-  import.meta.hot.dispose(() => {
-    import.meta.hot?.off(LOG_LEVEL_EVENT, changed);
-    import.meta.hot?.off("vite:ws:connect", refresh);
+  hot.dispose(() => {
+    connection++;
+    hot.off(LOG_LEVEL_EVENT, changed);
+    hot.off("vite:ws:connect", refresh);
   });
 }
+if (import.meta.hot) connectDeveloperSettings(import.meta.hot);

@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer } from "node:http";
+import { createServer, request } from "node:http";
 import { createServer as createViteServer } from "vite";
 import { afterEach, expect, it, vi } from "vitest";
 import { developerSettingsPlugin } from "./developer-settings.ts";
@@ -22,6 +22,7 @@ afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
   setLogLevel("info");
+  vi.unstubAllEnvs();
 });
 function directory() {
   const root = mkdtempSync(join(tmpdir(), "buzz-logging-"));
@@ -72,14 +73,21 @@ it("persists live levels before broadcasting and restores after restart without 
   const root = directory();
   let h = await harness(root);
   try {
-    expect(await (await h.get()).json()).toEqual({ logLevel: "info" });
+    expect(await (await h.get()).json()).toEqual({
+      logLevel: "info",
+      revision: 0,
+    });
     const logger = getLogger("existing");
     expect((await h.post('{"logLevel":"debug"}')).status).toBe(200);
     expect(logger.level).toBe(4);
+    expect(await (await h.get()).json()).toEqual({
+      logLevel: "debug",
+      revision: 1,
+    });
     expect(h.send).toHaveBeenCalledWith({
       type: "custom",
       event: "buzz:log-level",
-      data: "debug",
+      data: { logLevel: "debug", revision: 1 },
     });
     expect(
       JSON.parse(
@@ -91,7 +99,10 @@ it("persists live levels before broadcasting and restores after restart without 
   }
   h = await harness(root);
   try {
-    expect(await (await h.get()).json()).toEqual({ logLevel: "debug" });
+    expect(await (await h.get()).json()).toEqual({
+      logLevel: "debug",
+      revision: 0,
+    });
   } finally {
     await h.close();
   }
@@ -117,9 +128,35 @@ it("rejects cross-origin, invalid and oversized writes without changing settings
         .status,
     ).toBe(403);
     expect(
+      (
+        await fetch(`${h.base}/api/dev/settings`, {
+          method: "POST",
+          body: '{"logLevel":"debug"}',
+        })
+      ).status,
+    ).toBe(403);
+    const hostile = await new Promise((resolve, reject) => {
+      const req = request(
+        `${h.base}/api/dev/settings`,
+        {
+          headers: { host: "hostile.test:1234" },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve(res.statusCode));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    expect(hostile).toBe(403);
+    expect(
       (await fetch(`${h.base}/api/dev/settings`, { method: "DELETE" })).status,
     ).toBe(405);
-    expect(await (await h.get()).json()).toEqual({ logLevel: "info" });
+    expect(await (await h.get()).json()).toEqual({
+      logLevel: "info",
+      revision: 0,
+    });
     expect(h.send).not.toHaveBeenCalled();
   } finally {
     await h.close();
@@ -131,16 +168,23 @@ it("keeps the active level when persistence fails and recovers from corrupt sett
   writeFileSync(join(root, ".buzz/developer-settings.json"), "not-json");
   const h = await harness(root);
   try {
-    expect(await (await h.get()).json()).toEqual({ logLevel: "info" });
+    expect(await (await h.get()).json()).toEqual({
+      logLevel: "info",
+      revision: 0,
+    });
     mkdirSync(join(root, ".buzz/developer-settings.json.tmp"));
     expect((await h.post('{"logLevel":"trace"}')).status).toBe(500);
-    expect(await (await h.get()).json()).toEqual({ logLevel: "info" });
+    expect(await (await h.get()).json()).toEqual({
+      logLevel: "info",
+      revision: 0,
+    });
     expect(h.send).not.toHaveBeenCalled();
   } finally {
     await h.close();
   }
 });
-it("treats an absent settings API as unavailable without Vite's HTML fallback", async () => {
+it("makes no unsupported settings request and retains JSON fallback protection", async () => {
+  vi.stubEnv("BUZZ_DEV_SETTINGS", "0");
   const root = directory();
   writeFileSync(
     join(root, "index.html"),
@@ -174,6 +218,12 @@ it("treats an absent settings API as unavailable without Vite's HTML fallback", 
         return response;
       });
     setLogLevel("debug");
+    await expect(developerSettings()).rejects.toThrow(
+      "Development settings are unavailable",
+    );
+    expect(statuses).toEqual([]);
+    // Even an advertised endpoint that disappears must not get HTML fallback.
+    vi.stubEnv("BUZZ_DEV_SETTINGS", "1");
     await expect(developerSettings()).rejects.toThrow(
       "Development settings are unavailable",
     );

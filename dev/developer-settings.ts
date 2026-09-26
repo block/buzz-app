@@ -26,7 +26,13 @@ export function developerSettingsPlugin(root: string): Plugin {
         "Could not read saved log level; using Info.",
       );
   }
+  let revision = 0;
+  const snapshot = () => ({ logLevel: logLevel(), revision });
   return {
+    apply: "serve",
+    config: () => ({
+      define: { "import.meta.env.BUZZ_DEV_SETTINGS": JSON.stringify("1") },
+    }),
     name: "buzz-developer-settings",
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
@@ -47,7 +53,7 @@ export function developerSettingsPlugin(root: string): Plugin {
             req.headers["sec-fetch-site"] !== "same-origin")
         )
           return reply(403, { error: "Origin rejected" });
-        if (req.method === "GET") return reply(200, { logLevel: logLevel() });
+        if (req.method === "GET") return reply(200, snapshot());
         if (req.method !== "POST")
           return reply(405, { error: "Method not allowed" });
         try {
@@ -79,12 +85,13 @@ export function developerSettingsPlugin(root: string): Plugin {
           });
           renameSync(`${file}.tmp`, file);
           setLogLevel(value.logLevel);
+          revision++;
           server.ws.send({
             type: "custom",
             event: LOG_LEVEL_EVENT,
-            data: value.logLevel,
+            data: snapshot(),
           });
-          reply(200, { logLevel: logLevel() });
+          reply(200, snapshot());
         } catch {
           reply(500, { error: "Could not save development settings" });
         }

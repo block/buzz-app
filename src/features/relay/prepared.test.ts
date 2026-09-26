@@ -12,6 +12,7 @@ import {
   signed,
 } from "./testing";
 import type { HeadPersistence, SavedHead } from "./persistence";
+import { getLogger, logLevel, setLogLevel } from "../developer/logging";
 import { ByteLru } from "./budget";
 
 const relay = keypair(),
@@ -597,5 +598,36 @@ it("selection shares the one speculative read and failure releases preparation c
     expect(next().filters[0]?.["#h"]).toEqual(["b"]);
   } finally {
     store.dispose();
+  }
+});
+
+it("failed prepared head diagnostics omit response text from JSON errors", async () => {
+  const logger = getLogger("relay");
+  const reporters = [...logger.options.reporters];
+  const previous = logLevel();
+  const lines: string[] = [];
+  logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+  const { queries, store, next } = setup();
+  try {
+    setLogLevel("debug");
+    queries.ensureList();
+    next().respond(discovery(["a"]));
+    await flush();
+    queries.ensure("a");
+    let failure: unknown;
+    try {
+      await new Response("RESPONSE_SECRET_306").json();
+    } catch (error) {
+      failure = error;
+    }
+    expect(String(failure)).toContain("RESPONSE_SECRET_306");
+    next().fail(failure);
+    await flush();
+    expect(lines.join(" ")).toContain("head failed a unavailable");
+    expect(lines.join(" ")).not.toContain("RESPONSE_SECRET_306");
+  } finally {
+    store.dispose();
+    logger.setReporters(reporters);
+    setLogLevel(previous);
   }
 });

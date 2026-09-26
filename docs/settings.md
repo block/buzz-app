@@ -157,7 +157,10 @@ The choice applies immediately to broker terminal logs and browser relay
 diagnostics, and is saved in the worktree's ignored `.buzz/developer-settings.json`.
 It survives app/dev-server restarts and is shared by tabs using that server, not
 by other worktrees or communities on other installations. It works even without a
-configured relay broker. Production builds do not serve the settings endpoint.
+configured relay broker. Only servers with the settings plugin advertise this
+capability; standalone fixtures and production clients never request the endpoint.
+Responses and tab updates carry a server revision so delayed responses cannot
+replace a newer saved choice. Reconnecting refreshes the current server sequence.
 
 - **Info** (default): connection lifecycle, warnings and errors.
 - **Debug**: every completed broker HTTP request and each relay application
@@ -170,7 +173,9 @@ Traffic summaries include method/action, status and duration for HTTP, and
 relay host, direction, frame type, short event/subscription IDs, kind and size for
 WebSockets. They omit message bodies, signatures, auth challenges, URL credentials
 and query strings. Trace shows filter kinds, limits, time bounds and ID counts,
-not searches or full authors/tags. This is diagnostic output, not a retained audit
+not searches or full authors/tags, and does not generate call stacks. Rejected
+oversized text frames report code-unit length without allocating a UTF-8 copy.
+This is diagnostic output, not a retained audit
 log or an OS/network packet capture: native Rust transport and WebSocket control
 frames are outside this TypeScript logger.
 

@@ -514,7 +514,7 @@ export function createChannelStore(
       )
         throw new Error("Channel head exceeds the read budget");
     } catch (error) {
-      relayDebug("head failed", channelId.slice(0, 8), describe(error));
+      relayDebug("head failed", channelId.slice(0, 8), readErrorKind(error));
       if (
         !disposed &&
         generation === epoch &&

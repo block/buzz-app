@@ -745,6 +745,9 @@ export function relayBrokerPlugin({
         const startedAt = Date.now();
         const route = new URL(req.url, "http://localhost").pathname;
         res.on("finish", () => {
+          const severity =
+            res.statusCode >= 500 ? 0 : res.statusCode >= 400 ? 1 : 4;
+          if (log.level < severity) return;
           const line = `${req.method} ${httpLabel(route)} → ${res.statusCode} (${Date.now() - startedAt}ms)`;
           if (res.statusCode >= 500) log.error(line);
           else if (res.statusCode >= 400) log.warn(line);
@@ -831,6 +834,8 @@ export function relayBrokerPlugin({
               });
             }
           }
+          if (url.pathname === "/api/relay/stats" && req.method === "GET")
+            return json(res, 200, { ...stats, connects: upstream.connects() });
           if (url.pathname === "/api/relay/identity" && req.method === "GET")
             return json(res, 200, { viewer });
           const parts = url.pathname.split("/").filter(Boolean);
@@ -2358,7 +2363,7 @@ export function relayBrokerPlugin({
           }
           if (route === "/api/relay/query")
             if (log.level >= 5)
-              log.trace(
+              log.debug(
                 `query ${req.headers["x-buzz-read-priority"] === "background" ? "background" : "foreground"} ${filterSummary(filters)}`,
               );
           const gifSearchPath = gifs ? await getGifSearchPath(relay) : null;

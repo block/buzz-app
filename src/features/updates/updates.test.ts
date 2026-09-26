@@ -194,7 +194,7 @@ it("reports download and install failures, then retries with a fresh check", asy
   expect(second.update.close).toHaveBeenCalledOnce();
 });
 
-it("stops background checks and releases the pending update on dispose", async () => {
+it("stops background checks on dispose without closing an in-flight download", async () => {
   const updates = start();
   const { update } = handle();
   (await check(0)).resolve(update);

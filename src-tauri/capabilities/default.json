@@ -54,6 +54,7 @@
     "updater:allow-check",
     "updater:allow-download",
     "updater:allow-install",
+    "core:resources:allow-close",
     "process:allow-restart",
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",

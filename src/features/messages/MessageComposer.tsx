@@ -92,6 +92,8 @@ export type MessageComposerProps = {
   replyContext?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
+  /** Focus once when this conversation mounts, not when overlays close. */
+  autoFocus?: boolean;
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
@@ -138,6 +140,7 @@ function Composer({
   replyContext,
   mediaTimeSeconds,
   clearMediaTime,
+  autoFocus = false,
   focusRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
@@ -202,6 +205,27 @@ function Composer({
   const valueRef = useRef(value);
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const focusOnMount = useRef(
+    autoFocus && !disabled && typeof document !== "undefined"
+      ? document.activeElement
+      : undefined,
+  );
+  useEffect(() => {
+    // A navigation/dialog owner may restore focus during this commit. Let that
+    // explicit handoff win over the conversation's default initial focus.
+    const previous = focusOnMount.current;
+    if (
+      previous &&
+      (previous === document.activeElement ||
+        (!previous.isConnected && document.activeElement === document.body))
+    ) {
+      const editor = input.current;
+      if (!editor) return;
+      const end = editor.value.length;
+      editor.setSelectionRange(end, end);
+      editor.focus();
+    }
+  }, []);
   const nonmembers = useNonmemberMentions(session, channelId, () =>
     input.current?.focus(),
   );

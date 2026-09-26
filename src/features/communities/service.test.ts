@@ -524,3 +524,44 @@ it("hydrates presence intent before acquiring a retained session and keeps it ac
   expect(client.presence.status()).toBe("away");
   expect(localStorage.getItem(`buzz-presence.v1:${viewer}`)).toBe("away");
 });
+
+it("hydrates native public identity without contacting the development broker", async () => {
+  const nativeViewer = "c".repeat(64);
+  const saved = {
+    profile: { name: "Native", picture: "" },
+    memberships: [{ id: "https://native.example", name: "Native community" }],
+    selected: "https://native.example",
+  };
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) =>
+      key === `buzz-client.v1:${nativeViewer}` ? JSON.stringify(saved) : null,
+    setItem: vi.fn(),
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => {
+      throw new Error("Broker must not be contacted");
+    }),
+  );
+  const ctx = new Context();
+  roots.push(ctx);
+  let resolve!: (viewer: string) => void;
+  const ready = new Promise<string>((done) => {
+    resolve = done;
+  });
+  const client = createCommunities(ctx, false, undefined, "", undefined, ready);
+  expect(client.snapshot().status).toBe("loading");
+  resolve(nativeViewer);
+  await flush();
+  expect(client.snapshot()).toMatchObject({
+    ...saved,
+    viewer: nativeViewer,
+    status: "ready",
+    relayAvailable: false,
+  });
+  client.select(saved.selected);
+  client.relay.retry();
+  await flush();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(client.relay.snapshot().status).not.toBe("ready");
+});

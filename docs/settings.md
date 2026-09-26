@@ -11,17 +11,21 @@ Settings has two groups:
   groups**, **Templates & teams**, and future community-scoped personal or
   permission-gated settings.
 - **App** contains Appearance, Notifications, Shortcuts, Agents, and Plugins.
-  These preferences apply across communities on this device.
+  These preferences apply across communities on this device. In Personal space,
+  **Profile** is also in App so identity details and the local profile remain
+  accessible before joining. With a community selected, Profile stays under its
+  name; the identity details explicitly apply across all communities.
 
 Selecting another community in the rail leaves Settings and opens that
 community's view. Opening Settings there captures the new community context; the
 contents do not change underneath an open form.
 
-The current Profile implementation still edits a device-local seed and does not
-publish to the named community. That is a transitional implementation, not the
-final product contract. The community-settings batch must make Profile edit the
-captured community profile, update the local seed only after an accepted publish,
-and leave other existing community profiles unchanged.
+Profile in Personal space edits the device-local default without publishing. With
+a live community selected, it edits that captured community profile, confirms the
+accepted publish, then updates the local default; other existing community profiles
+remain unchanged. Without relay transport the community editor is unavailable,
+but public identity details and supported native private-key backup remain
+accessible. See [profile behavior](communities.md) and [native identity](identity.md).
 
 ## Appearance roadmap
 
@@ -93,8 +97,9 @@ when a product decision or complete Buzz 1.0 owner exists.
 
 | Area | Current Buzz 1.0 decision |
 | --- | --- |
-| Profile details and public identity | Implemented as a device-local default; existing community profiles remain independent. |
-| Identity backup, sign out, and delete data | Pending a security-reviewed identity and destructive-data lifecycle. |
+| Profile details and public identity | Local default in Personal space; selected-community profile with live transport. Public identity applies across communities. |
+| Identity backup | Native macOS nsec Reveal/Hide/Copy implemented; private export enters UI memory deliberately. Native persistence/consent acceptance remains pending; see [identity](identity.md). |
+| Sign out and delete data | Pending a security-reviewed destructive-data lifecycle; not offered by identity backup. |
 | Color mode and text size | Implemented as personal device preferences across communities. |
 | Conversation density, link previews, and thread layout | Approved as future personal device preferences; modes not yet implemented. |
 | Theme style, accent color, and native glass | Undecided; do not imply a user-selectable theme system from design tokens alone. |
@@ -105,7 +110,7 @@ when a product decision or complete Buzz 1.0 owner exists.
 | Agent runtimes and inherited defaults | Separate future native-agent product decisions; individual configuration remains on the Agents page. |
 | Voice, custom emoji, local archive, and channel templates | Pending dedicated product and implementation slices. |
 | Compute, experiments, mobile pairing, and updates | Pending dedicated native/app capability owners. |
-| Community profiles and administration | Planned for the Communities list-detail architecture below. |
+| Community profiles and administration | Live community profile editing is implemented; permission-gated administration requires its own capability owner. |
 
 Do not add empty destinations or functional-looking placeholders for pending rows.
 
@@ -136,10 +141,10 @@ authorization owners:
 
 ## Current implementation boundary
 
-This change establishes the selected community and **App** groups, places the
-existing Profile and contributed community cards under the community name, and
-places agent conversation behavior under **Agents**. It does not yet change the
-local-only Profile persistence contract or add permission-gated community
+Settings has selected-community and **App** groups, with contributed community
+cards under the community name and agent conversation behavior under **Agents**.
+Profile is available in either context as described above. Native identity setup
+and backup do not provide packaged relay transport or permission-gated community
 administration.
 
 Add new community entries only with real behavior and honest unavailable,

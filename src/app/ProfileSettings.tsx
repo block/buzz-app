@@ -1,4 +1,6 @@
 import { Header } from "../shared/design-system/ui/Header";
+import type { Identity } from "../features/identity/service";
+import { PrivateKey } from "../features/identity/PrivateKey";
 import { profileDefault } from "../features/communities/profile-default";
 import { AvatarEditor } from "../features/profiles/AvatarEditor";
 import { Button } from "../shared/design-system/ui/Button";
@@ -41,9 +43,13 @@ function isCurrentProfileSave(communities: Communities, generation: number) {
 export function ProfileSettings({
   communities,
   community,
+  identity,
+  active = true,
 }: {
   communities: Communities;
   community?: Membership | undefined;
+  identity?: Identity | undefined;
+  active?: boolean;
 }) {
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -102,6 +108,7 @@ export function ProfileSettings({
       setLoadStatus("ready");
       return;
     }
+    if (!client.relayAvailable) return;
     let current = true;
     setLoadStatus("loading");
     void communityApi.inspectProfile(community.id).then(
@@ -119,7 +126,7 @@ export function ProfileSettings({
     return () => {
       current = false;
     };
-  }, [community, loadAttempt]);
+  }, [community, loadAttempt, client.relayAvailable]);
   const persisted =
     community && loaded?.exists ? loaded.profile : client.profile;
   const profile = draft ?? persisted;
@@ -157,6 +164,10 @@ export function ProfileSettings({
             {client.status === "loading"
               ? "Opening your local identity…"
               : "Your local identity is unavailable. Connect your identity to edit your profile."}
+          </p>
+        ) : community && !client.relayAvailable ? (
+          <p role="status">
+            Community profiles are not available in this build yet.
           </p>
         ) : community && loadStatus !== "ready" ? (
           <div>
@@ -331,67 +342,71 @@ export function ProfileSettings({
                 />
               )}
             </form>
-            <section aria-labelledby="identity-settings-title" className="mt-8">
-              <h3 id="identity-settings-title" className="m-0 text-label-sm">
-                Identity
-              </h3>
-              <p className="mt-2 mb-4 text-body-sm text-muted">
-                Your public identity can be shared safely. It does not reveal
-                your private key.
-              </p>
-              {(
-                [
-                  [
-                    "Public key (hex)",
-                    "Public key",
-                    client.viewer ?? "",
-                    "public-key",
-                  ],
-                  [
-                    "Nostr address (npub)",
-                    "Nostr address",
-                    npub,
-                    "nostr-address",
-                  ],
-                ] as const
-              ).map(([label, copyLabel, value, id]) => (
-                <div className="mb-4 min-w-0" key={label}>
-                  <label className="mb-2 block text-label-sm" htmlFor={id}>
-                    {label}
-                  </label>
-                  <div className={styles.identityRow}>
-                    <Input
-                      id={id}
-                      readOnly
-                      value={value}
-                      onFocus={(event) => event.currentTarget.select()}
-                    />
-                    <Button
-                      type="button"
-                      onClick={() => void copyIdentity(value, copyLabel)}
-                    >
-                      Copy {copyLabel.toLowerCase()}
-                    </Button>
-                  </div>
-                </div>
-              ))}
-              {copyStatus && (
-                <ToastNotice
-                  title={
-                    copyStatus.failed
-                      ? "Identity wasn’t copied"
-                      : copyStatus.message
-                  }
-                  {...(copyStatus.failed
-                    ? { description: copyStatus.message }
-                    : {})}
-                  tone={copyStatus.failed ? "error" : "success"}
-                  timeout={copyStatus.failed ? 0 : 5000}
-                  onDismiss={() => setCopyStatus(null)}
-                />
-              )}
-            </section>
           </>
+        )}
+        {client.viewer && (
+          <section aria-labelledby="identity-settings-title" className="mt-8">
+            <h3 id="identity-settings-title" className="m-0 text-label-sm">
+              Identity details
+            </h3>
+            <p className="mt-2 mb-4 text-body-sm text-muted">
+              You use the same identity across all communities. Your public
+              identity can be shared safely; it does not reveal your private
+              key.
+            </p>
+            {(
+              [
+                [
+                  "Public key (hex)",
+                  "Public key",
+                  client.viewer ?? "",
+                  "public-key",
+                ],
+                [
+                  "Nostr address (npub)",
+                  "Nostr address",
+                  npub,
+                  "nostr-address",
+                ],
+              ] as const
+            ).map(([label, copyLabel, value, id]) => (
+              <div className="mb-4 min-w-0" key={label}>
+                <label className="mb-2 block text-label-sm" htmlFor={id}>
+                  {label}
+                </label>
+                <div className={styles.identityRow}>
+                  <Input
+                    id={id}
+                    readOnly
+                    value={value}
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                  <Button
+                    type="button"
+                    onClick={() => void copyIdentity(value, copyLabel)}
+                  >
+                    Copy {copyLabel.toLowerCase()}
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {identity && active && <PrivateKey identity={identity} />}
+            {copyStatus && (
+              <ToastNotice
+                title={
+                  copyStatus.failed
+                    ? "Identity wasn’t copied"
+                    : copyStatus.message
+                }
+                {...(copyStatus.failed
+                  ? { description: copyStatus.message }
+                  : {})}
+                tone={copyStatus.failed ? "error" : "success"}
+                timeout={copyStatus.failed ? 0 : 5000}
+                onDismiss={() => setCopyStatus(null)}
+              />
+            )}
+          </section>
         )}
       </div>
     </section>

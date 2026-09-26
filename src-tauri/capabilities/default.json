@@ -3,6 +3,10 @@
   "identifier": "main-window",
   "description": "Allow the main application commands, title bar controls and external HTTP(S) links.",
   "permissions": [
+    "allow-identity-restore",
+    "allow-identity-import",
+    "allow-identity-create",
+    "allow-identity-export",
     "allow-plugin-import-folder",
     "allow-plugin-import-git",
     "allow-plugin-import-install",

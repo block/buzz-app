@@ -39,6 +39,8 @@ export function CommunityDialog({
   onJoined?: (id: string) => void;
 }) {
   const client = communities.snapshot();
+  const unavailable =
+    client.status !== "ready" || (mode === "join" && !client.relayAvailable);
   const [url, setUrl] = useState("");
   const [destination, setDestination] =
     useState<ReturnType<typeof communityDestination>>();
@@ -80,7 +82,7 @@ export function CommunityDialog({
     (!policy?.age_attestation_required || adult) &&
     (!(policy?.terms_markdown || policy?.privacy_markdown) || agreed);
   async function submit() {
-    if (uploading) return;
+    if (uploading || unavailable) return;
     if (step === "destination") {
       await work(async () => {
         const next = communityDestination(relayOrigin(url));
@@ -190,11 +192,13 @@ export function CommunityDialog({
         {mode === "join" && step !== "destination" && destination && (
           <p className={styles.note}>Relay: {destination.url}</p>
         )}
-        {client.status !== "ready" ? (
+        {unavailable ? (
           <p>
             {client.status === "loading"
               ? "Opening your local identity…"
-              : "Live identity access is unavailable. For development, set BUZZ_DEV_VIEWER to your Buzz public key in .env.local, then restart just web or just desktop. See README.md for requirements."}
+              : client.status === "ready"
+                ? "Your identity is ready, but connecting to communities is not available in this build yet. You can manage your local profile and identity in Settings."
+                : "Live identity access is unavailable. For development, set BUZZ_DEV_VIEWER to your Buzz public key in .env.local, then restart just web or just desktop. See README.md for requirements."}
           </p>
         ) : (
           <>

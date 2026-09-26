@@ -5,12 +5,14 @@ import {
   ArrowSquareOutIcon,
   CaretLeftIcon,
   CaretRightIcon,
+  CopyIcon,
   DownloadIcon,
   MinusIcon,
   PlusIcon,
 } from "../../shared/design-system/icons/index";
 import type { Attachment } from "../relay/contracts";
 import { isProxySource, safeOpenUrl } from "./attachment-source";
+import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
 import styles from "./Messages.module.css";
 
 const MIN_ZOOM = 1;
@@ -46,6 +48,14 @@ export function ImageReviewStage({
   const [zoom, setZoom] = useState(MIN_ZOOM);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [copyNotice, setCopyNotice] = useState<"success" | "error">();
+  const copyBusy = useRef(false);
+  const copyNoticeTimer = useRef<number | undefined>(undefined);
+  const mounted = useRef(false);
+  const previousSelectedUrl = useRef(selectedUrl);
+  const selectedUrlRef = useRef(selectedUrl);
+  selectedUrlRef.current = selectedUrl;
   const selectedIndex = Math.max(
     0,
     attachments.findIndex((item) => item.url === selectedUrl),
@@ -54,7 +64,29 @@ export function ImageReviewStage({
   const source = selected ? media(selected.url) : undefined;
   const proxySource = source ? isProxySource(source) : false;
   const externalSource = source ? safeOpenUrl(source) && !proxySource : false;
+  const canCopyImage = supportsImageCopy();
   const pannable = zoom > MIN_ZOOM;
+  const clearCopyNoticeTimer = () => {
+    if (copyNoticeTimer.current === undefined) return;
+    window.clearTimeout(copyNoticeTimer.current);
+    copyNoticeTimer.current = undefined;
+  };
+  const clearCopyNotice = () => {
+    clearCopyNoticeTimer();
+    setCopyNotice(undefined);
+  };
+  const showCopyNotice = (notice: "success" | "error") => {
+    if (!mounted.current) return;
+    clearCopyNoticeTimer();
+    setCopyNotice(notice);
+    copyNoticeTimer.current = window.setTimeout(
+      () => {
+        copyNoticeTimer.current = undefined;
+        setCopyNotice(undefined);
+      },
+      notice === "success" ? 4000 : 6000,
+    );
+  };
 
   const panLimits = (nextZoom = zoom) => {
     const frame = stage.current?.getBoundingClientRect();
@@ -86,7 +118,26 @@ export function ImageReviewStage({
     if (!item) return;
     setZoom(MIN_ZOOM);
     setOffset({ x: 0, y: 0 });
+    clearCopyNotice();
     select(item.url);
+  };
+  const copyImage = async () => {
+    if (copyBusy.current || !image.current) return;
+    const copiedUrl = selectedUrl;
+    copyBusy.current = true;
+    setCopying(true);
+    clearCopyNotice();
+    try {
+      // Do not await before this call: WebKit requires clipboard.write to happen
+      // inside the user's click gesture.
+      await copyImageToClipboard(image.current);
+      if (selectedUrlRef.current === copiedUrl) showCopyNotice("success");
+    } catch {
+      if (selectedUrlRef.current === copiedUrl) showCopyNotice("error");
+    } finally {
+      copyBusy.current = false;
+      if (mounted.current) setCopying(false);
+    }
   };
 
   useEffect(() => {
@@ -94,6 +145,23 @@ export function ImageReviewStage({
     window.addEventListener("resize", reset);
     return () => window.removeEventListener("resize", reset);
   });
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (copyNoticeTimer.current !== undefined) {
+        window.clearTimeout(copyNoticeTimer.current);
+        copyNoticeTimer.current = undefined;
+      }
+    };
+  }, []);
+
+  if (previousSelectedUrl.current !== selectedUrl) {
+    previousSelectedUrl.current = selectedUrl;
+    clearCopyNoticeTimer();
+    if (copyNotice !== undefined) setCopyNotice(undefined);
+  }
 
   if (!selected || !source)
     return (
@@ -144,6 +212,14 @@ export function ImageReviewStage({
           transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
         }}
       />
+      {copyNotice && (
+        <div
+          className={`${styles.imageReviewCopyNotice} ${copyNotice === "error" ? styles.imageReviewCopyNoticeError : ""}`}
+          role={copyNotice === "error" ? "alert" : "status"}
+        >
+          {copyNotice === "success" ? "Image copied" : "Couldn't copy image"}
+        </div>
+      )}
       <div
         className={styles.imageReviewToolbar}
         onPointerDown={(event) => event.stopPropagation()}
@@ -209,15 +285,26 @@ export function ImageReviewStage({
           </Button>
         </div>
         {proxySource && (
-          <IconButton
-            nativeButton={false}
-            role="link"
-            render={<a href={source} download />}
-            size="compact"
-            aria-label="Download image"
-            title="Download image"
-            icon={<DownloadIcon size={17} />}
-          />
+          <>
+            <IconButton
+              size="compact"
+              type="button"
+              aria-label="Copy image"
+              title={canCopyImage ? "Copy image" : "Image copy unavailable"}
+              disabled={!canCopyImage || copying}
+              onClick={() => void copyImage()}
+              icon={<CopyIcon size={17} />}
+            />
+            <IconButton
+              nativeButton={false}
+              role="link"
+              render={<a href={source} download />}
+              size="compact"
+              aria-label="Download image"
+              title="Download image"
+              icon={<DownloadIcon size={17} />}
+            />
+          </>
         )}
         {externalSource && (
           <IconButton

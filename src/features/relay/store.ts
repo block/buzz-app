@@ -914,8 +914,13 @@ export function createChannelStore(
     }
     if (!cached) {
       saveDiscovery();
-      for (const channel of confirmed)
+      for (const channel of confirmed) {
+        // Disk rows were display-only during hydration. Fresh membership now
+        // makes that verified evidence usable for explicit read intent too.
+        const saved = heads.peek(channel.id);
+        if (saved) transport.restored?.(saved.events);
         if (windows.has(channel.id)) queries.ensure(channel.id);
+      }
     }
   }
   /** Apply roster authority as soon as it succeeds; names are a separate,
@@ -1043,6 +1048,8 @@ export function createChannelStore(
         // read waits for deliberate retry/a later hint instead of draining work.
         if (listAgain && outcome.state !== "error") void discover(true);
         else transport.rosterChanged?.();
+        if (outcome.state === "verified")
+          for (const id of windows.keys()) revalidateCached(id);
       }
     }
   }
@@ -1051,10 +1058,10 @@ export function createChannelStore(
     channelIds: readonly string[],
     settings?: ReadOptions,
   ) {
-    if (disposed || !transport || !discovery)
+    if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
     const ids = [...new Set(channelIds)].filter(
-      (id) => !discovery.authorized(id),
+      (id) => !discovery.authorized(id) || discovery.get(id)?.cached,
     );
     if (!ids.length) return;
     if (ids.length > 128) throw new Error("Too many search result channels");
@@ -1062,24 +1069,41 @@ export function createChannelStore(
     const started = new Map(
       ids.map((id) => [id, discovery.metadataVersion(id)]),
     );
-    const events = await transport.read(
-      [
-        {
-          kinds: [39000],
-          authors: [transport.relayAuthor],
-          "#d": ids,
-          limit: ids.length + 1,
-        },
-        {
-          kinds: [39002],
-          authors: [transport.relayAuthor],
-          "#d": ids,
-          "#p": [transport.viewer],
-          limit: ids.length + 1,
-        },
-      ],
-      { ...settings, fresh: true },
-    );
+    const cachedRosters = discovery.rosterVersions();
+    let events: readonly RelayEvent[];
+    try {
+      events = await transport.read(
+        [
+          {
+            kinds: [39000],
+            authors: [transport.relayAuthor],
+            "#d": ids,
+            limit: ids.length + 1,
+          },
+          {
+            kinds: [39002],
+            authors: [transport.relayAuthor],
+            "#d": ids,
+            "#p": [transport.viewer],
+            limit: ids.length + 1,
+          },
+        ],
+        { ...settings, fresh: true },
+      );
+    } catch (error) {
+      const [id] = ids;
+      if (
+        !disposed &&
+        generation === epoch &&
+        !settings?.signal?.aborted &&
+        ids.length === 1 &&
+        id &&
+        discovery.get(id)?.cached &&
+        readErrorKind(error) === "denied"
+      )
+        denyChannel(id, error);
+      throw error;
+    }
     settings?.signal?.throwIfAborted();
     if (disposed || generation !== epoch)
       throw new DOMException("Stale channel resolution", "AbortError");
@@ -1112,8 +1136,22 @@ export function createChannelStore(
       ...events.filter((event) => event.kind !== 39002),
     ]);
     if (resumed) setList(list, true);
-    // Missing evidence cannot keep an earlier public preview readable.
+    // Exact viewer-scoped omission is complete for this ID, unlike a capped
+    // global roster. Cached membership cannot fall back to public metadata.
     for (const id of ids) {
+      if (
+        discovery.get(id)?.cached &&
+        discovery.rosterVersions().get(id) === cachedRosters.get(id) &&
+        !events.some(
+          (event) =>
+            event.kind === 39002 &&
+            event.pubkey === transport.relayAuthor &&
+            tag(event, "d") === id &&
+            hasTag(event, "p", transport.viewer),
+        )
+      )
+        denyChannel(id, new Error("Conversation is unavailable"));
+      // Missing evidence cannot keep an earlier public preview readable.
       if (
         !events.some(
           (event) =>
@@ -1131,6 +1169,36 @@ export function createChannelStore(
       } else if (!discovery.named(id))
         throw new Error("Channel metadata capacity unavailable");
     }
+  }
+  const cachedResolutions = new Set<string>();
+  function revalidateCached(channelId: string) {
+    if (
+      disposed ||
+      options.cachedOnly ||
+      !discovery?.get(channelId)?.cached ||
+      listBusy ||
+      rosterRefresh.state === "idle" ||
+      cachedResolutions.has(channelId)
+    )
+      return;
+    const controller = new AbortController();
+    controllers.add(controller);
+    cachedResolutions.add(channelId);
+    void resolve([channelId], { signal: controller.signal })
+      .catch((error) => {
+        const state = windows.get(channelId);
+        if (
+          !disposed &&
+          !controller.signal.aborted &&
+          state &&
+          authorized(channelId)
+        )
+          setWindow(state, { error: describe(error) });
+      })
+      .finally(() => {
+        controllers.delete(controller);
+        cachedResolutions.delete(channelId);
+      });
   }
   async function clearCache() {
     epoch++;
@@ -1259,7 +1327,10 @@ export function createChannelStore(
         state.atHead = true;
         setWindow(state, patchFromHead(retained));
       }
-      if (!canReadRemote(channelId)) return;
+      if (!canReadRemote(channelId)) {
+        revalidateCached(channelId);
+        return;
+      }
       if (transport.demand?.(channelId)) return;
       if (
         state.snapshot.status !== "idle" &&
@@ -1342,7 +1413,10 @@ export function createChannelStore(
     refresh(channelId: string) {
       if (disposed || !transport || !authorized(channelId)) return;
       const state = touch(channelId);
-      if (!canReadRemote(channelId)) return;
+      if (!canReadRemote(channelId)) {
+        revalidateCached(channelId);
+        return;
+      }
       if (transport.demand?.(channelId)) return;
       if (state.controller) return;
       if (!state.snapshot.rows.length)
@@ -1350,7 +1424,11 @@ export function createChannelStore(
       void loadPage(state, null);
     },
     loadOlder(channelId: string) {
-      if (disposed || !transport || !canReadRemote(channelId)) return;
+      if (disposed || !transport) return;
+      if (!canReadRemote(channelId)) {
+        revalidateCached(channelId);
+        return;
+      }
       const state = windows.get(channelId);
       if (
         state?.snapshot.status !== "ready" ||

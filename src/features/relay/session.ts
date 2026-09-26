@@ -306,7 +306,9 @@ export function createRelaySession(
   function retainedEvent(id: string) {
     return retainedThreadEvent(id) ?? retainedChannelEvent(id);
   }
-  function visibility(events: readonly EventData[] = []) {
+  const canReadRemote = (id: string) =>
+    !options.cachedOnly && canAccess(id) && !channels.queries.get?.(id)?.cached;
+  function visibility(events: readonly EventData[] = [], remote = false) {
     const evidence = new Map(
       [...rawLocal().map((item) => item.event), ...events].map((event) => [
         event.id,
@@ -314,7 +316,7 @@ export function createRelaySession(
       ]),
     );
     return eventVisibility(
-      canAccess,
+      remote ? canReadRemote : canAccess,
       // Retained view targets survive shared-cache eviction. They are evidence,
       // not an access grant: eventVisibility still checks every referenced target.
       (id) =>
@@ -393,6 +395,7 @@ export function createRelaySession(
     channelTraffic = true,
   ) {
     if (
+      options.cachedOnly ||
       filters.some((filter) =>
         filter["#h"]?.some((id) => channels.queries.get?.(id)?.cached),
       )
@@ -495,7 +498,7 @@ export function createRelaySession(
           event.kind !== 20002 &&
           event.kind !== PRODUCT_FEEDBACK_KIND,
       )
-      .filter(visibility(events));
+      .filter(visibility(events, true));
     const epoch = accessEpoch;
     typing.accept(visible);
     if (closed || epoch !== accessEpoch) return [];
@@ -1464,6 +1467,11 @@ export function createRelaySession(
         reader: options?.exact
           ? {
               async read(filters, settings) {
+                if (!canReadRemote(channelId))
+                  throw new ReadError(
+                    "unavailable",
+                    "Reconnect to refresh conversation access.",
+                  );
                 const epoch = accessEpoch;
                 let events: readonly RelayEvent[];
                 try {
@@ -1477,7 +1485,11 @@ export function createRelaySession(
                     channels.denyChannel(channelId, error);
                   throw error;
                 }
-                if (closed || epoch !== accessEpoch)
+                if (
+                  closed ||
+                  epoch !== accessEpoch ||
+                  !canReadRemote(channelId)
+                )
                   throw new DOMException("Stale thread target", "AbortError");
                 settings?.signal?.throwIfAborted();
                 // A capped raw target/overlay read cannot establish a safe fold.

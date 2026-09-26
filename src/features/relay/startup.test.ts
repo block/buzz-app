@@ -7,6 +7,7 @@ import type { HeadPersistence, SavedHead, SavedStartup } from "./persistence";
 import { bounds, keypair, message, metadata, roster, profile } from "./testing";
 import type { RelayEvent } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
+import { readJournal, type ReadJournal } from "./read-state-storage";
 
 const viewer = keypair(),
   relay = keypair();
@@ -81,7 +82,9 @@ function setup(
   storage = disk(),
   cachedOnly = false,
   initialChannelId?: string,
+  readIntent = false,
 ) {
+  let journal: ReadJournal | undefined;
   const membership = deferred<RelayEvent[]>();
   const query = vi.fn(
     async (filters: readonly import("./events").ReadFilter[]) => {
@@ -99,8 +102,32 @@ function setup(
       relayAuthor: relay.pubkey,
       query,
       media: () => undefined,
+      ...(readIntent
+        ? {
+            readState: {
+              decode: async () => [],
+              sign: async () => {
+                throw new Error("Not publishing in this test");
+              },
+              publish: async () => {},
+            },
+          }
+        : {}),
     },
-    { persistence: storage, prepared: true, cachedOnly, initialChannelId },
+    {
+      persistence: storage,
+      prepared: true,
+      cachedOnly,
+      initialChannelId,
+      readPublisherLock: async (_signal, work) => work(),
+      readStateStorage: {
+        async update(change) {
+          journal = readJournal(change(journal), viewer.pubkey);
+          return journal;
+        },
+        close() {},
+      },
+    },
   );
   owners.push(owner);
   return {
@@ -263,6 +290,191 @@ describe("device-local startup", () => {
         .filter((f) => f["#h"])
         .every((f) => f["#h"]?.every((id) => id === "alpha")),
     ).toBe(true);
+  });
+  it.each(["confirm", "omit", "deny"])(
+    "fresh exact and ID-only reads respect held cached authority: %s",
+    async (outcome) => {
+      const { owner, channels, query, membership } = setup();
+      await owner.restore();
+      channels.ensure("alpha");
+      channels.ensureList();
+      await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
+      const fresh = message(keypair(), "alpha", "Never saved", 30);
+      query.mockImplementation(async (filters) => {
+        if (filters.some((f) => f.kinds?.includes(39002)))
+          return membership.promise;
+        if (filters.some((f) => f.ids?.includes(fresh.id) || f.depth_limit))
+          return [fresh];
+        return [];
+      });
+      const exact = owner.session.thread("alpha", fresh.id, { exact: true });
+      await exact.refresh();
+      expect(exact.snapshot().target).toBeUndefined();
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(await owner.session.read([{ ids: [fresh.id], limit: 1 }])).toEqual(
+        [],
+      );
+      expect(channels.window("alpha").rows[0]?.content).toBe("saved");
+      if (outcome === "deny")
+        membership.reject(new ReadError("denied", "Removed"));
+      else membership.resolve(outcome === "confirm" ? discovery : []);
+      await vi.waitFor(() =>
+        expect(channels.get?.("alpha")?.cached).toBeUndefined(),
+      );
+      await exact.refresh();
+      if (outcome === "confirm") {
+        expect(exact.snapshot().target?.content).toBe("Never saved");
+        expect(
+          (await owner.session.read([{ ids: [fresh.id], limit: 1 }]))[0]?.id,
+        ).toBe(fresh.id);
+      } else {
+        expect(exact.snapshot().target).toBeUndefined();
+        expect(channels.window("alpha").rows).toEqual([]);
+      }
+      exact.dispose();
+    },
+  );
+  it("automatically observes unopened-channel unread after a held cached roster becomes fresh", async () => {
+    const storage = disk();
+    const beta = [
+      roster(relay, "beta", [viewer.pubkey]),
+      metadata(relay, "beta", "Beta"),
+    ];
+    await storage.writeStartup?.({
+      discovery: {
+        savedAt: Date.now(),
+        relayAuthor: relay.pubkey,
+        events: [...discovery, ...beta],
+      },
+    });
+    const { owner, channels, query, membership } = setup(storage);
+    await owner.restore();
+    channels.ensureList();
+    await owner.session.unread.ensure();
+    await owner.session.unread.ensure();
+    const evidence = message(keypair(), "beta", "While closed", 30);
+    query.mockImplementation(async (filters) => {
+      if (filters.some((f) => f.kinds?.includes(39002)))
+        return membership.promise;
+      if (filters.some((f) => f.kinds?.includes(9))) return [evidence];
+      return [];
+    });
+    expect(
+      query.mock.calls
+        .flatMap(([filters]) => filters)
+        .filter((f) => f.kinds?.includes(9)),
+    ).toEqual([]);
+    membership.resolve([...discovery, ...beta]);
+    await vi.waitFor(() =>
+      expect(
+        owner.session.unread.snapshot({ kind: "channel", channelId: "beta" })
+          .observedCount,
+      ).toBe(1),
+    );
+    expect(channels.window("beta").rows).toEqual([]);
+  });
+  it.each(["confirm", "omit", "deny"])(
+    "revalidates demanded cached membership omitted by capped discovery: %s",
+    async (outcome) => {
+      const { owner, channels, query, membership, storage } = setup();
+      await owner.restore();
+      channels.ensureList();
+      await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
+      const exact = deferred<RelayEvent[]>();
+      query.mockImplementation(async (filters) => {
+        if (
+          filters.some(
+            (f) => f.kinds?.includes(39002) && f["#d"]?.includes("alpha"),
+          )
+        )
+          return exact.promise;
+        if (filters.some((f) => f.kinds?.includes(39002)))
+          return membership.promise;
+        if (filters.some((f) => f["#h"]?.includes("alpha")))
+          return head("fresh");
+        return [];
+      });
+      membership.resolve(
+        Array.from({ length: 500 }, (_, i) =>
+          roster(relay, `other-${i}`, [viewer.pubkey]),
+        ),
+      );
+      await vi.waitFor(() =>
+        expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+      );
+      expect(channels.get?.("alpha")?.cached).toBe(true);
+      expect(
+        (await storage.readStartup?.())?.discovery?.events.some((e) =>
+          (e as RelayEvent).tags.some(([k, v]) => k === "d" && v === "alpha"),
+        ),
+      ).toBe(false);
+      channels.ensure("alpha");
+      channels.refresh?.("alpha");
+      channels.loadOlder("alpha");
+      await vi.waitFor(() =>
+        expect(
+          query.mock.calls
+            .flatMap(([filters]) => filters)
+            .filter(
+              (f) => f.kinds?.includes(39002) && f["#d"]?.includes("alpha"),
+            ),
+        ).toHaveLength(1),
+      );
+      expect(channels.window("alpha").rows[0]?.content).toBe("saved");
+      if (outcome === "deny") exact.reject(new ReadError("denied", "Removed"));
+      else
+        exact.resolve(
+          outcome === "confirm"
+            ? discovery
+            : [metadata(relay, "alpha", "Alpha")],
+        );
+      await vi.waitFor(() =>
+        expect(channels.get?.("alpha")?.cached).toBeUndefined(),
+      );
+      if (outcome === "confirm") {
+        await vi.waitFor(() =>
+          expect(channels.window("alpha").rows[0]?.content).toBe("fresh"),
+        );
+      } else {
+        expect(channels.get?.("alpha")).toBeUndefined();
+        expect(channels.window("alpha").rows).toEqual([]);
+        expect(await storage.read()).toEqual([]);
+      }
+    },
+  );
+  it("promotes verified disk evidence for read intent without waiting for a held network head", async () => {
+    const { owner, channels, membership, query } = setup(
+      disk(),
+      false,
+      undefined,
+      true,
+    );
+    await owner.restore();
+    channels.ensure("alpha");
+    const id = channels.window("alpha").rows[0]?.id;
+    if (!id) throw new Error("Missing saved row");
+    const target = { kind: "channel", channelId: "alpha" } as const;
+    await expect(
+      owner.session.unread.markThrough(target, id),
+    ).rejects.toThrow();
+    channels.ensureList();
+    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
+    const content = deferred<RelayEvent[]>();
+    query.mockImplementation(async (filters) =>
+      filters.some((f) => f.kinds?.includes(39002))
+        ? membership.promise
+        : content.promise,
+    );
+    membership.resolve(discovery);
+    await vi.waitFor(() =>
+      expect(channels.get?.("alpha")?.cached).toBeUndefined(),
+    );
+    expect(owner.session.unread.snapshot(target).observedCount).not.toBeNull();
+    // A known saved message reaches durability, rather than failing evidence lookup.
+    await expect(
+      owner.session.unread.markThrough(target, id),
+    ).resolves.toBeDefined();
+    content.resolve([]);
   });
   it("a cache-only owner cannot fetch heads, hover preparation, unread evidence or older pages", async () => {
     const { owner, channels, query } = setup(disk(), true);

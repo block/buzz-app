@@ -143,6 +143,7 @@ export function createUnread({
   let closed = false,
     epoch = 0;
   let requested = false;
+  let repairAgain = false;
   let freshness: UnreadSnapshot["freshness"] = "unknown";
   let error: string | undefined;
   let refresh: Promise<void> | undefined;
@@ -598,6 +599,14 @@ export function createUnread({
         )
         .map((channel) => [channel.id, channel.channelType]),
     );
+  const cachedIds = () =>
+    new Set(
+      channels
+        .list()
+        .channels.filter((channel) => channel.cached)
+        .map((channel) => channel.id),
+    );
+  let cachedChannels = cachedIds();
   let channelTypes = types();
   let accessKey = [...channelTypes.keys()].sort().join(",");
   const stopChannels = channels.subscribeList(() => {
@@ -608,18 +617,29 @@ export function createUnread({
         channelTypes.get(id) !== type ? [id] : [],
       ),
     );
+    const confirmed = [...nextTypes.keys()].some((id) =>
+      cachedChannels.has(id),
+    );
+    cachedChannels = cachedIds();
     channelTypes = nextTypes;
     if (next === accessKey) {
       if (changed.size) publish(changed);
     } else {
       accessKey = next;
       purge();
+      // An initial observation made against a display-only roster still owes
+      // evidence when membership becomes fresh, including during an active repair.
+      if (requested && confirmed) {
+        repairAgain = true;
+        if (!refresh) void repair();
+      }
     }
   });
   async function repair(priority: Priority = "foreground") {
     requested = true;
     if (closed) return;
     if (refresh) return refresh;
+    repairAgain = false;
     const generation = epoch;
     refresh = (async () => {
       await reads.ensure();
@@ -667,6 +687,7 @@ export function createUnread({
       }
     })().finally(() => {
       refresh = undefined;
+      if (!closed && repairAgain) void repair();
     });
     return refresh;
   }
@@ -914,6 +935,7 @@ export function createUnread({
     },
     clear() {
       epoch++;
+      repairAgain = false;
       indexed = false;
       events.clear();
       known.clear();

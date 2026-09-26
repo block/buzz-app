@@ -178,7 +178,6 @@ test("reload restores the selected conversation/groups before handshake and upda
       history.getByRole("button", { name: "Loading older…", exact: true }),
     ).toHaveCount(0);
     await settle(page);
-    await edge(page, -1);
     await expect(history).toContainText("primary beta message 1");
     // A missed live event is learned only by the current session's explicit refresh.
     const missed = app.append(

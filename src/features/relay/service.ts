@@ -47,6 +47,7 @@ export function provideRelay(
   let generation = 0;
   let controller: AbortController | undefined;
   let connecting = false;
+  let clearing: Promise<void> | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   let store = createRelaySession(null, { identityNames });
   let snapshot: RelaySnapshot = Object.freeze({
@@ -153,7 +154,7 @@ export function provideRelay(
       };
     },
     retry() {
-      if (disposed || !connect || connecting) return;
+      if (disposed || !connect || connecting || clearing) return;
       const retained = snapshot.cached;
       if (!retained) reset();
       connecting = true;
@@ -191,7 +192,13 @@ export function provideRelay(
         .then(async (transport) => {
           clearTimeout(timer);
           await restoring;
-          if (disposed || signal.aborted || current !== generation) return;
+          if (
+            disposed ||
+            signal.aborted ||
+            current !== generation ||
+            signal !== controller?.signal
+          )
+            return;
           const successor = createRelaySession(transport, {
             identityNames,
             agentChoices,
@@ -210,7 +217,12 @@ export function provideRelay(
             ),
           });
           await successor.restore();
-          if (disposed || signal.aborted || current !== generation) {
+          if (
+            disposed ||
+            signal.aborted ||
+            current !== generation ||
+            signal !== controller?.signal
+          ) {
             successor.dispose();
             return;
           }
@@ -231,7 +243,13 @@ export function provideRelay(
         })
         .catch(async (error) => {
           await restoring;
-          if (disposed || signal.aborted || current !== generation) return;
+          if (
+            disposed ||
+            signal.aborted ||
+            current !== generation ||
+            signal !== controller?.signal
+          )
+            return;
           if (readErrorKind(error) === "denied") {
             await store.clearCache();
             if (resume) {
@@ -244,7 +262,13 @@ export function provideRelay(
                 disk.close();
               }
             }
-            if (disposed || signal.aborted || current !== generation) return;
+            if (
+              disposed ||
+              signal.aborted ||
+              current !== generation ||
+              signal !== controller?.signal
+            )
+              return;
             store.dispose();
             store = createRelaySession(null, { identityNames });
             publish({
@@ -271,25 +295,36 @@ export function provideRelay(
       reset();
       publish({ status: "disconnected", generation, session: store.session });
     },
-    async clearCache() {
-      // A successor restoring concurrently must not republish cleared history.
-      const wasConnecting = connecting;
+    clearCache() {
+      if (clearing) return clearing;
+      if (disposed) return Promise.resolve();
+      // Clearing owns a separate fence: an aborted connection's finally cannot
+      // release it and let retry restore records still being deleted from disk.
+      const current = generation;
+      const reconnect = connecting || snapshot.cached;
+      const retainedStore = store;
       controller?.abort();
       clearTimeout(deadline);
-      connecting = true;
-      await store.clearCache();
-      if (resume) {
-        const disk = createHeadPersistence(resume.viewer, resume.scope);
-        try {
-          await disk.clear();
-        } catch {
-          /* Storage can be unavailable. */
-        } finally {
-          disk.close();
-        }
-      }
       connecting = false;
-      if (!disposed && (wasConnecting || snapshot.cached)) service.retry();
+      clearing = Promise.resolve()
+        .then(async () => {
+          await retainedStore.clearCache();
+          if (resume) {
+            const disk = createHeadPersistence(resume.viewer, resume.scope);
+            try {
+              await disk.clear();
+            } catch {
+              /* Storage can be unavailable. */
+            } finally {
+              disk.close();
+            }
+          }
+        })
+        .finally(() => {
+          clearing = undefined;
+          if (!disposed && current === generation && reconnect) service.retry();
+        });
+      return clearing;
     },
   };
   ctx.provide("relay", service);

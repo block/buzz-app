@@ -179,3 +179,48 @@ it("disposal while local storage is still reading never publishes the restored s
   await new Promise((resolve) => setTimeout(resolve, 10));
   expect(data.snapshot()).toBe(snapshot);
 });
+
+it.each(["success", "failure"])(
+  "cache clear blocks retries after aborted connection %s settles",
+  async (outcome) => {
+    const { data, disk, connections, source, restored } = setup();
+    await restored();
+    const gate = deferred<void>();
+    const erase = disk.clear.bind(disk);
+    vi.mocked(disk.clear).mockImplementationOnce(async () => {
+      await gate.promise;
+      await erase();
+    });
+    const cleared = data.clearCache();
+    expect(data.clearCache()).toBe(cleared);
+    await vi.waitFor(() => expect(disk.clear).toHaveBeenCalled());
+    if (outcome === "success") connections[0]?.resolve(source);
+    else connections[0]?.reject(new Error("aborted connection failed"));
+    // Drain the connection's then/catch/finally before attempting retry.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    data.retry();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(connections).toHaveLength(1);
+    expect(data.snapshot().session.channels.window("alpha").rows).toEqual([]);
+    gate.resolve();
+    await cleared;
+    await vi.waitFor(() => expect(connections).toHaveLength(2));
+    connections[1]?.resolve(source);
+    await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+    expect(data.snapshot().session.channels.window("alpha").rows).toEqual([]);
+    expect(await disk.read()).toEqual([]);
+  },
+);
+it("disconnect during a coalesced cache clear does not reconnect", async () => {
+  const { data, disk, connections, restored } = setup();
+  await restored();
+  const gate = deferred<void>();
+  vi.mocked(disk.clear).mockImplementationOnce(() => gate.promise);
+  const cleared = data.clearCache();
+  await vi.waitFor(() => expect(disk.clear).toHaveBeenCalled());
+  data.disconnect();
+  gate.resolve();
+  await cleared;
+  expect(data.snapshot().status).toBe("disconnected");
+  expect(connections).toHaveLength(1);
+});

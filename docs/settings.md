@@ -149,3 +149,41 @@ administration.
 
 Add new community entries only with real behavior and honest unavailable,
 permission, loading, and recovery states.
+
+## Development logging
+
+Local Vite development builds expose **Developer → Runtime settings → Log level**.
+The choice applies immediately to broker terminal logs and browser relay
+diagnostics, and is saved in the worktree's ignored `.buzz/developer-settings.json`.
+It survives app/dev-server restarts and is shared by tabs using that server, not
+by other worktrees or communities on other installations. It works even without a
+configured relay broker. Only servers with the settings plugin advertise this
+capability; standalone fixtures and production clients never request the endpoint.
+Responses and tab updates carry a server revision so delayed responses cannot
+replace a newer saved choice. Vite reloads the page after a server restart, resetting the sequence.
+
+- **Info** (default): connection lifecycle, warnings and errors.
+- **Debug**: every completed broker HTTP request and each relay application
+  WebSocket frame in both directions, including identical repeats; no sampling or
+  duplicate suppression.
+- **Trace**: Debug plus bounded query/filter metadata.
+- **Warn**, **Error**, and **Silent** progressively reduce output.
+
+Traffic summaries include method/action, status and duration for HTTP, and
+relay host, direction, frame type, short event/subscription IDs, kind and size for
+WebSockets. They omit message bodies, signatures, auth challenges, URL credentials
+and query strings. Trace shows filter kinds, limits, time bounds and ID counts,
+not searches or full authors/tags, and does not generate call stacks. Rejected
+oversized text frames report code-unit length without allocating a UTF-8 copy.
+This is diagnostic output, not a retained audit
+log or an OS/network packet capture: native Rust transport and WebSocket control
+frames are outside this TypeScript logger.
+
+The implementation uses [Consola](https://github.com/unjs/consola) through
+`src/features/developer/logging.ts`; new owned TypeScript diagnostics can reuse
+`getLogger("component")`. Do not wrap the global console or dump raw payloads.
+The shared TypeScript logger is also bundled with production clients at Info;
+only its Vite settings endpoint/control and live level synchronization are dev-only.
+The former `buzz.debug.relay` localStorage switch is replaced by this control.
+Failure logs use static WebSocket reasons and allowlisted broker exception categories
+and network codes, not arbitrary error messages/stacks that may embed private data.

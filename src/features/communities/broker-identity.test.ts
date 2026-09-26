@@ -7,6 +7,7 @@ import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import type { Plugin, UserConfigFnPromise, ViteDevServer } from "vite";
 import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
 import viteConfig from "../../../vite.config";
+import { getLogger, setLogLevel } from "../developer/logging";
 
 // The broker picks its credential reader from process.platform at call time.
 // Every case pins the platform explicitly so the suite proves the same thing
@@ -83,6 +84,8 @@ beforeEach(() => {
 afterEach(() => {
   for (const server of servers.splice(0)) server.emit("close");
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  setLogLevel("info");
   onPlatform(realPlatform);
 });
 
@@ -97,7 +100,9 @@ async function startup(command: "serve" | "build" = "serve") {
   const server = createServer();
   servers.push(server);
   const use = vi.fn();
-  const info = vi.fn();
+  const info = vi
+    .spyOn(getLogger("relay-broker"), "info")
+    .mockImplementation(() => {});
   const start = () => {
     assert.exists(plugin);
     return (plugin.configureServer as (server: ViteDevServer) => Promise<void>)(

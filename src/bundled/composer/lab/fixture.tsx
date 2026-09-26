@@ -78,6 +78,10 @@ const rawSession = {
   archives: {
     snapshot: () => archiveSnapshot,
     subscribe: empty,
+    // Archive reads are unavailable here, as the real contract reports them.
+    state: () => "unknown" as const,
+    ensure: async () => {},
+    refresh: async () => {},
   },
   emoji: {
     snapshot: () => emojiSnapshot,

@@ -1,72 +1,44 @@
-import { useMentionDirectory } from "./useMentionDirectory";
-import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
-import { availableMentionAgents } from "../../features/agents/mention-choices";
-import { mentionChoices } from "./mention-choices";
-import { useArchivedPredicate } from "../../features/relay/use-archived";
-import { useIdentityNames } from "../../features/identity-names/react";
-import { useAgentChoices } from "../../features/agents/use-choices";
-import {
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useState } from "react";
+import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { matchesMentionQuery } from "./mention-query";
-import { peopleOrder } from "../../features/profiles/people-order";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
 const demands = new WeakMap<RelaySession, Set<string>>();
 export function MentionCompletion({
   session,
+  scope,
   channelId,
+  threadRootId,
   inviteAgents,
   query,
   publish,
 }: ComposerCompletionProps) {
-  const draftRoster = useContext(DraftMentionRoster);
-  const resolveName = useIdentityNames(session.names);
-  const archived = useArchivedPredicate(session);
-  const list = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-    session.channels.list,
-  );
-  const profiles = useSyncExternalStore(
-    session.profiles.subscribe,
-    session.profiles.snapshot,
-    session.profiles.snapshot,
-  );
-  const agents = useAgentChoices(session, !!inviteAgents);
-  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
-  const channel = list.channels.find((item) => item.id === channelId);
-  const directory = useMentionDirectory(
+  // The host remounts this provider on every keystroke. One `@` token in one
+  // composer is the chooser lifetime that keeps the last directory page.
+  const model = useMentionChoices(
     session,
-    channel,
+    channelId,
+    inviteAgents,
     query.query,
-    true && !draftRoster && !inviteAgents,
+    JSON.stringify(["inline", scope, channelId, threadRootId, query.start]),
   );
-  const available = useMemo(
-    () =>
-      availableMentionAgents(
-        channel,
-        agents.identities,
-        inviteAgents,
-        session.outbox?.supports(9000),
-      ),
-    [channel, agents, session.outbox, inviteAgents],
-  );
+  const {
+    profiles,
+    agents,
+    channel,
+    list,
+    choices,
+    roster: draftRoster,
+  } = model;
+  const members = draftRoster?.map((p) => p.pubkey) ?? channel?.members ?? [];
+  const memberKey = members.join(":");
   const parentAdmission =
     !!channel &&
     (channel.channelType !== "session" || !!channel.parentChannelId);
-  const members =
-    draftRoster?.map((person) => person.pubkey) ?? channel?.members ?? [];
-  const memberKey = members.join(":");
   const [attempt, retry] = useState(0);
   const [error, setError] = useState(false);
   useEffect(() => {
@@ -90,64 +62,48 @@ export function MentionCompletion({
   }, [session, memberKey, attempt, draftRoster]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
-    const candidates = mentionChoices(
-      draftRoster ?? [
-        ...(inviteAgents ? agents.identities : []),
-        ...available,
-        ...directory.people,
-      ],
-      members,
-      profiles,
-      resolveName,
-      archived,
-    );
-    const needle = query.query.toLowerCase();
-    // Source names close completed mentions; display labels still admit multi-word searches.
     const admitted = matchesMentionQuery(
       query.query,
-      candidates.flatMap(({ recipient, label }) => [recipient.name, label]),
+      [...model.candidates, ...choices].flatMap((c) => [...c.aliases, c.label]),
     );
-    const order = peopleOrder(query.query);
-    const matching =
-      admitted && !channel?.archived
-        ? candidates
-            .filter(({ recipient, label }) =>
-              `${label} ${recipient.pubkey}`.toLowerCase().includes(needle),
-            )
-            .sort((a, b) =>
-              order(
-                { name: a.label, pubkey: a.recipient.pubkey },
-                { name: b.label, pubkey: b.recipient.pubkey },
-              ),
-            )
-        : [];
+    const matching = admitted ? choices : [];
     const membershipMissing =
       !draftRoster && (!inviteAgents || !!channel) && !channel?.members;
     const membershipError = !draftRoster && list.error;
     const missing = !draftRoster && members.some((key) => !profiles.has(key));
     // A multi-word query that continues no known name is prose, not a search.
-    if (!admitted && !directory.loading && !directory.error) {
+    if (
+      !admitted &&
+      !model.pending &&
+      !model.directory.loading &&
+      !model.directory.error
+    ) {
       const withdraw = publish({ items: [] });
       return () => {
         if (withdraw) withdraw();
       };
     }
     const withdraw = publish({
-      items: matching.slice(0, 20).map(({ recipient, label }) => ({
+      spaceId: model.spaceId,
+      items: matching.map(({ recipient, label, disabled }) => ({
+        disabled,
+        canSelect: (key) => model.canSelect(recipient.pubkey, key === " "),
         id: recipient.pubkey,
         label,
-        detail: members.includes(recipient.pubkey)
-          ? recipient.pubkey
-          : inviteAgents
-            ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
-            : "Not in channel · Choose whether to add when you send",
+        detail:
+          disabled ??
+          (members.includes(recipient.pubkey)
+            ? recipient.pubkey
+            : inviteAgents
+              ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
+              : "Not in channel · Choose whether to add when you send"),
         preview: (
           <Avatar
             alt=""
             fallback={label}
             src={session.media(
               profiles.get(recipient.pubkey)?.picture ??
-                directory.people.find(
+                model.directory.people.find(
                   (person) => person.pubkey === recipient.pubkey,
                 )?.picture ??
                 "",
@@ -155,10 +111,8 @@ export function MentionCompletion({
             )}
             size="default"
             shape={
-              agentPubkeys.has(recipient.pubkey) ||
-              directory.people.some(
-                (person) =>
-                  person.pubkey === recipient.pubkey && person.isAgent,
+              model.candidates.some(
+                (c) => c.recipient.pubkey === recipient.pubkey && c.agent,
               )
                 ? "squircle"
                 : "circle"
@@ -167,25 +121,30 @@ export function MentionCompletion({
         ),
         edit: { mention: recipient },
       })),
-      ...(directory.error
-        ? { status: directory.error }
-        : directory.loading
-          ? { status: "Searching community…" }
-          : agents.status === "error" || agents.error
-            ? { status: "Could not load agents. Retry to refresh." }
-            : admitted && membershipMissing
-              ? { status: "Channel membership unavailable." }
-              : admitted && membershipError
-                ? { status: "Could not refresh channel membership." }
-                : error || missing
-                  ? {
-                      status:
-                        "Some names unavailable. Exact public keys still identify recipients.",
-                    }
-                  : directory.more || matching.length > 20
-                    ? { status: "Narrow your search to see more members." }
-                    : {}),
-      ...(directory.error ||
+      ...(model.pending
+        ? { status: "Loading recipients…" }
+        : model.directory.error
+          ? { status: model.directory.error }
+          : model.archives.status === "error"
+            ? { status: "Archive information unavailable. Retry to refresh." }
+            : agents.status === "error" || agents.error
+              ? { status: "Could not load agents. Retry to refresh." }
+              : admitted && membershipMissing
+                ? { status: "Channel membership unavailable." }
+                : admitted && membershipError
+                  ? { status: "Could not refresh channel membership." }
+                  : error || missing
+                    ? {
+                        status:
+                          "Some names unavailable. Exact public keys still identify recipients.",
+                      }
+                    : model.directory.loading
+                      ? { status: "Searching community…" }
+                      : model.directory.more || model.truncated
+                        ? { status: "Narrow your search to see more members." }
+                        : {}),
+      ...(model.directory.error ||
+      model.archives.status === "error" ||
       agents.status === "error" ||
       agents.error ||
       membershipMissing ||
@@ -194,8 +153,9 @@ export function MentionCompletion({
       missing
         ? {
             retry: () => {
-              directory.retry();
-              void session.agentChoices.refresh();
+              model.directory.retry();
+              void session.agentChoices.refresh(!!inviteAgents);
+              void session.archives?.refresh();
               setError(false);
               retry((value) => value + 1);
               if (membershipMissing || membershipError)
@@ -204,55 +164,24 @@ export function MentionCompletion({
           }
         : {}),
     });
-    // Invalidate displayed choices synchronously, before React paints new data.
-    const revoke = () => {
+    return () => {
       if (withdraw) withdraw();
     };
-    const rosterChanged = session.channels.subscribeList(() => {
-      const next = session.channels.list();
-      // Other channels' previews and list loading notifications are not new
-      // evidence for this menu. Revoke only what the effect will republish.
-      if (
-        next.channels.find((item) => item.id === channelId) !== channel ||
-        next.error !== list.error
-      )
-        revoke();
-    });
-    const profilesChanged = session.profiles.subscribe(() => {
-      if (session.profiles.snapshot() !== profiles) revoke();
-    });
-    const namesChanged = session.names.subscribe(revoke);
-    const agentsChanged = session.agentChoices.subscribe(revoke);
-    return () => {
-      namesChanged();
-      agentsChanged();
-      rosterChanged();
-      profilesChanged();
-      revoke();
-    };
   }, [
-    directory.retry,
-    directory.people,
-    directory.error,
-    directory.loading,
-    directory.more,
-    draftRoster,
-    resolveName,
-    archived,
     session,
-    agents,
-    inviteAgents,
-    channel,
-    channelId,
-    memberKey,
-    available,
-    parentAdmission,
-    profiles,
-    agentPubkeys,
-    query.query,
     publish,
+    query.query,
+    memberKey,
+    model,
+    profiles,
+    list,
+    agents,
     error,
-    list.error,
+    choices,
+    channel,
+    draftRoster,
+    inviteAgents,
+    parentAdmission,
   ]);
   return null;
 }

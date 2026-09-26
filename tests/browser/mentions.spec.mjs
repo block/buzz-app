@@ -18,7 +18,12 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     envFile: false,
     plugins: [react()],
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      // Match the app server: native builds must not reload an editing fixture.
+      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+    },
   });
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
@@ -60,7 +65,8 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         name: "Mention a member or agent",
       });
       const search = picker.getByRole("searchbox");
-      await search.fill(key);
+      // Both fixture keys are Honey namesakes; public keys are not search terms.
+      await search.fill("Honey");
       await expect(
         picker.getByRole("button", { name: new RegExp(key) }),
       ).toBeVisible();
@@ -476,7 +482,12 @@ test("selected mentions inside code remain visible through draft restore and cha
     envFile: false,
     plugins: [react()],
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      // Match the app server: native builds must not reload an editing fixture.
+      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+    },
   });
   try {
     await server.listen();
@@ -567,7 +578,12 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
     envFile: false,
     plugins: [react()],
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      // Match the app server: native builds must not reload an editing fixture.
+      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+    },
   });
   try {
     await server.listen();

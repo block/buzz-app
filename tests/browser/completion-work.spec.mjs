@@ -217,8 +217,18 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
     await input.press("End");
     await input.pressSequentially(" @Hon");
     await expect(options).toHaveCount(2);
+    // The fresh trigger gets "Hon" directory evidence after the typing pause:
+    // a new read, or the session's settled page for the same query.
+    await expect
+      .poll(async () => {
+        const all = await searches();
+        return (
+          all.slice(before.length).at(-1) ??
+          all.findLast((search) => search === "Hon")
+        );
+      })
+      .toBe("Hon");
     const added = (await searches()).slice(before.length);
-    expect(added.at(-1)).toBe("Hon");
     expect(added.filter((search) => !"Hon".startsWith(search))).toEqual([]);
     await input.press("Escape");
     await expect(listbox).toHaveCount(0);
@@ -262,9 +272,10 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
   await input.fill("");
   await page.evaluate(() => window.mentionFixture.holdSearches());
   try {
-    await input.pressSequentially("@Hon");
+    // An uncached query, so a directory read is in flight when dismissed.
+    await input.pressSequentially("@Hone");
     await expect(options).toHaveCount(2);
-    await expect.poll(held).toContain("Hon");
+    await expect.poll(held).toContain("Hone");
     await input.press("Escape");
     await expect(listbox).toHaveCount(0);
   } finally {

@@ -2647,3 +2647,77 @@ it.each(["retry", "unmount", "retarget", "disabled"])(
     expect(h.messages.send).toHaveBeenCalledTimes(outcome === "retry" ? 1 : 0);
   },
 );
+
+it("disabled completion keeps the highlighted key and consumes Enter without sending", async () => {
+  const h = mount();
+  h.input().focus();
+  h.fill("!Honey");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No completion request");
+  act(() => {
+    publish({
+      items: [
+        { id: first.pubkey, label: "First Honey", edit: { mention: first } },
+        { id: second.pubkey, label: "Second Honey", edit: { mention: second } },
+      ],
+    });
+  });
+  fireEvent.keyDown(h.input(), { key: "ArrowDown" });
+  act(() => {
+    publish({
+      items: [
+        { id: first.pubkey, label: "First Honey", edit: { mention: first } },
+        {
+          id: second.pubkey,
+          label: "Second Honey",
+          edit: { mention: second },
+          disabled: "Archived",
+        },
+      ],
+    });
+  });
+  expect(screen.getByRole("option", { name: "Second Honey" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("option", { name: "Second Honey" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(h.input()).toHaveValue("!Honey");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("rejects a known archived recipient at send entry without clearing the draft", () => {
+  const h = mount();
+  let archived = false;
+  const snapshot = { status: "ready" as const, archived: [] as string[] };
+  h.retarget({
+    session: {
+      ...h.session,
+      archives: {
+        snapshot: () => snapshot,
+        subscribe: () => () => {},
+        state: () => (archived ? "archived" : "not-archived"),
+        ensure: async () => {},
+        refresh: async () => {},
+        writable: false,
+        consent: vi.fn(),
+        request: vi.fn(),
+      },
+    },
+  });
+  act(() => {
+    expect(h.commands().insertMention(first)).toBe(true);
+  });
+  archived = true;
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue(`@${first.name} `);
+  expect(
+    screen.getByText(
+      "A selected recipient is archived. Remove it before sending.",
+    ),
+  ).toBeVisible();
+});

@@ -1,36 +1,21 @@
-import { useMentionDirectory } from "./useMentionDirectory";
-import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import {
   PopoverRoot,
   PopoverTrigger,
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
-import { availableMentionAgents } from "../../features/agents/mention-choices";
-import { mentionChoices } from "./mention-choices";
-import { useArchivedPredicate } from "../../features/relay/use-archived";
-import { useIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { useAgentChoices } from "../../features/agents/use-choices";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { AtIcon } from "../../shared/design-system/icons/index";
-import {
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { useMentionChoices } from "./use-mention-choices";
 import type { RelaySession } from "../../features/relay/session";
 import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Mentions.module.css";
 
 import type { ComposerToolProps } from "../../features/conversation/contracts";
-import { peopleOrder } from "../../features/profiles/people-order";
 
 /** Select identities from the shared relay roster, never from display-name matching. */
 export function MentionPicker({
@@ -47,9 +32,6 @@ export function MentionPicker({
   inviteAgents?: boolean | undefined;
   select: ComposerToolProps["insertMention"];
 }) {
-  const draftRoster = useContext(DraftMentionRoster);
-  const resolveName = useIdentityNames(session.names);
-  const archived = useArchivedPredicate(session);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string>();
@@ -57,35 +39,25 @@ export function MentionPicker({
   const controls = useRef<HTMLFieldSetElement>(null);
   const accepted = useRef(false);
   const searchInput = useRef<HTMLElement>(null);
-  const list = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-    session.channels.list,
-  );
-  const profiles = useSyncExternalStore(
-    session.profiles.subscribe,
-    session.profiles.snapshot,
-    session.profiles.snapshot,
-  );
-  const agents = useAgentChoices(session, !!inviteAgents && open);
-  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
-  const channel = list.channels.find((item) => item.id === channelId);
-  const directory = useMentionDirectory(
+  // The picker stays mounted while closed; each opening is its own lifetime.
+  const [opening, setOpening] = useState(0);
+  const lifetime = `picker:${useId()}:${opening}`;
+  const model = useMentionChoices(
     session,
-    channel,
+    channelId,
+    inviteAgents,
     search,
-    open && !disabled && !draftRoster && !inviteAgents,
+    lifetime,
+    open && !disabled,
   );
-  const available = useMemo(
-    () =>
-      availableMentionAgents(
-        channel,
-        agents.identities,
-        inviteAgents,
-        session.outbox?.supports(9000),
-      ),
-    [channel, agents, session.outbox, inviteAgents],
-  );
+  const {
+    profiles,
+    agents,
+    list,
+    channel,
+    roster: draftRoster,
+    choices: candidates,
+  } = model;
   const parentAdmission =
     !!channel &&
     (channel.channelType !== "session" || !!channel.parentChannelId);
@@ -107,35 +79,13 @@ export function MentionPicker({
       current = false;
     };
   }, [session, open, memberKey, draftRoster]);
-  const order = peopleOrder(search);
-  const candidates = mentionChoices(
-    draftRoster ?? [
-      ...(inviteAgents ? agents.identities : []),
-      ...available,
-      ...directory.people,
-    ],
-    members ?? [],
-    profiles,
-    resolveName,
-    archived,
-  )
-    .filter(({ recipient, label }) =>
-      `${label} ${recipient.pubkey}`
-        .toLowerCase()
-        .includes(search.trim().toLowerCase()),
-    )
-    .sort((a, b) =>
-      order(
-        { name: a.label, pubkey: a.recipient.pubkey },
-        { name: b.label, pubkey: b.recipient.pubkey },
-      ),
-    );
   return (
     <PopoverRoot
       open={open && !disabled}
       onOpenChange={(next) => {
         setOpen(next);
         if (next) {
+          setOpening((value) => value + 1);
           accepted.current = false;
           if (!draftRoster) session.channels.ensureList();
         }
@@ -244,25 +194,39 @@ export function MentionPicker({
                   : "Agents you mention join this session when you send, with access to its history."}
               </p>
             )}
+            {model.directory.loading && (
+              <p role="status">Searching community…</p>
+            )}
+            {model.directory.more && (
+              <p>Narrow your search to find more community people.</p>
+            )}
+            {model.directory.error && (
+              <>
+                <p role="status">{model.directory.error}</p>
+                <Button type="button" onClick={model.directory.retry}>
+                  Retry community search
+                </Button>
+              </>
+            )}
             {agents.status === "loading" && (
               <p role="status">Loading agents…</p>
             )}
             {(agents.status === "error" || !!agents.error) && (
               <Button
                 type="button"
-                onClick={() => void session.agentChoices.refresh()}
+                onClick={() =>
+                  void session.agentChoices.refresh(!!inviteAgents)
+                }
               >
                 Retry agent list
               </Button>
             )}
-            {directory.loading && <p role="status">Searching community…</p>}
-            {directory.more && (
-              <p>Narrow your search to find more community people.</p>
-            )}
-            {directory.error && <p role="status">{directory.error}</p>}
-            {directory.error && (
-              <Button type="button" onClick={directory.retry}>
-                Retry community search
+            {model.archives.status === "error" && (
+              <Button
+                type="button"
+                onClick={() => void session.archives?.refresh()}
+              >
+                Retry archive information
               </Button>
             )}
             {error && <p role="status">{error}</p>}
@@ -282,64 +246,65 @@ export function MentionPicker({
               </Button>
             )}
             <div className={`${styles.mentionChoices} buzz-thin-scrollbar`}>
-              {candidates.slice(0, 100).map(({ recipient, label }) => (
-                <NavigationItem
-                  variant="option"
-                  data-mention-choice=""
-                  type="button"
-                  key={recipient.pubkey}
-                  aria-label={`${label} ${recipient.pubkey}`}
-                  disabled={disabled || !!channel?.archived}
-                  onClick={() => {
-                    if (select(recipient)) {
-                      accepted.current = true;
-                      setOpen(false);
-                    }
-                  }}
-                  label={
-                    <span className="flex flex-col whitespace-normal">
-                      <span>{label}</span>
-                      {!members?.includes(recipient.pubkey) && (
-                        <small className="text-caption text-subtle">
-                          {inviteAgents
-                            ? parentAdmission
-                              ? "Adds to session and parent channel when you send"
-                              : "Adds to session when you send"
-                            : "Not in channel · Choose whether to add when you send"}
-                        </small>
-                      )}
-                    </span>
-                  }
-                  title={recipient.pubkey}
-                  trailing={<code>{recipient.pubkey.slice(0, 12)}</code>}
-                  icon={
-                    <Avatar
-                      alt=""
-                      fallback={label}
-                      src={session.media(
-                        profiles.get(recipient.pubkey)?.picture ??
-                          directory.people.find(
-                            (person) => person.pubkey === recipient.pubkey,
-                          )?.picture ??
-                          "",
-                        "small",
-                      )}
-                      size="large"
-                      shape={
-                        agentPubkeys.has(recipient.pubkey) ||
-                        directory.people.some(
-                          (person) =>
-                            person.pubkey === recipient.pubkey &&
-                            person.isAgent,
-                        )
-                          ? "squircle"
-                          : "circle"
+              {candidates.map(
+                ({ recipient, label, agent, disabled: reason }) => (
+                  <NavigationItem
+                    variant="option"
+                    data-mention-choice=""
+                    type="button"
+                    key={recipient.pubkey}
+                    aria-label={`${label} ${recipient.pubkey}`}
+                    disabled={disabled || !!reason}
+                    onClick={() => {
+                      if (
+                        model.canSelect(recipient.pubkey) &&
+                        select(recipient)
+                      ) {
+                        accepted.current = true;
+                        setOpen(false);
                       }
-                    />
-                  }
-                />
-              ))}
-              {candidates.length > 100 && (
+                    }}
+                    label={
+                      <span className="flex flex-col whitespace-normal">
+                        <span>{label}</span>
+                        {reason && <small>{reason}</small>}
+                        {!members?.includes(recipient.pubkey) && (
+                          <small className="text-caption text-subtle">
+                            {inviteAgents
+                              ? parentAdmission
+                                ? "Adds to session and parent channel when you send"
+                                : "Adds to session when you send"
+                              : "Not in channel · Choose whether to add when you send"}
+                          </small>
+                        )}
+                      </span>
+                    }
+                    title={recipient.pubkey}
+                    trailing={<code>{recipient.pubkey.slice(0, 12)}</code>}
+                    icon={
+                      <Avatar
+                        alt=""
+                        fallback={label}
+                        src={session.media(
+                          profiles.get(recipient.pubkey)?.picture ??
+                            model.directory.people.find(
+                              (person) => person.pubkey === recipient.pubkey,
+                            )?.picture ??
+                            "",
+                          "small",
+                        )}
+                        size="large"
+                        shape={
+                          agent || !members?.includes(recipient.pubkey)
+                            ? "squircle"
+                            : "circle"
+                        }
+                      />
+                    }
+                  />
+                ),
+              )}
+              {model.truncated && (
                 <p>Narrow your search to see more members.</p>
               )}
               {members && !candidates.length && (

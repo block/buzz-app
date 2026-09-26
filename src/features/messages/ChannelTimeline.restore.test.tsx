@@ -12,7 +12,7 @@ import { ChannelTimeline } from "./ChannelTimeline";
 import { createRelaySession } from "../relay/session";
 import type { ChannelWindow } from "../relay/contracts";
 import { keypair, message, scriptedTransport } from "../relay/testing";
-import { writeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 
 // Real React lifecycle; only the virtualizer's imperative layout boundary is
 // modeled here. Browser journeys retain the actual same-message/4px contract.
@@ -120,6 +120,8 @@ function mount(bottom = false) {
   );
   const result = render(tree(window));
   return {
+    saved: { offset: 900, bottom, anchor: { id: target.id, y: 42 } },
+    unmount: result.unmount,
     reveal() {
       const first = window.rows[0];
       if (!first) throw new Error("Missing fixture row");
@@ -141,45 +143,34 @@ function mount(bottom = false) {
     },
   };
 }
-for (const measurement of ["before", "after"] as const) {
-  it(`retains the saved anchor when measurement arrives ${measurement} row promotion`, async () => {
-    const h = mount();
-    await frame();
-    expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
-      align: "start",
-      offset: -42,
-    });
-    scroll.toIndex.mockClear();
-    if (measurement === "before") await h.measured();
-    h.promote();
-    await frame();
-    if (measurement === "after") {
-      scroll.toIndex.mockClear();
-      await h.measured();
-      await frame();
-    }
-    expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
-      align: "start",
-      offset: -42,
-    });
+it("retains the saved anchor correction when cached rows are promoted before its frame", async () => {
+  const h = mount();
+  await frame();
+  expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
+    align: "start",
+    offset: -42,
   });
-  it(`reader input cancels restoration with measurement ${measurement} row promotion`, async () => {
-    const h = mount();
-    await frame();
-    scroll.toIndex.mockClear();
-    if (measurement === "before") await h.measured();
-    fireEvent.wheel(
-      screen.getByRole("region", { name: "Channel message history" }),
-    );
-    h.promote();
-    await frame();
-    if (measurement === "after") {
-      await h.measured();
-      await frame();
-    }
-    expect(scroll.toIndex).not.toHaveBeenCalled();
+  scroll.toIndex.mockClear();
+  await h.measured();
+  h.promote();
+  await frame();
+  expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
+    align: "start",
+    offset: -42,
   });
-}
+});
+it("reader input cancels the queued correction even when cached rows are then promoted", async () => {
+  const h = mount();
+  await frame();
+  scroll.toIndex.mockClear();
+  await h.measured();
+  fireEvent.wheel(
+    screen.getByRole("region", { name: "Channel message history" }),
+  );
+  h.promote();
+  await frame();
+  expect(scroll.toIndex).not.toHaveBeenCalled();
+});
 
 it.each([false, true])(
   "local reveal retires restoration without canceling existing bottom follow=%s",
@@ -195,5 +186,30 @@ it.each([false, true])(
     await frame();
     expect(scroll.toIndex).toHaveBeenLastCalledWith(1, { align: "end" });
     expect(scroll.toIndex.mock.calls.length).toBe(calls + (bottom ? 1 : 0));
+  },
+);
+
+it.each([false, true])(
+  "a scroll before any visible virtual row mounts retains restoration unless reader input=%s",
+  async (readerInput) => {
+    const h = mount();
+    await frame();
+    const feed = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    // The virtualizer has accepted the offset, but its mounted range is still
+    // offscreen. No paragraph or row is available to replace the saved anchor.
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return new DOMRect(0, this.closest("ol") ? -200 : 0, 800, 100);
+      },
+    );
+    feed.scrollTop = 900;
+    if (readerInput) fireEvent.wheel(feed);
+    fireEvent.scroll(feed);
+    h.unmount();
+    expect(readView("scope", "scroll:c", null)).toEqual(
+      readerInput ? { offset: 900, bottom: false } : h.saved,
+    );
   },
 );

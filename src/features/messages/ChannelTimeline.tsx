@@ -186,6 +186,10 @@ function Timeline({
           )?.id
         : undefined;
       const position = positionAt(element, renderedAnchor);
+      // Virtua can emit the restoration scroll before mounting its visible
+      // range. An anchorless observation must not erase the saved reading intent.
+      // A reader gesture clears restoredAnchor before recording a new position.
+      if (anchor && !position.anchor) return;
       const previous = measuredPosition.current;
       // List shrinkage can clamp scrollTop upward without reader movement. An
       // upward offset beyond that clamp is input, including later events from
@@ -297,7 +301,9 @@ function Timeline({
         ? savedPosition.current
         : null;
     let observer: MutationObserver | undefined;
+    let correctionPending = false;
     const restorePosition = () => {
+      correctionPending = false;
       if (intent.current !== scheduledIntent || !handle.current) return;
       if (restore) {
         const anchor = restore.anchor;
@@ -343,6 +349,7 @@ function Timeline({
             if (list.style.height === height) return;
             height = list.style.height;
             cancelAnimationFrame(frame);
+            correctionPending = true;
             frame = requestAnimationFrame(restorePosition);
           });
           observer.observe(list, {
@@ -356,9 +363,14 @@ function Timeline({
     return () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();
-      // Row promotion can precede or interrupt late measurements. Preserve the
-      // restoration across either ordering; only newer reader input retires it.
-      if (restore && !follow.current && intent.current === scheduledIntent) {
+      // A row refresh can cancel the late measurement correction. Carry the
+      // original restoration across it; only newer reader input may retire it.
+      if (
+        correctionPending &&
+        restore &&
+        !follow.current &&
+        intent.current === scheduledIntent
+      ) {
         savedPosition.current = restore;
         settled.current = false;
       }

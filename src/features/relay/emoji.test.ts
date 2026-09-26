@@ -571,6 +571,38 @@ it("rejects invalid names before any read and maps publish failure to reference 
   await expect(failedRead).rejects.toThrow("Failed to add emoji.");
   expect(h.publish).toHaveBeenCalledTimes(1);
 });
+it("maps an add that outlives its deadline to the reference timeout copy", async () => {
+  const deadline = new AbortController();
+  const timeout = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockReturnValue(deadline.signal);
+  try {
+    const h = authoring();
+    const adding = h.emoji.add?.("party", url);
+    await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+    expect(timeout).toHaveBeenCalledWith(12_000);
+    deadline.abort(new DOMException("timed out", "TimeoutError"));
+    await expect(adding).rejects.toThrow("Timed out while adding emoji.");
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.emoji.snapshot().mine).toEqual([]);
+  } finally {
+    timeout.mockRestore();
+  }
+});
+it("dispose fails running and queued adds without publishing", async () => {
+  const h = authoring();
+  const running = h.emoji.add?.("one", "https://a.test/1.png");
+  const queued = h.emoji.add?.("two", "https://a.test/2.png");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.dispose();
+  await expect(running).rejects.toThrow("Failed to add emoji.");
+  await expect(queued).rejects.toThrow("Failed to add emoji.");
+  await expect(h.emoji.add?.("three", url)).rejects.toThrow(
+    "Failed to add emoji.",
+  );
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+});
 it("serializes concurrent adds so a stale own-set read cannot drop an earlier addition", async () => {
   const h = authoring();
   const first = h.emoji.add?.("one", "https://a.test/1.png");

@@ -6,7 +6,6 @@ import {
   normalizeShortcode,
   suggestShortcode,
 } from "../../features/relay/emoji";
-import { UPLOAD_FAILURES } from "../../features/relay/attachments";
 import { prepareAttachment } from "../../features/messages/prepare-attachment";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -133,124 +132,126 @@ function Editor({
     }
   }
 
-  const unavailable = !add || !upload;
   const preview = image && session.media(image.url);
   return (
     <div className="grid gap-6">
-      {unavailable && <p role="status">{UPLOAD_FAILURES.unavailable}</p>}
-      <form
-        aria-labelledby="custom-emoji-add-title"
-        className="grid gap-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save();
-        }}
-      >
-        <InlineHeader id="custom-emoji-add-title" title="Add emoji" />
-        <div className="grid gap-2">
-          <InlineHeader
-            level={4}
-            title="Upload an image"
-            subtitle="Square images work best. GIF, PNG, JPEG, and WebP files are supported."
-          />
-          <div className="flex items-center gap-3">
-            <span className={styles.emojiPreview}>
-              {preview && (
-                <img
-                  alt="Selected custom emoji preview"
-                  src={preview}
-                  draggable={false}
-                />
-              )}
-            </span>
-            <div className="grid min-w-0 gap-2">
-              {image && (
-                <p className="truncate text-body-sm">{image.filename}</p>
-              )}
-              <Button
-                disabled={unavailable || uploading || saving}
-                onClick={() => input.current?.click()}
-              >
-                {uploading
-                  ? "Uploading…"
-                  : image
-                    ? "Choose different image"
-                    : "Upload image"}
-              </Button>
-            </div>
-            <input
-              ref={input}
-              type="file"
-              className="sr-only"
-              tabIndex={-1}
-              aria-label="Upload image"
-              accept="image/gif,image/png,image/jpeg,image/webp"
-              disabled={unavailable || uploading || saving}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                if (file) void choose(file);
-              }}
-            />
-          </div>
-        </div>
-        <Field
-          label="Give it a name"
-          description="This is what you’ll type to add this emoji to messages and reactions."
-          error={
-            nameInvalid
-              ? "Use only letters, numbers, hyphen, or underscore."
-              : undefined
-          }
+      {/* Authoring needs both the uploader and kind-30030 publishing; the reference has no copy for its absence. */}
+      {add && upload && (
+        <form
+          aria-labelledby="custom-emoji-add-title"
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
         >
-          <InputGroup leading=":" trailing=":">
-            <Input
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              placeholder="party-parrot"
-              value={name}
-              disabled={unavailable || saving}
-              onChange={(event) => setName(event.target.value)}
+          <InlineHeader id="custom-emoji-add-title" title="Add emoji" />
+          <div className="grid gap-2">
+            <InlineHeader
+              level={4}
+              title="Upload an image"
+              subtitle="Square images work best. GIF, PNG, JPEG, and WebP files are supported."
             />
-          </InputGroup>
-        </Field>
-        {!nameInvalid &&
-          (!image ? (
-            <p className="text-body-sm text-muted">
-              Choose an image first; Buzz will suggest a name from the filename.
-            </p>
-          ) : replacing ? (
-            <p className="text-body-sm text-muted">
-              You already have :{normalized}: — saving will replace its image.
-            </p>
-          ) : null)}
-        {error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <Button
-            disabled={saving || (!name && !image)}
-            onClick={() => {
-              setName("");
-              setImage(undefined);
-              setError("");
-            }}
+            <div className="flex items-center gap-3">
+              <span className={styles.emojiPreview}>
+                {preview && (
+                  <img
+                    alt="Selected custom emoji preview"
+                    src={preview}
+                    draggable={false}
+                  />
+                )}
+              </span>
+              <div className="grid min-w-0 gap-2">
+                {image && (
+                  <p className="truncate text-body-sm">{image.filename}</p>
+                )}
+                <Button
+                  disabled={uploading || saving}
+                  onClick={() => input.current?.click()}
+                >
+                  {uploading
+                    ? "Uploading…"
+                    : image
+                      ? "Choose different image"
+                      : "Upload image"}
+                </Button>
+              </div>
+              <input
+                ref={input}
+                type="file"
+                className="sr-only"
+                tabIndex={-1}
+                aria-label="Upload image"
+                accept="image/gif,image/png,image/jpeg,image/webp"
+                disabled={uploading || saving}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) void choose(file);
+                }}
+              />
+            </div>
+          </div>
+          <Field
+            label="Give it a name"
+            description="This is what you’ll type to add this emoji to messages and reactions."
+            error={
+              nameInvalid
+                ? "Use only letters, numbers, hyphen, or underscore."
+                : undefined
+            }
           >
-            Clear
-          </Button>
-          <Button
-            type="submit"
-            variant="primary"
-            loading={saving}
-            disabled={!canSubmit}
-          >
-            {saving ? "Saving…" : "Save emoji"}
-          </Button>
-        </div>
-      </form>
+            <InputGroup leading=":" trailing=":">
+              <Input
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="party-parrot"
+                value={name}
+                disabled={saving}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </InputGroup>
+          </Field>
+          {!nameInvalid &&
+            (!image ? (
+              <p className="text-body-sm text-muted">
+                Choose an image first; Buzz will suggest a name from the
+                filename.
+              </p>
+            ) : replacing ? (
+              <p className="text-body-sm text-muted">
+                You already have :{normalized}: — saving will replace its image.
+              </p>
+            ) : null)}
+          {error && (
+            <p role="alert" className="error">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button
+              disabled={saving || (!name && !image)}
+              onClick={() => {
+                setName("");
+                setImage(undefined);
+                setError("");
+              }}
+            >
+              Clear
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={saving}
+              disabled={!canSubmit}
+            >
+              {saving ? "Saving…" : "Save emoji"}
+            </Button>
+          </div>
+        </form>
+      )}
       <section aria-labelledby="custom-emoji-mine-title" className="grid gap-2">
         <InlineHeader
           id="custom-emoji-mine-title"

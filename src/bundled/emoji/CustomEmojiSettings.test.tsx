@@ -204,13 +204,19 @@ it("shows the failed save, keeps the draft and saves on retry", async () => {
 
 it("hides the add form, without new copy, when the session cannot author emoji", async () => {
   const store = relayStore();
+  const settled = async () => {
+    await screen.findByText("My emoji");
+    await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/Add one above/)).toBeNull();
+  };
   const view = store.connect(vi.fn(), [9]);
-  await screen.findByText("You haven't added any emoji yet. Add one above.");
+  await settled();
   expect(screen.queryByText("Add emoji")).toBeNull();
   expect(screen.queryByText(UPLOAD_FAILURES.unavailable)).toBeNull();
   view.unmount();
   store.connect(null);
-  await screen.findByText("You haven't added any emoji yet. Add one above.");
+  await settled();
   expect(screen.queryByLabelText("Upload image")).toBeNull();
   expect(screen.queryByText(UPLOAD_FAILURES.unavailable)).toBeNull();
 });

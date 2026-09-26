@@ -236,6 +236,10 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     const name = page.getByPlaceholder("party-parrot");
     const save = page.getByRole("button", { name: "Save emoji" });
     const draft = page.getByRole("textbox", { name: "Message #general" });
+    // The emoji typeahead lists custom matches while its Unicode search is
+    // pending ("Searching emoji…"), then republishes; a click on the interim
+    // list is not accepted, so choose only from the settled list.
+    const searching = page.getByText("Searching emoji…");
     const ownSet = (community) =>
       relay
         .stored(community)
@@ -295,12 +299,13 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
 
     // Typeahead, then send a message that renders the new image.
     await draft.fill(":party_par");
-    await page
-      .getByRole("option", {
-        name: ":party_parrot:",
-        exact: true,
-      })
-      .click();
+    const suggestion = page.getByRole("option", {
+      name: ":party_parrot:",
+      exact: true,
+    });
+    await expect(suggestion).toBeVisible();
+    await expect(searching).toHaveCount(0);
+    await suggestion.click();
     await expect(draft).toHaveJSProperty("value", ":party_parrot:");
     await draft.press("Enter");
     const row = page.locator("[data-message-id]").first();
@@ -412,6 +417,7 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
       page.getByText("You haven't added any emoji yet. Add one above."),
     ).toBeVisible();
     await draft.fill(":party_par");
+    await expect(searching).toHaveCount(0);
     await expect(
       page.getByRole("option", { name: ":party_parrot:" }),
     ).toHaveCount(0);

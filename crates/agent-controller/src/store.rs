@@ -164,6 +164,53 @@ impl Store {
             runtime_message: Some("Native runtime has not been connected".into()),
         })
     }
+    /// Configure retained custody, never reread the old installation or move it.
+    pub fn use_here(&mut self, id: &str, resolution: crate::CommunityResolution) -> Result<()> {
+        let mut doc = self.read()?;
+        let source = doc
+            .agents
+            .iter()
+            .find(|agent| agent.id == id)
+            .cloned()
+            .ok_or("Imported identity no longer exists")?;
+        resolution.verify(source.auth_tag.as_deref().unwrap_or(""))?;
+        if resolution.pubkey != source.pubkey {
+            return Err("Use here must preserve the imported identity".into());
+        }
+        let target_id = crate::config::agent_id(&source.pubkey, &resolution.relay_url);
+        if doc.agents.iter().any(|agent| {
+            agent.pubkey == source.pubkey && agent.configured() && agent.id != target_id
+        }) {
+            return Err("This identity is already configured in another community. Clone it to create a new identity here.".into());
+        }
+        if let Some(target) = doc.agents.iter_mut().find(|agent| agent.id == target_id) {
+            resolution.verify(target.auth_tag.as_deref().unwrap_or(""))?;
+            if !target.configured() {
+                // Setup completes custody only; starting remains a separate
+                // explicit action, so drop any retained startup intent.
+                target.extra.insert("configured".into(), Value::Bool(true));
+                target.enabled = false;
+                target.start_on_app_launch = Some(false);
+                target.revision = target
+                    .revision
+                    .checked_add(1)
+                    .filter(|n| *n <= 9_007_199_254_740_991)
+                    .ok_or("Agent revision exhausted")?;
+            }
+        } else {
+            // Explicit owner-signed setup of an existing identity/community pair.
+            // Keep the source setup and credential reference; the new pair starts stopped.
+            let mut target = source.clone();
+            target.id = target_id;
+            target.relay_url = resolution.relay_url;
+            target.enabled = false;
+            target.start_on_app_launch = Some(false);
+            target.revision = 1;
+            target.extra.insert("configured".into(), Value::Bool(true));
+            doc.agents.push(target);
+        }
+        self.write(&doc)
+    }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<()> {
         let mut doc = self.read()?;
         let agent = doc
@@ -199,6 +246,9 @@ impl Store {
             .iter_mut()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        if enabled && !agent.configured() {
+            return Err("Choose Use here before starting this imported identity".into());
+        }
         agent.enabled = enabled;
         self.write(&doc)
     }

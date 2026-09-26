@@ -17,7 +17,6 @@ import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import { createAgentLibrary } from "../agents/library";
 import { MessageRow } from "./MessageRow";
 import { MessageMarkdown } from "./MessageMarkdown";
-import { MediaAttachment } from "./MediaAttachment";
 import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 import type { PageNavigation } from "../navigation/service";
@@ -391,6 +390,7 @@ it("bounds enlarged emoji presentation on sent messages", () => {
 });
 
 it("the actual message row rejects attachment URLs outside the shared safe-link policy", () => {
+  const media = vi.fn(() => undefined);
   const tree = MessageRow({
     row: {
       ...row,
@@ -401,19 +401,23 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
       ],
     },
     profile: undefined,
-    media: () => undefined,
+    media,
     onOpenLink: () => false,
     day: false,
     retry: undefined,
   });
-  const attachments = elements(tree).filter(
-    (element) => element.type === MediaAttachment,
+  const unavailable = elements(tree).filter(
+    (element) =>
+      element.props.role === "status" &&
+      element.props.children === "Image unavailable",
   );
-  expect(attachments).toHaveLength(1);
-  expect(attachments[0]?.props.attachment).toEqual({
-    url: "https://safe.test/a.png",
-    kind: "image",
-  });
+  expect(unavailable).toHaveLength(1);
+  expect(
+    elements(tree)
+      .filter((element) => element.props.role === "group")
+      .map((element) => element.props["aria-label"]),
+  ).toEqual(["1 image"]);
+  expect(media).toHaveBeenCalledExactlyOnceWith("https://safe.test/a.png");
 });
 
 it("seeks the media timecode while passing the stripped body to Markdown", () => {

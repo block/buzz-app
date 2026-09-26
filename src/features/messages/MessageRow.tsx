@@ -190,6 +190,18 @@ export const MessageRow = memo(function MessageRow({
       Report message
     </MenuItem>
   );
+  // Keep mixed attachments in sender order; only adjacent images share a strip.
+  const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
+  for (const attachment of row.attachments) {
+    if (!safeMessageUrl(attachment.url)) continue;
+    const previous = attachmentGroups.at(-1);
+    if (
+      (attachment.kind === "image" || attachment.kind === "file") &&
+      previous?.[0]?.kind === attachment.kind
+    )
+      previous.push(attachment);
+    else attachmentGroups.push([attachment]);
+  }
   const body = row.diff ? (
     <div>
       <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
@@ -402,45 +414,88 @@ export const MessageRow = memo(function MessageRow({
             body
           )}
           <DeliveryNotice row={row} retry={retry} />
-          {row.attachments.map((attachment) => {
-            const url = safeMessageUrl(attachment.url);
-            if (!url) return null;
-            const source = media(url);
-            if (attachment.kind === "file")
-              return (
-                <FileAttachment
-                  key={url}
-                  attachment={{ ...attachment, url }}
-                  source={source}
-                  onOpenLink={onOpenLink}
-                />
-              );
-            if (attachment.kind === "audio") {
-              if (source && isProxySource(source))
+          {attachmentGroups.map((group) => {
+            const images = group[0]?.kind === "image";
+            const files = group[0]?.kind === "file";
+            const items = group.map((attachment, index) => {
+              const url = safeMessageUrl(attachment.url);
+              if (!url) return null;
+              const source = media(url);
+              if (attachment.kind === "file")
                 return (
-                  <AudioAttachment
+                  <FileAttachment
                     key={url}
                     attachment={{ ...attachment, url }}
                     source={source}
+                    onOpenLink={onOpenLink}
                   />
                 );
+              if (attachment.kind === "audio") {
+                if (source && isProxySource(source))
+                  return (
+                    <AudioAttachment
+                      key={url}
+                      attachment={{ ...attachment, url }}
+                      source={source}
+                    />
+                  );
+                return (
+                  <FileAttachment
+                    key={url}
+                    attachment={{ ...attachment, url }}
+                    source={source}
+                    onOpenLink={onOpenLink}
+                  />
+                );
+              }
+              if (attachment.kind === "image") {
+                if (!source)
+                  return (
+                    <span
+                      key={url}
+                      className={styles.imageUnavailable}
+                      role="status"
+                    >
+                      Image unavailable
+                    </span>
+                  );
+                return (
+                  <AttachmentImage
+                    key={url}
+                    attachment={{ ...attachment, url }}
+                    url={url}
+                    source={source}
+                    thumbnail
+                    label={
+                      group.length > 1
+                        ? `Open image ${index + 1} of ${group.length}`
+                        : "Open image attachment"
+                    }
+                    onOpenLink={onOpenLink}
+                    {...(onOpenMediaReview
+                      ? {
+                          onOpenReview: (item, seconds) =>
+                            onOpenMediaReview(row.id, item, seconds),
+                        }
+                      : {})}
+                  />
+                );
+              }
               return (
-                <FileAttachment
+                <MediaAttachment
                   key={url}
                   attachment={{ ...attachment, url }}
-                  source={source}
-                  onOpenLink={onOpenLink}
-                />
-              );
-            }
-            if (attachment.kind === "image" && source)
-              return (
-                <AttachmentImage
-                  key={url}
-                  attachment={{ ...attachment, url }}
-                  url={url}
-                  source={source}
-                  onOpenLink={onOpenLink}
+                  media={media}
+                  mode={mediaMode}
+                  {...(attachment.kind === "video" && mediaSeekTo !== undefined
+                    ? {
+                        seekTo: mediaSeekTo,
+                        ...(mediaSeekRequest !== undefined
+                          ? { seekRequest: mediaSeekRequest }
+                          : {}),
+                      }
+                    : {})}
+                  {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
                   {...(onOpenMediaReview
                     ? {
                         onOpenReview: (item, seconds) =>
@@ -449,28 +504,27 @@ export const MessageRow = memo(function MessageRow({
                     : {})}
                 />
               );
-            return (
-              <MediaAttachment
-                key={url}
-                attachment={{ ...attachment, url }}
-                media={media}
-                mode={mediaMode}
-                {...(attachment.kind === "video" && mediaSeekTo !== undefined
-                  ? {
-                      seekTo: mediaSeekTo,
-                      ...(mediaSeekRequest !== undefined
-                        ? { seekRequest: mediaSeekRequest }
-                        : {}),
-                    }
-                  : {})}
-                {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
-                {...(onOpenMediaReview
-                  ? {
-                      onOpenReview: (item, seconds) =>
-                        onOpenMediaReview(row.id, item, seconds),
-                    }
-                  : {})}
-              />
+            });
+            return images ? (
+              <div className={styles.imageGroup} key={group[0]?.url}>
+                {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
+                <div
+                  className={styles.imageStrip}
+                  role="group"
+                  aria-label={`${group.length} ${group.length === 1 ? "image" : "images"}`}
+                >
+                  {items}
+                </div>
+                <div className={styles.imageCount}>
+                  {group.length} {group.length === 1 ? "image" : "images"}
+                </div>
+              </div>
+            ) : files ? (
+              <div className={styles.fileGroup} key={group[0]?.url}>
+                {items}
+              </div>
+            ) : (
+              items
             );
           })}
           {session && scope && extensions ? (

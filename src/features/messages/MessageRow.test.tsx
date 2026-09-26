@@ -434,35 +434,30 @@ it.each([9, 40002])(
 );
 
 it.each([
-  [
-    { width: 700, height: 900 },
-    "width:248.88888888888889px;aspect-ratio:700 / 900",
-  ],
-  [{ width: 1600, height: 900 }, "width:360px;aspect-ratio:1600 / 900"],
-  [{ width: 20, height: 10 }, "width:20px;aspect-ratio:20 / 10"],
-])(
-  "reserves metadata-sized previews without waiting for load: %j",
-  (dimensions, style) => {
-    const html = renderToStaticMarkup(
-      <MessageRow
-        row={{
-          ...row,
-          attachments: [
-            { url: "https://image.test/shot.png", kind: "image", dimensions },
-          ],
-        }}
-        profile={undefined}
-        media={(url) => url}
-        onOpenLink={() => false}
-        day={false}
-        retry={undefined}
-      />,
-    );
-    expect(html).toContain(`style="${style}"`);
-    expect(html).toContain('aria-label="Open image attachment"');
-    expect(html).toContain('loading="lazy"');
-  },
-);
+  { width: 700, height: 900 },
+  { width: 1600, height: 900 },
+  { width: 20, height: 10 },
+])("uses fixed thumbnails regardless of image dimensions: %j", (dimensions) => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { url: "https://image.test/shot.png", kind: "image", dimensions },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain('data-thumbnail="true"');
+  expect(html).not.toContain("aspect-ratio:");
+  expect(html).toContain('aria-label="Open image attachment"');
+  expect(html).toContain('loading="lazy"');
+});
 
 it("does not bypass the session media resolver to paint an inaccessible attachment", () => {
   const media = vi.fn(() => undefined);
@@ -769,3 +764,105 @@ it.each([9, 40002])(
     }
   },
 );
+
+it.each([1, 2, 3, 4, 5, 10])(
+  "keeps all %i images reachable in a labelled strip",
+  (count) => {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={{
+          ...row,
+          attachments: Array.from({ length: count }, (_, i) => ({
+            kind: "image",
+            url: `https://image.test/${i}.png`,
+          })),
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(html).toContain(
+      `role="group" aria-label="${count} ${count === 1 ? "image" : "images"}"`,
+    );
+    expect(html.match(/data-thumbnail="true"/g)).toHaveLength(count);
+    expect(html).toContain(`href="https://image.test/${count - 1}.png"`);
+  },
+);
+
+it("preserves interleaved file order and counts unavailable images but not unsafe URLs", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { kind: "image", url: "https://image.test/first.png" },
+          { kind: "image", url: "javascript:alert(1)" },
+          { kind: "image", url: "https://image.test/unavailable.png" },
+          {
+            kind: "file",
+            url: "https://files.test/notes.md",
+            name: "notes.md",
+          },
+          { kind: "image", url: "https://image.test/last.png" },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => (url.includes("unavailable") ? undefined : url)}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain('role="group" aria-label="2 images"');
+  expect(html).toContain('role="group" aria-label="1 image"');
+  expect(html).toContain("Image unavailable");
+  expect(html).not.toContain("javascript:");
+  expect(html.indexOf('href="https://image.test/first.png"')).toBeLessThan(
+    html.indexOf('href="https://files.test/notes.md"'),
+  );
+  expect(html.indexOf('href="https://files.test/notes.md"')).toBeLessThan(
+    html.indexOf('href="https://image.test/last.png"'),
+  );
+});
+
+it("keeps audio and video players between their original image runs", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { kind: "image", url: "https://image.test/first.png" },
+          {
+            kind: "audio",
+            url: "https://files.test/voice.mp3",
+            name: "voice.mp3",
+          },
+          {
+            kind: "video",
+            url: "https://files.test/demo.mp4",
+            name: "demo.mp4",
+          },
+          { kind: "image", url: "https://image.test/last.png" },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html.match(/role="group" aria-label="1 image"/g)).toHaveLength(2);
+  expect(html).toContain("<audio");
+  expect(html).toContain("<video");
+  expect(html.indexOf('href="https://image.test/first.png"')).toBeLessThan(
+    html.indexOf("<audio"),
+  );
+  expect(html.indexOf("<audio")).toBeLessThan(html.indexOf("<video"));
+  expect(html.indexOf("<video")).toBeLessThan(
+    html.indexOf('href="https://image.test/last.png"'),
+  );
+});

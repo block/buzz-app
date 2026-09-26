@@ -12,6 +12,10 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
   isTauri: vi.fn(() => false),
   invoke: vi.fn(),
+  Channel: class {
+    id = 1;
+    onmessage = () => {};
+  },
 }));
 // Only the plugin module is a fixture. Exercise the real app composition,
 // manager, runtime, Cordis root and community/relay services.
@@ -46,6 +50,7 @@ let values: Map<string, string>;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  vi.stubGlobal("navigator", { platform: "MacIntel" });
   plugin.cleanup.mockReset();
   plugin.host = undefined;
   vi.mocked(isTauri).mockReturnValue(false);
@@ -280,4 +285,87 @@ it("joins cleanup already started by disabling a plugin", async () => {
   await disposal;
   expect(finished).toBe(true);
   expect(plugin.cleanup).toHaveBeenCalledTimes(1);
+});
+
+it("composes the packaged native identity without a broker identity or session", async () => {
+  await services.dispose();
+  vi.stubEnv("VITE_BUZZ_LIVE", "0");
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(fetch).mockClear();
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return viewer;
+    if (command === "deep_link_take") return [];
+    if (command === "deep_link_watch") return null;
+    // Other native owners may initialize, but no actual native operations run.
+    throw new Error("Fixture native capability unavailable");
+  });
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.identity?.snapshot()).toEqual({ status: "ready", viewer });
+  expect(services.communities.snapshot()).toMatchObject({
+    status: "ready",
+    relayAvailable: false,
+    viewer,
+    selected: null,
+  });
+  expect(fetch).not.toHaveBeenCalled();
+  expect(services.relay.snapshot().status).not.toBe("ready");
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "identity_restore"),
+  ).toHaveLength(1);
+});
+
+it.each(["Linux x86_64", "Win32"])(
+  "keeps the unpinned %s shell available without native onboarding",
+  async (platform) => {
+    await services.dispose();
+    vi.stubEnv("VITE_BUZZ_LIVE", "0");
+    vi.stubGlobal("navigator", { platform });
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(fetch).mockClear();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "deep_link_take") return [];
+      if (command === "deep_link_watch") return null;
+      throw new Error("Fixture native capability unavailable");
+    });
+    services = createServices();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(services.identity).toBeUndefined();
+    expect(services.communities.snapshot()).toMatchObject({
+      status: "unavailable",
+      relayAvailable: false,
+    });
+    expect(services.pages.snapshot()).toHaveLength(1);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command.startsWith("identity_")),
+    ).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps pinned macOS desktop development on the broker identity", async () => {
+  await services.dispose();
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "deep_link_take") return [];
+    if (command === "deep_link_watch") return null;
+    throw new Error("Fixture native capability unavailable");
+  });
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.identity).toBeUndefined();
+  expect(services.communities.snapshot()).toMatchObject({
+    status: "ready",
+    viewer,
+    relayAvailable: true,
+  });
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command.startsWith("identity_")),
+  ).toBe(false);
 });

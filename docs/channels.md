@@ -27,9 +27,15 @@ the app-owned sidebar or session data.
 
 The broker uses the existing authorized Buzz identity in the OS secret store (macOS
 Keychain, Linux secret service) and
-signs authenticated reads and channel messages in Node. No private key reaches browser JavaScript; there is
-a bounded message-signing and publishing endpoint. The broker is restricted to loopback hosts, same-origin
-POSTs, valid Nostr kinds/event IDs, and bounded filters. Without a configured `BUZZ_DEV_VIEWER` pin, the shell and Messages empty state remain available, while the live identity/join flow explains that it needs the development broker. Packaged builds do not include the development broker.
+signs authenticated reads and channel messages in Node. In this broker mode no
+private key reaches browser JavaScript; there is a bounded message-signing and
+publishing endpoint. The broker is restricted to loopback hosts, same-origin
+POSTs, valid Nostr kinds/event IDs, and bounded filters. Without a configured
+`BUZZ_DEV_VIEWER` pin, native macOS offers [identity setup](identity.md); web and
+unsupported native platforms retain the unavailable shell. The separate native
+import/reveal/copy UI deliberately passes private strings through JavaScript.
+Packaged builds do not include the development broker. A saved native identity
+does not enable relay access: join and community profile editing stay unavailable.
 The broker supports explicitly scoped typed relay origins;
 see [destination routing and trust limits](communities.md#development-broker-boundary).
 This is not a new native login.

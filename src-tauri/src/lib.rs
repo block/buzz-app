@@ -11,7 +11,9 @@ mod deep_links;
 mod dock;
 mod host_command;
 mod host_request;
+mod identity;
 mod notifications;
+use identity::{identity_create, identity_export, identity_import, identity_restore, IdentityHost};
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 mod goose_models;
@@ -339,6 +341,10 @@ async fn plugin_recover(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        identity_restore,
+        identity_import,
+        identity_create,
+        identity_export,
         plugin_import_folder,
         plugin_import_git,
         plugin_import_install,
@@ -431,6 +437,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.manage(TitleBarFillFrames::default());
     builder
+        .manage(IdentityHost::default())
         .manage(Imports::default())
         .manage(Terminals::default())
         .manage(Notifications::default())

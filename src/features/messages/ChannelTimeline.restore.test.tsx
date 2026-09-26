@@ -132,31 +132,42 @@ function mount() {
     },
   };
 }
-it("retains the saved anchor correction when cached rows are promoted before its frame", async () => {
-  const h = mount();
-  await frame();
-  expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
-    align: "start",
-    offset: -42,
+for (const measurement of ["before", "after"] as const) {
+  it(`retains the saved anchor when measurement arrives ${measurement} row promotion`, async () => {
+    const h = mount();
+    await frame();
+    expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
+      align: "start",
+      offset: -42,
+    });
+    scroll.toIndex.mockClear();
+    if (measurement === "before") await h.measured();
+    h.promote();
+    await frame();
+    if (measurement === "after") {
+      scroll.toIndex.mockClear();
+      await h.measured();
+      await frame();
+    }
+    expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
+      align: "start",
+      offset: -42,
+    });
   });
-  scroll.toIndex.mockClear();
-  await h.measured();
-  h.promote();
-  await frame();
-  expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
-    align: "start",
-    offset: -42,
+  it(`reader input cancels restoration with measurement ${measurement} row promotion`, async () => {
+    const h = mount();
+    await frame();
+    scroll.toIndex.mockClear();
+    if (measurement === "before") await h.measured();
+    fireEvent.wheel(
+      screen.getByRole("region", { name: "Channel message history" }),
+    );
+    h.promote();
+    await frame();
+    if (measurement === "after") {
+      await h.measured();
+      await frame();
+    }
+    expect(scroll.toIndex).not.toHaveBeenCalled();
   });
-});
-it("reader input cancels the queued correction even when cached rows are then promoted", async () => {
-  const h = mount();
-  await frame();
-  scroll.toIndex.mockClear();
-  await h.measured();
-  fireEvent.wheel(
-    screen.getByRole("region", { name: "Channel message history" }),
-  );
-  h.promote();
-  await frame();
-  expect(scroll.toIndex).not.toHaveBeenCalled();
-});
+}

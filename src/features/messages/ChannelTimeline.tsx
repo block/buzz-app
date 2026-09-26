@@ -297,9 +297,7 @@ function Timeline({
         ? savedPosition.current
         : null;
     let observer: MutationObserver | undefined;
-    let correctionPending = false;
     const restorePosition = () => {
-      correctionPending = false;
       if (intent.current !== scheduledIntent || !handle.current) return;
       if (restore) {
         const anchor = restore.anchor;
@@ -345,7 +343,6 @@ function Timeline({
             if (list.style.height === height) return;
             height = list.style.height;
             cancelAnimationFrame(frame);
-            correctionPending = true;
             frame = requestAnimationFrame(restorePosition);
           });
           observer.observe(list, {
@@ -359,14 +356,9 @@ function Timeline({
     return () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();
-      // A row refresh can cancel the late measurement correction. Carry the
-      // original restoration across it; only newer reader input may retire it.
-      if (
-        correctionPending &&
-        restore &&
-        !follow.current &&
-        intent.current === scheduledIntent
-      ) {
+      // Row promotion can precede or interrupt late measurements. Preserve the
+      // restoration across either ordering; only newer reader input retires it.
+      if (restore && !follow.current && intent.current === scheduledIntent) {
         savedPosition.current = restore;
         settled.current = false;
       }

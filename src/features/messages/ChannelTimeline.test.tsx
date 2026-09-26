@@ -1146,7 +1146,11 @@ it("restores an anchor inside a membership group after history joins across a pa
     membershipRow("anchor", 2),
     membershipRow("newer", 3),
   ]);
-  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  // With no new reader intent, row regrouping retains the saved event/Y.
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(0, {
+    align: "start",
+    offset: -42,
+  });
   h.unmount();
 });
 it("live group growth follows the displayed group index rather than a hidden raw row", () => {
@@ -1265,7 +1269,7 @@ it.each([false, true])(
     );
     h.unmount();
     expect(h.saved().anchor).toEqual(
-      gesture ? { id: "preceding", y: -20 } : { id: "grown", y: 42 },
+      gesture ? { id: "preceding", y: -20 } : { id: "anchor", y: 42 },
     );
   },
 );

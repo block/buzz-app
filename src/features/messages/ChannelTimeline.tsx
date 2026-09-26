@@ -386,6 +386,7 @@ function Timeline({
     // Wait for the optimistic row and virtualizer to mount before revealing it.
     const frame = requestAnimationFrame(() => {
       if (!handle.current) return;
+      if (!follow.current) intent.current++;
       follow.current = true;
       restoredAnchor.current = undefined;
       userScrolled.current = false;

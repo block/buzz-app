@@ -71,7 +71,7 @@ async function frame() {
     }
   });
 }
-function mount() {
+function mount(bottom = false) {
   const viewer = keypair(),
     relay = keypair();
   const target = message(viewer, "c", "Saved reading anchor", 1);
@@ -81,7 +81,7 @@ function mount() {
   owners.push(owner);
   writeView("scope", "scroll:c", {
     offset: 900,
-    bottom: false,
+    bottom,
     anchor: { id: target.id, y: 42 },
   });
   const window: ChannelWindow = {
@@ -106,19 +106,28 @@ function mount() {
       },
     ],
   };
-  const tree = (snapshot: ChannelWindow) => (
+  const tree = (snapshot: ChannelWindow, revealMessageId?: string) => (
     <StrictMode>
       <ChannelTimeline
         channelId="c"
         scope="scope"
         queries={owner.session}
         window={snapshot}
+        revealMessageId={revealMessageId}
         onOpenLink={() => false}
       />
     </StrictMode>
   );
   const result = render(tree(window));
   return {
+    reveal() {
+      const first = window.rows[0];
+      if (!first) throw new Error("Missing fixture row");
+      const sent = { ...first, id: "sent", content: "New message" };
+      result.rerender(
+        tree({ ...window, rows: [...window.rows, sent] }, sent.id),
+      );
+    },
     promote() {
       result.rerender(
         tree({ ...window, freshness: "verified", rows: [...window.rows] }),
@@ -171,3 +180,20 @@ for (const measurement of ["before", "after"] as const) {
     expect(scroll.toIndex).not.toHaveBeenCalled();
   });
 }
+
+it.each([false, true])(
+  "local reveal retires restoration without canceling existing bottom follow=%s",
+  async (bottom) => {
+    const h = mount(bottom);
+    await frame();
+    scroll.toIndex.mockClear();
+    h.reveal();
+    await frame();
+    expect(scroll.toIndex).toHaveBeenLastCalledWith(1, { align: "end" });
+    const calls = scroll.toIndex.mock.calls.length;
+    await h.measured();
+    await frame();
+    expect(scroll.toIndex).toHaveBeenLastCalledWith(1, { align: "end" });
+    expect(scroll.toIndex.mock.calls.length).toBe(calls + (bottom ? 1 : 0));
+  },
+);

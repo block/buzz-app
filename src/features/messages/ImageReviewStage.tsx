@@ -128,6 +128,8 @@ export function ImageReviewStage({
     setCopying(true);
     clearCopyNotice();
     try {
+      // Do not await before this call: WebKit requires clipboard.write to happen
+      // inside the user's click gesture.
       await copyImageToClipboard(image.current);
       if (selectedUrlRef.current === copiedUrl) showCopyNotice("success");
     } catch {

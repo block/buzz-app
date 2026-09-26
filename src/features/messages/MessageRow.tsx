@@ -474,24 +474,22 @@ export const MessageRow = memo(function MessageRow({
             );
           })}
           {session && scope && extensions ? (
-            <div className={styles.reactions}>
-              <MessageReactions
-                onFocusedRemoval={() => menuTrigger.current?.focus()}
-                row={row}
-                session={session}
-                scope={scope}
-                tools={extensions.tools}
-                inline={extensions.inline}
-                disabled={
-                  !canReact ||
-                  (!!row.delivery &&
-                    !["accepted", "seen"].includes(row.delivery))
-                }
-              />
-            </div>
+            <MessageReactions
+              onFocusedRemoval={() => menuTrigger.current?.focus()}
+              row={row}
+              session={session}
+              scope={scope}
+              tools={extensions.tools}
+              inline={extensions.inline}
+              profiles={directory.profiles}
+              disabled={
+                !canReact ||
+                (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
+              }
+            />
           ) : (
             row.reactions.length > 0 && (
-              <div className={styles.reactions}>
+              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
                 {row.reactions.map((reaction) => (
                   <span
                     key={JSON.stringify([
@@ -525,7 +523,12 @@ export const MessageRow = memo(function MessageRow({
             <Button
               variant="ghost"
               size="sm"
-              style={{ paddingInlineStart: "var(--space-1)" }}
+              data-thread-summary=""
+              data-first-participant-shape={
+                agentPubkeys?.has(row.participants[0] ?? "")
+                  ? "squircle"
+                  : "circle"
+              }
               type="button"
               aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
               onClick={(event) => {

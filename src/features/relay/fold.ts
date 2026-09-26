@@ -338,7 +338,8 @@ export function foldMessages(
           edits[0]?.tags.some(([name]) => name === "emoji") ? edits[0] : event,
         ),
         reactions: groupReactions(
-          aux.filter((item) => item.kind === 7 && !deleted(item)),
+          aux.filter((item) => item.kind === 7),
+          deleted,
         ),
         ...parseSummary(summaries.get(event.id)),
       }),
@@ -348,13 +349,18 @@ export function foldMessages(
 }
 
 /** Count people, but retain event IDs for author-only removal and duplicate cleanup. */
-export function groupReactions(events: readonly EventData[]) {
+export function groupReactions(
+  events: readonly EventData[],
+  deleted: (event: EventData) => boolean = () => false,
+) {
   const groups = new Map<
     string,
     {
       content: string;
       emoji?: CustomEmoji;
       events: { id: string; authorId: string }[];
+      firstAt: number;
+      firstId: string;
     }
   >();
   for (const event of events) {
@@ -367,19 +373,34 @@ export function groupReactions(events: readonly EventData[]) {
       content,
       ...(emoji ? { emoji } : {}),
       events: [],
+      firstAt: event.created_at,
+      firstId: event.id,
     };
-    if (!group.events.some((entry) => entry.id === event.id))
+    if (
+      event.created_at < group.firstAt ||
+      (event.created_at === group.firstAt && event.id < group.firstId)
+    ) {
+      group.firstAt = event.created_at;
+      group.firstId = event.id;
+    }
+    if (!deleted(event) && !group.events.some((entry) => entry.id === event.id))
       group.events.push(
         Object.freeze({ id: event.id, authorId: event.pubkey }),
       );
     groups.set(key, group);
   }
   return Object.freeze(
-    [...groups.values()].map((group) =>
-      Object.freeze({
-        ...group,
-        events: Object.freeze(group.events),
-      }),
-    ),
+    [...groups.values()]
+      .filter((group) => group.events.length > 0)
+      .sort(
+        (a, b) => a.firstAt - b.firstAt || a.firstId.localeCompare(b.firstId),
+      )
+      .map(({ content, emoji, events }) =>
+        Object.freeze({
+          content,
+          ...(emoji ? { emoji } : {}),
+          events: Object.freeze(events),
+        }),
+      ),
   );
 }

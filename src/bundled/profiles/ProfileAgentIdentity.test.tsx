@@ -209,25 +209,27 @@ it("adds no agent section or owner read for a profile without an agent hint", as
   );
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
+  // Public metadata discovery can race the heading. Wait for those reads,
+  // then ensure they did not start observing an owner profile.
+  await waitFor(() =>
+    expect(query.mock.calls.flatMap(([filters]) => filters)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
+        expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
+        expect.objectContaining({
+          authors: [person.pubkey],
+          kinds: [10100],
+          limit: 1,
+        }),
+      ]),
+    ),
+  );
   const reads = query.mock.calls.flatMap(([filters]) => filters);
-  // Other public metadata reads may race the heading; only owner observation is excluded.
   expect(reads).not.toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         authors: [person.pubkey],
         kinds: [0],
-        limit: 1,
-      }),
-    ]),
-  );
-  expect(reads).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
-      expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
-      // Public capabilities are read for every profile, not from an owner.
-      expect.objectContaining({
-        authors: [person.pubkey],
-        kinds: [10100],
         limit: 1,
       }),
     ]),

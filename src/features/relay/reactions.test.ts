@@ -77,6 +77,48 @@ it("groups by event-local emoji identity, counts unique people and retains dupli
   ).toBe(2);
 });
 
+it("keeps pill order from the first reaction when counts change", () => {
+  const heart = signed(viewer, {
+    kind: 7,
+    content: "❤️",
+    created_at: 2,
+    tags: [
+      ["e", root.id],
+      ["h", "c"],
+    ],
+  });
+  const laugh = signed(other, {
+    kind: 7,
+    content: "😂",
+    created_at: 3,
+    tags: [
+      ["e", root.id],
+      ["h", "c"],
+    ],
+  });
+  const secondHeart = signed(other, {
+    kind: 7,
+    content: "❤️",
+    created_at: 4,
+    tags: [
+      ["e", root.id],
+      ["h", "c"],
+    ],
+  });
+  const events = [root, laugh, secondHeart, heart];
+  expect(
+    foldMessages("c", relay.pubkey, events)[0]?.reactions.map(
+      (item) => item.content,
+    ),
+  ).toEqual(["❤️", "😂"]);
+  expect(
+    foldMessages("c", relay.pubkey, [
+      ...events,
+      remove(heart),
+    ])[0]?.reactions.map((item) => item.content),
+  ).toEqual(["❤️", "😂"]);
+});
+
 it("incremental channel projection applies delete-of-reaction and rolls back a failed deletion", () => {
   const mine = reaction(),
     deletion = remove(mine);

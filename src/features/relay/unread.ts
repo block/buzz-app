@@ -165,7 +165,10 @@ export function createUnread({
     channels
       .list()
       .channels.some(
-        (channel) => channel.id === id && channel.members?.includes(viewer),
+        (channel) =>
+          channel.id === id &&
+          !channel.cached &&
+          channel.members?.includes(viewer),
       );
   const keyFor = (target: ReadTarget) =>
     `${target.channelId}:${targetKey(target)}`;
@@ -590,7 +593,9 @@ export function createUnread({
     new Map(
       channels
         .list()
-        .channels.filter((channel) => channel.members?.includes(viewer))
+        .channels.filter(
+          (channel) => !channel.cached && channel.members?.includes(viewer),
+        )
         .map((channel) => [channel.id, channel.channelType]),
     );
   let channelTypes = types();
@@ -621,7 +626,9 @@ export function createUnread({
       if (closed || generation !== epoch) return;
       const ids = channels
         .list()
-        .channels.filter((channel) => channel.members?.includes(viewer))
+        .channels.filter(
+          (channel) => !channel.cached && channel.members?.includes(viewer),
+        )
         .map((channel) => channel.id);
       if (!ids.length) return;
       try {

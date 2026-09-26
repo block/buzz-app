@@ -219,7 +219,7 @@ export function createRelaySession(
     transport?.viewer ?? "",
     (id) =>
       !closed &&
-      canAccess(id) &&
+      channels.canParticipate(id) &&
       channels.queries.list().channels.some((channel) => channel.id === id),
     notify,
   );
@@ -392,6 +392,15 @@ export function createRelaySession(
     settings?: ReadOptions,
     channelTraffic = true,
   ) {
+    if (
+      filters.some((filter) =>
+        filter["#h"]?.some((id) => channels.queries.get?.(id)?.cached),
+      )
+    )
+      throw new ReadError(
+        "unavailable",
+        "Reconnect to refresh conversation access.",
+      );
     const epoch = accessEpoch;
     let events: readonly RelayEvent[];
     try {
@@ -637,11 +646,11 @@ export function createRelaySession(
     return events;
   });
   const lifecycle = createChannelLifecycle({
-    reader: transport ? requests.reader : undefined,
+    reader: transport && !options.cachedOnly ? requests.reader : undefined,
     writer: transport?.channelLifecycle,
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
-    canAccess: (id) => !closed && canAccess(id),
+    canAccess: (id) => !closed && channels.canParticipate(id),
     acceptDiscovery: (events) => channels.acceptDiscovery(events),
     removed: (id) =>
       channels.denyChannel(id, new Error("Channel is no longer available")),
@@ -789,7 +798,7 @@ export function createRelaySession(
       .channels.find((item) => item.id === channelId);
     if (
       closed ||
-      !canAccess(channelId) ||
+      !channels.canParticipate(channelId) ||
       !channel?.members ||
       channel.archived ||
       (transport?.subscribe && liveSnapshot.status !== "connected")
@@ -1070,6 +1079,7 @@ export function createRelaySession(
             )
         : undefined;
     })(),
+    options.persistence,
   );
   let groupHead: string | undefined;
   const stopSidebarGroups = channelKit.capability.subscribe(() => {
@@ -1701,8 +1711,16 @@ export function createRelaySession(
     if (closed) return;
     const ids = [
       ...new Set([
-        ...channels.queries.list().channels.map((channel) => channel.id),
-        ...channels.demandedChannels().filter((id) => channels.canAccess(id)),
+        ...channels.queries
+          .list()
+          .channels.filter((channel) => !channel.cached)
+          .map((channel) => channel.id),
+        ...channels
+          .demandedChannels()
+          .filter(
+            (id) =>
+              channels.canAccess(id) && !channels.queries.get?.(id)?.cached,
+          ),
       ]),
     ];
     const wanted = new Set(ids);
@@ -2038,7 +2056,10 @@ export function createRelaySession(
     }
     const roster = channels.queries.list();
     if (roster.status !== "ready") return;
-    const ids = roster.channels.map((channel) => channel.id).sort();
+    const ids = roster.channels
+      .filter((channel) => !channel.cached)
+      .map((channel) => channel.id)
+      .sort();
     const key = ids.join("\0");
     if (key === activityRosterKey) return;
     activityRosterKey = key;
@@ -2058,6 +2079,9 @@ export function createRelaySession(
 
   return {
     session,
+    async restore() {
+      await Promise.all([channels.restore(), sidebarPreferences.ready]);
+    },
     async clearCache() {
       // Keep memory admission closed through asynchronous and overlapping purges.
       cacheClearing++;

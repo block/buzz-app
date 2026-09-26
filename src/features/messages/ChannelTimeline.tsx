@@ -73,6 +73,8 @@ export type ChannelTimelineProps = {
   scope: string;
   viewer?: string | undefined;
   queries: RelaySession;
+  /** A parent keyed by connection generation can preserve its timeline on cache promotion. */
+  continuityKey?: string | undefined;
   window: ChannelWindow;
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
@@ -94,7 +96,11 @@ export type ChannelTimelineProps = {
 export function ChannelTimeline(props: ChannelTimelineProps) {
   return (
     <Timeline
-      key={messageViewKey(props.queries, props.scope, props.channelId)}
+      key={
+        props.continuityKey
+          ? JSON.stringify([props.continuityKey, props.scope, props.channelId])
+          : messageViewKey(props.queries, props.scope, props.channelId)
+      }
       {...props}
     />
   );
@@ -122,7 +128,7 @@ function Timeline({
   const resolveName = useChannelIdentityNames(queries, channelId);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
-  const geometry = useMemo(() => geometryFor(queries.channels), [queries]);
+  const [geometry] = useState(() => geometryFor(queries.channels));
   const signature = useMemo(
     () => geometrySignature(window.rows, profiles, resolveName),
     [window.rows, profiles, resolveName],

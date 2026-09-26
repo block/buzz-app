@@ -13,7 +13,11 @@ export function AttachmentImage({
   cached = false,
   onOpenLink,
   onOpenReview,
+  thumbnail = false,
+  label = "Open image attachment",
 }: {
+  thumbnail?: boolean;
+  label?: string;
   attachment: Attachment;
   url: string;
   source: string | undefined;
@@ -22,7 +26,7 @@ export function AttachmentImage({
   onOpenReview?: (attachment: Attachment, seconds: number) => void;
 }) {
   const corners = useMediaCorners();
-  const style = attachment.dimensions
+  const style = !thumbnail && attachment.dimensions
     ? {
         width: Math.min(
           360,
@@ -37,11 +41,12 @@ export function AttachmentImage({
       <span
         ref={corners}
         className={`${styles.attachmentImage} ${styles.mediaPlaceholder}`}
+        data-thumbnail={thumbnail || undefined}
         style={style}
         aria-hidden="true"
       />
     ) : (
-      <span className={styles.attachmentUnavailable} role="status">
+      <span className={thumbnail ? styles.imageUnavailable : styles.attachmentUnavailable} role="status">
         Image unavailable
       </span>
     );
@@ -49,11 +54,12 @@ export function AttachmentImage({
     <a
       ref={corners}
       className={styles.attachmentImage}
+      data-thumbnail={thumbnail || undefined}
       style={style}
       href={url}
       target="_blank"
       rel="noreferrer"
-      aria-label="Open image attachment"
+      aria-label={label}
       data-media-preview=""
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey) return;

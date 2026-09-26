@@ -17,6 +17,7 @@ pub(crate) struct Snapshot {
     import_available: bool,
     create_available: bool,
     avatar_editing_available: bool,
+    local_inventory_actions: bool,
     default_workspace: String,
     harness_options: Vec<HarnessOption>,
     databricks_defaults: crate::agent_models::Defaults,
@@ -29,6 +30,7 @@ impl Snapshot {
             import_available,
             create_available: import_available,
             avatar_editing_available: true,
+            local_inventory_actions: true,
             default_workspace: workspace.to_string_lossy().into_owned(),
             harness_options: harness_options(),
             databricks_defaults: crate::agent_models::defaults(),
@@ -600,6 +602,18 @@ async fn start(
         }
         host.controller
             .action_with_key(&id, action, revision, &key, replay_floor)?;
+        host.snapshot()
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_use_here(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    resolution: buzz_agent_controller::CommunityResolution,
+) -> Result<Snapshot, String> {
+    run(state.inner().clone(), move |host| {
+        host.controller.use_here(&id, resolution)?;
         host.snapshot()
     })
     .await

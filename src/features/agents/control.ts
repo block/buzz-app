@@ -67,8 +67,11 @@ export interface AgentView {
   deployedRemote?: boolean;
   /** Older imports need an explicit snapshot of their legacy team instructions. */
   needsTeamImport?: boolean;
+  /** Absent on older hosts means an existing configured setup. */
+  configured?: boolean;
 }
 export interface ControlSnapshot {
+  localInventoryActions?: boolean;
   agents: AgentView[];
   runtimeAvailable: boolean;
   /** Native-owned editing suggestions, not installation or execution evidence.
@@ -112,8 +115,18 @@ export type AgentLogTarget = Pick<AgentView, "id" | "pubkey" | "relayUrl"> & {
     nonce: string,
   ): Promise<string>;
 };
+export type CommunityResolution = {
+  pubkey: string;
+  relayUrl: string;
+  owner: string;
+  signature: string;
+};
 export interface AgentControlHost {
   readLog?(target: AgentLogTarget): Promise<string>;
+  configureHere?(
+    id: string,
+    resolution: CommunityResolution,
+  ): Promise<ControlSnapshot>;
   models?: ModelHost;
   prepareCreate?(
     requestId: string,
@@ -159,6 +172,7 @@ export interface AgentControlState {
 export interface AgentControl {
   /** Sensitive local output. Native custody and exact community are rechecked per read. */
   readLog?(target: AgentLogTarget): Promise<string>;
+  configureHere?: AgentControlHost["configureHere"];
   models?: AgentModels;
   create?(
     requestId: string,
@@ -190,6 +204,8 @@ export function agentLaunchBlock(
   state: AgentControlState,
   agent: AgentView,
 ): string | null {
+  if (agent.configured === false)
+    return "Choose Use here before starting this imported identity.";
   if (state.status !== "ready") return "Refresh status before starting.";
   if (state.busy) return "Waiting for the current operation.";
   if (!state.data?.runtimeAvailable)
@@ -484,6 +500,7 @@ export function createAgentControl(
         const agents =
           state.data?.agents.filter(
             (agent) =>
+              agent.configured !== false &&
               pubkeys.includes(agent.pubkey) &&
               relayOrigin(agent.relayUrl) === relayOrigin(relayUrl),
           ) ?? [];
@@ -517,6 +534,22 @@ export function createAgentControl(
           update({ mentionError: `Message sent, but ${failures.join(" ")}` });
       };
     },
+    ...(host?.configureHere
+      ? {
+          configureHere: (id: string, resolution: CommunityResolution) =>
+            run(
+              (native) => {
+                if (!native.configureHere)
+                  throw new Error("Use here is unavailable.");
+                return native.configureHere(id, resolution);
+              },
+              (data) => update({ data }),
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
     previewImport: (source, destination) =>
       run(
         (native) => native.previewImport(source, destination),

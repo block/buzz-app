@@ -1,3 +1,4 @@
+import { MessageEditScope } from "./MessageEditScope";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -282,7 +283,7 @@ function ReviewShell({
           onDrop={rejectUnhandledFileDrop}
         >
           {rootId && source ? (
-            <>
+            <MessageEditScope>
               <ReviewComments
                 replies={replies}
                 limited={limited}
@@ -317,7 +318,7 @@ function ReviewShell({
                   : {})}
                 hideMediaTimeIndicator
               />
-            </>
+            </MessageEditScope>
           ) : (
             <p className={styles.empty} role={error ? "alert" : "status"}>
               {error ?? "Loading comments…"}

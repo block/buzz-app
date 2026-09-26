@@ -155,6 +155,9 @@ test("reload restores the selected conversation/groups before handshake and upda
       history.locator(`[data-message-id="${live.id}"]`),
     ).toBeVisible();
     expect(await retained.evaluate((node) => node.isConnected)).toBe(true);
+    // Visible appended content can precede Virtua's final follow-to-bottom
+    // measurement. Establish that layout before measuring a wheel distance.
+    await settle(page);
     const olderReads = () =>
       app.report.queries.filter(
         ({ filter }) => filter["#h"]?.includes("beta") && filter.before_id,

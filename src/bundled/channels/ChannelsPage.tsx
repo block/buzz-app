@@ -459,6 +459,7 @@ function ChannelWorkspace({
   useEffect(() => {
     if (
       cached ||
+      current?.cached ||
       !navigation ||
       !requestedMessage ||
       (!flatSession && requestedThread === requestedMessage) ||
@@ -491,6 +492,7 @@ function ChannelWorkspace({
     return stop;
   }, [
     cached,
+    current?.cached,
     navigation,
     requestedMessage,
     requestedThread,
@@ -498,15 +500,19 @@ function ChannelWorkspace({
     queries,
     flatSession,
   ]);
+  // A live connection can still be confirming its restored membership. Keep
+  // the pending intent; an exact reader cannot use display-only authority.
   const exact =
-    !flatSession &&
-    navigation &&
-    requestedMessage &&
-    requestedThread === requestedMessage
-      ? { request: navigation, inTimeline: false }
-      : exactOpening?.request === navigation
-        ? exactOpening
-        : undefined;
+    cached || current?.cached
+      ? undefined
+      : !flatSession &&
+          navigation &&
+          requestedMessage &&
+          requestedThread === requestedMessage
+        ? { request: navigation, inTimeline: false }
+        : exactOpening?.request === navigation
+          ? exactOpening
+          : undefined;
   type ShowingThread = {
     channelId: string;
     messageId: string;

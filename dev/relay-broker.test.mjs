@@ -166,6 +166,32 @@ test("broker permits bounded replacement edits with exactly one canonical target
     assert.equal(validMessageTemplate(invalid), false);
 });
 
+test("edits admit one exact target without new notification recipients or arbitrary references", () => {
+  const edit = {
+    kind: 40003,
+    content: "corrected",
+    created_at: 1788810000,
+    tags: [
+      ["h", "channel"],
+      ["e", "a".repeat(64)],
+      ["client-id", "unique"],
+    ],
+  };
+  assert.equal(validMessageTemplate(edit), true);
+  for (const tags of [
+    [["h", "channel"]],
+    [...edit.tags, ["e", "b".repeat(64)]],
+    [
+      ["h", "channel"],
+      ["e", "a".repeat(64), "", "reply"],
+    ],
+    [...edit.tags, ["p", "b".repeat(64)]],
+    [...edit.tags, ["imeta", "url https://example.com/image.png"]],
+  ])
+    assert.equal(validMessageTemplate({ ...edit, tags }), false);
+  assert.equal(validMessageTemplate({ ...edit, content: " " }), false);
+});
+
 test("workflow list batches alone may exceed four filters, with 128 unique channels at most", () => {
   const batch = Array.from({ length: 128 }, (_, i) => ({
     kinds: [30620],

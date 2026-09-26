@@ -1805,6 +1805,42 @@ test("memory reads use captured relay and owner, not submitted identity/filter a
   }
 });
 
+test("broker advertises, signs and publishes bounded edits through the real HTTP contract", async () => {
+  const h = await harness(() => new Response("[]"));
+  try {
+    await h.start();
+    const session = await (await h.get("session")).json();
+    expect(session.writeKinds).toContain(40003);
+    const template = {
+      kind: 40003,
+      content: "corrected text",
+      created_at: 1700000000,
+      tags: [
+        ["h", "c"],
+        ["e", h.event.id],
+        ["client-id", "edit-test"],
+      ],
+    };
+    const signed = await h.post("sign", template);
+    expect(signed.status).toBe(200);
+    const event = await signed.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.pubkey).toBe(h.event.pubkey);
+    const published = await h.post("publish", event);
+    expect(published.status).toBe(200);
+    expect(h.publications.some((item) => item.id === event.id)).toBe(true);
+    for (const route of ["sign", "publish"]) {
+      const rejected = await h.post(route, {
+        ...event,
+        tags: [...event.tags, ["p", "b".repeat(64)]],
+      });
+      expect(rejected.status).toBe(400);
+    }
+  } finally {
+    await h.close();
+  }
+});
+
 // Owner/admin community commands: community-bound, bounded before upstream I/O.
 async function communityAdmin(respond) {
   const h = await harness(respond);

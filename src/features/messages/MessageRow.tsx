@@ -37,6 +37,7 @@ import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
+import { MessageManagementItems } from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
 import { FlagIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
@@ -339,12 +340,13 @@ export const MessageRow = memo(function MessageRow({
                 ) : undefined)
               }
               overflowItems={
-                overflowItems || reportItem ? (
-                  <>
-                    {overflowItems}
-                    {reportItem}
-                  </>
-                ) : undefined
+                <>
+                  {overflowItems ??
+                    (session ? (
+                      <MessageManagementItems row={row} session={session} />
+                    ) : undefined)}
+                  {reportItem}
+                </>
               }
             />
           )}

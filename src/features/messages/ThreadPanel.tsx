@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { MessageEditScope } from "./MessageEditScope";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
 import { replyTree } from "./reply-tree";
@@ -585,7 +586,7 @@ function ThreadMessages({
   }
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
   return (
-    <>
+    <MessageEditScope>
       <section
         ref={scroller}
         className={styles.threadHistory}
@@ -752,6 +753,6 @@ function ThreadMessages({
           }}
         />
       )}
-    </>
+    </MessageEditScope>
   );
 }

@@ -185,16 +185,22 @@
   }
 
   .shell-header {
-    @apply flex h-14 shrink-0 items-center justify-between gap-3 px-4;
+    @apply flex shrink-0 items-center justify-between;
+    height: 48px;
+    padding-inline: var(--space-4);
+    gap: var(--space-2);
+    background: color-mix(in srgb, var(--bg-app) 72%, var(--surface-panel));
   }
   .shell-communities {
     @apply flex min-w-0 items-center justify-start;
+    gap: var(--space-1);
+    padding-left: var(--space-4);
   }
   .shell-communities > .navigation-item {
     flex-shrink: 1;
   }
   .shell-header-mac .shell-communities {
-    padding-left: var(--space-16);
+    padding-left: calc(var(--space-16) + var(--space-4));
   }
   .shell-pages {
     @apply flex min-h-0 min-w-0 flex-col gap-1 overflow-y-auto;
@@ -206,6 +212,26 @@
   }
   .shell-navigation {
     display: contents;
+  }
+  .shell-navigation[data-sidebar-collapsible] {
+    display: flex;
+    min-width: 0;
+    flex: none;
+    width: var(--shell-navigation-width, 260px);
+    margin-right: var(--space-panel-gap);
+    overflow: clip;
+    transition:
+      width var(--duration-settle) cubic-bezier(0.22, 1, 0.36, 1),
+      margin-right var(--duration-settle) cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .shell-navigation[data-sidebar-collapsible][aria-hidden="true"] {
+    width: 0;
+    margin-right: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .shell-navigation[data-sidebar-collapsible] {
+      transition: none;
+    }
   }
   .shell-navigation-toggle {
     display: none;
@@ -226,12 +252,35 @@
   .shell-sidebar-default > * {
     @apply min-w-0 flex-1;
   }
+  .shell-navigation[data-sidebar-collapsible] > .shell-sidebar {
+    flex: none;
+    max-width: none;
+  }
   .shell-actions {
-    @apply flex items-center justify-end gap-2;
+    @apply flex items-center justify-end;
+    gap: var(--space-2);
+  }
+  .shell-header .buzz-button[data-icon-variant="chrome"] {
+    width: 28px;
+    height: 28px;
+    background: var(--surface-panel);
+    box-shadow: none;
+  }
+  .shell-header .buzz-button[data-icon-variant="chrome"] svg {
+    width: 16px;
+    height: 16px;
+  }
+  .shell-header
+    .buzz-button[data-icon-variant="chrome"]:hover:not([data-disabled]) {
+    background: var(--affordance-subtle-hover);
   }
   @media (max-width: 700px) {
     .shell-header {
-      @apply gap-2 px-2;
+      padding-inline: var(--space-2);
+      gap: var(--space-2);
+    }
+    .shell-communities {
+      padding-left: var(--space-4);
     }
   }
   @media (max-width: 650px) {

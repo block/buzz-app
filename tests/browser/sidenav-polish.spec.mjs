@@ -192,6 +192,114 @@ test("section disclosure toggles content and honors reduced motion", async ({
   ).toBe(28);
 });
 
+// The shell owns sidebar visibility while the mounted sidebar owns route and width state.
+test("shell toggle restores the shared sidebar for Channels and Agents", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const rail = page.getByRole("navigation", { name: "Communities" });
+  const shellNavigation = page.locator("#shell-navigation");
+  const sidebar = page.getByRole("complementary", {
+    name: "Channel sidebar",
+    exact: true,
+  });
+  const sidebarNode = await sidebar.elementHandle();
+  const expandedWidth = (await sidebar.boundingBox()).width;
+  const track = await shellNavigation.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return {
+      width: node.getBoundingClientRect().width,
+      property: style.transitionProperty,
+      duration: style.transitionDuration,
+    };
+  });
+  expect(track.width).toBe(expandedWidth);
+  expect(track.property).toContain("width");
+  expect(track.property).toContain("margin-right");
+  expect(parseFloat(track.duration)).toBeGreaterThan(0);
+  const openGap = await page.evaluate(() => {
+    const nav = document.querySelector("#shell-navigation");
+    const main = document.querySelector("#main-content");
+    if (!(nav instanceof HTMLElement) || !(main instanceof HTMLElement))
+      throw new Error("Missing shell panels");
+    return {
+      actual:
+        main.getBoundingClientRect().left - nav.getBoundingClientRect().right,
+      token: Number.parseFloat(getComputedStyle(nav).marginRight),
+    };
+  });
+  expect(openGap.actual).toBe(openGap.token);
+  expect(openGap.actual).toBeGreaterThan(0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect
+    .poll(() =>
+      shellNavigation.evaluate(
+        (node) => getComputedStyle(node).transitionDuration,
+      ),
+    )
+    .toBe("0s");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
+  await page.getByRole("button", { name: "Show Channel sidebar" }).click();
+  await expect
+    .poll(() =>
+      shellNavigation.evaluate((node) => node.getBoundingClientRect().width),
+    )
+    .toBe(expandedWidth);
+
+  await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
+  await expect(shellNavigation).toHaveAttribute("aria-hidden", "true");
+  await expect(sidebar).not.toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const nav = document.querySelector("#shell-navigation");
+        const main = document.querySelector("#main-content");
+        if (!(nav instanceof HTMLElement) || !(main instanceof HTMLElement))
+          throw new Error("Missing shell panels");
+        return (
+          main.getBoundingClientRect().left - nav.getBoundingClientRect().right
+        );
+      }),
+    )
+    .toBe(0);
+  await expect(rail).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Show Channel sidebar" }).click();
+  await expect(shellNavigation).not.toHaveAttribute("aria-hidden", "true");
+  await expect(sidebar).toBeVisible();
+  expect(await sidebarNode.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  expect((await sidebar.boundingBox()).width).toBe(expandedWidth);
+
+  await sidebar.getByRole("button", { name: "Agents", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Agents", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
+  await expect(sidebar).not.toBeVisible();
+  await expect(rail).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Agents", exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Show Channel sidebar" }).click();
+  await expect(sidebar).toBeVisible();
+  expect(await sidebarNode.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  expect((await sidebar.boundingBox()).width).toBe(expandedWidth);
+  await expect(
+    sidebar.getByRole("button", { name: "Agents", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+});
+
 // A real grid/overlay measurement is needed: DOM presence misses implicit columns.
 test("placeholder destinations retain companion layout across navigation and resize", async ({
   page,

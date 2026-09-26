@@ -9,7 +9,7 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
   const state = useSyncExternalStore(navigation.subscribe, navigation.snapshot);
   return (
     <nav
-      className="mr-2 flex shrink-0 items-center gap-0.5"
+      className="flex shrink-0 items-center gap-1"
       aria-label="Navigation history"
     >
       <IconButton

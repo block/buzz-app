@@ -36,7 +36,7 @@ export function PanelLaunchers({
 function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
   return failed ? (
-    <SidebarIcon size={18} aria-hidden="true" />
+    <SidebarIcon size={16} aria-hidden="true" />
   ) : (
     <img
       src={src}

@@ -109,6 +109,28 @@ it("fences broad and ID reads across revoke/regrant, and accepts fresh work only
   expect(view.snapshot().events.map((e) => e.content)).toEqual(["fresh"]);
 });
 
+it.each([
+  [{ authors: [viewer.pubkey], kinds: [30177, 9] }],
+  [{ authors: [viewer.pubkey], kinds: [30177] }, { kinds: [9] }],
+  [{ authors: [alice.pubkey], kinds: [30177] }],
+  [{ authors: [viewer.pubkey], kinds: [30177], "#h": ["a"] }],
+  [{ authors: [viewer.pubkey], kinds: [30177], ids: ["a".repeat(64)] }],
+])(
+  "does not exempt mixed or non-owner inventory-shaped reads from revocation: %j",
+  async (...filters) => {
+    const h = setup();
+    h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
+    const read = h.session.read(
+      filters.map((filter) => ({ ...filter, limit: 20 })),
+    );
+    const request = h.next();
+    const rejected = expect(read).rejects.toMatchObject({ name: "AbortError" });
+    h.emit([roster(relay, "a", [], 11)]);
+    expect(request.signal?.aborted).toBe(true);
+    await rejected;
+  },
+);
+
 it("a complete roster omitting a generic-only channel purges it; partial live discovery does not", async () => {
   const h = setup();
   h.emit([message(alice, "a", "private", 10)]);

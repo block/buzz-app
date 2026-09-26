@@ -23,8 +23,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     app.report.brokerRequests.filter(({ url }) =>
       url.endsWith("/agent-library"),
     ).length;
-  // Shared naming loads inventory once on session activation. Link previews
-  // reuse that evidence rather than starting another library read.
+  // Owner inventory survives the startup roster; previews add no further read.
   await expect.poll(libraryReads).toBe(1);
   const history = app.histories.get("primary/alpha");
   const target = history.find((row) => row.content === "Broadcast reply");

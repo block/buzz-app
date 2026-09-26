@@ -12,6 +12,8 @@ import type { AgentProviders, AgentWork } from "./providers";
 
 const LEDGER = "buzz.agent-triggers.v1";
 const READ_LIMIT = 100;
+/** Pages per agent per scan before the floor is held for the next scan. */
+const MAX_PAGES = 10;
 /** Re-read this far back each scan; the handled ledger removes repeats. */
 const OVERLAP_SECONDS = 600;
 const RETAIN_SECONDS = 7 * 24 * 60 * 60;
@@ -126,6 +128,11 @@ function startScope(
   let scanning = false;
   let again = false;
   let bound = "";
+  let listReady = false;
+  /** Per agent: dispatches run one at a time, in mention order. */
+  const queues = new Map<string, Promise<void>>();
+  /** Invites sent this scope; the roster may not reflect them yet. */
+  const invited = new Set<string>();
 
   /** Provider-backed agents in this community whose provider is active now. */
   const agents = (): AgentView[] => {
@@ -171,31 +178,63 @@ function startScope(
     }
   }
 
+  /** Newest first, paged back to the floor. `complete` is false if pages ran out. */
+  async function readMentions(agent: AgentView, since: number) {
+    const found = new Map<string, VisibleEvent>();
+    let until: number | undefined;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const events = (await session.read(
+        [
+          {
+            kinds: [9],
+            "#p": [agent.pubkey],
+            since,
+            ...(until === undefined ? {} : { until }),
+            limit: READ_LIMIT,
+          },
+        ],
+        { signal: lifetime.signal, fresh: true, priority: "background" },
+      )) as readonly VisibleEvent[];
+      const before = found.size;
+      for (const event of events) found.set(event.id, event);
+      if (events.length < READ_LIMIT)
+        return { events: [...found.values()], complete: true };
+      // A full page of one second cannot page further by time.
+      if (found.size === before) break;
+      until = Math.min(...events.map((event) => event.created_at));
+    }
+    return { events: [...found.values()], complete: false };
+  }
+
   async function scanOnce() {
     const targets = agents();
     if (!targets.length) return;
+    // Membership is the admission rule; an unloaded roster would drop real mentions.
+    const list = session.channels.list();
+    if (list.status !== "ready") {
+      session.channels.ensureList();
+      return;
+    }
     const now = Math.floor(Date.now() / 1000);
     const ledger = loadLedger(storage, key);
     // A newly bound agent starts listening now; earlier history is never replayed.
     for (const agent of targets) ledger.floors[agent.pubkey] ??= now - 60;
     saveLedger(storage, key, ledger, now);
     // One filter per agent: the relay only narrows a single-value #p in SQL.
-    const events = (await session.read(
-      targets.map((agent) => ({
-        kinds: [9],
-        "#p": [agent.pubkey],
-        since: ledger.floors[agent.pubkey] ?? now - 60,
-        limit: READ_LIMIT,
-      })),
-      { signal: lifetime.signal, fresh: true, priority: "background" },
-    )) as readonly VisibleEvent[];
+    const reads = await Promise.all(
+      targets.map((agent) =>
+        readMentions(agent, ledger.floors[agent.pubkey] ?? now - 60),
+      ),
+    );
     if (lifetime.signal.aborted) return;
     const agentKeys = new Set(
       (control.snapshot().data?.agents ?? []).map((agent) => agent.pubkey),
     );
-    const ordered = [...events].sort(
-      (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-    );
+    const ordered = [
+      ...new Map(
+        reads.flatMap((read) => read.events).map((event) => [event.id, event]),
+      ).values(),
+    ].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
     for (const event of ordered) {
       // Only relay-accepted events; a pending local send is not yet work.
       if (event.delivery && !["accepted", "seen"].includes(event.delivery))
@@ -219,19 +258,33 @@ function startScope(
         // Record before dispatch: at most once, never a blind replay after a crash.
         ledger.handled[deliveryId] = now;
         saveLedger(storage, key, ledger, now);
-        void dispatch(agent, event, channelId, deliveryId).catch((error) => {
-          if (!lifetime.signal.aborted)
-            console.warn(`Agent provider failed for ${agent.name}`, error);
-        });
+        const previous = queues.get(agent.pubkey) ?? Promise.resolve();
+        const next = previous.then(() =>
+          dispatch(agent, event, channelId, deliveryId).catch((error) => {
+            if (!lifetime.signal.aborted)
+              console.warn(`Agent provider failed for ${agent.name}`, error);
+          }),
+        );
+        queues.set(agent.pubkey, next);
       }
     }
-    for (const agent of targets)
+    targets.forEach((agent, index) => {
+      // A truncated read holds the floor so the next scan still reaches older mentions.
+      if (!reads[index]?.complete) return;
       ledger.floors[agent.pubkey] = Math.max(
         ledger.floors[agent.pubkey] ?? 0,
         now - OVERLAP_SECONDS,
       );
+    });
     saveLedger(storage, key, ledger, now);
   }
+
+  /** Undo the handled mark for work that never reached the provider. */
+  const release = (deliveryId: string) => {
+    const ledger = loadLedger(storage, key);
+    delete ledger.handled[deliveryId];
+    saveLedger(storage, key, ledger, Math.floor(Date.now() / 1000));
+  };
 
   async function dispatch(
     agent: AgentView,
@@ -242,13 +295,30 @@ function startScope(
     const provider = providers
       .snapshot()
       .find((entry) => entry.key === agent.provider);
-    if (!provider || !agent.provider) return;
+    if (lifetime.signal.aborted || !provider || !agent.provider) {
+      release(deliveryId);
+      return;
+    }
     const channel =
       session.channels.list().channels.find((item) => item.id === channelId) ??
       session.channels.get?.(channelId);
+    const membership = `${channelId}:${agent.pubkey}`;
     // The owner invites the agent before it acts; the relay then admits its reads/writes.
-    if (!channel?.members?.includes(agent.pubkey))
-      await addChannelMember(session, channelId, agent.pubkey, lifetime.signal);
+    if (!channel?.members?.includes(agent.pubkey) && !invited.has(membership)) {
+      try {
+        await addChannelMember(
+          session,
+          channelId,
+          agent.pubkey,
+          lifetime.signal,
+        );
+      } catch (error) {
+        // Interrupted by a reconnect or switch: the next scope retries it.
+        if (lifetime.signal.aborted) release(deliveryId);
+        throw error;
+      }
+      invited.add(membership);
+    }
     const thread = threadReference(event);
     const work: AgentWork = Object.freeze({
       deliveryId,
@@ -292,16 +362,28 @@ function startScope(
   const stopSend =
     session.outbox?.observeSend((event) => {
       if (event.kind !== 9 || event.pubkey !== viewer) return;
-      const targets = new Set(agents().map((agent) => agent.pubkey));
-      if (
-        !event.tags.some(
-          ([name, value]) => name === "p" && targets.has(value ?? ""),
-        )
-      )
-        return;
+      const targets = agents()
+        .map((agent) => agent.pubkey)
+        .filter((pubkey) => mentions(event, pubkey));
+      if (!targets.length) return;
       // Runs after the relay accepts the send.
-      return () => schedule(0);
+      return () => {
+        // A send queued while offline keeps its original time; reach back for it.
+        const ledger = loadLedger(storage, key);
+        for (const pubkey of targets) {
+          const floor = ledger.floors[pubkey];
+          if (floor !== undefined && event.created_at < floor)
+            ledger.floors[pubkey] = event.created_at;
+        }
+        saveLedger(storage, key, ledger, Math.floor(Date.now() / 1000));
+        schedule(0);
+      };
     }) ?? (() => {});
+  const stopList = session.channels.subscribeList(() => {
+    const ready = session.channels.list().status === "ready";
+    if (ready && !listReady) schedule(0);
+    listReady = ready;
+  });
   const stopControl = control.subscribe(rebind);
   const stopProviders = providers.subscribe(rebind);
   // Catch-up needs the local inventory; read it once if nothing has yet.
@@ -314,6 +396,7 @@ function startScope(
     clearTimeout(timer);
     stopIncoming();
     stopSend();
+    stopList();
     stopControl();
     stopProviders();
   };

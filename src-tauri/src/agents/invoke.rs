@@ -1,5 +1,6 @@
 //! One-shot provider processes that act as a provider-backed agent. The renderer
-//! chooses the program and input; native supplies only this agent's credential.
+//! chooses a bundled tool and its input; native supplies only this agent's credential
+//! and never returns it.
 use super::{run, AgentHost};
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
@@ -89,7 +90,7 @@ pub(crate) async fn agent_control_invoke(
         .await
         .map_err(|_| "Native credential operation failed".to_owned())??
         .ok_or("Saved agent key is unavailable; nothing was run")?;
-    let (std_command, _temporary) = invocation.command(&key, &request.args)?;
+    let (std_command, _temporary, redaction) = invocation.command(&key, &request.args)?;
     drop(key);
     let mut command = tokio::process::Command::from(std_command);
     command.kill_on_drop(true);
@@ -99,7 +100,7 @@ pub(crate) async fn agent_control_invoke(
         .spawn()
         .map_err(|_| "Could not start the provider program")?;
     #[cfg(unix)]
-    let mut group = ProcessGroup(child.id().unwrap_or(0) as i32, child.id().is_some());
+    let group = ProcessGroup(child.id().unwrap_or(0) as i32, child.id().is_some());
     let stdin = child.stdin.take();
     let input = request.input.into_bytes();
     let stdout = child.stdout.take();
@@ -117,15 +118,14 @@ pub(crate) async fn agent_control_invoke(
     .await;
     match outcome {
         Ok((stdout, stderr, status)) => {
+            // Nothing the invocation started outlives it, with or without the key.
             #[cfg(unix)]
-            {
-                group.1 = false;
-            }
+            drop(group);
             Ok(InvokeResult {
                 exit_code: status.ok().and_then(|s| s.code()),
                 timed_out: false,
-                stdout,
-                stderr,
+                stdout: redaction.apply(stdout),
+                stderr: redaction.apply(stderr),
             })
         }
         Err(_) => {

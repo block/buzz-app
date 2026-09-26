@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use zeroize::Zeroizing;
 
 const PROVIDER: &str = "provider";
 const PROVIDER_CONFIG: &str = "providerConfig";
@@ -79,6 +80,16 @@ impl Agent {
     }
 }
 
+/// The key's encodings, removed from anything a provider process prints back.
+pub struct Redaction(Vec<Zeroizing<String>>);
+impl Redaction {
+    pub fn apply(&self, text: String) -> String {
+        self.0.iter().fold(text, |text, secret| {
+            text.replace(secret.as_str(), "[redacted]")
+        })
+    }
+}
+
 /// Native-only launch input for one provider invocation. Never serialized.
 pub struct Invocation {
     pub credential_id: String,
@@ -112,17 +123,11 @@ impl Controller {
             return Err("Agent workspace does not exist".into());
         }
         let bundle = self.bundle.as_ref().map_err(Clone::clone)?;
-        // Bare names are integrity-checked bundled tools; anything else is an absolute executable.
-        let resolved = if program.contains('/') || program.contains('\\') {
-            let path = PathBuf::from(program);
-            if !path.is_absolute() {
-                return Err("Provider programs must be bundled tools or absolute paths".into());
-            }
-            crate::runtime::executable(&path)?;
-            path
-        } else {
-            bundle.executable(program)?
-        };
+        // Only integrity-checked bundled tools: an arbitrary program could hand the key back.
+        if program.contains('/') || program.contains('\\') {
+            return Err("Provider programs must be bundled tools".into());
+        }
+        let resolved = bundle.executable(program)?;
         let runs = self.store.root().join("runs");
         crate::connection::private_directory(&runs)?;
         Ok(Invocation {
@@ -139,7 +144,11 @@ impl Controller {
 }
 impl Invocation {
     /// The returned directory must outlive the process: it is the child's TMPDIR.
-    pub fn command(&self, key: &Secret, args: &[String]) -> Result<(Command, tempfile::TempDir)> {
+    pub fn command(
+        &self,
+        key: &Secret,
+        args: &[String],
+    ) -> Result<(Command, tempfile::TempDir, Redaction)> {
         if key.pubkey() != self.pubkey {
             return Err("Credential does not match the saved agent".into());
         }
@@ -183,7 +192,9 @@ impl Invocation {
             .env("NOSTR_PRIVATE_KEY", &*key_hex)
             .env("BUZZ_RELAY_URL", &self.relay_url)
             .env("BUZZ_AUTH_TAG", &self.auth_tag);
-        Ok((command, temporary))
+        let upper = Zeroizing::new(key_hex.to_ascii_uppercase());
+        let redaction = Redaction(vec![key_hex, upper, key.nsec()?]);
+        Ok((command, temporary, redaction))
     }
     pub fn workspace(&self) -> &Path {
         &self.workspace

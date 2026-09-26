@@ -86,20 +86,32 @@ function fixture(agent = agentView()) {
   let events: VisibleEvent[] = [];
   const reads: unknown[] = [];
   const incoming = new Set<() => void>();
+  const lists = new Set<() => void>();
+  let listStatus = "ready";
   const members = new Map([
     [CHANNEL, [OWNER, AGENT]],
     [STRANGER_CHANNEL, [OTHER, AGENT]],
   ]);
   const session = {
     viewer: OWNER,
-    read: vi.fn(async (filters: unknown) => {
+    read: vi.fn(async (filters: { until?: number; limit: number }[]) => {
       reads.push(filters);
-      return events;
+      const until = filters[0]?.until ?? Number.POSITIVE_INFINITY;
+      return events
+        .filter((event) => event.created_at <= until)
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, filters[0]?.limit);
     }),
     channels: {
       list: () => ({
+        status: listStatus,
         channels: [...members].map(([id, list]) => ({ id, members: list })),
       }),
+      ensureList: () => {},
+      subscribeList(listener: () => void) {
+        lists.add(listener);
+        return () => lists.delete(listener);
+      },
     },
     subscribeIncoming(listener: () => void) {
       incoming.add(listener);
@@ -169,6 +181,11 @@ function fixture(agent = agentView()) {
     arrive: () => {
       for (const listener of incoming) listener();
     },
+    setListStatus: (status: string) => {
+      listStatus = status;
+      for (const listener of lists) listener();
+    },
+    store,
     disable: () => {
       active = [];
       for (const listener of providerListeners) listener();
@@ -271,5 +288,35 @@ test("a disabled provider reads nothing and dispatches nothing", async () => {
   await vi.advanceTimersByTimeAsync(1000);
   expect(f.reads).toEqual([]);
   expect(f.handled).toEqual([]);
+  stop();
+});
+
+test("mentions wait for the channel roster instead of being dropped", async () => {
+  const f = fixture();
+  f.setListStatus("loading");
+  const stop = f.bind();
+  f.setEvents([message("early", OWNER, { created_at: NOW - 30 })]);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.handled).toEqual([]);
+  expect(f.reads).toEqual([]);
+  f.setListStatus("ready");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.handled.map((work) => work.message.content)).toEqual([
+    "@Acky early",
+  ]);
+  stop();
+});
+
+test("a full page reads back further and holds the floor if it runs out", async () => {
+  const f = fixture();
+  const stop = f.bind();
+  f.setEvents(
+    Array.from({ length: 250 }, (_, index) =>
+      message(`m${index}`, OWNER, { created_at: NOW - 50 + (index % 50) }),
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.handled).toHaveLength(250);
+  expect(f.reads.length).toBeGreaterThan(1);
   stop();
 });

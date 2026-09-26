@@ -90,6 +90,11 @@ export function AgentCreateDialog({
   const blocked = busy || state.busy || state.status !== "ready";
   const create = async () => {
     if (blocked || runtimeBlocked || !available || !control.create) return;
+    // A provider that disappears mid-dialog must not fall back to a harness agent.
+    if (providerKey && !source && !provider && !saved) {
+      setError("That provider is no longer enabled.");
+      return;
+    }
     if (provider && !saved && !draft.name.trim()) {
       setError("Enter an agent name.");
       return;

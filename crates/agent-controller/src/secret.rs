@@ -161,6 +161,12 @@ impl Secret {
     pub fn pubkey(&self) -> &str {
         &self.pubkey
     }
+    pub(crate) fn nsec(&self) -> Result<Zeroizing<String>> {
+        let hrp = bech32::Hrp::parse("nsec").map_err(|_| "Agent key is malformed")?;
+        Ok(Zeroizing::new(
+            bech32::encode::<Bech32>(hrp, &*self.bytes).map_err(|_| "Agent key is malformed")?,
+        ))
+    }
     pub fn hex(&self) -> Zeroizing<String> {
         use std::fmt::Write;
         let mut output = Zeroizing::new(String::with_capacity(64));

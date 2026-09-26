@@ -1796,6 +1796,7 @@ fn provider_agents_never_start_and_invoke_only_as_their_provider() {
     for (provider, program) in [
         ("other.plugin/x", "buzz"),
         ("buzz.ackbot/ackbot", "relative/buzz"),
+        ("buzz.ackbot/ackbot", "/usr/bin/env"),
         ("buzz.ackbot/ackbot", "not-bundled"),
     ] {
         assert!(controller.invocation(&bound.id, provider, program).is_err());
@@ -1804,7 +1805,13 @@ fn provider_agents_never_start_and_invoke_only_as_their_provider() {
         .invocation(&bound.id, "buzz.ackbot/ackbot", "buzz")
         .unwrap();
     let key = Secret::parse(KEY, PUB).unwrap();
-    let (command, temporary) = invocation.command(&key, &["messages".into()]).unwrap();
+    let (command, temporary, redaction) = invocation.command(&key, &["messages".into()]).unwrap();
+    let printed = format!(
+        "{KEY} {} {}",
+        KEY.to_ascii_uppercase(),
+        &*key.nsec().unwrap()
+    );
+    assert_eq!(redaction.apply(printed), "[redacted] [redacted] [redacted]");
     assert_eq!(command.get_program(), tools.path().join("buzz").as_os_str());
     assert_eq!(command.get_current_dir(), Some(dir.path()));
     let env: BTreeMap<_, _> = command

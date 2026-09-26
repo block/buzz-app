@@ -5,8 +5,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
+import type { AttachmentUpload } from "../../features/relay/attachments";
 import { createRelaySession } from "../../features/relay/session";
-import { UploadError } from "../../features/relay/attachments";
+import { UPLOAD_FAILURES, UploadError } from "../../features/relay/attachments";
+import { PublishRejected } from "../../features/relay/outbox";
 import { keypair, signed } from "../../features/relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { CustomEmojiSettings } from "./CustomEmojiSettings";
@@ -28,9 +30,17 @@ function relayStore() {
   ) =>
     (!filter.kinds || filter.kinds.includes(event.kind)) &&
     (!filter.authors || filter.authors.includes(event.pubkey));
+  const failures: Error[] = [];
   return {
     stored,
-    connect(upload = vi.fn()) {
+    /** Queue a relay rejection for the next publish. */
+    rejectNext(error: Error) {
+      failures.push(error);
+    },
+    connect(
+      upload: AttachmentUpload | null = vi.fn(),
+      kinds?: readonly number[],
+    ) {
       const owner = createRelaySession(
         {
           viewer: viewer.pubkey,
@@ -42,10 +52,13 @@ function relayStore() {
               filters.some((filter) => matches(event, filter)),
             );
           },
-          uploadAttachment: upload,
+          ...(upload ? { uploadAttachment: upload } : {}),
           writer: {
+            ...(kinds ? { kinds } : {}),
             sign: async (template) => signed(viewer, template),
             async publish(event) {
+              const failure = failures.shift();
+              if (failure) throw failure;
               // NIP-33: the relay keeps only the latest set per coordinate.
               stored.splice(0, stored.length, event);
             },
@@ -161,4 +174,43 @@ it("shows reference copy for invalid names, non-images and upload failures", asy
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Save emoji" })).toBeDisabled();
   expect(store.stored).toEqual([]);
+});
+
+it("shows the failed save, keeps the draft and saves on retry", async () => {
+  const user = userEvent.setup();
+  const store = relayStore();
+  store.connect(vi.fn(async (file: File) => uploaded(file)));
+  await screen.findByText("You haven't added any emoji yet. Add one above.");
+  await user.upload(screen.getByLabelText("Upload image"), png("wave.png"));
+  await screen.findByRole("img", { name: "Selected custom emoji preview" });
+  store.rejectNext(new PublishRejected("blocked: no"));
+  const save = screen.getByRole("button", { name: "Save emoji" });
+  await user.click(save);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Failed to add emoji.",
+  );
+  expect(save).toBeEnabled();
+  expect(screen.getByRole("textbox")).toHaveValue("wave");
+  expect(store.stored).toEqual([]);
+  await user.click(save);
+  expect(await screen.findByText("Added :wave:")).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(store.stored[0]?.tags).toContainEqual([
+    "emoji",
+    "wave",
+    `${origin}/media/${"a".repeat(64)}.png`,
+  ]);
+});
+
+it("hides the add form, without new copy, when the session cannot author emoji", async () => {
+  const store = relayStore();
+  const view = store.connect(vi.fn(), [9]);
+  await screen.findByText("You haven't added any emoji yet. Add one above.");
+  expect(screen.queryByText("Add emoji")).toBeNull();
+  expect(screen.queryByText(UPLOAD_FAILURES.unavailable)).toBeNull();
+  view.unmount();
+  store.connect(null);
+  await screen.findByText("You haven't added any emoji yet. Add one above.");
+  expect(screen.queryByLabelText("Upload image")).toBeNull();
+  expect(screen.queryByText(UPLOAD_FAILURES.unavailable)).toBeNull();
 });

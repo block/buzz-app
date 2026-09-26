@@ -11,7 +11,7 @@ import { StrictMode, type ReactNode } from "react";
 import { ChannelTimeline } from "./ChannelTimeline";
 import { createRelaySession } from "../relay/session";
 import type { ChannelWindow } from "../relay/contracts";
-import { keypair, message, roster, scriptedTransport } from "../relay/testing";
+import { keypair, message, scriptedTransport } from "../relay/testing";
 import { writeView } from "../../shared/view-state";
 
 // Real React lifecycle; only the virtualizer's imperative layout boundary is
@@ -76,11 +76,7 @@ function mount() {
     relay = keypair();
   const target = message(viewer, "c", "Saved reading anchor", 1);
   const owner = createRelaySession(
-    scriptedTransport(viewer.pubkey, relay.pubkey, (filter) =>
-      filter.kinds?.includes(39002)
-        ? [roster(relay, "c", [viewer.pubkey], 1)]
-        : [],
-    ).transport,
+    scriptedTransport(viewer.pubkey, relay.pubkey).transport,
   );
   owners.push(owner);
   writeView("scope", "scroll:c", {
@@ -93,6 +89,8 @@ function mount() {
     status: "ready",
     freshness: "cached",
     hasMore: false,
+    loadingOlder: false,
+    error: undefined,
     rows: [
       {
         id: target.id,

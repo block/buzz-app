@@ -2489,8 +2489,7 @@ it("uses the full channel choice set for one selected chip and follows membershi
     providers = [
       {
         ...createAgentDirectory(),
-        resolve: () => "Alternative",
-        qualifier: () => undefined,
+        scope: () => () => ({ name: "Alternative" }),
       },
     ];
     policyChanged();

@@ -220,3 +220,34 @@ it("bounds lock-contention retries and never requests a signer when challenge st
     vi.useRealTimers();
   }
 });
+
+it("retries a provider invoke that hits host contention before anything runs", async () => {
+  vi.useFakeTimers();
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(invoke).mockReset();
+  const result = { exitCode: 0, timedOut: false, stdout: "", stderr: "" };
+  vi.mocked(invoke)
+    .mockRejectedValueOnce("Another native agent operation is in progress")
+    .mockRejectedValueOnce("Another native agent operation is in progress")
+    .mockResolvedValueOnce(result as never);
+  const host = nativeAgentControlHost();
+  if (!host?.invoke) throw new Error("Missing fixture host");
+  const request = { id: "exact-id", provider: "p/q", program: "buzz" };
+  try {
+    const run = host.invoke(request);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(await run).toEqual(result);
+    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(invoke).toHaveBeenLastCalledWith("agent_control_invoke", {
+      request,
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+  vi.mocked(invoke).mockReset();
+  vi.mocked(invoke).mockRejectedValueOnce("Saved agent key is unavailable");
+  await expect(host.invoke(request)).rejects.toBe(
+    "Saved agent key is unavailable",
+  );
+  expect(invoke).toHaveBeenCalledTimes(1);
+});

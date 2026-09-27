@@ -14,16 +14,21 @@ import {
   rename,
   rm,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const spec = JSON.parse(
   await readFile(join(root, "runtime/agent-runtime.json"), "utf8"),
 );
+// Build inputs come only from the pin and toolchain, so cached bundles are
+// interchangeable: drop injected credentials and per-shell compiler overrides.
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
     ([key]) =>
-      !/^(BUZZ_|BUZZODZ_|NOSTR_|DATABRICKS_|CARGO_TARGET_DIR$)/.test(key),
+      !/^(BUZZ_|BUZZODZ_|NOSTR_|DATABRICKS_|CARGO_(BUILD|ENCODED|PROFILE|TARGET)_|RUSTC$|RUSTC_|RUSTFLAGS$|RUSTDOCFLAGS$)/.test(
+        key,
+      ),
   ),
 );
 env.PATH = `${join(root, "bin")}:${env.PATH ?? ""}`;
@@ -107,7 +112,7 @@ async function verifiedBundle(directory) {
         .digest("hex");
       if (manifest.files[filename] !== hash) return false;
     }
-    return true;
+    return manifest;
   } catch {
     return false;
   }
@@ -139,24 +144,33 @@ async function publish(source, directory) {
     join(directory, "manifest.json.new"),
     join(directory, "manifest.json"),
   );
+  return manifest;
 }
 if (await verifiedBundle(destination)) {
   console.log(`Agent runtime ready (${spec.revision}, ${target})`);
   process.exit(0);
 }
 const cache = cachedBundle();
-if (cache && (await verifiedBundle(cache))) {
-  await publish(cache, destination);
-  console.log(
-    `Verified inputs restored from ${cache} (${spec.revision}, ${target})`,
-  );
-  process.exit(0);
+const cached = cache && (await verifiedBundle(cache));
+if (cached) {
+  // A concurrent repair may replace a corrupt entry mid-copy; mismatches rebuild.
+  const restored = await publish(cache, destination).catch(() => undefined);
+  if (
+    restored &&
+    filenames.every((f) => restored.files[f] === cached.files[f])
+  ) {
+    console.log(
+      `Verified inputs restored from ${cache} (${spec.revision}, ${target})`,
+    );
+    process.exit(0);
+  }
+  await rm(join(destination, "manifest.json"), { force: true });
 }
 console.log(
   "Preparing the agent runtime; the first build can take several minutes.",
 );
-await mkdir(join(root, "target"), { recursive: true });
-const stage = await mkdtemp(join(root, "target/agent-runtime-stage-"));
+// Outside the worktree, so no checkout's Cargo config reaches the build.
+const stage = await mkdtemp(join(tmpdir(), "buzz-agent-runtime-"));
 try {
   const source = join(stage, "source");
   await mkdir(source);
@@ -179,14 +193,26 @@ try {
   console.log(
     `Verified inputs staged at ${destination} (${spec.revision}, ${target})`,
   );
-  if (cache) {
-    // Publish whole entries by rename; a concurrent build may win the race.
+  // Verified entries are immutable because other worktrees may be copying them.
+  // Only a missing or corrupt entry is replaced, by rename; caching is best-effort.
+  if (cache && !cached) {
     const entry = `${cache}.${process.pid}.new`;
-    await publish(destination, entry);
-    await rm(cache, { recursive: true, force: true });
-    await rename(entry, cache).catch(() =>
-      rm(entry, { recursive: true, force: true }),
-    );
+    const stale = `${cache}.${process.pid}.old`;
+    try {
+      await publish(destination, entry);
+      // Renaming onto an existing entry fails; keep it if a concurrent build
+      // published it, and move it aside only if it is still corrupt.
+      await rename(entry, cache).catch(async () => {
+        if (await verifiedBundle(cache)) return;
+        await rename(cache, stale);
+        await rename(entry, cache);
+      });
+    } catch {
+      // Losing a repair race leaves the other build's entry in place.
+    } finally {
+      await rm(entry, { recursive: true, force: true });
+      await rm(stale, { recursive: true, force: true });
+    }
   }
 } finally {
   await rm(stage, { recursive: true, force: true });

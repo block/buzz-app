@@ -148,6 +148,8 @@ test("worktrees of one clone reuse a verified runtime built from identical input
   rmSync(bundle(two), { recursive: true });
   assert.match(run(two), /Verified inputs staged/);
   assert.ok(built(two));
+  rmSync(bundle(one), { recursive: true });
+  assert.match(run(one), /Verified inputs restored/, "repair republishes");
   // Different pinned inputs use a different entry.
   const specPath = path.join(one, "runtime/agent-runtime.json");
   const spec = JSON.parse(readFileSync(specPath, "utf8"));
@@ -157,6 +159,49 @@ test("worktrees of one clone reuse a verified runtime built from identical input
   );
   assert.match(run(one), /Verified inputs staged/);
   assert.equal(readdirSync(path.join(common, "buzz-agent-runtime")).length, 2);
+});
+
+test("a build that finishes after a concurrent publish keeps the published entry", (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const common = path.join(directory, "common");
+  const [one, two] = ["one", "two"].map((name) => {
+    const root = path.join(directory, name);
+    runtimeFixture(root);
+    writeFileSync(path.join(root, "git-common-dir"), common);
+    return root;
+  });
+  // While two compiles, one builds and publishes the same key.
+  writeFileSync(path.join(two, "during-build"), one);
+  const result = spawnSync(
+    process.execPath,
+    ["scripts/build-agent-runtime.mjs"],
+    {
+      cwd: two,
+      encoding: "utf8",
+      timeout: 10_000,
+      // Per-shell compiler overrides are scrubbed, so the fixture Cargo succeeds.
+      env: {
+        ...process.env,
+        RUSTFLAGS: "-C target-cpu=native",
+        RUSTC_WRAPPER: "sccache",
+        CARGO_PROFILE_RELEASE_OPT_LEVEL: "0",
+      },
+    },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const entries = path.join(common, "buzz-agent-runtime");
+  assert.equal(readdirSync(entries).length, 1, "no leftover staging entries");
+  const [entry] = readdirSync(entries);
+  const tool = (dir) => readFileSync(path.join(dir, "buzz"), "utf8");
+  assert.ok(
+    tool(path.join(entries, entry)).endsWith(one),
+    "first publish wins",
+  );
+  assert.ok(
+    tool(path.join(two, "src-tauri/resources/agent-runtime")).endsWith(two),
+  );
 });
 
 test("packaged desktop build prepares runtime before frontend compilation", () => {

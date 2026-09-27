@@ -24,6 +24,15 @@ export function options(args, names) {
   return { values, forwarded, rest: args.slice(index) };
 }
 
+// Tauri must build into this worktree's target/ (see .cargo/config.toml); an
+// inherited target-dir override would let other worktrees overwrite its app.
+export function desktopEnv() {
+  const env = { ...process.env };
+  delete env.CARGO_TARGET_DIR;
+  delete env.CARGO_BUILD_TARGET_DIR;
+  return env;
+}
+
 export function desktopOverlay(root) {
   const config = {};
   const icon = worktreeIcon(root);

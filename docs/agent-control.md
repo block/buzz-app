@@ -468,7 +468,8 @@ bin/cargo build -p buzz-foundation
 [`runtime/agent-runtime.json`](../runtime/agent-runtime.json) pins the five tools
 to the same immutable source revision as the native library. The build script fetches
 that revision and uses pinned Cargo for one `cargo build --release --locked` of all
-five tools, scrubs injected Buzz/provider environment, and stages binaries plus
+five tools outside the checkout, scrubs injected Buzz/provider environment and
+per-shell compiler overrides (`RUSTFLAGS`, `RUSTC_*`, `CARGO_PROFILE_*`, …), and stages binaries plus
 revision/target/SHA256 manifest in `src-tauri/resources/agent-runtime`. Worktrees
 of one clone reuse a verified bundle cached under the Git common directory, keyed
 by the pin, tool list, build arguments and `rustc -vV`. Native build copies them to

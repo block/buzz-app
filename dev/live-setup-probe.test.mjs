@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { generateSecretKey } from "nostr-tools";
-import { parseStrategy, probe, runStrategy } from "./live-setup-probe.mjs";
+import {
+  discoverRoster,
+  parseStrategy,
+  probe,
+  runStrategy,
+} from "./live-setup-probe.mjs";
 
 afterEach(() => vi.useRealTimers());
 /** A relay 20 ms away that answers every REQ at once and caps filters at 10.
@@ -217,4 +222,41 @@ it("keeps a timed-out route failed when its EOSE arrives after CLOSE", async () 
   expect(result).toMatchObject({ failed: 1 });
   expect(result.coverageMs).toBeUndefined();
   expect(result.error).toBeUndefined();
+});
+
+it("fails a roster read that is refused or truncated instead of probing part of it", async () => {
+  /** A relay that sends `count` roster events, then `end`. */
+  const rosterRelay = (count, end) => () => {
+    const socket = {
+      send(text) {
+        const [kind, id] = JSON.parse(text);
+        if (kind === "AUTH") return deliver(["OK", id.id, true]);
+        if (kind !== "REQ") return;
+        for (let i = 0; i < count; i++)
+          deliver(["EVENT", id, { tags: [["d", `channel-${i}`]] }]);
+        deliver(end);
+      },
+      close() {},
+    };
+    const deliver = (frame) =>
+      queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify(frame) }));
+    deliver(["AUTH", "c"]);
+    return socket;
+  };
+  const read = (count, end) =>
+    discoverRoster({
+      url: "wss://relay.test",
+      key: generateSecretKey(),
+      socketFactory: rosterRelay(count, end),
+    });
+  await expect(read(2, ["EOSE", "roster"])).resolves.toEqual([
+    "channel-0",
+    "channel-1",
+  ]);
+  await expect(
+    read(2, ["CLOSED", "roster", "rate-limited: quota exceeded"]),
+  ).rejects.toThrow("Roster read refused: rate-limited: quota exceeded");
+  await expect(read(500, ["EOSE", "roster"])).rejects.toThrow(
+    "may be truncated",
+  );
 });

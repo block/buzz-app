@@ -26,6 +26,7 @@ export type LivePhase = {
   /** First moment every channel route had settled (live or failed), relative to `start`. */
   coverageMs?: number;
   routes: number;
+  /** Routes that settled without going live: refused, or over live capacity. */
   routeErrors: number;
   /** Pending → live, per channel route. */
   routeMs: number[];
@@ -470,7 +471,7 @@ export function createClientMetrics({
         current.coverageMs = at - current.start;
         current.routes = channels.length;
         current.routeErrors = channels.filter(
-          (route) => route.status === "error",
+          (route) => route.status !== "live",
         ).length;
       }
     }),

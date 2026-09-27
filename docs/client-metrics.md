@@ -29,7 +29,7 @@ the other build with the same roster and the same order.
 | Long tasks | Long-task entries where the engine supports them (Chromium). WebKit has none, so it uses event-loop lag of at least 50 ms instead. Tasks that overlap a disk restore or a background read count as background. |
 | CPU | Time spent verifying signatures (`verify.read`, `verify.restore`) and folding rows (`fold`), measured per batch or window, never per event. |
 | Reads | `/query` calls (and the broker's channel-activity reads), with decoded response size in UTF-16 code units (about bytes for JSON). They are grouped by phase: the app open, then each reconnect. |
-| Live coverage | Per phase: time from connecting to the socket authenticating, and to every channel route being live (or failed). Also each route's pending→live time after authentication. |
+| Live coverage | Per phase: time from connecting to the socket authenticating, and to every channel route settling: live, or failed (refused, or over the live capacity). The panel counts every settled route that is not live as failed. Also each route's pending→live time after authentication. |
 
 Opens with nothing to paint are not timed: empty or failed channels, and
 rows kept offscreen by a saved scroll position. The summary counts them as
@@ -59,7 +59,8 @@ BUZZ_PRIVATE_KEY=nsec1… BUZZ_RELAY_URL=wss://relay.example pnpm probe:live \
 | `idle` | Nothing, which gives a baseline for the canary. |
 
 Without `--channels` (a comma-separated list or `@file`), it probes every
-channel the identity is a member of. It reports medians of:
+channel the identity is a member of. It stops if that roster read is refused
+or hits its 500-channel cap, rather than probing part of the roster. It reports medians of:
 
 - **coverage:** from authentication to the last channel reaching EOSE, only
   when every channel did;

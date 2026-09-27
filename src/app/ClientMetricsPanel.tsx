@@ -209,14 +209,17 @@ export function ClientMetricsPanel() {
           </h4>
           <p className="m-0 text-metadata">
             From opening the connection. A subscription is live once the relay
-            has sent its stored events (EOSE).
+            has sent its stored events (EOSE), and settled once it is live or
+            has failed (refused, or over the live capacity).
           </p>
         </div>
         {first && (
           <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
             <Stat label="Connected" value={ms(first.authMs)} />
             <Stat
-              label={first.routes ? `All ${first.routes} live` : "All live"}
+              label={
+                first.routes ? `All ${first.routes} settled` : "All settled"
+              }
               value={ms(first.coverageMs)}
             />
             <Stat
@@ -235,7 +238,7 @@ export function ClientMetricsPanel() {
                 key={index}
               >
                 {phaseName(phase, index + 1)}: connected {ms(phase.authMs)},{" "}
-                {phase.routes} live in {ms(phase.coverageMs)}
+                {phase.routes} settled in {ms(phase.coverageMs)}
                 {phase.routeErrors ? `, ${phase.routeErrors} failed` : ""}
               </li>
             ))}

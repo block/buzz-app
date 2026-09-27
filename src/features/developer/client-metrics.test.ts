@@ -254,7 +254,9 @@ it("derives open and reconnect phases, live coverage and per-phase read cost", (
   h.metrics.live("a", {
     status: "connected",
     routes: [
-      ...routes("live", 2),
+      ...routes("live", 1),
+      // Over the live capacity is settled, but not live.
+      { id: "channel:1", channelId: "1", status: "limited" },
       { id: "channel:2", channelId: "2", status: "error" },
     ],
   });
@@ -276,8 +278,8 @@ it("derives open and reconnect phases, live coverage and per-phase read cost", (
     authMs: 100,
     coverageMs: 100,
     routes: 3,
-    routeErrors: 1,
-    routeMs: { n: 2 },
+    routeErrors: 2,
+    routeMs: { n: 1 },
     queries: 1,
     background: 1,
     bytes: 500,

@@ -348,16 +348,17 @@ export async function discoverRoster({
       else if (frame[0] === "EVENT" && frame[1] === "roster") {
         const id = frame[2].tags.find(([name]) => name === "d")?.[1];
         if (id) channels.add(id);
-      } else if (
-        frame[1] === "roster" &&
-        (frame[0] === "EOSE" || frame[0] === "CLOSED")
-      ) {
-        clearTimeout(timer);
-        socket.close();
+      } else if (frame[0] === "CLOSED" && frame[1] === "roster")
+        // A refused read may already have sent part of the roster.
+        fail(`Roster read refused: ${frame[2]}`);
+      else if (frame[0] === "EOSE" && frame[1] === "roster") {
+        // Measuring a truncated roster would time the wrong channels.
         if (channels.size >= ROSTER_LIMIT)
-          console.error(
+          return fail(
             `Roster read returned ${channels.size} channels and may be truncated; pass --channels for a complete list.`,
           );
+        clearTimeout(timer);
+        socket.close();
         resolve([...channels].sort());
       }
     };

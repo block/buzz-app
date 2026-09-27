@@ -111,10 +111,11 @@ const channelId =
 
 function restoredChannelCreation(
   events: LocalEvents | undefined,
+  owned?: (id: string) => boolean,
 ): PendingChannelCreation | undefined {
   for (const item of [...(events?.snapshot() ?? [])].reverse()) {
     const restored = parseChannelCreation(item);
-    if (restored) return restored;
+    if (restored && !owned?.(restored.id)) return restored;
   }
 }
 
@@ -1094,6 +1095,13 @@ export function createRelaySession(
     groupHead = head;
     void sidebarPreferences.queries.refresh();
   });
+  type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
+  let setupNotices: readonly SetupNotice[] = [];
+  const setupListeners = new Set<() => void>();
+  const notifySetup = () =>
+    setupListeners.forEach((listener) => {
+      listener();
+    });
   const channelSetup =
     transport && writes && transport.channelKit
       ? createChannelSetup({
@@ -1101,6 +1109,7 @@ export function createRelaySession(
           outbox: writes.outbox,
           local: writes.local,
           signal: lifetime.signal,
+          changed: notifySetup,
           create: (id, input, active) =>
             workSessions.createChannel(
               id,
@@ -1239,24 +1248,16 @@ export function createRelaySession(
         })
       : undefined;
   let pendingChannelCreation: PendingChannelCreation | undefined =
-    restoredChannelCreation(writes?.local);
+    restoredChannelCreation(writes?.local, channelSetup?.owns);
   let restoredOperation = pendingChannelCreation?.operation;
   const pendingCreation = () => {
-    const candidate = restoredChannelCreation(writes?.local);
-    const restored = channelSetup ? undefined : candidate;
+    const restored = restoredChannelCreation(writes?.local, channelSetup?.owns);
     if (restored?.operation !== restoredOperation) {
       restoredOperation = restored?.operation;
       pendingChannelCreation = restored;
     }
     return pendingChannelCreation;
   };
-  type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
-  let setupNotices: readonly SetupNotice[] = [];
-  const setupListeners = new Set<() => void>();
-  const notifySetup = () =>
-    setupListeners.forEach((listener) => {
-      listener();
-    });
   const channelCreation = Object.freeze({
     available: workSessions.available,
     subscribe: (listener: () => void) => {
@@ -1267,7 +1268,7 @@ export function createRelaySession(
         setupListeners.delete(listener);
       };
     },
-    snapshot: () => (channelSetup ? undefined : pendingCreation()?.input),
+    snapshot: () => channelSetup?.snapshot() ?? pendingCreation()?.input,
     notices: () => setupNotices,
     dismissNotice(id: string) {
       setupNotices = setupNotices.filter((item) => item.id !== id);
@@ -1275,8 +1276,8 @@ export function createRelaySession(
     },
     async create(input: ChannelCreationInput) {
       if (!transport) throw new Error("The community connection changed.");
-      if (channelSetup) {
-        await writes?.ready;
+      await writes?.ready;
+      if (channelSetup && !pendingCreation()) {
         const run = channelSetup.run(input, transport.viewer);
         let opened: string | undefined;
         void run.completion.catch((error) => {
@@ -1328,7 +1329,12 @@ export function createRelaySession(
       const pending = pendingChannelCreation;
       if (!pending) throw new Error("Channel creation could not be prepared.");
       try {
-        await workSessions.delivered(pending.operation);
+        await workSessions.delivered(
+          pending.operation,
+          undefined,
+          false,
+          false,
+        );
         await workSessions.refresh(
           pending.id,
           { member: transport.viewer },
@@ -1336,6 +1342,18 @@ export function createRelaySession(
         );
         await writes?.outbox.dismiss(pending.operation);
         pendingChannelCreation = undefined;
+        if (channelSetup?.recovered(pending.id)) {
+          setupNotices = [
+            ...setupNotices,
+            {
+              id: pending.id,
+              name: pending.input.name,
+              error:
+                "Channel confirmed. Saved setup was not continued; check its group, Canvas and members before finishing them manually.",
+            },
+          ];
+          notifySetup();
+        }
         return pending.id;
       } catch (error) {
         if (workSessions.failed(pending.operation)) {

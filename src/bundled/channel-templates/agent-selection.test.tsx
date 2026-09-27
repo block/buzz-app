@@ -14,7 +14,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, assert, expect, it, vi } from "vitest";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { createRelaySession } from "../../features/relay/session";
 import { connectBrokerTransport } from "../../features/relay/transport";
 import type { RelayData } from "../../features/relay/service";
@@ -84,6 +84,7 @@ function harness(
   managed = true,
   beforeNativeRead?: () => Promise<void>,
   beforePublish?: (event: RelayEvent) => Promise<void>,
+  afterPublish?: (event: RelayEvent) => Promise<void>,
 ) {
   const viewer = keypair(),
     relay = keypair();
@@ -168,6 +169,7 @@ function harness(
             channels.get(id)?.push(member);
           }
           clock++;
+          await afterPublish?.(event);
         },
       },
       query: async (filters) => {
@@ -1540,3 +1542,112 @@ it("receipt-save failure prevents real Outbox signing/publication and stays guar
     test.dispose();
   }
 });
+
+it.each([
+  ["lost ACK", false],
+  ["missing membership", false],
+  ["lost ACK", true],
+  ["missing membership", true],
+] as const)(
+  "checks the same Create form after %s without another UUID or publication (template: %s)",
+  async (failure, template) => {
+    let unavailable = false;
+    const test = harness(
+      undefined,
+      async () => {
+        if (unavailable) throw new Error("membership unavailable");
+      },
+      true,
+      undefined,
+      undefined,
+      async (event) => {
+        if (event.kind !== 9007) return;
+        unavailable = true;
+        if (failure === "lost ACK") throw new Error("ACK lost");
+      },
+    );
+    const user = userEvent.setup();
+    const closed = vi.fn();
+    const registry = providerFixture();
+    if (template) test.setRecord(savedTemplate([test.fixture.agent.pubkey]));
+    function Form() {
+      const creation = test.owner.session.channelCreation;
+      const pending = useSyncExternalStore(
+        creation.subscribe,
+        creation.snapshot,
+      );
+      return (
+        <CreateChannelDialog
+          open
+          onOpenChange={closed}
+          onCreate={async (input) => {
+            await creation.create(input);
+          }}
+          pending={pending}
+          session={test.owner.session}
+          providers={registry.providers}
+          groups={undefined}
+          initialGroup=""
+          groupsReady
+        />
+      );
+    }
+    try {
+      render(<Form />);
+      await user.type(
+        screen.getByRole("textbox", { name: "Name" }),
+        "Uncertain",
+      );
+      if (template) {
+        await waitFor(() =>
+          expect(test.owner.session.archives.snapshot().status).toBe("ready"),
+        );
+        await chooseSaved();
+      }
+      await user.click(screen.getByRole("button", { name: "Create channel" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        /ACK lost|membership unavailable/,
+      );
+      expect(closed).not.toHaveBeenCalled();
+      const first = test.published.find((event) => event.kind === 9007);
+      assert.exists(first);
+      const id = first.tags.find(([tag]) => tag === "h")?.[1];
+      expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "Check channel" }));
+      await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
+      expect(closed).not.toHaveBeenCalled();
+      expect(test.published.filter((event) => event.kind === 9007)).toEqual([
+        first,
+      ]);
+      // Closing and reopening must retain the same session-owned attempt.
+      cleanup();
+      render(<Form />);
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+        "Uncertain",
+      );
+      unavailable = false;
+      await user.click(screen.getByRole("button", { name: "Check channel" }));
+      await waitFor(() => expect(closed).toHaveBeenCalledWith(false));
+      expect(test.owner.session.channels.get?.(id ?? "")?.members).toContain(
+        test.viewer.pubkey,
+      );
+      expect(
+        test.sign.mock.calls.filter(([event]) => event.kind === 9007),
+      ).toHaveLength(1);
+      expect(test.published.filter((event) => event.kind === 9007)).toEqual([
+        first,
+      ]);
+      expect(test.owner.session.channelCreation.snapshot()).toBeUndefined();
+      if (template)
+        await waitFor(() =>
+          expect(
+            test.owner.session.channelCreation.notices()[0]?.error,
+          ).toContain("Template setup was not continued"),
+        );
+      expect(test.published.map((event) => event.kind)).toEqual([9007]);
+    } finally {
+      cleanup();
+      test.dispose();
+    }
+  },
+);

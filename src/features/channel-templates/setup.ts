@@ -40,6 +40,7 @@ export function createChannelSetup({
   place,
   preflight,
   signal,
+  changed,
 }: {
   scope: string;
   outbox: Outbox;
@@ -57,11 +58,24 @@ export function createChannelSetup({
   place(id: string, group: string, source?: "legacy"): Promise<void>;
   preflight(input: ChannelCreationInput): Promise<void>;
   signal: AbortSignal;
+  changed(): void;
 }) {
   // A separate namespace leaves historical single-slot and experimental v1
   // receipts byte-for-byte intact. They never become an implicit new Create.
   const prefix = `buzz-channel-setup.v2:${scope}:`;
   const encoder = new TextEncoder();
+  let pending: Progress | undefined;
+  let admitting: ReturnType<typeof run> | undefined;
+  const admitted = new Set<string>();
+  function isAdmitted(id: string) {
+    if (admitted.has(id)) return true;
+    try {
+      const saved = JSON.parse(localStorage.getItem(prefix + id) ?? "null");
+      return saved?.version === 2 && saved.id === id && saved.created === true;
+    } catch {
+      return false;
+    }
+  }
   function write(p: Progress) {
     const raw = JSON.stringify(p);
     signal.throwIfAborted();
@@ -93,8 +107,18 @@ export function createChannelSetup({
     }
     signal.throwIfAborted();
     localStorage.removeItem(prefix + p.id);
+    if (pending === p) {
+      pending = undefined;
+      changed();
+    }
   }
-  function run(input: ChannelCreationInput, viewer: string) {
+  function run(
+    input: ChannelCreationInput,
+    viewer: string,
+  ): { admission: Promise<string>; completion: Promise<void> } {
+    if (admitting) return admitting;
+    const checking = pending;
+
     let opened!: (id: string) => void;
     let rejected!: (reason: unknown) => void;
     const admission = new Promise<string>((resolve, reject) => {
@@ -106,6 +130,42 @@ export function createChannelSetup({
         throw new Error(
           "This browser cannot safely coordinate channel setup; use a current browser",
         );
+      if (checking) {
+        // Admission recovery is read-only. Do not replay Create or resume the
+        // remaining template writes after an uncertain first attempt.
+        const operation = checking.operations.create;
+        if (!operation)
+          throw new Error(
+            "Channel creation was not saved. Reconnect before checking it.",
+          );
+        try {
+          await delivered(operation);
+          await refresh(checking.id, viewer);
+        } catch (error) {
+          if (
+            local
+              .snapshot()
+              .some(
+                (item) =>
+                  item.event.id === operation && item.delivery === "failed",
+              )
+          )
+            await retire(checking);
+          throw error;
+        }
+        checking.created = true;
+        admitted.add(checking.id);
+        pending = undefined;
+        changed();
+        opened(checking.id);
+        await save(checking);
+        if (checking.input.setup)
+          throw new Error(
+            "Channel confirmed. Template setup was not continued; check its group, Canvas and members before finishing them manually.",
+          );
+        await retire(checking);
+        return;
+      }
       await preflight(input);
       const p: Progress = {
         version: 2,
@@ -119,6 +179,8 @@ export function createChannelSetup({
         operations: {},
       };
       await save(p); // Reserve frozen intent before enqueueing anything.
+      pending = p;
+      changed();
       await navigator.locks.request(prefix + p.id, { signal }, async () => {
         let writable = true;
         let storageHealthy = true;
@@ -183,6 +245,9 @@ export function createChannelSetup({
           await delivered(id);
           await refresh(p.id, viewer);
           p.created = true;
+          admitted.add(p.id);
+          pending = undefined;
+          changed();
           // The original form owns admission until this exact channel is usable.
           // A subsequent storage/setup failure belongs to its completion notice.
           opened(p.id);
@@ -273,9 +338,31 @@ export function createChannelSetup({
     // Completion and admission are separate outcomes of the same run, not two
     // schedulers. The session owns completion even after the form has closed.
     void completion.catch(rejected);
-    return { admission, completion };
+    const result = { admission, completion };
+    admitting = result;
+    void admission
+      .finally(() => {
+        if (admitting === result) admitting = undefined;
+      })
+      .catch(() => {});
+    return result;
   }
-  return Object.freeze({ run });
+  return Object.freeze({
+    run,
+    snapshot: () => pending?.input,
+    owns: (id: string) => pending?.id === id || isAdmitted(id),
+    recovered(id: string) {
+      admitted.add(id);
+      // A restarted session confirms only the saved Outbox creation. Keep any
+      // historical template receipt intact; it must never authorize new writes.
+      try {
+        return localStorage.getItem(prefix + id) !== null;
+      } catch {
+        // Storage failure cannot turn a confirmed channel into another Create.
+        return true;
+      }
+    },
+  });
 }
 
 export function personalGroups(entries: readonly KitEntry[]) {

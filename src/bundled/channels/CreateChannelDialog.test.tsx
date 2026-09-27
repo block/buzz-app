@@ -285,8 +285,6 @@ it("resumes frozen setup with the plugin off and unavailable catalogs without re
       name: "Review / customize teams, agents & Canvas",
     }),
   ).not.toBeInTheDocument();
-  await user.click(
-    screen.getByRole("button", { name: "Resume channel setup" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Check channel" }));
   await waitFor(() => expect(onCreate).toHaveBeenCalledWith(pending));
 });

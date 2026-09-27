@@ -253,7 +253,7 @@ function OpenCreateChannelDialog({
             loading={busy}
             disabled={!name.trim()}
           >
-            {pending ? "Resume channel setup" : "Create channel"}
+            {pending ? "Check channel" : "Create channel"}
           </Button>
         </>
       }
@@ -270,8 +270,8 @@ function OpenCreateChannelDialog({
       >
         {pending && (
           <p role="status">
-            This attempt keeps its original name, destination and setup. Resume
-            checks the same channel; it will not create another.
+            This attempt may already have created a channel. Check confirms the
+            same channel without sending again or continuing template setup.
           </p>
         )}
         <fieldset

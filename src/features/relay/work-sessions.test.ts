@@ -75,169 +75,196 @@ it("keeps verified session roster reads available for sends without member-add c
   }
 });
 
-it("restores an unconfirmed ordinary channel without creating a second identity", async () => {
-  const viewer = keypair(),
-    relay = keypair();
-  const id = "11111111-1111-4111-8111-111111111111";
-  const creation = signed(viewer, {
-    kind: 9007,
-    content: "",
-    tags: [
-      ["h", id],
-      ["name", "Release notes"],
-      ["visibility", "private"],
-      ["channel_type", "stream"],
-      ["about", "Updates for the team"],
-      ["ttl", "604800"],
-    ],
-  });
-  const sessionCreation = signed(viewer, {
-    kind: 9007,
-    content: "",
-    tags: [
-      ["h", "22222222-2222-4222-8222-222222222222"],
-      ["name", "Work"],
-      ["visibility", "private"],
-      ["channel_type", "stream"],
-      ["about", SESSION_CHANNEL_DESCRIPTION],
-    ],
-  });
-  let records: readonly OutgoingEvent[] = [
-    { event: creation, signed: creation, delivery: "unknown" },
-    {
-      event: sessionCreation,
-      signed: sessionCreation,
-      delivery: "accepted",
-    },
-  ];
-  const sign = vi.fn(async () => creation);
-  const publish = vi.fn(async () => {
-    throw new Error("acknowledgement lost");
-  });
-  const owner = createRelaySession(
-    {
-      viewer: viewer.pubkey,
-      relayAuthor: relay.pubkey,
-      media: () => undefined,
-      query: async () => [],
-      writer: { kinds: [9, 9000, 9007], sign, publish },
-    },
-    {
-      outboxStorage: {
-        load: () => structuredClone(records),
-        save: (next) => {
-          records = structuredClone(next);
-        },
-      },
-    },
-  );
-  try {
-    await vi.waitFor(() =>
-      expect(owner.session.channelCreation.snapshot()).toEqual({
-        name: "Release notes",
-        description: "Updates for the team",
-        visibility: "private",
-        ttlSeconds: 604800,
-      }),
-    );
-    await expect(
-      owner.session.channelCreation.create({
-        name: "Different",
-        visibility: "open",
-      }),
-    ).rejects.toThrow(/still awaiting confirmation/);
-    await expect(
-      owner.session.channelCreation.create({
-        name: "Release notes",
-        description: "Updates for the team",
-        visibility: "private",
-        ttlSeconds: 604800,
-      }),
-    ).rejects.toThrow(/acknowledgement lost/);
-    expect(sign).not.toHaveBeenCalled();
-    expect(publish).toHaveBeenCalledOnce();
-    expect(
-      owner.session.outbox
-        ?.snapshot()
-        .filter((item) => item.event.id === creation.id),
-    ).toHaveLength(1);
-  } finally {
-    owner.dispose();
-  }
-});
-
-it("retains a seen channel creation while creator membership is unconfirmed", async () => {
-  const viewer = keypair(),
-    relay = keypair();
-  const id = "11111111-1111-4111-8111-111111111111";
-  const creation = signed(viewer, {
-    kind: 9007,
-    content: "",
-    tags: [
-      ["h", id],
-      ["name", "Release notes"],
-      ["visibility", "open"],
-      ["channel_type", "stream"],
-    ],
-  });
-  let records: readonly OutgoingEvent[] = [
-    { event: creation, signed: creation, delivery: "seen" },
-  ];
-  const sign = vi.fn(async () => creation);
-  const publish = vi.fn(async () => {});
-  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
-  const owner = createRelaySession(
-    {
-      ...wire.transport,
-      writer: { kinds: [9, 9000, 9007], sign, publish },
-    },
-    {
-      outboxStorage: {
-        load: () => structuredClone(records),
-        save: (next) => {
-          records = structuredClone(next);
-        },
-      },
-    },
-  );
-  const input = { name: "Release notes", visibility: "open" as const };
-  try {
-    await vi.waitFor(() =>
-      expect(owner.session.channelCreation.snapshot()).toEqual(input),
-    );
-    const creating = owner.session.channelCreation.create(input);
-    await vi.waitFor(() => expect(wire.pending.length).toBeGreaterThan(0));
-    const publicMetadata = signed(relay, {
-      kind: 39000,
-      content: JSON.stringify({ name: "Release notes" }),
-      tags: [["d", id], ["name", "Release notes"], ["public"]],
+it.each([false, true])(
+  "restores an unconfirmed ordinary channel without republishing (channel kit: %s)",
+  async (kit) => {
+    const viewer = keypair(),
+      relay = keypair();
+    const id = "11111111-1111-4111-8111-111111111111";
+    const creation = signed(viewer, {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", "Release notes"],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ["about", "Updates for the team"],
+        ["ttl", "604800"],
+      ],
     });
-    wire.next().respond([publicMetadata]);
-    await vi.waitFor(() =>
-      expect(owner.session.channels.get?.(id)?.readOnly).toBe(true),
+    const sessionCreation = signed(viewer, {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", "22222222-2222-4222-8222-222222222222"],
+        ["name", "Work"],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ["about", SESSION_CHANNEL_DESCRIPTION],
+      ],
+    });
+    let records: readonly OutgoingEvent[] = [
+      { event: creation, signed: creation, delivery: "unknown" },
+      {
+        event: sessionCreation,
+        signed: sessionCreation,
+        delivery: "accepted",
+      },
+    ];
+    const sign = vi.fn(async () => creation);
+    const publish = vi.fn(async () => {
+      throw new Error("acknowledgement lost");
+    });
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        media: () => undefined,
+        query: async () => [],
+        writer: { kinds: [9, 9000, 9007], sign, publish },
+        ...(kit
+          ? { channelKit: { decode: async () => [], prepare: async () => "" } }
+          : {}),
+      },
+      {
+        outboxStorage: {
+          load: () => structuredClone(records),
+          save: (next) => {
+            records = structuredClone(next);
+          },
+        },
+      },
     );
-    expect(sign).not.toHaveBeenCalled();
-    expect(publish).not.toHaveBeenCalled();
-    expect(owner.session.channelCreation.snapshot()).toEqual(input);
-    expect(records).toContainEqual(
-      expect.objectContaining({
-        event: expect.objectContaining({ id: creation.id }),
-        delivery: "seen",
-      }),
-    );
+    try {
+      await vi.waitFor(() =>
+        expect(owner.session.channelCreation.snapshot()).toEqual({
+          name: "Release notes",
+          description: "Updates for the team",
+          visibility: "private",
+          ttlSeconds: 604800,
+        }),
+      );
+      await expect(
+        owner.session.channelCreation.create({
+          name: "Different",
+          visibility: "open",
+        }),
+      ).rejects.toThrow(/still awaiting confirmation/);
+      await expect(
+        owner.session.channelCreation.create({
+          name: "Release notes",
+          description: "Updates for the team",
+          visibility: "private",
+          ttlSeconds: 604800,
+        }),
+      ).rejects.toThrow(/could not be confirmed/);
+      expect(sign).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+      expect(
+        owner.session.outbox
+          ?.snapshot()
+          .filter((item) => item.event.id === creation.id),
+      ).toHaveLength(1);
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 
-    owner.session.channels.refreshList?.();
-    await vi.waitFor(() => expect(wire.pending.length).toBeGreaterThan(0));
-    wire.next().respond([roster(relay, id, [viewer.pubkey]), publicMetadata]);
-    await expect(creating).resolves.toBe(id);
-    await vi.waitFor(() =>
-      expect(records.some(({ event }) => event.id === creation.id)).toBe(false),
+it.each([false, true])(
+  "retains a seen channel creation while creator membership is unconfirmed (channel kit: %s)",
+  async (kit) => {
+    // Receipt inspection is advisory: a blocked storage getter must not turn
+    // already-confirmed recovery back into a failed form after Outbox retirement.
+    const receiptRead = vi.fn(() => {
+      throw new Error("Storage blocked");
+    });
+    if (kit) vi.stubGlobal("localStorage", { getItem: receiptRead });
+    const viewer = keypair(),
+      relay = keypair();
+    const id = "11111111-1111-4111-8111-111111111111";
+    const creation = signed(viewer, {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", "Release notes"],
+        ["visibility", "open"],
+        ["channel_type", "stream"],
+      ],
+    });
+    let records: readonly OutgoingEvent[] = [
+      { event: creation, signed: creation, delivery: "seen" },
+    ];
+    const sign = vi.fn(async () => creation);
+    const publish = vi.fn(async () => {});
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        writer: { kinds: [9, 9000, 9007], sign, publish },
+        ...(kit
+          ? { channelKit: { decode: async () => [], prepare: async () => "" } }
+          : {}),
+      },
+      {
+        outboxStorage: {
+          load: () => structuredClone(records),
+          save: (next) => {
+            records = structuredClone(next);
+          },
+        },
+      },
     );
-    expect(owner.session.channelCreation.snapshot()).toBeUndefined();
-  } finally {
-    owner.dispose();
-  }
-});
+    const input = { name: "Release notes", visibility: "open" as const };
+    try {
+      await vi.waitFor(() =>
+        expect(owner.session.channelCreation.snapshot()).toEqual(input),
+      );
+      const creating = owner.session.channelCreation.create(input);
+      await vi.waitFor(() => expect(wire.pending.length).toBeGreaterThan(0));
+      const publicMetadata = signed(relay, {
+        kind: 39000,
+        content: JSON.stringify({ name: "Release notes" }),
+        tags: [["d", id], ["name", "Release notes"], ["public"]],
+      });
+      wire.next().respond([publicMetadata]);
+      await vi.waitFor(() =>
+        expect(owner.session.channels.get?.(id)?.readOnly).toBe(true),
+      );
+      expect(sign).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+      expect(owner.session.channelCreation.snapshot()).toEqual(input);
+      expect(records).toContainEqual(
+        expect.objectContaining({
+          event: expect.objectContaining({ id: creation.id }),
+          delivery: "seen",
+        }),
+      );
+
+      owner.session.channels.refreshList?.();
+      await vi.waitFor(() => expect(wire.pending.length).toBeGreaterThan(0));
+      wire.next().respond([roster(relay, id, [viewer.pubkey]), publicMetadata]);
+      await expect(creating).resolves.toBe(id);
+      await vi.waitFor(() =>
+        expect(records.some(({ event }) => event.id === creation.id)).toBe(
+          false,
+        ),
+      );
+      expect(owner.session.channelCreation.snapshot()).toBeUndefined();
+      if (kit) {
+        expect(receiptRead).toHaveBeenCalled();
+        expect(owner.session.channelCreation.notices()[0]).toMatchObject({
+          id,
+        });
+      }
+    } finally {
+      owner.dispose();
+      if (kit) vi.unstubAllGlobals();
+    }
+  },
+);
 
 it("keeps a seen private creation through an access purge and reconnect", async () => {
   const viewer = keypair(),

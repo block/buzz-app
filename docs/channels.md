@@ -159,7 +159,14 @@ Sidebar create-channel dialogs stay available on other pages. Channel admission
 session and navigates to a normal conversation destination. Remaining template
 setup continues in that session; failure produces a dismissible notice without
 navigating again. Frozen setup receipts and delivery evidence remain saved, but
-there is no template Resume or automatic startup continuation. New-session intent uses the Channels version-1
+there is no template Resume or automatic startup continuation. An uncertain
+admission keeps the original form locked to its channel identity. **Check channel**
+only reads back that creation and viewer membership; it never republishes Create
+or continues template writes. Successful recovery opens that channel and reports
+any unfinished setup for manual inspection. Closing/reopening retains the attempt;
+after session replacement, unresolved ordinary creations (including pre-upgrade
+Outbox entries) restore for the same read-only check. Already-admitted partial
+setups do not occupy a new Create form. New-session intent uses the Channels version-1
 page route `{ kind: "new-session", parentId }`; Channels checks parent access/type
 and Sessions availability. Only parent intent, never draft text, enters history.
 Preparing-DM suppression captures the pre-open roster and exact member set, hiding

@@ -58,6 +58,7 @@ function fixture() {
   };
   const opts = {
     scope: "setup-test",
+    changed: vi.fn(),
     outbox,
     local: outbox,
     create: vi.fn((id: string, _input: ChannelCreationInput) =>
@@ -148,32 +149,45 @@ it("keeps partial intent without locking a second Create or replaying the first 
   expect(f.outbox.retry).not.toHaveBeenCalled();
 });
 
-it("preserves unknown create evidence; safely retires only a new proven-failed create", async () => {
+it("checks an uncertain attempt without replaying Create or template writes", async () => {
   const f = fixture();
-  f.opts.delivered.mockImplementation(async (id) => {
-    const index = f.events.findIndex((item) => item.event.id === id);
-    assert.exists(f.events[index]);
-    f.events[index] = { ...f.events[index], delivery: "unknown" };
-    throw new Error("Unknown delivery");
-  });
+  f.opts.delivered.mockRejectedValueOnce(new Error("Unknown delivery"));
   const run = f.setup.run(input, viewer.pubkey);
   await expect(run.admission).rejects.toThrow("Unknown delivery");
   await expect(run.completion).rejects.toThrow("Unknown delivery");
-  expect(receipts()).toHaveLength(1);
-  const frozen = localStorage.getItem(firstReceipt());
-  f.opts.delivered.mockImplementation(async (id) => {
+  expect(f.setup.snapshot()).toEqual(input);
+  const saved = JSON.parse(localStorage.getItem(firstReceipt()) ?? "null");
+  const next = f.setup.run(input, viewer.pubkey);
+  await expect(next.admission).resolves.toBe(saved.id);
+  await expect(next.completion).rejects.toThrow(
+    "Template setup was not continued",
+  );
+  expect(f.opts.delivered.mock.calls).toEqual([
+    [saved.operations.create],
+    [saved.operations.create],
+  ]);
+  expect(f.setup.snapshot()).toBeUndefined();
+  expect(f.events.map((e) => e.event.kind)).toEqual([9007]);
+  expect(f.outbox.retry).not.toHaveBeenCalled();
+});
+
+it("retires a proven-failed Create so the form can try a new attempt", async () => {
+  const f = fixture();
+  f.opts.delivered.mockImplementationOnce(async (id) => {
     const index = f.events.findIndex((item) => item.event.id === id);
     assert.exists(f.events[index]);
     f.events[index] = { ...f.events[index], delivery: "failed" };
     throw new Error("Rejected");
   });
+  const run = f.setup.run(input, viewer.pubkey);
+  await expect(run.admission).rejects.toThrow("Rejected");
+  await expect(run.completion).rejects.toThrow("Rejected");
+  expect(f.setup.snapshot()).toBeUndefined();
+  expect(receipts()).toHaveLength(0);
   const next = f.setup.run(input, viewer.pubkey);
-  await expect(next.admission).rejects.toThrow("Rejected");
-  await expect(next.completion).rejects.toThrow("Rejected");
-  expect(receipts()).toHaveLength(1);
-  expect(localStorage.getItem(firstReceipt())).toBe(frozen);
-  expect(f.events).toHaveLength(1);
-  expect(f.outbox.retry).not.toHaveBeenCalled();
+  await next.admission;
+  await next.completion;
+  expect(f.opts.create).toHaveBeenCalledTimes(2);
 });
 
 it("Canvas failure does not lose group placement or turn admission into failure", async () => {
@@ -270,4 +284,52 @@ it("does not retire intent if Outbox dismissal did not actually remove the opera
   await run.admission;
   await failure;
   expect(receipts()).toHaveLength(1);
+});
+
+it("shares one admission while preflight is pending, including concurrent submits", async () => {
+  const f = fixture();
+  const gate = hold();
+  f.opts.preflight.mockImplementationOnce(() => gate.promise);
+  const run = f.setup.run(input, viewer.pubkey);
+  const concurrent = f.setup.run(input, viewer.pubkey);
+  expect(concurrent).toBe(run);
+  gate.release();
+  expect(await concurrent.admission).toBe(await run.admission);
+  await run.completion;
+  expect(f.opts.create).toHaveBeenCalledOnce();
+});
+
+it("releases a pending attempt when read-only confirmation proves it failed", async () => {
+  const f = fixture();
+  f.opts.delivered.mockRejectedValueOnce(new Error("Timed out"));
+  const run = f.setup.run(input, viewer.pubkey);
+  await expect(run.admission).rejects.toThrow("Timed out");
+  await expect(run.completion).rejects.toThrow("Timed out");
+  f.opts.delivered.mockImplementationOnce(async (id) => {
+    const index = f.events.findIndex((item) => item.event.id === id);
+    assert.exists(f.events[index]);
+    f.events[index] = { ...f.events[index], delivery: "failed" };
+    throw new Error("Rejected");
+  });
+  const check = f.setup.run(input, viewer.pubkey);
+  await expect(check.admission).rejects.toThrow("Rejected");
+  await expect(check.completion).rejects.toThrow("Rejected");
+  expect(f.setup.snapshot()).toBeUndefined();
+  expect(receipts()).toHaveLength(0);
+  expect(f.opts.create).toHaveBeenCalledOnce();
+});
+
+it("keeps admitted partial receipts out of a restarted Create without resuming them", async () => {
+  const f = fixture();
+  f.opts.confirm.mockRejectedValueOnce(new Error("Canvas unavailable"));
+  const run = f.setup.run(input, viewer.pubkey);
+  const id = await run.admission;
+  await expect(run.completion).rejects.toThrow("Canvas unavailable");
+  const frozen = localStorage.getItem(firstReceipt());
+  const restarted = createChannelSetup(f.opts);
+  expect(restarted.owns(id)).toBe(true);
+  expect(restarted.snapshot()).toBeUndefined();
+  expect(localStorage.getItem(firstReceipt())).toBe(frozen);
+  expect(f.events.map((e) => e.event.kind)).toEqual([9007, 40100]);
+  expect(f.outbox.retry).not.toHaveBeenCalled();
 });

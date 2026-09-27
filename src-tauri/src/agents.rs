@@ -669,13 +669,15 @@ pub(crate) mod tests;
 
 // Advisory handover guard only: unmodified old Buzz does not share our lock and
 // can be launched afterward. Never inspect process environments or terminate it.
-fn refuse_legacy_listing(listing: &str) -> Result<(), String> {
+fn refuse_legacy_listing(listing: &str, current_pid: u32) -> Result<(), String> {
     for line in listing.lines() {
-        let executable = line
-            .trim()
-            .split_once(char::is_whitespace)
-            .map(|(_, exe)| exe.trim())
-            .unwrap_or("");
+        let Some((pid, executable)) = line.trim().split_once(char::is_whitespace) else {
+            continue;
+        };
+        if pid.parse::<u32>().ok() == Some(current_pid) {
+            continue;
+        }
+        let executable = executable.trim();
         let name = std::path::Path::new(executable)
             .file_name()
             .and_then(|n| n.to_str())
@@ -701,5 +703,5 @@ fn refuse_legacy() -> Result<(), String> {
     if !output.status.success() || output.stdout.len() > 4 * 1024 * 1024 {
         return Err("Could not check old Buzz processes; Start refused".into());
     }
-    refuse_legacy_listing(&String::from_utf8_lossy(&output.stdout))
+    refuse_legacy_listing(&String::from_utf8_lossy(&output.stdout), std::process::id())
 }

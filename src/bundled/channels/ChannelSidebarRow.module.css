@@ -83,6 +83,9 @@
   overflow: hidden;
   white-space: nowrap;
 }
+.label:only-child {
+  width: 100%;
+}
 .label[data-overflowing],
 .childLabel[data-overflowing] {
   -webkit-mask-image: linear-gradient(

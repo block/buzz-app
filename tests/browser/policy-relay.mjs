@@ -37,8 +37,9 @@ export function policyRelay({
   report.profileHolds = profileHolds;
   let heldAuthors = new Set();
   // Fixture targets distinguish the two explicit production globals from channels.
+  // A shared channel REQ is one route over every channel it names.
   const routeOf = (filter) =>
-    filter["#h"]?.[0] ??
+    filter["#h"]?.join(",") ??
     (filter.kinds.length === 3 &&
     [0, 10100, 30177].every((kind) => filter.kinds.includes(kind))
       ? "profiles"
@@ -92,7 +93,12 @@ export function policyRelay({
     releaseEose(channel) {
       heldEose.delete(channel);
       for (let i = pendingEose.length - 1; i >= 0; i--) {
-        if (pendingEose[i].channel !== channel) continue;
+        const { channels } = pendingEose[i];
+        if (
+          !channels.includes(channel) ||
+          channels.some((held) => heldEose.has(held))
+        )
+          continue;
         const [item] = pendingEose.splice(i, 1);
         emit(item.socket, ["EOSE", item.id]);
       }
@@ -478,11 +484,10 @@ export function policyRelay({
               route: routeOf(filter),
               at: performance.now(),
             });
-            const channel = filter["#h"]?.[0];
             // A broad channel REQ cannot substitute for explicit #h fan-out.
             if (
               filter.kinds.includes(9) &&
-              (!channel || filter["#h"].length !== 1)
+              (!filter["#h"]?.length || filter["#h"].length > 128)
             ) {
               queueMicrotask(() =>
                 emit(this, [
@@ -504,9 +509,9 @@ export function policyRelay({
               );
             }
             this.routes.set(id, filter);
-            const route = routeOf(filter);
-            if (heldEose.has(route))
-              pendingEose.push({ socket: this, id, channel: route });
+            const channels = filter["#h"] ?? [routeOf(filter)];
+            if (channels.some((channel) => heldEose.has(channel)))
+              pendingEose.push({ socket: this, id, channels });
             else queueMicrotask(() => emit(this, ["EOSE", id]));
           } catch (error) {
             fault(error);
@@ -527,7 +532,9 @@ export function policyRelay({
         (s) =>
           s.readyState === 1 &&
           s.community === community &&
-          [...s.routes.values()].some((f) => routeOf(f) === channel),
+          [...s.routes.values()].some((f) =>
+            (f["#h"] ?? [routeOf(f)]).includes(channel),
+          ),
       );
     },
     observer(community, event) {
@@ -576,7 +583,7 @@ export function policyRelay({
       for (const socket of sockets) {
         if (socket.readyState !== 1 || socket.community !== community) continue;
         for (const [id, filter] of [...socket.routes]) {
-          if (routeOf(filter) !== channel) continue;
+          if (!(filter["#h"] ?? [routeOf(filter)]).includes(channel)) continue;
           socket.routes.delete(id);
           emit(socket, ["CLOSED", id, reason]);
           failures++;

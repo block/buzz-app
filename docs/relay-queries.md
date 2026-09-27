@@ -193,6 +193,18 @@ Shared composers and reactions remain unavailable for nonmembers; message helper
 and workflows do not acquire write eligibility from public metadata. The relay
 remains the final write authority, including low-level outbox intent.
 
+Live channel routes share one authenticated socket. Demanded channels, including
+read-only previews, each keep a single-channel `#h` REQ, so relay denial and
+access-revoked CLOSED stay per channel. Other roster channels share REQs of at
+most 128 `#h` values (the relay's explicit-channel bound). The relay silently
+omits inaccessible channels and closes a shared REQ only when none remain;
+signed membership notifications on the membership route still refresh the
+roster. Shared traffic is attributed
+by the event's own `h` (or `d` for relay-signed 39xxx metadata); relay-derived
+tagless reactions and deletions reconcile without channel provenance. Leaves are
+filtered locally until a shared REQ empties, and joins open a new batch, so
+roster changes never replay established channels.
+
 Public-to-private metadata, membership loss and explicit denial purge retained
 content through the existing coordinated revocation boundary. An access-revoked
 live CLOSED suspends and revalidates the affected preview ID: nonmembers may never

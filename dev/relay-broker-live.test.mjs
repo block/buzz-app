@@ -145,7 +145,8 @@ test("POST replacement and a second stream share server cooldown without pacing 
     // WebKit must not wait for a later heartbeat to receive the last SSE frame.
     expect(first.response.headers.get("transfer-encoding")).toBeNull();
     expect(first.response.headers.get("connection")).toBe("close");
-    await until(() => h.requests.length === 4);
+    // Two globals and one shared channel REQ per stream.
+    await until(() => h.requests.length === 3);
     const second = await h.post(["c", "d"]);
     expect(second.response.status).toBe(200);
     first.abort();
@@ -153,11 +154,11 @@ test("POST replacement and a second stream share server cooldown without pacing 
     const replacement = await h.post(["a", "b", "e"]);
     expect(replacement.response.status).toBe(200);
     await delay(300);
-    expect(h.requests).toHaveLength(4);
-    await until(() => h.requests.length === 13);
+    expect(h.requests).toHaveLength(3);
+    await until(() => h.requests.length === 9);
     // A local quota refusal with a zero-second hint still has a rounding margin.
-    expect(h.requests[4].at - h.requests[0].at).toBeGreaterThanOrEqual(990);
-    expect(h.requests.slice(4).map((r) => r.socket)).toEqual(
+    expect(h.requests[3].at - h.requests[0].at).toBeGreaterThanOrEqual(990);
+    expect(h.requests.slice(3).map((r) => r.socket)).toEqual(
       expect.arrayContaining([h.sockets[1], h.sockets[2]]),
     );
     second.abort();
@@ -320,7 +321,7 @@ test.each([
 ])(
   "actual browser transport retry preserves healthy routes (%s)",
   async (reason) => {
-    const h = await harness(5, reason);
+    const h = await harness(3, reason);
     const nativeFetch = globalThis.fetch;
     let traffic;
     try {
@@ -343,12 +344,13 @@ test.each([
           snapshot = value;
         },
       });
+      // The refused shared channel REQ fails and retries as a unit.
       traffic.update(["a", "b", "c"]);
       await until(() =>
         snapshot?.routes.some((r) => r.channelId === "c" && r.error),
       );
       expect(snapshot.routes.filter((r) => r.status === "live")).toHaveLength(
-        4,
+        2,
       );
       const sockets = h.sockets.length;
       const healthySocket = h.sockets.at(-1);
@@ -357,14 +359,9 @@ test.each([
       await until(() => snapshot.routes.every((r) => r.status === "live"));
       expect(h.sockets).toHaveLength(sockets);
       expect(healthySocket.readyState).toBe(1);
-      expect(h.requests.map((r) => r.filter["#h"]?.[0] ?? "global")).toEqual([
-        "global",
-        "global",
-        "a",
-        "b",
-        "c",
-        "c",
-      ]);
+      expect(
+        h.requests.map((r) => r.filter["#h"]?.join() ?? "global"),
+      ).toEqual(["global", "global", "a,b,c", "a,b,c"]);
       traffic.dispose();
       await until(() => h.sockets.every((s) => s.readyState === 3));
     } finally {
@@ -469,30 +466,29 @@ test("current demand reaches the front of a large roster without replacing its P
     await fetcher.mock.results[interestControl()].value;
     const auth = h.frames.find((frame) => frame.kind === "AUTH");
     await h.sockets[0].receive(["OK", auth.id.id, true]);
-    await until(() => h.requests.length >= 3);
+    await until(() => h.requests.length >= 4);
+    // Demand goes first on its own route; the rest of the roster shares one REQ.
     expect(
-      h.requests.slice(0, 3).map((r) => r.filter["#h"]?.[0] ?? "global"),
-    ).toEqual(["global", "global", ids[127]]);
+      h.requests.map((r) => r.filter["#h"] ?? "global"),
+    ).toEqual(["global", "global", [ids[127]], ids.slice(0, 127)]);
     const sockets = h.sockets.length;
     const posts = fetcher.mock.calls.filter(([url]) =>
       String(url).endsWith("/stream"),
     ).length;
-    traffic.prioritize([ids[126]]);
-    traffic.prioritize([ids[125]]);
-    // Observe the latest real control response before freeing setup capacity.
+    // New demand for a channel that is not yet live gets the next free slot.
+    traffic.update([...ids, "late"]);
+    traffic.prioritize(["late"]);
     const targetControl = () =>
       fetcher.mock.calls.findIndex(
         ([url, init]) =>
           String(url).endsWith("/stream-priority") &&
-          JSON.parse(init.body).channels[0] === ids[125],
+          JSON.parse(init.body).channels[0] === "late",
       );
     await until(() => targetControl() >= 0);
     await fetcher.mock.results[targetControl()].value;
     await h.sockets[0].receive(["EOSE", h.requests[0].id]);
-    await until(() => h.requests.some((r) => r.filter["#h"]?.[0] === ids[125]));
-    expect(
-      h.requests.findIndex((r) => r.filter["#h"]?.[0] === ids[125]),
-    ).toBeLessThan(7);
+    await until(() => h.requests.length === 5);
+    expect(h.requests[4].filter["#h"]).toEqual(["late"]);
     expect(h.sockets).toHaveLength(sockets);
     expect(
       fetcher.mock.calls.filter(([url]) => String(url).endsWith("/stream")),
@@ -1293,7 +1289,7 @@ test("startup response ABA retires an old wire before applying the latest intere
       receive,
     });
     traffic.update(["a", "b"]);
-    await until(() => h.requests.length === 4);
+    await until(() => h.requests.length === 3);
     await until(() => established.mock.calls.some(([id]) => id === "a"));
     let held = false,
       controlled = false;
@@ -1338,36 +1334,34 @@ test("startup response ABA retires an old wire before applying the latest intere
       () =>
         held &&
         h.sockets.length === 2 &&
-        h.requests.filter((r) => r.socket === h.sockets[1]).length === 5,
+        h.requests.filter((r) => r.socket === h.sockets[1]).length === 3,
     );
     const old = h.requests.find(
-      (r) => r.socket === h.sockets[1] && r.filter["#h"]?.[0] === "a",
+      (r) => r.socket === h.sockets[1] && r.filter["#h"]?.includes("a"),
     );
+    expect(old.filter["#h"]).toEqual(["a", "b", "c"]);
     traffic.update(["b", "c"]);
     traffic.update(["a", "b", "c"]);
     release();
     await until(() => controlled);
+    // The old shared wire keeps b and c; the re-added channel gets its own.
+    await until(
+      () =>
+        h.requests.filter(
+          (r) => r.socket === h.sockets[1] && r.filter["#h"]?.includes("a"),
+        ).length === 2,
+    );
+    const current = h.requests
+      .filter((r) => r.socket === h.sockets[1] && r.filter["#h"]?.includes("a"))
+      .at(-1);
+    expect(current.filter["#h"]).toEqual(["a"]);
     expect(
       h.frames.some(
         (f) =>
           f.kind === "CLOSE" && f.id === old.id && f.socket === h.sockets[1],
       ),
-    ).toBe(true);
-    await until(
-      () =>
-        h.requests.filter(
-          (r) => r.socket === h.sockets[1] && r.filter["#h"]?.[0] === "a",
-        ).length === 2,
-    );
-    const current = h.requests
-      .filter((r) => r.socket === h.sockets[1] && r.filter["#h"]?.[0] === "a")
-      .at(-1);
+    ).toBe(false);
     await h.sockets[1].receive(["EOSE", old.id]);
-    await h.sockets[1].receive([
-      "CLOSED",
-      old.id,
-      "restricted: not a channel member",
-    ]);
     const event = await outgoing(transport);
     await h.sockets[1].receive(["EVENT", old.id, event]);
     await h.sockets[1].receive(["EVENT", current.id, event]);
@@ -1377,7 +1371,7 @@ test("startup response ABA retires an old wire before applying the latest intere
     expect(h.sockets).toHaveLength(2);
     expect(
       h.requests.filter(
-        (r) => r.socket === h.sockets[1] && r.filter["#h"]?.[0] === "b",
+        (r) => r.socket === h.sockets[1] && r.filter["#h"]?.includes("b"),
       ),
     ).toHaveLength(1);
   } finally {
@@ -1412,7 +1406,7 @@ test.each(["disconnect", "close"])(
     });
     try {
       const opened = await h.post(["a", "b"]);
-      await until(() => h.requests.length === 4);
+      await until(() => h.requests.length === 3);
       const before = states.length;
       const socket = h.sockets[0];
       await socket.receive(["EOSE", h.requests[0].id]);
@@ -1433,8 +1427,6 @@ test.each(["disconnect", "close"])(
             ...body,
           }),
         });
-      await socket.receive(["EOSE", h.requests[2].id]);
-      expect(states).toHaveLength(before + 1); // Pending channel progress.
       await (await control("stream-observer", { observer: 1 })).text();
       expect(states.at(-1).routes.find((r) => r.id === "observer").status).toBe(
         "pending",
@@ -1453,7 +1445,9 @@ test.each(["disconnect", "close"])(
           interestRevision: 3,
         })
       ).text();
-      await socket.receive(["EOSE", h.requests[3].id]);
+      const pending = states.length;
+      await socket.receive(["EOSE", h.requests[2].id]);
+      expect(states).toHaveLength(pending); // Pending shared channel progress.
       response.emit("drain");
       expect(states.at(-1).interestRevision).toBe(3);
       await (await control("stream-priority", { channels: ["a"] })).text();

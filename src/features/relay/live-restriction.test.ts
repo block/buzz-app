@@ -206,9 +206,6 @@ it.each(["roster", "metadata"])(
 it("ignores unrelated route failures and repeated aggregate restriction snapshots", async () => {
   const h = await setup();
   try {
-    const b = h.socket
-      .requests()
-      .find(([, , filter]) => filter["#h"]?.includes("b"));
     const global = h.socket.requests().find(([, , filter]) => !filter["#h"]);
     await h.socket.receive([
       "CLOSED",
@@ -218,6 +215,11 @@ it("ignores unrelated route failures and repeated aggregate restriction snapshot
     await h.close("invalid: bad filter");
     await settle();
     expect(h.wire.pending).toHaveLength(0);
+    h.owner.session.live.retry();
+    const b = h.socket
+      .requests()
+      .filter(([, , filter]) => filter["#h"]?.includes("b"))
+      .at(-1);
     await h.socket.receive([
       "CLOSED",
       b?.[1],
@@ -284,9 +286,10 @@ it("coalesces two restricted channels into one authoritative refresh", async () 
 it("preserves the existing immediate explicit non-member denial", async () => {
   const h = await setup();
   try {
+    // The relay refuses a shared REQ only when none of its channels is accessible.
     await h.close("restricted: not a channel member");
     await settle();
-    expect(h.rows()).toEqual(["b"]);
+    expect(h.rows()).toEqual([]);
     expect(h.wire.pending).toHaveLength(0);
   } finally {
     h.owner.dispose();

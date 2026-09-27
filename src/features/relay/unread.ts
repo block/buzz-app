@@ -731,7 +731,7 @@ export function createUnread({
           const result = await reader.read(
             [
               {
-                kinds: [...MESSAGE_KINDS],
+                kinds: MESSAGE_KINDS,
                 "#h": ids.slice(offset, offset + 128),
                 include_aux: true,
                 limit: 500,

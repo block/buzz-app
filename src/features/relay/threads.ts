@@ -440,7 +440,7 @@ export function createThreadView({
       let more = false;
       for (let page = 0; page < targetPages; page++) {
         const filter: ReadFilter = {
-          kinds: [...MESSAGE_KINDS],
+          kinds: MESSAGE_KINDS,
           "#h": [channelId],
           "#e": [rootId],
           depth_limit: 100,

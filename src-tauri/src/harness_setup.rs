@@ -63,18 +63,28 @@ impl HarnessSetup {
         }
         Ok(guard)
     }
-    /// Records a spawned installer group; after Quit it is killed immediately.
-    fn track(&self, group: u32) -> Result<(), String> {
+    /// Quit either prevents spawning or observes the registered process group.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn spawn(
+        &self,
+        spawn: impl FnOnce() -> std::io::Result<tokio::process::Child>,
+    ) -> Result<InstallerChild<'_>, String> {
         let mut state = self
             .1
             .lock()
             .map_err(|_| "Goose install state is unavailable")?;
         if state.shutting_down {
-            kill_group(group);
             return Err("Buzz is quitting".into());
         }
-        state.group = Some(group);
-        Ok(())
+        let child = spawn().map_err(|_| "Could not start the Goose installer".to_owned())?;
+        let group = child.id();
+        state.group = Some(group.ok_or("Could not start the Goose installer")?);
+        Ok(InstallerChild {
+            child,
+            group,
+            setup: self,
+            reaped: false,
+        })
     }
     fn untrack(&self, group: u32, kill: bool) {
         if let Ok(mut state) = self.1.lock() {
@@ -235,17 +245,7 @@ async fn upstream(setup: &HarnessSetup, log: File) -> Result<bool, String> {
         .stderr(Stdio::from(log))
         .kill_on_drop(true)
         .process_group(0);
-    let child = command
-        .spawn()
-        .map_err(|_| "Could not start the Goose installer".to_owned())?;
-    let group = child.id();
-    let mut child = InstallerChild {
-        child,
-        group,
-        setup,
-        reaped: false,
-    };
-    setup.track(group.ok_or("Could not start the Goose installer")?)?;
+    let mut child = setup.spawn(|| command.spawn())?;
     let result = tokio::time::timeout(std::time::Duration::from_secs(300), child.child.wait())
         .await
         .map_err(|_| "Goose installer timed out after five minutes".to_owned())?

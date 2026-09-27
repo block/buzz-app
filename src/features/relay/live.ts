@@ -147,6 +147,8 @@ type Route = {
 type Wire = {
   id: string;
   routes: Route[];
+  /** The sent REQ named several channels; local leaves never narrow it. */
+  shared: boolean;
   count: number;
   deadline?: ReturnType<typeof setTimeout>;
 };
@@ -371,7 +373,12 @@ export function subscribeRelayTraffic(
             .slice(0, LIVE_BATCH_CHANNELS)
         : [route];
       // A retry being sent is not recovery. Retain its last failure until EOSE.
-      const wire: Wire = { id: `live-${++serial}`, routes: members, count: 0 };
+      const wire: Wire = {
+        id: `live-${++serial}`,
+        routes: members,
+        shared: members.length > 1,
+        count: 0,
+      };
       for (const member of members) member.wire = wire.id;
       wires.set(wire.id, wire);
       wire.deadline = setTimeout(() => {
@@ -581,8 +588,7 @@ export function subscribeRelayTraffic(
         }
         return;
       }
-      const wire =
-        typeof data[1] === "string" ? wires.get(data[1]) : undefined;
+      const wire = typeof data[1] === "string" ? wires.get(data[1]) : undefined;
       const first = wire?.routes[0];
       if (!authenticated || !wire || !first) return;
       if (data[0] === "EVENT") {
@@ -595,15 +601,15 @@ export function subscribeRelayTraffic(
         }
         // Preserve route consistency before receive() discards the subscription ID.
         // A shared wire outlives local leaves, so its events name their own channel
-        // (relay-signed 39xxx by `d`). Relay-derived tagless reactions/deletions
-        // reconcile without channel provenance.
+        // (relay-signed 39000/39002 metadata by `d`; 39005 summaries carry `h`).
+        // Relay-derived tagless reactions/deletions reconcile without channel provenance.
         const scope =
-          incoming.kind >= 39000 && incoming.kind < 40000 ? "d" : "h";
+          incoming.kind === 39000 || incoming.kind === 39002 ? "d" : "h";
         const tagged = incoming.tags.flatMap(([name, value]) =>
           name === scope && value ? [value] : [],
         );
         const route =
-          !first.channelId || (!tagged.length && wire.routes.length === 1)
+          !first.channelId || (!tagged.length && !wire.shared)
             ? first
             : wire.routes.find((member) =>
                 tagged.includes(member.channelId as string),
@@ -636,7 +642,8 @@ export function subscribeRelayTraffic(
         for (const route of wire.routes) {
           route.status = "live";
           delete route.error;
-          route.replay = wire.count >= LIVE_REPLAY_LIMIT ? "limited" : "unknown";
+          route.replay =
+            wire.count >= LIVE_REPLAY_LIMIT ? "limited" : "unknown";
         }
         notify();
         for (const route of [...wire.routes])
@@ -748,8 +755,7 @@ export function subscribeRelayTraffic(
         if (
           route.channelId &&
           route.status === "pending" &&
-          wire &&
-          wire.routes.length > 1 &&
+          wire?.shared &&
           priority.includes(route.channelId)
         )
           detach(route);

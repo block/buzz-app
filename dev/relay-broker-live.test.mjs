@@ -359,9 +359,9 @@ test.each([
       await until(() => snapshot.routes.every((r) => r.status === "live"));
       expect(h.sockets).toHaveLength(sockets);
       expect(healthySocket.readyState).toBe(1);
-      expect(
-        h.requests.map((r) => r.filter["#h"]?.join() ?? "global"),
-      ).toEqual(["global", "global", "a,b,c", "a,b,c"]);
+      expect(h.requests.map((r) => r.filter["#h"]?.join() ?? "global")).toEqual(
+        ["global", "global", "a,b,c", "a,b,c"],
+      );
       traffic.dispose();
       await until(() => h.sockets.every((s) => s.readyState === 3));
     } finally {
@@ -468,9 +468,12 @@ test("current demand reaches the front of a large roster without replacing its P
     await h.sockets[0].receive(["OK", auth.id.id, true]);
     await until(() => h.requests.length >= 4);
     // Demand goes first on its own route; the rest of the roster shares one REQ.
-    expect(
-      h.requests.map((r) => r.filter["#h"] ?? "global"),
-    ).toEqual(["global", "global", [ids[127]], ids.slice(0, 127)]);
+    expect(h.requests.map((r) => r.filter["#h"] ?? "global")).toEqual([
+      "global",
+      "global",
+      [ids[127]],
+      ids.slice(0, 127),
+    ]);
     const sockets = h.sockets.length;
     const posts = fetcher.mock.calls.filter(([url]) =>
       String(url).endsWith("/stream"),

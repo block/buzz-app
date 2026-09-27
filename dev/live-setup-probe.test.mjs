@@ -73,9 +73,7 @@ it("measures coverage for the app's subscriber and for raw batch shapes", async 
   const single = await run("multi-h:all", channels);
   // The app batches undemanded roster channels into one REQ, beside its
   // profile and membership routes.
-  expect([one.reqs, four.reqs, packed.reqs, single.reqs]).toEqual([
-    3, 3, 2, 1,
-  ]);
+  expect([one.reqs, four.reqs, packed.reqs, single.reqs]).toEqual([3, 3, 2, 1]);
   for (const result of [one, four, packed, single])
     expect(result).toMatchObject({
       channels: 20,

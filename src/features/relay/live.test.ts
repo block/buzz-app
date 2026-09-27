@@ -13,6 +13,7 @@ import {
   roster,
   signed,
   scriptedTransport,
+  summary,
 } from "./testing";
 import { createRelaySession } from "./session";
 class Socket {
@@ -143,13 +144,16 @@ it("attributes shared traffic by channel tag, establishes every member and fence
       content: "+",
       tags: [["e", b.id]],
     });
+    // Thread summaries name their root by `d` and their channel by `h`.
+    const thread = summary(keypair(), "b", b.id, { replies: 1 });
     const outside = message(author, "c", "c", 1700000000);
-    for (const event of [b, named, reaction, outside])
+    for (const event of [b, named, reaction, thread, outside])
       await h.first.receive(["EVENT", shared[1], event]);
     expect(h.callbacks.receive.mock.calls).toEqual([
       [[b], { phase: "replay", channelId: "b" }],
       [[named], { phase: "replay", channelId: "a" }],
       [[reaction], { phase: "replay" }],
+      [[thread], { phase: "replay", channelId: "b" }],
     ]);
     await h.first.receive(["EOSE", shared[1]]);
     expect(h.callbacks.established.mock.calls).toEqual([["a"], ["b"]]);
@@ -337,12 +341,13 @@ it("splits late demand out of a replaying shared REQ", async () => {
   const key = keypair();
   const socket = new Socket();
   const established: (string | undefined)[] = [];
+  const received: [unknown, string | undefined][] = [];
   const owner = subscribeRelayTraffic(
     "wss://relay.test",
     async (event) => signed(key, event),
     key.pubkey,
     {
-      receive() {},
+      receive: ([event], meta) => received.push([event, meta?.channelId]),
       state() {},
       established: (id) => established.push(id),
       denied() {},
@@ -361,10 +366,66 @@ it("splits late demand out of a replaying shared REQ", async () => {
   expect(alone[2]["#h"]).toEqual(["alpha"]);
   // The shared REQ stays open for the others; alpha's own EOSE establishes it.
   expect(socket.sent.some((frame) => frame[0] === "CLOSE")).toBe(false);
+  // Alpha's copy on the shared REQ is dropped; its own REQ delivers it.
+  const author = keypair();
+  const a = message(author, "alpha", "a", 1700000000);
+  const b = message(author, "beta", "b", 1700000000);
+  for (const event of [a, b]) await socket.receive(["EVENT", shared[1], event]);
+  await socket.receive(["EVENT", alone[1], a]);
+  expect(received).toEqual([
+    [b, "beta"],
+    [a, "alpha"],
+  ]);
   await socket.receive(["EOSE", alone[1]]);
   expect(established).toEqual(["alpha"]);
   await socket.receive(["EOSE", shared[1]]);
   expect(established).toEqual(["alpha", "beta", "gamma"]);
+  owner.dispose();
+});
+it("splits the last local member of a replaying shared REQ", async () => {
+  const key = keypair();
+  const socket = new Socket();
+  const established: (string | undefined)[] = [];
+  const receive = vi.fn();
+  const owner = subscribeRelayTraffic(
+    "wss://relay.test",
+    async (event) => signed(key, event),
+    key.pubkey,
+    {
+      receive,
+      state() {},
+      established: (id) => established.push(id),
+      denied() {},
+    },
+    () => socket as unknown as WebSocket,
+  );
+  owner.update(["alpha", "beta"]);
+  await socket.auth();
+  const shared = socket
+    .requests()
+    .find((request) => request[2]["#h"]?.length === 2);
+  assert.exists(shared);
+  owner.prioritize?.(["alpha"]);
+  const alpha = socket.requests().at(-1);
+  assert.exists(alpha);
+  // Beta is now the shared REQ's only local member, but the sent REQ still
+  // names alpha, so switching to beta before its EOSE must not wait on it.
+  owner.prioritize?.(["beta"]);
+  expect(socket.sent.filter(([type]) => type === "CLOSE")).toEqual([
+    ["CLOSE", shared[1]],
+  ]);
+  const beta = socket.requests().at(-1);
+  assert.exists(beta);
+  expect(beta[2]["#h"]).toEqual(["beta"]);
+  await socket.receive(["EOSE", beta[1]]);
+  expect(established).toEqual(["beta"]);
+  // A solo route attributes summaries by `h`, not their root `d`.
+  const thread = summary(keypair(), "beta", "root", { replies: 1 });
+  await socket.receive(["EVENT", beta[1], thread]);
+  expect(receive).toHaveBeenCalledExactlyOnceWith([thread], {
+    phase: "live",
+    channelId: "beta",
+  });
   owner.dispose();
 });
 it("refills setup immediately on EOSE; quota CLOSED pauses the whole queue and only retries refused routes", async () => {

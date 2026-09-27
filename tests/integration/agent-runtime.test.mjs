@@ -4,6 +4,7 @@ import {
   chmodSync,
   existsSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -109,6 +110,53 @@ test("runtime preparation builds missing resources, reuses verified files, and r
     assert.match(run(), /Agent runtime ready/);
     assert.equal(count(), before + 1);
   }
+});
+
+test("worktrees of one clone reuse a verified runtime built from identical inputs", (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const common = path.join(directory, "common");
+  const worktrees = ["one", "two"].map((name) => {
+    const root = path.join(directory, name);
+    runtimeFixture(root);
+    writeFileSync(path.join(root, "git-common-dir"), common);
+    return root;
+  });
+  const run = (root) => {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/build-agent-runtime.mjs"],
+      { cwd: root, encoding: "utf8", timeout: 10_000 },
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  const built = (root) => existsSync(path.join(root, "build-calls.jsonl"));
+  const [one, two] = worktrees;
+  const bundle = (root) => path.join(root, "src-tauri/resources/agent-runtime");
+  assert.match(run(one), /Verified inputs staged/);
+  assert.match(run(two), /Verified inputs restored/);
+  assert.ok(!built(two), "a matching cached runtime must not invoke Cargo");
+  assert.deepEqual(
+    readFileSync(path.join(bundle(two), "manifest.json"), "utf8"),
+    readFileSync(path.join(bundle(one), "manifest.json"), "utf8"),
+  );
+  // A corrupt cache entry is rebuilt, never copied into a worktree.
+  const [entry] = readdirSync(path.join(common, "buzz-agent-runtime"));
+  writeFileSync(path.join(common, "buzz-agent-runtime", entry, "buzz"), "bad");
+  rmSync(bundle(two), { recursive: true });
+  assert.match(run(two), /Verified inputs staged/);
+  assert.ok(built(two));
+  // Different pinned inputs use a different entry.
+  const specPath = path.join(one, "runtime/agent-runtime.json");
+  const spec = JSON.parse(readFileSync(specPath, "utf8"));
+  writeFileSync(
+    specPath,
+    JSON.stringify({ ...spec, revision: "0".repeat(40) }),
+  );
+  assert.match(run(one), /Verified inputs staged/);
+  assert.equal(readdirSync(path.join(common, "buzz-agent-runtime")).length, 2);
 });
 
 test("packaged desktop build prepares runtime before frontend compilation", () => {

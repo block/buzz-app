@@ -187,6 +187,7 @@ export const MessageRow = memo(function MessageRow({
   }, [reportActive, keepMounted, row.id]);
   const report =
     !row.membership &&
+    !row.plugin &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
       ? session?.messages.report
       : undefined;
@@ -249,7 +250,7 @@ export const MessageRow = memo(function MessageRow({
     />
   );
   return (
-    <div data-message-id={row.id}>
+    <div data-message-id={row.id} data-plugin-row={row.plugin ? "" : undefined}>
       {day && (
         <div className={styles.day}>
           <span>
@@ -382,7 +383,7 @@ export const MessageRow = memo(function MessageRow({
                         channel.id === row.channelId && !channel.readOnly,
                     ))
                 }
-                link={messageCopyLink(row, scope)}
+                link={row.plugin ? undefined : messageCopyLink(row, scope)}
                 copyText={() =>
                   messageCopyText(row, directory.profiles, directory.agents)
                 }

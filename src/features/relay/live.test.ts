@@ -321,13 +321,50 @@ it("bounds outstanding setup by the supplied concurrency", async () => {
     undefined,
     16,
   );
-  owner.update(Array.from({ length: 40 }, (_, i) => `channel-${i}`));
+  const ids = Array.from({ length: 40 }, (_, i) => `channel-${i}`);
+  // Demanded channels keep one REQ each, so the bound is visible per channel.
+  owner.prioritize?.(ids);
+  owner.update(ids);
   await socket.auth();
   expect(socket.requests()).toHaveLength(16);
   const first = socket.requests()[0];
   assert.exists(first);
   await socket.receive(["EOSE", first[1]]);
   expect(socket.requests()).toHaveLength(17);
+  owner.dispose();
+});
+it("splits late demand out of a replaying shared REQ", async () => {
+  const key = keypair();
+  const socket = new Socket();
+  const established: (string | undefined)[] = [];
+  const owner = subscribeRelayTraffic(
+    "wss://relay.test",
+    async (event) => signed(key, event),
+    key.pubkey,
+    {
+      receive() {},
+      state() {},
+      established: (id) => established.push(id),
+      denied() {},
+    },
+    () => socket as unknown as WebSocket,
+  );
+  owner.update(["alpha", "beta", "gamma"]);
+  await socket.auth();
+  const shared = socket
+    .requests()
+    .find((request) => request[2]["#h"]?.length === 3);
+  assert.exists(shared);
+  owner.prioritize?.(["alpha"]);
+  const alone = socket.requests().at(-1);
+  assert.exists(alone);
+  expect(alone[2]["#h"]).toEqual(["alpha"]);
+  // The shared REQ stays open for the others; alpha's own EOSE establishes it.
+  expect(socket.sent.some((frame) => frame[0] === "CLOSE")).toBe(false);
+  await socket.receive(["EOSE", alone[1]]);
+  expect(established).toEqual(["alpha"]);
+  await socket.receive(["EOSE", shared[1]]);
+  expect(established).toEqual(["alpha", "beta", "gamma"]);
   owner.dispose();
 });
 it("refills setup immediately on EOSE; quota CLOSED pauses the whole queue and only retries refused routes", async () => {

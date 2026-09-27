@@ -71,9 +71,10 @@ it("measures coverage for the app's subscriber and for raw batch shapes", async 
   const four = await run("client:4", channels);
   const packed = await run("filters:10", channels);
   const single = await run("multi-h:all", channels);
-  // The app also sets up its profile and membership routes.
+  // The app batches undemanded roster channels into one REQ, beside its
+  // profile and membership routes.
   expect([one.reqs, four.reqs, packed.reqs, single.reqs]).toEqual([
-    22, 22, 2, 1,
+    3, 3, 2, 1,
   ]);
   for (const result of [one, four, packed, single])
     expect(result).toMatchObject({
@@ -83,9 +84,9 @@ it("measures coverage for the app's subscriber and for raw batch shapes", async 
       canaryMs: expect.any(Number),
       sockets: 1,
     });
-  // One round trip per outstanding slot: 22 serial, ceil(22 / 4) = 6, then 1.
-  expect(one.coverageMs).toBe(22 * 40);
-  expect(four.coverageMs).toBe(6 * 40);
+  // One round trip per outstanding slot: 3 serial, then 1.
+  expect(one.coverageMs).toBe(3 * 40);
+  expect(four.coverageMs).toBe(40);
   expect(packed.coverageMs).toBe(40);
   expect(single.reqMs).toEqual([40]);
 });
@@ -210,7 +211,8 @@ it("times channel coverage by channel EOSE only", async () => {
 it("keeps a timed-out route failed when its EOSE arrives after CLOSE", async () => {
   vi.useFakeTimers();
   let first = true;
-  // The first channel REQ answers 30 ms after the subscriber's 10 s deadline.
+  // The shared channel REQ answers 30 ms after the subscriber's 10 s deadline,
+  // so both of its channels fail together.
   const result = await run("client:1", channels.slice(0, 2), undefined, {
     delay: (_id, channel) => {
       if (!channel) return 40;
@@ -219,7 +221,7 @@ it("keeps a timed-out route failed when its EOSE arrives after CLOSE", async () 
       return late ? 10030 : 40;
     },
   });
-  expect(result).toMatchObject({ failed: 1 });
+  expect(result).toMatchObject({ failed: 2 });
   expect(result.coverageMs).toBeUndefined();
   expect(result.error).toBeUndefined();
 });

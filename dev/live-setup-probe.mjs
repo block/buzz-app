@@ -1,8 +1,9 @@
 // Development probe: how long live coverage of a channel roster takes to set up
 // under different subscription strategies, against a real relay. Each run uses a
 // fresh authenticated socket. `client:K` drives the app's own subscriber with K
-// setups outstanding (the app uses SETUP_CONCURRENCY); the other strategies send
-// raw REQs the app does not send today. A canary REQ sent right after the burst
+// setups outstanding (the app uses SETUP_CONCURRENCY and batches roster channels
+// into multi-`#h` REQs); the other strategies send raw REQ shapes for comparison.
+// A canary REQ sent right after the burst
 // measures how long other socket work waits behind setup.
 import process from "node:process";
 import { readFile, writeFile } from "node:fs/promises";

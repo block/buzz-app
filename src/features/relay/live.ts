@@ -741,6 +741,19 @@ export function subscribeRelayTraffic(
     prioritize(input) {
       liveChannels(input); // Same bounded ID validation, but preserve demand order.
       priority = [...new Set(input)].slice(0, 64);
+      // Demand that lands while a shared REQ is still replaying gets its own REQ,
+      // so the open channel never waits on the rest of the roster.
+      for (const route of routes.values()) {
+        const wire = route.wire ? wires.get(route.wire) : undefined;
+        if (
+          route.channelId &&
+          route.status === "pending" &&
+          wire &&
+          wire.routes.length > 1 &&
+          priority.includes(route.channelId)
+        )
+          detach(route);
+      }
       if (!closed) sync();
     },
     update(input) {

@@ -14,6 +14,7 @@ import { byteSize } from "./budget";
 import { foldMessages } from "./fold";
 import { compareMessages, MessageClock } from "./message-order";
 import { shareMessageRows } from "./row-identity";
+import { isMessageKind, MESSAGE_KINDS } from "./kinds";
 
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
 const PAGE_SIZE = 50;
@@ -23,8 +24,7 @@ const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
 /** The relay's `thread_window` row allowlist excludes legacy diffs (kind 40008). */
 const STRICT_WINDOW_KINDS = [9, 40002];
-const contentKind = (event: EventData) =>
-  [9, 40002, 40008].includes(event.kind);
+const contentKind = (event: EventData) => isMessageKind(event.kind);
 const inChannel = (event: EventData, channelId: string) =>
   event.tags.some(([name, value]) => name === "h" && value === channelId);
 /** Relay thread-cursor order (seconds, id); rendered order is `compareMessages`. */
@@ -440,7 +440,7 @@ export function createThreadView({
       let more = false;
       for (let page = 0; page < targetPages; page++) {
         const filter: ReadFilter = {
-          kinds: [9, 40002, 40008],
+          kinds: [...MESSAGE_KINDS],
           "#h": [channelId],
           "#e": [rootId],
           depth_limit: 100,

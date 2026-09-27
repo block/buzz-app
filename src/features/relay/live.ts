@@ -13,6 +13,7 @@ import {
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import { eventDto } from "./events.ts";
 import { EMOJI_SET } from "./emoji.ts";
+import { CHANNEL_ACTIVITY_KINDS, MEMBERSHIP_KIND } from "./kinds.ts";
 
 export const LIVE_CHANNEL_CAPACITY = 1022;
 export const LIVE_BATCH_SIZE = 10; // Relay's per-REQ filter cap; replay stays per channel.
@@ -194,8 +195,17 @@ type Route = {
   deadline?: ReturnType<typeof setTimeout>;
 };
 export const CHANNEL_KINDS = [
-  9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
-  39005, 20002,
+  ...CHANNEL_ACTIVITY_KINDS,
+  MEMBERSHIP_KIND,
+  40100,
+  40003,
+  5,
+  9005,
+  7,
+  39000,
+  39002,
+  39005,
+  20002,
 ];
 /** One authenticated socket, bounded joined-channel batches, singleton previews and two globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */

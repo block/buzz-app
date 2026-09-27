@@ -67,6 +67,7 @@ import { createChannelStore, type ChannelStoreOptions } from "./store";
 import { MessageClock } from "./message-order";
 import { UploadError, type UploadedAttachment } from "./attachments";
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
+import { isMessageKind } from "./kinds";
 import type { ReadTransport } from "./transport";
 import type { LiveSnapshot, LiveSubscription } from "./live";
 import {
@@ -444,14 +445,14 @@ export function createRelaySession(
           filter.search !== undefined &&
           !filter["#h"]?.length &&
           !!filter.kinds?.length &&
-          filter.kinds.every((kind) => [9, 40002, 40008].includes(kind)),
+          filter.kinds.every(isMessageKind),
       )
     ) {
       const ids = [
         ...new Set(
           events.flatMap((event) => {
             const tags = event.tags.filter(([name]) => name === "h");
-            return [9, 40002, 40008].includes(event.kind) &&
+            return isMessageKind(event.kind) &&
               tags.length === 1 &&
               tags[0]?.[1]
               ? [tags[0][1]]
@@ -1986,9 +1987,7 @@ export function createRelaySession(
                   ([name]) => name === "h",
                 );
                 return (
-                  (event.kind === 9 ||
-                    event.kind === 40002 ||
-                    event.kind === 40008) &&
+                  isMessageKind(event.kind) &&
                   event.pubkey !== transport.viewer &&
                   destinations.length === 1 &&
                   destinations[0]?.[1] === provenance.channelId &&

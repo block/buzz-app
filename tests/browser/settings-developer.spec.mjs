@@ -108,5 +108,9 @@ test.describe("client performance", () => {
       }),
     ]);
     expect(exported.queries.length).toBeGreaterThan(0);
+    // Relay reads were signature-checked on the worker, not inline.
+    expect(
+      exported.summary.mainThread.cpu["verify.worker"]?.count,
+    ).toBeGreaterThan(0);
   });
 });

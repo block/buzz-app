@@ -5,7 +5,10 @@ import {
   type Event,
   type VerifiedEvent,
 } from "nostr-tools";
+import { clientMetrics } from "../developer/client-metrics.ts";
 import { ByteLru } from "./budget.ts";
+import { checkSignatures } from "./signature-pool.ts";
+import { yieldToHost } from "./yield.ts";
 /** A relay event whose signature has been verified at the transport boundary. */
 export type RelayEvent = VerifiedEvent;
 /** Event payload shared by locally authored intent and verified relay records.
@@ -50,29 +53,84 @@ export function eventDto(value: unknown): RelayEvent {
  * Retains no payload, authorization, freshness or caller-supplied proof symbols. */
 export function createEventVerifier() {
   const proofs = new ByteLru<string>(2048, 2048 * 192);
-  return (value: unknown): RelayEvent =>
+  const proven = (event: Event) =>
+    proofs.get(event.id) === event.sig && getEventHash(event) === event.id;
+  const remember = (event: Event) => proofs.set(event.id, event.sig, 192); // fixed ASCII id (64) + signature (128)
+  const verify = (value: unknown): RelayEvent =>
     checkedEvent(value, (event): event is VerifiedEvent => {
-      if (
-        proofs.get(event.id) === event.sig &&
-        getEventHash(event) === event.id
-      ) {
-        event[verifiedSymbol] = true;
-        return true;
-      }
+      if (proven(event)) return true;
       if (!verifyEvent(event)) return false;
-      proofs.set(event.id, event.sig, 192); // fixed ASCII id (64) + signature (128)
+      remember(event);
       return true;
     });
+  /** Bulk reads: validate and copy wire fields here, check new signatures on a
+   * worker so they never compete with input and rendering. One bad signature
+   * rejects the whole batch, as the single-event path does. */
+  async function many(
+    values: readonly unknown[],
+    signal?: AbortSignal,
+  ): Promise<RelayEvent[]> {
+    const cancelled = () => {
+      if (signal?.aborted)
+        throw new DOMException("Read cancelled", "AbortError");
+    };
+    let started = performance.now();
+    const owned = values.map(wireFields);
+    const fresh = owned.filter((event) => !proven(event));
+    clientMetrics.cpu("verify.read", performance.now() - started, owned.length);
+    clientMetrics.cpu("verify.reused", 0, owned.length - fresh.length);
+    const worker = fresh.length ? await checkSignatures(fresh) : undefined;
+    cancelled();
+    if (worker) {
+      clientMetrics.cpu("verify.worker", worker.ms, fresh.length);
+      if (worker.ok.some((ok) => !ok)) throw invalidEvent();
+      for (const event of fresh) remember(event);
+    } else {
+      // No worker (tests, or it failed to load): check inline between yields.
+      for (let index = 0; index < fresh.length; index += 12) {
+        cancelled();
+        started = performance.now();
+        const batch = fresh.slice(index, index + 12);
+        for (const event of batch) {
+          if (!verifyEvent(event)) throw invalidEvent();
+          remember(event);
+        }
+        clientMetrics.cpu("verify.read", performance.now() - started, 0);
+        if (index + 12 < fresh.length) await yieldToHost();
+      }
+    }
+    return owned.map(sealed);
+  }
+  return Object.assign(verify, { many });
 }
+export type EventVerifier = ReturnType<typeof createEventVerifier>;
+
+/** Disk restore of events this app saved only after verifying them. Rehashing
+ * catches corruption and any edit to signed fields; the Schnorr check is skipped.
+ * The store is origin-private IndexedDB that only this app writes, so anything
+ * able to forge a record there can already run code as the app. */
+export function savedEvent(value: unknown): RelayEvent {
+  return checkedEvent(
+    value,
+    (event): event is VerifiedEvent => getEventHash(event) === event.id,
+  );
+}
+
+const invalidEvent = () =>
+  new Error("Relay supplied a malformed or invalidly signed event");
 
 function checkedEvent(
   value: unknown,
   verify: (event: Event) => event is VerifiedEvent,
 ): RelayEvent {
-  const invalid = () =>
-    new Error("Relay supplied a malformed or invalidly signed event");
+  const owned = wireFields(value);
+  if (!verify(owned)) throw invalidEvent();
+  return sealed(owned);
+}
+
+function wireFields(value: unknown): Event {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw invalid();
+    throw invalidEvent();
   const raw = value as Record<string, unknown>;
   // nostr-tools validates only typeof number here. JSON overflow becomes Infinity
   // and hashes as null; fractions/unsafe integers cannot be protocol timestamps.
@@ -97,10 +155,10 @@ function checkedEvent(
         !Array.isArray(tag) || tag.some((item) => typeof item !== "string"),
     )
   )
-    throw invalid();
+    throw invalidEvent();
   // Copy only wire fields before verification. Never trust a cached verification
   // symbol from a caller-owned object whose signed bytes may have changed.
-  const owned = {
+  return {
     id: raw.id,
     pubkey: raw.pubkey,
     sig: raw.sig,
@@ -109,10 +167,15 @@ function checkedEvent(
     content: raw.content,
     tags: raw.tags.map((tag: string[]) => [...tag]),
   };
-  if (!verify(owned)) throw invalid();
+}
+
+/** Freeze a copy whose signature has been accepted by the caller. */
+function sealed(owned: Event): RelayEvent {
   for (const tag of owned.tags) Object.freeze(tag);
   Object.freeze(owned.tags);
-  return Object.freeze(owned);
+  return Object.freeze(
+    Object.assign(owned, { [verifiedSymbol]: true as const }),
+  );
 }
 
 export const tag = (event: RelayEvent, name: string) =>

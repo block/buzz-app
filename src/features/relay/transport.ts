@@ -37,7 +37,6 @@ import {
   presenceFilter,
   presenceText,
 } from "./http-admission";
-import { yieldToHost } from "./yield";
 import { clientMetrics } from "../developer/client-metrics";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import {
@@ -52,6 +51,7 @@ import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import {
   createEventVerifier,
   eventDto,
+  type EventVerifier,
   type ReadFilter,
   type RelayEvent,
 } from "./events";
@@ -183,7 +183,7 @@ export function relayHttpBase(
 
 async function parseEvents(
   raw: unknown,
-  verify: (value: unknown) => RelayEvent,
+  verify: EventVerifier,
   signal?: AbortSignal,
 ): Promise<RelayEvent[]> {
   if (!Array.isArray(raw))
@@ -191,18 +191,7 @@ async function parseEvents(
       "invalid-response",
       "Relay response is not an event array",
     );
-  const events: RelayEvent[] = [];
-  // Signature checks are CPU work too. Yield between small batches so speculative
-  // head/profile responses cannot monopolize input and foreground rendering.
-  for (let index = 0; index < raw.length; index += 12) {
-    if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
-    const started = performance.now();
-    const batch = raw.slice(index, index + 12).map(verify);
-    clientMetrics.cpu("verify.read", performance.now() - started, batch.length);
-    events.push(...batch);
-    if (index + 12 < raw.length) await yieldToHost();
-  }
-  return events;
+  return verify.many(raw, signal);
 }
 
 /** Development metrics: one record per finite read, never per event.
@@ -254,7 +243,7 @@ async function parsePresence(
   if (!Array.isArray(raw) || raw.length > authors.length)
     throw new Error("Invalid presence snapshot");
   const values = new Map<string, "online" | "away" | "offline" | "unknown">();
-  for (const event of await parseEvents(raw, eventDto, signal)) {
+  for (const event of await parseEvents(raw, createEventVerifier(), signal)) {
     const subjects = event.tags.filter(([tag]) => tag === "p");
     const subject = subjects[0]?.[1];
     let status: unknown = event.content;

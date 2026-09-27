@@ -10,8 +10,9 @@ export type SavedStartup = {
   };
   preferences?: { savedAt: number; data: SidebarPreferences };
 };
-/** Signed wire records only. The owner re-verifies before displaying cached history.
- * A cache hit is never authority for current membership or freshness. No keys/tokens are persisted. */
+/** Signed wire records only, written after verification. The owner rehashes them on
+ * restore but trusts their signatures (see `savedEvent`). A cache hit is never
+ * authority for current membership or freshness. No keys/tokens are persisted. */
 export type SavedHead = {
   channelId: string;
   savedAt: number;

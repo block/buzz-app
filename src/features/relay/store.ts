@@ -11,7 +11,7 @@ import type {
 } from "./contracts";
 import { DiscoveryState } from "./discovery";
 import { foldMessages } from "./fold";
-import { eventDto, hasTag, tag, type RelayEvent } from "./events";
+import { hasTag, savedEvent, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
@@ -693,15 +693,12 @@ export function createChannelStore(
         continue;
       }
       try {
-        // Verify in channel-sized batches and yield between them; cache parsing never monopolizes startup.
-        // Persisted input is untrusted even if an in-memory test object carries nostr-tools'
-        // cached verification symbol. Reconstruct only wire fields before verification.
-        const verifySaved = (value: unknown) =>
-          eventDto(JSON.parse(JSON.stringify(value)));
+        // Saved events were verified before they were written (see savedEvent):
+        // rehash, don't re-check signatures. Yield between batches all the same.
         const events: RelayEvent[] = [];
-        for (let index = 0; index < record.events.length; index += 8) {
+        for (let index = 0; index < record.events.length; index += 64) {
           const started = performance.now();
-          const batch = record.events.slice(index, index + 8).map(verifySaved);
+          const batch = record.events.slice(index, index + 64).map(savedEvent);
           clientMetrics.cpu(
             "verify.restore",
             performance.now() - started,
@@ -742,8 +739,8 @@ export function createChannelStore(
           restored: true,
         };
         const verifiedProfiles: RelayEvent[] = [];
-        for (let index = 0; index < record.profiles.length; index += 8) {
-          for (const value of record.profiles.slice(index, index + 8)) {
+        for (let index = 0; index < record.profiles.length; index += 64) {
+          for (const value of record.profiles.slice(index, index + 64)) {
             const candidate = value as { pubkey?: string; id?: string };
             const existing =
               candidate?.pubkey && directory.event(candidate.pubkey);
@@ -751,7 +748,7 @@ export function createChannelStore(
             verifiedProfiles.push(
               existing && existing.id === candidate.id
                 ? existing
-                : verifySaved(value),
+                : savedEvent(value),
             );
           }
           await yieldToHost();
@@ -836,21 +833,24 @@ export function createChannelStore(
       )
         return;
       const events: RelayEvent[] = [];
-      for (let index = 0; index < saved.events.length; index += 12) {
-        events.push(
-          ...saved.events
-            .slice(index, index + 12)
-            .map((value) => eventDto(JSON.parse(JSON.stringify(value)))),
+      for (let index = 0; index < saved.events.length; index += 64) {
+        const started = performance.now();
+        const batch = saved.events.slice(index, index + 64).map(savedEvent);
+        clientMetrics.cpu(
+          "verify.restore",
+          performance.now() - started,
+          batch.length,
         );
+        events.push(...batch);
         await yieldToHost();
         if (disposed || generation !== epoch || discoveryObserved) return;
       }
       const profiles: RelayEvent[] = [];
       if (Array.isArray(saved.profiles) && saved.profiles.length <= 1024) {
-        for (let index = 0; index < saved.profiles.length; index += 12) {
-          for (const value of saved.profiles.slice(index, index + 12)) {
+        for (let index = 0; index < saved.profiles.length; index += 64) {
+          for (const value of saved.profiles.slice(index, index + 64)) {
             try {
-              profiles.push(eventDto(JSON.parse(JSON.stringify(value))));
+              profiles.push(savedEvent(value));
             } catch {
               /* A bad optional label cannot discard valid conversation history. */
             }

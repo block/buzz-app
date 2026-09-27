@@ -258,9 +258,19 @@ export function ClientMetricsPanel() {
                   times, {ms(mainThread.longTaskMs)} in total
                 </li>
                 {[
-                  cpuLine("Checking signatures of relay reads", "verify.read"),
                   cpuLine(
-                    "Checking signatures of disk restores",
+                    "Checking relay reads on the main thread",
+                    "verify.read",
+                  ),
+                  cpuLine(
+                    "Checking signatures in the background",
+                    "verify.worker",
+                  ),
+                  cpu("verify.reused")?.count
+                    ? `Signatures already checked on this connection: ${cpu("verify.reused")?.count} events`
+                    : "",
+                  cpuLine(
+                    "Restoring saved events without signature checks",
                     "verify.restore",
                   ),
                   cpuLine("Building timelines from events", "fold"),

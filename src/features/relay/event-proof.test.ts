@@ -1,6 +1,6 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getEventHash, verifyEvent, verifiedSymbol } from "nostr-tools";
-import { createEventVerifier, eventDto } from "./events";
+import { createEventVerifier, eventDto, savedEvent } from "./events";
 import { connectBrokerTransport, connectSignedTransport } from "./transport";
 import { keypair, signed } from "./testing";
 import { ByteLru } from "./budget";
@@ -159,7 +159,9 @@ it.each(["broker", "signed"])(
     const filters = [{ kinds: [9], "#h": ["a"], limit: 2 }];
     expect(await first.query(filters)).toHaveLength(2);
     expect(await first.query(filters)).toHaveLength(2);
-    expect(verifyEvent).toHaveBeenCalledTimes(1);
+    // Batches check their unproven events together, so a repeat within one
+    // response is checked twice; the next response reuses the proof.
+    expect(verifyEvent).toHaveBeenCalledTimes(2);
     payload = { ...wire(), content: "corrupted after cold read" };
     await expect(first.query(filters)).rejects.toThrow(/malformed/);
     payload = { ...wire(), sig: "0".repeat(128) };
@@ -170,7 +172,7 @@ it.each(["broker", "signed"])(
     expect(verifyEvent).not.toHaveBeenCalled();
     const second = await connect();
     expect(await second.query(filters)).toHaveLength(2);
-    expect(verifyEvent).toHaveBeenCalledTimes(1);
+    expect(verifyEvent).toHaveBeenCalledTimes(2);
     expect(
       fetcher.mock.calls.filter(([url]) => url.endsWith("/query")),
     ).toHaveLength(6);
@@ -179,3 +181,81 @@ it.each(["broker", "signed"])(
     await expect(first.query(filters, aborted.signal)).rejects.toThrow();
   },
 );
+
+it("restores saved events without a signature check but rejects edited signed fields", () => {
+  const restored = savedEvent(wire());
+  expect(restored).toEqual(event);
+  expect(restored[verifiedSymbol]).toBe(true);
+  expect(Object.isFrozen(restored)).toBe(true);
+  expect(verifyEvent).not.toHaveBeenCalled();
+  for (const patch of [
+    { content: "tampered" },
+    { pubkey: other.pubkey },
+    { created_at: event.created_at + 1 },
+    { tags: [["h", "b"]] },
+    { id: "0".repeat(64) },
+    { sig: "not hex" },
+  ])
+    expect(() => savedEvent({ ...wire(), ...patch })).toThrow(/malformed/);
+});
+
+describe("background signature checks", () => {
+  /** Runs the worker's check in-process, with the real (unmocked) verifier. */
+  async function stubWorker(fail = false) {
+    const actual =
+      await vi.importActual<typeof import("nostr-tools")>("nostr-tools");
+    const posted: unknown[] = [];
+    class FakeWorker {
+      onmessage?: (message: { data: unknown }) => void;
+      onerror?: () => void;
+      postMessage(data: { id: number; events: unknown[] }) {
+        posted.push(data);
+        const copy = structuredClone(data);
+        setTimeout(() =>
+          fail
+            ? this.onerror?.()
+            : this.onmessage?.({
+                data: {
+                  id: copy.id,
+                  ok: copy.events.map((item) =>
+                    actual.verifyEvent(item as never),
+                  ),
+                  ms: 1,
+                },
+              }),
+        );
+      }
+      terminate() {}
+    }
+    vi.stubGlobal("Worker", FakeWorker);
+    vi.resetModules();
+    const { createEventVerifier } = await import("./events");
+    return { verify: createEventVerifier(), posted };
+  }
+
+  it("checks new signatures off the main thread and rejects the whole batch on one bad signature", async () => {
+    const { verify, posted } = await stubWorker();
+    const batch = Array.from({ length: 70 }, (_, index) =>
+      signed(key, { kind: 9, content: `m${index}`, tags: [] }),
+    );
+    const events = await verify.many(batch);
+    expect(events.map((item) => item.id)).toEqual(batch.map((item) => item.id));
+    expect(events.every((item) => Object.isFrozen(item))).toBe(true);
+    expect(posted).toHaveLength(2); // 64-event chunks spread across workers
+    expect(verifyEvent).not.toHaveBeenCalled(); // main thread did no crypto
+    expect(await verify.many(batch)).toHaveLength(70);
+    expect(posted).toHaveLength(2); // proofs reused, nothing re-sent
+    await expect(
+      verify.many([wire(), { ...wire(), sig: "0".repeat(128) }]),
+    ).rejects.toThrow(/malformed/);
+  });
+
+  it("falls back to inline checks when the worker fails", async () => {
+    const { verify } = await stubWorker(true);
+    expect(await verify.many([wire()])).toHaveLength(1);
+    expect(verifyEvent).toHaveBeenCalledTimes(1);
+    await expect(
+      verify.many([{ ...wire(), content: "x", id: event.id }]),
+    ).rejects.toThrow(/malformed/);
+  });
+});

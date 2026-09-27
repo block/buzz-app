@@ -376,30 +376,20 @@ it("ignores timer lag while the page is hidden", () => {
   }
 });
 
-it("attributes long tasks and measured CPU to background work", () => {
+it("records event-loop lag as long tasks and sums CPU per stage", () => {
   vi.useFakeTimers();
   let time = 0;
   const metrics = createClientMetrics({ now: () => time, monitor: true });
-  const finished = metrics.background();
   metrics.cpu("verify.read", 12, 24);
   time += 250; // The loop was blocked; the 50 ms sampler fires late.
   vi.advanceTimersByTime(50);
-  finished();
   time += 50;
-  vi.advanceTimersByTime(50);
-  time += 150;
   vi.advanceTimersByTime(50);
   metrics.cpu("verify.read", 3, 6);
   const { mainThread } = metrics.summary();
-  expect(mainThread.longTasks).toBe(2);
-  expect(mainThread.longTaskMs).toBe(200 + 100);
-  expect(mainThread.backgroundLongTaskMs).toBe(200);
-  expect(mainThread.cpu["verify.read"]).toEqual({
-    ms: 15,
-    count: 30,
-    calls: 2,
-    backgroundMs: 12,
-  });
+  expect(mainThread.longTasks).toBe(1);
+  expect(mainThread.longTaskMs).toBe(200);
+  expect(mainThread.cpu["verify.read"]).toEqual({ ms: 15, count: 30 });
 });
 
 it("records nothing when disabled, and unit tests get the disabled singleton", () => {

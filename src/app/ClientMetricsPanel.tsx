@@ -255,9 +255,7 @@ export function ClientMetricsPanel() {
               <ul className="m-0 list-none space-y-1 p-0 text-body-sm tabular-nums">
                 <li>
                   Main thread blocked 50 ms or more: {mainThread.longTasks}{" "}
-                  times, {ms(mainThread.longTaskMs)} in total,{" "}
-                  {ms(mainThread.backgroundLongTaskMs)} of it during background
-                  sync
+                  times, {ms(mainThread.longTaskMs)} in total
                 </li>
                 {[
                   cpuLine("Checking signatures of relay reads", "verify.read"),

@@ -8,6 +8,7 @@ import process from "node:process";
 import { readFile, writeFile } from "node:fs/promises";
 import { finalizeEvent, getPublicKey, nip19 } from "nostr-tools";
 import { setLogLevel } from "../src/features/developer/logging.ts";
+import { percentile } from "../src/features/developer/client-metrics.ts";
 import {
   CHANNEL_KINDS,
   LIVE_REPLAY_LIMIT,
@@ -17,16 +18,12 @@ import {
 
 const CANARY = "probe-canary";
 const ROSTER_LIMIT = 500;
-const median = (values) => percentile(values, 50);
-function percentile(values, p) {
-  const sorted = values
-    .filter((value) => value !== undefined)
-    .sort((a, b) => a - b);
-  if (!sorted.length) return undefined;
-  return sorted[
-    Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)
-  ];
-}
+// Runs that never reached a milestone report `undefined` for it.
+const median = (values) =>
+  percentile(
+    values.filter((value) => value !== undefined),
+    50,
+  );
 
 /** `client:4`, `client:all`, `filters:10`, `multi-h:all`, `idle`. */
 export function parseStrategy(value) {

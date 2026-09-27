@@ -933,11 +933,7 @@ export function createChannelStore(
     // Network heads belong to explicit demand/intent and retained live catch-up.
     if (prepared && !hydration) {
       const reveal = revealHydration;
-      const restored = clientMetrics.background();
-      hydration = hydrate().finally(() => {
-        restored();
-        reveal?.();
-      });
+      hydration = hydrate().finally(() => reveal?.());
     }
     if (!cached) {
       saveDiscovery();

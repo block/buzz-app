@@ -45,7 +45,6 @@ type QueryRecord = Readonly<{
 type LongTask = Readonly<{
   start: number;
   duration: number;
-  background: boolean;
 }>;
 type LiveRouteState = Readonly<{
   id: string;
@@ -60,7 +59,6 @@ type LiveState = Readonly<{
 const OPEN_LIMIT = 500;
 const QUERY_LIMIT = 4000;
 const TASK_LIMIT = 2000;
-const INTERVAL_LIMIT = 4000;
 const LAG_SAMPLE_MS = 50;
 const PAINT_FRAMES = 30;
 
@@ -126,14 +124,7 @@ export function createClientMetrics({
       bytes: 0,
     },
   ];
-  const cpu = new Map<
-    string,
-    { ms: number; count: number; calls: number; backgroundMs: number }
-  >();
-  /** Closed background intervals, plus the open ones by token. */
-  const intervals: { start: number; end: number }[] = [];
-  const openIntervals = new Map<number, number>();
-  let intervalSequence = 0;
+  const cpu = new Map<string, { ms: number; count: number }>();
   let pending:
     | {
         channel: string;
@@ -163,30 +154,11 @@ export function createClientMetrics({
 
   const phase = () => phases.length - 1;
   const currentPhase = () => phases[phase()] as LivePhase;
-  function backgroundAt(start: number, end: number) {
-    for (const begin of openIntervals.values()) if (begin <= end) return true;
-    // Intervals close in order, so scan from the newest and stop at the first
-    // that ended before this span.
-    for (let i = intervals.length - 1; i >= 0; i--) {
-      const interval = intervals[i] as { start: number; end: number };
-      if (interval.end < start) return false;
-      if (interval.start <= end) return true;
-    }
-    return false;
-  }
   function startMonitor() {
     if (monitoring || !monitor || !enabled) return;
     monitoring = true;
     const record = (start: number, duration: number) =>
-      push(
-        longTasks,
-        Object.freeze({
-          start,
-          duration,
-          background: backgroundAt(start, start + duration),
-        }),
-        TASK_LIMIT,
-      );
+      push(longTasks, Object.freeze({ start, duration }), TASK_LIMIT);
     if (
       typeof PerformanceObserver !== "undefined" &&
       PerformanceObserver.supportedEntryTypes?.includes("longtask")
@@ -259,10 +231,6 @@ export function createClientMetrics({
         loads(opens.filter((open) => open.source === source)),
       ]),
     ) as Record<OpenSource, ReturnType<typeof loads>>;
-    const taskMs = (background: boolean) =>
-      longTasks
-        .filter((task) => task.background === background)
-        .reduce((sum, task) => sum + task.duration, 0);
     return {
       opens: {
         ...distribution(opens.map((open) => open.ms)),
@@ -273,8 +241,7 @@ export function createClientMetrics({
       },
       mainThread: {
         longTasks: longTasks.length,
-        longTaskMs: taskMs(true) + taskMs(false),
-        backgroundLongTaskMs: taskMs(true),
+        longTaskMs: longTasks.reduce((sum, task) => sum + task.duration, 0),
         cpu: Object.fromEntries(cpu),
       },
       phases: phases.map((entry) => ({
@@ -385,32 +352,11 @@ export function createClientMetrics({
         );
       },
     ),
-    /** Mark background work (disk restore, background reads). */
-    background: (): (() => void) => {
-      if (!enabled) return () => {};
-      startMonitor();
-      const token = ++intervalSequence;
-      openIntervals.set(token, now());
-      return () => {
-        const start = openIntervals.get(token);
-        if (start === undefined) return;
-        openIntervals.delete(token);
-        push(intervals, { start, end: now() }, INTERVAL_LIMIT);
-      };
-    },
     /** Synchronous main-thread work measured by its caller, per batch. */
     cpu: active((stage: string, ms: number, count: number) => {
-      const entry = cpu.get(stage) ?? {
-        ms: 0,
-        count: 0,
-        calls: 0,
-        backgroundMs: 0,
-      };
+      const entry = cpu.get(stage) ?? { ms: 0, count: 0 };
       entry.ms += ms;
       entry.count += count;
-      entry.calls++;
-      const end = now();
-      if (backgroundAt(end - ms, end)) entry.backgroundMs += ms;
       cpu.set(stage, entry);
     }),
     /** Observe live route state; derives connect/reconnect phases and coverage. */
@@ -493,7 +439,6 @@ export function createClientMetrics({
       opens.length = 0;
       queries.length = 0;
       longTasks.length = 0;
-      intervals.length = 0;
       cpu.clear();
       skipped = 0;
       // Keep `shown`: the pane still shows it, and reselecting it opens nothing.

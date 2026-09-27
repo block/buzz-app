@@ -210,8 +210,6 @@ async function measureQuery<T>(
   read: (sized: (text: string) => string) => Promise<T>,
 ): Promise<T> {
   const started = performance.now();
-  const finished =
-    priority === "background" ? clientMetrics.background() : undefined;
   let bytes = 0;
   let ok = false;
   try {
@@ -222,7 +220,6 @@ async function measureQuery<T>(
     ok = true;
     return result;
   } finally {
-    finished?.();
     clientMetrics.query(session, {
       ms: performance.now() - started,
       bytes,

@@ -46,6 +46,21 @@ const EXCEPTIONS = new Map([
   ],
 ]);
 
+// Deliberate presence palette choice. Bind to the mode, role, surface and
+// resolved colors so this cannot excuse a future palette/surface regression.
+// These remain contrast failures accepted by design, not WCAG compliance.
+const BOUNDARY_EXCEPTIONS = new Map(
+  [
+    "light: --status-away on --surface-base (#ffba18 on #f5f5f6)",
+    "light: --status-away on --surface-panel (#ffba18 on #ffffff)",
+    "light: --status-away on --surface-inset (#ffba18 on #f5f5f6)",
+    "light: --status-away on --surface-popover (#ffba18 on #ffffff)",
+  ].map((pair) => [
+    pair,
+    "Approved Amber 10 presence palette; below 3:1. See docs/presence.md#your-status.",
+  ]),
+);
+
 /** Roles measured at the meta target rather than the body target. */
 const META_ROLES = new Set(["--text-tertiary", "--text-metadata"]);
 
@@ -260,10 +275,19 @@ for (const [mode, map] of Object.entries(modes)) {
         borderColor && surfaceColor
           ? wcagRatio(borderColor, surfaceColor)
           : null;
-      if (ratio === null || ratio < 3)
+      if (ratio === null || ratio < 3) {
+        const key = `${mode}: ${role} on ${surface} (${borderColor} on ${surfaceColor})`;
+        if (ratio !== null && BOUNDARY_EXCEPTIONS.has(key)) {
+          claimedExceptions.add(key);
+          console.log(
+            `  (design exception) ${key} — ${ratio.toFixed(3)}:1, needs 3:1. ${BOUNDARY_EXCEPTIONS.get(key)}`,
+          );
+          continue;
+        }
         boundaryFailures.push(
           `${mode}: ${role} on ${surface} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
         );
+      }
     }
   }
 }
@@ -315,13 +339,13 @@ if (failures.length > 0) {
 
 if (boundaryFailures.length > 0) process.exit(1);
 console.log(
-  "✓ Contrast: text and control/state boundaries clear their targets in both modes",
+  "✓ Contrast: measured pairs meet targets except documented design exceptions",
 );
 for (const [role, why] of EXCEPTIONS) {
   console.log(`  (exception) ${role} — ${why.split(";")[0]}`);
 }
 
-const stale = [...EXCEPTIONS.keys()].filter(
+const stale = [...EXCEPTIONS.keys(), ...BOUNDARY_EXCEPTIONS.keys()].filter(
   (key) => key.includes(" on ") && !claimedExceptions.has(key),
 );
 if (stale.length > 0) {

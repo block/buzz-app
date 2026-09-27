@@ -14,17 +14,56 @@ seconds; refreshing the snapshot does not prove that the session is still alive.
 ## Your status
 
 The avatar dot shows your locally chosen/derived status, not an authoritative
-relay readback. Its account dropdown keeps Settings and adds **Automatic**,
-**Away**, and **Appear offline**, using the shared keyboard-accessible radio group.
-Automatic returns to Active on input/foreground return and Away after ten idle
-minutes. Manual Away/Offline wins over typing until Automatic is selected.
+relay readback. Its account dropdown keeps Settings and offers **Online**,
+**Away**, and **Offline**, using the shared keyboard-accessible radio group.
+The checked choice reflects the current status. Automatic activity detection is
+internal: new/default and previously saved `auto` preferences return to Online
+on input/foreground return and Away after ten idle minutes. Selecting a
+status, including reselecting the checked status, saves a manual override;
+explicit Online, Away, and Offline choices persist
+through idle and input. Automatic is not a menu choice.
 
-The one app activity owner stores `auto | away | offline` per viewer in
+Online label text and avatar dots use Green 10. Away dots and label backgrounds
+use Amber 10; Away label text uses the mode-aware Amber 12 `text-warning` role.
+Label backgrounds mix their status color at 12%, 18% on hover, and 24% while
+pressed/open. Online and neutral Offline mix over `surface-inset` for a darker
+fill; Away keeps its translucent fill over the menu. Against the actual white
+light menu and #333333 dark menu, label contrast is:
+
+| Label | Light resting / hover / open | Dark resting / hover / open |
+| --- | --- | --- |
+| Online | 2.87 / 2.69 / 2.51 | 5.90 / 5.32 / 4.74 |
+| Away | 10.63 / 10.28 / 9.94 | 7.76 / 6.65 / 5.70 |
+| Offline | 6.00 / 5.47 / 4.96 | 8.96 / 7.70 / 6.53 |
+
+These are WCAG contrast ratios. Away and Offline pass AA's 4.5:1 small-text
+target in both modes. Online passes in dark mode but still fails in light mode,
+where darkening its fill reduces contrast with Green 10 text. The light-mode
+Amber 10 dot also misses the 3:1 non-text boundary target: 1.568:1 on
+`surface-base`/`surface-inset` and 1.709:1 on `surface-panel`/`surface-popover`.
+
+The design guide also requires APCA Lc60 for text. Online misses that target in
+both themes: approximately Lc40–48 in light mode and Lc44–47 in dark mode across
+the same states. Its dark-mode WCAG pass does not establish APCA compliance.
+
+These are deliberate design exceptions, approved to preserve the Green 10 / Amber
+10 palette and Medium (500) availability capsule shown in the
+[review snapshots](screenshots/presence-labels/README.md). The contrast guard
+reports the four Away boundary exceptions, limited to these exact light-mode
+roles, surfaces and resolved colors; any color or surface change requires
+reassessment. The Online capsule's composited fills are outside that static
+token-pair guard, so its measured text exception is recorded here. Passing the
+guard does not mean this treatment meets contrast targets. Other roles and
+thresholds remain unchanged. Presence still has accessible status text, and the
+dropdown uses standard text colors; that does not remedy the visual shortfall.
+
+The one app activity owner stores `auto | online | away | offline` per viewer in
 `buzz-presence.v1:<pubkey>`. Same-origin windows observe storage changes; all
 retained communities use that viewer's intent. Startup restores it before opening
-a session. Storage failure applies only to the current window and displays a
-warning. This is device-local, not cross-device arbitration: another device or
-CLI can overwrite the relay's last-writer-wins status.
+a session. Existing `auto` values remain valid without migration; missing or
+unrecognized values fall back to `auto`. Storage failure applies only to the
+current window and displays a warning. This is device-local, not cross-device
+arbitration: another device or CLI can overwrite the relay's last-writer-wins status.
 
 The existing authenticated publisher sends bare kind:20001 status. An accepted
 Offline clears presence once without renewal; locally unsent/refused/unconfirmed

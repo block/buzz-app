@@ -398,20 +398,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
     id: "semantic-status",
     name: "Status",
     description:
-      "Presence badge colors, paired across light and dark surfaces.",
+      "Presence badge and label colors, paired across light and dark surfaces.",
     roles: [
       {
         token: "status-online",
         variable: "--status-online",
-        pointsAt: "green-11 light / green-11 dark",
-        use: "Online presence dot.",
+        pointsAt: "green-10 light / green-10 dark",
+        use: "Online presence dot and tinted availability label. Accepted label contrast exception: below AA in light mode and APCA in both modes; see docs/presence.md.",
         status: "core",
       },
       {
         token: "status-away",
         variable: "--status-away",
-        pointsAt: "amber-11 light / amber-11 dark",
-        use: "Away presence dot.",
+        pointsAt: "amber-10 light / amber-10 dark",
+        use: "Away presence dot and availability label tint; label text uses text-warning. Accepted light-mode dot contrast exception; see docs/presence.md.",
         status: "core",
       },
       {

@@ -151,7 +151,8 @@ if (await verifiedBundle(destination)) {
   process.exit(0);
 }
 const cache = cachedBundle();
-const cached = cache && (await verifiedBundle(cache));
+const existing = cache && (await lstat(cache).catch(() => undefined));
+const cached = existing && (await verifiedBundle(cache));
 if (cached) {
   // A copy that fails (e.g. the entry was removed mid-copy) rebuilds below.
   const restored = await publish(cache, destination).catch(() => undefined);
@@ -161,10 +162,10 @@ if (cached) {
     );
     process.exit(0);
   }
-} else if (cache && (await lstat(cache).catch(() => undefined))) {
-  // Entries are only published whole, so an existing entry that fails
-  // verification was edited; remove it so this build can replace it. Never
-  // remove a missing key: a concurrent build may be about to publish it.
+} else if (existing) {
+  // Seen before verifying: entries appear whole by rename, so this one was
+  // edited. A key missing at check time is never removed, since a concurrent
+  // build may publish it.
   await rm(cache, { recursive: true, force: true });
 }
 console.log(

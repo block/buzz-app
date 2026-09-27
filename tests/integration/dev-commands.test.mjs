@@ -44,7 +44,6 @@ function recipeWithRuntime(failRuntime, name, ...args) {
     writeFileSync(
       path.join(directory, "pnpm"),
       `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.BUZZ_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
-if (process.argv[2] === "tauri" && (process.env.CARGO_TARGET_DIR || process.env.CARGO_BUILD_TARGET_DIR)) process.exit(23);
 if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.includes("--help") && !process.argv.includes("-h")) {
   if (!require("node:fs").existsSync("src-tauri/resources/agent-runtime/manifest.json")) process.exit(19);
 }\n`,
@@ -131,18 +130,6 @@ const announced = (port, { derived = true } = {}) =>
       "$",
     "m",
   );
-
-test("desktop launchers ignore an inherited shared Cargo target directory", (t) => {
-  // The fixture pnpm fails if either override reaches Tauri.
-  process.env.CARGO_TARGET_DIR = "/tmp/shared-target";
-  process.env.CARGO_BUILD_TARGET_DIR = "/tmp/shared-target";
-  t.after(() => {
-    delete process.env.CARGO_TARGET_DIR;
-    delete process.env.CARGO_BUILD_TARGET_DIR;
-  });
-  launched("desktop");
-  launched("desktop-bundle");
-});
 
 test("web preserves the no-argument command", () => {
   assert.deepEqual(launched("web").call, ["dev"]);

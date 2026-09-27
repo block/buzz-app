@@ -112,7 +112,7 @@ async function verifiedBundle(directory) {
         .digest("hex");
       if (manifest.files[filename] !== hash) return false;
     }
-    return manifest;
+    return true;
   } catch {
     return false;
   }
@@ -153,18 +153,19 @@ if (await verifiedBundle(destination)) {
 const cache = cachedBundle();
 const cached = cache && (await verifiedBundle(cache));
 if (cached) {
-  // A concurrent repair may replace a corrupt entry mid-copy; mismatches rebuild.
+  // A copy that fails (e.g. the entry was removed mid-copy) rebuilds below.
   const restored = await publish(cache, destination).catch(() => undefined);
-  if (
-    restored &&
-    filenames.every((f) => restored.files[f] === cached.files[f])
-  ) {
+  if (restored) {
     console.log(
       `Verified inputs restored from ${cache} (${spec.revision}, ${target})`,
     );
     process.exit(0);
   }
-  await rm(join(destination, "manifest.json"), { force: true });
+} else if (cache && (await lstat(cache).catch(() => undefined))) {
+  // Entries are only published whole, so an existing entry that fails
+  // verification was edited; remove it so this build can replace it. Never
+  // remove a missing key: a concurrent build may be about to publish it.
+  await rm(cache, { recursive: true, force: true });
 }
 console.log(
   "Preparing the agent runtime; the first build can take several minutes.",
@@ -193,25 +194,17 @@ try {
   console.log(
     `Verified inputs staged at ${destination} (${spec.revision}, ${target})`,
   );
-  // Verified entries are immutable because other worktrees may be copying them.
-  // Only a missing or corrupt entry is replaced, by rename; caching is best-effort.
+  // Entries are published whole by rename; caching is best-effort.
   if (cache && !cached) {
     const entry = `${cache}.${process.pid}.new`;
-    const stale = `${cache}.${process.pid}.old`;
     try {
       await publish(destination, entry);
-      // Renaming onto an existing entry fails; keep it if a concurrent build
-      // published it, and move it aside only if it is still corrupt.
-      await rename(entry, cache).catch(async () => {
-        if (await verifiedBundle(cache)) return;
-        await rename(cache, stale);
-        await rename(entry, cache);
-      });
+      // Renaming onto an existing entry fails: a concurrent build published first.
+      await rename(entry, cache);
     } catch {
-      // Losing a repair race leaves the other build's entry in place.
+      // Keep the other build's entry.
     } finally {
       await rm(entry, { recursive: true, force: true });
-      await rm(stale, { recursive: true, force: true });
     }
   }
 } finally {

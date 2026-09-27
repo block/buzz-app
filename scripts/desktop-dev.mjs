@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { desktopEnv, desktopOverlay, options } from "./desktop-config.mjs";
+import { desktopOverlay, options } from "./desktop-config.mjs";
 import { worktreePort } from "./worktree-port.mjs";
 
 const args = process.argv.slice(2);
@@ -52,7 +52,6 @@ forwarded.unshift("--config", JSON.stringify(config));
 // Runner/application arguments after -- belong to Tauri, including any --port.
 forwarded.push(...rest);
 const result = spawnSync("pnpm", ["tauri", "dev", ...forwarded], {
-  env: desktopEnv(),
   stdio: "inherit",
 });
 if (result.error) console.error(result.error.message);

@@ -73,6 +73,36 @@ it("times an open from its input event to the painted frame and classifies its s
   expect(summary.opens.bySource.network.n).toBe(1);
 });
 
+it("splits each open into waiting for rows and rendering them", () => {
+  const h = setup();
+  // A server read: rows reach the store 300 ms after the click.
+  h.metrics.channelIntent("alpha", click(0));
+  h.metrics.channelMounted("alpha");
+  h.metrics.channelEnsured("alpha", "network");
+  h.advance(300);
+  h.metrics.channelData("alpha");
+  h.metrics.channelData("other"); // Not the channel being opened.
+  h.advance(20);
+  h.metrics.channelRendered("alpha", "verified");
+  h.metrics.channelData("alpha"); // A later page doesn't move the wait.
+  h.advance(10);
+  h.paint();
+  // Rows were already in the store, so all of it is rendering.
+  h.metrics.channelIntent("beta", click(330));
+  h.metrics.channelMounted("beta");
+  h.metrics.channelEnsured("beta", "memory");
+  h.advance(25);
+  h.metrics.channelRendered("beta", "verified");
+  h.paint();
+  expect(h.metrics.export().opens).toEqual([
+    expect.objectContaining({ channel: "alpha", ms: 330, waitMs: 300 }),
+    expect.objectContaining({ channel: "beta", ms: 25, waitMs: 0 }),
+  ]);
+  const { bySource } = h.metrics.summary().opens;
+  expect(bySource.network).toMatchObject({ waitP50: 300, renderP50: 30 });
+  expect(bySource.memory).toMatchObject({ waitP50: 0, renderP50: 25 });
+});
+
 it("waits for the rows to be visible, ignores reselecting the shown channel and supersedes abandoned opens", () => {
   const h = setup();
   h.metrics.channelMounted("alpha");

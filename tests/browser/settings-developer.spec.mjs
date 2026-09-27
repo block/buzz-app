@@ -89,6 +89,12 @@ test.describe("client performance", () => {
     const exported = JSON.parse(
       await readFile(await (await download).path(), "utf8"),
     );
+    const [betaOpen, alphaOpen] = exported.opens.slice(-2);
+    // Beta's held read is waiting, not rendering; Alpha's rows were in memory.
+    expect(betaOpen.waitMs).toBeGreaterThan(0);
+    expect(betaOpen.waitMs).toBeLessThan(betaOpen.ms);
+    expect(alphaOpen.waitMs).toBeLessThan(betaOpen.waitMs);
+    await expect(page.getByText(/^Server \d+$/)).toBeVisible();
     expect(exported.opens.slice(-2)).toEqual([
       expect.objectContaining({
         channel: "beta",

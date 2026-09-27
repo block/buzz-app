@@ -12,6 +12,9 @@ export type ChannelOpen = Readonly<{
   source: OpenSource;
   /** Input event (or mount) to the frame after first rows were committed. */
   ms: number;
+  /** Until the store held rows for the channel: a disk read or relay request.
+   * Zero when the rows were already there. The rest of `ms` is rendering. */
+  waitMs: number;
   at: number;
   phase: number;
 }>;
@@ -73,6 +76,19 @@ const distribution = (values: readonly number[]) => ({
   p90: percentile(values, 90),
   max: values.length ? Math.max(...values) : undefined,
 });
+/** Totals plus medians of the wait/render split. Medians of the parts need
+ * not add up to the median total. */
+const loads = (list: readonly ChannelOpen[]) => ({
+  ...distribution(list.map((open) => open.ms)),
+  waitP50: percentile(
+    list.map((open) => open.waitMs),
+    50,
+  ),
+  renderP50: percentile(
+    list.map((open) => open.ms - open.waitMs),
+    50,
+  ),
+});
 const push = <T>(list: T[], value: T, limit: number) => {
   list.push(value);
   if (list.length > limit) list.splice(0, list.length - limit);
@@ -123,6 +139,8 @@ export function createClientMetrics({
         trigger: OpenTrigger;
         start: number;
         ensured?: "memory" | "disk" | "network";
+        /** The store first held rows for the channel during this open. */
+        dataAt?: number;
         rendered?: boolean;
       }
     | undefined;
@@ -196,6 +214,7 @@ export function createClientMetrics({
     const open = pending;
     if (!open) return;
     pending = undefined;
+    const at = now();
     const source: OpenSource =
       open.ensured === "network"
         ? freshness === "cached"
@@ -208,7 +227,8 @@ export function createClientMetrics({
         channel: open.channel.slice(0, 8),
         trigger: open.trigger,
         source,
-        ms: now() - open.start,
+        ms: at - open.start,
+        waitMs: Math.max(0, (open.dataAt ?? open.start) - open.start),
         at: open.start,
         phase: phase(),
       }),
@@ -223,11 +243,9 @@ export function createClientMetrics({
     const bySource = Object.fromEntries(
       (["memory", "disk", "disk-late", "network"] as const).map((source) => [
         source,
-        distribution(
-          opens.filter((open) => open.source === source).map((o) => o.ms),
-        ),
+        loads(opens.filter((open) => open.source === source)),
       ]),
-    ) as Record<OpenSource, ReturnType<typeof distribution>>;
+    ) as Record<OpenSource, ReturnType<typeof loads>>;
     const taskMs = (background: boolean) =>
       longTasks
         .filter((task) => task.background === background)
@@ -287,6 +305,11 @@ export function createClientMetrics({
           pending.ensured = source;
       },
     ),
+    /** The store first holds rows for a channel whose window was empty. */
+    channelData: active((channel: string) => {
+      if (pending?.channel === channel && !pending.rendered)
+        pending.dataAt ??= now();
+    }),
     /** Message rows were committed for a channel. Records after the first
      * paint in which `visible` holds (a virtualized list may need a frame). */
     channelRendered: active(

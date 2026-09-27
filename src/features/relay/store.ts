@@ -274,6 +274,8 @@ export function createChannelStore(
     )
       return;
     const previousPreview = messagePreview(state.snapshot.rows);
+    if (rows.length && !state.snapshot.rows.length)
+      clientMetrics.channelData(state.channelId);
     state.snapshot = Object.freeze(next);
     notify(windowListeners.get(state.channelId));
     if (previousPreview !== messagePreview(rows)) setList(list);

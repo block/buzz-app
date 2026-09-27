@@ -23,6 +23,7 @@ the other build with the same roster and the same order.
 | Metric | Definition |
 |---|---|
 | Click-to-content | From the sidebar click or keyboard event (or, for other routes, the pane switch) to the first paint after one of its rows is in the DOM. |
+| Wait / render | Each open splits at the moment the store first holds rows for the channel. **Wait** runs until then: a disk read or relay request, or zero when the rows were already there. **Render** is the rest, from rows in memory to rows on screen. The panel shows the median of each part, so the parts need not add up to the median total. |
 | Source | `memory`: rows were already on the device from this session. `disk`: restored from IndexedDB before the open. `disk-late`: the open waited, then a disk restore arrived before the network read did. `network`: the open waited for a relay read. |
 | Cache-hit rate | Share of opens served from `memory` or `disk`, with no network wait. |
 | Long tasks | Long-task entries where the engine supports them (Chromium). WebKit has none, so it uses event-loop lag of at least 50 ms instead. Tasks that overlap a disk restore or a background read count as background. |

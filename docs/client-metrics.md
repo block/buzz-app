@@ -24,7 +24,7 @@ the other build with the same roster and the same order.
 |---|---|
 | Click-to-content | From the sidebar click or keyboard event (or, for other routes, the pane switch) to the first paint after one of its rows is in the DOM. |
 | Wait / render | Each open splits at the moment the store first holds rows for the channel. **Wait** runs until then: a disk read or relay request, or zero when the rows were already there. **Render** is the rest, from rows in memory to rows on screen. The panel shows the median of each part, so the parts need not add up to the median total. |
-| Source | `memory`: rows were already on the device from this session. `disk`: restored from IndexedDB before the open. `disk-late`: the open waited, then a disk restore arrived before the network read did. `network`: the open waited for a relay read. |
+| Source | Where the rows came from, tracked apart from freshness (a dropped socket marks relay rows stale, which does not make them disk rows). `memory`: rows a relay read already fetched this session. `disk`: restored from IndexedDB before the open. `disk-late`: the open waited, then a disk restore arrived before the network read did. `network`: the open waited for a relay read. |
 | Cache-hit rate | Share of opens served from `memory` or `disk`, with no network wait. |
 | Long tasks | Long-task entries where the engine supports them (Chromium). WebKit has none, so it uses event-loop lag of at least 50 ms instead. Tasks that overlap a disk restore or a background read count as background. |
 | CPU | Time spent verifying signatures (`verify.read`, `verify.restore`) and folding rows (`fold`), measured per batch or window, never per event. |
@@ -33,7 +33,12 @@ the other build with the same roster and the same order.
 
 Opens with nothing to paint are not timed: empty or failed channels, and
 rows kept offscreen by a saved scroll position. The summary counts them as
-**Not timed**.
+**Not timed**. Leaving the pane (for Settings, say) drops an unfinished open,
+and coming back is a new open.
+
+Live coverage and reads follow the first relay session the page reports,
+normally the community selected at launch. Other retained communities keep
+their own sockets, which would otherwise read as that session reconnecting.
 
 ## Live setup probe
 
@@ -56,15 +61,18 @@ BUZZ_PRIVATE_KEY=nsec1… BUZZ_RELAY_URL=wss://relay.example pnpm probe:live \
 Without `--channels` (a comma-separated list or `@file`), it probes every
 channel the identity is a member of. It reports medians of:
 
-- **coverage:** from authentication to the last channel reaching EOSE;
+- **coverage:** from authentication to the last channel reaching EOSE, only
+  when every channel did;
 - **per-REQ time:** from send to EOSE;
 - **canary:** how long a one-filter REQ sent right after the burst took to
   reach EOSE, compared with `idle`;
-- **failures:** refusals by reason, summed over runs.
+- **failures:** refusals by reason (including the canary's), summed over runs.
 
-A run that misses `--timeout` (30 s by default) is counted as `incomplete`,
-and that strategy then reports no coverage median, since a median over only
-the finished runs would favour it.
+A run that misses `--timeout` (30 s by default) or leaves any channel refused
+is counted as `incomplete`, and that strategy then reports no coverage median,
+since a median over only the finished runs would favour it. Likewise, a
+refused canary is counted under `canary refused` and suppresses the canary
+median.
 
 Refusals such as `rate-limited: quota exceeded` count as failures for the raw
 strategies. The app's subscriber retries them itself. Runs rotate their order

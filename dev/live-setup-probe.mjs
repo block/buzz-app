@@ -105,10 +105,12 @@ export function runStrategy({
   const coverage = new Map(
     strategy.kind === "idle" ? [] : channels.map((id) => [id, "pending"]),
   );
-  let lastEose;
+  // Profile and membership REQs share the socket but not channel coverage.
+  let lastChannelEose;
   let authId;
   let authAt;
   let canarySent;
+  let canaryDone = false;
   let finish;
   const done = new Promise((resolve) => {
     finish = resolve;
@@ -135,14 +137,15 @@ export function runStrategy({
   const covered = () => {
     if (
       authAt !== undefined &&
-      result.canaryMs !== undefined &&
+      canaryDone &&
       [...coverage.values()].every((state) => state !== "pending")
     ) {
-      result.coverageMs =
+      // Coverage means every channel is live; refusals are counted in `failed`.
+      if (
         channels.length &&
-        [...coverage.values()].some((state) => state === "live")
-          ? lastEose - authAt
-          : undefined;
+        [...coverage.values()].every((state) => state === "live")
+      )
+        result.coverageMs = lastChannelEose - authAt;
       complete();
     }
   };
@@ -170,6 +173,8 @@ export function runStrategy({
     sent(text) {
       const frame = JSON.parse(text);
       if (frame[0] === "AUTH") authId = frame[1].id;
+      // A retired wire's late frames must not change its route's outcome.
+      if (frame[0] === "CLOSE") requests.delete(frame[1]);
       if (frame[0] !== "REQ" || frame[1] === CANARY) return;
       result.reqs++;
       const ids = frame
@@ -198,9 +203,14 @@ export function runStrategy({
         return false;
       }
       if (frame[1] === CANARY) {
+        if (frame[0] === "EOSE") result.canaryMs = now() - canarySent;
+        if (frame[0] === "CLOSED") {
+          const reason = `canary: ${String(frame[2] ?? "closed").slice(0, 120)}`;
+          result.canaryRefused = reason;
+          result.failures[reason] = (result.failures[reason] ?? 0) + 1;
+        }
         if (frame[0] === "EOSE" || frame[0] === "CLOSED") {
-          result.canaryMs = now() - canarySent;
-          if (frame[0] === "CLOSED") result.canaryRefused = String(frame[2]);
+          canaryDone = true;
           covered();
         }
         return true;
@@ -215,8 +225,9 @@ export function runStrategy({
       if (!request) return false;
       if (frame[0] === "EOSE") {
         requests.delete(frame[1]);
-        lastEose = now();
-        result.reqMs.push(lastEose - request.sent);
+        const at = now();
+        result.reqMs.push(at - request.sent);
+        if (request.channels.length) lastChannelEose = at;
         for (const id of request.channels) coverage.set(id, "live");
       } else if (frame[0] === "CLOSED") {
         requests.delete(frame[1]);
@@ -384,8 +395,11 @@ export async function probe({
   const summary = strategies.map(({ name }) => {
     const mine = results.filter((result) => result.strategy === name);
     // A median over only the runs that finished would favour the slowest
-    // strategy, whose slow runs are the ones that time out.
-    const incomplete = mine.filter((result) => result.error).length;
+    // strategy, whose slow runs are the ones that time out or are refused.
+    const incomplete = mine.filter(
+      (result) => result.error || result.failed,
+    ).length;
+    const canaryRefused = mine.filter((result) => result.canaryRefused).length;
     return {
       strategy: name,
       runs: mine.length,
@@ -398,7 +412,10 @@ export async function probe({
         : median(mine.map((result) => result.coverageMs)),
       reqP50Ms: median(mine.map((result) => percentile(result.reqMs, 50))),
       reqP90Ms: median(mine.map((result) => percentile(result.reqMs, 90))),
-      canaryMs: median(mine.map((result) => result.canaryMs)),
+      canaryMs: canaryRefused
+        ? undefined
+        : median(mine.map((result) => result.canaryMs)),
+      canaryRefused,
       events: median(mine.map((result) => result.events)),
       kb: median(mine.map((result) => result.bytes / 1024)),
       failed: Math.max(...mine.map((result) => result.failed)),
@@ -478,6 +495,7 @@ Without --channels, probes every channel the identity is a member of.`);
       "req p50": round(row.reqP50Ms),
       "req p90": round(row.reqP90Ms),
       "canary ms": round(row.canaryMs),
+      "canary refused": row.canaryRefused,
       events: row.events,
       KB: round(row.kb),
       failed: row.failed,

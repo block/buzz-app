@@ -1297,7 +1297,10 @@ const ChannelBody = memo(function ChannelBody({
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
   const window = useChannelWindow(queries.channels, channelId);
-  useLayoutEffect(() => clientMetrics.channelMounted(channelId), [channelId]);
+  useLayoutEffect(() => {
+    clientMetrics.channelMounted(channelId);
+    return () => clientMetrics.channelUnmounted(channelId);
+  }, [channelId]);
   const newest = window.rows.at(-1)?.id;
   const settled = window.status === "ready" || window.status === "error";
   useLayoutEffect(() => {
@@ -1307,14 +1310,13 @@ const ChannelBody = memo(function ChannelBody({
     if (newest)
       clientMetrics.channelRendered(
         channelId,
-        window.freshness,
         () =>
           !!document.querySelector(
             `[data-channel-timeline="${CSS.escape(channelId)}"] [data-message-id]`,
           ),
       );
     else if (settled) clientMetrics.channelEmpty(channelId);
-  }, [channelId, newest, window.freshness, settled]);
+  }, [channelId, newest, settled]);
   useEffect(() => {
     // Only the normalized conversation attempt can acknowledge its channel.
     // A warm child effect runs before the parent's default resolution effect.

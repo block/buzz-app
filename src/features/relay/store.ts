@@ -35,6 +35,9 @@ type WindowState = {
   atHead: boolean;
   generation: number;
   controller?: AbortController | undefined;
+  /** Rows came from IndexedDB and no relay read has replaced them. Freshness
+   * cannot say this: a dropped socket also marks relay rows `cached`. */
+  restored?: boolean;
 };
 type Head = {
   rows: readonly ChannelMessage[];
@@ -43,6 +46,7 @@ type Head = {
   events: readonly RelayEvent[];
   savedAt: number;
   cached: boolean;
+  restored?: true;
 };
 export type ChannelStoreOptions = {
   profiling?: RelayProfiler;
@@ -275,7 +279,10 @@ export function createChannelStore(
       return;
     const previousPreview = messagePreview(state.snapshot.rows);
     if (rows.length && !state.snapshot.rows.length)
-      clientMetrics.channelData(state.channelId);
+      clientMetrics.channelData(
+        state.channelId,
+        state.restored ? "disk" : "network",
+      );
     state.snapshot = Object.freeze(next);
     notify(windowListeners.get(state.channelId));
     if (previousPreview !== messagePreview(rows)) setList(list);
@@ -580,6 +587,7 @@ export function createChannelStore(
         state.cursor = head.cursor;
         state.events = head.events;
         state.atHead = true;
+        state.restored = head.restored === true;
         setWindow(state, patchFromHead(head));
         return;
       }
@@ -609,6 +617,7 @@ export function createChannelStore(
       state.events = retained;
       state.atHead = !cursor;
       state.cursor = page.cursor;
+      state.restored = false;
       setWindow(state, {
         status: "ready",
         rows,
@@ -725,6 +734,7 @@ export function createChannelStore(
           hasMore: page.hasMore,
           savedAt: record.savedAt,
           cached: true,
+          restored: true,
         };
         const verifiedProfiles: RelayEvent[] = [];
         for (let index = 0; index < record.profiles.length; index += 8) {
@@ -767,6 +777,7 @@ export function createChannelStore(
           state.cursor = head.cursor;
           state.events = head.events;
           state.atHead = true;
+          state.restored = head.restored === true;
           setWindow(state, patchFromHead(head));
         }
       } catch {
@@ -1341,13 +1352,14 @@ export function createChannelStore(
         state.cursor = retained.cursor;
         state.events = retained.events;
         state.atHead = true;
+        state.restored = retained.restored === true;
         setWindow(state, patchFromHead(retained));
       }
       clientMetrics.channelEnsured(
         channelId,
         !state.snapshot.rows.length
           ? "network"
-          : state.snapshot.freshness === "cached"
+          : state.restored
             ? "disk"
             : "memory",
       );
@@ -1380,6 +1392,7 @@ export function createChannelStore(
         state.cursor = head.cursor;
         state.events = head.events;
         state.atHead = true;
+        state.restored = head.restored === true;
         setWindow(state, patchFromHead(head));
         prepareMedia(channelId);
       }
@@ -1793,6 +1806,7 @@ export function createChannelStore(
         );
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
+        retained.restored = false;
         accept(head.events);
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");

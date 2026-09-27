@@ -205,6 +205,7 @@ async function parseEvents(
 /** Development metrics: one record per finite read, never per event.
  * `sized` passes the decoded response body through and records its length. */
 async function measureQuery<T>(
+  session: string,
   priority: "foreground" | "background",
   read: (sized: (text: string) => string) => Promise<T>,
 ): Promise<T> {
@@ -222,7 +223,7 @@ async function measureQuery<T>(
     return result;
   } finally {
     finished?.();
-    clientMetrics.query({
+    clientMetrics.query(session, {
       ms: performance.now() - started,
       bytes,
       priority,
@@ -231,11 +232,14 @@ async function measureQuery<T>(
   }
 }
 /** Report live route state to development metrics before the session sees it. */
-function measuredLive(callbacks: LiveCallbacks): LiveCallbacks {
+function measuredLive(
+  session: string,
+  callbacks: LiveCallbacks,
+): LiveCallbacks {
   return {
     ...callbacks,
     state(snapshot) {
-      clientMetrics.live(snapshot);
+      clientMetrics.live(session, snapshot);
       callbacks.state(snapshot);
     },
   };
@@ -444,7 +448,10 @@ export async function connectBrokerTransport(
     ...(session.live
       ? {
           subscribe: (callbacks: LiveCallbacks) => {
-            traffic = subscribeBrokerTraffic(endpoint, measuredLive(callbacks));
+            traffic = subscribeBrokerTraffic(
+              endpoint,
+              measuredLive(endpoint, callbacks),
+            );
             return traffic;
           },
         }
@@ -691,7 +698,7 @@ export async function connectBrokerTransport(
             requestId: string,
             priority: "foreground" | "background",
           ) {
-            return measureQuery(priority, async (sized) => {
+            return measureQuery(endpoint, priority, async (sized) => {
               const response = await fetch(`${endpoint}/query`, {
                 method: "POST",
                 credentials: "same-origin",
@@ -857,7 +864,7 @@ export async function connectBrokerTransport(
     ...(session.channelActivity
       ? {
           async channelActivity(channelIds, signal) {
-            return measureQuery("background", async (sized) => {
+            return measureQuery(endpoint, "background", async (sized) => {
               const result = await fetch(`${endpoint}/channel-activity`, {
                 method: "POST",
                 credentials: "same-origin",
@@ -892,7 +899,7 @@ export async function connectBrokerTransport(
         size,
       ),
     query: (filters, signal, requestId = "read", priority = "foreground") =>
-      measureQuery(priority, async (sized) => {
+      measureQuery(endpoint, priority, async (sized) => {
         const result = await fetch(`${endpoint}/query`, {
           method: "POST",
           credentials: "same-origin",
@@ -949,7 +956,7 @@ export async function connectSignedTransport(
           httpOrigin.replace(/^http/, "ws"),
           (event) => signer.signEvent(event),
           viewer,
-          measuredLive(callbacks),
+          measuredLive(httpOrigin, callbacks),
           undefined,
           owner.live,
         );
@@ -995,7 +1002,7 @@ export async function connectSignedTransport(
       },
     },
     query: (filters, signal, requestId = "read", priority = "foreground") =>
-      measureQuery(priority, async (sized) => {
+      measureQuery(httpOrigin, priority, async (sized) => {
         const result = await signedPost(
           signer,
           `${httpOrigin}/query`,

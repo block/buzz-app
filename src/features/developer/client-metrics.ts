@@ -141,6 +141,7 @@ export function createClientMetrics({
         ensured?: "memory" | "disk" | "network";
         /** The store first held rows for the channel during this open. */
         dataAt?: number;
+        dataOrigin?: "disk" | "network";
         rendered?: boolean;
       }
     | undefined;
@@ -151,6 +152,13 @@ export function createClientMetrics({
   const routeSeen = new Map<string, number>();
   const routeDone = new Set<string>();
   let lastStatus: string | undefined;
+  /** Live and read metrics follow one relay session: its phases are per
+   * connection, and a retained community's socket would read as a reconnect. */
+  let owner: string | undefined;
+  function owns(session: string) {
+    owner ??= session;
+    return owner === session;
+  }
 
   const phase = () => phases.length - 1;
   const currentPhase = () => phases[phase()] as LivePhase;
@@ -210,17 +218,21 @@ export function createClientMetrics({
       return work(...args);
     }) as (...args: A) => R | undefined;
 
-  function finishOpen(freshness: string | undefined) {
+  function finishOpen() {
     const open = pending;
     if (!open) return;
     pending = undefined;
     const at = now();
+    // Rows the store already held keep their origin; otherwise they arrived
+    // during the open.
     const source: OpenSource =
-      open.ensured === "network"
-        ? freshness === "cached"
+      open.ensured === "memory" || open.ensured === "disk"
+        ? open.ensured
+        : open.dataOrigin === "disk"
           ? "disk-late"
-          : "network"
-        : (open.ensured ?? (freshness === "cached" ? "disk" : "memory"));
+          : open.dataOrigin || open.ensured
+            ? "network"
+            : "memory";
     push(
       opens,
       Object.freeze({
@@ -294,37 +306,43 @@ export function createClientMetrics({
       if (pending?.channel !== channel)
         pending = { channel, trigger: "route", start: now() };
     }),
-    /** The store's view of the demanded window when it was ensured. */
+    /** The pane stopped showing a channel (switched, or replaced by another
+     * page). Returning to it is a new open, and its unfinished open is dropped
+     * unless the pane remounts at once (React StrictMode replays effects). */
+    channelUnmounted: active((channel: string) => {
+      if (shown !== channel) return;
+      shown = undefined;
+      const open = pending;
+      queueMicrotask(() => {
+        if (shown !== channel && pending === open && open?.channel === channel)
+          pending = undefined;
+      });
+    }),
+    /** The store's view of the demanded window when it was ensured. The pane
+     * may already have rendered rows it held, before its effect ensured it. */
     channelEnsured: active(
       (channel: string, source: "memory" | "disk" | "network") => {
-        if (
-          pending?.channel === channel &&
-          !pending.rendered &&
-          !pending.ensured
-        )
+        if (pending?.channel === channel && !pending.ensured)
           pending.ensured = source;
       },
     ),
     /** The store first holds rows for a channel whose window was empty. */
-    channelData: active((channel: string) => {
-      if (pending?.channel === channel && !pending.rendered)
-        pending.dataAt ??= now();
+    channelData: active((channel: string, origin: "disk" | "network") => {
+      if (pending?.channel !== channel || pending.rendered) return;
+      pending.dataAt ??= now();
+      pending.dataOrigin ??= origin;
     }),
     /** Message rows were committed for a channel. Records after the first
      * paint in which `visible` holds (a virtualized list may need a frame). */
     channelRendered: active(
-      (
-        channel: string,
-        freshness?: string,
-        visible: () => boolean = () => true,
-      ) => {
+      (channel: string, visible: () => boolean = () => true) => {
         const open = pending;
         if (open?.channel !== channel || open.rendered) return;
         open.rendered = true;
         let frames = 0;
         const check = () => {
-          if (pending !== open) return;
-          if (visible()) finishOpen(freshness);
+          if (pending !== open || shown !== channel) return;
+          if (visible()) finishOpen();
           else if (++frames < PAINT_FRAMES) afterPaint(check);
           else {
             // Recording now would time the fallback, not the paint.
@@ -342,14 +360,19 @@ export function createClientMetrics({
       pending = undefined;
       skipped++;
     }),
-    /** A finite relay read finished. One call per request, never per event. */
+    /** A finite relay read finished. One call per request, never per event.
+     * `session` names the relay session; only the first one seen is recorded. */
     query: active(
-      (input: {
-        ms: number;
-        bytes: number;
-        priority: "foreground" | "background";
-        ok: boolean;
-      }) => {
+      (
+        session: string,
+        input: {
+          ms: number;
+          bytes: number;
+          priority: "foreground" | "background";
+          ok: boolean;
+        },
+      ) => {
+        if (!owns(session)) return;
         const current = currentPhase();
         current.queries++;
         current.bytes += input.bytes;
@@ -361,7 +384,7 @@ export function createClientMetrics({
         );
       },
     ),
-    /** Mark background work (disk restore, background reads, live setup). */
+    /** Mark background work (disk restore, background reads). */
     background: (): (() => void) => {
       if (!enabled) return () => {};
       startMonitor();
@@ -390,7 +413,8 @@ export function createClientMetrics({
       cpu.set(stage, entry);
     }),
     /** Observe live route state; derives connect/reconnect phases and coverage. */
-    live: active((state: LiveState) => {
+    live: active((session: string, state: LiveState) => {
+      if (!owns(session)) return;
       const at = now();
       const reconnecting =
         everConnected &&

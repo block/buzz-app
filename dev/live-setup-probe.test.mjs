@@ -4,8 +4,12 @@ import { parseStrategy, probe, runStrategy } from "./live-setup-probe.mjs";
 
 afterEach(() => vi.useRealTimers());
 /** A relay 20 ms away that answers every REQ at once and caps filters at 10.
- * `answer` may replace the reply to a channel REQ (or return null for none). */
-function fakeRelay(answer = (id) => ["EOSE", id]) {
+ * `answer` may replace the reply to a channel REQ (or return null for none),
+ * `other` the reply to any other REQ, and `delay` the reply latency. */
+function fakeRelay(
+  answer = (id) => ["EOSE", id],
+  { other = (id) => ["EOSE", id], delay = () => 40 } = {},
+) {
   const sockets = [];
   const factory = () => {
     const socket = {
@@ -16,20 +20,19 @@ function fakeRelay(answer = (id) => ["EOSE", id]) {
         if (kind !== "REQ") return;
         if (filters.length > 10)
           return reply(["CLOSED", id, "invalid: too many filters"]);
-        const frame = filters.some((filter) => filter["#h"])
-          ? answer(id)
-          : ["EOSE", id];
-        if (frame) reply(frame);
+        const channel = filters.some((filter) => filter["#h"]);
+        const frame = channel ? answer(id) : other(id);
+        if (frame) reply(frame, delay(id, channel));
       },
       close() {
         this.readyState = 3;
       },
     };
-    const reply = (frame) =>
+    const reply = (frame, ms = 40) =>
       setTimeout(() => {
         if (socket.readyState === 1)
           socket.onmessage?.({ data: JSON.stringify(frame) });
-      }, 40);
+      }, ms);
     setTimeout(
       () => socket.onmessage?.({ data: JSON.stringify(["AUTH", "c"]) }),
       20,
@@ -45,8 +48,8 @@ const options = (relay) => ({
   socketFactory: relay.factory,
   now: () => Date.now(),
 });
-async function run(name, channels, answer) {
-  const relay = fakeRelay(answer);
+async function run(name, channels, answer, relayOptions) {
+  const relay = fakeRelay(answer, relayOptions);
   const result = runStrategy({
     ...options(relay),
     channels,
@@ -91,6 +94,8 @@ it("reports relay refusals and an idle baseline canary", async () => {
     failed: 11,
     failures: { "invalid: too many filters": 1 },
   });
+  // Partial coverage is not coverage.
+  expect(refused.coverageMs).toBeUndefined();
   const idle = await run("idle", channels);
   expect(idle).toMatchObject({ reqs: 0, failed: 0, canaryMs: 40 });
   expect(() => parseStrategy("client:0")).toThrow();
@@ -133,4 +138,83 @@ it("reports timed-out runs and gives no coverage median unless every run finishe
   ]);
   expect(summary[0]).toMatchObject({ runs: 3, incomplete: 1, failed: 2 });
   expect(summary[0].coverageMs).toBeUndefined();
+});
+
+it("gives no coverage median when any run leaves channels refused", async () => {
+  vi.useFakeTimers();
+  let answered = 0;
+  // The first run refuses both channels; later runs answer.
+  const relay = fakeRelay((id) =>
+    answered++ < 2 ? ["CLOSED", id, "restricted: no"] : ["EOSE", id],
+  );
+  const report = probe({
+    ...options(relay),
+    channels: channels.slice(0, 2),
+    strategies: [parseStrategy("multi-h:1")],
+    runs: 3,
+    pauseMs: 0,
+  });
+  await vi.runAllTimersAsync();
+  const { summary, results } = await report;
+  expect(results.map((result) => result.failed)).toEqual([2, 0, 0]);
+  expect(summary[0]).toMatchObject({ incomplete: 1, failed: 2 });
+  expect(summary[0].coverageMs).toBeUndefined();
+});
+
+it("reports a refused canary as a refusal, not as canary latency", async () => {
+  vi.useFakeTimers();
+  const relay = fakeRelay(undefined, {
+    other: (id) =>
+      id === "probe-canary"
+        ? ["CLOSED", id, "rate-limited: slow down"]
+        : ["EOSE", id],
+    delay: (id) => (id === "probe-canary" ? 1 : 40),
+  });
+  const report = probe({
+    ...options(relay),
+    channels: channels.slice(0, 2),
+    strategies: [parseStrategy("multi-h:all")],
+    runs: 1,
+    pauseMs: 0,
+  });
+  await vi.runAllTimersAsync();
+  const { summary, results } = await report;
+  // It still finishes as soon as the channels are live, not at the timeout.
+  expect(results[0]).toMatchObject({
+    coverageMs: 40,
+    canaryRefused: "canary: rate-limited: slow down",
+    failures: { "canary: rate-limited: slow down": 1 },
+  });
+  expect(results[0].error).toBeUndefined();
+  expect(results[0].canaryMs).toBeUndefined();
+  expect(summary[0]).toMatchObject({ canaryRefused: 1 });
+  expect(summary[0].canaryMs).toBeUndefined();
+});
+
+it("times channel coverage by channel EOSE only", async () => {
+  vi.useFakeTimers();
+  // Profiles and membership settle at 1 s and the canary at 5 s, both after
+  // every channel is live at 40 ms.
+  const result = await run("client:all", channels.slice(0, 2), undefined, {
+    delay: (id, channel) =>
+      channel ? 40 : id === "probe-canary" ? 5000 : 1000,
+  });
+  expect(result).toMatchObject({ failed: 0, coverageMs: 40, canaryMs: 5000 });
+});
+
+it("keeps a timed-out route failed when its EOSE arrives after CLOSE", async () => {
+  vi.useFakeTimers();
+  let first = true;
+  // The first channel REQ answers 30 ms after the subscriber's 10 s deadline.
+  const result = await run("client:1", channels.slice(0, 2), undefined, {
+    delay: (_id, channel) => {
+      if (!channel) return 40;
+      const late = first;
+      first = false;
+      return late ? 10030 : 40;
+    },
+  });
+  expect(result).toMatchObject({ failed: 1 });
+  expect(result.coverageMs).toBeUndefined();
+  expect(result.error).toBeUndefined();
 });

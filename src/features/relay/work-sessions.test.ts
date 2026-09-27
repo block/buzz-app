@@ -690,40 +690,52 @@ it("creates an ordinary stream with explicit visibility and optional description
   const test = setup();
   const id = "11111111-1111-4111-8111-111111111111";
   test.service.createChannel(id, "  Release notes  ", "open", "  Updates  ");
-  expect(test.outbox.send).toHaveBeenCalledWith({
-    kind: 9007,
-    content: "",
-    tags: [
-      ["h", id],
-      ["name", "Release notes"],
-      ["visibility", "open"],
-      ["channel_type", "stream"],
-      ["about", "Updates"],
-    ],
-  });
+  expect(test.outbox.send).toHaveBeenCalledWith(
+    {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", "Release notes"],
+        ["visibility", "open"],
+        ["channel_type", "stream"],
+        ["about", "Updates"],
+      ],
+    },
+    undefined,
+    undefined,
+  );
   test.service.createChannel(id, "Private", "private");
-  expect(test.outbox.send).toHaveBeenLastCalledWith({
-    kind: 9007,
-    content: "",
-    tags: [
-      ["h", id],
-      ["name", "Private"],
-      ["visibility", "private"],
-      ["channel_type", "stream"],
-    ],
-  });
+  expect(test.outbox.send).toHaveBeenLastCalledWith(
+    {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", "Private"],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+      ],
+    },
+    undefined,
+    undefined,
+  );
   test.service.createChannel(id, "Standup", "open", undefined, 604800);
-  expect(test.outbox.send).toHaveBeenLastCalledWith({
-    kind: 9007,
-    content: "",
-    tags: [
-      ["h", id],
-      ["name", "Standup"],
-      ["visibility", "open"],
-      ["channel_type", "stream"],
-      ["ttl", "604800"],
-    ],
-  });
+  expect(test.outbox.send).toHaveBeenLastCalledWith(
+    {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", "Standup"],
+        ["visibility", "open"],
+        ["channel_type", "stream"],
+        ["ttl", "604800"],
+      ],
+    },
+    undefined,
+    undefined,
+  );
   for (const description of [
     SESSION_CHANNEL_DESCRIPTION,
     "Buzz session (notes)",

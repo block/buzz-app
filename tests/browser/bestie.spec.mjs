@@ -289,7 +289,7 @@ async function chooseSetting(page, label) {
 }
 
 async function start(page, f) {
-  await button(page, "Start Bestie voice conversation").click();
+  await button(page, "Call Bestie").click();
   await expect(button(page, "Mute Bestie microphone")).toBeEnabled();
   await expect(page.getByRole("status")).not.toContainText("Listening through");
   await expect.poll(f.microphones).toBe(1);
@@ -369,7 +369,7 @@ test("call controls keep their space and keyboard focus through connecting and c
 }, testInfo) => {
   const f = await fixture(page, { holdReady: true });
   try {
-    const call = button(page, "Start Bestie voice conversation");
+    const call = button(page, "Call Bestie");
     const footer = page.locator("footer");
     const before = await footer.boundingBox();
     await call.focus();
@@ -385,7 +385,7 @@ test("call controls keep their space and keyboard focus through connecting and c
     await expect(footer).toHaveAttribute("data-instant", "true");
     await expect(call).toHaveCount(0);
     await page.keyboard.press("Enter");
-    await expect(button(page, "Start Bestie voice conversation")).toBeFocused();
+    await expect(button(page, "Call Bestie")).toBeFocused();
     await expect(page.getByRole("status")).toBeEmpty();
     await expect(button(page, "End Bestie conversation")).toHaveCount(0);
     expect((await footer.boundingBox()).height).toBe(before.height);
@@ -402,6 +402,39 @@ test("call controls keep their space and keyboard focus through connecting and c
     await f.close();
   }
 });
+
+for (const moveFocus of [false, true]) {
+  test(`microphone disconnection ${moveFocus ? "preserves focus outside the call controls" : "returns focused End to Call"}`, async ({
+    page,
+  }) => {
+    const f = await fixture(page);
+    try {
+      const call = button(page, "Call Bestie");
+      await expect(call).toHaveText("Call");
+      await call.focus();
+      await page.keyboard.press("Enter");
+      await expect(button(page, "Mute Bestie microphone")).toBeEnabled();
+      await expect(button(page, "End Bestie conversation")).toBeFocused();
+      await expect.poll(f.microphones).toBe(1);
+      const settings = button(page, "Bestie call settings");
+      if (moveFocus) await settings.focus();
+      // Exercise the actual media failure -> call error -> rendered controls path.
+      await page.evaluate(() => {
+        window.bestieMicrophones.at(-1).dispatchEvent(new Event("ended"));
+      });
+      await expect(page.getByRole("status")).toContainText(
+        "The microphone disconnected",
+      );
+      await expect(call).toBeEnabled();
+      await expect(moveFocus ? settings : call).toBeFocused();
+      await expect(button(page, "End Bestie conversation")).toHaveCount(0);
+      await expect.poll(f.microphones).toBe(0);
+      expect(f.errors).toEqual([]);
+    } finally {
+      await f.close();
+    }
+  });
+}
 
 async function capture(page, testInfo, name) {
   if (!process.env.BESTIE_REVIEW_SCREENSHOTS) return;
@@ -572,7 +605,7 @@ test("actual Bestie call keeps duplex media and thinking through panel relocatio
       )
       .toBe(true);
     await button(page, "Show Bestie").click();
-    await expect(button(page, "Start Bestie voice conversation")).toBeEnabled();
+    await expect(button(page, "Call Bestie")).toBeEnabled();
     expect(f.errors).toEqual([]);
   } finally {
     await f.close();
@@ -606,12 +639,12 @@ test("community changes revoke the old call and clear transcripts after both act
           f.children[0].exitCode !== null || f.children[0].signalCode !== null,
       )
       .toBe(true);
-    await expect(button(page, "Start Bestie voice conversation")).toBeEnabled();
+    await expect(button(page, "Call Bestie")).toBeEnabled();
     await start(page, f);
     expect(f.children.length).toBe(2);
     await expect(page.getByRole("log")).toContainText("Fixture voice reply.");
     await button(page, "End Bestie conversation").click();
-    await expect(button(page, "Start Bestie voice conversation")).toBeEnabled();
+    await expect(button(page, "Call Bestie")).toBeEnabled();
     await button(page, "Select Alpha").click();
     await expect(page.getByRole("log")).not.toContainText(
       "Fixture voice reply.",

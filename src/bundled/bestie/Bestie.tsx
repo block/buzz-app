@@ -36,13 +36,18 @@ export function Bestie({
   const busy =
     connected || state.phase === "connecting" || state.phase === "stopping";
   useLayoutEffect(() => {
-    if (!restoreFocus.current) return;
+    const focusedEnd =
+      !busy &&
+      controls.current?.querySelector(
+        '[aria-label="End Bestie conversation"]',
+      ) === document.activeElement;
+    if (!restoreFocus.current && !focusedEnd) return;
     restoreFocus.current = false;
     controls.current
       ?.querySelector<HTMLButtonElement>(
         busy
           ? '[aria-label="End Bestie conversation"]'
-          : '[aria-label="Start Bestie voice conversation"]',
+          : '[aria-label="Call Bestie"]',
       )
       ?.focus();
   }, [busy]);
@@ -156,7 +161,7 @@ export function Bestie({
         <div className={styles.callStart} inert={busy} aria-hidden={busy}>
           <Button
             variant="quiet"
-            aria-label="Start Bestie voice conversation"
+            aria-label="Call Bestie"
             disabled={!available || !state.community}
             onClick={(event) => {
               restoreFocus.current = event.detail === 0;

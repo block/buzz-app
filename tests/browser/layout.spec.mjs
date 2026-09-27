@@ -322,7 +322,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await launch.click();
   await expect(bestie).toBeVisible();
   await expect(bestie).toContainText("Voice isn’t available in this app.");
-  await expect(button(page, "Start Bestie voice conversation")).toBeDisabled();
+  await expect(button(page, "Call Bestie")).toBeDisabled();
   await expect(launch).toHaveAttribute("aria-expanded", "true");
   await launch.click();
   await expect(bestie).toHaveCount(0);

@@ -54,7 +54,7 @@ describe("semantic contrast contract", () => {
     expect(result.output).toContain(
       "checked text and control/state boundaries",
     );
-    expect(result.output.match(/\(accepted link contrast\)/g)).toHaveLength(7);
+    expect(result.output.match(/\(accepted link contrast\)/g)).toHaveLength(8);
     expect(result.output).toContain("not a contrast pass");
   });
 
@@ -90,9 +90,15 @@ describe("semantic contrast contract", () => {
       "on --surface-inset",
     ],
     [
-      "hover",
-      "--affordance-link-hover: var(--blue-2);",
+      "hover role",
       "--affordance-link-hover: var(--blue-3);",
+      "--affordance-link-hover: var(--blue-4);",
+      "on --affordance-link-hover",
+    ],
+    [
+      "hover color",
+      "--blue-3: #0d2847;",
+      "--blue-3: #0d2848;",
       "on --affordance-link-hover",
     ],
   ])("rejects an unapproved change to %s", (_name, from, to, pairing) => {

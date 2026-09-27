@@ -622,7 +622,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-link-hover",
         variable: "--affordance-link-hover",
-        pointsAt: "blue-2 light / blue-2 dark",
+        pointsAt: "blue-3 light / blue-3 dark",
         use: "An inline link under a pointer.",
         status: "core",
       },

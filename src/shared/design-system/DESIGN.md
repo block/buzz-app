@@ -553,12 +553,13 @@ it is the rule a generated theme is measured against.
 
 ### Link contrast
 
-Inline links and mentions use Blue 11 text with Blue 2 hover in both modes.
+Inline links and mentions use Blue 11 text with Blue 3 hover in both modes.
 This is an explicitly approved visual tradeoff: the brighter link color is
-preferred to Blue 12 even where it falls below the ordinary contrast target.
+preferred to Blue 12, and Blue 3 makes the hover fill more visible than Blue 2,
+even where these choices fall below the ordinary contrast target.
 It is not a claim of WCAG AA conformance on every supported surface.
 
-The contrast guard accepts only these seven exact mode/role/color pairings:
+The contrast guard accepts only these eight exact mode/role/color pairings:
 
 | Mode | Surface role | Text / surface | APCA Lc | WCAG ratio |
 | --- | --- | --- | ---: | ---: |
@@ -569,12 +570,14 @@ The contrast guard accepts only these seven exact mode/role/color pairings:
 | Dark | affordance-subtle | #70b8ff / #333333 | 55.433 | 6.010 |
 | Dark | affordance-selected | #70b8ff / #333333 | 55.433 | 6.010 |
 | Dark | neutral-4 | #70b8ff / #232323 | 58.707 | 7.476 |
+| Dark | affordance-link-hover | #70b8ff / #0d2847 | 57.791 | 7.076 |
 
 Each accepted shortfall is printed with its measurements. Changed colors and
 other roles/surfaces remain subject to the normal APCA target; unused exceptions
-are reported for removal. The target stays Lc 60 and hover has no exception.
-Blue 2 hover clears both metrics: light 4.531:1 / Lc 68.906; dark 8.379:1 /
-Lc 60.055. Light base/inset/subtle surfaces clear APCA but remain below WCAG
+are reported for removal. The target stays Lc 60. Blue 3 hover in light mode
+(#0d74ce on #e6f4fe) clears APCA at Lc 64.614 but falls below WCAG 4.5:1
+at 4.252:1; this is also an accepted visual tradeoff.
+Light base/inset/subtle surfaces clear APCA but remain below WCAG
 4.5:1 at 4.374:1. Focus appearance and link-identification cues are separate
 contracts; this color choice does not change them.
 

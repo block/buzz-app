@@ -24,6 +24,7 @@ export function lastEditableMessage(
         !row.membership &&
         !row.agentEnvelope &&
         !row.diff &&
+        !row.plugin &&
         (!row.delivery ||
           row.delivery === "accepted" ||
           row.delivery === "seen") &&

@@ -13,7 +13,11 @@ import {
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import { eventDto } from "./events.ts";
 import { EMOJI_SET } from "./emoji.ts";
-import { CHANNEL_ACTIVITY_KINDS, MEMBERSHIP_KIND } from "./kinds.ts";
+import {
+  CHANNEL_ACTIVITY_KINDS,
+  MEMBERSHIP_KIND,
+  pluginRowKinds,
+} from "./kinds.ts";
 
 export const LIVE_CHANNEL_CAPACITY = 1022;
 export const LIVE_BATCH_SIZE = 10; // Relay's per-REQ filter cap; replay stays per channel.
@@ -194,7 +198,7 @@ type Route = {
   quotaRetries: number;
   deadline?: ReturnType<typeof setTimeout>;
 };
-export const CHANNEL_KINDS = [
+export const channelKinds = () => [
   ...CHANNEL_ACTIVITY_KINDS,
   MEMBERSHIP_KIND,
   40100,
@@ -206,6 +210,7 @@ export const CHANNEL_KINDS = [
   39002,
   39005,
   20002,
+  ...pluginRowKinds(),
 ];
 /** One authenticated socket, bounded joined-channel batches, singleton previews and two globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
@@ -547,7 +552,7 @@ export function subscribeRelayTraffic(
         ? (route.liveOnly
             ? [scope(route)]
             : scope(route).map((id) => [id])
-          ).map((ids) => ({ kinds: CHANNEL_KINDS, "#h": ids }))
+          ).map((ids) => ({ kinds: channelKinds(), "#h": ids }))
         : [
             route.id === "presence"
               ? { kinds: [20001], authors: presenceAuthors }

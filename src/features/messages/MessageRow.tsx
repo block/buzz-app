@@ -158,7 +158,8 @@ export const MessageRow = memo(function MessageRow({
   );
   const presenceId = useId();
   const thinkingId = useId();
-  const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
+  const timeReply =
+    row.diff || row.plugin ? undefined : parseMediaTimeReply(row.content);
   const displayRow = timeReply ? { ...row, content: timeReply.content } : row;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
@@ -209,7 +210,9 @@ export const MessageRow = memo(function MessageRow({
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
   }
-  const body = row.diff ? (
+  const body = row.plugin ? (
+    <p className="text-body-sm">Unsupported item</p>
+  ) : row.diff ? (
     <div>
       <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
       {row.diff.description && (
@@ -354,15 +357,17 @@ export const MessageRow = memo(function MessageRow({
                 menuTriggerRef={menuTrigger}
                 messageId={row.id}
                 onReply={
-                  (onReply ? () => onReply(row.id) : undefined) ??
-                  (onOpenThread
-                    ? () =>
-                        onOpenThread(
-                          row.threadRootId ?? row.id,
-                          row.threadRootId ?? row.id,
-                          "reply",
-                        )
-                    : undefined)
+                  row.plugin
+                    ? undefined
+                    : ((onReply ? () => onReply(row.id) : undefined) ??
+                      (onOpenThread
+                        ? () =>
+                            onOpenThread(
+                              row.threadRootId ?? row.id,
+                              row.threadRootId ?? row.id,
+                              "reply",
+                            )
+                        : undefined))
                 }
                 replyDisabled={
                   !!(

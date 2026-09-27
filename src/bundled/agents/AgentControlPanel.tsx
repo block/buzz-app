@@ -273,7 +273,7 @@ export function AgentControlPanel({
           <Dialog.Portal>
             <Dialog.Popup
               data-buzz-ui=""
-              className="agent-controls agent-dialog text-body"
+              className="buzz-dialog agent-controls agent-dialog text-body"
             >
               <Dialog.Title className="text-heading">
                 Set up agent here

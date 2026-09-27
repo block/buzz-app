@@ -11,7 +11,13 @@ import type {
 } from "./contracts";
 import { DiscoveryState } from "./discovery";
 import { foldMessages } from "./fold";
-import { hasTag, savedEvent, tag, type RelayEvent } from "./events";
+import {
+  hasTag,
+  savedProof,
+  savedReader,
+  tag,
+  type RelayEvent,
+} from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
@@ -442,6 +448,7 @@ export function createChannelStore(
       savedAt: head.savedAt,
       events: [...head.events],
       profiles,
+      proof: savedProof([...head.events, ...profiles]),
     };
     void persistence.write(record).catch(() => {});
     return signature;
@@ -693,12 +700,16 @@ export function createChannelStore(
         continue;
       }
       try {
-        // Saved events were verified before they were written (see savedEvent):
-        // rehash, don't re-check signatures. Yield between batches all the same.
+        // Saved events were verified before they were written (see savedReader):
+        // with a matching proof, rehash rather than re-check signatures.
+        const saved = savedReader(
+          [...record.events, ...record.profiles],
+          record.proof,
+        );
         const events: RelayEvent[] = [];
         for (let index = 0; index < record.events.length; index += 64) {
           const started = performance.now();
-          const batch = record.events.slice(index, index + 64).map(savedEvent);
+          const batch = record.events.slice(index, index + 64).map(saved);
           clientMetrics.cpu(
             "verify.restore",
             performance.now() - started,
@@ -748,7 +759,7 @@ export function createChannelStore(
             verifiedProfiles.push(
               existing && existing.id === candidate.id
                 ? existing
-                : savedEvent(value),
+                : saved(value),
             );
           }
           await yieldToHost();
@@ -793,25 +804,28 @@ export function createChannelStore(
   function saveDiscovery() {
     if (!persistence?.writeStartup || !discovery || !transport || disposed)
       return;
+    const events = discovery.savedEvents();
+    const profiles = [
+      ...new Set(
+        discovery
+          .channels()
+          .filter((channel) => !channel.cached)
+          .flatMap((channel) => channel.participants ?? []),
+      ),
+    ]
+      .slice(0, 1024)
+      .flatMap((id) => {
+        const event = directory.event(id);
+        return event ? [event] : [];
+      });
     void persistence
       .writeStartup({
         discovery: {
           savedAt: now(),
           relayAuthor: transport.relayAuthor,
-          events: discovery.savedEvents(),
-          profiles: [
-            ...new Set(
-              discovery
-                .channels()
-                .filter((channel) => !channel.cached)
-                .flatMap((channel) => channel.participants ?? []),
-            ),
-          ]
-            .slice(0, 1024)
-            .flatMap((id) => {
-              const event = directory.event(id);
-              return event ? [event] : [];
-            }),
+          events,
+          profiles,
+          proof: savedProof([...events, ...profiles]),
         },
       })
       .catch(() => {});
@@ -832,10 +846,14 @@ export function createChannelStore(
         byteSize(saved) > 8 * 1024 * 1024
       )
         return;
+      const read = savedReader(
+        [...saved.events, ...(saved.profiles ?? [])],
+        saved.proof,
+      );
       const events: RelayEvent[] = [];
       for (let index = 0; index < saved.events.length; index += 64) {
         const started = performance.now();
-        const batch = saved.events.slice(index, index + 64).map(savedEvent);
+        const batch = saved.events.slice(index, index + 64).map(read);
         clientMetrics.cpu(
           "verify.restore",
           performance.now() - started,
@@ -850,7 +868,7 @@ export function createChannelStore(
         for (let index = 0; index < saved.profiles.length; index += 64) {
           for (const value of saved.profiles.slice(index, index + 64)) {
             try {
-              profiles.push(savedEvent(value));
+              profiles.push(read(value));
             } catch {
               /* A bad optional label cannot discard valid conversation history. */
             }

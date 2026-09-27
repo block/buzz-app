@@ -4,8 +4,16 @@ import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { DiscoveryState } from "./discovery";
 import { ReadError } from "./errors";
 import type { HeadPersistence, SavedHead, SavedStartup } from "./persistence";
-import { bounds, keypair, message, metadata, roster, profile } from "./testing";
-import type { RelayEvent } from "./events";
+import {
+  bounds,
+  changedSig,
+  keypair,
+  message,
+  metadata,
+  roster,
+  profile,
+} from "./testing";
+import { savedProof, type RelayEvent } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
 import { readJournal, type ReadJournal } from "./read-state-storage";
 
@@ -40,15 +48,18 @@ function disk() {
       savedAt: Date.now(),
       relayAuthor: relay.pubkey,
       events: discovery,
+      proof: savedProof(discovery),
     },
     preferences: { savedAt: Date.now(), data: preferences },
   };
+  const saved = head("saved");
   let heads: SavedHead[] = [
     {
       channelId: "alpha",
       savedAt: Date.now(),
-      events: head("saved"),
+      events: saved,
       profiles: [],
+      proof: savedProof(saved),
     },
   ];
   const storage: HeadPersistence = {
@@ -724,7 +735,7 @@ describe("device-local startup", () => {
     expect(channels.list().channels[0]?.cached).toBe(true);
     expect(channels.window("alpha").rows[0]?.content).toBe("saved");
   });
-  it.each(["tampered", "expired", "other-relay"])(
+  it.each(["tampered", "changed-signature", "expired", "other-relay"])(
     "ignores %s discovery without blocking fresh reads",
     async (mode) => {
       const storage = disk();
@@ -732,6 +743,10 @@ describe("device-local startup", () => {
       if (!saved?.discovery) throw new Error("Missing saved discovery");
       if (mode === "tampered")
         saved.discovery.events[0] = { ...discovery[0], content: "tampered" };
+      if (mode === "changed-signature")
+        saved.discovery.events = discovery.map((event, index) =>
+          index ? event : changedSig(event),
+        );
       if (mode === "expired") saved.discovery.savedAt -= 86_400_001;
       if (mode === "other-relay")
         saved.discovery.relayAuthor = keypair().pubkey;

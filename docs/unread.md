@@ -29,7 +29,8 @@ reading intent before calling `observe`: this is a trusted in-process API, not
 proof that a human read text. The engine resolves signed message identity,
 timestamps, ancestry, deletion and current access; arbitrary timestamps are not
 accepted. Cancelled leases cannot survive disposal, revocation/regrant, or a newer
-manual-unread action. Restored channel heads pass signature/access verification
+manual-unread action. Restored channel heads pass integrity (rehash plus saved
+signature proof; see the channels local-first launch section) and access checks,
 and supply evidence before their rows become observable.
 
 Reusable `ChannelTimeline` and `ThreadPanel` own the standard observation policy:
@@ -206,7 +207,7 @@ durable account-owned intent survives without exposing revoked context projectio
   batching, progressive/partial failure, explicit/reconnect recovery and access/cache
   fences; `read-state.test.ts` also checks both marker-discovery priority paths.
 - `unread.test.ts`: real session lifecycle, access, deletions, reading leases and
-  reverified disk-restore evidence without network content.
+  integrity-checked disk-restore evidence without network content.
 - `use-reading.test.ts`, timeline/thread tests: dwell/geometry and owner wiring.
 - `dev/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
   reader envelope verification, filter rejection and streamed body limits.

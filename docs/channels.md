@@ -359,7 +359,7 @@ The port retains the prepared-store implementation and its behavior tests:
   deduplication. Hover/focus prepares at most one speculative head at a time;
   superseded hints do not form a backlog. That shared head keeps foreground
   priority so selection cannot inherit a host-side background wait. Discovery
-  restores reverified disk heads against saved, display-only membership before
+  restores integrity-checked disk heads against saved, display-only membership before
   network authorization, without waiting for optional channel names, and does not
   fetch heads across the roster.
   Verified heads save before optional profile enrichment; changed profiles can
@@ -369,9 +369,11 @@ The port retains the prepared-store implementation and its behavior tests:
   a request or resetting its deadline.
 - 1,024 profile entries / 2 MiB signed-record budget, narrow row profile selectors,
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
-  under the Save-Data preference). Signature verification yields in batches.
+  under the Save-Data preference). Bulk reads check signatures on background
+  workers, falling back to inline checks that yield in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
-  expiry. Signed cached events are reverified before display. The same database
+  expiry. Cached events are integrity-checked before display (see Local-first
+  launch). The same database
   stores account/relay-scoped startup discovery and sidebar organization (a separate
   8 MiB global budget); old version-1 head records survive the version-2 upgrade.
 - A 60-second head freshness lease; warm revisits reuse heads without new reads.
@@ -402,7 +404,17 @@ concurrently with the real connection handshake. Saved groups, stars and channel
 names are display data, not a confirmed preference mutation base. No cache means
 the ordinary cold connection flow; unavailable/corrupt storage never grants access.
 
-A cached roster can display previously downloaded, reverified history for up to
+Every relay event is signature-checked when it arrives; only verified events are
+saved. Each saved head and startup record carries a proof, a SHA-256 over its
+events' `id` and `sig`. Restore rehashes each event against its `id` and checks
+the proof instead of re-running signature checks. Together these catch local
+corruption of any signed field or of the signature. Records without a matching
+proof (including ones from older builds) are fully signature-verified, and a
+failure discards the record. The proof is not a secret. The threat model trusts
+the origin-private IndexedDB that only this app writes: anything able to forge a
+record there can already run code as the app.
+
+A cached roster can display previously downloaded, integrity-checked history for up to
 24 hours. It cannot authorize head/history reads, unread evidence, typing or
 publishing. Unconfirmed membership is not resaved with a fresh lease. An identical
 or newer fresh signed roster promotes it; a complete roster omission or explicit

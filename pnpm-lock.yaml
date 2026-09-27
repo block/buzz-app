@@ -33,6 +33,9 @@ importers:
       '@noble/curves':
         specifier: 2.0.1
         version: 2.0.1
+      '@noble/hashes':
+        specifier: 2.0.1
+        version: 2.0.1
       '@phosphor-icons/core':
         specifier: 2.1.1
         version: 2.1.1
@@ -290,6 +293,7 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@biomejs/cli-linux-x64@2.5.14':
     resolution: {integrity: sha512-VHZRa7CCQBUWKxNwUvHJeuW03WFRgN5NWO//SDGOitc9QIeNyfA42V9zlKm+x82xFSG9Bzi5fi+hbhm9anO8yA==}

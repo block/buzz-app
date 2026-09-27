@@ -8,10 +8,12 @@ import {
   metadata,
   profile,
   roster,
+  changedSig,
   scriptedTransport,
   signed,
 } from "./testing";
 import type { HeadPersistence, SavedHead } from "./persistence";
+import { savedProof } from "./events";
 import { getLogger, logLevel, setLogLevel } from "../developer/logging";
 import { ByteLru } from "./budget";
 
@@ -184,6 +186,28 @@ describe("prepared channel working sets", () => {
     await flush();
     expect(queries.window("a").rows).toEqual([]);
     expect(store.diagnostics().heads.entries).toBe(1);
+    store.dispose();
+  });
+  it.each([
+    ["proven", 1],
+    ["changed-signature", 0],
+  ] as const)("hydrates a %s cached head", async (mode, rows) => {
+    const original = head("a");
+    const proof = savedProof(original);
+    const events =
+      mode === "changed-signature"
+        ? original.map((event, index) => (index ? event : changedSig(event)))
+        : original;
+    const disk = memoryDisk([
+      { channelId: "a", savedAt: Date.now(), events, profiles: [], proof },
+    ]);
+    const { queries, next, store } = setup({ persistence: disk });
+    queries.ensureList();
+    next().respond(discovery(["a"]));
+    await flush();
+    queries.ensure("a");
+    await flush();
+    expect(queries.window("a").rows).toHaveLength(rows);
     store.dispose();
   });
   it("denied cached revalidation immediately hides the cached rows", async () => {

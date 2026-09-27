@@ -161,9 +161,17 @@ recipes remain so this temporary visual decision can be reversed in one place.
 Button and IconButton share prominent, subtle, ghost, inverted, destructive,
 outline and link emphasis. Inverted is for an inverse surface; link keeps its
 background clear and underlines on interaction. Its
-32 / 40 / 52px sizes are sm / md / lg at the default scale; labels may wrap and
-increase height at larger text settings. Text buttons use pill corners. Fields
-use the shared control corner. Small buttons use 16px side padding and 16px
+32 / 40 / 52px sizes are sm / md / lg at the default scale, with minimum
+heights that accommodate larger text. Text buttons use `--radius-capsule`
+(1.25rem / 20px): pill-shaped at the default 40px height, clamped naturally on
+shorter controls, and bounded on taller ones. Reuse this role for similarly sized
+actions; `--radius-pill` remains the fully round role for circles and pills of
+any height. Fields retain `--radius-control`.
+
+Button labels stay on one line and do not shrink in flex layouts, following
+shadcn's `whitespace-nowrap shrink-0` behavior without changing Buzz's sizing,
+emphasis, or Base UI interactions. Parents must reflow whole controls or provide
+scrolling when space is limited. Small buttons use 16px side padding and 16px
 icons; medium and large use 24px side padding and 24px icons. Labels use the
 complete text-label-sm / text-label roles, with an 8px icon gap.
 

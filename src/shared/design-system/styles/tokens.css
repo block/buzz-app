@@ -693,6 +693,8 @@
   --radius-panel: var(--corner-panel);
   --radius-control: var(--corner-control);
   --radius-row: var(--corner-row);
+  /* A bounded pill for standard-height actions, not an all-size circle. */
+  --radius-capsule: 1.25rem;
   --radius-pill: var(--corner-round);
   /* A chip reads as a chip in running text, so it takes a tighter corner than
      a control and gets its own role rather than borrowing one. */

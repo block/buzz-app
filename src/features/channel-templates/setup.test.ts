@@ -64,7 +64,7 @@ function fixture() {
     create: vi.fn((id: string, _input: ChannelCreationInput) =>
       outbox.send({ kind: 9007, content: "", tags: [["h", id]] }),
     ),
-    delivered: vi.fn(async (_id: string) => {}),
+    delivered: vi.fn(async (_id: string, _active?: () => boolean) => {}),
     confirm: vi.fn(async (id: string) => {
       if (events.find((e) => e.event.id === id)?.event.kind === 40100)
         canvas = id;
@@ -164,7 +164,7 @@ it("checks an uncertain attempt without replaying Create or template writes", as
   );
   expect(f.opts.delivered.mock.calls).toEqual([
     [saved.operations.create],
-    [saved.operations.create],
+    [saved.operations.create, expect.any(Function)],
   ]);
   expect(f.setup.snapshot()).toBeUndefined();
   expect(f.events.map((e) => e.event.kind)).toEqual([9007]);

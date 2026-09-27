@@ -1546,12 +1546,16 @@ it("receipt-save failure prevents real Outbox signing/publication and stays guar
 it.each([
   ["lost ACK", false],
   ["missing membership", false],
+  ["never landed", false],
   ["lost ACK", true],
   ["missing membership", true],
+  ["never landed", true],
 ] as const)(
-  "checks the same Create form after %s without another UUID or publication (template: %s)",
+  "retries the same Create identity after %s without repeating template writes (template: %s)",
   async (failure, template) => {
     let unavailable = false;
+    let dropping = failure === "never landed";
+    const attempts: RelayEvent[] = [];
     const test = harness(
       undefined,
       async () => {
@@ -1559,9 +1563,13 @@ it.each([
       },
       true,
       undefined,
-      undefined,
       async (event) => {
         if (event.kind !== 9007) return;
+        attempts.push(event);
+        if (dropping) throw new Error("Connection lost before storage");
+      },
+      async (event) => {
+        if (event.kind !== 9007 || failure === "never landed") return;
         unavailable = true;
         if (failure === "lost ACK") throw new Error("ACK lost");
       },
@@ -1606,19 +1614,22 @@ it.each([
       }
       await user.click(screen.getByRole("button", { name: "Create channel" }));
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        /ACK lost|membership unavailable/,
+        /ACK lost|membership unavailable|Connection lost before storage/,
       );
       expect(closed).not.toHaveBeenCalled();
-      const first = test.published.find((event) => event.kind === 9007);
+      const first = attempts[0];
       assert.exists(first);
       const id = first.tags.find(([tag]) => tag === "h")?.[1];
       expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
-      await user.click(screen.getByRole("button", { name: "Check channel" }));
+      await user.click(screen.getByRole("button", { name: "Retry channel" }));
       await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
       expect(closed).not.toHaveBeenCalled();
-      expect(test.published.filter((event) => event.kind === 9007)).toEqual([
-        first,
-      ]);
+      expect(test.published.filter((event) => event.kind === 9007)).toEqual(
+        failure === "never landed" ? [] : [first],
+      );
+      expect(attempts).toEqual(
+        failure === "never landed" ? [first, first] : [first],
+      );
       // Closing and reopening must retain the same session-owned attempt.
       cleanup();
       render(<Form />);
@@ -1626,7 +1637,8 @@ it.each([
         "Uncertain",
       );
       unavailable = false;
-      await user.click(screen.getByRole("button", { name: "Check channel" }));
+      dropping = false;
+      await user.click(screen.getByRole("button", { name: "Retry channel" }));
       await waitFor(() => expect(closed).toHaveBeenCalledWith(false));
       expect(test.owner.session.channels.get?.(id ?? "")?.members).toContain(
         test.viewer.pubkey,
@@ -1637,6 +1649,9 @@ it.each([
       expect(test.published.filter((event) => event.kind === 9007)).toEqual([
         first,
       ]);
+      expect(attempts).toEqual(
+        failure === "never landed" ? [first, first, first] : [first],
+      );
       expect(test.owner.session.channelCreation.snapshot()).toBeUndefined();
       if (template)
         await waitFor(() =>

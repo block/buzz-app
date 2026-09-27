@@ -1119,8 +1119,13 @@ export function createRelaySession(
               input.ttlSeconds,
               active,
             ),
-          delivered: (id) =>
-            workSessions.delivered(id, undefined, false, false),
+          delivered: (id, active) =>
+            workSessions.delivered(
+              id,
+              active,
+              false,
+              !!active && !workSessions.failed(id),
+            ),
           confirm: async (id) => {
             await workSessions.delivered(id, undefined, false, false);
             if (
@@ -1331,9 +1336,9 @@ export function createRelaySession(
       try {
         await workSessions.delivered(
           pending.operation,
-          undefined,
+          () => !lifetime.signal.aborted,
           false,
-          false,
+          !workSessions.failed(pending.operation),
         );
         await workSessions.refresh(
           pending.id,

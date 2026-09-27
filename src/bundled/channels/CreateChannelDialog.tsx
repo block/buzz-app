@@ -253,7 +253,7 @@ function OpenCreateChannelDialog({
             loading={busy}
             disabled={!name.trim()}
           >
-            {pending ? "Check channel" : "Create channel"}
+            {pending ? "Retry channel" : "Create channel"}
           </Button>
         </>
       }
@@ -270,8 +270,9 @@ function OpenCreateChannelDialog({
       >
         {pending && (
           <p role="status">
-            This attempt may already have created a channel. Check confirms the
-            same channel without sending again or continuing template setup.
+            This attempt may already have created a channel. Retry checks it
+            first and, if unconfirmed, resends only the same creation request.
+            It will not create another channel or continue template setup.
           </p>
         )}
         <fieldset

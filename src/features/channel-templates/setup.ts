@@ -50,8 +50,9 @@ export function createChannelSetup({
     input: ChannelCreationInput,
     active: () => boolean,
   ): string;
-  /** Observe/read back only; these callbacks must never retry a publication. */
-  delivered(id: string): Promise<void>;
+  /** An active gate permits explicit retry of this exact uncertain Create only. */
+  delivered(id: string, active?: () => boolean): Promise<void>;
+  /** Observe/read back only; never retry template publications. */
   confirm(id: string): Promise<void>;
   refresh(id: string, member: string): Promise<void>;
   canvasHead(id: string): Promise<string | undefined>;
@@ -131,15 +132,16 @@ export function createChannelSetup({
           "This browser cannot safely coordinate channel setup; use a current browser",
         );
       if (checking) {
-        // Admission recovery is read-only. Do not replay Create or resume the
-        // remaining template writes after an uncertain first attempt.
+        // Explicit recovery may retry only the saved Create, never a new UUID
+        // or the remaining template writes. Renew its revoked admission gate.
         const operation = checking.operations.create;
         if (!operation)
           throw new Error(
             "Channel creation was not saved. Reconnect before checking it.",
           );
+        let retrying = true;
         try {
-          await delivered(operation);
+          await delivered(operation, () => retrying && !signal.aborted);
           await refresh(checking.id, viewer);
         } catch (error) {
           if (
@@ -152,6 +154,8 @@ export function createChannelSetup({
           )
             await retire(checking);
           throw error;
+        } finally {
+          retrying = false;
         }
         checking.created = true;
         admitted.add(checking.id);

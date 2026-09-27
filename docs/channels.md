@@ -160,12 +160,13 @@ session and navigates to a normal conversation destination. Remaining template
 setup continues in that session; failure produces a dismissible notice without
 navigating again. Frozen setup receipts and delivery evidence remain saved, but
 there is no template Resume or automatic startup continuation. An uncertain
-admission keeps the original form locked to its channel identity. **Check channel**
-only reads back that creation and viewer membership; it never republishes Create
-or continues template writes. Successful recovery opens that channel and reports
+admission keeps the original form locked to its channel identity. **Retry channel**
+checks that creation first; if delivery remains unknown, an explicit click may
+republish only the exact saved Create event, with the same UUID and signature.
+It never continues template writes or retries in the background. Successful recovery opens that channel and reports
 any unfinished setup for manual inspection. Closing/reopening retains the attempt;
 after session replacement, unresolved ordinary creations (including pre-upgrade
-Outbox entries) restore for the same read-only check. Already-admitted partial
+Outbox entries) restore for the same identity-preserving retry. Already-admitted partial
 setups do not occupy a new Create form. New-session intent uses the Channels version-1
 page route `{ kind: "new-session", parentId }`; Channels checks parent access/type
 and Sessions availability. Only parent intent, never draft text, enters history.

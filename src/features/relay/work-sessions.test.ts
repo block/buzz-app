@@ -76,7 +76,7 @@ it("keeps verified session roster reads available for sends without member-add c
 });
 
 it.each([false, true])(
-  "restores an unconfirmed ordinary channel without republishing (channel kit: %s)",
+  "retries the identical saved creation after it never reached the relay (channel kit: %s)",
   async (kit) => {
     const viewer = keypair(),
       relay = keypair();
@@ -105,7 +105,7 @@ it.each([false, true])(
       ],
     });
     let records: readonly OutgoingEvent[] = [
-      { event: creation, signed: creation, delivery: "unknown" },
+      { event: creation, signed: creation, delivery: "unknown", guarded: kit },
       {
         event: sessionCreation,
         signed: sessionCreation,
@@ -113,15 +113,29 @@ it.each([false, true])(
       },
     ];
     const sign = vi.fn(async () => creation);
-    const publish = vi.fn(async () => {
-      throw new Error("acknowledgement lost");
+    let delivered = false;
+    let dropping = true;
+    const publish = vi.fn(async (_event: typeof creation) => {
+      if (dropping) throw new Error("connection lost");
+      delivered = true;
     });
     const owner = createRelaySession(
       {
         viewer: viewer.pubkey,
         relayAuthor: relay.pubkey,
         media: () => undefined,
-        query: async () => [],
+        query: async () =>
+          delivered
+            ? [
+                creation,
+                roster(relay, id, [viewer.pubkey]),
+                signed(relay, {
+                  kind: 39000,
+                  content: "",
+                  tags: [["d", id], ["name", "Release notes"], ["private"]],
+                }),
+              ]
+            : [],
         writer: { kinds: [9, 9000, 9007], sign, publish },
         ...(kit
           ? { channelKit: { decode: async () => [], prepare: async () => "" } }
@@ -158,14 +172,30 @@ it.each([false, true])(
           visibility: "private",
           ttlSeconds: 604800,
         }),
-      ).rejects.toThrow(/could not be confirmed/);
+      ).rejects.toThrow(/connection lost/);
       expect(sign).not.toHaveBeenCalled();
-      expect(publish).not.toHaveBeenCalled();
+      expect(publish).toHaveBeenCalledOnce();
+      expect(publish.mock.calls[0]?.[0]).toEqual(creation);
       expect(
         owner.session.outbox
           ?.snapshot()
           .filter((item) => item.event.id === creation.id),
       ).toHaveLength(1);
+      dropping = false;
+      await expect(
+        owner.session.channelCreation.create({
+          name: "Release notes",
+          description: "Updates for the team",
+          visibility: "private",
+          ttlSeconds: 604800,
+        }),
+      ).resolves.toBe(id);
+      expect(sign).not.toHaveBeenCalled();
+      expect(publish.mock.calls.map(([event]) => event)).toEqual([
+        creation,
+        creation,
+      ]);
+      expect(owner.session.channelCreation.snapshot()).toBeUndefined();
     } finally {
       owner.dispose();
     }

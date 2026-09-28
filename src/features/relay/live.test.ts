@@ -51,6 +51,7 @@ function setup(channels = ["a", "b"]) {
   const key = keypair(),
     sockets: Socket[] = [];
   const callbacks = {
+    presence: vi.fn(),
     receive: vi.fn(),
     state: vi.fn<LiveCallbacks["state"]>(),
     established: vi.fn(),
@@ -1478,7 +1479,7 @@ it("an outstanding presence signer pins its principal flight across socket repla
   for (const [, id] of next.requests()) await next.receive(["EOSE", id]);
   expect(
     await owner.publishPresence?.("online", new AbortController().signal),
-  ).toBeNull();
+  ).toEqual({ retryAfterMs: 250 });
   release();
   expect(await result).toBeNull();
   expect(
@@ -1863,7 +1864,7 @@ it("presence and ordinary publications correlate independently and share only re
     expect(await result).toMatchObject({ sent: false });
     expect(
       await h.owner.publishPresence("away", new AbortController().signal),
-    ).toBeNull();
+    ).toEqual({ retryAfterMs: 2000 });
     await vi.advanceTimersByTimeAsync(2000);
     const renewal = h.owner.publishPresence(
       "away",
@@ -2010,4 +2011,61 @@ it("logs authentication failure and retry reasons at Info without server payload
     logger.setReporters(reporters);
     setLogLevel("info");
   }
+});
+
+it("presence shares the authenticated socket, verifies signatures, and replaces demand without an observation gap", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  const peer = keypair();
+  h.owner.watchPresence?.([peer.pubkey]);
+  await h.first.auth();
+  const first = h.first.requests().find((r) => r[2].kinds.includes(20001));
+  assert.exists(first);
+  expect(first[2]).toMatchObject({ authors: [peer.pubkey], limit: 0 });
+  await h.first.receive(["EOSE", first[1]]);
+  const event = signed(peer, {
+    kind: 20001,
+    tags: [],
+    content: "away",
+    created_at: Math.floor(Date.now() / 1000),
+  });
+  h.owner.watchPresence?.([peer.pubkey, h.key.pubkey]);
+  const next = h.first
+    .requests()
+    .filter((r) => r[2].kinds.includes(20001))
+    .at(-1);
+  assert.exists(next);
+  expect(next[1]).not.toBe(first[1]);
+  expect(h.first.sent).not.toContainEqual(["CLOSE", first[1]]);
+  await h.first.receive(["EVENT", first[1], event]);
+  expect(h.callbacks.presence).toHaveBeenLastCalledWith(event);
+  expect(h.callbacks.receive).not.toHaveBeenCalled();
+  await h.first.receive(["EOSE", next[1]]);
+  expect(h.first.sent).toContainEqual(["CLOSE", first[1]]);
+  h.callbacks.presence.mockClear();
+  await h.first.receive(["EVENT", first[1], event]);
+  await h.first.receive(["EVENT", next[1], { ...event, content: "online" }]);
+  expect(h.callbacks.presence).not.toHaveBeenCalled();
+  h.owner.dispose();
+});
+
+it("reports the remaining presence gate without extending it and honors cooldown", () => {
+  vi.useFakeTimers();
+  const admission = createLiveAdmission();
+  expect(admission.presenceDelay()).toBe(0);
+  const release = admission.tryPresence();
+  expect(admission.presenceDelay()).toBe(250);
+  admission.presenceSent();
+  vi.advanceTimersByTime(1200);
+  expect(admission.presenceDelay()).toBe(3800);
+  release?.();
+  expect(admission.tryPresence()).toBeUndefined();
+  admission.pause(10);
+  expect(admission.presenceDelay()).toBe(11000);
+  vi.advanceTimersByTime(10999);
+  expect(admission.presenceDelay()).toBe(1);
+  expect(admission.tryPresence()).toBeUndefined();
+  vi.advanceTimersByTime(1);
+  expect(admission.presenceDelay()).toBe(0);
+  admission.tryPresence()?.();
 });

@@ -16,11 +16,7 @@ import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowEditor } from "./WorkflowEditor";
 import { WorkflowOperations } from "./WorkflowOperations";
 import { WorkflowRuns } from "./WorkflowRuns";
-import {
-  confirmedDeletion,
-  deletionStatus,
-  exactSaveReadback,
-} from "./editor-model";
+import { exactSaveReadback } from "./editor-model";
 import { DEFAULT_FORM_STATE, formStateToYaml } from "./workflowFormTypes";
 import { readWorkflowDocumentFields } from "./workflowYamlDocument";
 import { useWorkflowView } from "./useWorkflowView";
@@ -56,18 +52,20 @@ export function WorkflowChannel({
   onDraftRiskChange,
   onSaveReadback,
   onClose,
+  onDelete,
 }: {
   capability: WorkflowCapability;
   channelId: string;
   channelName: string;
   initialSelection?: WorkflowDefinition | "new" | undefined;
-  initialAction?: "run" | "delete" | undefined;
+  initialAction?: "run" | undefined;
   viewer: string;
   onDraftRiskChange?: (atRisk: boolean) => void;
   onSaveReadback?: (
     saved: Pick<WorkflowDefinition, "channelId" | "revision">,
   ) => void;
   onClose?: () => void;
+  onDelete: (definition: WorkflowDefinition) => void;
 }) {
   const { snapshot, refresh } = useWorkflowView(
     useCallback(
@@ -89,9 +87,7 @@ export function WorkflowChannel({
   const [pendingSelection, setPendingSelection] = useState<
     WorkflowDefinition | "new" | "close" | null
   >(null);
-  const [confirmDelete, setConfirmDelete] = useState(
-    initialAction === "delete",
-  );
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmRun, setConfirmRun] = useState(initialAction === "run");
   const [error, setError] = useState<string | null>(null);
   const [readRuns, setReadRuns] = useState(false);
@@ -109,7 +105,9 @@ export function WorkflowChannel({
   const atRisk = dirty || !!draft?.operationId;
   const unresolvedWrite = ownOperations.some(
     (item) =>
-      (item.outcome === "pending" || item.outcome === "unknown") &&
+      (item.outcome === "pending" ||
+        item.outcome === "unknown" ||
+        (item.action === "delete" && item.outcome === "succeeded")) &&
       (draft?.original
         ? item.workflow.id === draft.original.id &&
           item.workflow.owner === draft.original.owner
@@ -145,28 +143,11 @@ export function WorkflowChannel({
     if (atRisk) setPendingSelection(next);
     else open(next);
   };
-  const checkDeletion =
-    operation?.action === "delete" &&
-    operation.outcome === "unknown" &&
-    !!operation.error &&
-    (operation.delivery === "accepted" || operation.delivery === "seen");
   useEffect(() => {
-    if (
-      operation?.eventId &&
-      (operation.outcome === "succeeded" || checkDeletion)
-    )
-      void refresh();
-  }, [operation?.eventId, operation?.outcome, checkDeletion, refresh]);
+    if (operation?.eventId && operation.outcome === "succeeded") void refresh();
+  }, [operation?.eventId, operation?.outcome, refresh]);
   useEffect(() => {
     if (!operation || !draft || snapshot?.status !== "ready") return;
-    if (confirmedDeletion(operation, snapshot)) {
-      submission.current = null;
-      setDraft(null);
-      setLocalDraftAtRisk(false);
-      setPendingSelection(null);
-      onClose?.();
-      return;
-    }
     const saved = exactSaveReadback(operation, snapshot.data.items);
     if (saved) {
       submission.current = null;
@@ -183,7 +164,7 @@ export function WorkflowChannel({
         initial: saved.yaml,
       });
     }
-  }, [operation, snapshot, draft, onSaveReadback, onClose]);
+  }, [operation, snapshot, draft, onSaveReadback]);
   // A cleared/unavailable view withdraws the saved private definition from display.
   // Unsaved user-authored drafts never become a second retained definition cache.
   useEffect(() => {
@@ -245,22 +226,15 @@ export function WorkflowChannel({
       draft.operationId
     )
       return;
-    try {
-      submission.current = "submitting";
-      const operationId = capability.delete(draft.original);
-      submission.current = operationId;
-      setDraft({ ...draft, operationId });
-      setConfirmDelete(false);
-      setError(null);
-    } catch (cause) {
-      submission.current = null;
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Couldn't start deletion. Your draft is kept.",
-      );
-    }
+    // The page owns submission and recovery after this editor is discarded.
+    const definition = draft.original;
+    setDraft(null);
+    setLocalDraftAtRisk(false);
+    setPendingSelection(null);
+    setConfirmDelete(false);
+    onDelete(definition);
   };
+
   const trigger = () => {
     if (
       !draft?.original ||
@@ -294,9 +268,7 @@ export function WorkflowChannel({
       submission.current = null;
   }, [operations]);
   let blocked: string | undefined;
-  if (operation?.action === "delete")
-    blocked = deletionStatus(operation, snapshot);
-  else if (!capability.availability.save)
+  if (!capability.availability.save)
     blocked = "Saving is unavailable from this host.";
   else if (unresolvedWrite && !draft?.operationId)
     blocked =
@@ -406,7 +378,6 @@ export function WorkflowChannel({
             onLocalDraftRiskChange={setLocalDraftAtRisk}
             readOnly={readonly}
             busy={busy}
-            deleting={operation?.action === "delete"}
             locked={!!draft.operationId}
             blocked={blocked}
             onCancel={() => select("close")}
@@ -494,9 +465,7 @@ export function WorkflowChannel({
                       setDraft(rest);
                     }}
                   >
-                    {operation.action === "delete"
-                      ? "Continue editing"
-                      : "Continue editing retained draft"}
+                    Continue editing retained draft
                   </Button>
                 )}
                 {draft.original && readRuns && (
@@ -507,7 +476,9 @@ export function WorkflowChannel({
                   />
                 )}
                 <WorkflowOperations
-                  operations={ownOperations}
+                  operations={ownOperations.filter(
+                    (item) => item.action !== "delete",
+                  )}
                   snapshot={snapshot}
                   onCheckSaved={refresh}
                   onReviewSaved={select}
@@ -576,7 +547,7 @@ export function WorkflowChannel({
         )}
       {!draft && (
         <WorkflowOperations
-          operations={ownOperations}
+          operations={ownOperations.filter((item) => item.action !== "delete")}
           snapshot={snapshot}
           onCheckSaved={refresh}
           onReviewSaved={select}

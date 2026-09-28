@@ -69,14 +69,23 @@ runs stay unknown: only a returned run ID identifies a requested run.
 
 An empty successful deletion receipt is reconciled only by a fresh read started
 after that receipt: the workflow's owner/channel/UUID must be absent from a
-complete channel result. The editor then closes and the landing refreshes without
-resubmitting the deletion. Missing receipts, partial/failed reads and retained
-definitions keep the editor recoverable through **Check saved configuration**.
-This confirms configuration removal, not cancellation of already running work.
-Deletion uses direct action wording, with pending, checking, retained, and
-unconfirmed states. Success copy uses the same complete-read evidence as editor
-closure; delivery details stay in their disclosure. Dismissing a deletion notice
-keeps the draft and unlocks editing without confirming or repeating deletion.
+complete channel result. Grid deletion confirms on the grid without mounting an
+editor. Confirming deletion in detail discards the local draft and returns to the
+grid immediately, including on a synchronous submission error. The session/outbox
+continues delivery; the landing remains mounted across channel/editor navigation
+and owns readback and recovery. There is no deletion progress in the editor.
+
+Pending cards remain visible with **Deleting…** and disabled actions. Confirmed
+removal refreshes the landing without resubmitting deletion. Rejection restores
+card actions. Submission errors, rejection, and unconfirmed outcomes use the
+existing toast stack; uncertain results offer **Check saved configuration**, which
+also resumes a paused read. Missing receipts, partial/failed reads, and retained
+legacy definitions never establish removal. Explicit **Dismiss notice** confirms
+that dismissal does not confirm, cancel, or repeat deletion; actions stay locked
+until durable dismissal succeeds, and persistence errors remain recoverable.
+Session clear/access loss purges copied data and recovery UI. Work already running
+may continue. The compact **Refresh workflows** icon keeps the old app's label and
+rereads definitions for the known channels; it does not rediscover project channels.
 
 Saving a configured enabled flag does not prove runtime activation or cancellation.
 Legacy deletion can retain a visible definition; accepted delivery is not proof

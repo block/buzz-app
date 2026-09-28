@@ -10,6 +10,7 @@ import {
   signed,
 } from "../../features/relay/testing";
 import type { RelayEvent } from "../../features/relay/events";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
 import type { LiveCallbacks } from "../../features/relay/live";
@@ -348,6 +349,8 @@ const root = document.getElementById("root");
 if (root)
   createRoot(root).render(
     <StrictMode>
-      <Fixture />
+      <ToastProvider>
+        <Fixture />
+      </ToastProvider>
     </StrictMode>,
   );

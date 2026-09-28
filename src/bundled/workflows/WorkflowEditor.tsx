@@ -43,7 +43,6 @@ export function WorkflowEditor({
   readOnly = false,
   blocked,
   busy = false,
-  deleting = false,
   locked = false,
   onCancel,
   scope,
@@ -62,7 +61,6 @@ export function WorkflowEditor({
   readOnly?: boolean;
   blocked?: string | undefined;
   busy?: boolean;
-  deleting?: boolean;
   locked?: boolean;
   onCancel?: () => void;
   scope?: ReactNode;
@@ -262,18 +260,14 @@ export function WorkflowEditor({
               }}
             >
               {busy
-                ? deleting
-                  ? "Deleting…"
+                ? create
+                  ? "Creating…"
+                  : "Saving…"
+                : showingForm && !form?.steps.length
+                  ? "Add step"
                   : create
-                    ? "Creating…"
-                    : "Saving…"
-                : deleting
-                  ? "Delete workflow"
-                  : showingForm && !form?.steps.length
-                    ? "Add step"
-                    : create
-                      ? "Create workflow"
-                      : "Save changes"}
+                    ? "Create workflow"
+                    : "Save changes"}
             </Button>
           </>
         )

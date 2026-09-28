@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode } from "react";
+import { Children, memo, useMemo, useState, type ReactNode } from "react";
 import Markdown, { type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
@@ -51,6 +51,29 @@ function githubImages() {
   };
 }
 
+function EmbeddedAttachment({
+  children,
+  fallback,
+  caption,
+}: {
+  children: ReactNode;
+  fallback: ReactNode;
+  caption: ReactNode;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <div
+      className={styles.attachment}
+      onLoadCapture={() => setLoaded(true)}
+      onLoadedDataCapture={() => setLoaded(true)}
+      onErrorCapture={() => setLoaded(false)}
+    >
+      {children}
+      {loaded ? caption : fallback}
+    </div>
+  );
+}
+
 export const GitHubBody = memo(function GitHubBody({
   body,
   bodyHtml,
@@ -84,7 +107,13 @@ export const GitHubBody = memo(function GitHubBody({
     );
     if (!attachment) return link;
     return (
-      <div className={styles.attachment} key={source}>
+      <EmbeddedAttachment
+        key={source}
+        fallback={link}
+        caption={
+          Children.toArray(label).some((part) => part !== source) ? label : null
+        }
+      >
         {attachment.kind === "audio" ? (
           <AudioAttachment attachment={attachment} source={source} />
         ) : (
@@ -95,8 +124,7 @@ export const GitHubBody = memo(function GitHubBody({
             preload="metadata"
           />
         )}
-        {link}
-      </div>
+      </EmbeddedAttachment>
     );
   };
 

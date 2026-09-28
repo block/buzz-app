@@ -31,7 +31,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("renders GFM, original links, and Before/After players in document order", () => {
+it("renders GFM and Before/After players without duplicate loaded-media links", () => {
   const { container } = render(
     <GitHubBody
       url={url}
@@ -64,7 +64,13 @@ it("renders GFM, original links, and Before/After players in document order", ()
     expect(video).toHaveAttribute("preload", "metadata");
     expect(video).not.toHaveAttribute("autoplay");
     expect(video.closest("p, a")).toBeNull();
+    fireEvent.loadedData(video);
   }
+  expect(screen.queryByRole("link", { name: before })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("link", { name: "Result recording" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("Result recording")).toBeVisible();
 });
 
 it("selects images, audio and named attachments while retaining descriptions and file links", () => {
@@ -89,14 +95,70 @@ it("selects images, audio and named attachments while retaining descriptions and
   const audioElement = container.querySelector("audio");
   const videoElement = container.querySelector("video");
   if (!audioElement || !videoElement) throw new Error("Missing media");
+  fireEvent.loadedData(audioElement);
+  fireEvent.loadedData(videoElement);
+  fireEvent.load(screen.getByAltText("Screen description"));
+  for (const name of ["Screen description", "Audio recording", "Movie"])
+    expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Archive" })).toBeVisible();
   fireEvent.error(audioElement);
   fireEvent.error(videoElement);
   fireEvent.error(screen.getByAltText("Screen description"));
   expect(screen.getByText("Audio unavailable")).toBeVisible();
   expect(screen.getByText("Video unavailable")).toBeVisible();
   expect(screen.getByText("Image unavailable")).toBeVisible();
-  for (const name of ["Screen description", "Audio recording", "Movie"])
+  for (const [name, href] of [
+    ["Screen description", image],
+    ["Audio recording", audio],
+    ["Movie", after],
+  ] as const) {
     expect(screen.getByRole("link", { name })).toBeVisible();
+    expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
+    expect(screen.getByRole("link", { name })).toHaveAttribute(
+      "target",
+      "_blank",
+    );
+  }
+});
+
+it("keeps original links when media fails before loading", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      bodyHtml={metadata}
+      body={`${before}\n\n![Screenshot](${image})\n\n[Audio](${audio})`}
+    />,
+  );
+  for (const media of container.querySelectorAll("video, img, audio"))
+    fireEvent.error(media);
+  expect(screen.getAllByRole("status")).toHaveLength(3);
+  for (const [name, href] of [
+    [before, before],
+    ["Screenshot", image],
+    ["Audio", audio],
+  ] as const) {
+    expect(screen.getByRole("link", { name })).toBeVisible();
+    expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
+  }
+});
+
+it("preserves surrounding prose and formatted labels after an inline video loads", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      bodyHtml={metadata}
+      body={`See [**the corrected behavior**](${before}) for the result.`}
+    />,
+  );
+  const video = container.querySelector("video");
+  if (!video) throw new Error("Missing video");
+  fireEvent.loadedData(video);
+  expect(container).toHaveTextContent("See");
+  expect(container.querySelector("strong")).toHaveTextContent(
+    "the corrected behavior",
+  );
+  expect(container).toHaveTextContent("for the result.");
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
 });
 
 it("never interprets literal code or executes HTML and unsafe links", () => {
@@ -151,6 +213,13 @@ it.each([`![Linked image](${image})`, `**![Linked image](${image})**`])(
       "href",
       image,
     );
+    expect(
+      screen.getByRole("link", { name: "https://example.com/review" }),
+    ).toBeVisible();
+    fireEvent.load(screen.getByAltText("Linked image"));
+    expect(
+      screen.queryByRole("link", { name: "Linked image" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "https://example.com/review" }),
     ).toBeVisible();

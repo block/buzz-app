@@ -115,10 +115,6 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     "list-style-type",
     "disc",
   );
-  await expect(panel.locator(`a[href="${before}"]`)).toHaveCSS(
-    "text-decoration-line",
-    "underline",
-  );
   for (let index = 0; index < 2; index++) {
     const video = videos.nth(index);
     await panel
@@ -135,6 +131,8 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
       .getByRole("button", { name: "Pause video", exact: true })
       .click();
   }
+  for (const source of [before, after])
+    await expect(panel.locator(`a[href="${source}"]`)).toHaveCount(0);
   await panel
     .getByRole("button", { name: "Open video fullscreen" })
     .nth(1)

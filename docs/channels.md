@@ -15,7 +15,8 @@ continue to open normally. No GitHub account connection is configured yet.
 Descriptions render bounded GitHub-flavored Markdown, including task lists and
 tables. GitHub attachment metadata selects inline image, video, and audio players
 in document order; code stays literal and other files stay links. Image descriptions
-and original attachment links remain available, including on playback failure.
+remain available; duplicate attachment links disappear after media loads and
+return on failure. Descriptive link labels remain as text beside loaded media.
 Rendered API HTML is parsed only for metadata, never inserted into the page.
 Raw HTML is not generally rendered; only image markup is projected into Markdown.
 Videos request metadata without autoplay. Public attachment redirects use the

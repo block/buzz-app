@@ -1,6 +1,6 @@
 import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
-import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
+import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import { Button } from "../shared/design-system/ui/Button";
 import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
 import { useSyncExternalStore } from "react";
@@ -48,7 +48,7 @@ export function NotificationSettings({
       <div className="grid gap-5">
         <div className={styles.preferenceList}>
           {state.categories.map(({ key, label }) => (
-            <PreferenceRow
+            <SwitchPreferenceRow
               key={key}
               label={label}
               checked={preferences.categories[key] !== false}
@@ -60,7 +60,7 @@ export function NotificationSettings({
             />
           ))}
         </div>
-        <PreferenceRow
+        <SwitchPreferenceRow
           label="Desktop alerts"
           description="Show notifications for new activity. Opening an alert takes you to its message or thread."
           checked={desktopAlertsEnabled}
@@ -113,7 +113,7 @@ export function NotificationSettings({
           </div>
         )}
         <div className={styles.nestedPreferences}>
-          <PreferenceRow
+          <SwitchPreferenceRow
             label="Notify while viewing"
             description="Show alerts while the conversation is already open."
             checked={preferences.notifyWhileViewing}
@@ -123,7 +123,7 @@ export function NotificationSettings({
             }
           />
           {!state.systemManaged && (
-            <PreferenceRow
+            <SwitchPreferenceRow
               label="Sound"
               description="Use the system notification sound."
               checked={preferences.sound}

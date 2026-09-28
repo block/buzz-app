@@ -20,7 +20,7 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   const frame = page.getByRole("region", { name: "Settings", exact: true });
   const content = page.getByRole("region", { name: "Plugins", exact: true });
   const row = content.getByRole("article").filter({
-    has: page.getByRole("heading", { name: "GitHub", exact: true }),
+    has: page.getByRole("switch", { name: "Enable GitHub", exact: true }),
   });
   const toggle = row.getByRole("switch", {
     name: "Enable GitHub",

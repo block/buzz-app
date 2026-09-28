@@ -16,18 +16,12 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runtimeBuildPlatform } from "./runtime-build-platform.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const spec = JSON.parse(
   await readFile(join(root, "runtime/agent-runtime.json"), "utf8"),
 );
-const env = Object.fromEntries(
-  Object.entries(process.env).filter(
-    ([key]) =>
-      !/^(BUZZ_|BUZZODZ_|NOSTR_|DATABRICKS_|CARGO_TARGET_DIR$)/.test(key),
-  ),
-);
-env.PATH = `${join(root, "bin")}:${env.PATH ?? ""}`;
-env.CARGO_TARGET_DIR = join(root, "target/agent-runtime-build");
+const { env, cargo, rustc } = runtimeBuildPlatform(root);
 async function run(command, args, capture = false) {
   return new Promise((accept, reject) => {
     const child = spawn(command, args, {
@@ -47,9 +41,9 @@ async function run(command, args, capture = false) {
     );
   });
 }
-const target = (await run(join(root, "bin/rustc"), ["-vV"], true)).match(
-  /^host: (.+)$/m,
-)?.[1];
+const target = (await run(rustc, ["-vV"], true))
+  .match(/^host: (.+)$/m)?.[1]
+  ?.trim();
 if (!target) throw new Error("Could not resolve pinned Rust target");
 const destination = join(root, "src-tauri/resources/agent-runtime");
 const filenames = spec.tools.map((name) =>
@@ -95,7 +89,7 @@ await mkdir(join(root, "target"), { recursive: true });
 const stage = await mkdtemp(join(root, "target/agent-runtime-stage-"));
 try {
   // One source revision and one frozen workspace lock, no local path/ambient tools.
-  await run(join(root, "bin/cargo"), [
+  await run(cargo, [
     "install",
     "--git",
     spec.repository,

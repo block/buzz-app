@@ -18,12 +18,3 @@
   width: 100%;
   height: 100%;
 }
-.agent-motion-canvas {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 88px;
-  height: 88px;
-  transform-origin: top left;
-  pointer-events: none;
-}

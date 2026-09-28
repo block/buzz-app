@@ -58,7 +58,7 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
       .poll(() => image.evaluate((el) => el.naturalWidth))
       .toBeGreaterThan(0);
     await expect(image).toHaveCSS("opacity", "1");
-    await expect(avatar).toHaveText("");
+    await expect(avatar.locator("[data-avatar-shape]")).toHaveText("");
     const original = await avatar.boundingBox();
 
     let release;
@@ -91,7 +91,7 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
       .poll(() => image.evaluate((el) => el.naturalWidth))
       .toBeGreaterThan(0);
     await expect(image).toHaveCSS("opacity", "1");
-    await expect(avatar).toHaveText("");
+    await expect(avatar.locator("[data-avatar-shape]")).toHaveText("");
   } finally {
     await server.close();
   }

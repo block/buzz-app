@@ -27,6 +27,7 @@ import {
 import {
   type ReactNode,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -188,6 +189,9 @@ function ProfileDetails({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const presence = usePresenceStatus(session.presence, pubkey, true);
   const knownAgent = agentPubkeys.has(pubkey);
+  const thinkingId = useId();
+  const describeThinking =
+    knownAgent && tab === "info" && presence !== "unknown";
   const ownership = useAgentOwnerEvidence(
     session,
     knownAgent ? pubkey : undefined,
@@ -319,6 +323,7 @@ function ProfileDetails({
       ref={region}
       data-buzz-ui=""
       aria-label="Profile details"
+      aria-describedby={describeThinking ? thinkingId : undefined}
       tabIndex={-1}
       className={styles.root}
     >
@@ -341,6 +346,9 @@ function ProfileDetails({
                 session={session}
                 agentPubkey={pubkey}
                 channelId={context?.channelId}
+                thinkingDescriptionId={
+                  describeThinking ? thinkingId : undefined
+                }
                 src={picture}
                 alt={
                   tab === "info" && presence !== "unknown"

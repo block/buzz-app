@@ -127,24 +127,29 @@ export function ThinkingBadge({
         </defs>
       </svg>
       <span
-        ref={measure}
-        aria-hidden="true"
-        className="buzz-button badge-pill-measure"
-        data-size="sm"
-        data-variant="prominent"
+        className="badge-pill-canvas"
+        style={{ transform: `scale(${pixels / 88})` }}
       >
-        Start
-      </span>
-      <span
-        ref={ink}
-        className="badge-pill-ink"
-        aria-hidden="true"
-        style={{ visibility: enabled ? "visible" : "hidden" }}
-      >
-        <span ref={dots} className="badge-pill-dots">
-          <i />
-          <i />
-          <i />
+        <span
+          ref={measure}
+          aria-hidden="true"
+          className="buzz-button badge-pill-measure"
+          data-size="sm"
+          data-variant="prominent"
+        >
+          Start
+        </span>
+        <span
+          ref={ink}
+          className="badge-pill-ink"
+          aria-hidden="true"
+          style={{ visibility: enabled ? "visible" : "hidden" }}
+        >
+          <span ref={dots} className="badge-pill-dots">
+            <i />
+            <i />
+            <i />
+          </span>
         </span>
       </span>
     </span>

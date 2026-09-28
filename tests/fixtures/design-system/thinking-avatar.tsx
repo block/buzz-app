@@ -23,19 +23,9 @@ function Fixture() {
       </label>
       <article aria-label="Centered Start pill">
         <div style={{ width: size, height: size, marginBlock: 40 }}>
-          <div
-            style={{
-              position: "relative",
-              width: 88,
-              height: 88,
-              transform: `scale(${size / 88})`,
-              transformOrigin: "top left",
-            }}
-          >
-            <ThinkingBadge thinking={thinking} avatarSize={size}>
-              <Avatar alt="Agent" fallback="A" size="fill" shape="squircle" />
-            </ThinkingBadge>
-          </div>
+          <ThinkingBadge thinking={thinking} avatarSize={size}>
+            <Avatar alt="Agent" fallback="A" size="fill" shape="squircle" />
+          </ThinkingBadge>
         </div>
         <button type="button" onClick={() => setThinking(false)}>
           Available

@@ -1,3 +1,15 @@
+.badge-pill-root {
+  position: relative;
+}
+.badge-pill-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 88px;
+  height: 88px;
+  transform-origin: top left;
+  pointer-events: none;
+}
 .badge-pill-cutout {
   position: absolute;
   inset: 0;

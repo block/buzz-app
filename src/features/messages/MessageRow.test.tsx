@@ -4,6 +4,7 @@ import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
 import { expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render as renderDom,
@@ -44,7 +45,29 @@ it("keeps agent badges but omits human presence and status symbols from messages
   const subscribe = vi.fn(() => () => {});
   const status = vi.fn<() => "online" | "unknown">(() => "online");
   const channels = { channels: [], status: "ready" };
+  let working = false;
+  const activityListeners = new Set<() => void>();
   const session = {
+    agentActivity: {
+      snapshot: () => ({
+        turns: working
+          ? [
+              {
+                agent: agentRow.authorId,
+                channelId: row.channelId,
+                state: "working",
+              },
+            ]
+          : [],
+        typing: [],
+      }),
+      subscribe: (listener: () => void) => {
+        activityListeners.add(listener);
+        return () => {
+          activityListeners.delete(listener);
+        };
+      },
+    },
     presence: { subscribe, status, limited: () => false },
     messages: { report: undefined },
     channels: {
@@ -98,7 +121,25 @@ it("keeps agent badges but omits human presence and status symbols from messages
   );
   expect(
     screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
-  ).toHaveAccessibleDescription("Presence: online");
+  ).toHaveAccessibleDescription(/^Presence: online\s*$/);
+  act(() => {
+    working = true;
+    for (const listener of activityListeners) listener();
+  });
+  expect(
+    screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
+  ).toHaveAccessibleDescription("Presence: online Agent is thinking");
+  expect(document.querySelector(".agent-motion-avatar")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  act(() => {
+    working = false;
+    for (const listener of activityListeners) listener();
+  });
+  expect(
+    screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
+  ).toHaveAccessibleDescription(/^Presence: online\s*$/);
   mounted.unmount();
   status.mockReturnValue("unknown");
   const unknown = renderDom(<MessageRow {...props} canOpenLink={() => true} />);

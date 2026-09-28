@@ -15,6 +15,7 @@ type AgentAvatarProps = ComponentProps<typeof Avatar> & {
   agentPubkey?: string | undefined;
   channelId?: string | undefined;
   working?: boolean | undefined;
+  thinkingDescriptionId?: string | undefined;
 };
 export function AgentAvatar(props: AgentAvatarProps) {
   if (props.shape === "squircle") return <ActiveAgentAvatar {...props} />;
@@ -26,6 +27,7 @@ function ActiveAgentAvatar({
   agentPubkey,
   channelId,
   working,
+  thinkingDescriptionId,
   ...props
 }: AgentAvatarProps) {
   const activity = session?.agentActivity;
@@ -67,21 +69,18 @@ function ActiveAgentAvatar({
     return () => observer.disconnect();
   }, []);
   return (
-    <span
-      ref={root}
-      className="agent-motion-avatar"
-      data-size={props.size ?? "default"}
-      role="img"
-      aria-label={
-        props.alt
-          ? `${props.alt}${thinking ? ", thinking" : props.statusBadge === "online" ? ", available" : props.statusBadge ? `, ${props.statusBadge}` : ""}`
-          : undefined
-      }
-      aria-hidden={!props.alt || undefined}
-    >
+    <>
       <span
-        className="agent-motion-canvas"
-        style={{ transform: `scale(${size / 88})` }}
+        ref={root}
+        className="agent-motion-avatar"
+        data-size={props.size ?? "default"}
+        role="img"
+        aria-label={
+          props.alt
+            ? `${props.alt}${thinking ? ", thinking" : props.statusBadge === "online" ? ", available" : props.statusBadge ? `, ${props.statusBadge}` : ""}`
+            : undefined
+        }
+        aria-hidden={!props.alt || undefined}
       >
         <ThinkingBadge avatarSize={size} thinking={thinking} enabled={visible}>
           <Avatar
@@ -92,6 +91,11 @@ function ActiveAgentAvatar({
           />
         </ThinkingBadge>
       </span>
-    </span>
+      {thinkingDescriptionId && (
+        <span className="sr-only" id={thinkingDescriptionId}>
+          {thinking ? "Agent is thinking" : ""}
+        </span>
+      )}
+    </>
   );
 }

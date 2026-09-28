@@ -778,8 +778,6 @@ html[data-keyboard-navigation] .audioSeek:focus-visible {
 .mediaPreview {
   --media-preview-radius: 16px;
   --media-controls-inset: 6px;
-  --media-glass-background: #00000059;
-  --media-glass-filter: blur(24px) saturate(1.5);
   position: relative;
   display: block;
   width: min(32rem, 100%, calc(min(28rem, 56vh) * var(--media-ratio, 16 / 9)));
@@ -1085,10 +1083,10 @@ button.mediaPreview {
 .imageReviewToolbar {
   width: max-content;
   max-width: calc(100% - 32px);
-  color: #fff;
-  border: 1px solid #ffffff1a;
-  border-radius: 12px;
-  background: #171717ed;
+  color: var(--text-standard);
+  border: 1px solid var(--rim-shade);
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
   transition: opacity 160ms ease-out;
   position: absolute;
   z-index: 2;
@@ -1102,7 +1100,7 @@ button.mediaPreview {
 }
 .imageReviewToolbar button,
 .imageReviewToolbar a {
-  color: #fff;
+  color: var(--text-standard);
   background: transparent;
   transition:
     background-color 120ms ease-out,
@@ -1111,16 +1109,16 @@ button.mediaPreview {
 @media (hover: hover) and (pointer: fine) {
   .imageReviewToolbar button:enabled:hover,
   .imageReviewToolbar a:hover {
-    background: #ffffff26;
+    background: var(--affordance-subtle-hover);
   }
 }
 .imageReviewToolbar button:enabled:active,
 .imageReviewToolbar a:active {
-  background: #ffffff40;
+  background: var(--affordance-subtle-pressed);
   scale: 0.94;
 }
 html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
-  outline: 2px solid #fff;
+  outline: 2px solid var(--text-standard);
   outline-offset: 2px;
 }
 .imageReviewZoom > button {
@@ -1128,7 +1126,7 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
   white-space: nowrap;
 }
 .imageReviewZoom input {
-  accent-color: #fff;
+  accent-color: var(--text-standard);
 }
 @media (hover: hover) and (pointer: fine) {
   /* Programmatic gallery focus can remain :focus-visible after a mouse click. */
@@ -1882,10 +1880,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   display: inline-flex;
   align-items: center;
   min-height: 20px;
-  padding: 0 6px;
-  border-radius: 4px;
+  padding: 0 var(--space-1h);
+  border-radius: calc(var(--radius-row) * 0.4);
   background: var(--affordance-selected);
-  font: 600 11px var(--font-mono);
+  font: var(--text-mono--font-weight) var(--text-mono) var(--font-mono);
 }
 /* Shared dark media review and compact video surfaces. */
 .mediaPreview[data-video-preview] {
@@ -1901,39 +1899,17 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   top: 8px;
   right: 8px;
 }
+/* Shared chrome controls own their glass, colors, focus ring and shape. */
 .mediaPreview[data-video-preview] .mediaExpand button {
-  position: relative;
-  isolation: isolate;
-  color: white;
-  background: transparent;
-  border: 0;
   transition:
     background-color 120ms ease-out,
     scale 100ms ease-out;
 }
-.mediaPreview[data-video-preview] .mediaExpand button::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  border-radius: inherit;
-  border: 1px solid #ffffff1a;
-  background: var(--media-glass-background);
-  -webkit-backdrop-filter: var(--media-glass-filter);
-  backdrop-filter: var(--media-glass-filter);
-}
-@media (hover: hover) and (pointer: fine) {
-  .mediaPreview[data-video-preview] .mediaExpand button:enabled:hover {
-    background: #ffffff26;
-  }
-}
 .mediaPreview[data-video-preview] .mediaExpand button:enabled:active {
-  background: #ffffff40;
   scale: 0.94;
 }
 .darkReviewBackdrop {
-  padding: 40px;
+  padding: calc(var(--space-8) + var(--space-2));
   background: transparent;
   display: grid;
   place-items: center;
@@ -1942,24 +1918,22 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   grid-template-columns: minmax(0, 1fr) minmax(0, 24rem);
   max-width: 1520px;
   max-height: 980px;
-  border: 1px solid #ffffff26;
-  border-radius: 16px;
-  background: #0a0a0a;
-  --surface-panel: #0a0a0a;
-  --surface-base: #0a0a0a;
-  --text-standard: #fafafa;
-  --text-subtle: #a3a3a3;
-  --border-standard: #262626;
+  border: 1px solid var(--affordance-subtle-hover);
+  border-radius: var(
+    --media-preview-radius,
+    calc(var(--radius-control) + var(--space-1))
+  );
+  background: var(--surface-inset);
 }
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewStage {
-  background: #000;
+  background: var(--surface-base);
   padding: 0;
 }
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewHeading {
-  background: #0a0a0a;
-  color: #fafafa;
-  border-bottom: 1px solid #262626;
-  gap: 12px;
+  background: var(--surface-inset);
+  color: var(--text-standard);
+  border-bottom: 1px solid var(--border-standard);
+  gap: var(--space-3);
   min-height: 48px;
 }
 .mediaReviewHeading > span {
@@ -1969,39 +1943,17 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   white-space: nowrap;
 }
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewHeading button {
-  color: #fafafa;
-  border-radius: 10px;
-  background: #171717;
   transition:
     background-color 120ms ease-out,
     scale 100ms ease-out;
 }
 .mediaReviewViewer[data-color-mode="dark"]
   .mediaReviewHeading
-  button[aria-pressed="true"] {
-  background: #262626;
-}
-@media (hover: hover) and (pointer: fine) {
-  .mediaReviewViewer[data-color-mode="dark"]
-    .mediaReviewHeading
-    button:enabled:hover {
-    background: #383838;
-  }
-}
-.mediaReviewViewer[data-color-mode="dark"]
-  .mediaReviewHeading
   button:enabled:active {
-  background: #484848;
   scale: 0.94;
 }
-.mediaReviewViewer[data-color-mode="dark"]
-  .mediaReviewHeading
-  button:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 2px;
-}
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
-  border-left: 1px solid #262626;
+  border-left: 1px solid var(--border-standard);
 }
 .mediaReviewViewer[data-comments-hidden] {
   grid-template-columns: minmax(0, 1fr) minmax(0, 0px);
@@ -2009,32 +1961,32 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .mediaReviewThreadHeading strong {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewThreadHeading {
-  border-bottom: 1px solid #262626;
-  margin: 0 -16px 12px;
-  padding: 16px;
+  border-bottom: 1px solid var(--border-standard);
+  margin: 0 calc(-1 * var(--space-4)) var(--space-3);
+  padding: var(--space-4);
 }
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewThreadHeading > span {
-  border-radius: 8px;
-  background: #262626;
-  padding: 2px 8px;
+  border-radius: calc(var(--radius-row) * 0.8);
+  background: var(--border-standard);
+  padding: var(--space-half) var(--space-2);
 }
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewComment {
-  padding: 12px;
-  margin-bottom: 12px;
-  border-radius: 8px;
-  background: #171717;
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  border-radius: calc(var(--radius-row) * 0.8);
+  background: var(--surface-panel);
 }
 .mediaReviewComment[data-selected] {
-  outline: 1px solid #737373;
+  outline: 1px solid var(--border-prominent);
   outline-offset: -1px;
 }
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewThread .message {
   padding: 0;
   grid-template-columns: 24px minmax(0, 1fr);
-  column-gap: 8px;
+  column-gap: var(--space-2);
 }
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewThread .avatar {
   width: 24px;
@@ -2042,18 +1994,18 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 
 .mediaReviewViewer[data-color-mode="dark"] .mediaTimeLink > :is(button, span) {
-  color: #fafafa;
-  background: #ffffff26;
+  color: var(--text-standard);
+  background: var(--affordance-subtle-hover);
 }
 .mediaReviewViewer[data-color-mode="dark"] .threadNote {
-  border: 1px dashed #333;
-  border-radius: 8px;
-  padding: 24px 12px;
+  border: 1px dashed var(--surface-popover);
+  border-radius: calc(var(--radius-row) * 0.8);
+  padding: var(--space-6) var(--space-3);
   text-align: center;
 }
 @media (max-width: 800px) {
   .darkReviewBackdrop {
-    padding: 12px;
+    padding: var(--space-3);
   }
 }
 
@@ -2068,20 +2020,20 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   clip-path: var(--media-corner-clip, none);
 }
 .mediaReviewViewer[data-color-mode="dark"] {
-  color: #fafafa;
+  color: var(--text-standard);
   color-scheme: dark;
-  --text: #fafafa;
-  --text-muted: #a3a3a3;
-  --text-secondary: #a3a3a3;
-  --surface: #0a0a0a;
-  --surface-input: #0a0a0a;
+  --text: var(--text-standard);
+  --text-muted: var(--text-metadata);
+  --text-secondary: var(--text-metadata);
+  --surface: var(--surface-inset);
+  --surface-input: var(--surface-inset);
   /* Legacy reaction roles must resolve here, not inherit the app root's mode. */
   --surface-control: var(--affordance-subtle);
   --surface-hover: var(--affordance-subtle-hover);
-  --border: #262626;
-  --border-input: #404040;
-  --primary: #fafafa;
-  --on-primary: #0a0a0a;
+  --border: var(--border-standard);
+  --border-input: var(--border-prominent);
+  --primary: var(--text-standard);
+  --on-primary: var(--surface-inset);
 }
 .mediaReviewViewer[data-color-mode="dark"]
   .mediaReviewComment
@@ -2094,7 +2046,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   height: 24px;
   min-width: 24px;
   min-height: 24px;
-  font-size: 11px;
+  font-size: var(--text-caption);
 }
 @media (max-width: 900px) {
   .mediaReviewViewer[data-color-mode="dark"] {
@@ -2191,7 +2143,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: #000b;
+  background: var(--bg-scrim);
 }
 .darkReviewBackdrop > .mediaReviewViewer {
   position: relative;

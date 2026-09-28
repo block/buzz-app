@@ -220,7 +220,8 @@ export function MediaAttachment({
     <>
       <div
         ref={corners}
-        className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
+        className={`${styles.mediaPreview} dark ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
+        data-color-mode="dark"
         data-video-preview=""
         data-media-preview=""
         data-started={started || undefined}
@@ -240,7 +241,7 @@ export function MediaAttachment({
         <span className={styles.mediaExpand}>
           <IconButton
             size="compact"
-            variant="solid"
+            variant="chrome"
             shape="round"
             type="button"
             aria-label="Open video fullscreen"

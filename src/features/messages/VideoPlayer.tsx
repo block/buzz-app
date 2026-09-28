@@ -1,3 +1,4 @@
+import { useVideoGestures } from "./use-video-gestures";
 import { useMediaControls } from "./use-media-controls";
 import { useMediaCorners } from "./use-media-corners";
 import {
@@ -371,15 +372,17 @@ export function VideoPlayer({
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const idle = useMediaControls(stage, source);
+  const gestures = useVideoGestures(videoRef, source);
   return (
     <div
       ref={stage}
-      className={styles.player}
+      className={`${styles.player} dark`}
+      data-color-mode="dark"
       data-controls-idle={idle || undefined}
     >
-      {/* biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL. */}
       <video
         ref={videoRef}
+        {...gestures}
         data-review-media=""
         src={source}
         poster={poster}

@@ -299,7 +299,7 @@ function ReviewShell({
     // biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismissal complements the close button and Escape shortcut.
     <div
       ref={backdrop}
-      className={`${styles.mediaReviewBackdrop} ${styles.darkReviewBackdrop}`}
+      className={`${styles.mediaReviewBackdrop} ${styles.darkReviewBackdrop} dark`}
       role="presentation"
       onMouseDown={(event) => {
         if (event.button === 0 && event.target === event.currentTarget)
@@ -338,6 +338,8 @@ function ReviewShell({
           </span>
           <IconButton
             size="compact"
+            variant="subtle"
+            shape="control"
             aria-label={commentsOpen ? "Hide comments" : "Show comments"}
             aria-pressed={commentsOpen}
             onClick={(event) => {
@@ -349,6 +351,8 @@ function ReviewShell({
           />
           <IconButton
             size="compact"
+            variant="subtle"
+            shape="control"
             ref={closeButton}
             type="button"
             aria-label="Close fullscreen viewer"

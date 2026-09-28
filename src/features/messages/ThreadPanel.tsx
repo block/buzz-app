@@ -393,6 +393,10 @@ function ThreadMessages({
     request: number;
   }>();
   const rootId = snapshot.root?.id;
+  const hasMediaComments =
+    (snapshot.root?.replyCount ?? 0) > 0 ||
+    snapshot.replies.length > 0 ||
+    (!!snapshot.target && snapshot.target.id !== rootId);
   const openRootMedia = useCallback(
     (
       _rowId: string,
@@ -400,22 +404,9 @@ function ThreadMessages({
       seconds: number,
     ) => {
       if (rootId)
-        onOpenMediaReview?.(
-          _rowId,
-          attachment,
-          seconds,
-          (snapshot.root?.replyCount ?? 0) > 0 ||
-            snapshot.replies.length > 0 ||
-            (!!snapshot.target && snapshot.target.id !== rootId),
-        );
+        onOpenMediaReview?.(_rowId, attachment, seconds, hasMediaComments);
     },
-    [
-      rootId,
-      onOpenMediaReview,
-      snapshot.root?.replyCount,
-      snapshot.replies.length,
-      snapshot.target,
-    ],
+    [rootId, onOpenMediaReview, hasMediaComments],
   );
   // Without a selected viewer, bare timecodes need one unambiguous video.
   const videoUrls = new Set(

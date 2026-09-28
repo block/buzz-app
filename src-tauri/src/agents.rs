@@ -214,28 +214,8 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                 any(target_arch = "x86_64", target_arch = "aarch64")
             ))),
             default_args: &[],
-            providers: &[
-                ProviderOption {
-                    value: "anthropic",
-                    label: "Anthropic",
-                },
-                ProviderOption {
-                    value: "openai",
-                    label: "OpenAI",
-                },
-                ProviderOption {
-                    value: "openai-codex",
-                    label: "OpenAI Codex",
-                },
-                ProviderOption {
-                    value: "google",
-                    label: "Google",
-                },
-                ProviderOption {
-                    value: "openrouter",
-                    label: "OpenRouter",
-                },
-            ],
+            // Pi reports signed-in providers through its model catalog.
+            providers: &[],
         },
     ]
 }

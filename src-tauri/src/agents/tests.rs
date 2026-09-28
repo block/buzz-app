@@ -205,6 +205,8 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         before["harnessOptions"][2]["status"] == "ready"
     );
     assert_eq!(before["harnessOptions"][2]["defaultArgs"], json!([]));
+    // Pi's signed-in providers come from its catalog, never a static list.
+    assert_eq!(before["harnessOptions"][2]["providers"], json!([]));
     assert_eq!(
         before["harnessOptions"][2]["status"],
         pi_status(
@@ -1265,5 +1267,83 @@ fn log_ipc_requires_fresh_exact_owner_proof_and_consumes_challenge() {
         )
         .unwrap(),
         ""
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn pi_model_lookup_waits_out_brief_host_contention() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, host, _app, view) = fixture();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    for tool in ["pi", "node", "buzz-pi-acp"] {
+        let file = tools.join(tool);
+        std::fs::write(&file, "#!/bin/sh\nread request\nprintf '%s\\n' '{\"id\":\"catalog\",\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"provider\":\"databricks\",\"id\":\"model-a\"}]}}'\n").unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    // Another native operation (for example a snapshot refresh) briefly holds
+    // the host while the lookup reads its settings.
+    let (locked, wait) = std::sync::mpsc::channel();
+    let holder = {
+        let lock = host.0.clone();
+        std::thread::spawn(move || {
+            let _guard = lock.lock().unwrap();
+            locked.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        })
+    };
+    wait.recv().unwrap();
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"","filter":"","action":"connect","edit":{
+                "name":"Pi draft","systemPrompt":"","workspace":dir.path(),
+                "harness":{"command":tools.join("buzz-pi-acp"),"args":[],"provider":"","model":""},
+                "environment":{}
+            }
+        }}),
+    )
+    .unwrap();
+    holder.join().unwrap();
+    assert_eq!(
+        result["models"],
+        json!([{"id":"databricks/model-a","name":"databricks/model-a"}])
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn pi_connection_test_prompts_the_draft_selection() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _host, _app, view) = fixture();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    for tool in ["pi", "node", "buzz-pi-acp"] {
+        let file = tools.join(tool);
+        std::fs::write(&file, "#!/bin/sh\nread request\ncase \"$*\" in *'--model model-a'*) stop=stop;; *) stop=error;; esac\nprintf '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"%s\",\"errorMessage\":\"401\"}}\\n' \"$stop\"\n").unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let test = |model: &str| {
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":{
+                "host":"","filter":"","action":"test","edit":{
+                    "name":"Pi draft","systemPrompt":"","workspace":dir.path(),
+                    "harness":{"command":tools.join("buzz-pi-acp"),"args":[],"provider":"databricks","model":model},
+                    "environment":{}
+                }
+            }}),
+        )
+    };
+    assert_eq!(test("model-a").unwrap()["models"], json!([]));
+    let error = test("model-b").unwrap_err();
+    assert!(
+        error.as_str().unwrap().contains("rejected the API key"),
+        "{error}"
     );
 }

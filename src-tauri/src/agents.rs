@@ -689,6 +689,22 @@ pub(crate) async fn start(
     start_guarded(owner, id, action, restore, replay_floor, guard).await
 }
 type StartGuard = (fn(&buzz_agent_controller::AgentView) -> bool, &'static str);
+fn check_guard(host: &mut Host, id: &str, guard: Option<StartGuard>) -> Result<(), String> {
+    let Some((eligible, refusal)) = guard else {
+        return Ok(());
+    };
+    if host
+        .controller
+        .snapshot()?
+        .agents
+        .iter()
+        .any(|agent| agent.id == id && eligible(agent))
+    {
+        Ok(())
+    } else {
+        Err(refusal.into())
+    }
+}
 async fn start_guarded(
     owner: AgentHost,
     id: String,
@@ -705,17 +721,7 @@ async fn start_guarded(
         }
         // Re-check while holding the controller, not just when the caller
         // chose this agent: Stop or Edit may have changed it since.
-        if let Some((eligible, refusal)) = guard {
-            if !host
-                .controller
-                .snapshot()?
-                .agents
-                .iter()
-                .any(|agent| agent.id == id && eligible(agent))
-            {
-                return Err(refusal.into());
-            }
-        }
+        check_guard(host, &id, guard)?;
         host.starts.remove(&id);
         if !restore {
             host.acted.insert(id.clone());
@@ -765,6 +771,9 @@ async fn start_guarded(
             host.controller.record_error(&id, error);
             return host.snapshot();
         }
+        // The OS credential prompt can outlast the agent (e.g. its listener
+        // exited); eligibility must still hold right before Restart enables it.
+        check_guard(host, &id, guard)?;
         host.controller
             .action_with_key(&id, action, revision, &key, replay_floor)?;
         host.snapshot()

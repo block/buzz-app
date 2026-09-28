@@ -764,6 +764,79 @@ mod overlap {
         fresh.shutdown().unwrap();
     }
 
+    // Eligibility can lapse while the OS credential prompt is open (e.g. the
+    // listener exits). The guard must be re-checked before Restart enables it.
+    #[test]
+    fn save_restart_rechecks_eligibility_after_the_credential_prompt() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+        const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        static ELIGIBLE: AtomicBool = AtomicBool::new(true);
+        struct Lapsing;
+        impl Credentials for Lapsing {
+            fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+                panic!("not a deletion")
+            }
+            fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
+                panic!("not an import")
+            }
+            fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
+                panic!("not a write")
+            }
+            fn read(&self, _: &str, pubkey: &str) -> Result<Option<Secret>, String> {
+                ELIGIBLE.store(false, Ordering::SeqCst);
+                Secret::parse(KEY, pubkey).map(Some)
+            }
+        }
+        fn eligible(_: &buzz_agent_controller::AgentView) -> bool {
+            ELIGIBLE.load(Ordering::SeqCst)
+        }
+        let (dir, host, _app, _view) = fixture();
+        let id = seed(dir.path());
+        let path = dir.path().join("store/agents.json");
+        let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let id = id.replacen(&"ab".repeat(32), PUB, 1);
+        saved["agents"][0]["id"] = json!(id);
+        saved["agents"][0]["pubkey"] = json!(PUB);
+        saved["agents"][0]["credentialId"] = json!(id);
+        saved["agents"][0]["enabled"] = json!(false);
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let credentials: Arc<dyn Credentials> = Arc::new(Lapsing);
+        host.with(|h| {
+            h.controller = Controller::new(
+                Store::open(dir.path().join("replacement"))?,
+                credentials.clone(),
+                Err("placeholder".into()),
+                dir.path().join("ownership"),
+            );
+            h.controller = Controller::new(
+                Store::open(dir.path().join("store"))?,
+                credentials.clone(),
+                Ok(synthetic_bundle(&dir.path().join("tools"))),
+                dir.path().join("ownership"),
+            );
+            h.credentials = credentials;
+            h.legacy_check = || Ok(());
+            Ok(())
+        })
+        .unwrap();
+        let result = tauri::async_runtime::block_on(start_guarded(
+            host,
+            id,
+            Action::Restart,
+            false,
+            None,
+            Some((eligible, "Agent no longer needs a save restart")),
+        ));
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Agent no longer needs a save restart")
+        );
+        // Restart never ran, so it did not enable the agent.
+        let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved["agents"][0]["enabled"], false);
+    }
+
     // A genuinely eligible agent: its Start failed on the missing Goose CLI.
     // Stop during the download must win over the install's late restart.
     #[test]

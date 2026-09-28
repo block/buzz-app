@@ -8,9 +8,16 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
+import { createCommunityMembership } from "../bundled/moderation/membership";
+import {
+  SettingsCardsService,
+  type SettingsCard,
+  type SettingsCards,
+} from "../features/settings/service";
+import type { RelayData } from "../features/relay/service";
 import type { Contribution } from "../plugins/contributions";
-import type { SettingsCard, SettingsCards } from "../features/settings/service";
 
 afterEach(cleanup);
 
@@ -206,4 +213,84 @@ it("keeps same-id community cards from different plugins distinct", () => {
   expect(
     screen.getByRole("button", { name: "Example groups" }),
   ).not.toHaveAttribute("aria-current");
+});
+
+it("keeps Administration hidden after applying a verified ordinary-member roster", async () => {
+  const viewer = "a".repeat(64);
+  const relayAuthor = "f".repeat(64);
+  let resolveRoster!: (events: unknown[]) => void;
+  const roster = new Promise<unknown[]>((resolve) => {
+    resolveRoster = resolve;
+  });
+  const membership = createCommunityMembership({
+    snapshot: () => ({
+      status: "ready",
+      generation: 1,
+      scope: `https://primary.example:${viewer}`,
+      viewer,
+      session: {
+        relayAuthor,
+        read: () => roster,
+        profiles: { ensure: vi.fn(async () => {}) },
+      },
+    }),
+    subscribe: () => () => {},
+  } as unknown as RelayData);
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const cards = new SettingsCardsService(root);
+  const scope = root.extend({
+    pluginOwner: { id: "moderation", revision: "one" },
+  });
+  const fiber = scope.plugin((ctx) => {
+    ctx.settingsCards.register({
+      id: "membership",
+      title: "Membership",
+      section: "administration",
+      visibility: {
+        snapshot: () => {
+          const state = membership.snapshot();
+          return (
+            state.status === "ready" &&
+            (state.role === "owner" || state.role === "admin")
+          );
+        },
+        subscribe: membership.subscribe,
+        ensure: membership.ensure,
+      },
+      component: () => <p>Membership body</p>,
+    });
+  });
+  await fiber.await();
+  render(<Settings {...host} cards={cards} />);
+  expect(membership.snapshot().status).toBe("loading");
+
+  resolveRoster([
+    {
+      id: "1".repeat(64),
+      kind: 13534,
+      pubkey: relayAuthor,
+      created_at: 1,
+      content: "",
+      sig: "",
+      tags: [["member", viewer, "member"]],
+    },
+  ]);
+  await waitFor(() =>
+    expect(membership.snapshot()).toMatchObject({
+      status: "ready",
+      role: "member",
+      refreshing: false,
+    }),
+  );
+
+  const nav = screen.getByRole("navigation", { name: "Settings sections" });
+  expect(nav).not.toHaveTextContent("Administration");
+  expect(screen.queryByRole("button", { name: "Membership" })).toBeNull();
+  await fiber.dispose();
+  membership.dispose();
+  await root.fiber.dispose();
 });

@@ -287,38 +287,42 @@ it("joins cleanup already started by disabling a plugin", async () => {
   expect(plugin.cleanup).toHaveBeenCalledTimes(1);
 });
 
-it("composes the packaged native identity without a broker identity or session", async () => {
-  await services.dispose();
-  vi.stubEnv("VITE_BUZZ_LIVE", "0");
-  vi.mocked(isTauri).mockReturnValue(true);
-  vi.mocked(fetch).mockClear();
-  vi.mocked(invoke).mockImplementation(async (command) => {
-    if (command === "identity_restore") return viewer;
-    if (command === "deep_link_take") return [];
-    if (command === "deep_link_watch") return null;
-    // Other native owners may initialize, but no actual native operations run.
-    throw new Error("Fixture native capability unavailable");
-  });
-  services = createServices();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(services.identity?.snapshot()).toEqual({ status: "ready", viewer });
-  expect(services.communities.snapshot()).toMatchObject({
-    status: "ready",
-    relayAvailable: false,
-    viewer,
-    selected: null,
-  });
-  expect(fetch).not.toHaveBeenCalled();
-  expect(services.relay.snapshot().status).not.toBe("ready");
-  expect(
-    vi
-      .mocked(invoke)
-      .mock.calls.filter(([command]) => command === "identity_restore"),
-  ).toHaveLength(1);
-});
+it.each(["MacIntel", "Linux x86_64", "Win32"])(
+  "composes the packaged %s identity without a broker identity or session",
+  async (platform) => {
+    await services.dispose();
+    vi.stubEnv("VITE_BUZZ_LIVE", "0");
+    vi.stubGlobal("navigator", { platform });
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(fetch).mockClear();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "identity_restore") return viewer;
+      if (command === "deep_link_take") return [];
+      if (command === "deep_link_watch") return null;
+      // Other native owners may initialize, but no actual native operations run.
+      throw new Error("Fixture native capability unavailable");
+    });
+    services = createServices();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(services.identity?.snapshot()).toEqual({ status: "ready", viewer });
+    expect(services.communities.snapshot()).toMatchObject({
+      status: "ready",
+      relayAvailable: false,
+      viewer,
+      selected: null,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(services.relay.snapshot().status).not.toBe("ready");
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === "identity_restore"),
+    ).toHaveLength(1);
+  },
+);
 
 it.each(["Linux x86_64", "Win32"])(
-  "keeps the unpinned %s shell available without native onboarding",
+  "keeps %s storage failures distinct from first-run onboarding without a broker fallback",
   async (platform) => {
     await services.dispose();
     vi.stubEnv("VITE_BUZZ_LIVE", "0");
@@ -332,17 +336,18 @@ it.each(["Linux x86_64", "Win32"])(
     });
     services = createServices();
     await vi.advanceTimersByTimeAsync(0);
-    expect(services.identity).toBeUndefined();
-    expect(services.communities.snapshot()).toMatchObject({
-      status: "unavailable",
-      relayAvailable: false,
+    expect(services.identity?.snapshot()).toEqual({
+      status: "error",
+      error: "Fixture native capability unavailable",
     });
+    expect(services.communities.snapshot().relayAvailable).toBe(false);
     expect(services.pages.snapshot()).toHaveLength(1);
     expect(
       vi
         .mocked(invoke)
-        .mock.calls.some(([command]) => command.startsWith("identity_")),
-    ).toBe(false);
+        .mock.calls.filter(([command]) => command.startsWith("identity_"))
+        .map(([command]) => command),
+    ).toEqual(["identity_restore"]);
     expect(fetch).not.toHaveBeenCalled();
   },
 );

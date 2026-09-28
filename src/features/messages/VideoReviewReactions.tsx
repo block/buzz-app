@@ -49,7 +49,7 @@ export function VideoReviewReactions({
     }
   };
   return (
-    <div className={styles.reactions}>
+    <div className={styles.reactions} data-review-chrome="">
       <fieldset aria-label="React at current frame">
         {["😂", "😍", "😮", "🙌", "👍", "👎"].map((emoji) => (
           <button

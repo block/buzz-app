@@ -587,3 +587,79 @@ it("keeps Tab and Shift+Tab in the dialog when initial focus is its noninteracti
   expect(screen.getByRole("button", { name: "Show comments" })).toHaveFocus();
   release();
 });
+
+it("stops video playback at dismissal and fades reactions with the other controls", async () => {
+  const { animate, release } = setup("video");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open video fullscreen" }),
+    { detail: 1 },
+  );
+  await act(async () => release());
+  const dialog = screen.getByRole("dialog");
+  const video = dialog.querySelector("video");
+  if (!video) throw new Error("Missing review video");
+  const pause = vi.spyOn(video, "pause").mockImplementation(() => {});
+  const play = vi.spyOn(video, "play").mockResolvedValue(undefined);
+  const reactions = screen.getByRole("group", {
+    name: "React at current frame",
+  }).parentElement;
+  vi.useFakeTimers();
+  try {
+    fireEvent.click(video);
+    act(() => vi.advanceTimersByTime(100));
+    const exitStart = animate.mock.calls.length;
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close fullscreen viewer" }),
+      { detail: 1 },
+    );
+    expect(pause).toHaveBeenCalledOnce();
+    expect(dialog).toHaveAttribute("data-review-closing");
+    const reactionFade = animate.mock.contexts.findIndex(
+      (element, index) => index >= exitStart && element === reactions,
+    );
+    expect(reactionFade).toBeGreaterThanOrEqual(exitStart);
+    expect(animate.mock.calls[reactionFade]?.[0]).toEqual([
+      { opacity: "1" },
+      { opacity: 0 },
+    ]);
+    expect(animate.mock.calls[reactionFade]?.[1]).toMatchObject({
+      duration: 100,
+      easing: "ease-out",
+      fill: "forwards",
+    });
+    fireEvent.keyDown(dialog, { key: " " });
+    act(() => vi.advanceTimersByTime(250));
+    expect(play).not.toHaveBeenCalled();
+    // Native play promises may complete after the exit has started.
+    fireEvent.play(video);
+    expect(pause).toHaveBeenCalledTimes(2);
+    act(() => animate.mock.results[exitStart]?.value.onfinish?.());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(pause).toHaveBeenCalledTimes(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each(["escape", "backdrop"])(
+  "stops video playback when closing via %s",
+  (method) => {
+    const { release } = setup("video");
+    try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open video fullscreen" }),
+        { detail: 1 },
+      );
+      const dialog = screen.getByRole("dialog");
+      const video = dialog.querySelector("video");
+      if (!video) throw new Error("Missing review video");
+      const pause = vi.spyOn(video, "pause").mockImplementation(() => {});
+      if (method === "escape") fireEvent.keyDown(document, { key: "Escape" });
+      else
+        fireEvent.mouseDown(dialog.parentElement as HTMLElement, { button: 0 });
+      expect(pause).toHaveBeenCalled();
+    } finally {
+      release();
+    }
+  },
+);

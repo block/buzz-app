@@ -6,7 +6,7 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { useRef } from "react";
+import { StrictMode, useRef } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { VideoPlayer } from "./VideoPlayer";
 
@@ -179,4 +179,29 @@ it("cancels a pending tap when beginning a hold", () => {
   expect(video.playbackRate).toBe(2);
   fireEvent.pointerUp(video);
   expect(video.paused).toBe(true);
+});
+
+it("preserves autoplay during StrictMode replay but pauses the detached video", () => {
+  const pause = vi
+    .spyOn(HTMLMediaElement.prototype, "pause")
+    .mockImplementation(() => {});
+  function Player() {
+    const video = useRef<HTMLVideoElement>(null);
+    return (
+      <VideoPlayer
+        source="/clip.mp4"
+        videoRef={video}
+        onTime={() => {}}
+        onError={() => {}}
+      />
+    );
+  }
+  const view = render(
+    <StrictMode>
+      <Player />
+    </StrictMode>,
+  );
+  expect(pause).not.toHaveBeenCalled();
+  view.unmount();
+  expect(pause).toHaveBeenCalledOnce();
 });

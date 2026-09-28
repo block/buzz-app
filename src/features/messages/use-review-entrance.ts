@@ -328,6 +328,9 @@ export function useReviewEntrance(
     };
   }, [frame, origin]);
   const dismiss = (pointer: boolean) => {
+    const panel = frame.current;
+    const media = panel?.querySelector<HTMLElement>("[data-review-media]");
+    if (media instanceof HTMLVideoElement) media.pause();
     if (
       !pointer ||
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
@@ -336,8 +339,6 @@ export function useReviewEntrance(
       return;
     }
     if (closing.current) return;
-    const panel = frame.current;
-    const media = panel?.querySelector<HTMLElement>("[data-review-media]");
     if (
       !panel ||
       !media?.animate ||

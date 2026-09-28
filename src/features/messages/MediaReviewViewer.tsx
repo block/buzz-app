@@ -320,6 +320,7 @@ function ReviewShell({
         onKeyDown={(event) => {
           if (
             attachment.kind !== "video" ||
+            event.currentTarget.hasAttribute("data-review-closing") ||
             !video.current ||
             event.defaultPrevented ||
             event.nativeEvent.isComposing ||

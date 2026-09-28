@@ -404,6 +404,11 @@ export function VideoPlayer({
         playsInline
         autoPlay
         preload="auto"
+        onPlay={(event) => {
+          // A pending play request can settle after dismissal has begun.
+          if (event.currentTarget.closest("[data-review-closing]"))
+            event.currentTarget.pause();
+        }}
         onLoadedMetadata={(event) => {
           const element = event.currentTarget;
           element.currentTime = Math.max(
@@ -425,6 +430,7 @@ export function VideoPlayer({
           key={feedback.id}
           className={`${styles.center} ${styles.gestureFeedback}`}
           data-video-feedback={feedback.kind}
+          data-review-chrome=""
           aria-hidden="true"
         >
           {feedback.kind === "play" ? (

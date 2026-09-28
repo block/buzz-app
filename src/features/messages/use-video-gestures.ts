@@ -65,6 +65,7 @@ export function useVideoGestures(
   };
   useEffect(() => {
     void source;
+    const element = video.current;
     const stop = () => {
       cancel.current();
       clearTimeout(feedbackTimer.current);
@@ -77,10 +78,12 @@ export function useVideoGestures(
     document.addEventListener("visibilitychange", hidden);
     return () => {
       stop();
+      // StrictMode replays effects while the autoplay video is still mounted.
+      if (element && !element.isConnected) element.pause();
       window.removeEventListener("blur", stop);
       document.removeEventListener("visibilitychange", hidden);
     };
-  }, [source]);
+  }, [source, video]);
   const handlers = {
     onClick(event: React.MouseEvent<HTMLVideoElement>) {
       if (suppressClick.current) return;
@@ -93,7 +96,7 @@ export function useVideoGestures(
       // Let the browser's double-click gesture seek without toggling playback.
       clickTimer.current = setTimeout(() => {
         const element = video.current;
-        if (!element) return;
+        if (!element || element.closest("[data-review-closing]")) return;
         previous.committed = true;
         const paused = element.paused;
         if (paused) void element.play().catch(() => {});
@@ -126,6 +129,7 @@ export function useVideoGestures(
       const bounds = element.getBoundingClientRect();
       if (event.clientX < bounds.left + bounds.width / 2) return;
       holdTimer.current = setTimeout(() => {
+        if (element.closest("[data-review-closing]")) return;
         clearClick();
         suppressClick.current = true;
         clickState.current = undefined;

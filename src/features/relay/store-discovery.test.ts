@@ -494,6 +494,58 @@ it("does not revoke omitted channels when retained rosters exhaust capacity", as
   ).toBe(true);
 });
 
+it("keeps coverage partial when exact discovery overflows during omission confirmation", async () => {
+  const h = setup();
+  h.emit(memberships.slice(0, 1024));
+  expect(h.channels.list().channels).toHaveLength(1024);
+
+  h.channels.ensureList();
+  await h.rosters(1000);
+  const confirmation = await h.next(39002);
+  const omitted = memberships
+    .slice(1000, 1024)
+    .flatMap((event) => tag(event, "d") ?? []);
+  const confirmationIds = confirmation.filters[0]?.["#d"] ?? [];
+  expect(confirmation.filters[0]).toMatchObject({
+    authors: [relay.pubkey],
+    "#p": [viewer.pubkey],
+    limit: omitted.length + 1,
+  });
+  expect(new Set(confirmationIds)).toEqual(new Set(omitted));
+
+  const resolve = h.channels.resolve?.(["overflow"]);
+  assert.exists(resolve);
+  const exact = await h.next(39000);
+  expect(exact.filters).toEqual([
+    {
+      kinds: [39000],
+      authors: [relay.pubkey],
+      "#d": ["overflow"],
+      limit: 2,
+    },
+    {
+      kinds: [39002],
+      authors: [relay.pubkey],
+      "#d": ["overflow"],
+      "#p": [viewer.pubkey],
+      limit: 2,
+    },
+  ]);
+  exact.respond([roster(relay, "overflow", [viewer.pubkey])]);
+  await resolve;
+  expect(h.channels.list().coverage).toBe("partial");
+
+  confirmation.respond([]);
+  await h.metadata(1000);
+  expect(h.session.live.snapshot().roster.state).toBe("verified");
+  expect(h.channels.list().coverage).toBe("partial");
+  expect(
+    h.channels.list().channels.some((channel) => channel.id === "overflow"),
+  ).toBe(false);
+  expect(h.channels.get?.("overflow")).toBeUndefined();
+  expect(h.pending).toHaveLength(0);
+});
+
 it("marks metadata retention overflow as partial without discarding membership", async () => {
   const h = setup();
   const member = memberships[1024];

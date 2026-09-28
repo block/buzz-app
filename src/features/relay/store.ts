@@ -1114,7 +1114,9 @@ export function createChannelStore(
           applyDiscovery(confirmations);
           if (disposed || generation !== epoch) return;
         }
-        if (!applyDiscovery([], complete, started)) return;
+        if (discovery.overflowRevision !== overflowRevision)
+          complete = undefined;
+        if (complete && !applyDiscovery([], complete, started)) return;
       }
       const wanted = [...ids].filter(
         (id) =>

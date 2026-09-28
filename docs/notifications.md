@@ -13,9 +13,15 @@ Notification sound is app-owned on browser and desktop: Buzz bundles a set of
 alert sounds under `public/sounds/`, and the notifications service plays the
 per-category selection (with a shared default) in the running app after a
 banner submission is accepted. OS banners are always submitted silent, so the
-system never plays a second sound. Settings offers per-category sound selection
-with an in-app preview; the Sound switch turns playback off without disabling
-alerts.
+system never plays a second sound: the browser banner sets `silent: true`, the
+Windows toast is built with silent audio (`sound(None)`), Linux Notify sends
+the standard `suppress-sound` hint, and the macOS backend never sets a sound
+name. Because a submission can resolve after state has moved on, playback is
+re-fenced when it resolves: the sound plays only if the same account
+generation is live, the alert is still allowed and eligible, and Sound was on
+both when the banner was submitted and when it was accepted. Settings offers
+per-category sound selection with an in-app preview; the Sound switch turns
+playback off without disabling alerts.
 
 ```ts
 export const inject = ["notifications"];

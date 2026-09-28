@@ -96,7 +96,7 @@ function AlertSoundRow({
               label: "",
               options: names.map((name) => ({
                 value: name,
-                label: name === recommended ? `${name} (rec.)` : name,
+                label: name === recommended ? `${name} rec.` : name,
               })),
             },
           ]}

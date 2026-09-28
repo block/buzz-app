@@ -316,3 +316,59 @@ it("sound off delivers silently and a failed submission never plays", async () =
   expect(t.plays).toEqual([]);
   expect(t.service.snapshot().error).toBe("SDK unavailable");
 });
+it("a deferred submission revalidates the sound decision before playing", async () => {
+  const t = setup();
+  const releases: (() => void)[] = [];
+  vi.mocked(t.platform.show).mockImplementation(
+    (_item, activate, failed) =>
+      new Promise<void>((resolve) => {
+        t.clicks.push(activate);
+        t.failures.push(failed);
+        releases.push(resolve);
+      }),
+  );
+  const settle = async () => {
+    releases.shift()?.();
+    await flush();
+  };
+  // Signing out or switching accounts while the submission is outstanding
+  // must not leak the prior account's activity as audio.
+  await t.submit("switched");
+  await flush();
+  t.service.selectViewer("b".repeat(64));
+  await settle();
+  expect(t.plays).toEqual([]);
+  t.service.selectViewer(viewer);
+  // Turning Sound off mid-flight cancels the outstanding decision.
+  await t.submit("muted");
+  await flush();
+  t.service.updatePreferences({ sound: false });
+  await settle();
+  expect(t.plays).toEqual([]);
+  // A banner submitted while Sound was off stays silent after off → on.
+  await t.submit("resurrected");
+  await flush();
+  t.service.updatePreferences({ sound: true });
+  await settle();
+  expect(t.plays).toEqual([]);
+  // Disabling the category mid-flight cancels the sound.
+  await t.submit("category-off");
+  await flush();
+  t.service.updatePreferences({ categories: { mention: false } });
+  await settle();
+  expect(t.plays).toEqual([]);
+  t.service.updatePreferences({ categories: { mention: true } });
+  // Losing eligibility (access/producer revocation) mid-flight cancels it.
+  let eligible: boolean | "wait" = true;
+  await t.submit("revoked", () => eligible);
+  await flush();
+  eligible = false;
+  await settle();
+  expect(t.plays).toEqual([]);
+  // An undisturbed deferred submission still plays exactly once.
+  await t.submit("intact");
+  await flush();
+  expect(t.plays).toEqual([]);
+  await settle();
+  expect(t.plays).toEqual(["flutter"]);
+});

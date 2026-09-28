@@ -383,6 +383,7 @@ export class NotificationsService extends Service implements Notifications {
       }
       // One attempt. A rejected/unknown OS submission is reported, never retried.
       this.pending.delete(item);
+      const soundEnabled = this.state.preferences.sound;
       await this.platform.show(
         {
           id: crypto.randomUUID(),
@@ -401,8 +402,19 @@ export class NotificationsService extends Service implements Notifications {
         },
       );
       // Banners are always submitted silent; the selected per-category sound
-      // plays here once the platform accepted the presentation.
-      if (this.state.preferences.sound)
+      // plays here once the platform accepted the presentation. The item left
+      // `pending` before the await, so `revalidate`/`selectViewer` cannot
+      // cancel this outstanding decision — re-fence it here: same account
+      // generation, still allowed and eligible, and Sound on both when the
+      // banner was submitted and now (a mid-flight off→on flip must not
+      // resurrect a banner that was submitted while sounds were off).
+      if (
+        soundEnabled &&
+        generation === this.generation &&
+        this.state.preferences.sound &&
+        this.allowed(item) &&
+        item.eligible() === true
+      )
         this.playSound(
           resolveCategorySound(this.state.preferences.sounds, item.category),
         );

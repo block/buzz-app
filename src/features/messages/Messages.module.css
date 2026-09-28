@@ -1496,6 +1496,21 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
     opacity: 0;
     pointer-events: none;
   }
+  /* Thread controls keep their own row so hover never obscures reply text
+     or shifts neighboring branch controls. */
+  .threadHistory .messageBody {
+    display: flex;
+    flex-direction: column;
+  }
+  .threadHistory .messageActions {
+    position: static;
+    order: 1;
+    flex-wrap: nowrap;
+    max-width: none;
+    flex-shrink: 0;
+    align-self: flex-end;
+    margin-inline-start: 0;
+  }
   .message:hover .messageActions,
   .message:focus-within .messageActions,
   .messageActions[data-open],

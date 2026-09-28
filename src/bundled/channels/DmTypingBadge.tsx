@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import type { RelaySession } from "../../features/relay/session";
 import styles from "./Channels.module.css";
@@ -12,13 +12,18 @@ export function formatTypingLabel(names: readonly string[]) {
   return `${names[0]}, ${names[1]}, and ${names.length - 2} others are typing...`;
 }
 
-/** Remote human typing anywhere in a DM, including its threads, from the session store. */
+/**
+ * Remote human typing anywhere in a DM, including its threads, from the session
+ * store. While someone types, the dots replace the DM identity (Slack-style).
+ */
 export function DmTypingBadge({
   session,
   channelId,
+  children,
 }: {
   session: RelaySession;
   channelId: string;
+  children: ReactNode;
 }) {
   // Select a per-row primitive so unrelated typing changes do not re-render
   // this row. Pubkeys are hex; a signer typing in several scopes appears once.
@@ -31,18 +36,24 @@ export function DmTypingBadge({
   const pubkeys = typing ? typing.split(",") : [];
   // Idle rows read no names or profiles.
   return pubkeys.length ? (
-    <TypingDots session={session} channelId={channelId} pubkeys={pubkeys} />
-  ) : null;
+    <TypingDots session={session} channelId={channelId} pubkeys={pubkeys}>
+      {children}
+    </TypingDots>
+  ) : (
+    children
+  );
 }
 
 function TypingDots({
   session,
   channelId,
   pubkeys,
+  children,
 }: {
   session: RelaySession;
   channelId: string;
   pubkeys: readonly string[];
+  children: ReactNode;
 }) {
   const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
@@ -52,7 +63,7 @@ function TypingDots({
   // Human-only: known agents are represented by the Agent working signal.
   // Unclassified signers stay visible until a loaded profile marks them.
   const humans = pubkeys.filter((pubkey) => !profiles.get(pubkey)?.isAgent);
-  if (!humans.length) return null;
+  if (!humans.length) return children;
   // Reuse already available names; optional typing must not trigger profile reads.
   const label = formatTypingLabel(
     humans.map((pubkey) =>

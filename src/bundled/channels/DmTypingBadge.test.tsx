@@ -195,6 +195,11 @@ it("shows live remote typing on the matching 1:1 and group DM rows only", () => 
   expect(badge).toHaveAttribute("aria-label", `${name(alice)} is typing...`);
   expect(badge).toHaveAttribute("title", `${name(alice)} is typing...`);
   expect(allTyping()).toHaveLength(1);
+  // The dots replace the DM identity (avatar or count) while typing.
+  const identity = (row: string) =>
+    screen.getByTestId(row).querySelector("[data-dm-identity]");
+  expect(identity("dm")).toBeNull();
+  expect(identity("group")).not.toBeNull();
 
   // Switching the selected conversation keeps typing on its own row.
   view.rerender(rows("other"));
@@ -227,6 +232,7 @@ it("shows live remote typing on the matching 1:1 and group DM rows only", () => 
   // Alice's thread message clears her last scope.
   receive(pulse(alice, "group", { root: ROOT, kind: 9 }));
   expect(typing("group")).toBeNull();
+  expect(identity("group")).not.toBeNull();
 
   // Expiry: visible until eight seconds after the last signed pulse.
   act(() => vi.advanceTimersByTime(7_999));

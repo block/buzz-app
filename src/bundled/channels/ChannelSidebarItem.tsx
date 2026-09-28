@@ -92,32 +92,37 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       channel={channel}
       dmVisualSpacing={channel.channelType === "dm"}
       icon={
-        channel.channelType === "dm" && channel.participants?.length === 1 ? (
-          <span className={styles.dmAvatar} data-dm-identity="">
-            <Avatar
-              src={
-                profile?.picture
-                  ? session.media(profile.picture, "small")
-                  : undefined
-              }
-              alt=""
-              fallback={channel.name}
-              size="fill"
-              shape={profile?.isAgent ? "squircle" : "circle"}
-              statusBadge={presence === "unknown" ? undefined : presence}
-            />
-          </span>
-        ) : channel.channelType === "dm" &&
-          (channel.participants?.length ?? 0) > 1 ? (
-          <span
-            className={styles.dmCount}
-            data-dm-identity=""
-            data-dm-participant-count=""
-            title={`${channel.participants?.length} other participants`}
-            aria-hidden="true"
-          >
-            {channel.participants?.length}
-          </span>
+        channel.channelType === "dm" ? (
+          <DmTypingBadge session={session} channelId={channel.id}>
+            {channel.participants?.length === 1 ? (
+              <span className={styles.dmAvatar} data-dm-identity="">
+                <Avatar
+                  src={
+                    profile?.picture
+                      ? session.media(profile.picture, "small")
+                      : undefined
+                  }
+                  alt=""
+                  fallback={channel.name}
+                  size="fill"
+                  shape={profile?.isAgent ? "squircle" : "circle"}
+                  statusBadge={presence === "unknown" ? undefined : presence}
+                />
+              </span>
+            ) : (channel.participants?.length ?? 0) > 1 ? (
+              <span
+                className={styles.dmCount}
+                data-dm-identity=""
+                data-dm-participant-count=""
+                title={`${channel.participants?.length} other participants`}
+                aria-hidden="true"
+              >
+                {channel.participants?.length}
+              </span>
+            ) : (
+              <Icon size={16} />
+            )}
+          </DmTypingBadge>
         ) : (
           <Icon size={16} />
         )
@@ -134,30 +139,25 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         )
       }
       badge={
-        <>
-          {channel.channelType === "dm" && (
-            <DmTypingBadge session={session} channelId={channel.id} />
-          )}
-          <span className={styles.indicatorStack} data-channel-indicators="">
-            <span className={styles.indicatorLayer}>
-              <UnreadBadge
-                session={session}
-                channelId={channel.id}
-                dm={channel.channelType === "dm"}
-              />
-            </span>
-            {working && (
-              <span
-                className={styles.working}
-                data-channel-working=""
-                data-indicator-layer="working"
-                role="img"
-                aria-label="Agent working"
-                title="Agent working in this channel"
-              />
-            )}
+        <span className={styles.indicatorStack} data-channel-indicators="">
+          <span className={styles.indicatorLayer}>
+            <UnreadBadge
+              session={session}
+              channelId={channel.id}
+              dm={channel.channelType === "dm"}
+            />
           </span>
-        </>
+          {working && (
+            <span
+              className={styles.working}
+              data-channel-working=""
+              data-indicator-layer="working"
+              role="img"
+              aria-label="Agent working"
+              title="Agent working in this channel"
+            />
+          )}
+        </span>
       }
       wrapSelect={(trigger) => {
         const activity = (

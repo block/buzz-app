@@ -736,9 +736,14 @@
   background: var(--affordance-accent-prominent);
 }
 
+/* Occupies the DM identity box while it replaces the avatar or count. */
 .typing {
   display: inline-flex;
-  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
   gap: var(--space-half);
 }
 .typing > span {

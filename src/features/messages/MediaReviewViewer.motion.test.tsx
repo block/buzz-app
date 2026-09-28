@@ -667,9 +667,9 @@ it.each(["escape", "backdrop"])(
 it("opens and closes a wide image from its cropped square thumbnail", () => {
   const { animate, release } = setup("image");
   const opener = screen.getByRole("link", { name: "Open image attachment" });
-  vi.spyOn(opener, "getBoundingClientRect").mockReturnValue(
-    new DOMRect(100, 200, 72, 72),
-  );
+  Object.defineProperty(opener, "getBoundingClientRect", {
+    value: () => new DOMRect(100, 200, 72, 72),
+  });
   const image = opener.querySelector("img");
   if (!image) throw new Error("Missing preview image");
   Object.defineProperties(image, {

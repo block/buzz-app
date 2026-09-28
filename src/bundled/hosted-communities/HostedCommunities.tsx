@@ -37,7 +37,6 @@ import {
   clearPendingDeletion,
   getAuth,
   HOST_SUFFIX,
-  isAcceptanceUnknown,
   login,
   makePendingDeletion,
   persistPendingDeletion,
@@ -92,7 +91,6 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const generation = useRef(0);
   const acceptedDeletionIds = useRef(new Set<string>());
   const loadedOwner = useRef<string | null | undefined>(undefined);
-  const recoveryAttempted = useRef("");
 
   const load = useCallback(async () => {
     const at = generation.current;
@@ -120,17 +118,14 @@ export function HostedCommunities({ active }: { active(): boolean }) {
     ) {
       clearPendingDeletion(stored);
       setPendingDeletion(null);
+    } else if (stored) {
+      setPendingDeletion(stored);
     }
     const listed = list.communities ?? [];
     const nextCommunities = listed.filter(
       (community) =>
         !community.id || !acceptedDeletionIds.current.has(community.id),
     );
-    // One authoritative omission establishes that the accepted fence reached
-    // the list projection. A later privileged abort may then restore the row.
-    for (const id of acceptedDeletionIds.current)
-      if (!listed.some((community) => community.id === id))
-        acceptedDeletionIds.current.delete(id);
     const nextQuota = quota(list);
     setIdentity(nextIdentity);
     setCommunities(nextCommunities);
@@ -152,38 +147,6 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       return true;
     },
     [active],
-  );
-
-  const recoverDeletion = useCallback(
-    async (owner: string | null, at: number) => {
-      const stored = readPendingDeletion();
-      if (!stored) return;
-      if (
-        stored.owner_pubkey !== owner ||
-        stored.backend_origin !== window.location.origin
-      ) {
-        clearPendingDeletion(stored);
-        return;
-      }
-      setPendingDeletion(stored);
-      if (recoveryAttempted.current === stored.request.request_id) return;
-      recoveryAttempted.current = stored.request.request_id;
-      try {
-        await checkDeletionStatus(stored.request);
-        markDeletionAccepted(stored, at);
-      } catch (reason) {
-        if (at !== generation.current || !active()) return;
-        if (
-          reason instanceof ApiFailure &&
-          reason.code === "deletion_aborted"
-        ) {
-          clearPendingDeletion(stored);
-          setPendingDeletion(null);
-        }
-        setError(message(reason));
-      }
-    },
-    [active, markDeletionAccepted],
   );
 
   const localRead = useRef(0);
@@ -208,15 +171,9 @@ export function HostedCommunities({ active }: { active(): boolean }) {
         if (at !== generation.current) return;
         setAuth(next);
         if (next)
-          return load()
-            .then((snapshot) => {
-              if (snapshot && at === generation.current)
-                return recoverDeletion(boundKey(snapshot.identity), at);
-            })
-            .catch(
-              (reason) =>
-                at === generation.current && setError(message(reason)),
-            );
+          return load().catch(
+            (reason) => at === generation.current && setError(message(reason)),
+          );
       })
       .catch((reason) => {
         if (at !== generation.current) return;
@@ -228,7 +185,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       generation.current++;
       loginAbort.current?.abort();
     };
-  }, [load, loadLocal, recoverDeletion]);
+  }, [load, loadLocal]);
 
   /** Runs one account operation at a time; resolves whether it succeeded. */
   async function run(label: string, operation: () => Promise<unknown>) {
@@ -274,58 +231,40 @@ export function HostedCommunities({ active }: { active(): boolean }) {
     if (stored) clearPendingDeletion(stored);
     setPendingDeletion(null);
   };
-  const attemptDeletion = async (
+  const settleDeletion = async (
     pending: PendingDeletion,
-    preserveNotOwner: boolean,
+    at: number,
+    operation: () => Promise<unknown>,
   ) => {
-    const at = generation.current;
     try {
-      await admitDeletion(pending.request);
-      if (!markDeletionAccepted(pending, at)) return;
+      await operation();
+      if (!markDeletionAccepted(pending, at)) return false;
       await settle();
+      return true;
     } catch (reason) {
-      if (at !== generation.current || !active()) return;
-      if (
-        isAcceptanceUnknown(reason) ||
-        (preserveNotOwner &&
-          reason instanceof ApiFailure &&
-          reason.code === "not_owner")
-      ) {
-        setPendingDeletion(pending);
-        setError(message(reason));
-        return;
-      }
-      clearPendingDeletion(pending);
-      setPendingDeletion(null);
+      if (at !== generation.current || !active()) return false;
+      if (reason instanceof ApiFailure && reason.code === "deletion_aborted") {
+        clearPendingDeletion(pending);
+        setPendingDeletion(null);
+      } else setPendingDeletion(pending);
       throw reason;
     }
   };
   const checkPendingDeletion = (pending: PendingDeletion) =>
     run("receipt", async () => {
       const at = generation.current;
-      try {
-        await checkDeletionStatus(pending.request);
-        if (!markDeletionAccepted(pending, at)) return;
-        await settle();
-      } catch (reason) {
-        if (at !== generation.current || !active()) return;
-        if (
-          reason instanceof ApiFailure &&
-          reason.code === "deletion_aborted"
-        ) {
-          clearPendingDeletion(pending);
-          setPendingDeletion(null);
-        }
-        throw reason;
-      }
+      await settleDeletion(pending, at, () =>
+        checkDeletionStatus(pending.request),
+      );
     });
   const retryPendingDeletion = (pending: PendingDeletion) =>
     run("delete", async () => {
-      const currentAuth = await getAuth();
-      if (currentAuth?.capabilities?.can_delete_buzz_communities !== true)
-        throw new Error("Community deletion is no longer available.");
-      setAuth(currentAuth);
+      const at = generation.current;
       const snapshot = await load();
+      if (at !== generation.current || !active()) return;
+      const currentAuth = await getAuth();
+      if (at !== generation.current || !active()) return;
+      const stored = readPendingDeletion();
       const row = snapshot?.communities.find(
         (community) =>
           community.id === pending.request.community_id &&
@@ -334,13 +273,19 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       );
       if (
         !snapshot ||
+        !stored ||
+        JSON.stringify(stored) !== JSON.stringify(pending) ||
+        stored.backend_origin !== window.location.origin ||
         boundKey(snapshot.identity) !== pending.owner_pubkey ||
         !row
       )
         throw new Error(
           "The exact archived community is not currently available for a safe retry. Check deletion status instead.",
         );
-      await attemptDeletion(pending, true);
+      if (currentAuth?.capabilities?.can_delete_buzz_communities !== true)
+        throw new Error("Community deletion is no longer available.");
+      setAuth(currentAuth);
+      await settleDeletion(pending, at, () => admitDeletion(pending.request));
     });
   const busy = action !== null;
   // Repeated inside open dialogs, whose modal backdrop hides the page copy.
@@ -643,11 +588,19 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             <div className={card}>
               <p className="m-0 text-label">Deletion status is unknown</p>
               <p className="text-body-sm text-muted">
-                Keep this request while Buzz checks its durable receipt. A
+                Buzz will not check automatically. Use Check deletion status
+                when you are ready; uncertainty can continue indefinitely. A
                 missing receipt does not prove the deletion was never accepted.
               </p>
               <p className="break-all font-mono text-body-sm">
                 {pendingDeletion.request.host}
+              </p>
+              <p className="text-body-sm text-muted">
+                If this remains uncertain, contact support and include this
+                Request UUID:
+              </p>
+              <p className="select-all break-all font-mono text-body-sm">
+                {pendingDeletion.request.request_id}
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button
@@ -735,7 +688,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                                 <Button
                                   variant="prominent"
                                   size="sm"
-                                  disabled={busy || deletionPending}
+                                  disabled={busy || Boolean(pendingDeletion)}
                                   onClick={() => setDeleteTarget(community)}
                                 >
                                   <TrashIcon aria-hidden="true" /> Delete
@@ -855,15 +808,25 @@ export function HostedCommunities({ active }: { active(): boolean }) {
               pending = makePendingDeletion(bound, deleteTarget);
               persistPendingDeletion(pending);
             } catch {
+              const stored = readPendingDeletion();
+              if (
+                stored?.owner_pubkey === bound &&
+                stored.backend_origin === window.location.origin
+              )
+                setPendingDeletion(stored);
               setError(
                 "Deletion was not sent because its recovery record could not be saved.",
               );
               return;
             }
             setPendingDeletion(pending);
-            void run("delete", () => attemptDeletion(pending, false)).then(
-              (ok) => ok && setDeleteTarget(null),
-            );
+            setDeleteTarget(null);
+            void run("delete", async () => {
+              const at = generation.current;
+              await settleDeletion(pending, at, () =>
+                admitDeletion(pending.request),
+              );
+            });
           }}
         />
       )}

@@ -362,7 +362,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   }
 });
 
-test("hosted deletion reload recovery uses only the read-only receipt while capability is off", async ({
+test("hosted deletion reload waits for a manual receipt check while capability is off", async ({
   page,
   app,
 }) => {
@@ -427,6 +427,20 @@ test("hosted deletion reload recovery uses only the read-only receipt while capa
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Hosted communities").click();
+  await expect(
+    page.getByText("Deletion status is unknown", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(request.request_id, { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/will not check automatically/i)).toBeVisible();
+  expect(calls.filter((action) => action === "delete-receipt")).toHaveLength(0);
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("buzz.hosted-community-deletion.v1"),
+    ),
+  ).not.toBeNull();
+  await button(page, "Check deletion status").click();
   await expect(
     page.getByText("Deletion started", { exact: true }),
   ).toBeVisible();

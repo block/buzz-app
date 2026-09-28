@@ -300,7 +300,13 @@ export function readPendingDeletion(): PendingDeletion | null {
 }
 
 export function persistPendingDeletion(pending: PendingDeletion) {
-  localStorage.setItem(DELETION_PENDING_KEY, JSON.stringify(pending));
+  const serialized = JSON.stringify(pending);
+  const current = readPendingDeletion();
+  if (current && JSON.stringify(current) !== serialized)
+    throw new Error("Another community deletion is already pending");
+  localStorage.setItem(DELETION_PENDING_KEY, serialized);
+  if (JSON.stringify(readPendingDeletion()) !== serialized)
+    throw new Error("The pending deletion could not be verified");
 }
 
 export function clearPendingDeletion(expected: PendingDeletion) {
@@ -314,13 +320,38 @@ export function clearPendingDeletion(expected: PendingDeletion) {
   }
 }
 
-function accepted(reply: Reply, request: DeletionRequest) {
+function matchesDeletion(reply: Reply, request: DeletionRequest) {
   return (
-    reply.status === "accepted" &&
     reply.request_id === request.request_id &&
     reply.community_id === request.community_id &&
     reply.host === request.host &&
     reply.acknowledgement_version === request.acknowledgement_version
+  );
+}
+
+/** A possible dispatch terminates only on a tuple-bound acceptance or abort. */
+function deletionResult(
+  response: { status: number; value: Reply },
+  request: DeletionRequest,
+) {
+  const { status, value } = response;
+  if (
+    status === 202 &&
+    !value.error &&
+    value.status === "accepted" &&
+    matchesDeletion(value, request)
+  )
+    return value;
+  if (
+    value.error?.code === "deletion_aborted" &&
+    value.status === "aborted" &&
+    matchesDeletion(value, request)
+  )
+    check(value, "Could not check deletion status.");
+  throw new ApiFailure(
+    "acceptance_unknown",
+    messages.acceptance_unknown as string,
+    value.correlation_id,
   );
 }
 
@@ -335,38 +366,23 @@ export async function checkDeletionStatus(request: DeletionRequest) {
       messages.acceptance_unknown as string,
     );
   }
-  if (response.value.error?.code === "not_owner")
-    throw new ApiFailure(
-      "acceptance_unknown",
-      messages.acceptance_unknown as string,
-      response.value.correlation_id,
-    );
-  check(response.value, "Could not check deletion status.");
-  if (response.status === 202 && accepted(response.value, request))
-    return response.value;
-  throw new ApiFailure(
-    "acceptance_unknown",
-    messages.acceptance_unknown as string,
-    response.value.correlation_id,
-  );
+  return deletionResult(response, request);
 }
 
 /** Sends one admission; ambiguous browser responses reconcile through the read-only route. */
 export async function admitDeletion(request: DeletionRequest) {
+  let response: { status: number; value: Reply };
   try {
-    const response = await send<Reply>("delete", request);
-    if (response.value.error) {
-      if (response.value.error.code !== "unknown")
-        check(response.value, "Could not start deletion.");
-    } else if (response.status === 202 && accepted(response.value, request)) {
-      return response.value;
-    }
-  } catch (reason) {
-    if (reason instanceof ApiFailure) throw reason;
+    response = await send<Reply>("delete", request);
+  } catch {
     // Browser-to-broker response loss is ambiguous; reconcile below.
+    return checkDeletionStatus(request);
+  }
+  try {
+    return deletionResult(response, request);
+  } catch (reason) {
+    if (reason instanceof ApiFailure && reason.code === "deletion_aborted")
+      throw reason;
   }
   return checkDeletionStatus(request);
 }
-
-export const isAcceptanceUnknown = (reason: unknown) =>
-  reason instanceof ApiFailure && reason.code === "acceptance_unknown";

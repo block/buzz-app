@@ -3,9 +3,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   admitDeletion,
   type ApiFailure,
+  checkDeletionStatus,
   DELETION_PENDING_KEY,
+  persistPendingDeletion,
   readPendingDeletion,
   type DeletionRequest,
+  type PendingDeletion,
 } from "./api";
 
 const request: DeletionRequest = {
@@ -13,6 +16,12 @@ const request: DeletionRequest = {
   host: "North.communities.buzz.xyz",
   request_id: "22222222-2222-4222-8222-222222222222",
   acknowledgement_version: 1,
+};
+const pending: PendingDeletion = {
+  version: 1,
+  owner_pubkey: "a".repeat(64),
+  backend_origin: window.location.origin,
+  request,
 };
 
 beforeEach(() => localStorage.clear());
@@ -96,6 +105,133 @@ it("turns a missing receipt after ambiguous dispatch into acceptance_unknown", a
   await expect(admitDeletion(request)).rejects.toMatchObject({
     code: "acceptance_unknown",
   } satisfies Partial<ApiFailure>);
+});
+
+it("preserves receipt correlation when EOF is followed by relay_unavailable", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("EOF"))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error: { code: "relay_unavailable" },
+            correlation_id: "corr-receipt-relay",
+          },
+          { status: 503 },
+        ),
+      ),
+  );
+  await expect(admitDeletion(request)).rejects.toMatchObject({
+    code: "acceptance_unknown",
+    correlationId: "corr-receipt-relay",
+  } satisfies Partial<ApiFailure>);
+});
+
+it.each(["relay_unavailable", "not_owner"])(
+  "treats retry admission %s as uncertain instead of proof of noncommit",
+  async (code) => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            { error: { code }, correlation_id: `corr-admission-${code}` },
+            { status: code === "not_owner" ? 403 : 503 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              error: { code: "relay_unavailable" },
+              correlation_id: `corr-receipt-${code}`,
+            },
+            { status: 503 },
+          ),
+        ),
+    );
+    await expect(admitDeletion(request)).rejects.toMatchObject({
+      code: "acceptance_unknown",
+      correlationId: `corr-receipt-${code}`,
+    } satisfies Partial<ApiFailure>);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("does not accept an unbound aborted receipt as terminal", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json(
+        {
+          error: { code: "deletion_aborted" },
+          status: "aborted",
+          correlation_id: "corr-unbound-abort",
+        },
+        { status: 409 },
+      ),
+    ),
+  );
+  await expect(checkDeletionStatus(request)).rejects.toMatchObject({
+    code: "acceptance_unknown",
+    correlationId: "corr-unbound-abort",
+  } satisfies Partial<ApiFailure>);
+});
+
+it("accepts only a full tuple-bound aborted receipt as terminal", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json(
+        {
+          ...request,
+          error: { code: "deletion_aborted" },
+          status: "aborted",
+          correlation_id: "corr-bound-abort",
+        },
+        { status: 409 },
+      ),
+    ),
+  );
+  await expect(checkDeletionStatus(request)).rejects.toMatchObject({
+    code: "deletion_aborted",
+    correlationId: "corr-bound-abort",
+  } satisfies Partial<ApiFailure>);
+});
+
+it("requires HTTP 202 for a tuple-bound accepted result", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({ ...request, status: "accepted" }, { status: 200 }),
+    ),
+  );
+  await expect(checkDeletionStatus(request)).rejects.toMatchObject({
+    code: "acceptance_unknown",
+  } satisfies Partial<ApiFailure>);
+});
+
+it("refuses to replace a different pending deletion", () => {
+  persistPendingDeletion(pending);
+  const replacement = {
+    ...pending,
+    request: {
+      ...request,
+      request_id: "33333333-3333-4333-8333-333333333333",
+    },
+  };
+  expect(() => persistPendingDeletion(replacement)).toThrow(/already pending/i);
+  expect(readPendingDeletion()).toEqual(pending);
+});
+
+it("requires the exact pending tuple to be readable after persistence", () => {
+  const getItem = vi.spyOn(Storage.prototype, "getItem");
+  getItem.mockReturnValueOnce(null).mockReturnValueOnce(null);
+  expect(() => persistPendingDeletion(pending)).toThrow(
+    /could not be verified/i,
+  );
 });
 
 it.each([

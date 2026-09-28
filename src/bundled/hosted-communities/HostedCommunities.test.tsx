@@ -971,7 +971,7 @@ it("preserves one UUID across an ambiguous response, manual receipt check, and a
   ).toBe(requestId);
 });
 
-it("performs one read-only recovery on reopen even when admission capability is off", async () => {
+it("shows a stored request for explicit manual checking without background recovery", async () => {
   const request = {
     community_id: archived.id,
     host: archived.normalized_host,
@@ -994,8 +994,18 @@ it("performs one read-only recovery on reopen even when admission capability is 
   routes["/api/builderlab/delete-receipt"] = (body) =>
     Response.json(accepted(body), { status: 202 });
   renderCard();
-  expect(await screen.findByText("Deletion started")).toBeVisible();
+  expect(await screen.findByText("Deletion status is unknown")).toBeVisible();
+  expect(screen.getByText(request.request_id)).toHaveClass("select-all");
+  expect(screen.getByText(/will not check automatically/i)).toBeVisible();
+  expect(screen.getByText(/contact support/i)).toBeVisible();
   expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
+  expect(
+    calls.filter(([url]) => url === "/api/builderlab/delete-receipt"),
+  ).toHaveLength(0);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Check deletion status" }),
+  );
+  expect(await screen.findByText("Deletion started")).toBeVisible();
   expect(
     calls.filter(([url]) => url === "/api/builderlab/delete-receipt"),
   ).toHaveLength(1);
@@ -1072,10 +1082,19 @@ it("terminates pending recovery on a bound aborted receipt", async () => {
   );
   routes["/api/builderlab/delete-receipt"] = () =>
     Response.json(
-      { error: { code: "deletion_aborted" }, correlation_id: "corr-aborted" },
+      {
+        ...request,
+        error: { code: "deletion_aborted" },
+        status: "aborted",
+        correlation_id: "corr-aborted",
+      },
       { status: 409 },
     );
   renderCard();
+  expect(await screen.findByText("Deletion status is unknown")).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Check deletion status" }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "This deletion was aborted",
   );
@@ -1085,34 +1104,236 @@ it("terminates pending recovery on a bound aborted receipt", async () => {
   ).not.toBeInTheDocument();
 });
 
-it("does not let a late admission response clear another account's envelope", async () => {
+it("keeps an unbound aborted result pending", async () => {
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
-  const admission = hold();
-  routes["/api/builderlab/delete"] = admission.answer as Handler;
-  const view = render(<HostedCommunities active={() => true} />);
+  routes["/api/builderlab/delete"] = () =>
+    Response.json(
+      {
+        error: { code: "deletion_aborted" },
+        status: "aborted",
+        correlation_id: "corr-unbound-abort",
+      },
+      { status: 409 },
+    );
+  routes["/api/builderlab/delete-receipt"] = routes["/api/builderlab/delete"];
+  renderCard();
   await confirmDeletion();
-  await waitFor(() =>
-    expect(calls.map(([url]) => url)).toContain("/api/builderlab/delete"),
-  );
-  const old = JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "");
-  view.unmount();
-  const next = {
-    ...old,
-    owner_pubkey: other,
-    request: {
-      ...old.request,
-      request_id: "55555555-5555-4555-8555-555555555555",
-    },
-  };
-  localStorage.setItem(DELETION_PENDING_KEY, JSON.stringify(next));
-  await act(async () =>
-    admission.release(
-      Response.json(accepted(old.request), {
-        status: 202,
-      }),
-    ),
-  );
-  expect(JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "")).toEqual(
-    next,
+  expect(await screen.findByText("Deletion status is unknown")).toBeVisible();
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).not.toBeNull();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Correlation ID: corr-unbound-abort",
   );
 });
+
+it("disables deletion for every row when a pending slot exists in another mounted card", async () => {
+  const south = {
+    ...archived,
+    id: "22222222-2222-4222-8222-222222222222",
+    name: "south",
+    normalized_host: "South.communities.buzz.xyz",
+  };
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = () =>
+    Response.json(
+      { error: { code: "relay_unavailable" }, correlation_id: "corr-slot" },
+      { status: 503 },
+    );
+  routes["/api/builderlab/delete-receipt"] = routes["/api/builderlab/delete"];
+  render(<HostedCommunities active={() => true} />);
+  fireEvent.click(
+    (
+      await screen.findAllByRole("button", { name: "Delete" })
+    )[0] as HTMLElement,
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: /Permanently delete north/,
+  });
+  fireEvent.change(within(dialog).getByLabelText("Type the exact host"), {
+    target: { value: archived.normalized_host },
+  });
+  fireEvent.click(
+    within(dialog).getByRole("checkbox", {
+      name: /I understand this cannot be canceled/,
+    }),
+  );
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Start deletion" }),
+  );
+  await screen.findByText("Deletion status is unknown");
+  const original = localStorage.getItem(DELETION_PENDING_KEY);
+  routes["/api/builderlab/list"] = () => ({
+    communities: [archived, south],
+  });
+  render(<HostedCommunities active={() => true} />);
+  await waitFor(() =>
+    expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(3),
+  );
+  for (const button of screen.getAllByRole("button", { name: "Delete" }))
+    expect(button).toBeDisabled();
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
+  expect(
+    calls.filter(([url]) => url === "/api/builderlab/delete"),
+  ).toHaveLength(1);
+});
+
+it.each([
+  ["capability is revoked", "capability"],
+  ["the archived owner row disappears", "row"],
+])("does not retry when %s on the fresh check", async (_label, condition) => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = () =>
+    Response.json(
+      { error: { code: "relay_unavailable" }, correlation_id: "corr-first" },
+      { status: 503 },
+    );
+  routes["/api/builderlab/delete-receipt"] = routes["/api/builderlab/delete"];
+  renderCard();
+  await confirmDeletion();
+  await screen.findByText("Deletion status is unknown");
+  if (condition === "capability")
+    routes["/api/builderlab/auth"] = () => ({
+      auth: { email: "a@example.com", expiresAt: "2030", capabilities: {} },
+    });
+  else routes["/api/builderlab/list"] = () => ({ communities: [] });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry same deletion request" }),
+  );
+  await screen.findByRole("alert");
+  expect(
+    calls.filter(([url]) => url === "/api/builderlab/delete"),
+  ).toHaveLength(1);
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).not.toBeNull();
+});
+
+it("rechecks capability after the fresh owner list resolves", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = () =>
+    Response.json(
+      { error: { code: "relay_unavailable" }, correlation_id: "corr-first" },
+      { status: 503 },
+    );
+  routes["/api/builderlab/delete-receipt"] = routes["/api/builderlab/delete"];
+  renderCard();
+  await confirmDeletion();
+  await screen.findByText("Deletion status is unknown");
+  const list = hold();
+  routes["/api/builderlab/list"] = list.answer as Handler;
+  const listCalls = calls.filter(
+    ([url]) => url === "/api/builderlab/list",
+  ).length;
+  const retry = screen.getByRole("button", {
+    name: "Retry same deletion request",
+  });
+  await waitFor(() => expect(retry).toBeEnabled());
+  fireEvent.click(retry);
+  await waitFor(() =>
+    expect(
+      calls.filter(([url]) => url === "/api/builderlab/list").length,
+    ).toBeGreaterThan(listCalls),
+  );
+  routes["/api/builderlab/auth"] = () => ({
+    auth: { email: "a@example.com", expiresAt: "2030", capabilities: {} },
+  });
+  await act(async () => list.release({ communities: [archived] }));
+  await screen.findByRole("alert");
+  expect(
+    calls.filter(([url]) => url === "/api/builderlab/delete"),
+  ).toHaveLength(1);
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).not.toBeNull();
+});
+
+it("keeps an accepted row hidden if a stale list returns after an omission", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = (body) =>
+    Response.json(accepted(body), { status: 202 });
+  renderCard();
+  await confirmDeletion();
+  expect(await screen.findByText("Deletion started")).toBeVisible();
+  const refresh = screen.getByRole("button", { name: "Refresh" });
+  await waitFor(() => expect(refresh).toBeEnabled());
+  routes["/api/builderlab/list"] = () => ({ communities: [] });
+  let listCalls = calls.filter(
+    ([url]) => url === "/api/builderlab/list",
+  ).length;
+  fireEvent.click(refresh);
+  await waitFor(() =>
+    expect(
+      calls.filter(([url]) => url === "/api/builderlab/list").length,
+    ).toBeGreaterThan(listCalls),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+  );
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  listCalls = calls.filter(([url]) => url === "/api/builderlab/list").length;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() =>
+    expect(
+      calls.filter(([url]) => url === "/api/builderlab/list").length,
+    ).toBeGreaterThan(listCalls),
+  );
+  expect(
+    screen.queryByText("North.communities.buzz.xyz"),
+  ).not.toBeInTheDocument();
+});
+
+it.each(["accepted", "structured error"])(
+  "generation-fences a late %s after an A to B to A account sequence",
+  async (outcome) => {
+    routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+    const admission = hold();
+    routes["/api/builderlab/delete"] = admission.answer as Handler;
+    const view = render(<HostedCommunities active={() => true} />);
+    await confirmDeletion();
+    await waitFor(() =>
+      expect(calls.map(([url]) => url)).toContain("/api/builderlab/delete"),
+    );
+    const old = JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "");
+    view.unmount();
+    const middle = {
+      ...old,
+      owner_pubkey: other,
+      request: {
+        ...old.request,
+        request_id: "55555555-5555-4555-8555-555555555555",
+      },
+    };
+    localStorage.setItem(DELETION_PENDING_KEY, JSON.stringify(middle));
+    routes["/api/builderlab/identity"] = () => ({
+      identity: { pubkey_hex: other },
+    });
+    const middleView = render(<HostedCommunities active={() => true} />);
+    await screen.findByText(middle.request.request_id);
+    middleView.unmount();
+    const next = {
+      ...old,
+      request: {
+        ...old.request,
+        request_id: "66666666-6666-4666-8666-666666666666",
+      },
+    };
+    localStorage.setItem(DELETION_PENDING_KEY, JSON.stringify(next));
+    routes["/api/builderlab/identity"] = () => ({
+      identity: { pubkey_hex: local },
+    });
+    render(<HostedCommunities active={() => true} />);
+    await screen.findByText(next.request.request_id);
+    await act(async () =>
+      admission.release(
+        outcome === "accepted"
+          ? Response.json(accepted(old.request), { status: 202 })
+          : Response.json(
+              {
+                error: { code: "relay_unavailable" },
+                correlation_id: "corr-late-error",
+              },
+              { status: 503 },
+            ),
+      ),
+    );
+    await act(async () => Promise.resolve());
+    expect(
+      JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? ""),
+    ).toEqual(next);
+  },
+);

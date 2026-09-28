@@ -131,7 +131,10 @@ account: browser sign-in, binding the local Buzz identity (a locally signed kind
 24243 challenge), and create/archive/unarchive/transfer. A server-declared,
 default-off capability also exposes owner deletion for archived communities. The
 card persists the bound four-field request before admission, uses the read-only
-receipt route for uncertain recovery, and consumes server-authoritative quota;
+receipt route only after an explicit status check for uncertain recovery, and
+consumes server-authoritative quota. One origin-wide pending slot is re-read and
+verified before dispatch; browser local storage has no atomic compare-and-set,
+so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
 stays in the existing Add a community dialog; the card only copies the new relay address. Its
 `/api/builderlab/*` routes live in the development broker (`dev/builderlab.mjs`),

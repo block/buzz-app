@@ -109,35 +109,36 @@ it("turns a missing receipt after ambiguous dispatch into acceptance_unknown", a
 });
 
 it.each([
-  "missing_mapping",
-  "invalid_request",
-  "confirmation_mismatch",
-  "not_owner",
-  "must_archive",
-  "protected_target",
-  "deletion_conflict",
-  "unsupported_acknowledgement_version",
-  "relay_unavailable",
-  "unauthorized",
-])("terminates a fresh trustworthy structured %s rejection", async (code) => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () =>
-      Response.json(
-        {
-          error: { code },
-          correlation_id: `corr-${code}`,
-        },
-        { status: 409 },
+  ["missing_mapping", 400],
+  ["invalid_request", 400],
+  ["confirmation_mismatch", 400],
+  ["unsupported_acknowledgement_version", 400],
+  ["not_owner", 404],
+  ["must_archive", 409],
+  ["protected_target", 409],
+  ["deletion_conflict", 409],
+])(
+  "terminates a fresh trustworthy structured %s/%i rejection",
+  async (code, status) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            error: { code },
+            correlation_id: `corr-${code}`,
+          },
+          { status },
+        ),
       ),
-    ),
-  );
-  await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
-    code,
-    correlationId: `corr-${code}`,
-  } satisfies Partial<ApiFailure>);
-  expect(fetch).toHaveBeenCalledTimes(1);
-});
+    );
+    await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
+      code,
+      correlationId: `corr-${code}`,
+    } satisfies Partial<ApiFailure>);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  },
+);
 
 it.each([
   [
@@ -149,6 +150,47 @@ it.each([
     "unknown structured rejection",
     () =>
       Response.json({ error: { code: "future_rejection" } }, { status: 409 }),
+  ],
+  [
+    "wrong-status missing_mapping",
+    () =>
+      Response.json({ error: { code: "missing_mapping" } }, { status: 409 }),
+  ],
+  [
+    "wrong-status not_owner",
+    () => Response.json({ error: { code: "not_owner" } }, { status: 400 }),
+  ],
+  [
+    "wrong-status deletion_conflict",
+    () =>
+      Response.json({ error: { code: "deletion_conflict" } }, { status: 400 }),
+  ],
+  [
+    "wrong-status must_archive",
+    () => Response.json({ error: { code: "must_archive" } }, { status: 503 }),
+  ],
+  [
+    "relay_unavailable/409",
+    () =>
+      Response.json({ error: { code: "relay_unavailable" } }, { status: 409 }),
+  ],
+  [
+    "relay_unavailable/502",
+    () =>
+      Response.json({ error: { code: "relay_unavailable" } }, { status: 502 }),
+  ],
+  [
+    "relay_unavailable/503",
+    () =>
+      Response.json({ error: { code: "relay_unavailable" } }, { status: 503 }),
+  ],
+  [
+    "unauthorized/401",
+    () => Response.json({ error: { code: "unauthorized" } }, { status: 401 }),
+  ],
+  [
+    "unauthorized/403",
+    () => Response.json({ error: { code: "unauthorized" } }, { status: 403 }),
   ],
   [
     "timeout",

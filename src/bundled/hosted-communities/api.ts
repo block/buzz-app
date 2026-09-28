@@ -330,24 +330,21 @@ function matchesDeletion(reply: Reply, request: DeletionRequest) {
   );
 }
 
-const DEFINITIVE_DELETION_REJECTIONS = new Set([
-  "missing_mapping",
-  "invalid_request",
-  "confirmation_mismatch",
-  "not_owner",
-  "must_archive",
-  "protected_target",
-  "deletion_conflict",
-  "unsupported_acknowledgement_version",
-  "relay_unavailable",
-  "unauthorized",
+const DEFINITIVE_DELETION_REJECTIONS = new Map([
+  ["missing_mapping", 400],
+  ["invalid_request", 400],
+  ["confirmation_mismatch", 400],
+  ["unsupported_acknowledgement_version", 400],
+  ["not_owner", 404],
+  ["must_archive", 409],
+  ["protected_target", 409],
+  ["deletion_conflict", 409],
 ]);
 
+class DefinitiveDeletionRejection extends ApiFailure {}
+
 export function isDefinitiveDeletionRejection(reason: unknown) {
-  return (
-    reason instanceof ApiFailure &&
-    DEFINITIVE_DELETION_REJECTIONS.has(reason.code)
-  );
+  return reason instanceof DefinitiveDeletionRejection;
 }
 
 /** A possible dispatch terminates only on a tuple-bound acceptance or abort. */
@@ -401,11 +398,18 @@ export async function admitDeletion(
     // Browser-to-broker response loss is ambiguous; reconcile below.
     return checkDeletionStatus(request);
   }
+  const code = response.value.error?.code ?? "";
   if (
     attempt === "fresh" &&
-    DEFINITIVE_DELETION_REJECTIONS.has(response.value.error?.code ?? "")
+    DEFINITIVE_DELETION_REJECTIONS.get(code) === response.status
   )
-    check(response.value, "Could not start deletion.");
+    throw new DefinitiveDeletionRejection(
+      code,
+      messages[code] ??
+        response.value.error?.message ??
+        "Could not start deletion.",
+      response.value.correlation_id,
+    );
   try {
     return deletionResult(response, request);
   } catch (reason) {

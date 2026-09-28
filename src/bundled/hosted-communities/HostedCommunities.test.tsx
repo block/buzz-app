@@ -1062,17 +1062,22 @@ it("discards a recovery envelope bound to another owner without contacting recei
   );
 });
 
-it("manually resubmits the same UUID only after a fresh capable archived-owner list", async () => {
+it("keeps and retries the same UUID after a wrong-status pre-admission rejection", async () => {
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   routes["/api/builderlab/delete"] = () =>
     Response.json(
-      { error: { code: "acceptance_unknown" }, correlation_id: "corr-unknown" },
+      { error: { code: "must_archive" }, correlation_id: "corr-wrong-status" },
       { status: 503 },
     );
+  routes["/api/builderlab/delete-receipt"] = () =>
+    Response.json({ error: { code: "acceptance_unknown" } }, { status: 503 });
   renderCard();
   await confirmDeletion();
   expect(await screen.findByText("Deletion status is unknown")).toBeVisible();
+  const original = localStorage.getItem(DELETION_PENDING_KEY);
+  expect(original).not.toBeNull();
   const first = calls.find(([url]) => url === "/api/builderlab/delete")?.[1];
+  expect(first?.request_id).toBe(JSON.parse(original ?? "").request.request_id);
   routes["/api/builderlab/delete"] = (request) =>
     Response.json(accepted(request), { status: 202 });
   fireEvent.click(
@@ -1082,6 +1087,7 @@ it("manually resubmits the same UUID only after a fresh capable archived-owner l
   const admissions = calls.filter(([url]) => url === "/api/builderlab/delete");
   expect(admissions).toHaveLength(2);
   expect(admissions[1]?.[1]).toEqual(first);
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
   expect(calls.filter(([url]) => url === "/api/builderlab/auth")).toHaveLength(
     3,
   ); // StrictMode startup twice, then the fresh capability check.

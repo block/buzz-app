@@ -209,14 +209,38 @@ it("adds no agent section or owner reads for a profile without an agent hint", a
   );
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
+  // Wait for existing public metadata discovery before inspecting the no-owner
+  // contract; the visible heading does not complete background reads.
+  await waitFor(() =>
+    expect(query.mock.calls.flatMap(([filters]) => filters)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          authors: [person.pubkey],
+          kinds: [10100],
+          limit: 1,
+        }),
+      ]),
+    ),
+  );
   const reads = query.mock.calls.flatMap(([filters]) => filters);
-  expect(reads).toHaveLength(2);
+  expect(reads).toHaveLength(3);
   expect(reads).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
       expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
+      expect.objectContaining({
+        authors: [person.pubkey],
+        kinds: [10100],
+        limit: 1,
+      }),
     ]),
   );
+  expect(
+    reads.every(
+      (filter) =>
+        filter.authors?.length === 1 && filter.authors[0] === person.pubkey,
+    ),
+  ).toBe(true);
 });
 
 function timedProfile(

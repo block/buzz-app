@@ -168,7 +168,7 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   owner.dispose();
 });
 
-it("collapses only explicit coordination with ready choices and keeps human-facing replies visible", async () => {
+it("collapses explicit coordination from cached profiles before choices load and keeps human-facing replies visible", async () => {
   const relay = keypair(),
     viewer = keypair(),
     agent = keypair();
@@ -263,10 +263,11 @@ it("collapses only explicit coordination with ready choices and keeps human-faci
     { reactStrictMode: true },
   );
   try {
-    expect(await screen.findByText("Agent answer")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("region", { name: "Agent coordination and activity" }),
-    ).toBeNull();
+    const initialGroup = await screen.findByRole("button", {
+      name: "1 agent · 1 coordination message",
+    });
+    expect(initialGroup).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Agent answer")).toBeNull();
     act(() => {
       choices = { ...choices, status: "ready" };
       for (const listener of listeners) listener();
@@ -274,6 +275,7 @@ it("collapses only explicit coordination with ready choices and keeps human-faci
     const group = screen.getByRole("button", {
       name: "1 agent · 1 coordination message",
     });
+    expect(group).toBe(initialGroup);
     expect(screen.queryByText("Agent answer")).toBeNull();
     fireEvent.click(group);
     expect(screen.getByText("Agent answer")).toBeInTheDocument();
@@ -338,13 +340,15 @@ it("collapses only explicit coordination with ready choices and keeps human-faci
         )
         ?.closest('[aria-label="Agent coordination and activity"]'),
     ).toBeNull();
-    // A public isAgent hint still cannot hide content after local evidence retires.
+    // Cached exact profile hints remain valid presentation evidence while the
+    // choices source loads; no content/body heuristic is introduced.
     act(() => {
       choices = { ...choices, status: "loading" };
       for (const listener of listeners) listener();
     });
-    expect(screen.getByText("Agent answer")).toBeInTheDocument();
-    expect(screen.getByText("Later answer")).toBeInTheDocument();
+    expect(screen.queryByText("Agent answer")).toBeNull();
+    expect(screen.queryByText("Later answer")).toBeNull();
+    expect(screen.getByText("Human-facing result")).toBeInTheDocument();
   } finally {
     view.unmount();
     owner.dispose();

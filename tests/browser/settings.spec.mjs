@@ -393,9 +393,23 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
 test("Settings loads and publishes the selected community profile", async ({
   page,
   app,
+  browserName,
 }) => {
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
   const writes = [];
   const profiles = [];
+  let releaseProfile;
+  await page.route("**/api/relay/primary/profile", async (route) => {
+    const response = await new Promise((resolve) => {
+      releaseProfile = resolve;
+    });
+    releaseProfile = undefined;
+    if (response) await route.fulfill(response);
+    else await route.continue();
+  });
   page.on("request", (request) => {
     if (/\/api\/relay\/.*\/(profile|sign|publish)$/.test(request.url())) {
       writes.push(request.url());
@@ -426,7 +440,8 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(name).toBeHidden();
   await button(page, "Profile").click();
   await expect(name).toHaveValue("Do not save");
-  await button(page, "Cancel").click();
+  await button(page, "Cancel").press("Enter");
+  await expect(name).toBeFocused();
   await expect(name).toHaveValue("Fixture Reader");
   await name.fill("Discard when leaving Settings");
   await page
@@ -458,7 +473,49 @@ test("Settings loads and publishes the selected community profile", async ({
   await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
   await expect(save()).toBeEnabled();
   await reopenedName.fill("  Updated community profile  ");
-  await save().click();
+  await save().press("Enter");
+  try {
+    await expect.poll(() => profiles.length).toBe(1);
+    await expect.poll(() => typeof releaseProfile).toBe("function");
+    await expect(save()).toHaveAttribute("aria-busy", "true");
+    await expect(save()).toBeFocused();
+    await expect(reopenedName).toBeDisabled();
+    await expect(button(page, "Cancel")).toBeDisabled();
+    await page.keyboard.press("Enter");
+  } finally {
+    releaseProfile?.({
+      json: { accepted: false, message: "Publication unavailable" },
+    });
+  }
+  await expect(page.getByRole("alert")).toContainText(
+    "Publication unavailable",
+  );
+  await expect(save()).toBeFocused();
+  await expect(save()).toBeEnabled();
+  await page.keyboard.press("Enter");
+  try {
+    await expect.poll(() => profiles.length).toBe(2);
+    await expect.poll(() => typeof releaseProfile).toBe("function");
+    await expect(save()).toHaveAttribute("aria-busy", "true");
+    await expect(save()).toBeFocused();
+  } finally {
+    releaseProfile?.();
+  }
+  await expect(reopenedName).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(
+    profileRegion().getByRole("textbox", {
+      name: "Profile description (optional)",
+    }),
+  ).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(
+    profileRegion().getByRole("textbox", {
+      name: "Public key (hex)",
+      exact: true,
+    }),
+  ).toBeFocused();
+  await expect(save()).toHaveCount(0);
   await expect(
     page.getByRole("dialog", { name: "Profile updated" }),
   ).toBeVisible();
@@ -471,7 +528,8 @@ test("Settings loads and publishes the selected community profile", async ({
     "Updated community profile",
   );
   await reopenedName.fill("Discard after saving");
-  await button(page, "Cancel").click();
+  await button(page, "Cancel").press("Enter");
+  await expect(reopenedName).toBeFocused();
   await expect(reopenedName).toHaveValue("Updated community profile");
   await page.reload();
   await button(page, "Your profile").click();
@@ -487,14 +545,16 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(page.getByRole("tooltip")).toHaveText(
     "Updated community profile",
   );
-  expect(writes.filter((url) => url.endsWith("/profile"))).toHaveLength(1);
-  expect(profiles).toEqual([
-    expect.objectContaining({
-      name: "Updated community profile",
-      picture: "",
-      existing: expect.objectContaining({ name: "Fixture Reader" }),
-    }),
-  ]);
+  expect(writes.filter((url) => url.endsWith("/profile"))).toHaveLength(2);
+  expect(profiles).toHaveLength(2);
+  for (const profile of profiles)
+    expect(profile).toEqual(
+      expect.objectContaining({
+        name: "Updated community profile",
+        picture: "",
+        existing: expect.objectContaining({ name: "Fixture Reader" }),
+      }),
+    );
 });
 
 test("discarding community setup leaves the published profile unchanged", async ({

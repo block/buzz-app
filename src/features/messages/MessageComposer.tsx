@@ -135,6 +135,17 @@ export function MessageComposer(props: MessageComposerProps) {
     />
   );
 }
+
+function sameAttachmentSelection(
+  left: readonly { id: string }[],
+  right: readonly { id: string }[],
+) {
+  return (
+    left.length === right.length &&
+    left.every((item, index) => item.id === right[index]?.id)
+  );
+}
+
 function Composer({
   session,
   extensions,
@@ -182,6 +193,7 @@ function Composer({
     ?.cached;
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
@@ -296,6 +308,7 @@ function Composer({
     disabled ||
     admitting ||
     sending ||
+    uploadingAttachments ||
     !!submission?.locked ||
     (editing.target && (editing.locked || editDisabled)) ||
     false;
@@ -580,16 +593,32 @@ function Composer({
       attempt.signal.throwIfAborted();
       if (
         valueRef.current !== captured ||
-        attachments.store.snapshot() !== capturedAttachments
+        !sameAttachmentSelection(
+          attachments.store.snapshot(),
+          capturedAttachments,
+        )
+      )
+        return;
+      const uploaded = capturedAttachments.length
+        ? await (async () => {
+            setUploadingAttachments(true);
+            setError(undefined);
+            return attachments.store.prepareForSend(attempt.signal);
+          })()
+        : [];
+      attempt.signal.throwIfAborted();
+      if (
+        valueRef.current !== captured ||
+        !sameAttachmentSelection(
+          attachments.store.snapshot(),
+          capturedAttachments,
+        )
       )
         return;
       const content =
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
-      const uploaded = capturedAttachments.flatMap((item) =>
-        item.uploaded ? [item.uploaded] : [],
-      );
       const id = threadRootId
         ? session.messages.reply(
             channelId,
@@ -650,6 +679,7 @@ function Composer({
         sendAttempt.current = null;
         if (live.current) {
           setSending(false);
+          setUploadingAttachments(false);
           setAdmitting(false);
         }
       }
@@ -802,6 +832,7 @@ function Composer({
             resolved={value}
           />
         )}
+        {uploadingAttachments && <p role="status">Uploading attachments…</p>}
         {dragging && <p role="status">Drop files to attach</p>}
         {attachmentError && (
           <ToastNotice
@@ -815,8 +846,22 @@ function Composer({
             media={session.media}
             items={attachments.items}
             disabled={editingDisabled}
-            remove={attachments.store.remove}
-            retry={attachments.store.retry}
+            remove={(id) => {
+              const item = attachments.items.find(
+                (candidate) => candidate.id === id,
+              );
+              attachments.store.remove(id);
+              if (item?.status === "error" && item.error === error)
+                setError(undefined);
+            }}
+            retry={(id) => {
+              const item = attachments.items.find(
+                (candidate) => candidate.id === id,
+              );
+              attachments.store.retry(id);
+              if (item?.status === "error" && item.error === error)
+                setError(undefined);
+            }}
           />
           <div className={styles.composerInput}>
             <RichComposerInput
@@ -988,6 +1033,7 @@ function Composer({
               (!!editing.target && (editing.locked || editDisabled)) ||
               admitting ||
               sending ||
+              uploadingAttachments ||
               submission?.disabled ||
               attachments.blocked ||
               (!draft.trim() && !attachments.items.length)

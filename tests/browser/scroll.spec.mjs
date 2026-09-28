@@ -171,7 +171,7 @@ readingTest(
     ).toBeAttached();
     await settle(page);
     await expectAnchor(page, reloadedAnchor);
-    const jumpToLatest = button(page, "Jump to latest message");
+    const jumpToLatest = history(page).locator("button[data-jump-to-latest]");
     await expect(jumpToLatest).toBeVisible();
     await jumpToLatest.click();
     await expect(

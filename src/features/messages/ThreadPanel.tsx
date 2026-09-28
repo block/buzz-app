@@ -278,7 +278,25 @@ function ThreadMessages({
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
   const follow = useRef(true);
+  const jumpingToLatest = useRef(false);
+  const jumpTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const previousReplies = useRef({
+    ids: new Set(snapshot.replies.map((reply) => reply.id)),
+    latestCreatedAt: Math.max(
+      0,
+      ...snapshot.replies.map((reply) => reply.createdAt),
+    ),
+  });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [newMessageCount, setNewMessageCount] = useState(0);
+  useEffect(
+    () => () => {
+      if (jumpTimer.current !== undefined) clearTimeout(jumpTimer.current);
+    },
+    [],
+  );
   const targetAnchor = useRef<number | undefined>(undefined);
   const selectedRow = useCallback(
     () =>
@@ -450,6 +468,23 @@ function ThreadMessages({
     if (snapshot.status === "ready" && snapshot.canLoadMore)
       void view.loadMore();
   }, [view, snapshot]);
+  useLayoutEffect(() => {
+    const previous = previousReplies.current;
+    const arrivals = snapshot.replies.filter(
+      (reply) =>
+        !previous.ids.has(reply.id) &&
+        reply.createdAt >= previous.latestCreatedAt,
+    ).length;
+    previousReplies.current = {
+      ids: new Set(snapshot.replies.map((reply) => reply.id)),
+      latestCreatedAt: Math.max(
+        previous.latestCreatedAt,
+        ...snapshot.replies.map((reply) => reply.createdAt),
+      ),
+    };
+    if (arrivals > 0 && !follow.current)
+      setNewMessageCount((count) => count + arrivals);
+  }, [snapshot.replies]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;
@@ -485,10 +520,14 @@ function ThreadMessages({
     // subsequent live changes follow only while the reader is at the bottom.
     if (follow.current) element.scrollTop = element.scrollHeight;
     positioned.current = true;
-    setShowJumpToLatest(
-      !follow.current &&
-        element.scrollHeight - element.clientHeight - element.scrollTop >= 80,
-    );
+    if (jumpingToLatest.current) {
+      setShowJumpToLatest(false);
+    } else {
+      const bottom =
+        element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+      setShowJumpToLatest(!bottom);
+      if (bottom) setNewMessageCount(0);
+    }
   }, [
     snapshot.status,
     snapshot.canLoadMore,
@@ -522,10 +561,25 @@ function ThreadMessages({
     targetAnchor.current = undefined;
     positioned.current = true;
     follow.current = true;
+    jumpingToLatest.current = true;
     setShowJumpToLatest(false);
+    setNewMessageCount(0);
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+    if (jumpTimer.current !== undefined) clearTimeout(jumpTimer.current);
+    jumpTimer.current = setTimeout(() => {
+      jumpTimer.current = undefined;
+      const current = scroller.current;
+      if (!current || !jumpingToLatest.current) return;
+      current.scrollTop = current.scrollHeight;
+      jumpingToLatest.current = false;
+    }, 1000);
   };
   const keepReadingPosition = () => {
+    jumpingToLatest.current = false;
+    if (jumpTimer.current !== undefined) {
+      clearTimeout(jumpTimer.current);
+      jumpTimer.current = undefined;
+    }
     targetAnchor.current = undefined;
     if (positioned.current) return;
     positioned.current = true;
@@ -639,10 +693,13 @@ function ThreadMessages({
         onScroll={(event) => {
           if (!positioned.current) return;
           const element = event.currentTarget;
-          follow.current =
+          const bottom =
             element.scrollHeight - element.clientHeight - element.scrollTop <
             80;
-          setShowJumpToLatest(!follow.current);
+          if (jumpingToLatest.current) return;
+          follow.current = bottom;
+          setShowJumpToLatest(!bottom);
+          if (bottom) setNewMessageCount(0);
         }}
         onWheel={keepReadingPosition}
         onTouchMove={keepReadingPosition}
@@ -663,7 +720,12 @@ function ThreadMessages({
         }}
         tabIndex={0}
       >
-        {showJumpToLatest && <JumpToLatestButton onClick={jumpToLatest} />}
+        {showJumpToLatest && (
+          <JumpToLatestButton
+            newMessageCount={newMessageCount}
+            onClick={jumpToLatest}
+          />
+        )}
         {snapshot.root ? (
           <MessageRow
             extensions={extensions}

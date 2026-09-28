@@ -511,7 +511,6 @@ it("an append does not steal a reading position when virtualizer still reports b
   h.jumpToLatest();
   expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
     align: "end",
-    smooth: true,
   });
   h.render();
   expect(h.hasJumpToLatest()).toBe(false);

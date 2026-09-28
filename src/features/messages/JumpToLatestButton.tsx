@@ -1,18 +1,29 @@
 import { ArrowDownIcon } from "../../shared/design-system/icons/index";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Messages.module.css";
 
-const label = "Jump to latest message";
-
-export function JumpToLatestButton({ onClick }: { onClick(): void }) {
+export function JumpToLatestButton({
+  newMessageCount,
+  onClick,
+}: {
+  newMessageCount: number;
+  onClick(): void;
+}) {
+  const label =
+    newMessageCount > 0
+      ? `${newMessageCount} new message${newMessageCount === 1 ? "" : "s"}`
+      : "Jump to latest";
   return (
     <div className={styles.jumpToLatest}>
-      <IconButton
-        aria-label={label}
-        title={label}
+      <Button
+        data-jump-to-latest=""
+        size="sm"
+        variant="outline"
         onClick={onClick}
-        icon={<ArrowDownIcon size={18} aria-hidden="true" />}
-      />
+      >
+        <ArrowDownIcon size={16} aria-hidden="true" />
+        {label}
+      </Button>
     </div>
   );
 }

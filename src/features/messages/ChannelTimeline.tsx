@@ -164,7 +164,8 @@ function Timeline({
   const edges = useRef<{
     first?: string | undefined;
     last?: string | undefined;
-  }>({});
+    ids: ReadonlySet<string>;
+  }>({ ids: new Set() });
   const intent = useRef(0);
   const measuredPosition = useRef<{
     offset: number;
@@ -175,9 +176,9 @@ function Timeline({
   const olderDemand = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
-    follow = useRef(true),
-    unseenLatest = useRef(false);
+    follow = useRef(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
     (element: HTMLElement) => {
       // A delayed membership event can replace a group's rendered representative.
@@ -220,25 +221,19 @@ function Timeline({
   const updateJumpToLatest = useCallback((element: HTMLElement) => {
     const bottom =
       element.scrollHeight - element.clientHeight - element.scrollTop < 80;
-    if (bottom) unseenLatest.current = false;
-    setShowJumpToLatest(
-      !bottom &&
-        (unseenLatest.current ||
-          element.scrollHeight - element.clientHeight - element.scrollTop >
-            element.clientHeight),
-    );
+    setShowJumpToLatest(!bottom);
+    if (bottom) setNewMessageCount(0);
   }, []);
   const jumpToLatest = useCallback(() => {
     if (!handle.current || !rows.length) return;
     intent.current++;
     follow.current = true;
-    unseenLatest.current = false;
     restoredAnchor.current = undefined;
     userScrolled.current = false;
     setShowJumpToLatest(false);
+    setNewMessageCount(0);
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
-      smooth: true,
     });
   }, [rows.length]);
   const targetId =
@@ -313,13 +308,17 @@ function Timeline({
   useLayoutEffect(() => {
     // Row updates include edits/reactions/replies, not only new message IDs.
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.
-    const previousLast = edges.current.last;
-    const appended =
-      !!previousLast && previousLast !== rows.at(-1)?.id && !prepend;
-    edges.current = { first: rows[0]?.id, last: rows.at(-1)?.id };
-    if (appended && !follow.current) {
-      unseenLatest.current = true;
-      if (scroller.current) updateJumpToLatest(scroller.current);
+    const previousIds = edges.current.ids;
+    const arrivals = prepend
+      ? 0
+      : rows.filter((row) => !previousIds.has(row.id)).length;
+    edges.current = {
+      first: rows[0]?.id,
+      last: rows.at(-1)?.id,
+      ids: new Set(rows.map((row) => row.id)),
+    };
+    if (arrivals > 0 && previousIds.size > 0 && !follow.current && !targetId) {
+      setNewMessageCount((count) => count + arrivals);
     }
     if (
       (targetId && navigation && exactRevealed.current !== navigation.signal) ||
@@ -401,6 +400,7 @@ function Timeline({
         }
       }
       settled.current = true;
+      if (scroller.current) updateJumpToLatest(scroller.current);
     });
     return () => {
       cancelAnimationFrame(frame);
@@ -554,7 +554,12 @@ function Timeline({
           </Button>
         ) : null}
       </div>
-      {showJumpToLatest && <JumpToLatestButton onClick={jumpToLatest} />}
+      {showJumpToLatest && (
+        <JumpToLatestButton
+          newMessageCount={newMessageCount}
+          onClick={jumpToLatest}
+        />
+      )}
       {width > 0 && (
         <Virtualizer
           ref={handle}

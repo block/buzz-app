@@ -200,10 +200,7 @@ for (const reading of [false, true]) {
       ).toBeVisible();
       if (reading) {
         expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
-        const jumpToLatest = page.getByRole("button", {
-          name: "Jump to latest message",
-          exact: true,
-        });
+        const jumpToLatest = region.locator("button[data-jump-to-latest]");
         await expect(jumpToLatest).toBeVisible();
         await jumpToLatest.click();
         await expect(

@@ -432,7 +432,7 @@ impl AgentHost {
     pub(crate) async fn inherited_workspace(&self) -> Result<Option<String>, String> {
         run(self.clone(), |host| host.controller.inherited_workspace()).await
     }
-    #[cfg(any(target_os = "macos", target_os = "linux", test))]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(crate) async fn waiting_for_goose(&self) -> Result<Vec<String>, String> {
         run(self.clone(), move |host| {
             Ok(host

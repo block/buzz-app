@@ -78,11 +78,13 @@ export function AttachmentImage({
     >
       {/* Retargeting retires both the DOM pixels and all pending callbacks before
           the new source can paint. Session switches also remount the workspace. */}
-      <ImagePixels
-        key={JSON.stringify([source, attachment.blurhash])}
-        source={source}
-        blurhash={attachment.blurhash}
-      />
+      <span className={styles.attachmentImagePixels}>
+        <ImagePixels
+          key={JSON.stringify([source, attachment.blurhash])}
+          source={source}
+          blurhash={attachment.blurhash}
+        />
+      </span>
     </a>
   );
 }

@@ -112,6 +112,21 @@ test("posted image strips keep counts visible and every image reachable beside d
         )
         .toBe(true);
       await expect(links.last()).toHaveCSS("outline-style", "solid");
+      // A declared outline can still be clipped away. Compare actual pixels
+      // while changing only its color, not focus, scrolling, or layout.
+      await links
+        .last()
+        .evaluate((el) => el.setAttribute("data-focus-probe", ""));
+      const mask = [links.locator("img, canvas")];
+      const focused = await strip.screenshot({ mask });
+      const hiddenOutline = await strip.screenshot({
+        mask,
+        style: "[data-focus-probe] { outline-color: transparent !important; }",
+      });
+      expect(focused.equals(hiddenOutline)).toBe(false);
+      await links
+        .last()
+        .evaluate((el) => el.removeAttribute("data-focus-probe"));
       await expect(
         history.getByText("8 images", { exact: true }),
       ).toBeVisible();

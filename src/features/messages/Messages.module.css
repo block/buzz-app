@@ -366,12 +366,22 @@
   max-width: 100%;
   aspect-ratio: 360 / 320;
   margin-top: var(--space-2);
-  overflow: hidden;
   border-radius: var(--media-preview-radius);
+}
+/* Clip the pixels, not the focusable link's outside keyboard outline. */
+.attachmentImagePixels {
+  position: absolute;
+  inset: 0;
+}
+.attachmentImagePixels,
+.attachmentImage.mediaPlaceholder {
+  overflow: hidden;
+  border-radius: inherit;
   clip-path: var(--media-corner-clip, none);
   background: var(--affordance-subtle-hover);
 }
 .attachmentImage.mediaPlaceholder {
+  border-radius: var(--media-preview-radius);
   background: var(--surface-inset);
 }
 .attachmentImage canvas,

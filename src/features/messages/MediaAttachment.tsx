@@ -241,7 +241,7 @@ export function MediaAttachment({
         <span className={styles.mediaExpand}>
           <IconButton
             size="compact"
-            variant="chrome"
+            variant="media"
             shape="round"
             type="button"
             aria-label="Open video fullscreen"

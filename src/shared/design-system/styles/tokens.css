@@ -315,6 +315,11 @@
   --glass-4: #ffffffc7; /* glass hovered  */
   --glass-5: #ffffffe0; /* nearly solid   */
 
+  /* Media glass stays dark over video pixels in either app mode. */
+  --media-glass-fill: rgb(0 0 0 / 35%);
+  --media-glass-rim: rgb(255 255 255 / 10%);
+  --media-glass-foreground: #ffffff;
+
   /* --- Backdrop treatments. Named visual values, not colours.
      These treatments only exist in the mode where their names are true. The
      semantic pairings below provide the stable cross-mode selection. -------- */
@@ -633,6 +638,12 @@
      globals.css are the only legitimate readers: they pair each fill
      with its blur, rim, and lift so a material cannot arrive in
      pieces.                                                   */
+  /* Media controls use one dark material in both app modes so video remains
+     visible through a stable fill and its paired icons remain white. */
+  --bg-media-glass: var(--media-glass-fill);
+  --border-media-glass: var(--media-glass-rim);
+  --text-on-media: var(--media-glass-foreground);
+
   --bg-glass-primary: var(--glass-2);
   --bg-glass-primary-hover: var(--glass-3);
   --bg-glass-secondary: var(--glass-4);

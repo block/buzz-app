@@ -221,7 +221,7 @@
   z-index: -1;
   pointer-events: none;
   border-radius: inherit;
-  @apply glass-primary;
+  @apply media-glass;
 }
 .controls[data-inline]::before {
   clip-path: var(--media-corner-clip, none);
@@ -358,9 +358,6 @@
   .center:enabled:hover {
     scale: 1.05;
   }
-  .center:enabled:hover::before {
-    background: var(--bg-glass-primary-hover);
-  }
 }
 .controls button:enabled:active,
 .reactions > fieldset > button:enabled:active {
@@ -369,9 +366,6 @@
 }
 .center:enabled:active {
   scale: 0.96;
-}
-.center:enabled:active::before {
-  background: var(--bg-glass-secondary);
 }
 .reactions > fieldset > button:focus-visible {
   outline: 2px solid var(--text-standard);

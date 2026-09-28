@@ -454,14 +454,16 @@ it("batch definitions use one bounded filter and count unique events before coor
   h.read.mockResolvedValue(events);
   await view.refresh();
   expect(view.snapshot().data.partial).toBe(false);
-  h.read.mockResolvedValue([...events, make(channelId, 49)]);
+  h.read
+    .mockResolvedValueOnce([...events, make(channelId, 49)])
+    .mockResolvedValueOnce([]);
   await view.refresh();
   expect(view.snapshot().data).toMatchObject({
-    partial: true,
-    partialChannelIds: [channelId, other, empty],
+    partial: false,
+    partialChannelIds: [],
   });
   expect(view.snapshot().data.items).toHaveLength(2);
-  expect(h.read).toHaveBeenCalledTimes(3);
+  expect(h.read).toHaveBeenCalledTimes(4);
   expect(
     h.capability.definitions([channelId, other, empty]).snapshot(),
   ).toMatchObject({

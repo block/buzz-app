@@ -217,10 +217,11 @@ export function createWorkflows({
         if (pending) return pending;
         const owned = new AbortController();
         controller = owned;
-        const signal = AbortSignal.any([
-          owned.signal,
-          AbortSignal.timeout(10000),
-        ]);
+        // Paged batches use the shared reader's deadline for each request.
+        const signal =
+          typeof channelId !== "string"
+            ? owned.signal
+            : AbortSignal.any([owned.signal, AbortSignal.timeout(10000)]);
         snapshot = Object.freeze({ status: "loading", data: snapshot.data });
         pending = Promise.resolve()
           .then(() => {
@@ -313,6 +314,7 @@ export function createWorkflows({
   const capability = Object.freeze<WorkflowCapability>({
     availability,
     definitions(channelId) {
+      const aggregate = typeof channelId !== "string";
       const channelIds =
         typeof channelId === "string" ? [channelId] : [...new Set(channelId)];
       return view<WorkflowDefinitions>(
@@ -324,35 +326,61 @@ export function createWorkflows({
         }),
         async (signal) => {
           if (!reader) throw new Error("Workflow definitions unavailable");
-          const events = await reader.read(
-            [
-              {
-                kinds: [30620],
-                "#h": channelIds,
-                limit: WORKFLOW_DEFINITION_LIMIT,
-              },
-            ],
-            { signal, fresh: true },
-          );
           const coordinates = new Map<string, WorkflowDefinition>();
-          const seen = new Set<string>();
-          for (const event of events) {
-            if (seen.has(event.id)) continue;
-            seen.add(event.id);
-            const row = definition(event);
-            if (!channelIds.includes(row.channelId))
-              throw new Error("Mismatched workflow channel");
-            const key = `${row.channelId}:${row.owner}:${row.id}`;
-            const old = coordinates.get(key);
-            if (
-              !old ||
-              row.createdAt > old.createdAt ||
-              (row.createdAt === old.createdAt && row.revision < old.revision)
-            )
-              coordinates.set(key, row);
+          let cursor: { until: number; before_id: string } | undefined;
+          let partial = false;
+          while (true) {
+            signal.throwIfAborted();
+            if (!channelIds.every(canAccess))
+              throw new Error("Workflow channel access unavailable");
+            const events = await reader.read(
+              [
+                {
+                  kinds: [30620],
+                  "#h": channelIds,
+                  limit: WORKFLOW_DEFINITION_LIMIT,
+                  ...cursor,
+                },
+              ],
+              { signal, fresh: true },
+            );
+            signal.throwIfAborted();
+            if (!channelIds.every(canAccess))
+              throw new Error("Workflow channel access unavailable");
+            const page = [
+              ...new Map(events.map((event) => [event.id, event])).values(),
+            ].sort(
+              (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+            );
+            for (const event of page) {
+              if (
+                cursor &&
+                (event.created_at > cursor.until ||
+                  (event.created_at === cursor.until &&
+                    event.id <= cursor.before_id))
+              )
+                throw new Error("Workflow page did not advance");
+              const row = definition(event);
+              if (!channelIds.includes(row.channelId))
+                throw new Error("Mismatched workflow channel");
+              const key = `${row.channelId}:${row.owner}:${row.id}`;
+              const old = coordinates.get(key);
+              if (
+                !old ||
+                row.createdAt > old.createdAt ||
+                (row.createdAt === old.createdAt && row.revision < old.revision)
+              )
+                coordinates.set(key, row);
+            }
+            const full = page.length >= WORKFLOW_DEFINITION_LIMIT;
+            if (!aggregate) {
+              partial = full;
+              break;
+            }
+            const last = page.at(-1);
+            if (!full || !last) break;
+            cursor = { until: last.created_at, before_id: last.id };
           }
-          // A full batch can omit workflows from any of its channels.
-          const partial = seen.size >= WORKFLOW_DEFINITION_LIMIT;
           return Object.freeze({
             items: Object.freeze([...coordinates.values()]),
             partial,

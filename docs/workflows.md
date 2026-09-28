@@ -73,13 +73,16 @@ of runtime cleanup. These backend limitations are displayed, not repaired here.
 
 The landing discovers workflows in serial batches of up to 128 participating
 channel IDs, including authorized DMs. Each request uses one kind-30620 filter
-whose `#h` contains the whole batch, reading all authors with a shared 100-event
-limit. The existing reader/broker request and response byte budgets apply.
-500 memberships need four requests. Signed event IDs are deduplicated before
-counting/folding. When a batch reaches the result limit, every channel in it is
-marked partial, including channels with no returned rows; a finished scan is not
-proof of an exhaustive runtime inventory. Definition reads do not paginate or
-retain a session overview cache.
+whose `#h` contains the whole batch, reading all authors in 100-event pages.
+Full pages continue with the relay's exact `until`/`before_id` cursor, preserving
+same-timestamp definitions. Each batch finishes paging before the next starts
+with a fresh cursor; retry and refresh also start at the head. Signed event IDs
+are deduplicated before counting/folding, and non-advancing pages fail the read.
+The existing reader/broker request and response byte budgets and per-request
+deadlines apply to every page. 500 memberships need four initial requests plus
+continuations for full pages. Single-channel detail reads remain capped at 100
+events and mark saturated results partial. A finished scan is not proof of an
+exhaustive runtime inventory. No session overview cache is retained.
 
 Metadata renames/reordering do not restart discovery; new memberships add only
 their missing reads. One stable status replaces

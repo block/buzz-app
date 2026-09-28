@@ -178,9 +178,10 @@ export function AgentSettingsFields({
           />
           {pi && (
             <p className="text-body-sm text-secondary">
-              Browse loads available models and providers from your local Pi
-              configuration, including extensions. Configure sign-in in Pi
-              first. Save keeps changes for the next Start or Restart.
+              Providers and models load from your local Pi configuration,
+              including extensions. Only providers signed in to Pi appear;
+              configure sign-in in Pi first. Save keeps changes for the next
+              Start or Restart.
             </p>
           )}
         </fieldset>

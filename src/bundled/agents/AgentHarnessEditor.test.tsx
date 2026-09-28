@@ -185,7 +185,12 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
     model: "",
   });
   await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
-  await user.click(await screen.findByRole("option", { name: "extension" }));
+  const extension = await screen.findByRole("option", { name: "extension" });
+  // Only catalog-reported (signed-in) providers are offered for Pi.
+  expect(
+    screen.queryByRole("option", { name: "Anthropic" }),
+  ).not.toBeInTheDocument();
+  await user.click(extension);
   expect(current.provider).toBe("extension");
   await user.click(screen.getByRole("combobox", { name: "Harness" }));
   await user.click(await screen.findByRole("option", { name: "Goose" }));

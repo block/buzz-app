@@ -154,6 +154,12 @@ export function AgentModelPicker({
       }
     }
   };
+  // Pi's catalog is headless and supplies the signed-in provider list, so load
+  // it when Pi is selected. Later context edits wait for Browse or Retry.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only entering Pi triggers the automatic lookup.
+  useEffect(() => {
+    if (pi) void run("connect");
+  }, [pi, draft.command]);
   const fresh = catalog?.key === key ? catalog.data : null;
   const entries = (fresh?.models ?? []).filter(
     (m) => !pi || !draft.provider || m.id.startsWith(`${draft.provider}/`),

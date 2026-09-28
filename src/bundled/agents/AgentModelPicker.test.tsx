@@ -424,6 +424,48 @@ it("Pi discovers extension providers before start and selects the exact provider
   }
 });
 
+it("Pi loads its signed-in providers when selected, without Browse", async () => {
+  const f = controlFixture();
+  const run = vi.fn(async () => ({
+    host: "",
+    models: [
+      { id: "databricks/model-a", name: "databricks/model-a" },
+      { id: "ds4/model-b", name: "ds4/model-b" },
+    ],
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(f.host);
+  const providers = vi.fn();
+  const renderPicker = (command: string) => (
+    <AgentModelPicker
+      draft={{ ...agentDraft(f.agent), command, provider: "", model: "" }}
+      control={control}
+      defaults={{ host: "", filter: "" }}
+      onPiProviders={providers}
+      onChange={() => {}}
+    />
+  );
+  const view = render(renderPicker("/local/goose"));
+  try {
+    // Goose may start OAuth, so it still waits for an explicit Browse.
+    expect(run).not.toHaveBeenCalled();
+    view.rerender(renderPicker("/local/buzz-pi-acp"));
+    await waitFor(() =>
+      expect(providers).toHaveBeenLastCalledWith(["databricks", "ds4"]),
+    );
+    expect(run).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ action: "connect" }),
+    );
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
 it("explains an empty Pi provider in the open model list without discarding other providers", async () => {
   const f = controlFixture();
   const message =

@@ -116,15 +116,10 @@ export function AgentHarnessEditor({
                 ? `Build default (${defaultProvider})`
                 : "Not set",
           },
-          ...(harness?.providers ?? []),
+          // Pi lists only providers its catalog reports as signed in.
           ...(harness?.label === "Pi"
-            ? piProviders
-                .filter(
-                  (p) =>
-                    !harness.providers.some((option) => option.value === p),
-                )
-                .map((value) => ({ value, label: value }))
-            : []),
+            ? piProviders.map((value) => ({ value, label: value }))
+            : (harness?.providers ?? [])),
         ]}
         onChange={(provider) =>
           onChange({

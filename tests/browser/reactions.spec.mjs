@@ -347,3 +347,51 @@ sourceTest(
     ).toHaveCount(0);
   },
 );
+
+// Browser-only: the documented gallery owns a separate root/iframe, so app-level
+// provider coverage cannot prove that its portaled clipboard feedback is wired.
+sourceTest(
+  "standalone message gallery hosts clipboard success and failure toasts",
+  async ({ page }) => {
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(String(error)));
+    await page.addInitScript(() => {
+      let attempts = 0;
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async () => {
+            if (++attempts === 1) throw new Error("Clipboard unavailable");
+          },
+        },
+      });
+    });
+    await page.goto("/tests/fixtures/message-gallery.html");
+    const row = page.locator("[data-message-id]").first();
+    const notifications = page.getByRole("region", {
+      name: "App notifications",
+    });
+    const copy = async () => {
+      await row.hover();
+      await row
+        .getByRole("button", { name: "More message actions", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "Copy message", exact: true })
+        .click();
+    };
+    await copy();
+    await expect(
+      notifications.getByText(
+        "Couldn’t copy. Try again from the message menu.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await copy();
+    await expect(
+      notifications.getByText("Message copied", { exact: true }),
+    ).toBeVisible();
+    await expect(row).toBeVisible();
+    expect(errors).toEqual([]);
+  },
+);

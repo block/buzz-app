@@ -87,11 +87,11 @@ export function EmojiPicker({
     session.emoji.snapshot,
   );
   useLayoutEffect(() => {
-    // The popover is positioned against the action row; intermediate tool groups
+    // The popover is positioned against the composer; intermediate tool groups
     // may be narrower and are not its available width.
     const container = reaction
       ? document.documentElement
-      : controls.current?.offsetParent;
+      : (controls.current?.closest("form") ?? controls.current?.offsetParent);
     if (!open || disabled || !(container instanceof HTMLElement)) return;
     const resize = () =>
       setLayout({

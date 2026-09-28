@@ -423,6 +423,10 @@ export class NotificationsService extends Service implements Notifications {
             void this.navigation.open(item.target).catch(this.reportError);
           },
           (error) => {
+            // Native failure can arrive before `show` resolves. Cancellation is
+            // about this submission's audio decision, not whether its account
+            // still owns visible error reporting.
+            if (decision) decision.cancelled = true;
             if (!this.closed && generation === this.generation)
               this.reportError(error);
           },

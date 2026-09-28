@@ -6,7 +6,13 @@ import { IconButton } from "../shared/design-system/ui/IconButton";
 import { Select } from "../shared/design-system/ui/Select";
 import { PauseIcon, PlayIcon } from "../shared/design-system/icons/index";
 import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
-import { useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { NotificationsService } from "../features/notifications/service";
 import type { NotificationCategory } from "../features/notifications/preferences";
 import {
@@ -14,7 +20,6 @@ import {
   CATEGORY_SOUND_LABELS,
   RECOMMENDED_SOUND_BY_CATEGORY,
   SOUND_NAMES,
-  playNotificationSound,
   type SoundName,
 } from "../features/notifications/sound";
 import styles from "./NotificationSettings.module.css";
@@ -43,31 +48,18 @@ function AlertSoundRow({
   category,
   value,
   disabled,
+  isPlaying,
   onChange,
+  onPreview,
 }: {
   category: NotificationCategory;
   value: SoundName;
   disabled: boolean;
+  isPlaying: boolean;
   onChange: (next: SoundName) => void;
+  onPreview: () => void;
 }) {
   const recommended = RECOMMENDED_SOUND_BY_CATEGORY[category];
-  const [isPlaying, setIsPlaying] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  function togglePreview() {
-    if (isPlaying) {
-      audioRef.current?.pause();
-      setIsPlaying(false);
-      return;
-    }
-    const audio = playNotificationSound(value);
-    if (!audio) return;
-    audioRef.current = audio;
-    setIsPlaying(true);
-    const stop = () => setIsPlaying(false);
-    audio.addEventListener("ended", stop, { once: true });
-    audio.addEventListener("pause", stop, { once: true });
-  }
 
   const names = [
     recommended,
@@ -114,7 +106,7 @@ function AlertSoundRow({
           }
           size="compact"
           type="button"
-          onClick={togglePreview}
+          onClick={onPreview}
         />
       </span>
     </div>
@@ -133,6 +125,69 @@ export function NotificationSettings({
     notifications.snapshot,
   );
   const { preferences, permission } = state;
+  const [preview, setPreview] = useState<{
+    category: NotificationCategory;
+    name: SoundName;
+  } | null>(null);
+  const previewAudio = useRef<HTMLAudioElement | null>(null);
+  const stopPreview = useCallback((owner?: HTMLAudioElement) => {
+    const audio = previewAudio.current;
+    if (owner && audio !== owner) return;
+    previewAudio.current = null;
+    if (audio) {
+      audio.onended = null;
+      audio.onpause = null;
+      audio.onerror = null;
+      audio.pause();
+    }
+    setPreview(null);
+  }, []);
+  const togglePreview = useCallback(
+    (category: NotificationCategory, name: SoundName) => {
+      if (preview?.category === category && preview.name === name) {
+        stopPreview();
+        return;
+      }
+      stopPreview();
+      try {
+        const audio = new Audio(`/sounds/${name}.mp3`);
+        previewAudio.current = audio;
+        setPreview({ category, name });
+        const stop = () => stopPreview(audio);
+        audio.onended = stop;
+        audio.onpause = stop;
+        audio.onerror = stop;
+        void audio.play().catch(stop);
+      } catch {
+        stopPreview();
+      }
+    },
+    [preview, stopPreview],
+  );
+  useEffect(
+    () => () => {
+      const audio = previewAudio.current;
+      previewAudio.current = null;
+      if (audio) {
+        audio.onended = null;
+        audio.onpause = null;
+        audio.onerror = null;
+        audio.pause();
+      }
+    },
+    [],
+  );
+  useEffect(() => {
+    if (
+      preview &&
+      (!active ||
+        !preferences.enabled ||
+        !preferences.sound ||
+        preferences.categories[preview.category] === false ||
+        preferences.sounds[preview.category] !== preview.name)
+    )
+      stopPreview();
+  }, [active, preferences, preview, stopPreview]);
   const desktopAlertsEnabled = !state.developmentPaused && preferences.enabled;
   const permissionStatus = state.developmentPaused
     ? "Notifications are paused by your local development setting. Remove BUZZ_DEV_NOTIFICATIONS=0 from .env.local and restart the dev server to resume normal behavior. Your saved alert choices are unchanged."
@@ -248,7 +303,11 @@ export function NotificationSettings({
                   key={category}
                   category={category}
                   disabled={preferences.categories[category] === false}
+                  isPlaying={preview?.category === category}
                   value={preferences.sounds[category]}
+                  onPreview={() =>
+                    togglePreview(category, preferences.sounds[category])
+                  }
                   onChange={(next) =>
                     notifications.updatePreferences({
                       sounds: { ...preferences.sounds, [category]: next },

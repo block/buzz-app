@@ -378,6 +378,15 @@ it("a deferred submission revalidates the sound decision before playing", async 
   eligible = true;
   await settle();
   expect(t.plays).toEqual([]);
+  // A native failure can arrive before the command promise resolves. It cancels
+  // audio without retrying the accepted candidate.
+  await t.submit("early-failure");
+  await flush();
+  t.failures.at(-1)?.(new Error("Backend rejected notification"));
+  await settle();
+  expect(t.plays).toEqual([]);
+  expect(t.service.snapshot().error).toBe("Backend rejected notification");
+  expect(t.platform.show).toHaveBeenCalledTimes(7);
   // An undisturbed deferred submission still plays exactly once.
   await t.submit("intact");
   await flush();

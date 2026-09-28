@@ -642,7 +642,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   // Settings details own scrolling independently of the sidebar.
   const settingsPage = page
     .getByRole("region", { name: "Settings", exact: true })
-    .locator(":scope > [data-buzz-surface]");
+    .locator(":scope > div");
   await expect(enabled).not.toBeInViewport();
   const viewport = await box(settingsPage);
   await page.mouse.move(

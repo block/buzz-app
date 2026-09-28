@@ -263,6 +263,16 @@
       display: none;
     }
   }
+  @media (max-width: 400px) {
+    .shell-header,
+    .shell-actions,
+    .shell-communities > nav {
+      gap: 0;
+    }
+    .shell-communities > nav {
+      margin-inline-end: 0;
+    }
+  }
   .muted {
     @apply text-body-sm text-muted;
   }

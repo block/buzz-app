@@ -123,9 +123,12 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(
     page.getByRole("region", { name: "Channels", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("complementary", { name: "Channel sidebar" }),
-  ).toBeVisible();
+  const channelsSidebar = page.getByRole("complementary", {
+    name: "Channel sidebar",
+  });
+  await expect(channelsSidebar).toBeHidden();
+  await showNavigation.click();
+  await expect(channelsSidebar).toBeVisible();
 });
 
 test("avatar Settings access dismisses cleanly and exposes Profile and Plugins", async ({

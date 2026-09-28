@@ -308,21 +308,34 @@ test("placeholder destinations retain companion layout across navigation and res
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
       .toBe(page.viewportSize().width);
   };
+  const selectChannel = async (name) => {
+    const show = page.getByRole("button", {
+      name: "Show navigation",
+      exact: true,
+    });
+    if (await show.isVisible()) await show.click();
+    await sidebar.getByRole("button", { name, exact: true }).click();
+    const hide = page.getByRole("button", {
+      name: "Hide navigation",
+      exact: true,
+    });
+    if (await hide.isVisible()) await hide.click();
+  };
   for (const width of [1440, 900, 600]) {
     await page.setViewportSize({ width, height: 950 });
-    await sidebar.getByRole("button", { name: "Inbox", exact: true }).click();
+    await selectChannel("Inbox");
     await launcher.click();
     await checkGeometry(width <= 1000);
-    await sidebar.getByRole("button", { name: "Bestie", exact: true }).click();
+    await selectChannel("Bestie");
     await expect(
       conversation.getByRole("heading", { name: "Bestie", exact: true }),
     ).toBeVisible();
     await checkGeometry(width <= 1000);
     await launcher.click();
     await expect(companion).not.toBeVisible();
-    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await selectChannel("Alpha");
     await launcher.click();
-    await sidebar.getByRole("button", { name: "Inbox", exact: true }).click();
+    await selectChannel("Inbox");
     await checkGeometry(width <= 1000);
     await launcher.click();
   }
@@ -424,32 +437,35 @@ fillSidebar(
       });
     for (const width of [1440, 720]) {
       await page.setViewportSize({ width, height: 900 });
-      const bounds = Object.fromEntries(
-        await Promise.all(
-          Object.entries(rows).map(async ([key, row]) => {
-            await expect(row).toBeVisible();
-            return [key, await fillBounds(row)];
-          }),
-        ),
-      );
-      expect(
-        bounds.destination.left - bounds.destination.containerLeft,
-      ).toBeCloseTo(0, 0);
-      expect(
-        bounds.destination.containerRight - bounds.destination.right,
-      ).toBeCloseTo(0, 0);
-      const listBounds = await list.evaluate((element) => {
-        const rect = element.getBoundingClientRect();
-        return { left: rect.left, right: rect.right };
-      });
-      expect(bounds.destination.left - listBounds.left).toBeCloseTo(4, 0);
-      expect(
-        listBounds.right - bounds.destination.right,
-      ).toBeGreaterThanOrEqual(4);
-      for (const bound of Object.values(bounds)) {
-        expect(bound.left).toBeCloseTo(bounds.destination.left, 0);
-        expect(bound.right).toBeCloseTo(bounds.destination.right, 0);
-      }
+      // Resizing is asynchronous in WebKit; assert the complete applied layout.
+      await expect(async () => {
+        const bounds = Object.fromEntries(
+          await Promise.all(
+            Object.entries(rows).map(async ([key, row]) => {
+              await expect(row).toBeVisible();
+              return [key, await fillBounds(row)];
+            }),
+          ),
+        );
+        expect(
+          bounds.destination.left - bounds.destination.containerLeft,
+        ).toBeCloseTo(0, 0);
+        expect(
+          bounds.destination.containerRight - bounds.destination.right,
+        ).toBeCloseTo(0, 0);
+        const listBounds = await list.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return { left: rect.left, right: rect.right };
+        });
+        expect(bounds.destination.left - listBounds.left).toBeCloseTo(4, 0);
+        expect(
+          listBounds.right - bounds.destination.right,
+        ).toBeGreaterThanOrEqual(4);
+        for (const bound of Object.values(bounds)) {
+          expect(bound.left).toBeCloseTo(bounds.destination.left, 0);
+          expect(bound.right).toBeCloseTo(bounds.destination.right, 0);
+        }
+      }).toPass({ timeout: 10_000 });
     }
 
     await page

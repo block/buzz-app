@@ -15,7 +15,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["unstable"] }
-wry = { version = "=0.55.1", default-features = false, features = ["os-webview"] }
+wry = { version = "=0.57.0", default-features = false, features = ["os-webview"] }
 buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
@@ -23,7 +23,7 @@ serde_json = "1"
 buzz-agent = { git = "https://github.com/block/buzz.git", rev = "48884848f566d02c42ce07636636c4ad5f164c27" }
 tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util"] }
 sha2 = "0.10"
-base64 = "0.22"
+base64 = "0.23"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 url = "2"
 tauri-plugin-dialog = "2"
@@ -31,14 +31,14 @@ tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 uuid = { version = "1", features = ["v4"] }
-bech32 = "0.11"
-secp256k1 = { version = "0.31", default-features = false, features = ["std"] }
-getrandom = "0.3"
+bech32 = "0.12"
+secp256k1 = { version = "0.33", default-features = false, features = ["std"] }
+getrandom = "0.4"
 zeroize = "1.9"
 
 [dev-dependencies]
 tempfile = "3"
-secp256k1 = { version = "0.31", features = ["std"] }
+secp256k1 = { version = "0.33", features = ["std"] }
 tauri = { version = "2", features = ["test"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -57,8 +57,8 @@ objc2-user-notifications = { version = "=0.3.2", default-features = false, featu
 objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-app-kit", "block2", "WKWebView", "WKUIDelegate", "WKFrameInfo", "WKSecurityOrigin"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-webview2-com = "=0.38.2"
-windows-core = "=0.61.2"
+webview2-com = "=0.39.1"
+windows-core = "=0.100.0"
 tauri-winrt-notification = "=0.8.1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
 

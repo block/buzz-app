@@ -9,17 +9,11 @@ test.use({
   historyCounts: { alpha: 3, beta: 1 },
 });
 
-async function replyActions(page, row) {
-  const trigger = row.getByRole("button", {
-    name: "Open reply actions",
-    exact: true,
-  });
-  if (await trigger.count()) {
-    await trigger.click();
-    return page.getByRole("dialog", { name: "Reply actions", exact: true });
-  }
+// Every thread reply, nested or not, carries the same full action bar; on desktop
+// it is revealed by hover or focus.
+async function replyActions(row) {
   await row.hover();
-  return row;
+  return row.getByRole("group", { name: "Message actions", exact: true });
 }
 
 // Browser-only boundary: real composer -> signing broker -> live nested row;
@@ -132,7 +126,7 @@ test("nested replies send, stay open, and reveal through links at readable panel
   await expect(
     panel.getByRole("button", { name: "Cancel reply target" }),
   ).toHaveCount(0);
-  await (await replyActions(page, nestedRow))
+  await (await replyActions(nestedRow))
     .getByRole("button", { name: "Reply", exact: true })
     .click();
   await expect(editor).toBeFocused();
@@ -178,15 +172,19 @@ test("nested replies send, stay open, and reveal through links at readable panel
     await expect(pending.locator('[data-layout="thread"]')).toBeVisible();
     await expect.poll(() => grandchildRequested).toBe(true);
     await expect(
-      (await replyActions(page, pending)).getByRole("button", {
+      (await replyActions(pending)).getByRole("button", {
         name: "Reply",
         exact: true,
       }),
     ).toBeDisabled();
-    await page.keyboard.press("Escape");
-    await expect(
-      pending.getByRole("button", { name: "Open reply actions" }),
-    ).toBeFocused();
+    // Focus the bar's menu trigger to prove the full bar is keyboard-reachable on
+    // a nested pending row, then return focus to the composer.
+    const pendingMenu = pending.getByRole("button", {
+      name: "More message actions",
+      exact: true,
+    });
+    await pendingMenu.focus();
+    await expect(pendingMenu).toBeFocused();
     // Inspecting the pending row intentionally moved focus away from composing.
     await editor.focus();
   } finally {
@@ -222,7 +220,7 @@ test("nested replies send, stay open, and reveal through links at readable panel
   let deepest = grandchildRow;
   for (let depth = 0; depth < 6; depth++) {
     await editor.hover();
-    await (await replyActions(page, deepest))
+    await (await replyActions(deepest))
       .getByRole("button", { name: "Reply", exact: true })
       .click();
     await expect(editor).toBeFocused();
@@ -411,14 +409,11 @@ test.describe("touch branch controls", () => {
     const child = branch.locator(":scope > [id] [data-message-id]").first();
     await expect(child).toBeFocused();
     await expect(child).toBeVisible();
-    const actionTrigger = child.getByRole("button", {
-      name: "Open reply actions",
-    });
-    await actionTrigger.tap();
-    const actions = page.getByRole("dialog", {
-      name: "Reply actions",
+    const actions = child.getByRole("group", {
+      name: "Message actions",
       exact: true,
     });
+    await expect(actions).toBeVisible();
     await actions
       .getByRole("button", { name: "Add reaction", exact: true })
       .tap();
@@ -432,15 +427,17 @@ test.describe("touch branch controls", () => {
       page.getByRole("dialog", { name: "Emoji picker", exact: true }),
     ).toHaveCount(0);
     await expect(actions).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(actionTrigger).toBeFocused();
-    await actionTrigger.tap();
-    await actions.getByRole("button", { name: "More message actions" }).tap();
+    const menuTrigger = actions.getByRole("button", {
+      name: "More message actions",
+      exact: true,
+    });
+    await menuTrigger.tap();
     await expect(
       page.getByRole("menuitem", { name: "Copy message", exact: true }),
     ).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(menuTrigger).toBeFocused();
     await expect(actions).toBeVisible();
     await actions.getByRole("button", { name: "Reply", exact: true }).tap();
     await expect(
@@ -466,7 +463,7 @@ test.describe("touch branch controls", () => {
 });
 
 // Real pointer hit testing and focus cannot be verified in jsdom.
-for (const width of [1492, 1280, 1024, 390])
+for (const width of [1492, 1280, 1024, 700, 390])
   test(`crowded capped branches expand once with readable actions at ${width}`, async ({
     page,
     app,
@@ -541,7 +538,7 @@ for (const width of [1492, 1280, 1024, 390])
     await clock.hover();
     await expect(page.getByRole("tooltip")).toContainText(/\d{4}/);
     await continuationRow
-      .getByRole("button", { name: "Open reply actions" })
+      .getByRole("button", { name: "More message actions", exact: true })
       .focus();
     await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
     await expect(clock).toHaveCSS("opacity", "1");
@@ -551,81 +548,163 @@ for (const width of [1492, 1280, 1024, 390])
       await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
       await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
       await row.scrollIntoViewIfNeeded();
-      // Put a row at the scrollport edge: actions must remain reachable there.
+      // Exercise the lifted bar away from the top edge. Morgan accepted
+      // clipping at that boundary; scrolling the row down restores access.
       await row.evaluate((node) => {
         const history = node.closest('[aria-label="Thread messages"]');
         history.scrollTop +=
           node.getBoundingClientRect().top -
-          history.getBoundingClientRect().top;
+          history.getBoundingClientRect().top -
+          history.clientHeight / 2;
       });
       const restingHeight = (await row.boundingBox()).height;
       await row.hover();
       expect((await row.boundingBox()).height).toBe(restingHeight);
-      const compact = row.getByRole("button", { name: "Open reply actions" });
-      const isNested = id !== ids[0];
-      await expect(compact).toHaveCount(isNested ? 1 : 0);
-      const actions = isNested
-        ? compact
-        : row.getByRole("group", { name: "Message actions" });
+      // Every reply, nested or not, exposes the same full bar. Revealing it must
+      // not reflow the row.
+      const actions = row.getByRole("group", {
+        name: "Message actions",
+        exact: true,
+      });
+      await expect(actions).toHaveCount(1);
       await expect(actions).toHaveCSS("opacity", "1");
-      for (const button of isNested
-        ? [compact]
-        : await actions.getByRole("button").all()) {
+      if (width >= 640) {
+        // Check the visual relationship, not a copied legacy offset: a header
+        // bar ends at the body, while a continuation retains its extra lift.
+        const placement = await row.evaluate((node) => {
+          const message = node.querySelector("[data-layout]");
+          const bar = node.querySelector('[aria-label="Message actions"]');
+          const bounds = bar.getBoundingClientRect();
+          if (message.dataset.layout !== "continuation") {
+            const body = node.querySelector(
+              '[class*="_text_"], [class*="_plainText_"]',
+            );
+            return {
+              actual: bounds.bottom,
+              expected: body.getBoundingClientRect().top,
+            };
+          }
+          const ruler = document.createElement("span");
+          ruler.style.cssText = "position:absolute;width:var(--space-3)";
+          message.append(ruler);
+          const extraLift = ruler.getBoundingClientRect().width;
+          ruler.remove();
+          return {
+            actual:
+              bounds.top +
+              bounds.height / 2 -
+              message.getBoundingClientRect().top,
+            expected: -extraLift,
+          };
+        });
+        expect(placement.actual).toBeCloseTo(placement.expected, 1);
+        // Header anchoring must not wrap a full toolbar inside the narrower
+        // body column before the row-width action reductions take effect.
+        const centres = await actions.evaluate((bar) =>
+          [...bar.querySelectorAll("button")]
+            .map((button) => button.getBoundingClientRect())
+            .filter((box) => box.width > 0 && box.height > 0)
+            .map((box) => box.top + box.height / 2),
+        );
+        expect(Math.max(...centres) - Math.min(...centres)).toBeLessThan(1);
+      }
+      // Reaching the bar from the byline is the natural pointer path, and the bar
+      // is allowed to sit over the timestamp. The date hint must therefore never
+      // take ownership of the pointer where the bar is: it outranks the bar in the
+      // layer stack, so a hoverable hint would swallow every action click.
+      const stamp = row.locator("time");
+      if (await stamp.count()) {
+        const hint = await stamp.boundingBox();
+        await page.mouse.move(hint.x + 4, hint.y + hint.height / 2);
+        await expect
+          .poll(() =>
+            actions.evaluate((bar) =>
+              [...bar.querySelectorAll("button")]
+                .filter((button) => {
+                  const box = button.getBoundingClientRect();
+                  return box.width > 0 && box.height > 0;
+                })
+                .every((button) => {
+                  const box = button.getBoundingClientRect();
+                  return document
+                    .elementsFromPoint(
+                      (box.left + box.right) / 2,
+                      (box.top + box.bottom) / 2,
+                    )[0]
+                    ?.isSameNode(button);
+                }),
+            ),
+          )
+          .toBe(true);
+        await row.hover();
+      }
+      for (const button of await actions.getByRole("button").all()) {
         await expect(button).toBeInViewport();
         await button.click({ trial: true });
       }
-      // Test rendered text fragments, not a block whose empty area may overlap.
-      // Hover actions must leave this row's own message and its neighbor readable.
+      // The bar must not cover this row's own message text. Compare against the
+      // rendered body only, inset by half-leading so leading is not read as ink.
+      // Include headerless continuation rows: the shared lift must clear them too.
       await expect
         .poll(() =>
           row.evaluate((node) => {
             const tray = node
-              .querySelector(
-                '[aria-label="Open reply actions"], [aria-label="Message actions"]',
-              )
+              .querySelector('[aria-label="Message actions"]')
               .getBoundingClientRect();
-            const walker = document.createTreeWalker(
-              node.closest('[aria-label="Thread messages"]'),
-              NodeFilter.SHOW_TEXT,
+            const body = node.querySelectorAll(
+              '[class*="_text_"], [class*="_plainText_"]',
             );
-            for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-              if (
-                !/^(Crowded reply|Same-parent continuation)/.test(
-                  text.textContent,
-                )
-              )
-                continue;
-              const range = document.createRange();
-              range.selectNodeContents(text);
-              for (const rect of range.getClientRects()) {
-                if (
-                  tray.left < rect.right &&
-                  tray.right > rect.left &&
-                  tray.top < rect.bottom &&
-                  tray.bottom > rect.top
-                )
-                  return true;
+            for (const element of body) {
+              const size = parseFloat(getComputedStyle(element).fontSize);
+              const walker = document.createTreeWalker(
+                element,
+                NodeFilter.SHOW_TEXT,
+              );
+              for (
+                let text = walker.nextNode();
+                text;
+                text = walker.nextNode()
+              ) {
+                if (!text.textContent.trim()) continue;
+                const range = document.createRange();
+                range.selectNodeContents(text);
+                for (const rect of range.getClientRects()) {
+                  if (!rect.width || !rect.height) continue;
+                  const lead = Math.max(0, (rect.height - size) / 2);
+                  const dx =
+                    Math.min(tray.right, rect.right) -
+                    Math.max(tray.left, rect.left);
+                  const dy =
+                    Math.min(tray.bottom, rect.bottom - lead) -
+                    Math.max(tray.top, rect.top + lead);
+                  if (dx > 0.5 && dy > 0.5) return true;
+                }
               }
             }
             return false;
           }),
         )
         .toBe(false);
-      if (isNested) {
-        await compact.click();
-        const popup = page.getByRole("dialog", {
-          name: "Reply actions",
+      if (width >= 640 && id === continuation.id) {
+        // Real diagonal pointer travel must not drop the hover-only toolbar.
+        await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
+        const body = await row
+          .getByText("Same-parent continuation", { exact: true })
+          .boundingBox();
+        await page.mouse.move(body.x + 4, body.y + body.height / 2);
+        await expect(actions).toHaveCSS("opacity", "1");
+        const reply = actions.getByRole("button", {
+          name: "Reply",
           exact: true,
         });
-        await expect(
-          popup.getByRole("button", { name: "Reply", exact: true }),
-        ).toBeVisible();
-        for (const button of await popup.getByRole("button").all()) {
-          await expect(button).toBeInViewport();
-          await button.click({ trial: true });
-        }
-        await page.keyboard.press("Escape");
-        await expect(compact).toBeFocused();
+        const target = await reply.boundingBox();
+        await page.mouse.move(
+          target.x + target.width / 2,
+          target.y + target.height / 2,
+          { steps: 20 },
+        );
+        await expect(actions).toHaveCSS("opacity", "1");
+        await reply.click({ trial: true });
       }
       await expect(
         branch.getByRole("button", {
@@ -635,11 +714,13 @@ for (const width of [1492, 1280, 1024, 390])
     }
     await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
     await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
-    for (const id of ids.slice(0, 1)) {
+    // Resting state must match the contract for every rendered reply, not just
+    // the first: hidden on desktop hover-capable widths, always usable below 640.
+    for (const id of [...ids.slice(0, -1), continuation.id]) {
       await expect(
         panel
           .locator(`[data-message-id="${id}"]`)
-          .getByRole("group", { name: "Message actions" }),
+          .getByRole("group", { name: "Message actions", exact: true }),
       ).toHaveCSS("opacity", "0");
     }
     await panel.screenshot({

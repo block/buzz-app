@@ -93,6 +93,12 @@
 .feed .message[data-layout="continuation"] {
   gap: var(--space-3);
 }
+.nestedAvatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 var(--size-control-sm);
+  height: var(--size-control-sm);
+}
 .messageGutter {
   flex: 0 0 var(--size-control-sm);
 }
@@ -1558,22 +1564,37 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
   }
 }
 @media (hover: hover) and (pointer: fine) {
-  /* Float above prose without reserving message height. */
-  .messageBody {
-    position: relative;
-  }
   .messageActions {
     position: absolute;
+    flex-wrap: nowrap;
+    max-width: none;
     inset-inline-end: 0;
-    bottom: 100%;
-    z-index: 2;
+    top: calc(100% + var(--space-1));
+    translate: 0 -100%;
     opacity: 0;
     pointer-events: none;
     margin-inline-start: 0;
   }
-  .message:not([data-layout="continuation"]) .messageActions {
-    /* Bound the lower edge even when a narrow toolbar wraps. */
-    bottom: calc(100% - var(--text-body-sm) * var(--text-body-sm--line-height));
+  /* Anchor to the real author line, including when its metadata wraps. */
+  .messageHeader {
+    position: relative;
+  }
+  .message[data-layout="continuation"] .messageHeader {
+    position: static;
+  }
+  /* Headerless continuations need the legacy extra lift to clear body ink. */
+  .message[data-layout="continuation"] .messageActions {
+    top: calc(-1 * var(--space-3));
+    translate: 0 -50%;
+  }
+  /* Keep pointer travel to the lifted bar inside the hovered row without
+     changing spacing or intercepting the preceding row while at rest. */
+  .message:hover::before {
+    content: "";
+    position: absolute;
+    bottom: 100%;
+    inset-inline: 0;
+    height: var(--space-2);
   }
   .message:hover .messageActions,
   .message:focus-within .messageActions,
@@ -1582,22 +1603,6 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
     opacity: 1;
     pointer-events: auto;
   }
-}
-
-/* Thread controls stay inside their own row. The float reserves only the lines
-   it occupies, so a short reply cannot paint beneath its actions. */
-.message:is([data-layout="thread"], [data-layout="continuation"]) .messageBody {
-  display: flow-root;
-}
-.nestedActionTrigger {
-  float: inline-end;
-  margin-inline-start: var(--space-2);
-}
-.nestedActionContents {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-half);
 }
 
 .replyBranch {

@@ -662,7 +662,6 @@ function ThreadMessages({
           extensions={extensions}
           session={session}
           scope={scope}
-          compactActions={!!row.replyParentId && row.replyParentId !== rootId}
           onReply={snapshot.root ? targetReply : undefined}
           row={row}
           profile={profiles.get(row.authorId)}
@@ -673,6 +672,7 @@ function ThreadMessages({
           canOpenLink={canOpenLink}
           day={day}
           layout={continuation ? "continuation" : "thread"}
+          compactAvatar={depth > 0}
           retry={session.messages.retry}
           {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
           {...(onOpenMediaReview && rootId

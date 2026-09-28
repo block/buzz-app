@@ -24,11 +24,11 @@ vi.mock("../relay/react", () => {
   return { useRowProfiles: () => profiles };
 });
 vi.mock("./MessageRow", () => ({
-  MessageRow: ({ row, onReply, layout, compactActions }: MessageRowProps) => (
+  MessageRow: ({ row, onReply, layout, compactAvatar }: MessageRowProps) => (
     <article
       data-message-id={row.id}
       data-layout={layout}
-      data-compact={compactActions || undefined}
+      data-compact-avatar={compactAvatar}
     >
       <span>{row.content}</span>
       <button type="button" onClick={() => onReply?.(row.id)}>
@@ -387,24 +387,18 @@ it("returns focus to the parent when the newly revealed focused child is deleted
   expect(screen.getByText("parent").closest("article")).toHaveFocus();
 });
 
-it("uses compact actions only for replies to replies, including unloaded parents", () => {
-  const h = setup("child");
-  expect(screen.getByText("root").closest("article")).not.toHaveAttribute(
-    "data-compact",
-  );
-  expect(screen.getByText("parent").closest("article")).not.toHaveAttribute(
-    "data-compact",
-  );
-  expect(screen.getByText("child").closest("article")).toHaveAttribute(
-    "data-compact",
-    "true",
-  );
-  h.update([row("orphan", "unloaded"), row("ordinary", "root")]);
-  expect(screen.getByText("orphan").closest("article")).toHaveAttribute(
-    "data-compact",
-    "true",
-  );
-  expect(screen.getByText("ordinary").closest("article")).not.toHaveAttribute(
-    "data-compact",
-  );
+it("uses compact avatars only below ordinary thread replies", () => {
+  setup("grandchild");
+  for (const id of ["root", "parent"]) {
+    expect(screen.getByText(id).closest("article")).not.toHaveAttribute(
+      "data-compact-avatar",
+      "true",
+    );
+  }
+  for (const id of ["child", "grandchild"]) {
+    expect(screen.getByText(id).closest("article")).toHaveAttribute(
+      "data-compact-avatar",
+      "true",
+    );
+  }
 });

@@ -140,6 +140,60 @@ function setup(
 }
 describe("device-local startup", () => {
   it.each([false, true])(
+    "refreshes restored channel metadata with metadata included in the roster response=%s",
+    async (included) => {
+      const { owner, channels, membership, query } = setup();
+      const fresh = metadata(relay, "alpha", "Renamed Alpha", 1_700_000_001, [
+        ["archived", "true"],
+      ]);
+      const names = deferred<RelayEvent[]>();
+      query.mockImplementation(async (filters) => {
+        if (filters.some((filter) => filter.kinds?.includes(39002)))
+          return membership.promise;
+        if (filters.some((filter) => filter.kinds?.includes(39000)))
+          return names.promise;
+        return [];
+      });
+      await owner.restore();
+      expect(channels.get?.("alpha")).toMatchObject({
+        name: "Alpha",
+        cached: true,
+      });
+      expect(channels.get?.("alpha")?.archived).toBeUndefined();
+      channels.ensureList();
+      await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
+      try {
+        membership.resolve([
+          roster(relay, "alpha", [viewer.pubkey]),
+          ...(included ? [fresh] : []),
+        ]);
+        if (!included) {
+          await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
+          expect(channels.get?.("alpha")?.cached).toBeUndefined();
+          expect(owner.session.live.snapshot().roster.state).toBe("pending");
+        }
+      } finally {
+        names.resolve([fresh]);
+      }
+      await vi.waitFor(() =>
+        expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+      );
+      expect(channels.get?.("alpha")).toMatchObject({
+        name: "Renamed Alpha",
+        archived: true,
+      });
+      expect(channels.get?.("alpha")?.cached).toBeUndefined();
+      expect(
+        query.mock.calls
+          .flatMap(([filters]) => filters)
+          .filter((filter) => filter.kinds?.includes(39000)),
+      ).toEqual(
+        included ? [] : [{ kinds: [39000], "#d": ["alpha"], limit: 500 }],
+      );
+    },
+  );
+
+  it.each([false, true])(
     "keeps saved names on unchanged confirmation but purges them on omission=%s",
     async (omitted) => {
       const storage = disk();

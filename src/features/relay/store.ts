@@ -967,6 +967,12 @@ export function createChannelStore(
     let controller = new AbortController();
     controllers.add(controller);
     const started = discovery.rosterVersions();
+    // Roster confirmation clears cached membership before metadata is fetched.
+    const cached = new Set(
+      list.channels
+        .filter((channel) => channel.cached)
+        .map((channel) => channel.id),
+    );
     const overflowRevision = discovery.overflowRevision;
     let readingRoster = true;
     let outcome: RosterRefresh = { state: "deferred" };
@@ -1038,7 +1044,7 @@ export function createChannelStore(
         (id) =>
           discovery.authorized(id) &&
           !named.has(id) &&
-          (force || discovery.get(id)?.cached || !discovery.named(id)),
+          (force || cached.has(id) || !discovery.named(id)),
       );
       generation = epoch;
       readingRoster = false;

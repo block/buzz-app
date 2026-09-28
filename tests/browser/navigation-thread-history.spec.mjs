@@ -179,6 +179,8 @@ for (const reading of [false, true]) {
         .toBe("opened");
       if (reading) {
         expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
+        const jumpToLatest = region.locator("button[data-jump-to-latest]");
+        await expect(jumpToLatest).toHaveAccessibleName("Jump to latest");
       } else {
         await expect
           .poll(() =>
@@ -201,7 +203,7 @@ for (const reading of [false, true]) {
       if (reading) {
         expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
         const jumpToLatest = region.locator("button[data-jump-to-latest]");
-        await expect(jumpToLatest).toBeVisible();
+        await expect(jumpToLatest).toHaveAccessibleName("1 new message");
         await jumpToLatest.click();
         await expect(
           region.locator(`[data-message-id="${live.id}"]`),

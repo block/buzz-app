@@ -2251,12 +2251,4 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 button[data-jump-to-latest] {
   pointer-events: auto;
-  border: 1px solid var(--border-standard);
-  background: color-mix(in srgb, var(--surface-panel) 82%, transparent);
-  color: var(--text-secondary);
-  box-shadow: var(--shadow-xs);
-  backdrop-filter: blur(20px);
-}
-button[data-jump-to-latest]:hover {
-  background: color-mix(in srgb, var(--surface-panel) 94%, transparent);
 }

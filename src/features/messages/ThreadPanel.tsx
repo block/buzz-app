@@ -288,6 +288,7 @@ function ThreadMessages({
       0,
       ...snapshot.replies.map((reply) => reply.createdAt),
     ),
+    complete: snapshot.status === "ready" && !snapshot.canLoadMore,
   });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
@@ -470,21 +471,24 @@ function ThreadMessages({
   }, [view, snapshot]);
   useLayoutEffect(() => {
     const previous = previousReplies.current;
-    const arrivals = snapshot.replies.filter(
-      (reply) =>
-        !previous.ids.has(reply.id) &&
-        reply.createdAt >= previous.latestCreatedAt,
-    ).length;
+    const arrivals = previous.complete
+      ? snapshot.replies.filter(
+          (reply) =>
+            !previous.ids.has(reply.id) &&
+            reply.createdAt >= previous.latestCreatedAt,
+        ).length
+      : 0;
     previousReplies.current = {
       ids: new Set(snapshot.replies.map((reply) => reply.id)),
       latestCreatedAt: Math.max(
         previous.latestCreatedAt,
         ...snapshot.replies.map((reply) => reply.createdAt),
       ),
+      complete: snapshot.status === "ready" && !snapshot.canLoadMore,
     };
     if (arrivals > 0 && !follow.current)
       setNewMessageCount((count) => count + arrivals);
-  }, [snapshot.replies]);
+  }, [snapshot.status, snapshot.canLoadMore, snapshot.replies]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;

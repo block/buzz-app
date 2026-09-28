@@ -34,6 +34,25 @@ function Example({
   );
 }
 
+test("names the create switch for configuration enablement", async () => {
+  const change = vi.fn();
+  render(
+    <WorkflowEditor
+      create
+      yaml={fixtureYaml}
+      onChange={change}
+      onSave={vi.fn()}
+    />,
+  );
+  const toggle = screen.getByRole("switch", {
+    name: "Enabled in configuration",
+  });
+  expect(toggle).not.toBeChecked();
+  await userEvent.setup().click(toggle);
+  expect(change).toHaveBeenCalledTimes(1);
+  expect(parse(change.mock.calls[0]?.[0]).enabled).not.toBe(false);
+});
+
 test("keeps naming compact and applies header changes only on save", async () => {
   const user = userEvent.setup();
   const save = vi.fn();
@@ -165,9 +184,13 @@ test("form errors follow the editable field and clear when corrected", async () 
 test("YAML errors replace help, retain the draft and restore help after recovery", async () => {
   const user = userEvent.setup();
   render(<Example initial="name: [" />);
-  expect(
-    screen.queryByRole("switch", { name: "Configuration" }),
-  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
+  const enable = await screen.findByRole("menuitemcheckbox", {
+    name: "Enable",
+  });
+  expect(enable).not.toBeChecked();
+  expect(enable).toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Escape}");
   expect(screen.getByText("Unreadable configuration")).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Edit workflow name" }),

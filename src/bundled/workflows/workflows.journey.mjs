@@ -182,7 +182,7 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
   await editor.closeInspector();
   expect(
     await page
-      .getByRole("switch", { name: /^Configuration$/ })
+      .getByRole("switch", { name: /^Enabled in configuration$/ })
       .getAttribute("aria-checked"),
   ).toBe("false");
   await editor.rename("Incomplete editor");
@@ -248,7 +248,10 @@ test("existing workflow enablement stays in the header overflow", async ({
   const actions = dialog.getByRole("button", { name: "Workflow actions" });
   const close = dialog.getByRole("button", { name: "Close editor" });
   await expect(
-    dialog.getByRole("switch", { name: "Configuration", exact: true }),
+    dialog.getByRole("switch", {
+      name: "Enabled in configuration",
+      exact: true,
+    }),
   ).toHaveCount(0);
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
@@ -309,7 +312,9 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await page.goto(url);
   const editor = editorControls(page);
   const { button } = editor;
-  let enabled = page.getByRole("switch", { name: /^Configuration$/ });
+  let enabled = page.getByRole("switch", {
+    name: /^Enabled in configuration$/,
+  });
   const reply = page.getByRole("switch", {
     name: "Reply in the triggering thread",
   });
@@ -1329,7 +1334,9 @@ test("schedule presets round-trip into YAML and warn before enabling a frequent 
   await expect(preset("Custom cron")).toBeChecked();
 
   await pill("Every hour").click();
-  await page.getByRole("switch", { name: /^Configuration$/ }).click();
+  await page
+    .getByRole("switch", { name: /^Enabled in configuration$/ })
+    .click();
   await editor.primary("Create workflow").click();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText(

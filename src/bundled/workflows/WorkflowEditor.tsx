@@ -359,7 +359,7 @@ export function WorkflowEditor({
           )}
           {create && fields.editable ? (
             <Switch
-              label="Configuration"
+              label="Enabled in configuration"
               aria-describedby={
                 controlReason ? `${id}-control-reason` : undefined
               }

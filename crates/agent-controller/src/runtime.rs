@@ -425,6 +425,20 @@ impl Controller {
         let agent = self.edited_agent(id, revision, edit)?;
         crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
     }
+    /// Resolve unsaved Create drafts against the same native defaults as a saved start.
+    pub fn effective_draft(&self, mut edit: AgentEdit) -> Result<AgentEdit> {
+        let mut environment = draft_environment(edit.environment);
+        crate::agent_defaults::effective_settings(
+            &mut edit.harness,
+            &mut environment,
+            &self.store.defaults()?,
+        );
+        edit.environment = environment
+            .into_iter()
+            .map(|(key, value)| (key, Some(value)))
+            .collect();
+        Ok(edit)
+    }
     pub fn draft_pi_model_context(edit: AgentEdit) -> Result<crate::pi::PiContext> {
         crate::pi::PiContext::new(
             &edit.harness,
@@ -525,7 +539,7 @@ impl Controller {
             .snapshot()?
             .agents
             .into_iter()
-            .filter(|a| a.status == ProcessStatus::Running)
+            .filter(|a| a.enabled && a.status == ProcessStatus::Running)
             .map(|a| a.id)
             .collect();
         Ok(self

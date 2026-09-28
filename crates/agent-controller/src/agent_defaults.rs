@@ -1,6 +1,6 @@
 //! Device-wide agent defaults, editable in Settings → Agents. Native-only file;
 //! environment values are write-only and never cross IPC.
-use crate::config::Agent;
+use crate::config::{Agent, HarnessEdit};
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -135,26 +135,37 @@ pub(crate) fn harness_kind(command: &str) -> Option<&'static str> {
 /// Temporary launch copy: blank provider/model/effort inherit defaults for the
 /// same harness; environment merges per key with the agent's key winning. The
 /// build floor (`BuildDefaults::resolve`) still applies afterwards.
-pub(crate) fn effective(agent: &Agent, defaults: &AgentDefaults) -> Agent {
-    let mut out = agent.clone();
-    if harness_kind(&agent.harness.command) == Some(defaults.harness.as_str()) {
-        if out.harness.provider.is_empty() {
-            out.harness.provider.clone_from(&defaults.provider);
+pub(crate) fn effective_settings(
+    harness: &mut HarnessEdit,
+    environment: &mut BTreeMap<String, String>,
+    defaults: &AgentDefaults,
+) -> bool {
+    let same_harness = harness_kind(&harness.command) == Some(defaults.harness.as_str());
+    if same_harness {
+        if harness.provider.is_empty() {
+            harness.provider.clone_from(&defaults.provider);
         }
-        if out.harness.model.is_empty() {
-            out.harness.model.clone_from(&defaults.model);
-        }
-        if !defaults.effort.is_empty() {
-            out.extra.insert(
-                INHERITED_EFFORT.into(),
-                Value::String(defaults.effort.clone()),
-            );
+        if harness.model.is_empty() {
+            harness.model.clone_from(&defaults.model);
         }
     }
     for (key, value) in &defaults.environment {
-        out.environment
+        environment
             .entry(key.clone())
             .or_insert_with(|| value.clone());
+    }
+    same_harness
+}
+
+pub(crate) fn effective(agent: &Agent, defaults: &AgentDefaults) -> Agent {
+    let mut out = agent.clone();
+    if effective_settings(&mut out.harness, &mut out.environment, defaults)
+        && !defaults.effort.is_empty()
+    {
+        out.extra.insert(
+            INHERITED_EFFORT.into(),
+            Value::String(defaults.effort.clone()),
+        );
     }
     out
 }

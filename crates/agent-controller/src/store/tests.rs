@@ -424,3 +424,29 @@ fn agent_defaults_persist_owner_only_and_never_project_values() {
     fs::write(root.join("defaults.json"), b"{not json").unwrap();
     assert!(store.defaults().is_err());
 }
+
+#[test]
+fn oversized_defaults_are_rejected_before_replacing_the_usable_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    let mut defaults = store.defaults().unwrap();
+    defaults.model = "working-model".into();
+    store.save_defaults(&defaults).unwrap();
+    let original = fs::read(dir.path().join("defaults.json")).unwrap();
+
+    // Individual values are valid, but their combined JSON exceeds the read limit.
+    for index in 0..40 {
+        defaults
+            .environment
+            .insert(format!("TOKEN_{index}"), "x".repeat(32 * 1024));
+    }
+    assert_eq!(
+        store.save_defaults(&defaults).unwrap_err(),
+        "Agent defaults exceed the size limit"
+    );
+    assert_eq!(
+        fs::read(dir.path().join("defaults.json")).unwrap(),
+        original
+    );
+    assert_eq!(store.defaults().unwrap().model, "working-model");
+}

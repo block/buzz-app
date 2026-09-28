@@ -46,6 +46,21 @@ it("words save results by restart count", () => {
   expect(savedMessage(3)).toBe("Saved. Restarted 3 agents.");
 });
 
+it("discard clears unfinished environment inputs as well as the saved draft", async () => {
+  const user = userEvent.setup();
+  const { control } = setup();
+  await control.refresh();
+  const card = await screen.findByRole("region", { name: "Agent defaults" });
+  await user.type(within(card).getByLabelText("Name"), "UNSAVED_TOKEN");
+  await user.type(within(card).getByLabelText("Value"), "unfinished-secret");
+  expect(within(card).getByRole("button", { name: "Discard" })).toBeVisible();
+  await user.type(within(card).getByLabelText("Default model"), "-draft");
+  await user.click(within(card).getByRole("button", { name: "Discard" }));
+  expect(within(card).getByLabelText("Default model")).toHaveValue("old-model");
+  expect(within(card).getByLabelText("Name")).toHaveValue("");
+  expect(within(card).getByLabelText("Value")).toHaveValue("");
+});
+
 it("changing the default harness clears model and effort and saves write-only env", async () => {
   const user = userEvent.setup();
   const { fixture, control } = setup(2);

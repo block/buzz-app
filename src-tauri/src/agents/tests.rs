@@ -152,6 +152,78 @@ fn restart_on_save_selects_only_live_agents_with_changed_effective_settings() {
 }
 
 #[test]
+fn disabled_live_agent_is_not_eligible_for_a_save_restart() {
+    let (dir, host, _app, _view) = fixture();
+    seed(dir.path());
+    let mut agent = host
+        .with(|host| Ok(host.controller.snapshot()?.agents.remove(0)))
+        .unwrap();
+    agent.status = buzz_agent_controller::ProcessStatus::Running;
+    assert!(is_running(&agent));
+    // A user Stop/Start after Save may already have applied the new settings.
+    assert!(!needs_save_restart(&agent));
+    agent.enabled = false;
+    assert!(!is_running(&agent));
+    assert!(!needs_save_restart(&agent));
+}
+
+#[test]
+fn create_draft_model_browsing_inherits_native_provider_and_environment() {
+    let (dir, host, _app, _view) = fixture();
+    host.with(|host| {
+        host.controller
+            .save_defaults(
+                serde_json::from_value(json!({
+                    "harness":"buzz-agent", "provider":"databricks_v2", "model":"",
+                    "effort":"", "environment":{"DATABRICKS_HOST":"https://models.example"}
+                }))
+                .unwrap(),
+            )
+            .map(drop)
+    })
+    .unwrap();
+    let draft = json!({
+        "name":"New agent", "systemPrompt":"", "workspace":dir.path(),
+        "harness":{"command":"buzz-agent","args":[],"provider":"","model":""},
+        "environment":{}
+    });
+    let context = host
+        .model_context(None, None, serde_json::from_value(draft.clone()).unwrap())
+        .unwrap();
+    assert_eq!(context.host.as_deref(), Some("https://models.example"));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let goose = dir.path().join("goose");
+        std::fs::write(&goose, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+        host.with(|host| {
+            host.controller
+                .save_defaults(
+                    serde_json::from_value(json!({
+                        "harness":"goose", "provider":"openai", "model":"",
+                        "effort":"", "environment":{"GOOSE_API_KEY":"write-only-key"}
+                    }))
+                    .unwrap(),
+                )
+                .map(drop)
+        })
+        .unwrap();
+        let draft = json!({
+            "name":"New agent", "systemPrompt":"", "workspace":dir.path(),
+            "harness":{"command":goose,"args":["acp"],"provider":"","model":""},
+            "environment":{}
+        });
+        let context = host
+            .goose_model_context(None, None, serde_json::from_value(draft).unwrap())
+            .unwrap();
+        assert_eq!(context.provider_id, "openai");
+        assert_eq!(context.environment["GOOSE_API_KEY"], "write-only-key");
+    }
+}
+
+#[test]
 fn saving_defaults_never_starts_or_enables_stopped_agents() {
     let (dir, host, _app, view) = fixture();
     let id = seed(dir.path());
@@ -186,11 +258,11 @@ fn saving_defaults_never_starts_or_enables_stopped_agents() {
         Action::Restart,
         false,
         None,
-        Some((is_running, "Agent stopped before its restart")),
+        Some((needs_save_restart, "Agent no longer needs a save restart")),
     ));
     assert_eq!(
         refused.err().as_deref(),
-        Some("Agent stopped before its restart")
+        Some("Agent no longer needs a save restart")
     );
     let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(saved["agents"][0]["enabled"], false);

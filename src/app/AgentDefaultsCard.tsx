@@ -52,6 +52,8 @@ export function AgentDefaultsCard({
     void control.saveDefaults?.(current).then(
       (snapshot) => {
         setDraft(null);
+        setNewKey("");
+        setNewValue("");
         setNotice(savedMessage(snapshot.restarted));
       },
       () => setError("Agent defaults weren’t saved. Try again."),
@@ -198,11 +200,15 @@ export function AgentDefaultsCard({
         >
           Save defaults
         </Button>
-        {draft && (
+        {(draft || newKey || newValue) && (
           <Button
             type="button"
             disabled={disabled}
-            onClick={() => setDraft(null)}
+            onClick={() => {
+              setDraft(null);
+              setNewKey("");
+              setNewValue("");
+            }}
           >
             Discard
           </Button>

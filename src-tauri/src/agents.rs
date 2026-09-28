@@ -460,7 +460,7 @@ impl AgentHost {
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.model_context(id, revision, edit),
-            (None, None) => Controller::draft_model_context(edit),
+            (None, None) => Controller::draft_model_context(host.controller.effective_draft(edit)?),
             _ => Err("Invalid agent model context".into()),
         })
         .await
@@ -474,7 +474,9 @@ impl AgentHost {
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.goose_model_context(id, revision, edit),
-            (None, None) => Controller::draft_goose_model_context(edit),
+            (None, None) => {
+                Controller::draft_goose_model_context(host.controller.effective_draft(edit)?)
+            }
             _ => Err("Invalid agent model context".into()),
         })
         .await
@@ -488,7 +490,9 @@ impl AgentHost {
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.pi_model_context(id, revision, edit),
-            (None, None) => Controller::draft_pi_model_context(edit),
+            (None, None) => {
+                Controller::draft_pi_model_context(host.controller.effective_draft(edit)?)
+            }
             _ => Err("Invalid agent model context".into()),
         })
         .await
@@ -589,14 +593,15 @@ async fn save_and_restart(
     .await?;
     let mut restarted = 0;
     for id in changed {
-        // Re-checked under the lock: a Stop since the save must win.
+        // Re-checked under the lock: Stop wins, and a subsequent user Start
+        // may already have launched the saved settings.
         let result = start_guarded(
             owner.clone(),
             id.clone(),
             Action::Restart,
             false,
             None,
-            Some((is_running, "Agent stopped before its restart")),
+            Some((needs_save_restart, "Agent no longer needs a save restart")),
         )
         .await;
         if result.is_ok_and(|snapshot| {
@@ -625,7 +630,10 @@ fn changed_running(
         .collect()
 }
 fn is_running(agent: &buzz_agent_controller::AgentView) -> bool {
-    agent.status == buzz_agent_controller::ProcessStatus::Running
+    agent.enabled && agent.status == buzz_agent_controller::ProcessStatus::Running
+}
+fn needs_save_restart(agent: &buzz_agent_controller::AgentView) -> bool {
+    is_running(agent) && !agent.restart_diff.is_empty()
 }
 #[tauri::command]
 pub(crate) async fn agent_control_start_on_app_launch(

@@ -1861,7 +1861,95 @@ fn inherited_default_changes_reach_restart_diff_and_the_next_start() {
     other.environment = BTreeMap::from([("PROVIDER_TEST_SETTING".into(), Some("hidden".into()))]);
     controller.save_defaults(other).unwrap();
     assert_eq!(controller.running_settings().unwrap(), before);
-    controller.shutdown().unwrap();
-    // Stopped agents are not live and have no running settings.
+    // A failed Stop can persist disabled intent while its listener remains live.
+    // Saving defaults must not select it for a restart or re-enable it.
+    controller.store.enabled(&a.id, false).unwrap();
+    let disabled = controller.snapshot().unwrap();
+    assert!(disabled.agents[0].status == ProcessStatus::Running);
+    assert!(!disabled.agents[0].enabled);
     assert!(controller.running_settings().unwrap().is_empty());
+    controller.shutdown().unwrap();
+    assert!(controller.running_settings().unwrap().is_empty());
+}
+
+#[test]
+fn restart_comparison_ignores_overridden_selectors_without_exposing_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = agent(dir.path());
+    a.harness.command = "/usr/local/bin/goose".into();
+    a.harness.model.clear();
+    a.harness.provider.clear();
+    a.environment
+        .insert("GOOSE_MODEL".into(), "secret-model".into());
+    a.environment
+        .insert("GOOSE_PROVIDER".into(), "secret-provider".into());
+    let defaults = |model: &str, provider: &str| crate::agent_defaults::AgentDefaults {
+        harness: "goose".into(),
+        provider: provider.into(),
+        model: model.into(),
+        ..Default::default()
+    };
+    let first = crate::restart::spawn_config(&crate::agent_defaults::effective(
+        &a,
+        &defaults("global-one", "provider-one"),
+    ));
+    let second = crate::restart::spawn_config(&crate::agent_defaults::effective(
+        &a,
+        &defaults("global-two", "provider-two"),
+    ));
+    assert_eq!(
+        first, second,
+        "overridden global selectors must not restart"
+    );
+    assert!(crate::restart::diff(&first, &second).is_empty());
+    a.environment
+        .insert("GOOSE_MODEL".into(), "other-secret".into());
+    let changed = crate::restart::spawn_config(&crate::agent_defaults::effective(
+        &a,
+        &defaults("global-two", "provider-two"),
+    ));
+    let diff = serde_json::to_string(&crate::restart::diff(&first, &changed)).unwrap();
+    assert!(diff.contains("GOOSE_MODEL"));
+    assert!(!diff.contains("secret-model") && !diff.contains("other-secret"));
+}
+
+#[test]
+fn databricks_environment_override_is_not_projected_as_a_restart_selector() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = agent(dir.path());
+    a.harness.provider = "databricks_v2".into();
+    a.harness.model.clear();
+    a.environment
+        .insert("DATABRICKS_MODEL".into(), "secret-model".into());
+    a.environment
+        .insert("DATABRICKS_HOST".into(), "https://private.example".into());
+    a.harness.databricks = Some(crate::connection::DatabricksSettings {
+        host: "https://old.example".into(),
+        filter: String::new(),
+    });
+    let first = crate::restart::spawn_config(&a);
+    let matching_default = crate::agent_defaults::AgentDefaults {
+        harness: "buzz-agent".into(),
+        model: "secret-model".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        first,
+        crate::restart::spawn_config(&crate::agent_defaults::effective(&a, &matching_default)),
+        "setting the same model must not restart even if the source changes"
+    );
+    a.harness.databricks.as_mut().unwrap().host = "https://new.example".into();
+    let second = crate::restart::spawn_config(&a);
+    assert_eq!(first, second, "env overrides the saved workspace host");
+    a.environment
+        .insert("DATABRICKS_MODEL".into(), "new-secret".into());
+    let third = crate::restart::spawn_config(&a);
+    let entries = crate::restart::diff(&first, &third);
+    assert!(matches!(
+        entries.iter().find(|e| e.field == "model").unwrap().change,
+        crate::restart::RestartChange::Masked { .. }
+    ));
+    let wire = serde_json::to_string(&entries).unwrap();
+    assert!(wire.contains("DATABRICKS_MODEL"));
+    assert!(!wire.contains("secret-model") && !wire.contains("new-secret"));
 }

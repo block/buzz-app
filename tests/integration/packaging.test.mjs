@@ -155,5 +155,4 @@ test("candidate builds cannot reach publisher or macOS signing and use read-only
     );
     assert.ok(!JSON.stringify(job).includes("secrets."));
   }
-  assert.equal(workflow.jobs.linux.env.NO_STRIP, "1");
 });

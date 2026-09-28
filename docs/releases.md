@@ -57,8 +57,8 @@ installed runtime manifest and each tool's hash, without launching the app.
 Linux reuses old Buzz's Ubuntu 24.04 recipe and guarded Wayland/GStreamer AppImage
 repair from `block/buzz` tag `desktop-v0.5.25`. Repacking tools and the type2 runtime
 are checksum-pinned. Resource binaries must retain their manifest hashes; the
-build disables linuxdeploy stripping and verifies both extracted package payloads
-after repacking. Compatibility guards fail rather than silently omitting a fix.
+repair restores the verified original tools after linuxdeploy rewrites ELF RPATHs,
+then the workflow verifies both extracted package payloads after repacking. Compatibility guards fail rather than silently omitting a fix.
 AppImage still relies on host desktop/media libraries; this is not a promise of
 universal distro compatibility. Neither candidate job writes shared build caches.
 

@@ -140,6 +140,7 @@ function setup(
 }
 describe("device-local startup", () => {
   let pagedRosters: RelayEvent[];
+  let capacityRosters: readonly RelayEvent[];
   beforeAll(() => {
     // Alpha is confirmed on page one; the 501st membership requires a continuation.
     pagedRosters = [
@@ -148,6 +149,10 @@ describe("device-local startup", () => {
         roster(relay, `channel-${index}`, [viewer.pubkey]),
       ).sort((a, b) => a.id.localeCompare(b.id)),
     ];
+    // Cached alpha plus these rosters exceeds the 1,024-entry retention cap.
+    capacityRosters = Array.from({ length: 1024 }, (_, i) =>
+      roster(relay, `other-${i}`, [viewer.pubkey]),
+    ).sort((a, b) => a.id.localeCompare(b.id));
   });
 
   it.each(["roster failure", "roster cancellation", "metadata failure"])(
@@ -528,9 +533,6 @@ describe("device-local startup", () => {
       channels.ensureList();
       await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
       const exact = deferred<RelayEvent[]>();
-      const others = Array.from({ length: 1024 }, (_, i) =>
-        roster(relay, `other-${i}`, [viewer.pubkey]),
-      ).sort((a, b) => a.id.localeCompare(b.id));
       query.mockImplementation(async (filters) => {
         if (
           filters.some(
@@ -540,7 +542,7 @@ describe("device-local startup", () => {
           return exact.promise;
         const rosterFilter = filters.find((f) => f.kinds?.includes(39002));
         if (rosterFilter)
-          return others
+          return capacityRosters
             .filter(
               (event) =>
                 !rosterFilter.before_id || event.id > rosterFilter.before_id,
@@ -550,7 +552,7 @@ describe("device-local startup", () => {
           return head("fresh");
         return [];
       });
-      membership.resolve(others.slice(0, 500));
+      membership.resolve(capacityRosters.slice(0, 500));
       await vi.waitFor(() =>
         expect(owner.session.live.snapshot().roster.state).toBe("verified"),
       );

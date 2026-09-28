@@ -194,7 +194,7 @@ mod unix {
             self.stream.get_mut().write_all(&bytes).await.map_err(|_| {
                 ModelError::new(
                     "unavailable",
-                    "Codex transport closed. Check the adapter installation and configuration.",
+                    "Codex exited before responding. Check its configuration and login.",
                 )
             })?;
             for _ in 0..128 {

@@ -66,13 +66,13 @@ test("status badges keep avatar sizes and show a clear cutout in both modes", as
     for (const [status, color] of Object.entries(
       mode === "light"
         ? {
-            online: "rgb(33, 131, 88)",
-            away: "rgb(171, 100, 0)",
+            online: "rgb(43, 154, 102)",
+            away: "rgb(255, 186, 24)",
             offline: "rgb(128, 128, 128)",
           }
         : {
-            online: "rgb(61, 214, 140)",
-            away: "rgb(255, 202, 22)",
+            online: "rgb(51, 176, 116)",
+            away: "rgb(255, 214, 10)",
             offline: "rgb(164, 164, 164)",
           },
     )) {

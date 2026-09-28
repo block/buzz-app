@@ -9,7 +9,7 @@ export async function pageChoices(page) {
 
 export async function openPage(page, name) {
   const choices = await pageChoices(page);
-  await choices.getByRole("option", { name, exact: true }).click();
+  await choices.getByRole("option", { name, exact: true }).press("Enter");
   await expect(
     page.getByRole("dialog", { name: "Search Buzz", exact: true }),
   ).not.toBeVisible();

@@ -1,4 +1,5 @@
 import { connectBrokerTransport } from "../relay/transport";
+import type { RelaySession } from "../relay/session";
 import type { PersonalProfile } from "./service";
 export type CommunityInfo = {
   name?: string;
@@ -35,16 +36,21 @@ export async function communityRequest<T>(
     );
   return result as T;
 }
-export async function inspectProfile(id: string) {
-  const transport = await connectBrokerTransport(
-    "",
-    AbortSignal.timeout(12000),
-    id,
-  );
-  const events = await transport.query(
-    [{ kinds: [0], authors: [transport.viewer], limit: 5 }],
-    AbortSignal.timeout(12000),
-  );
+export async function inspectProfile(id: string, session?: RelaySession) {
+  // Existing-community editors use the captured session so confirmed reads also
+  // update its shared profile directory. Joining still uses the broker directly.
+  const transport =
+    session ??
+    (await connectBrokerTransport("", AbortSignal.timeout(12000), id));
+  if (!transport.viewer) throw new Error("Profile identity is unavailable");
+  const filters = [{ kinds: [0], authors: [transport.viewer], limit: 5 }];
+  const events =
+    "read" in transport
+      ? await transport.read(filters, {
+          signal: AbortSignal.timeout(12000),
+          fresh: true,
+        })
+      : await transport.query(filters, AbortSignal.timeout(12000));
   const event = events
     .filter((e) => e.kind === 0 && e.pubkey === transport.viewer)
     .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0];
@@ -56,6 +62,7 @@ export async function inspectProfile(id: string) {
   const profile: PersonalProfile = {
     name: String(existing.display_name ?? existing.name ?? ""),
     picture: typeof existing.picture === "string" ? existing.picture : "",
+    about: typeof existing.about === "string" ? existing.about : "",
   };
   return { existing, profile, exists: !!event };
 }

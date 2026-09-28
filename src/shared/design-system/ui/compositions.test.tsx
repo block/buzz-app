@@ -310,3 +310,58 @@ test("stable dialog height is opt-in and can return to content sizing", () => {
   rerender(renderDialog());
   expect(screen.getByRole("dialog")).toHaveAttribute("data-height", "content");
 });
+
+test("dialog composition keeps actions accessible and lets an inner layer consume Escape", async () => {
+  const user = userEvent.setup();
+  const change = vi.fn();
+  const interceptEscape = vi
+    .fn()
+    .mockReturnValueOnce(true)
+    .mockReturnValue(false);
+  render(
+    <Dialog
+      open
+      title="Editor"
+      onOpenChange={change}
+      onEscape={interceptEscape}
+      headerActions={<Button>Editor menu</Button>}
+      leadingActions={<Button>Change view</Button>}
+      actions={<Button>Save</Button>}
+    >
+      <Field label="Name">
+        <Input />
+      </Field>
+    </Dialog>,
+  );
+  for (const name of ["Editor menu", "Change view", "Save", "Close"])
+    expect(screen.getByRole("button", { name })).toBeVisible();
+  await user.click(screen.getByRole("textbox", { name: "Name" }));
+  await user.keyboard("{Escape}");
+  expect(interceptEscape).toHaveBeenCalledTimes(1);
+  expect(change).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(change).toHaveBeenCalledWith(false);
+});
+
+test("a nested right dialog renders its own dismissal backdrop", () => {
+  render(
+    <Dialog open title="Editor" onOpenChange={() => {}}>
+      <Dialog
+        open
+        placement="right"
+        dismissOnOutsideClick
+        title="Inspector"
+        onOpenChange={() => {}}
+      >
+        <Button>Inspect</Button>
+      </Dialog>
+    </Dialog>,
+  );
+  expect(screen.getByRole("dialog", { name: "Inspector" })).toHaveAttribute(
+    "data-placement",
+    "right",
+  );
+  expect(
+    document.querySelector('.buzz-dialog-backdrop[data-placement="right"]'),
+  ).not.toBeNull();
+});

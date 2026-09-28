@@ -1,6 +1,21 @@
+import { openPage, pageChoices } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 test.use({ pluginFixtures: true, historyCounts: { alpha: 1, beta: 0 } });
+
+async function expectPageChoice(page, name, count) {
+  const choices = await pageChoices(page);
+  await expect(
+    choices.getByRole("option", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  await expect(choices.getByRole("option", { name, exact: true })).toHaveCount(
+    count,
+  );
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),
+  ).toHaveCount(0);
+}
 
 // Regressions from the independent review, exercised through production composition.
 test("cold destination waits for its enabled provider to activate", async ({
@@ -31,18 +46,14 @@ test("cold destination waits for its enabled provider to activate", async ({
         page.evaluate(() => window.fixtureNavigation?.snapshot().status),
       )
       .toBe("opening");
-    const launcher = page.getByRole("button", {
-      name: "Delayed fixture",
-      exact: true,
-    });
     const destination = page.getByText("Delayed destination presented", {
       exact: true,
     });
-    await expect(launcher).toHaveCount(0);
+    await expectPageChoice(page, "Delayed fixture", 0);
     await expect(destination).toHaveCount(0);
     await page.evaluate(() => window.delayFixture.release());
-    await expect(launcher.first()).toBeVisible();
     await expect(destination).toBeVisible();
+    await expectPageChoice(page, "Delayed fixture", 1);
     await expect
       .poll(() =>
         page.evaluate(() => window.fixtureNavigation.snapshot().status),
@@ -70,9 +81,7 @@ test("Messages default resolution returns opened to cold and warm callers withou
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Messages", exact: true }).first(),
-  ).toBeVisible();
+  await expectPageChoice(page, "Messages", 1);
   for (const mode of ["cold", "warm"]) {
     const result = await page.evaluate(async () => {
       const nav = window.fixtureNavigation;
@@ -103,12 +112,11 @@ test("native Alt arrows preserve composer editing; deliberate history shortcuts 
   app,
 }) => {
   await open(page, app);
-  const nav = page.getByRole("navigation", { name: "Pages", exact: true });
-  await nav.getByRole("button", { name: "Projects", exact: true }).click();
+  await openPage(page, "Projects");
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
-  await nav.getByRole("button", { name: "Messages", exact: true }).click();
+  await openPage(page, "Messages");
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,

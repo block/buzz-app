@@ -20,6 +20,8 @@ export type ChannelSummary = Readonly<{
   lastActivityAt?: number | undefined;
   /** Readable public nonmember channel; not part of the joined roster. */
   readOnly?: true;
+  /** Downloaded membership is display-only pending current relay confirmation. */
+  cached?: true;
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
@@ -74,8 +76,10 @@ export type ChannelMessage = Readonly<{
   delivery?: Delivery | undefined;
   deliveryError?: string | undefined;
   authorId: string;
-  /** Unix seconds from the signed event. Ordering is (createdAt asc, id desc); no clock inference. */
+  /** Unix seconds from the signed event. */
   createdAt: number;
+  /** Effective send ms (valid `ms` tag, else createdAt * 1000); ordered by `compareMessages`. */
+  createdAtMs?: number;
   content: string;
   /** Unprojected current body when attachment presentation removed Markdown. */
   sourceContent?: string;
@@ -96,6 +100,8 @@ export type ChannelMessage = Readonly<{
   attachmentContentRemoved?: true;
   /** Pubkeys named by signed `p` tags. Identity never comes from prose. */
   mentions: readonly string[];
+  /** Signed two-field mention tags bind display only; never notification recipients. */
+  mentionReferences?: readonly string[];
   /** Authorized edit supplying current imeta; absent when sourced from the original. */
   attachmentSourceId?: string;
   attachments: readonly Attachment[];

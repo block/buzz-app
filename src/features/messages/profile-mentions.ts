@@ -8,16 +8,21 @@ type Part = { text: string; target?: string | undefined };
 export function profileMentionParts(
   row: Pick<
     ChannelMessage,
-    "content" | "edited" | "attachmentContentRemoved" | "mentions"
+    | "content"
+    | "edited"
+    | "attachmentContentRemoved"
+    | "mentions"
+    | "mentionReferences"
   >,
   profiles: ReadonlyMap<string, Profile> | undefined,
   agents: AgentLibrary["identities"] = [],
 ): Part[] {
   const text = row.content;
-  if (row.edited || row.attachmentContentRemoved || !row.mentions.length)
+  const identities = [...row.mentions, ...(row.mentionReferences ?? [])];
+  if (row.edited || row.attachmentContentRemoved || !identities.length)
     return [{ text }];
   const names = new Map<string, Set<string>>();
-  for (const id of new Set(row.mentions)) {
+  for (const id of new Set(identities)) {
     const target = profileTarget(id);
     if (!target) continue;
     const labels = [

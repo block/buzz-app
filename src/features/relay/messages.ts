@@ -1,7 +1,20 @@
 import { attachmentMessage, type UploadedAttachment } from "./attachments";
 import { validReactionContent, type CustomEmoji } from "./emoji";
+import type { EventTemplate } from "nostr-tools";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
+
+/** NIP-56 types accepted by the Buzz relay for message reports. */
+export const REPORT_TYPES = [
+  "spam",
+  "profanity",
+  "nudity",
+  "impersonation",
+  "malware",
+  "illegal",
+  "other",
+] as const;
+export type ReportType = (typeof REPORT_TYPES)[number];
 
 /** Domain convenience only. Delivery and read reconciliation remain session-owned. */
 export function createMessages(
@@ -12,6 +25,8 @@ export function createMessages(
   validateMentions: (channelId: string, pubkeys: readonly string[]) => void,
   canParticipate: (channelId: string) => boolean = () => true,
   relayOrigin?: string,
+  /** Resolves on relay OK. Reports are never echoed, so they bypass the outbox. */
+  publishReport?: (template: EventTemplate) => Promise<void>,
 ) {
   const writer = (kind: number, channelId: string) => {
     if (!canParticipate(channelId))
@@ -35,6 +50,14 @@ export function createMessages(
     validateMentions(channelId, unique);
     return unique.map((key) => ["p", key]);
   };
+  const referenceTags = (pubkeys: readonly string[]) => {
+    if (
+      pubkeys.length > 32 ||
+      pubkeys.some((key) => !/^[0-9a-f]{64}$/.test(key))
+    )
+      throw new Error("Choose at most 32 valid mention references");
+    return [...new Set(pubkeys)].map((key) => ["mention", key]);
+  };
   return Object.freeze({
     send(
       channelId: string,
@@ -42,6 +65,7 @@ export function createMessages(
       mentions: readonly string[] = [],
       attachments: readonly UploadedAttachment[] = [],
       recovery?: OutboxRecovery,
+      references: readonly string[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
@@ -52,6 +76,7 @@ export function createMessages(
           tags: [
             ["h", channelId],
             ...mentionTags(channelId, mentions),
+            ...referenceTags(references),
             ...emojiTags(content),
             ...message.tags,
           ],
@@ -66,6 +91,7 @@ export function createMessages(
       mentions: readonly string[] = [],
       attachments: readonly UploadedAttachment[] = [],
       parentId: string = rootId,
+      references: readonly string[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
@@ -81,6 +107,7 @@ export function createMessages(
           ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
           ["e", parentId, "", "reply"],
           ...mentionTags(channelId, mentions),
+          ...referenceTags(references),
           ...emojiTags(content),
           ...message.tags,
         ],
@@ -181,6 +208,27 @@ export function createMessages(
         ],
       });
     },
+    /** Undefined when this connection cannot publish reports. */
+    report: publishReport
+      ? (messageId: string, type: ReportType, note = "") => {
+          const original = find(messageId);
+          if (!original || ![9, 40002, 40008].includes(original.kind))
+            return Promise.reject(
+              new Error("Load the message before reporting it"),
+            );
+          if (!REPORT_TYPES.includes(type))
+            return Promise.reject(new Error("Choose a report reason"));
+          return publishReport({
+            kind: 1984,
+            content: note.trim(),
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [
+              ["p", original.pubkey],
+              ["e", messageId, type],
+            ],
+          });
+        }
+      : undefined,
     reactionTarget(event: Pick<EventData, "kind" | "tags">) {
       const target = event.tags.find(([name]) => name === "e")?.[1];
       if (event.kind === 7) return target;

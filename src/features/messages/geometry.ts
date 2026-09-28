@@ -53,7 +53,11 @@ export const geometrySignature = (
       }
       const ids = event.membership
         ? [event.membership.actor, event.membership.target]
-        : [event.authorId, ...event.mentions];
+        : [
+            event.authorId,
+            ...event.mentions,
+            ...(event.mentionReferences ?? []),
+          ];
       const names = resolveName
         ? ids.map((id) => resolveName(id, profiles.get(id)?.name ?? id))
         : [];

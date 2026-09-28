@@ -12,6 +12,7 @@ export function matchCompletion(
   providers: readonly Contribution<ComposerCompletion>[],
   observation: ComposerObservation,
   context: CompletionContext,
+  resolved: readonly Readonly<{ start: number; end: number }>[] = [],
 ) {
   const order = (value: ComposerCompletion) =>
     Number.isFinite(value.order) ? (value.order ?? 0) : 0;
@@ -25,8 +26,12 @@ export function matchCompletion(
       const query = provider.match(observation, context);
       // A later trigger owns the caret over a broad earlier query (e.g.
       // @Mary Jane :smile). Order/key resolve providers claiming the same start.
+      // A trigger inside a resolved chip is not an open query.
       if (
         validQuery(query, observation) &&
+        !resolved.some(
+          (span) => span.start <= query.start && query.start < span.end,
+        ) &&
         (!winner || query.start > winner.query.start)
       )
         winner = {
@@ -94,6 +99,12 @@ export function completionResult(result: CompletionResult): CompletionResult {
         label: item.label,
         ...(typeof item.detail === "string" ? { detail: item.detail } : {}),
         preview: item.preview,
+        ...(typeof item.disabled === "string"
+          ? { disabled: item.disabled }
+          : {}),
+        ...(typeof item.canSelect === "function"
+          ? { canSelect: item.canSelect }
+          : {}),
         edit: Object.freeze(
           "mention" in edit
             ? { mention: Object.freeze({ ...edit.mention }) }
@@ -104,6 +115,9 @@ export function completionResult(result: CompletionResult): CompletionResult {
   }
   return Object.freeze({
     items: Object.freeze(items),
+    ...(typeof result.spaceId === "string" && ids.has(result.spaceId)
+      ? { spaceId: result.spaceId }
+      : {}),
     ...(typeof result.status === "string" ? { status: result.status } : {}),
     ...(typeof result.retry === "function" ? { retry: result.retry } : {}),
   });

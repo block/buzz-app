@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -46,11 +47,12 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   );
   await expect(menu.getByRole("menuitem")).toHaveText([
     "New session",
+    "Move channel",
     "Mute",
     "Mark as Read",
     "Retry channel permissions",
   ]);
-  await expect(menu.getByRole("separator")).toHaveCount(2);
+  await expect(menu.getByRole("separator")).toHaveCount(3);
   for (const name of ["Mute", "Mark as Read"]) {
     await expect(
       menu
@@ -113,7 +115,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.keyboard.press("Escape");
   await page.unroute("**/sidebar-mute");
   // The persistent sidebar keeps retry UI and actions usable outside Messages.
-  await page.getByRole("button", { name: "Projects", exact: true }).click();
+  await openPage(page, "Projects");
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
@@ -159,11 +161,9 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
       { timeout: 12000 },
     )
     .toBe(true);
+  await readStateSettled(page);
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await beta.click({ button: "right" });
   await expect(
     menu.getByRole("menuitem", { name: "Unmute", exact: true }),
@@ -201,10 +201,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await Promise.all([preferences.ready, reads.ready]);
   try {
     await page.reload();
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Messages");
     await Promise.all([preferences.started, reads.started]);
     await expect(localMark).toBeVisible();
     await expect(beta).toContainText("Beta");
@@ -218,7 +215,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     preferences.release();
     await expect(
       sidebar
-        .locator("details")
+        .locator("[data-sidebar-section]")
         .filter({ has: page.locator("summary", { hasText: "Work" }) })
         .locator('[data-channel-id="beta"]'),
     ).toBeVisible();
@@ -260,16 +257,18 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
       coordinate: "channel-mutes",
       blob: { channels: { beta: { muted: false } } },
     });
+  await readStateSettled(page);
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await beta.click({ button: "right" });
   await expect(
     menu.getByRole("menuitem", { name: "Mute", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+  // A click in the same instant as Escape can be lost while the row menu
+  // dismisses. Open the next menu only after this one has closed.
+  await expect(menu).toHaveCount(0);
+  await expect(beta).toBeFocused();
   // Removing session entry preserves attention and lifecycle groups; only the
   // separator between those remaining groups survives.
   const toggleSessions = async (enabled) => {
@@ -291,11 +290,12 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await toggleSessions(false);
   await beta.click({ button: "right" });
   await expect(menu.getByRole("menuitem")).toHaveText([
+    "Move channel",
     "Mute",
     "Mark as Unread",
     "Retry channel permissions",
   ]);
-  await expect(menu.getByRole("separator")).toHaveCount(1);
+  await expect(menu.getByRole("separator")).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();
@@ -311,6 +311,38 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   ).toBeFocused();
   expect(app.report.unexpected).toEqual([]);
 });
+
+// A relay publication is not the end of read-state work: the app still reads
+// its own write back and decodes it. WebKit reports a decode cut off by reload
+// as a page error, so reload only after the saved journal records acceptance.
+async function readStateSettled(page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          new Promise((resolve, reject) => {
+            const request = indexedDB.open("buzz-read-state-v1", 1);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+              const db = request.result;
+              const tx = db.transaction("partitions", "readonly");
+              const read = tx.objectStore("partitions").getAll();
+              read.onsuccess = () => {
+                const journal = read.result[0];
+                resolve(
+                  !!journal &&
+                    !journal.pending &&
+                    journal.acceptedRevision >= journal.revision,
+                );
+              };
+              read.onerror = () => reject(read.error);
+              tx.oncomplete = () => db.close();
+            };
+          }),
+      ),
+    )
+    .toBe(true);
+}
 
 function holdResponse(page, pattern) {
   let release, started;

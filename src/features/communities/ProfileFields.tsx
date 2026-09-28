@@ -1,11 +1,24 @@
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
+import { AvatarEditor } from "../profiles/AvatarEditor";
+import { avatarPictureError } from "../profiles/avatar-upload";
 import type { PersonalProfile } from "./service";
+import { PROFILE_ABOUT_MAX_LENGTH } from "./service";
+import { Textarea } from "../../shared/design-system/ui/Textarea";
+
+export function profilesEqual(left: PersonalProfile, right: PersonalProfile) {
+  return (
+    left.name === right.name &&
+    left.picture === right.picture &&
+    (left.about ?? "") === (right.about ?? "")
+  );
+}
 
 export function canSaveProfile(profile: PersonalProfile) {
   return (
     !!profile.name.trim() &&
-    (!profile.picture || profile.picture.startsWith("https://"))
+    !avatarPictureError(profile.picture) &&
+    (profile.about?.length ?? 0) <= PROFILE_ABOUT_MAX_LENGTH
   );
 }
 
@@ -13,13 +26,29 @@ export function ProfileFields({
   profile,
   onChange,
   disabled = false,
+  community,
+  onBusyChange,
+  showAvatar = true,
 }: {
   profile: PersonalProfile;
   onChange(profile: PersonalProfile): void;
   disabled?: boolean;
+  community?: string | undefined;
+  onBusyChange?(busy: boolean): void;
+  showAvatar?: boolean;
 }) {
   return (
     <div className="grid gap-4">
+      {showAvatar && (
+        <AvatarEditor
+          value={profile.picture}
+          name={profile.name}
+          community={community}
+          disabled={disabled}
+          onBusyChange={onBusyChange}
+          onChange={(picture) => onChange({ ...profile, picture })}
+        />
+      )}
       <Field label="Display name">
         <Input
           autoComplete="nickname"
@@ -32,15 +61,21 @@ export function ProfileFields({
           }
         />
       </Field>
-      <Field label="Picture URL (optional)">
-        <Input
-          type="url"
-          placeholder="https://…"
+      <Field
+        label="Profile description (optional)"
+        description={`${profile.about?.length ?? 0} of ${PROFILE_ABOUT_MAX_LENGTH} characters`}
+        error={
+          (profile.about?.length ?? 0) > PROFILE_ABOUT_MAX_LENGTH
+            ? `Shorten the description to ${PROFILE_ABOUT_MAX_LENGTH} characters before saving.`
+            : undefined
+        }
+      >
+        <Textarea
+          rows={3}
           disabled={disabled}
-          value={profile.picture}
-          maxLength={2048}
+          value={profile.about ?? ""}
           onChange={(event) =>
-            onChange({ ...profile, picture: event.target.value })
+            onChange({ ...profile, about: event.target.value })
           }
         />
       </Field>

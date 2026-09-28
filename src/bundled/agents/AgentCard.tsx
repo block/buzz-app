@@ -1,12 +1,15 @@
-import { useRef, type ReactNode } from "react";
+import { npubEncode } from "nostr-tools/nip19";
+import { Fragment, useRef, type ReactNode } from "react";
 import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
   MenuItem,
   MenuNote,
+  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
+import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import {
   DotsThreeIcon,
   UsersIcon,
@@ -15,6 +18,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { avatarSource } from "../../shared/avatar-source";
+import { usePresenceStatus } from "../../features/presence/react";
 import type { AgentLibrary } from "../../features/agents/library";
 import type { AgentView } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
@@ -26,6 +30,8 @@ export function AgentCard({
   session,
   editable = [],
   onEdit,
+  onDuplicate,
+  onDelete,
   children,
   identityLabel = (identity) => identity.name,
 }: {
@@ -37,14 +43,28 @@ export function AgentCard({
   session?: RelaySession;
   editable?: AgentView[];
   onEdit?: ((agent: AgentView, avatar?: string) => void) | undefined;
+  onDuplicate?: ((agent: AgentView) => void) | undefined;
+  onDelete?: ((agent: AgentView) => void) | undefined;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
-  const source = avatarSource(avatar);
-  const picture = source?.startsWith("data:")
-    ? source
-    : source
-      ? session?.media(source, "small")
-      : undefined;
+  const presence = usePresenceStatus(
+    session?.presence,
+    identities.length === 1 ? identities[0]?.pubkey : undefined,
+  );
+  const managed = editable.length === 1 ? editable[0] : undefined;
+  const source = avatarSource(managed?.picture ?? avatar);
+  const managedPicture = useAvatarPreview(
+    managed?.picture ?? "",
+    managed?.relayUrl,
+  );
+  const picture =
+    managed?.picture != null
+      ? managedPicture
+      : source?.startsWith("data:")
+        ? source
+        : source
+          ? session?.media(source, "small")
+          : undefined;
   return (
     <article
       aria-label={`Agent ${name}`}
@@ -66,32 +86,61 @@ export function AgentCard({
             <MenuPopup align="end" size="wide">
               {editable.length ? (
                 editable.map((agent) => (
-                  <MenuItem
-                    key={agent.id}
-                    onClick={() => {
-                      // The menu item unmounts; return from the dialog to the card.
-                      trigger.current?.focus();
-                      onEdit(agent, picture);
-                    }}
-                  >
-                    {editable.length === 1 ? (
-                      "Edit"
-                    ) : (
-                      <ChoiceRow
-                        label={`Edit ${identityLabel(agent)}`}
-                        description={
-                          <>
-                            <span className="block break-all text-body-sm text-secondary">
-                              {agent.relayUrl}
-                            </span>
-                            <span className="block break-all text-mono-sm text-secondary">
-                              {agent.pubkey}
-                            </span>
-                          </>
-                        }
-                      />
+                  <Fragment key={agent.id}>
+                    <MenuItem
+                      onClick={() => {
+                        // The menu item unmounts; return from the dialog to the card.
+                        trigger.current?.focus();
+                        onEdit(agent, source);
+                      }}
+                    >
+                      {editable.length === 1 ? (
+                        "Edit"
+                      ) : (
+                        <ChoiceRow
+                          label={`Edit ${identityLabel(agent)}`}
+                          description={
+                            <>
+                              <span className="block break-all text-body-sm text-secondary">
+                                {agent.relayUrl}
+                              </span>
+                              <span className="block break-all text-mono-sm text-secondary">
+                                {npubEncode(agent.pubkey)}
+                              </span>
+                            </>
+                          }
+                        />
+                      )}
+                    </MenuItem>
+                    {onDuplicate && (
+                      <MenuItem
+                        onClick={() => {
+                          trigger.current?.focus();
+                          onDuplicate(agent);
+                        }}
+                      >
+                        {editable.length === 1
+                          ? "Duplicate"
+                          : `Duplicate ${identityLabel(agent)}`}
+                      </MenuItem>
                     )}
-                  </MenuItem>
+                    {onDelete && (
+                      <>
+                        <MenuSeparator />
+                        <MenuItem
+                          tone="danger"
+                          onClick={() => {
+                            trigger.current?.focus();
+                            onDelete(agent);
+                          }}
+                        >
+                          {editable.length === 1
+                            ? "Delete"
+                            : `Delete ${identityLabel(agent)}`}
+                        </MenuItem>
+                      </>
+                    )}
+                  </Fragment>
                 ))
               ) : (
                 <>
@@ -127,6 +176,7 @@ export function AgentCard({
             src={picture ?? null}
             size="large"
             shape="squircle"
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         </div>
         <h3 className="m-0 min-w-0 truncate text-label" title={name}>
@@ -155,7 +205,7 @@ export function AgentCard({
                         {identityLabel(identity)}
                       </span>
                       <p className="m-0 mt-1 select-all break-all text-mono-sm">
-                        {identity.pubkey}
+                        {npubEncode(identity.pubkey)}
                       </p>
                     </li>
                   ))}

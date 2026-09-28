@@ -27,9 +27,15 @@ the app-owned sidebar or session data.
 
 The broker uses the existing authorized Buzz identity in the OS secret store (macOS
 Keychain, Linux secret service) and
-signs authenticated reads and channel messages in Node. No private key reaches browser JavaScript; there is
-a bounded message-signing and publishing endpoint. The broker is restricted to loopback hosts, same-origin
-POSTs, valid Nostr kinds/event IDs, and bounded filters. Without a configured `BUZZ_DEV_VIEWER` pin, the shell and Messages empty state remain available, while the live identity/join flow explains that it needs the development broker. Packaged builds do not include the development broker.
+signs authenticated reads and channel messages in Node. In this broker mode no
+private key reaches browser JavaScript; there is a bounded message-signing and
+publishing endpoint. The broker is restricted to loopback hosts, same-origin
+POSTs, valid Nostr kinds/event IDs, and bounded filters. Without a configured
+`BUZZ_DEV_VIEWER` pin, native macOS offers [identity setup](identity.md); web and
+unsupported native platforms retain the unavailable shell. The separate native
+import/reveal/copy UI deliberately passes private strings through JavaScript.
+Packaged builds do not include the development broker. A saved native identity
+does not enable relay access: join and community profile editing stay unavailable.
 The broker supports explicitly scoped typed relay origins;
 see [destination routing and trust limits](communities.md#development-broker-boundary).
 This is not a new native login.
@@ -77,7 +83,8 @@ good snapshot through loading/errors. Page exits neither restart nor cancel that
 read. Cache clearing and session disposal cancel it and discard decoded data;
 late completion cannot repopulate a retired snapshot. These are account-owned
 preferences, not channel access grants: sidebar sections still intersect the
-authorized roster. There is no new disk cache or automatic cross-device sync.
+authorized roster. Local-first launch also restores a display-only copy from the
+existing account/relay-scoped device store; this does not add automatic cross-device sync.
 
 The browser/development host exposes one narrow **Mute/Unmute** command. It
 re-reads the viewer's signed encrypted `channel-mutes` coordinate, changes only the
@@ -89,7 +96,7 @@ survive. Invalid, unreadable, or over-budget heads fail closed; only a successfu
 can seed a record. Same-host writes serialize per relay. This is confirmed
 whole-record replacement, not atomic cross-device merging or a durable outbox;
 simultaneous writers on different hosts can still race. Failure requires explicit
-retry. No group/star mutation or alternate menu implementation is included;
+retry. Group/star writes use their separate narrow commands;
 [section sorting](#sidebar-sort-persistence) uses its separate preference coordinate.
 
 Rows expose mute/read actions through right-click/long-press, Shift+F10, or the
@@ -112,6 +119,16 @@ for explicit retry. Focus resolves the current row by identity even if saved
 preferences relocated it during the transaction. Read actions require
 `frontier-sync`; hosts lacking mute writes keep read-only preference projection.
 Packaged hosts gain no speculative native preference writer.
+
+Move channel, Create new, exclusive Starred placement and startup presentation also
+belong to this persistent sidebar. The session serializes placement, sort and mute
+writes through one queue, retaining one confirmed preferences snapshot beneath
+pending Move and Sort projections. Each confirmation updates only its owned fields
+before reapplying pending intent; failure cannot roll back unrelated confirmed
+state. Field-only confirmations cannot recover a failed full preference read or
+hide its Retry. Move stays gated until that read succeeds. Mute optimism remains
+presentation-only; notification policy continues to use confirmed mutes. This
+composition does not change the whole-record cross-device limitation below.
 
 Collapsed section keys and sidebar scroll remain separate, scoped view intent.
 They survive page switches in the same mounted sidebar, are saved when that
@@ -137,9 +154,20 @@ derive the saved group id separately from `group:<id>` rather than conflating it
 with rendered placement. Right-clicking the separate session disclosure remains
 outside the parent menu trigger, as do child-session rows.
 
-Sidebar create-channel dialogs and partial-setup recovery stay available on other
-pages. Completion is fenced to the originating relay session and navigates to a
-normal conversation destination. New-session intent uses the Channels version-1
+Sidebar create-channel dialogs stay available on other pages. Channel admission
+(creation plus verified viewer membership) is fenced to the originating relay
+session and navigates to a normal conversation destination. Remaining template
+setup continues in that session; failure produces a dismissible notice without
+navigating again. Frozen setup receipts and delivery evidence remain saved, but
+there is no template Resume or automatic startup continuation. An uncertain
+admission keeps the original form locked to its channel identity. **Retry channel**
+checks that creation first; if delivery remains unknown, an explicit click may
+republish only the exact saved Create event, with the same UUID and signature.
+It never continues template writes or retries in the background. Successful recovery opens that channel and reports
+any unfinished setup for manual inspection. Closing/reopening retains the attempt;
+after session replacement, unresolved ordinary creations (including pre-upgrade
+Outbox entries) restore for the same identity-preserving retry. Already-admitted partial
+setups do not occupy a new Create form. New-session intent uses the Channels version-1
 page route `{ kind: "new-session", parentId }`; Channels checks parent access/type
 and Sessions availability. Only parent intent, never draft text, enters history.
 Preparing-DM suppression captures the pre-open roster and exact member set, hiding
@@ -257,8 +285,9 @@ New session and the mute/read group. Lifecycle items use shared leading icons an
 a separator only when they resolve and earlier actions exist. Right-click
 and keyboard access reuse the existing row trigger; no ⋮ control or second popup
 is added. Session creation, attention actions and child-session navigation keep
-their existing owners; sessions do not receive lifecycle actions. This slice adds
-no Move/Star/grouping controls or shared-menu restyling.
+their existing owners; sessions do not receive lifecycle actions. Move/Star/grouping
+controls share this popup with independent eligibility; lifecycle actions do not
+change shared-menu styling.
 
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering
@@ -317,8 +346,9 @@ The port retains the prepared-store implementation and its behavior tests:
   deduplication. Hover/focus prepares at most one speculative head at a time;
   superseded hints do not form a backlog. That shared head keeps foreground
   priority so selection cannot inherit a host-side background wait. Discovery
-  restores authorized disk heads immediately after roster authorization, without
-  waiting for optional channel names, and does not fetch heads across the roster.
+  restores reverified disk heads against saved, display-only membership before
+  network authorization, without waiting for optional channel names, and does not
+  fetch heads across the roster.
   Verified heads save before optional profile enrichment; changed profiles can
   enrich the disk record afterward. Network reads belong to intent, selection and
   retained-window live catch-up. Optional profile enrichment stays background.
@@ -328,7 +358,9 @@ The port retains the prepared-store implementation and its behavior tests:
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Signature verification yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
-  expiry. Cached events are reverified only after fresh roster authorization.
+  expiry. Signed cached events are reverified before display. The same database
+  stores account/relay-scoped startup discovery and sidebar organization (a separate
+  8 MiB global budget); old version-1 head records survive the version-2 upgrade.
 - A 60-second head freshness lease; warm revisits reuse heads without new reads.
   Partial discovery never treats an omitted channel as a membership revocation.
   Explicit denial or signed membership removal invalidates private cached views.
@@ -338,6 +370,36 @@ The port retains the prepared-store implementation and its behavior tests:
 Connection generations and store epochs reject late results after disconnect,
 replacement, disposal, or access revocation. The data service outlives plugin
 components; it is disposed with the app runtime.
+
+## Local-first launch
+
+The selected community and conversation reuse the existing device view-state.
+The relay service restores a read-only session from the account/relay-scoped cache
+concurrently with the real connection handshake. Saved groups, stars and channel
+names are display data, not a confirmed preference mutation base. No cache means
+the ordinary cold connection flow; unavailable/corrupt storage never grants access.
+
+A cached roster can display previously downloaded, reverified history for up to
+24 hours. It cannot authorize head/history reads, unread evidence, typing or
+publishing. Unconfirmed membership is not resaved with a fresh lease. An identical
+or newer fresh signed roster promotes it; a complete roster omission or explicit
+denial purges both the view and the next-launch record. Partial roster reads do
+not prove absence. The live transport's relay identity remains authoritative.
+
+A failed or timed-out handshake retains usable saved content with Retry; browser
+online/visibility signals retry the connection. The successor restores its local
+read models and materializes retained windows before replacing the cached owner.
+The workspace generation stays stable for that promotion, so selection, the
+channel timeline DOM and its reading state survive. Ordinary reconnect, account
+or community changes still reset presentation lifetimes. Drafts remain scope-keyed.
+Cache clearing/disconnect/disposal fence pending restoration and connection results.
+
+`index.html` shows a centered Buzz mark on the synchronously selected light/dark
+background before React loads. This is a document launch surface, not a native
+pre-webview splash; the native window's initial paint remains separate.
+`tests/browser/startup.spec.mjs` exercises IndexedDB reload, held/failed handshake,
+in-place recovery, denial-by-omission and both document themes in Chromium/WebKit.
+`features/relay/startup.test.ts` covers signed-cache admission and authority boundaries.
 
 ## DM label recovery invariant
 

@@ -34,6 +34,35 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   const parent = panel
     .locator("[data-message-id]")
     .filter({ hasText: "Unread reply 0" });
+  const history = panel.getByRole("region", { name: "Thread messages" });
+  await expect(panel.locator('[data-depth="-1"]')).toHaveCount(0);
+  await expect(
+    panel.getByRole("button", { name: "Hide thread replies", exact: true }),
+  ).toHaveCount(0);
+  // Ordinary replies are direct siblings, not children of a collapsible panel.
+  await expect(
+    history.locator(":scope > ol > li").filter({
+      has: page
+        .locator("[data-message-id]")
+        .filter({ hasText: "Unread reply 0" }),
+    }),
+  ).toHaveCount(1);
+  const ordinaryGeometry = await parent.evaluate((node) => {
+    const item = node.closest("li");
+    const root = node
+      .closest('[aria-label="Thread messages"]')
+      .querySelector("[data-message-id]");
+    return {
+      rootLeft: root.getBoundingClientRect().left,
+      replyLeft: node.getBoundingClientRect().left,
+      connector: getComputedStyle(item, "::after").content,
+    };
+  });
+  expect(ordinaryGeometry.replyLeft).toBe(ordinaryGeometry.rootLeft);
+  expect(ordinaryGeometry.connector).toBe("none");
+  await panel.screenshot({
+    path: test.info().outputPath("ordinary-thread-replies.png"),
+  });
   await editor.fill("Nested browser reply");
   await parent.hover();
   await parent.getByRole("button", { name: "Reply", exact: true }).click();
@@ -215,9 +244,7 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     const geometry = await panel.evaluate((element) => {
       const history = element.querySelector('[aria-label="Thread messages"]');
       const rail = [
-        ...element.querySelectorAll(
-          'button[aria-label="Hide replies"], button[aria-label="Hide thread replies"]',
-        ),
+        ...element.querySelectorAll('button[aria-label="Hide replies"]'),
       ].find(
         (node) =>
           getComputedStyle(node).position === "absolute" &&
@@ -226,11 +253,17 @@ test("nested replies send, collapse, and reveal through links at readable panel 
       return {
         width: history.clientWidth,
         scroll: history.scrollWidth,
-        rail: rail.getBoundingClientRect().width,
+        rail: rail?.getBoundingClientRect().width,
       };
     });
     expect(geometry.scroll).toBeLessThanOrEqual(geometry.width + 1);
-    expect(geometry.rail).toBeGreaterThanOrEqual(24);
+    // At the narrowest cap all rails yield to per-row collapse controls.
+    if (geometry.rail !== undefined)
+      expect(geometry.rail).toBeGreaterThanOrEqual(24);
+    else
+      await expect(
+        parent.getByRole("button", { name: "Collapse this branch" }),
+      ).toBeVisible();
     const deepestBox = await deepest.boundingBox();
     expect(deepestBox.width).toBeGreaterThan(140);
     const capped = deepest.locator(
@@ -261,7 +294,7 @@ test("nested replies send, collapse, and reveal through links at readable panel 
         theme,
       );
       await expect(
-        panel.getByRole("button", { name: /^Hide (thread )?replies$/ }).last(),
+        panel.locator('button[aria-label="Hide replies"]').last(),
       ).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await panel.screenshot({
         path: test.info().outputPath(`nested-${width}-${theme}.png`),
@@ -269,19 +302,20 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     }
   }
   await page.setViewportSize({ width: 1440, height: 950 });
-  const collapseThread = panel.getByRole("button", {
-    name: "Hide thread replies",
-    exact: true,
-  });
-  await collapseThread.focus();
-  await collapseThread.press("Enter");
-  await expect(parent).toHaveCount(0);
-  const reopenThread = panel.getByRole("button", {
-    name: /^View thread replies:/,
-  });
-  await expect(reopenThread).toBeFocused();
-  await reopenThread.press("Enter");
+  const parentBranch = parent.locator("../..");
+  const collapseBranch = parentBranch
+    .getByRole("button", { name: "Hide replies", exact: true })
+    .first();
+  await collapseBranch.focus();
+  await collapseBranch.press("Enter");
   await expect(parent).toBeVisible();
+  await expect(nestedRow).toHaveCount(0);
+  const reopenBranch = parentBranch.getByRole("button", {
+    name: /^View \d+ replies/,
+  });
+  await expect(reopenBranch).toBeFocused();
+  await reopenBranch.press("Enter");
+  await expect(nestedRow).toBeVisible();
   await expect(grandchildRow).toHaveCount(0);
   await panel
     .getByRole("button", { name: "Close thread", exact: true })
@@ -311,27 +345,27 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     panel.getByText("New peer reply", { exact: true }),
   ).toBeVisible();
   await expect(grandchildRow).toHaveCount(0);
-  await panel
-    .getByRole("button", { name: "Hide thread replies", exact: true })
-    .click();
-  await expect(parent).toHaveCount(0);
-  // Own send explicitly opens the root again; ordinary live arrivals must not.
-  await editor.fill("Own reply after root collapse");
+  await expect(parent).toBeVisible();
+  // Sending to the thread must not reopen a separately collapsed nested branch.
+  await editor.fill("Own ordinary thread reply");
   await editor.press("Enter");
   await expect(
-    panel.getByText("Own reply after root collapse", { exact: true }),
+    panel.getByText("Own ordinary thread reply", { exact: true }),
   ).toBeInViewport();
   // The optimistic row is visible before relay acceptance. Keep the production
   // subscription alive until publication and delivery settle, then end the test.
   await expect
     .poll(() =>
       app.report.publications.some(
-        ({ event }) => event?.content === "Own reply after root collapse",
+        ({ event }) => event?.content === "Own ordinary thread reply",
       ),
     )
     .toBe(true);
+  await expect(grandchildRow).toHaveCount(0);
+  await expect(nestedRow).toHaveCount(0);
+  await expect(parent).toBeVisible();
   const finalReply = app.report.publications.find(
-    ({ event }) => event?.content === "Own reply after root collapse",
+    ({ event }) => event?.content === "Own ordinary thread reply",
   ).event;
   await expect(
     panel
@@ -433,14 +467,15 @@ test.describe("touch branch controls", () => {
 
     await collapse.tap();
     await expect(summary).toBeVisible();
-    const collapseThread = panel.getByRole("button", {
-      name: "Hide thread replies",
-      exact: true,
-    });
-    await expect(collapseThread).toHaveText("Hide thread replies");
-    await collapseThread.tap();
-    await expect(summary).toHaveCount(0);
-    await panel.getByRole("button", { name: /^View thread replies:/ }).tap();
+    await expect(
+      panel.getByRole("button", { name: "Hide thread replies", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      panel.getByText("Unread reply 0", { exact: true }),
+    ).toBeVisible();
+    await summary.tap();
+    await expect(collapse).toHaveText("Hide replies");
+    await collapse.tap();
     await expect(summary).toBeVisible();
   });
 });

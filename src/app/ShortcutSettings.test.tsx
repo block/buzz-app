@@ -280,6 +280,7 @@ it("presents actual host registrations in navigation, text sizing, search/settin
             within(article).getByRole("heading", { level: 3 }).textContent,
         ),
     ).toEqual([
+      "Home",
       "Go back",
       "Go forward",
       "Increase text size",
@@ -374,7 +375,7 @@ it("captures a chord, refuses conflicts and bare keys, applies overrides to the 
     expect(input).toHaveFocus();
     expect(input).toHaveValue("Press a shortcut…");
     expect(input).toHaveAttribute("data-state", "listening");
-    expect(input).toHaveAttribute("data-design-pass", "pending");
+    expect(input).toHaveAttribute("data-size", "sm");
     expect(
       screen.getByRole("button", { name: `Cancel changing ${title}` }),
     ).toBeInTheDocument();

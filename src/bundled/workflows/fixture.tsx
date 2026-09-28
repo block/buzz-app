@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
 import "@fontsource-variable/inter/wght.css";
 import "@fontsource/jetbrains-mono/400.css";
@@ -20,6 +20,10 @@ Object.assign(window, { workflowFixture: fixture });
 function Fixture() {
   useKeyboardFocusVisibility();
   const [mounted, setMounted] = useState(true);
+  // The modal editor hides the toolbar, so journeys unmount through this.
+  useEffect(() => {
+    Object.assign(fixture, { unmount: () => setMounted(false) });
+  }, []);
   return (
     <main data-buzz-ui="" className="text-body" style={{ padding: 24 }}>
       <p>Offline fixture — no relay or signing identity.</p>

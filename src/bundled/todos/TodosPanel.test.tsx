@@ -121,6 +121,48 @@ it("adds and checks tasks, saves exact base, preserves other Markdown and restor
     await screen.findByRole("checkbox", { name: "New item" }),
   ).toBeChecked();
 });
+it("moves a task through To do, Doing and Done, editing only its Canvas marker", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  render(<TodosPanel {...f.props} />);
+  const doing = () => screen.getByRole("button", { name: "Doing: First" });
+  const section = (name: string) =>
+    within(screen.getByRole("region", { name }));
+  const lastSave = (content: string, base: string) =>
+    expect(f.canvas.save).toHaveBeenLastCalledWith(
+      context.channelId,
+      content,
+      base,
+    );
+  await screen.findByRole("checkbox", { name: "First" });
+  expect(
+    screen.queryByRole("region", { name: "Doing" }),
+  ).not.toBeInTheDocument();
+  expect(doing()).toHaveAttribute("aria-pressed", "false");
+  await user.click(doing());
+  await saved();
+  lastSave(original.replace("- [ ] First", "- [/] First"), head.id);
+  expect(
+    section("Doing").getByRole("checkbox", { name: "First" }),
+  ).toBePartiallyChecked();
+  expect(doing()).toHaveAttribute("aria-pressed", "true");
+  expect(doing()).toHaveFocus();
+  await user.click(doing());
+  await saved();
+  lastSave(original, "b".repeat(64));
+  expect(
+    section("To do").getByRole("checkbox", { name: "First" }),
+  ).not.toBeChecked();
+  await user.click(doing());
+  await saved();
+  await user.click(screen.getByRole("checkbox", { name: "First" }));
+  await saved();
+  lastSave(original.replace("- [ ] First", "- [x] First"), "b".repeat(64));
+  expect(
+    section("Done").getByRole("checkbox", { name: "First" }),
+  ).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "First" })).toHaveFocus();
+});
 it("keeps failed save changes through close/reopen and confirms destructive refresh", async () => {
   const f = fixture(),
     user = userEvent.setup();

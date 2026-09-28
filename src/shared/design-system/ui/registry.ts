@@ -308,6 +308,21 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["panel-header"],
   },
   {
+    slug: "preference-row",
+    name: "PreferenceRow",
+    purpose:
+      "A full-width on/off setting with aligned supporting text and a trailing switch.",
+    behavior:
+      "The visible label and optional description name the shared Switch control",
+    variants: ["label", "label with description", "disabled"],
+    status: "proposed",
+    collection: "components",
+    owner: "Buzz Settings",
+    source: "shared/design-system/ui/PreferenceRow.tsx",
+    baseUi: [],
+    composes: ["switch"],
+  },
+  {
     slug: "switch",
     name: "Switch",
     purpose: "A labelled setting that is on or off.",
@@ -359,6 +374,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "link",
       "tint",
       "chrome",
+      "avatar",
       "shape: round (default) | control",
       "size: xs (20px, 12px icon) | sm (32px) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
@@ -463,6 +479,19 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     owner: "desktop-new Messages",
     source: "shared/design-system/ui/Tabs.tsx",
     baseUi: [BASE_UI_PARTS.tabs],
+    composes: [],
+  },
+  {
+    slug: "header",
+    name: "Header",
+    purpose:
+      "Content title with optional subtitle, eyebrow, icon and actions; compact InlineHeader for groups.",
+    behavior: "Semantic heading with caller-selected level",
+    variants: ["header", "inline"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Header.tsx",
+    baseUi: [],
     composes: [],
   },
   {

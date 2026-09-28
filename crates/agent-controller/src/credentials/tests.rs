@@ -41,6 +41,21 @@ impl Fake {
     }
 }
 impl Keychain for Fake {
+    fn delete(&self, service: &str, account: &str) -> std::result::Result<(), Failure> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(("delete".into(), service.into(), account.into()));
+        if let Some(error) = *self.failure.lock().unwrap() {
+            return Err(error);
+        }
+        self.entries
+            .lock()
+            .unwrap()
+            .remove(&(service.into(), account.into()))
+            .map(|_| ())
+            .ok_or(Failure::Absent)
+    }
     fn legacy(
         &self,
         service: &str,
@@ -81,6 +96,32 @@ fn fixture() -> (PlatformCredentials, Arc<Fake>) {
         },
         keychain,
     )
+}
+#[test]
+fn deletion_is_bound_to_this_apps_exact_credential_and_can_be_retried() {
+    let (credentials, fake) = fixture();
+    let id = agent_id(PUB, "wss://relay.example");
+    let account = format!("agent:{id}");
+    fake.put(SERVICE, &account, KEY.as_bytes().to_vec());
+    fake.put("buzz-desktop", "secrets", blob());
+    assert!(credentials.delete(&id, &"ab".repeat(32)).is_err());
+    assert!(fake
+        .entries
+        .lock()
+        .unwrap()
+        .contains_key(&(SERVICE.into(), account.clone())));
+    credentials.delete(&id, PUB).unwrap();
+    credentials.delete(&id, PUB).unwrap();
+    assert!(!fake
+        .entries
+        .lock()
+        .unwrap()
+        .contains_key(&(SERVICE.into(), account)));
+    assert!(fake
+        .entries
+        .lock()
+        .unwrap()
+        .contains_key(&("buzz-desktop".into(), "secrets".into())));
 }
 fn blob() -> Vec<u8> {
     serde_json::to_vec(&json!({format!("agent:{PUB}"):KEY, "identity":"not-the-agent-key"}))

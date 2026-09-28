@@ -1,17 +1,16 @@
 // Parser-blocking, same-origin bootstrap: no inline-script CSP exception required.
 // Keep key/fallback aligned with shared/theme/service.ts (covered by service.test.ts).
 (() => {
-  let mode = "light";
+  let mode =
+    typeof matchMedia === "function" &&
+    matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
   try {
     const preference = localStorage.getItem("buzz-appearance.v1");
-    if (preference === "dark") mode = "dark";
-    if (
-      preference === "system" &&
-      matchMedia("(prefers-color-scheme: dark)").matches
-    )
-      mode = "dark";
+    if (preference === "light" || preference === "dark") mode = preference;
   } catch {
-    // Storage may be denied; the built-in light palette still opens safely.
+    // Storage may be denied; the system palette still opens safely.
   }
   document.documentElement.dataset.colorMode = mode;
   let scale = 1;

@@ -9,14 +9,20 @@ mod agent_models;
 mod agents;
 mod deep_links;
 mod dock;
+mod host_command;
+mod host_request;
+mod identity;
 mod notifications;
+use identity::{identity_create, identity_export, identity_import, identity_restore, IdentityHost};
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 mod goose_models;
+mod harness_setup;
 mod pi_models;
 use agents::{
     agent_control_action, agent_control_create_commit, agent_control_create_prepare,
-    agent_control_creation_profile, agent_control_import_commit, agent_control_import_preview,
+    agent_control_creation_profile, agent_control_delete, agent_control_import_commit,
+    agent_control_import_preview, agent_control_log_challenge, agent_control_read_log,
     agent_control_save, agent_control_snapshot, agent_control_start_on_app_launch, AgentHost,
 };
 use buzzodz_plugins::{
@@ -25,6 +31,9 @@ use buzzodz_plugins::{
 };
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
+use harness_setup::{goose_install, HarnessSetup};
+use host_command::plugin_host_run_command;
+use host_request::plugin_host_request;
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -334,6 +343,10 @@ async fn plugin_recover(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        identity_restore,
+        identity_import,
+        identity_create,
+        identity_export,
         plugin_import_folder,
         plugin_import_git,
         plugin_import_install,
@@ -343,11 +356,17 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_reload,
         plugin_module,
         plugin_recover,
+        plugin_host_run_command,
+        plugin_host_request,
         agent_control_create_prepare,
         agent_control_create_commit,
         agent_control_creation_profile,
         agent_control_snapshot,
+        agent_control_log_challenge,
+        agent_control_read_log,
+        goose_install,
         agent_control_save,
+        agent_control_delete,
         agent_control_action,
         agent_control_start_on_app_launch,
         agent_control_import_preview,
@@ -421,7 +440,9 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.manage(TitleBarFillFrames::default());
     builder
+        .manage(IdentityHost::default())
         .manage(Imports::default())
+        .manage(HarnessSetup::default())
         .manage(Terminals::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
@@ -458,6 +479,7 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<HarnessSetup>().shutdown();
                 browser::shutdown();
                 if let Err(error) = app.state::<Terminals>().shutdown() {
                     eprintln!("Terminal shutdown failed: {error}");

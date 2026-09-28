@@ -24,6 +24,7 @@
 @import "./typography-base.css";
 @import "./components.css";
 @import "./forms.css";
+@import "./content-header.css";
 @import "./overlays.css";
 @import "./chips.css";
 @import "./bento.css";

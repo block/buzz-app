@@ -13,6 +13,10 @@ import {
   ChoiceRowSpecimen,
 } from "./MenuSpecimens";
 import {
+  Header,
+  InlineHeader,
+} from "../../../../src/shared/design-system/ui/Header";
+import {
   InputExamples,
   TextareaExamples,
   SearchExamples,
@@ -45,6 +49,7 @@ import {
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
+import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
 
 import { Avatar } from "../../../../src/shared/design-system/ui/Avatar";
@@ -192,8 +197,66 @@ function AvatarSpecimen() {
           </Specimen>
         </div>
       </SpecimenGroup>
+      <SpecimenGroup label="Status badge and rounded cutout">
+        <div className="component-specimen-row">
+          {(["small", "default", "large"] as const).map((size) => (
+            <Specimen key={size} prop={`${size} · online`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Morgan Martin"
+                fallback="Morgan"
+                size={size}
+                statusBadge="online"
+              />
+            </Specimen>
+          ))}
+          {(["away", "offline"] as const).map((status) => (
+            <Specimen key={status} prop={`large · ${status}`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Morgan Martin"
+                fallback="Morgan"
+                size="large"
+                statusBadge={status}
+              />
+            </Specimen>
+          ))}
+          <Specimen prop="large · no badge">
+            <Avatar
+              src={avatarUrl}
+              alt="Morgan Martin"
+              fallback="Morgan"
+              size="large"
+            />
+          </Specimen>
+        </div>
+      </SpecimenGroup>
       <SpecimenGroup label="Agent shape (proposed)">
         <div className="component-specimen-row">
+          {(["small", "default", "large"] as const).map((size) => (
+            <Specimen key={size} prop={`squircle · ${size} · online`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Agent artwork"
+                fallback="Agent"
+                shape="squircle"
+                size={size}
+                statusBadge="online"
+              />
+            </Specimen>
+          ))}
+          {(["away", "offline"] as const).map((status) => (
+            <Specimen key={status} prop={`squircle · large · ${status}`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Agent artwork"
+                fallback="Agent"
+                shape="squircle"
+                size="large"
+                statusBadge={status}
+              />
+            </Specimen>
+          ))}
           <Specimen prop='shape="squircle"'>
             <Avatar
               src={avatarUrl}
@@ -207,6 +270,7 @@ function AvatarSpecimen() {
           </Specimen>
         </div>
       </SpecimenGroup>
+      <LiveAvatarStatusSpecimen />
       {/* No `src`, so the fallback initial shows. Same three sizes, because a
           fallback has to hold the ramp as well as an image does. */}
       <SpecimenGroup label="Fallback, with no src">
@@ -258,6 +322,34 @@ function AvatarSpecimen() {
         </div>
       </SpecimenGroup>
     </div>
+  );
+}
+
+function LiveAvatarStatusSpecimen() {
+  const [status, setStatus] = useState<
+    "online" | "away" | "offline" | undefined
+  >();
+  return (
+    <SpecimenGroup label="Status transitions">
+      <div className="component-specimen-row">
+        <Avatar
+          src={avatarUrl}
+          alt="Live agent artwork"
+          fallback="Agent"
+          shape="squircle"
+          size="large"
+          statusBadge={status}
+        />
+        {(["online", "away", "offline"] as const).map((next) => (
+          <Button key={next} size="compact" onClick={() => setStatus(next)}>
+            Set {next}
+          </Button>
+        ))}
+        <Button size="compact" onClick={() => setStatus(undefined)}>
+          Clear status
+        </Button>
+      </div>
+    </SpecimenGroup>
   );
 }
 function FullPageSurfaceSpecimen() {
@@ -745,6 +837,16 @@ function SwitchSpecimen() {
   const [busyChecked, setBusyChecked] = useState(true);
   return (
     <div className="component-specimen-stack">
+      <div className="divide-y divide-line">
+        <PreferenceRow
+          label="Desktop alerts"
+          description="Show notifications for new activity."
+          checked={checked}
+          onCheckedChange={setChecked}
+        />
+        <PreferenceRow label="Sound" checked />
+        <PreferenceRow label="Unavailable preference" disabled />
+      </div>
       <Switch
         checked={checked}
         onCheckedChange={setChecked}
@@ -918,6 +1020,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   select: SelectExamples,
   combobox: ComboboxExamples,
   switch: SwitchSpecimen,
+  "preference-row": SwitchSpecimen,
   accordion: () => (
     <>
       <Accordion
@@ -971,6 +1074,16 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
         ]}
       />
     </>
+  ),
+  header: () => (
+    <div>
+      <Header
+        title="Profile"
+        eyebrow="Account"
+        subtitle="Your local default for new communities."
+      />
+      <InlineHeader title="Preferences" subtitle="Choose what works for you." />
+    </div>
   ),
   "panel-header": PanelHeaderSpecimen,
   "search-field": SearchExamples,

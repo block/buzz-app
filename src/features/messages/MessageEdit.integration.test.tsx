@@ -294,7 +294,6 @@ it.each(["image", "video"] as const)(
         await authorize(owner);
         render(
           <MediaReviewViewer
-            onOpenLink={() => false}
             attachment={attachment}
             session={owner.session}
             scope={`media-edit-${kind}-${scenario}`}
@@ -303,6 +302,7 @@ it.each(["image", "video"] as const)(
             messageId={exactTarget ? exact.id : root.id}
             initialTime={5}
             close={() => {}}
+            onOpenLink={() => false}
           />,
           { reactStrictMode: true },
         );

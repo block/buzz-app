@@ -5,8 +5,9 @@ import type { Appearance } from "../shared/theme/service";
 // Settings presents the host category in functional sections: navigation,
 // text sizing, search/settings, then development-only actions.
 export const HOST_SHORTCUT_ORDER = {
-  navigationBack: 10,
-  navigationForward: 20,
+  home: 10,
+  navigationBack: 20,
+  navigationForward: 30,
   textSizeIncrease: 40,
   textSizeDecrease: 50,
   textSizeReset: 60,
@@ -96,6 +97,15 @@ export function registerNavigationShortcuts(
   navigation: import("../features/navigation/controller").Navigation,
 ) {
   const remove = [
+    shortcuts.registerHost({
+      id: "home",
+      title: "Home",
+      order: HOST_SHORTCUT_ORDER.home,
+      binding: { key: "a", mod: true, shift: true },
+      allowInEditable: true,
+      run: () =>
+        navigation.open({ version: 1, kind: "home" }).then(() => undefined),
+    }),
     shortcuts.registerHost({
       id: "navigation-back",
       title: "Go back",

@@ -6,6 +6,7 @@ pub(crate) fn fixture() -> Agent {
     let pubkey = "ab".repeat(32);
     let relay_url = "wss://relay.example".to_owned();
     Agent {
+        picture: None,
         id: agent_id(&pubkey, &relay_url),
         pubkey,
         relay_url,
@@ -31,6 +32,7 @@ pub(crate) fn fixture() -> Agent {
 }
 fn edit() -> AgentEdit {
     AgentEdit {
+        picture: None,
         name: "Edited Brain".into(),
         system_prompt: "New prompt".into(),
         workspace: "/tmp".into(),
@@ -184,6 +186,26 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     }
 }
 #[test]
+fn remove_requires_current_revision_and_persists_absence() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let agent = fixture();
+    store.insert(vec![agent.clone()]).unwrap();
+    store.enabled(&agent.id, false).unwrap();
+    assert!(dir.path().join("agents.previous.json").exists());
+    assert!(store.remove(&agent.id, agent.revision + 1).is_err());
+    assert_eq!(store.agents().unwrap().len(), 1);
+    store.remove(&agent.id, agent.revision).unwrap();
+    assert!(store.agents().unwrap().is_empty());
+    assert!(!dir.path().join("agents.previous.json").exists());
+    drop(store);
+    assert!(Store::open(dir.path().to_owned())
+        .unwrap()
+        .agents()
+        .unwrap()
+        .is_empty());
+}
+#[test]
 fn environment_patch_preserves_deletes_and_rejects_host_overrides_without_writing() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = Store::open(dir.path().to_owned()).unwrap();
@@ -305,4 +327,68 @@ fn closing_store_releases_lock_even_with_inherited_file_description() {
     assert!(Store::open(dir.path().to_owned()).is_err());
     drop(reopened);
     Store::open(dir.path().to_owned()).unwrap();
+}
+
+#[test]
+fn avatar_save_preserve_clear_pending_cas_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut update = edit();
+    update.picture = Some("https://images.example/brain.png".into());
+    store.save(&a.id, 1, update).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap().agents[0].picture.as_deref(),
+        Some("https://images.example/brain.png")
+    );
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    drop(store);
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    store.save(&a.id, 2, edit()).unwrap(); // Omitted picture preserves the managed override.
+    assert_eq!(
+        store.agents().unwrap()[0].picture.as_deref(),
+        Some("https://images.example/brain.png")
+    );
+    assert!(store.profile_published(&a.id, 2).is_err());
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    store.profile_published(&a.id, 3).unwrap();
+    assert!(!store.snapshot().unwrap().agents[0].profile_pending);
+    let mut update = edit();
+    update.picture = Some("https://images.example/brain.png".into());
+    store.save(&a.id, 3, update).unwrap();
+    assert!(!store.snapshot().unwrap().agents[0].profile_pending); // Unchanged does not republish.
+    let mut update = edit();
+    update.picture = Some(String::new());
+    store.save(&a.id, 4, update).unwrap();
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    drop(store);
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(store.agents().unwrap()[0].picture.as_deref(), Some(""));
+    assert_eq!(store.agents().unwrap()[0].imported, a.imported);
+}
+
+#[test]
+fn invalid_avatar_and_stale_save_leave_persistent_bytes_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    let before = fs::read(store.path()).unwrap();
+    for value in [
+        "http://images.example/a.png",
+        "data:image/png;base64,AA==",
+        "https://user:secret@images.example/a.png",
+        "not a URL",
+    ] {
+        let mut update = edit();
+        update.picture = Some(value.into());
+        assert!(store.save(&a.id, 1, update).is_err());
+        assert_eq!(fs::read(store.path()).unwrap(), before);
+    }
+    let mut update = edit();
+    update.picture = Some("https://images.example/new.png".into());
+    assert!(store.save(&a.id, 0, update).is_err());
+    assert_eq!(fs::read(store.path()).unwrap(), before);
 }

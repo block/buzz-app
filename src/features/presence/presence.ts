@@ -145,6 +145,10 @@ export function createPresence(
           : 0;
       readGate = nextRead = Date.now() + Math.max(minute(), retry);
     } finally {
+      // The broker starts its gate after transit. Measure from settlement so
+      // shorter transit on the next read cannot spend a second busy interval.
+      readGate = Math.max(readGate, Date.now() + 5000);
+      nextRead = Math.max(nextRead, readGate);
       reading = false;
       if (controller === owned) controller = undefined;
       schedule();

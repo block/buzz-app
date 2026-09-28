@@ -2,6 +2,7 @@ import { assert, afterEach, expect, it, vi } from "vitest";
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "./events";
 import { createRelaySession } from "./session";
+import { mentionConformance } from "../../bundled/mentions/mention-rules.conformance";
 import {
   flush,
   keypair,
@@ -137,6 +138,7 @@ it.each([false, true])(
       ...(reply ? [["e", root, "", "reply"]] : []),
       ["p", honey.pubkey],
       ["p", namesake.pubkey],
+      ["ms", expect.stringMatching(/^(0|[1-9]\d{0,2})$/)],
     ]);
     expect(h.sign).toHaveBeenCalledTimes(1);
     // Actual publication acknowledgement is not execution completion.
@@ -162,7 +164,10 @@ it("typed names create no recipient tags; unconfirmed or forged membership canno
   await flush();
   expect(
     h.publish.mock.calls[0]?.[0].tags.filter(([tag]) => tag !== "client-id"),
-  ).toEqual([["h", "c"]]);
+  ).toEqual([
+    ["h", "c"],
+    ["ms", expect.stringMatching(/^(0|[1-9]\d{0,2})$/)],
+  ]);
 });
 it("publishes roster changes even when channel names/previews are unchanged and rejects a removed recipient", async () => {
   const h = setup();
@@ -251,5 +256,79 @@ it.each([false, true])(
       h.publish.mock.calls.at(-1)?.[0].tags.filter(([name]) => name === "p"),
     ).toEqual([["p", honey.pubkey]]);
     expect(h.publish).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each([false, true])(
+  "publishes nonmember references without addressed tags, reply=%s",
+  async (reply) => {
+    const h = setup();
+    await h.members([viewer.pubkey, honey.pubkey]);
+    const root = "f".repeat(64);
+    if (reply)
+      h.session.messages.reply(
+        "c",
+        root,
+        "@Honey and @Outside",
+        [honey.pubkey],
+        [],
+        undefined,
+        [namesake.pubkey],
+      );
+    else
+      h.session.messages.send(
+        "c",
+        "@Honey and @Outside",
+        [honey.pubkey],
+        [],
+        undefined,
+        [namesake.pubkey],
+      );
+    await flush();
+    const event = h.publish.mock.calls[0]?.[0];
+    expect(event?.tags).toContainEqual(["p", honey.pubkey]);
+    expect(event?.tags).toContainEqual(["mention", namesake.pubkey]);
+    expect(event?.tags).not.toContainEqual(["p", namesake.pubkey]);
+    expect(() =>
+      h.session.messages.send("c", "@Outside", [namesake.pubkey]),
+    ).toThrow(/no longer a channel member/);
+    expect(() =>
+      h.session.messages.send("c", "@Outside", [], [], undefined, ["invalid"]),
+    ).toThrow(/valid mention references/);
+  },
+);
+
+it.each(mentionConformance.tags.write)(
+  "conforms to the portable mention tag writing contract: $name",
+  async (fixture) => {
+    const h = setup();
+    // The sender must be a member; fixtures list only the other members.
+    await h.members([viewer.pubkey, ...fixture.members]);
+    const send = () =>
+      h.session.messages.send(
+        "c",
+        "@Someone",
+        fixture.recipients,
+        [],
+        undefined,
+        fixture.references,
+      );
+    const expected = fixture.expected;
+    if ("error" in expected) {
+      expect(send).toThrow(
+        {
+          not_member: /no longer a channel member/,
+          invalid: /valid mention/,
+          too_many: /at most 32/,
+        }[expected.error],
+      );
+      return;
+    }
+    send();
+    await flush();
+    const event = h.publish.mock.calls[0]?.[0];
+    expect(
+      event?.tags.filter(([name]) => name === "p" || name === "mention"),
+    ).toEqual(expected.tags);
   },
 );

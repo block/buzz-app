@@ -52,7 +52,7 @@
 }
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) fit-content(42%);
+  grid-template-columns: minmax(0, 1fr) auto fit-content(42%);
   align-items: center;
   gap: var(--space-2);
   padding-block: var(--space-1);

@@ -219,45 +219,44 @@ it("groups the first same-author reply with the root but respects the time windo
     "thread",
   );
 });
-it("collapses only replies, restores focus, and reopens one level without losing the composer", async () => {
+it("keeps ordinary replies flat and visible when nested branches close or new replies arrive", () => {
   const h = setup();
-  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
-  const rail = screen.getAllByRole("button", {
-    name: "Hide thread replies",
-  })[1];
-  if (!rail) throw new Error("Missing thread rail");
-  fireEvent.click(rail);
-  expect(screen.getByText("root")).toBeVisible();
-  expect(screen.queryByText("parent")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Composer")).toBeVisible();
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "View thread replies: 3" }),
-    ).toHaveFocus(),
-  );
   h.update([
     row("parent", "root"),
     row("child", "parent"),
     row("peer", "root"),
   ]);
-  expect(screen.queryByText("peer")).not.toBeInTheDocument();
-  fireEvent.click(
-    screen.getByRole("button", { name: "View thread replies: 3" }),
-  );
-  expect(screen.getByText("parent")).toBeVisible();
-  expect(screen.getByText("peer")).toBeVisible();
+  const history = screen.getByRole("region", { name: "Thread messages" });
+  expect(
+    within(history).queryByRole("button", { name: "Hide thread replies" }),
+  ).not.toBeInTheDocument();
+  const parent = screen.getByText("parent").closest("li");
+  const peer = screen.getByText("peer").closest("li");
+  expect(parent?.parentElement).toBe(peer?.parentElement);
+  expect(parent?.parentElement?.parentElement).toBe(history);
+  fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
+  expect(screen.getByText("child")).toBeVisible();
+  const collapse = screen.getAllByRole("button", { name: "Hide replies" })[0];
+  if (!collapse) throw new Error("Missing nested collapse control");
+  fireEvent.click(collapse);
+  h.update([
+    row("parent", "root"),
+    row("child", "parent"),
+    row("peer", "root"),
+    row("new", "root"),
+  ]);
+  for (const id of ["parent", "peer", "new"])
+    expect(screen.getByText(id)).toBeVisible();
   expect(screen.queryByText("child")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Composer")).toBeVisible();
 });
-it("an own root reply reopens a collapsed thread and reveals its row", () => {
+it("an own ordinary reply stays visible without opening a nested branch", () => {
   const h = setup();
-  const toggle = screen.getAllByRole("button", {
-    name: "Hide thread replies",
-  })[0];
-  if (!toggle) throw new Error("Missing thread toggle");
-  fireEvent.click(toggle);
   fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
-  h.update([row("new", "root")]);
+  h.update([row("parent", "root"), row("child", "parent"), row("new", "root")]);
   expect(screen.getByText("new")).toBeVisible();
+  expect(screen.getByText("parent")).toBeVisible();
+  expect(screen.queryByText("child")).not.toBeInTheDocument();
   expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
 });
 
@@ -285,23 +284,22 @@ it("keeps same-author continuation layout through pending, failed, and accepted 
   }
 });
 
-it("keeps replies available while a collapsed root is missing and restores its collapse preference", () => {
+it("preserves ordinary reply identity, focus and nested collapse state through root loss and return", () => {
   const h = setup();
-  const toggle = screen.getAllByRole("button", {
-    name: "Hide thread replies",
-  })[0];
-  if (!toggle) throw new Error("Missing thread collapse control");
-  fireEvent.click(toggle);
-  expect(screen.queryByText("parent")).not.toBeInTheDocument();
+  const parent = screen.getByText("parent").closest("article");
+  const reply = screen.getByRole("button", { name: "Reply to parent" });
+  reply.focus();
   h.setRoot(undefined);
   expect(screen.getByText("Original message unavailable.")).toBeVisible();
-  expect(screen.getByText("parent")).toBeVisible();
+  expect(screen.getByText("parent").closest("article")).toBe(parent);
+  expect(reply).toHaveFocus();
   h.setRoot(row("root"));
-  expect(screen.queryByText("parent")).not.toBeInTheDocument();
-  fireEvent.click(
-    screen.getByRole("button", { name: "View thread replies: 3" }),
-  );
-  expect(screen.getByText("parent")).toBeVisible();
+  expect(screen.getByText("parent").closest("article")).toBe(parent);
+  expect(reply).toHaveFocus();
+  expect(screen.queryByText("child")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Hide thread replies" }),
+  ).not.toBeInTheDocument();
 });
 
 for (const startsWithChild of [false, true])

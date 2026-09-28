@@ -27,6 +27,8 @@ export interface AgentView {
   pubkey: string;
   relayUrl: string;
   name: string;
+  /** Missing preserves existing artwork; empty removes it. */
+  picture?: string | null;
   systemPrompt: string;
   workspace: string;
   harness: {
@@ -61,22 +63,31 @@ export interface AgentView {
   launchProviderEnv: string | null;
   /** Empty unless a running process was started with different saved settings. */
   restartDiff: RestartDiffEntry[];
+  /** Native refuses to delete a deployed remote record. */
+  deployedRemote?: boolean;
+  /** Older imports need an explicit snapshot of their legacy team instructions. */
+  needsTeamImport?: boolean;
 }
 export interface ControlSnapshot {
   agents: AgentView[];
   runtimeAvailable: boolean;
-  /** Native-owned editing suggestions, not installation or execution evidence.
+  /** Native executable presence and editing suggestions, not sign-in or execution evidence.
    * Optional so an older running native host retains editable custom values. */
   harnessOptions?: {
     command: string;
     label: string;
     available?: boolean;
+    /** Executable presence only; Pi also needs Node.js for its adapter. */
+    status?: "ready" | "cli-needed" | "adapter-needed";
+    /** The native installer is available on macOS/Linux, not Windows. */
+    installSupported?: boolean;
     defaultArgs?: string[];
     providers: { value: string; label: string }[];
   }[];
   /** False while native credential/import acceptance is outstanding. */
   importAvailable?: boolean;
   createAvailable?: boolean;
+  avatarEditingAvailable?: boolean;
   defaultWorkspace?: string;
   runtimeMessage?: string | null;
   databricksDefaults?: { host: string; filter: string };
@@ -84,6 +95,8 @@ export interface ControlSnapshot {
 }
 export interface AgentEdit {
   name: string;
+  /** Omitted preserves artwork; empty removes it. */
+  picture?: string;
   systemPrompt: string;
   workspace: string;
   harness: Omit<AgentView["harness"], "environmentKeys">;
@@ -96,8 +109,25 @@ export interface AgentImportPreview {
   candidates: Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name">[];
   warnings: string[];
 }
+export type AgentLogTarget = Pick<AgentView, "id" | "pubkey" | "relayUrl"> & {
+  /** Scoped signer; never a caller-supplied identity or public key. */
+  authorize(
+    target: Pick<AgentView, "id" | "pubkey" | "relayUrl">,
+    nonce: string,
+  ): Promise<string>;
+};
+export interface GooseInstallReport {
+  ready: boolean;
+  restarted: number;
+  restartFailures: number;
+  logPath: string;
+  output: string;
+  error: string | null;
+}
 export interface AgentControlHost {
+  readLog?(target: AgentLogTarget): Promise<string>;
   models?: ModelHost;
+  installGoose?(): Promise<GooseInstallReport>;
   prepareCreate?(
     requestId: string,
     destination: string,
@@ -116,6 +146,7 @@ export interface AgentControlHost {
     expectedRevision: number,
     edit: AgentEdit,
   ): Promise<ControlSnapshot>;
+  delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   action(
     id: string,
     action: AgentAction,
@@ -131,6 +162,12 @@ export interface AgentControlState {
   status: "idle" | "loading" | "ready" | "error" | "unavailable";
   data: ControlSnapshot | null;
   busy: boolean;
+  /** App-lifetime install progress and last result, independent of agent writes. */
+  gooseInstall?: {
+    installing: boolean;
+    report: GooseInstallReport | null;
+    error: string | null;
+  };
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
   pendingCredentialWrite?: boolean;
@@ -139,7 +176,10 @@ export interface AgentControlState {
   error: string | null;
 }
 export interface AgentControl {
+  /** Sensitive local output. Native custody and exact community are rechecked per read. */
+  readLog?(target: AgentLogTarget): Promise<string>;
   models?: AgentModels;
+  installGoose?(): Promise<GooseInstallReport>;
   create?(
     requestId: string,
     destination: string,
@@ -152,6 +192,7 @@ export interface AgentControl {
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
   save: AgentControlHost["save"];
+  delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   action: AgentControlHost["action"];
   previewImport: AgentControlHost["previewImport"];
   commitImport: AgentControlHost["commitImport"];
@@ -210,6 +251,7 @@ export function createAgentControl(
     status: host ? "idle" : "unavailable",
     data: null,
     busy: false,
+    gooseInstall: { installing: false, report: null, error: null },
     error: host ? null : agentControlUnavailable,
   };
   const listeners = new Set<() => void>();
@@ -217,6 +259,7 @@ export function createAgentControl(
   let generation = 0;
   let stopped = 0;
   let read: Promise<void> | null = null;
+  let installNeedsRefresh = false;
   const update = (patch: Partial<AgentControlState>) => {
     if (disposed) return;
     state = { ...state, ...patch };
@@ -229,11 +272,12 @@ export function createAgentControl(
     if (!host || disposed || state.busy) return Promise.resolve();
     if (read) return read;
     const current = generation;
-    if (!state.data) update({ status: "loading", error: null });
+    if (!state.data && state.status === "idle")
+      update({ status: "loading", error: null });
     const pending = Promise.resolve()
       .then(async () => {
-        // Only read-only native startup/contention failures are transient. Keep
-        // the coalesced read loading for up to twenty 250ms waits, not a UI error.
+        // Only read-only native startup is transient. Keep the coalesced read
+        // loading for up to twenty 250ms waits, not a UI error.
         for (let attempt = 0; !disposed && current === generation; attempt++) {
           try {
             return await host.snapshot();
@@ -241,8 +285,7 @@ export function createAgentControl(
             if (disposed || current !== generation) return;
             if (
               attempt === 20 ||
-              (error !== "Agent runtime is initializing; retry shortly" &&
-                error !== "Another native agent operation is in progress")
+              error !== "Agent runtime is initializing; retry shortly"
             )
               throw error;
             await new Promise<void>((resolve) => setTimeout(resolve, 250));
@@ -258,7 +301,7 @@ export function createAgentControl(
             update({
               status: "error",
               error:
-                "Could not refresh local agents. Retry to get current host status.",
+                "Could not refresh local agents. Current host status is unconfirmed.",
             });
         },
       )
@@ -267,6 +310,18 @@ export function createAgentControl(
       });
     read = pending;
     return pending;
+  }
+
+  async function refreshAfterInstall(): Promise<void> {
+    if (!installNeedsRefresh || disposed || state.busy) return;
+    installNeedsRefresh = false;
+    // An earlier snapshot may have started before the installer completed.
+    if (read) await read;
+    if (state.busy) {
+      installNeedsRefresh = true;
+      return;
+    }
+    await refresh();
   }
 
   async function run<T>(
@@ -300,12 +355,10 @@ export function createAgentControl(
     } catch (error) {
       // Host rejects with sanitized user-facing strings, never raw child output.
       const detail = typeof error === "string" ? `${error} ` : "";
-      if (current === generation)
-        update({
-          status: "error",
-          error: `${detail}Could not confirm the operation. Refresh status before other operations; Stop remains available for known agents. Your edits are retained.`,
-        });
-      throw new Error("Could not confirm the agent operation.");
+      const message = `${detail}Could not confirm the operation. Check current status and saved settings before retrying; the operation will not be repeated automatically. Your edits are retained.`;
+      if (current === generation) update({ status: "error", error: message });
+      // Dialogs own failed-write details after a successful status read.
+      throw new Error(message);
     } finally {
       // A superseded credential wait still owns its busy lane, but never the
       // newer Stop's result/error. Credential writes may commit; refresh recovers them.
@@ -322,6 +375,7 @@ export function createAgentControl(
           busy: !!(state.pendingLaunch || state.pendingCredentialWrite),
         });
       }
+      void refreshAfterInstall();
     }
   }
 
@@ -339,8 +393,55 @@ export function createAgentControl(
       command === "stop" ? undefined : id,
     );
   };
+  const installGoose = host?.installGoose;
   return {
     models,
+    ...(host?.readLog
+      ? {
+          readLog: async (target: AgentLogTarget) => {
+            if (disposed) throw new Error(agentControlUnavailable);
+            const readLog = host.readLog;
+            if (!readLog) throw new Error(agentControlUnavailable);
+            const content = await readLog(target);
+            if (disposed) throw new Error(agentControlUnavailable);
+            return content;
+          },
+        }
+      : {}),
+    ...(installGoose
+      ? {
+          installGoose: async () => {
+            if (disposed) throw new Error(agentControlUnavailable);
+            if (state.gooseInstall?.installing)
+              throw new Error("A Goose installation is already in progress.");
+            if (state.status !== "ready" || state.busy)
+              throw new Error("Refresh local agents before installing Goose.");
+            update({
+              gooseInstall: { installing: true, report: null, error: null },
+            });
+            try {
+              const report = await installGoose();
+              update({
+                gooseInstall: { installing: false, report, error: null },
+              });
+              return report;
+            } catch {
+              update({
+                gooseInstall: {
+                  installing: false,
+                  report: null,
+                  error:
+                    "Couldn’t install Goose. Try again or check the desktop app.",
+                },
+              });
+              throw new Error("Could not install Goose.");
+            } finally {
+              installNeedsRefresh = true;
+              await refreshAfterInstall();
+            }
+          },
+        }
+      : {}),
     ...(host?.prepareCreate && host.commitCreate
       ? {
           create: async (
@@ -421,6 +522,17 @@ export function createAgentControl(
     refresh,
     save: (id, revision, edit) =>
       run((native) => native.save(id, revision, edit), ready),
+    ...(host?.delete
+      ? {
+          // Resolve the host method per call, like every other command.
+          delete: (id: string, revision: number) =>
+            run((native) => {
+              if (!native.delete)
+                throw new Error("Agent deletion is unavailable.");
+              return native.delete(id, revision);
+            }, ready),
+        }
+      : {}),
     action,
     dismissMentionError: () => update({ mentionError: null }),
     prepareMention(pubkeys, relayUrl, replayFloor, signal) {

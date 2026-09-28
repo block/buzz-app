@@ -75,7 +75,12 @@ type ProtectedContent = {
 function protectInlineContent(
   row: Pick<
     ChannelMessage,
-    "content" | "edited" | "attachmentContentRemoved" | "mentions" | "emoji"
+    | "content"
+    | "edited"
+    | "attachmentContentRemoved"
+    | "mentions"
+    | "mentionReferences"
+    | "emoji"
   >,
   profiles: ReadonlyMap<string, Profile> | undefined,
   literalRanges: readonly LiteralRange[],
@@ -198,8 +203,9 @@ function inlineProtectionKey(
   profiles: ReadonlyMap<string, Profile> | undefined,
   agents: typeof emptyReferenceDirectory.agents,
 ) {
-  const mentions = row.mentions.map((id) => [id, profiles?.get(id)?.name]);
-  const mentioned = new Set(row.mentions);
+  const identities = [...row.mentions, ...(row.mentionReferences ?? [])];
+  const mentions = identities.map((id) => [id, profiles?.get(id)?.name]);
+  const mentioned = new Set(identities);
   const agentNames = agents
     .filter((agent) => mentioned.has(agent.pubkey))
     .map((agent) => [agent.pubkey, agent.name]);
@@ -455,6 +461,7 @@ function PreparedMessageMarkdown({
             ? { attachmentContentRemoved: true as const }
             : {}),
           mentions: sourceRow.mentions,
+          mentionReferences: sourceRow.mentionReferences ?? [],
           ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
         },
         profiles,

@@ -4,8 +4,10 @@ import { pickerIcons } from "../../shared/design-system/icons/svg";
 // Emoji Mart config adapted from block/buzz's shared picker; see NOTICE.md.
 import data from "@emoji-mart/data";
 import { Data, Picker, SearchIndex } from "emoji-mart";
-import { parseColorMode } from "../../shared/theme/service";
 import type { CustomEmoji } from "../../features/relay/emoji";
+
+const resolvedTheme = (value: unknown): "light" | "dark" =>
+  value === "dark" ? "dark" : "light";
 
 const prefix = "buzz-custom/";
 const categoryIcons = {
@@ -103,7 +105,7 @@ export function mountEmojiMart({
     set: "native",
     skinTonePosition: "search",
     // Widget mode follows the host, never the OS independently.
-    theme: parseColorMode(host.ownerDocument.documentElement.dataset.colorMode),
+    theme: resolvedTheme(host.ownerDocument.documentElement.dataset.colorMode),
     onEmojiSelect: (emoji: { native?: string; id?: string }) => {
       if (disposed) return;
       if (emoji.native) {
@@ -118,10 +120,7 @@ export function mountEmojiMart({
   // picker/dictionary (or lose search, focus and scroll) just to change appearance.
   const documentRoot = host.ownerDocument.documentElement;
   const syncAppearance = () => {
-    picker.setAttribute(
-      "theme",
-      parseColorMode(documentRoot.dataset.colorMode),
-    );
+    picker.setAttribute("theme", resolvedTheme(documentRoot.dataset.colorMode));
     picker.toggleAttribute(
       "data-keyboard-navigation",
       documentRoot.hasAttribute("data-keyboard-navigation"),

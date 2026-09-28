@@ -1,4 +1,5 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
+import { getLogger, logLevel, setLogLevel } from "../developer/logging";
 import { createMediaPreparation, saveData, wasIntended } from "./media";
 
 afterEach(() => {
@@ -105,4 +106,27 @@ it("Save-Data disables warming but nothing else", () => {
 
   vi.stubGlobal("navigator", {});
   expect(saveData()).toBe(false);
+});
+
+it("avatar completion diagnostics never expose signed URL credentials", async () => {
+  const created = stubImages();
+  const logger = getLogger("relay");
+  const reporters = [...logger.options.reporters];
+  const previous = logLevel();
+  const lines: string[] = [];
+  logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+  const media = createMediaPreparation();
+  try {
+    setLogLevel("debug");
+    media.prepare(["https://media.test/avatar?token=AVATAR_SECRET_306"]);
+    created[0]?.onload?.();
+    await flushDecode();
+    expect(lines.join(" ")).toContain("avatar ok 100x100");
+    expect(lines.join(" ")).not.toContain("AVATAR_SECRET_306");
+    expect(lines.join(" ")).not.toContain("media.test");
+  } finally {
+    media.dispose();
+    logger.setReporters(reporters);
+    setLogLevel(previous);
+  }
 });

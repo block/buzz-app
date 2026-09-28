@@ -81,6 +81,28 @@
       transform: translate(-50%, -50%);
     }
   }
+  /* A nested sheet needs a backdrop above its parent popup, not below it.
+     Matching the popup layer preserves DOM ordering: parent, backdrop, sheet. */
+  .buzz-dialog-backdrop[data-placement="right"] {
+    z-index: var(--layer-dialog);
+  }
+  .buzz-dialog[data-placement="right"] {
+    inset: 0 0 0 auto;
+    transform: none;
+    width: min(26rem, 100vw);
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  .buzz-dialog-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-shrink: 0;
+  }
+  .buzz-dialog-leading-actions {
+    margin-right: auto;
+  }
   .buzz-dialog-heading {
     min-width: 0;
     display: flex;
@@ -131,7 +153,8 @@
     margin-inline: calc(-1 * var(--dialog-padding));
     padding-inline: var(--dialog-padding);
   }
-  .buzz-dialog[data-size="expanded"] .buzz-dialog-body {
+  .buzz-dialog[data-size="expanded"] > .buzz-dialog-body,
+  .buzz-dialog[data-placement="right"] > .buzz-dialog-body {
     min-height: 0;
     flex: 1;
     overflow: auto;

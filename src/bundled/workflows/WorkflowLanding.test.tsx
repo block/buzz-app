@@ -15,6 +15,7 @@ import type { RelayEvent } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import { createWorkflows } from "../../features/workflows/capability";
 import { WorkflowLanding } from "./WorkflowLanding";
+import type { WorkflowDefinition } from "../../features/workflows/types";
 import { fixtureDefinition, fixtureViewer, fixtureYaml } from "./fixtures";
 
 afterEach(cleanup);
@@ -67,12 +68,18 @@ function mount(
   });
   prepare?.(owner);
   let refresh = 0;
+  let mountKey = 0;
+  let saveReadback:
+    | Pick<WorkflowDefinition, "channelId" | "revision">
+    | undefined;
   const element = () => (
     <StrictMode>
       <WorkflowLanding
+        key={mountKey}
         capability={owner.capability}
         channels={channels}
         refreshRequest={refresh}
+        saveReadback={saveReadback}
         viewer={fixtureViewer}
         onCreate={() => {}}
         onOpen={() => {}}
@@ -90,8 +97,16 @@ function mount(
         rendered.rerender(element());
       });
     },
+    remount() {
+      mountKey++;
+      rendered.rerender(element());
+    },
     refresh() {
       refresh++;
+      rendered.rerender(element());
+    },
+    readback(channelId: string, revision: string) {
+      saveReadback = { channelId, revision };
       rendered.rerender(element());
     },
     async finish(index: number, events: readonly RelayEvent[] = []) {
@@ -413,6 +428,91 @@ it("reports synchronous view admission failure once and retries its unread roste
     );
   } finally {
     for (const view of blockers) view.dispose();
+    fixture.close();
+  }
+});
+
+it("queues verified readback after an older pending read and rereads only the saved channel", async () => {
+  const [a, b] = [channel(1), channel(2)];
+  const fixture = mount([a, b]);
+  try {
+    await fixture.finish(0);
+    fixture.refresh();
+    await waitFor(() => expect(fixture.reads).toHaveLength(2));
+    fixture.readback(a.id, "first-revision");
+    expect(fixture.reads).toHaveLength(2);
+    expect(fixture.reads[1]?.signal?.aborted).toBe(false);
+    await fixture.finish(1);
+    await fixture.finish(2, [event(a.id)]);
+    expect(fixture.reads.map((read) => read.ids)).toEqual([
+      [a.id, b.id],
+      [a.id, b.id],
+      [a.id],
+    ]);
+    expect(
+      screen.getByRole("button", { name: "Open Message helper" }),
+    ).toBeVisible();
+    fixture.change([b, a]);
+    expect(fixture.reads).toHaveLength(3);
+    fixture.readback(a.id, "second-revision");
+    await fixture.finish(3, [event(a.id, 124)]);
+    expect(fixture.reads[3]?.ids).toEqual([a.id]);
+    act(() => fixture.owner.clear());
+    expect(
+      screen.queryByRole("button", { name: "Open Message helper" }),
+    ).toBeNull();
+    fixture.change([a, b]);
+    expect(fixture.reads).toHaveLength(4);
+  } finally {
+    fixture.close();
+  }
+});
+
+it("drops queued readback for a removed membership without restoring its card", async () => {
+  const [a, b] = [channel(1), channel(2)];
+  const fixture = mount([a, b]);
+  try {
+    await fixture.finish(0);
+    fixture.refresh();
+    await waitFor(() => expect(fixture.reads).toHaveLength(2));
+    fixture.readback(a.id, "saved-revision");
+    fixture.change([b], true);
+    expect(fixture.reads[1]?.signal?.aborted).toBe(true);
+    await fixture.finish(1, [event(a.id)]);
+    await fixture.finish(2);
+    expect(fixture.reads[2]?.ids).toEqual([b.id]);
+    fixture.readback(a.id, "late-revision");
+    expect(fixture.reads).toHaveLength(3);
+    expect(
+      screen.queryByRole("button", { name: "Open Message helper" }),
+    ).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Workflow scan finished.",
+    );
+  } finally {
+    fixture.close();
+  }
+});
+
+it("skips already copied revisions and does not replay readback on landing remount", async () => {
+  const [a, b] = [channel(1), channel(2)];
+  const saved = event(a.id);
+  const fixture = mount([a, b]);
+  try {
+    await fixture.finish(0, [saved]);
+    fixture.readback(a.id, saved.id);
+    expect(fixture.reads).toHaveLength(1);
+    fixture.remount();
+    await fixture.finish(1, [saved]);
+    expect(fixture.reads).toHaveLength(2);
+    expect(fixture.reads[1]?.ids).toEqual([a.id, b.id]);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Workflow scan finished.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Open Message helper" }),
+    ).toBeVisible();
+  } finally {
     fixture.close();
   }
 });

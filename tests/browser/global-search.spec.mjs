@@ -16,7 +16,7 @@ test.describe("photo avatar", () => {
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="navy"/></svg>',
       }),
     );
-    // Seed the photo before startup; reloading here can retire a stream while
+    // Seed the signed community photo before startup; reloading can retire a stream while
     // its initial control request is still in flight.
     await page.goto(app.origin);
     await expect(button(page, "Your profile").locator("img")).toHaveAttribute(

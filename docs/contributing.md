@@ -320,7 +320,7 @@ the complete suite still runs with `pnpm test` / `just scan`:
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
-- **Browser journeys:** four runners (Chromium and WebKit, two file-level shards
+- **Browser journeys:** six runners (Chromium and WebKit, three file-level shards
   per engine), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. Each runner builds the native
   plugin-manager fixture in a separately logged setup step before starting

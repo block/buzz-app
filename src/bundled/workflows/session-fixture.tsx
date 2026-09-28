@@ -176,6 +176,9 @@ function session(scope: string) {
 let owner = session(currentScope);
 Object.assign(window, {
   workflowSessionFixture: {
+    // The modal editor hides the toolbar, so journeys call its closures here.
+    switchCommunity: switchScope,
+    revokeSelectedChannel,
     publications: () => publishCount,
     state: (status: "connected" | "retrying") =>
       traffic.state({ status, routes: [] }),
@@ -270,6 +273,9 @@ const relay: RelayData = {
   disconnect() {},
   clearCache: () => owner.clearCache(),
 };
+function revokeSelectedChannel() {
+  incoming?.([roster(authority, fixtureChannel, [], 1_800_000_000)]);
+}
 function switchScope() {
   owner.dispose();
   currentScope = currentScope === "Fixture A" ? "Fixture B" : "Fixture A";
@@ -295,13 +301,7 @@ function Fixture() {
       </p>
       <div className="workflow-toolbar">
         <Button onClick={switchScope}>Switch community</Button>
-        <Button
-          onClick={() => {
-            incoming?.([roster(authority, fixtureChannel, [], 1_800_000_000)]);
-          }}
-        >
-          Revoke selected channel
-        </Button>
+        <Button onClick={revokeSelectedChannel}>Revoke selected channel</Button>
         <Button
           onClick={() => {
             void owner.clearCache();

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import { expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -14,6 +15,7 @@ import { keypair, message, signed, summary } from "../relay/testing";
 import { MessageRow } from "./MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
+import type { RelaySession } from "../relay/session";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 
 const row: ChannelMessage = {
@@ -28,6 +30,83 @@ const row: ChannelMessage = {
   reactions: [],
   replyCount: 23,
 };
+
+it("badges agent and human bylines with known presence", () => {
+  const agentRow = { ...row, authorId: "a".repeat(64) };
+  const subscribe = vi.fn(() => () => {});
+  const status = vi.fn<() => "online" | "unknown">(() => "online");
+  const channels = { channels: [], status: "ready" };
+  const session = {
+    presence: { subscribe, status, limited: () => false },
+    messages: { report: undefined },
+    channels: {
+      subscribeList: () => () => {},
+      list: () => channels,
+    },
+  } as unknown as RelaySession;
+  const show = (agent: boolean) =>
+    renderToStaticMarkup(
+      <MessageRow
+        row={agentRow}
+        agentPubkeys={agent ? new Set([agentRow.authorId]) : undefined}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  const agent = show(true);
+  expect(agent).toContain('data-status="online"');
+  expect(agent).toContain('aria-label="Agent, online"');
+  const human = show(false);
+  expect(human).toContain('data-status="online"');
+  expect(human).toContain('aria-label="aaaaaaaaaa avatar, online"');
+  expect(status).toHaveBeenCalledTimes(2);
+  const props = {
+    row: agentRow,
+    session,
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  const mounted = renderDom(
+    <MessageRow {...props} agentPubkeys={new Set([agentRow.authorId])} />,
+  );
+  expect(subscribe).toHaveBeenCalledWith(
+    agentRow.authorId,
+    expect.any(Function),
+    false,
+  );
+  mounted.rerender(
+    <MessageRow
+      {...props}
+      agentPubkeys={new Set([agentRow.authorId])}
+      canOpenLink={() => true}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
+  ).toHaveAccessibleDescription("Presence: online");
+  mounted.unmount();
+  status.mockReturnValue("unknown");
+  const unknown = renderDom(<MessageRow {...props} canOpenLink={() => true} />);
+  expect(
+    screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
+  ).not.toHaveAccessibleDescription();
+  unknown.unmount();
+  subscribe.mockClear();
+  renderDom(<MessageRow {...props} />);
+  expect(subscribe).toHaveBeenCalledWith(
+    agentRow.authorId,
+    expect.any(Function),
+    false,
+  );
+  cleanup();
+});
 it.each(["bare", "angle", "markdown", "escaped"] as const)(
   "renders link contributions inside message prose, preserving punctuation and plain-link fallback (%s)",
   (format) => {
@@ -382,6 +461,69 @@ it.each([
     expect(html).toContain(`style="${style}"`);
     expect(html).toContain('aria-label="Open image attachment"');
     expect(html).toContain('loading="lazy"');
+  },
+);
+
+it.each([undefined, { width: 640, height: 400 }])(
+  "keeps cached images silent and unfetched, but explains a live unavailable source (%j)",
+  (dimensions) => {
+    const media = vi.fn(() => undefined);
+    const imageRow: ChannelMessage = {
+      ...row,
+      attachments: [
+        {
+          url: "https://image.test/unavailable.png",
+          kind: "image",
+          ...(dimensions ? { dimensions } : {}),
+        },
+      ],
+    };
+    const show = (cached: boolean) => {
+      const list = {
+        status: "ready",
+        channels: [{ id: row.channelId, cached }],
+      };
+      const session = {
+        messages: {},
+        channels: { list: () => list, subscribeList: () => () => {} },
+      } as unknown as RelaySession;
+      return (
+        <MessageRow
+          row={imageRow}
+          session={session}
+          profile={undefined}
+          media={media}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+      );
+    };
+    const view = renderDom(show(true));
+    try {
+      const placeholder = view.container.querySelector(
+        '[class*="attachmentImage"][aria-hidden="true"]',
+      );
+      expect(placeholder).not.toBeNull();
+      expect(placeholder).toBeEmptyDOMElement();
+      if (dimensions)
+        expect(placeholder).toHaveStyle({
+          width: "360px",
+          aspectRatio: "640 / 400",
+        });
+      else expect(placeholder).not.toHaveAttribute("style"); // Existing CSS owns fallback geometry.
+      expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
+      expect(screen.queryByText("Image unavailable")).not.toBeInTheDocument();
+      view.rerender(show(false));
+      expect(screen.getByRole("status")).toHaveTextContent("Image unavailable");
+      expect(
+        view.container.querySelector('[class*="attachmentImage"]'),
+      ).toBeNull();
+      expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
+      expect(media).toHaveBeenCalledWith("https://image.test/unavailable.png");
+    } finally {
+      view.unmount();
+    }
   },
 );
 

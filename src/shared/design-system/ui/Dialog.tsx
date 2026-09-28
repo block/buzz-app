@@ -7,10 +7,19 @@ type PopupProps = ComponentProps<typeof BaseDialog.Popup>;
 export type DialogProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
+  onOpenChangeComplete?: ComponentProps<
+    typeof BaseDialog.Root
+  >["onOpenChangeComplete"];
   title: ReactNode;
   description?: ReactNode;
   children: ReactNode;
   actions?: ReactNode;
+  leadingActions?: ReactNode;
+  headerActions?: ReactNode;
+  /** Return true when an inner editor layer consumed Escape. */
+  onEscape?: () => boolean;
+  placement?: "center" | "right";
+  dismissOnOutsideClick?: boolean;
   closeLabel?: string;
   /** Reserve viewport-capped space for changing content; scroll only the body. */
   height?: "content" | "stable";
@@ -28,10 +37,16 @@ export type DialogProps = {
 export function Dialog({
   open,
   onOpenChange,
+  onOpenChangeComplete,
   title,
   description,
   children,
   actions,
+  leadingActions,
+  headerActions,
+  onEscape,
+  placement = "center",
+  dismissOnOutsideClick = false,
   closeLabel = "Close",
   size = "default",
   preventClose = false,
@@ -46,9 +61,14 @@ export function Dialog({
   return (
     <BaseDialog.Root
       open={open}
-      disablePointerDismissal
+      onOpenChangeComplete={onOpenChangeComplete}
+      disablePointerDismissal={!dismissOnOutsideClick}
       onOpenChange={(next, details) => {
         if (!next && preventClose) {
+          details.cancel();
+          return;
+        }
+        if (!next && details.reason === "escape-key" && onEscape?.()) {
           details.cancel();
           return;
         }
@@ -58,6 +78,8 @@ export function Dialog({
     >
       <BaseDialog.Portal>
         <BaseDialog.Backdrop
+          forceRender={placement === "right"}
+          data-placement={placement}
           data-buzz-ui=""
           data-motion={transition}
           className="buzz-dialog-backdrop"
@@ -65,6 +87,7 @@ export function Dialog({
         <BaseDialog.Popup
           data-buzz-ui=""
           className="buzz-dialog gap-0"
+          data-placement={placement}
           data-height={height}
           data-size={size}
           data-motion={transition}
@@ -83,21 +106,31 @@ export function Dialog({
                 </BaseDialog.Description>
               )}
             </div>
-            <BaseDialog.Close
-              disabled={preventClose}
-              render={
-                <IconButton
-                  aria-label={closeLabel}
-                  disabled={preventClose}
-                  size="compact"
-                  icon={<XIcon size={16} aria-hidden="true" />}
-                />
-              }
-            />
+            <div className="buzz-dialog-header-actions">
+              {headerActions}
+              <BaseDialog.Close
+                disabled={preventClose}
+                render={
+                  <IconButton
+                    aria-label={closeLabel}
+                    disabled={preventClose}
+                    size="compact"
+                    icon={<XIcon size={16} aria-hidden="true" />}
+                  />
+                }
+              />
+            </div>
           </header>
           <div className="buzz-dialog-body buzz-dialog-content">{children}</div>
-          {actions && (
-            <footer className="buzz-dialog-actions">{actions}</footer>
+          {(actions || leadingActions) && (
+            <footer className="buzz-dialog-actions">
+              {leadingActions && (
+                <div className="buzz-dialog-leading-actions">
+                  {leadingActions}
+                </div>
+              )}
+              {actions}
+            </footer>
           )}
         </BaseDialog.Popup>
       </BaseDialog.Portal>

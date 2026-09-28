@@ -300,7 +300,7 @@ function auditLayers() {
   // Require every new semantic role to declare both modes and reference a token.
   const roles = [
     ...modes.light.matchAll(
-      /^\s*(--(?:surface|affordance|text|border)-[a-z0-9-]+):/gm,
+      /^\s*(--(?:surface|affordance|text|border|status)-[a-z0-9-]+):/gm,
     ),
   ];
   for (const [, name] of roles) {

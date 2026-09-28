@@ -1,5 +1,13 @@
 import { Button } from "../shared/design-system/ui/Button";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { Select } from "../shared/design-system/ui/Select";
+import {
+  developerSettings,
+  isLogLevel,
+  logLevel,
+  LOG_LEVELS,
+  subscribeLogLevel,
+} from "../features/developer/logging";
 import type { RelayData } from "../features/relay/service";
 
 type BrokerStats = {
@@ -24,6 +32,38 @@ async function fetchStats(): Promise<BrokerStats | undefined> {
 }
 
 export function DeveloperSettings({ relay }: { relay: RelayData }) {
+  const level = useSyncExternalStore(subscribeLogLevel, logLevel);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState<string>();
+  useEffect(() => {
+    let alive = true;
+    void developerSettings()
+      .then(() => {
+        if (alive) setSettingsReady(true);
+      })
+      .catch(() => {
+        if (alive)
+          setSettingsError(
+            "Runtime settings require the local development server.",
+          );
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  async function saveLevel(value: string) {
+    if (!isLogLevel(value)) return;
+    setSaving(true);
+    setSettingsError(undefined);
+    try {
+      await developerSettings(value);
+    } catch {
+      setSettingsError("Log level wasn’t saved. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
   const [stats, setStats] = useState<BrokerStats>();
   const [clearing, setClearing] = useState(false);
   const [status, setStatus] = useState<string>();
@@ -46,9 +86,9 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
     setClearing(true);
     try {
       await relay.clearCache();
-      setStatus("Caches cleared. Channels and media will refetch on demand.");
+      setStatus("Cache cleared. Buzz will load channels and media as needed.");
     } catch (error) {
-      setStatus(`Clear failed: ${String(error)}`);
+      setStatus(`Buzz couldn’t clear the cache. ${String(error)}`);
     } finally {
       setClearing(false);
     }
@@ -61,9 +101,39 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
       </h2>
       <div className="ui-card space-y-5 p-5 sm:p-6">
         <p className="text-body-sm text-muted">
-          Diagnostics for local development. This tab only appears when the app
-          is served from localhost in a development build.
+          View local development diagnostics. This section appears only in
+          development builds served from localhost.
         </p>
+        <div className="space-y-2">
+          <h3 className="m-0 text-label-sm">Runtime settings</h3>
+          <Select
+            label="Log level"
+            value={level}
+            disabled={!settingsReady || saving}
+            onValueChange={(value) => void saveLevel(value)}
+            groups={[
+              {
+                label: "",
+                options: Object.keys(LOG_LEVELS).map((value) => ({
+                  value,
+                  label: value.charAt(0).toUpperCase() + value.slice(1),
+                })),
+              },
+            ]}
+          />
+          <p className="m-0 text-body-sm text-muted">
+            Applies immediately and survives restarts of this worktree. Info
+            shows lifecycle messages; Debug shows every broker HTTP request and
+            relay WebSocket frame; Trace adds safe protocol metadata. Message
+            bodies and credentials are never included. Browser relay diagnostics
+            use the same level.
+          </p>
+          {settingsError && (
+            <p role="alert" className="m-0 text-body-sm text-muted">
+              {settingsError}
+            </p>
+          )}
+        </div>
         <div className="space-y-2">
           <h3 className="m-0 text-label-sm">Relay broker stats</h3>
           {stats ? (
@@ -87,16 +157,16 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
             </dl>
           ) : (
             <p role="status" className="m-0 text-body-sm text-muted">
-              Broker stats are unavailable. They exist only when the dev relay
-              broker is running on this origin.
+              Broker stats aren’t available. Start the development relay broker
+              on this origin to view them.
             </p>
           )}
         </div>
         <div className="space-y-2">
           <h3 className="m-0 text-label-sm">Caches</h3>
           <p className="m-0 text-body-sm text-muted">
-            Clears cached channels, messages, and media. Account, relay, and
-            sidebar settings are kept.
+            Clear cached channels, messages, and media. Buzz keeps your account,
+            relay, and sidebar settings.
           </p>
           <Button
             type="button"

@@ -9,3 +9,6 @@
 .agent-editor {
   width: min(40rem, calc(100vw - 2rem));
 }
+.agent-model-popup {
+  max-height: min(36rem, var(--available-height));
+}

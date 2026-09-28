@@ -7,6 +7,14 @@ export type PluginManifest = Readonly<{
   id: string;
   name: string;
   apiVersion: 1;
+  host?: Readonly<{
+    commands?: readonly Readonly<{
+      id: string;
+      program: string;
+      args: readonly string[];
+    }>[];
+    networkOrigins?: readonly string[];
+  }>;
 }>;
 // Module evaluation must be pure. apply owns resources through ctx.effect.
 // A plugin may contribute to several surfaces, or provide services without UI.

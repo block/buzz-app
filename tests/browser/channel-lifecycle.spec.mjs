@@ -1,10 +1,8 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 async function openLifecycle(page, app) {
   await page.goto(app.origin);
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alpha", exact: true })
@@ -76,10 +74,11 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
     await seen;
     await expect(menu).toBeVisible();
     // Attention actions remain usable while lifecycle permissions are held;
-    // the only separator belongs to that existing group, not pending lifecycle.
-    await expect(menu.getByRole("separator")).toHaveCount(1);
+    // existing separators belong to Move and attention, not pending lifecycle.
+    await expect(menu.getByRole("separator")).toHaveCount(2);
     await expect(menu.getByRole("menuitem")).toHaveText([
       "New session",
+      "Move channel",
       "Mute",
       "Mark as Unread",
     ]);
@@ -90,9 +89,10 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await expect(
     menu.getByRole("menuitem", { name: "Archive channel", exact: true }),
   ).toBeVisible();
-  await expect(menu.getByRole("separator")).toHaveCount(2);
+  await expect(menu.getByRole("separator")).toHaveCount(3);
   await expect(menu.getByRole("menuitem")).toHaveText([
     "New session",
+    "Move channel",
     "Mute",
     "Mark as Unread",
     "Archive channel",
@@ -131,10 +131,7 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeFocused();
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
-  await page
-    .getByRole("button", { name: "Projects", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Projects");
   await row.click({ button: "right" });
   await menu
     .getByRole("menuitem", { name: "Archive channel", exact: true })
@@ -305,10 +302,7 @@ for (const action of ["archive", "hide"]) {
       app,
     }) => {
       await page.goto(app.origin);
-      await page
-        .getByRole("button", { name: "Messages", exact: true })
-        .first()
-        .click();
+      await openPage(page, "Messages");
       const sidebar = page.getByRole("navigation", {
         name: "Subscribed channels",
       });

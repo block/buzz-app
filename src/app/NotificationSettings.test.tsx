@@ -59,11 +59,15 @@ it.each([true, false])(
       wrapper: ToastProvider,
     });
     const toggle = screen.getByRole("switch", { name: "Desktop alerts" });
+    const whileViewing = screen.getByRole("switch", {
+      name: "Notify while viewing",
+    });
     if (paused) {
       expect(toggle).toHaveAttribute("aria-disabled", "true");
       await userEvent.setup().click(toggle);
       expect(service.snapshot().preferences.enabled).toBe(true);
       expect(toggle).not.toBeChecked();
+      expect(whileViewing).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByRole("status")).toHaveTextContent(
         "Remove BUZZ_DEV_NOTIFICATIONS=0",
       );
@@ -72,6 +76,16 @@ it.each([true, false])(
       ).not.toBeInTheDocument();
     } else {
       expect(toggle).not.toHaveAttribute("aria-disabled", "true");
+      expect(toggle).toBeChecked();
+      expect(whileViewing).not.toHaveAttribute("aria-disabled", "true");
+      await userEvent
+        .setup()
+        .click(screen.getByText("Desktop alerts", { selector: "label" }));
+      expect(toggle).not.toBeChecked();
+      expect(service.snapshot().preferences.enabled).toBe(false);
+      await userEvent
+        .setup()
+        .click(screen.getByText("Desktop alerts", { selector: "label" }));
       expect(toggle).toBeChecked();
       expect(
         screen.getByRole("button", { name: "Allow notifications" }),
@@ -184,7 +198,9 @@ it("repeated identical permission failures retain feedback without leaving Setti
     wrapper: ToastProvider,
   });
   const notice = () =>
-    screen.getByRole("dialog", { name: "Notification failed" });
+    screen.getByRole("dialog", {
+      name: "Buzz couldn’t send the notification",
+    });
   expect(notice()).toHaveTextContent("Permission unavailable");
   await act(() => vi.advanceTimersByTimeAsync(9000));
   fireEvent.keyDown(notice(), { key: "Escape" });

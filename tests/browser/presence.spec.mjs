@@ -68,6 +68,13 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
     await expect(
       profile.getByRole("img", { name: "Presence: Active" }),
     ).toBeVisible();
+    await expect(profile.locator(".buzz-avatar-status")).toHaveAttribute(
+      "data-status",
+      "online",
+    );
+    await expect(
+      profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
+    ).toHaveCount(0);
     // Startup may skip busy setup. Keep real time: advancing only browser time
     // would expire its SSE heartbeat without advancing the broker's keepalive.
     await expect
@@ -203,9 +210,9 @@ test("foreground send and cold channel entry remain available during a profile s
   }
 });
 
-test.describe("conversation presence is not rendered or queried", () => {
+test.describe("human message bylines show known presence", () => {
   test.use({ threadUnread: true, historyCounts: { alpha: 20, beta: 20 } });
-  test("timeline and thread bylines do not acquire presence; an explicit profile does", async ({
+  test("timeline and thread bylines demand presence alongside an explicit profile", async ({
     page,
     app,
   }) => {
@@ -226,14 +233,18 @@ test.describe("conversation presence is not rendered or queried", () => {
     await expect(
       thread.getByText("Unread reply 0", { exact: true }),
     ).toBeVisible();
-    await expect(timeline.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
-    );
-    await expect(thread.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
-    );
-    // Opening and resolving a profile exercises a real snapshot completion
-    // barrier, without keeping obsolete hidden byline subscribers alive.
+    await expect(
+      timeline
+        .getByRole("button", { name: "View Alice Fixture profile" })
+        .first()
+        .locator(".buzz-avatar-status"),
+    ).toHaveAttribute("data-status", "online");
+    await expect(
+      thread
+        .getByRole("button", { name: "View Alice Fixture profile" })
+        .first()
+        .locator(".buzz-avatar-status"),
+    ).toHaveAttribute("data-status", "online");
     await thread
       .getByRole("button", { name: "View Alice Fixture profile", exact: true })
       .first()
@@ -242,11 +253,18 @@ test.describe("conversation presence is not rendered or queried", () => {
     await expect(
       profile.getByRole("img", { name: "Presence: Active" }),
     ).toBeVisible();
-    expect(app.report.presenceSnapshots).toHaveLength(1);
-    expect(app.report.presenceSnapshots[0].filter.authors).toHaveLength(1);
-    await expect(timeline.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
+    expect(
+      app.report.presenceSnapshots.some((snapshot) =>
+        snapshot.filter.authors.includes(root.pubkey),
+      ),
+    ).toBe(true);
+    await expect(profile.locator(".buzz-avatar-status")).toHaveAttribute(
+      "data-status",
+      "online",
     );
+    await expect(
+      profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
+    ).toHaveCount(0);
     expect(
       app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
     ).toBe(false);
@@ -401,6 +419,32 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
 
 // Real account controls -> shared activity -> retained session -> production
 // broker -> authenticated socket; real localStorage survives app reconstruction.
+test("profile trigger stays transparent through hover, press, and open menu", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const trigger = page.getByRole("button", {
+    name: "Your profile",
+    exact: true,
+  });
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.colorMode = value;
+    }, mode);
+    await trigger.hover();
+    await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await page.mouse.down();
+    await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await page.mouse.up();
+    await page.mouse.move(1, 1);
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await page.keyboard.press("Escape");
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  }
+});
+
 test("avatar choices publish through the existing socket and persist across reload", async ({
   page,
   app,
@@ -410,20 +454,45 @@ test("avatar choices publish through the existing socket and persist across relo
     name: "Your profile",
     exact: true,
   });
-  const account = page.getByRole("menu", { name: "Browser Fixture" });
+  const badge = avatar.locator(".buzz-avatar-status-dot");
+  const account = page.getByRole("menu", { name: "Fixture Reader" });
   const published = (status) =>
     app.report.presencePublications.filter(
       ({ event }) => event.content === status,
     ).length;
   await expect(
-    page.getByRole("img", { name: "Your status: Online" }),
+    avatar.getByRole("img", { name: "Your status: Online" }),
   ).toBeVisible();
+  await expect
+    .poll(() =>
+      avatar.locator(".buzz-avatar").evaluate(async (element) => {
+        const mask = getComputedStyle(element).maskImage;
+        const image = new Image();
+        image.src = mask.slice(4, -1).replace(/^["']|["']$/g, "");
+        try {
+          await image.decode();
+          return image.naturalWidth > 0;
+        } catch {
+          return false;
+        }
+      }),
+    )
+    .toBe(true);
+  await expect(badge).toHaveCSS("background-image", "none");
+  await expect(badge).toHaveCSS("box-shadow", "none");
+  await avatar.screenshot({
+    path: test.info().outputPath("avatar-online.png"),
+  });
   await avatar.click();
   await page.getByRole("button", { name: /^Availability:/ }).click();
   await page.getByRole("menuitemradio", { name: "Away", exact: true }).click();
   await expect(
-    page.getByRole("img", { name: "Your status: Away" }),
+    avatar.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
+  await expect(badge).toHaveCSS("background-color", "rgb(171, 100, 0)");
+  await expect(badge).toHaveCSS("background-image", "none");
+  await expect(badge).toHaveCSS("box-shadow", "none");
+  await avatar.screenshot({ path: test.info().outputPath("avatar-away.png") });
   await expect.poll(() => published("away")).toBeGreaterThan(0);
   const editor = page.getByRole("textbox", {
     name: "Message #Alpha",
@@ -432,7 +501,7 @@ test("avatar choices publish through the existing socket and persist across relo
   await editor.click();
   await editor.fill("Still away while typing");
   await expect(
-    page.getByRole("img", { name: "Your status: Away" }),
+    avatar.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
   await avatar.click();
   await page.getByRole("button", { name: /^Availability:/ }).click();
@@ -442,8 +511,14 @@ test("avatar choices publish through the existing socket and persist across relo
   await expect.poll(() => published("offline")).toBeGreaterThan(0);
   await page.reload();
   await expect(
-    page.getByRole("img", { name: "Your status: Offline" }),
+    avatar.getByRole("img", { name: "Your status: Offline" }),
   ).toBeVisible();
+  await expect(badge).toHaveCSS("background-color", "rgb(128, 128, 128)");
+  await expect(badge).toHaveCSS("background-image", "none");
+  await expect(badge).toHaveCSS("box-shadow", "none");
+  await avatar.screenshot({
+    path: test.info().outputPath("avatar-offline.png"),
+  });
   await avatar.click();
   await page.getByRole("button", { name: /^Availability:/ }).click();
   await expect(
@@ -454,7 +529,7 @@ test("avatar choices publish through the existing socket and persist across relo
     .getByRole("menuitemradio", { name: "Automatic", exact: true })
     .click();
   await expect(
-    page.getByRole("img", { name: "Your status: Online" }),
+    avatar.getByRole("img", { name: "Your status: Online" }),
   ).toBeVisible();
   await expect.poll(() => published("online")).toBeGreaterThan(before);
   await account.screenshot({

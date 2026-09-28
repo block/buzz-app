@@ -398,13 +398,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
     id: "semantic-status",
     name: "Status",
     description:
-      "Presence badge colors, paired across light and dark surfaces.",
+      "Presence badge and label colors, paired across light and dark surfaces.",
     roles: [
       {
         token: "status-online",
         variable: "--status-online",
         pointsAt: "green-11 light / green-11 dark",
         use: "Running activity status fill.",
+        status: "core",
+      },
+      {
+        token: "status-availability-online",
+        variable: "--status-availability-online",
+        pointsAt: "green-10 light / green-10 dark",
+        use: "Online availability label. Accepted contrast exception: below AA in light mode and APCA in both modes; see docs/presence.md.",
         status: "core",
       },
       {
@@ -418,7 +425,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "status-away",
         variable: "--status-away",
         pointsAt: "amber-10 light / amber-10 dark",
-        use: "Away avatar badge center, paired with status-avatar-away-border.",
+        use: "Away avatar badge center and availability label tint; label text uses text-warning. The avatar badge uses status-avatar-away-border for contrast.",
         status: "core",
       },
       {
@@ -756,6 +763,34 @@ export const ROLE_GROUPS: RoleGroup[] = [
     description:
       "Glass is applied as a whole material — a fill, a blur, a rim, and sometimes a lift — through the `glass-primary` and `glass-secondary` utilities. The fills below are what those utilities read; they are deliberately not registered as Tailwind colour utilities, because a bare `bg-glass-primary` class would be the fill without the rest, which is the failure the materials exist to prevent. Named by stacking depth: primary sits on the backdrop, secondary sits over something already glass. See the glass page.",
     roles: [
+      {
+        token: "media-glass",
+        variable: "--bg-media-glass",
+        pointsAt: "black 35% + 24px blur + 150% saturation",
+        use: "Floating video-preview controls in either app mode; static fill during hover and press.",
+        status: "core",
+      },
+      {
+        token: "media-track",
+        variable: "--bg-media-track",
+        pointsAt: "white 16%",
+        use: "The unplayed portion of media sliders over dark controls and video glass.",
+        status: "core",
+      },
+      {
+        token: "border-media-glass",
+        variable: "--border-media-glass",
+        pointsAt: "white 10%",
+        use: "The continuous rim of the media-glass material.",
+        status: "core",
+      },
+      {
+        token: "text-on-media",
+        variable: "--text-on-media",
+        pointsAt: "white in both modes",
+        use: "Icons and labels paired with the fixed dark media-glass fill.",
+        status: "core",
+      },
       {
         token: "glass-primary",
         variable: "--bg-glass-primary",
@@ -1273,6 +1308,10 @@ export const BLUR = [
 
 /** The entire exception list. Everything else points at a ramp step. */
 export const EXCEPTIONS = [
+  {
+    name: "--bg-media-glass, --border-media-glass, --text-on-media, --bg-media-track",
+    why: "Media preview glass remains black at 35% with a white 10% rim and white icons in either app mode; the unplayed track remains white at 16%. These paired values preserve the video beneath it.",
+  },
   {
     name: "text-on-accent, text-on-inverse, and the four status pairings",
     why: "Computed from their fill's lightness rather than fixed, because white is readable on a blue or purple fill and unreadable on yellow or lime. This is what keeps a free choice of accent hue from becoming a contrast lottery.",

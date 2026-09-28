@@ -319,6 +319,7 @@
   --media-glass-fill: rgb(0 0 0 / 35%);
   --media-glass-rim: rgb(255 255 255 / 10%);
   --media-glass-foreground: #ffffff;
+  --media-track-fill: rgb(255 255 255 / 16%);
 
   /* --- Backdrop treatments. Named visual values, not colours.
      These treatments only exist in the mode where their names are true. The
@@ -641,6 +642,7 @@
   /* Media controls use one dark material in both app modes so video remains
      visible through a stable fill and its paired icons remain white. */
   --bg-media-glass: var(--media-glass-fill);
+  --bg-media-track: var(--media-track-fill);
   --border-media-glass: var(--media-glass-rim);
   --text-on-media: var(--media-glass-foreground);
 
@@ -771,6 +773,8 @@
   --color-surface-popover: var(--surface-popover);
   --color-surface-inset: var(--surface-inset);
   --color-surface-inverse: var(--surface-inverse);
+  --text-color-on-media: var(--text-on-media);
+  --border-color-media-glass: var(--border-media-glass);
   --text-color-standard: var(--text-standard);
   --text-color-subtle: var(--text-subtle);
   --text-color-metadata: var(--text-metadata);

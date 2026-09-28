@@ -93,7 +93,7 @@
   background: linear-gradient(
     to right,
     var(--text-standard) 0 var(--progress),
-    var(--affordance-subtle) var(--progress) 100%
+    var(--bg-media-track) var(--progress) 100%
   );
   cursor: pointer;
 }
@@ -315,6 +315,8 @@
   background: var(--surface-panel);
 }
 .reactions > fieldset > button {
+  appearance: none;
+  -webkit-appearance: none;
   transition:
     background-color 120ms ease-out,
     scale 100ms ease-out;
@@ -342,6 +344,12 @@
   background: var(--affordance-navigation-quiet);
   padding: var(--space-2);
   font-size: var(--text-caption);
+}
+
+.reactionEmoji {
+  display: block;
+  font-family: var(--font-emoji);
+  line-height: 1;
 }
 
 .speedMenu,
@@ -406,6 +414,7 @@
   position: absolute;
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
+  scale: 0.8;
 }
 @keyframes video-feedback-scale {
   from {
@@ -417,12 +426,11 @@
 }
 @keyframes video-feedback-fade {
   0%,
-  100% {
-    opacity: 0;
-  }
-  12%,
   70% {
     opacity: 1;
+  }
+  100% {
+    opacity: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {

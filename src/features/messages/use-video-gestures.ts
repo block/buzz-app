@@ -77,13 +77,14 @@ export function useVideoGestures(
       if (event.detail >= 2) return;
       const previous = { paused: event.currentTarget.paused, committed: false };
       clickState.current = previous;
+      showFeedback(previous.paused ? "play" : "pause");
+      // Feedback is immediate; only playback waits for double-click detection.
       // Let the browser's double-click gesture seek without toggling playback.
       clickTimer.current = setTimeout(() => {
         const element = video.current;
         if (!element) return;
         previous.committed = true;
         const paused = element.paused;
-        showFeedback(paused ? "play" : "pause");
         if (paused) void element.play().catch(() => {});
         else element.pause();
       }, 250);

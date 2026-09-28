@@ -63,12 +63,16 @@ it("toggles picture playback and leaves the separate play control immediate", ()
   const { video, play, pause } = setup();
   fireEvent.click(video);
   expect(play).not.toHaveBeenCalled();
+  expect(document.querySelector('[data-video-feedback="play"]')).not.toBeNull();
   act(() => vi.advanceTimersByTime(250));
   expect(play).toHaveBeenCalledOnce();
   expect(document.querySelector('[data-video-feedback="play"]')).not.toBeNull();
   act(() => vi.advanceTimersByTime(650));
   expect(document.querySelector("[data-video-feedback]")).toBeNull();
   fireEvent.click(video);
+  expect(
+    document.querySelector('[data-video-feedback="pause"]'),
+  ).not.toBeNull();
   act(() => vi.advanceTimersByTime(250));
   expect(pause).toHaveBeenCalledOnce();
   expect(

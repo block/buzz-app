@@ -53,13 +53,16 @@ export function VideoReviewReactions({
       <fieldset aria-label="React at current frame">
         {["😂", "😍", "😮", "🙌", "👍", "👎"].map((emoji) => (
           <button
+            data-buzz-ui=""
             type="button"
             key={emoji}
             disabled={disabled}
             aria-label={`React ${emoji} at current frame`}
             onClick={() => select(emoji)}
           >
-            {emoji}
+            <span className={styles.reactionEmoji} aria-hidden="true">
+              {emoji}
+            </span>
           </button>
         ))}
         {extensions && (

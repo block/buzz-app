@@ -284,6 +284,7 @@ export function EmojiPicker({
   const controlsView = (
     <fieldset
       ref={controls}
+      data-external-trigger={!!externalTrigger || undefined}
       disabled={disabled}
       aria-label="Emoji controls"
       className={styles.emojiPicker}

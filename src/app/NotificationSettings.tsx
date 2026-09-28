@@ -2,10 +2,124 @@ import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { Button } from "../shared/design-system/ui/Button";
+import { IconButton } from "../shared/design-system/ui/IconButton";
+import { Select } from "../shared/design-system/ui/Select";
+import { PauseIcon, PlayIcon } from "../shared/design-system/icons/index";
 import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
-import { useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import type { NotificationsService } from "../features/notifications/service";
+import type { NotificationCategory } from "../features/notifications/preferences";
+import {
+  CATEGORY_SOUND_DESCRIPTIONS,
+  CATEGORY_SOUND_LABELS,
+  RECOMMENDED_SOUND_BY_CATEGORY,
+  SOUND_NAMES,
+  playNotificationSound,
+  type SoundName,
+} from "../features/notifications/sound";
 import styles from "./NotificationSettings.module.css";
+
+// Reference row order: direct messages, mentions, thread replies.
+const SOUND_ROWS: readonly NotificationCategory[] = [
+  "direct",
+  "mention",
+  "thread",
+];
+
+// The waveform SVGs use fill="currentColor", which an <img> can't inherit,
+// so render them as a mask over the current text color instead.
+function Waveform({ name }: { name: SoundName }) {
+  const maskImage = `url(/sounds/${name}.svg)`;
+  return (
+    <span
+      aria-hidden="true"
+      className={styles.waveform}
+      style={{ maskImage, WebkitMaskImage: maskImage }}
+    />
+  );
+}
+
+function AlertSoundRow({
+  category,
+  value,
+  disabled,
+  onChange,
+}: {
+  category: NotificationCategory;
+  value: SoundName;
+  disabled: boolean;
+  onChange: (next: SoundName) => void;
+}) {
+  const recommended = RECOMMENDED_SOUND_BY_CATEGORY[category];
+  const [isPlaying, setIsPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  function togglePreview() {
+    if (isPlaying) {
+      audioRef.current?.pause();
+      setIsPlaying(false);
+      return;
+    }
+    const audio = playNotificationSound(value);
+    if (!audio) return;
+    audioRef.current = audio;
+    setIsPlaying(true);
+    const stop = () => setIsPlaying(false);
+    audio.addEventListener("ended", stop, { once: true });
+    audio.addEventListener("pause", stop, { once: true });
+  }
+
+  const names = [
+    recommended,
+    ...SOUND_NAMES.filter((name) => name !== recommended).sort(),
+  ];
+  return (
+    <div className={styles.soundRow} data-disabled={disabled || undefined}>
+      <div className={styles.soundRowContent}>
+        <span className={styles.soundRowLabel}>
+          {CATEGORY_SOUND_LABELS[category]}
+        </span>
+        <span className="text-body-sm text-muted">
+          {CATEGORY_SOUND_DESCRIPTIONS[category]}
+        </span>
+      </div>
+      <span className={styles.soundControls}>
+        <Waveform name={value} />
+        <Select
+          label={CATEGORY_SOUND_LABELS[category]}
+          variant="compact"
+          disabled={disabled}
+          value={value}
+          valueLabel={value}
+          groups={[
+            {
+              label: "",
+              options: names.map((name) => ({
+                value: name,
+                label: name === recommended ? `${name} (rec.)` : name,
+              })),
+            },
+          ]}
+          onValueChange={(next) => onChange(next as SoundName)}
+        />
+        <IconButton
+          aria-label={isPlaying ? `Pause ${value}` : `Preview ${value}`}
+          disabled={disabled}
+          icon={
+            isPlaying ? (
+              <PauseIcon size={14} aria-hidden="true" />
+            ) : (
+              <PlayIcon size={14} aria-hidden="true" />
+            )
+          }
+          size="compact"
+          type="button"
+          onClick={togglePreview}
+        />
+      </span>
+    </div>
+  );
+}
 
 export function NotificationSettings({
   notifications,
@@ -39,11 +153,7 @@ export function NotificationSettings({
       <Header
         id="notification-settings-title"
         title="Notifications"
-        subtitle={
-          state.systemManaged
-            ? "Buzz sends alerts and badges for new activity in the selected community while it’s running. Manage app permissions and sounds in your system settings."
-            : "Buzz sends alerts and badges for new activity in the selected community while it’s running. Manage app permissions in your system settings."
-        }
+        subtitle="Buzz sends alerts and badges for new activity in the selected community while it’s running. Manage app permissions in your system settings."
       />
       <div className="grid gap-5">
         <div className={styles.preferenceList}>
@@ -122,16 +232,31 @@ export function NotificationSettings({
               notifications.updatePreferences({ notifyWhileViewing })
             }
           />
-          {!state.systemManaged && (
-            <PreferenceRow
-              label="Sound"
-              description="Use the system notification sound."
-              checked={preferences.sound}
-              disabled={!desktopAlertsEnabled}
-              onCheckedChange={(sound) =>
-                notifications.updatePreferences({ sound })
-              }
-            />
+          <PreferenceRow
+            label="Sound"
+            description="Alert with a sound for the events below."
+            checked={preferences.sound}
+            disabled={!desktopAlertsEnabled}
+            onCheckedChange={(sound) =>
+              notifications.updatePreferences({ sound })
+            }
+          />
+          {desktopAlertsEnabled && preferences.sound && (
+            <div className={styles.soundRows}>
+              {SOUND_ROWS.map((category) => (
+                <AlertSoundRow
+                  key={category}
+                  category={category}
+                  disabled={preferences.categories[category] === false}
+                  value={preferences.sounds[category]}
+                  onChange={(next) =>
+                    notifications.updatePreferences({
+                      sounds: { ...preferences.sounds, [category]: next },
+                    })
+                  }
+                />
+              ))}
+            </div>
           )}
         </div>
         <UnreadIndicatorSettings

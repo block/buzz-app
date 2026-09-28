@@ -13,6 +13,11 @@ import {
   type NotificationPermissionState,
 } from "./platform";
 import { afterPresentation } from "./presentation";
+import {
+  playNotificationSound,
+  resolveCategorySound,
+  type SoundName,
+} from "./sound";
 import type { NotificationText } from "./content";
 
 export type NotificationCategoryDescriptor = Readonly<{
@@ -84,6 +89,8 @@ export class NotificationsService extends Service implements Notifications {
     private readonly preferences = createNotificationPreferences(),
     private readonly authorized: (target: OpenTarget) => boolean = (target) =>
       !("scope" in target && target.scope),
+    private readonly playSound: (name: SoundName) => void = (name) =>
+      void playNotificationSound(name),
   ) {
     super(ctx, "notifications");
     this.contributions =
@@ -380,7 +387,6 @@ export class NotificationsService extends Service implements Notifications {
         {
           id: crypto.randomUUID(),
           ...item.text(),
-          silent: !this.state.preferences.sound,
         },
         () => {
           if (this.closed || generation !== this.generation) return;
@@ -394,6 +400,12 @@ export class NotificationsService extends Service implements Notifications {
             this.reportError(error);
         },
       );
+      // Banners are always submitted silent; the selected per-category sound
+      // plays here once the platform accepted the presentation.
+      if (this.state.preferences.sound)
+        this.playSound(
+          resolveCategorySound(this.state.preferences.sounds, item.category),
+        );
     } catch (error) {
       this.pending.delete(item);
       this.reportError(error);

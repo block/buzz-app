@@ -39,7 +39,6 @@ const item = () => ({
   id: crypto.randomUUID(),
   title: "Buzz",
   body: "Hello",
-  silent: true,
 });
 function callback(index = 0) {
   const call = calls[index];

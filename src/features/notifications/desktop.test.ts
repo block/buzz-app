@@ -120,7 +120,7 @@ it("observable SDK failures surface once without retry or a browser fallback", a
   expect(sdk.show).toHaveBeenCalledTimes(2);
 });
 
-it("desktop settings explain OS sound and running-app exact clicks", async () => {
+it("desktop settings expose app-owned sound and running-app exact clicks", async () => {
   const { service } = setup();
   await flush();
   const html = renderToStaticMarkup(
@@ -128,13 +128,16 @@ it("desktop settings explain OS sound and running-app exact clicks", async () =>
   );
   expect(html).toContain("Desktop alerts");
   expect(html).toContain("Mentions");
-  expect(html).toContain(
-    "Manage app permissions and sounds in your system settings.",
-  );
+  expect(html).toContain("Manage app permissions in your system settings.");
   expect(html).toContain(
     "Opening an alert takes you to its message or thread.",
   );
-  expect(html).not.toContain("<span>Sound</span>");
+  // Sound is app-owned on desktop: the switch and per-event sound rows render.
+  expect(html).toContain("Alert with a sound for the events below.");
+  expect(html).toContain("Direct messages");
+  expect(html).toContain("@Mentions");
+  expect(html).toContain("Thread replies");
+  expect(html).toContain("Preview flutter");
   expect(html).not.toContain("Permission granted");
   expect(html).not.toContain("Check permission");
   expect(html).not.toContain("Allow notifications");
@@ -292,13 +295,13 @@ it("native presentation rejects at capacity before sending instead of evicting l
     failed = vi.fn();
   for (let i = 0; i < 128; i++)
     await platform.show(
-      { id: String(i), title: "Buzz", body: "Hi", silent: true },
+      { id: String(i), title: "Buzz", body: "Hi" },
       activate,
       failed,
     );
   await expect(
     platform.show(
-      { id: "overflow", title: "Buzz", body: "Hi", silent: true },
+      { id: "overflow", title: "Buzz", body: "Hi" },
       activate,
       failed,
     ),
@@ -308,7 +311,7 @@ it("native presentation rejects at capacity before sending instead of evicting l
   first.onEvent.onmessage({ id: first.id, kind: "activated" });
   expect(activate).toHaveBeenCalledOnce();
   await platform.show(
-    { id: "next", title: "Buzz", body: "Hi", silent: true },
+    { id: "next", title: "Buzz", body: "Hi" },
     activate,
     failed,
   );

@@ -51,11 +51,14 @@ function setup() {
     }),
     dispose: vi.fn(),
   };
+  const plays: string[] = [];
   const service = new NotificationsService(
     ctx,
     navigation.navigation,
     platform,
     preferences,
+    undefined,
+    (name) => plays.push(name),
   );
   service.selectViewer(viewer);
   return {
@@ -68,6 +71,7 @@ function setup() {
     failures,
     values,
     host,
+    plays,
     permission(value: NotificationPermissionState) {
       permission = value;
     },
@@ -275,4 +279,40 @@ it("late platform errors report without retry and stay fenced to their account l
   await t.ctx.fiber.dispose();
   t.failures[0]?.(new Error("Disposed failure"));
   expect(t.service.snapshot().error).toBeNull();
+});
+it("plays the selected per-category sound once delivery is accepted", async () => {
+  const t = setup();
+  t.service.updatePreferences({
+    sounds: { mention: "ping", direct: "unison", thread: "doop" },
+  });
+  await t.submit("one");
+  await flush();
+  expect(t.platform.show).toHaveBeenCalledTimes(1);
+  expect(t.plays).toEqual(["ping"]);
+  // Plugin categories have no per-category choice; they use the default sound.
+  await t.service.admit(
+    "updates",
+    "Updates",
+    { sourceKey: "two", target },
+    () => true,
+  );
+  await flush();
+  expect(t.plays).toEqual(["ping", "flutter"]);
+});
+it("sound off delivers silently and a failed submission never plays", async () => {
+  const t = setup();
+  t.service.updatePreferences({ sound: false });
+  await t.submit("one");
+  await flush();
+  expect(t.platform.show).toHaveBeenCalledTimes(1);
+  expect(t.plays).toEqual([]);
+  t.service.updatePreferences({ sound: true });
+  vi.mocked(t.platform.show).mockRejectedValueOnce(
+    new Error("SDK unavailable"),
+  );
+  await t.submit("two");
+  await flush();
+  expect(t.platform.show).toHaveBeenCalledTimes(2);
+  expect(t.plays).toEqual([]);
+  expect(t.service.snapshot().error).toBe("SDK unavailable");
 });

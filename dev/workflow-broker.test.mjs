@@ -6,6 +6,7 @@ import { finalizeEvent, getPublicKey, verifyEvent } from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
+import { createWorkflows } from "../src/features/workflows/capability.ts";
 import { WORKFLOW_READ_BYTES } from "../src/features/workflows/http.ts";
 
 vi.mock("nostr-tools", async (importOriginal) => {
@@ -90,6 +91,62 @@ async function harness(
   };
 }
 const signal = () => new AbortController().signal;
+it("workflow capability sends 128 channels in one filter through the real reader and authenticated broker", async () => {
+  const channels = Array.from(
+    { length: 128 },
+    (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+  );
+  const key = new Uint8Array(32);
+  key[31] = 9;
+  const event = finalizeEvent(
+    {
+      kind: 30620,
+      created_at: 123,
+      content: "name: Fixture",
+      tags: [
+        ["h", channels[127]],
+        ["d", id],
+      ],
+    },
+    key,
+  );
+  const h = await harness(() => Response.json([event]));
+  let reader, workflows;
+  try {
+    reader = createRelayReader(await connectBrokerTransport(h.base));
+    workflows = createWorkflows({
+      viewer: h.viewer,
+      reader: reader.reader,
+      canAccess: (channel) => channels.includes(channel),
+    });
+    const view = workflows.capability.definitions(channels);
+    await view.refresh();
+    expect(view.snapshot()).toMatchObject({
+      status: "ready",
+      data: {
+        items: [{ revision: event.id, owner: event.pubkey }],
+        partial: false,
+      },
+    });
+    expect(h.calls).toHaveLength(1);
+    const { url, init, auth } = h.calls[0];
+    expect(url).toBe("https://a.workflow.test/query");
+    expect(JSON.parse(init.body)).toEqual([
+      { kinds: [30620], "#h": channels, limit: 100 },
+    ]);
+    expect(auth.tags).toContainEqual(["u", url]);
+    expect(auth.tags).toContainEqual(["method", "POST"]);
+    expect(() => workflows.capability.definitions([...channels, id])).toThrow(
+      "Invalid workflow channels",
+    );
+    expect(h.calls).toHaveLength(1);
+    expect(h.publications).toHaveLength(0);
+  } finally {
+    workflows?.dispose();
+    reader?.dispose();
+    await h.close();
+  }
+});
 it("real reader and broker forward 128 workflow filters with viewer auth and reject wider batches before dispatch", async () => {
   const batch = Array.from({ length: 128 }, (_, i) => ({
     kinds: [30620],

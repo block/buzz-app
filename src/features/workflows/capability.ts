@@ -325,15 +325,16 @@ export function createWorkflows({
         async (signal) => {
           if (!reader) throw new Error("Workflow definitions unavailable");
           const events = await reader.read(
-            channelIds.map((id) => ({
-              kinds: [30620],
-              "#h": [id],
-              limit: WORKFLOW_DEFINITION_LIMIT,
-            })),
+            [
+              {
+                kinds: [30620],
+                "#h": channelIds,
+                limit: WORKFLOW_DEFINITION_LIMIT,
+              },
+            ],
             { signal, fresh: true },
           );
           const coordinates = new Map<string, WorkflowDefinition>();
-          const counts = new Map<string, number>();
           const seen = new Set<string>();
           for (const event of events) {
             if (seen.has(event.id)) continue;
@@ -341,7 +342,6 @@ export function createWorkflows({
             const row = definition(event);
             if (!channelIds.includes(row.channelId))
               throw new Error("Mismatched workflow channel");
-            counts.set(row.channelId, (counts.get(row.channelId) ?? 0) + 1);
             const key = `${row.channelId}:${row.owner}:${row.id}`;
             const old = coordinates.get(key);
             if (
@@ -351,15 +351,12 @@ export function createWorkflows({
             )
               coordinates.set(key, row);
           }
-          const partialChannelIds = Object.freeze(
-            channelIds.filter(
-              (id) => (counts.get(id) ?? 0) >= WORKFLOW_DEFINITION_LIMIT,
-            ),
-          );
+          // A full batch can omit workflows from any of its channels.
+          const partial = seen.size >= WORKFLOW_DEFINITION_LIMIT;
           return Object.freeze({
             items: Object.freeze([...coordinates.values()]),
-            partial: partialChannelIds.length > 0,
-            partialChannelIds,
+            partial,
+            partialChannelIds: Object.freeze(partial ? channelIds : []),
           });
         },
         ({ items }) => {

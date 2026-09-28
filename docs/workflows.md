@@ -72,13 +72,14 @@ Legacy deletion can retain a visible definition; accepted delivery is not proof
 of runtime cleanup. These backend limitations are displayed, not repaired here.
 
 The landing discovers workflows in serial batches of up to 128 participating
-channel IDs, including authorized DMs. Each channel keeps its own single-`#h`
-kind-30620 filter and 100-event limit, matching the old app's relay-compatible
-batching. Only this exact filter shape gets the reader/broker exception to the
-generic four-filter limit; request/response byte budgets remain unchanged.
+channel IDs, including authorized DMs. Each request uses one kind-30620 filter
+whose `#h` contains the whole batch, reading all authors with a shared 100-event
+limit. The existing reader/broker request and response byte budgets apply.
 500 memberships need four requests. Signed event IDs are deduplicated before
-counting/folding, and saturated channels are marked partial; a finished scan is
-not proof of an exhaustive runtime inventory.
+counting/folding. When a batch reaches the result limit, every channel in it is
+marked partial, including channels with no returned rows; a finished scan is not
+proof of an exhaustive runtime inventory. Definition reads do not paginate or
+retain a session overview cache.
 
 Metadata renames/reordering do not restart discovery; new memberships add only
 their missing reads. One stable status replaces

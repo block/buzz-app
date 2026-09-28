@@ -415,11 +415,13 @@ it.each(["save", "trigger", "delete"] as const)(
   },
 );
 
-it("batch definitions deduplicate signed IDs and track limits per channel before coordinate folding", async () => {
+it("batch definitions use one bounded filter and count unique events before coordinate folding", async () => {
   const h = setup();
   const other = "44444444-4444-4444-8444-444444444444";
+  const empty = "66666666-6666-4666-8666-666666666666";
+  const author = keypair();
   const make = (channel: string, index: number) =>
-    signed(keypair(), {
+    signed(author, {
       kind: 30620,
       created_at: index,
       content: yaml,
@@ -433,13 +435,10 @@ it("batch definitions deduplicate signed IDs and track limits per channel before
     ...Array.from({ length: 100 }, () => first),
     make(other, 2),
   ]);
-  const view = h.capability.definitions([channelId, other]);
+  const view = h.capability.definitions([channelId, other, empty, channelId]);
   await view.refresh();
   expect(h.read).toHaveBeenLastCalledWith(
-    [
-      { kinds: [30620], "#h": [channelId], limit: 100 },
-      { kinds: [30620], "#h": [other], limit: 100 },
-    ],
+    [{ kinds: [30620], "#h": [channelId, other, empty], limit: 100 }],
     expect.anything(),
   );
   expect(view.snapshot().data).toMatchObject({
@@ -448,12 +447,27 @@ it("batch definitions deduplicate signed IDs and track limits per channel before
     partialChannelIds: [],
   });
   expect(view.snapshot().data.items).toHaveLength(2);
-  h.read.mockResolvedValue([
-    ...Array.from({ length: 100 }, (_, i) => make(channelId, i)),
-    make(other, 2),
-  ]);
+  const events = [
+    ...Array.from({ length: 49 }, (_, i) => make(channelId, i)),
+    ...Array.from({ length: 50 }, (_, i) => make(other, i)),
+  ];
+  h.read.mockResolvedValue(events);
   await view.refresh();
-  expect(view.snapshot().data.partialChannelIds).toEqual([channelId]);
+  expect(view.snapshot().data.partial).toBe(false);
+  h.read.mockResolvedValue([...events, make(channelId, 49)]);
+  await view.refresh();
+  expect(view.snapshot().data).toMatchObject({
+    partial: true,
+    partialChannelIds: [channelId, other, empty],
+  });
+  expect(view.snapshot().data.items).toHaveLength(2);
+  expect(h.read).toHaveBeenCalledTimes(3);
+  expect(
+    h.capability.definitions([channelId, other, empty]).snapshot(),
+  ).toMatchObject({
+    status: "idle",
+    data: { items: [] },
+  });
   h.read.mockResolvedValue([make("55555555-5555-4555-8555-555555555555", 1)]);
   await view.refresh();
   expect(view.snapshot()).toMatchObject({

@@ -19,7 +19,7 @@ export type WorkflowDefinitions = Readonly<{
   items: readonly WorkflowDefinition[];
   /** A bounded configuration snapshot is not a complete runtime inventory. */
   partial: boolean;
-  /** Channels that reached the per-channel limit before coordinate folding. */
+  /** All channels in a batch that reached the result limit before coordinate folding. */
   partialChannelIds?: readonly string[];
 }>;
 

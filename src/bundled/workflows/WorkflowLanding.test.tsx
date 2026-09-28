@@ -216,7 +216,7 @@ it("purges globally without automatic reads and recovers remaining channels on m
   }
 });
 
-it("preserves per-channel partial results and retry never drops loaded cards", async () => {
+it("marks every channel in a full batch partial and retry never drops loaded cards", async () => {
   const channels = Array.from({ length: 129 }, (_, i) => channel(i + 1));
   const fixture = mount(channels);
   try {
@@ -228,8 +228,8 @@ it("preserves per-channel partial results and retry never drops loaded cards", a
       screen.getByText("#Channel 1 returned a partial workflow list."),
     ).toBeVisible();
     expect(
-      screen.queryByText("#Channel 2 returned a partial workflow list."),
-    ).toBeNull();
+      screen.getByText("#Channel 2 returned a partial workflow list."),
+    ).toBeVisible();
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
     await act(async () => fixture.reads[1]?.reject(new Error("offline")));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -239,6 +239,9 @@ it("preserves per-channel partial results and retry never drops loaded cards", a
     ).toBeVisible();
     await fixture.finish(2);
     expect(fixture.reads[2]?.ids).toEqual([channel(129).id]);
+    expect(
+      screen.queryByText("#Channel 129 returned a partial workflow list."),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   } finally {
     fixture.close();

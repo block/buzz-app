@@ -135,6 +135,47 @@ fn goose_databricks_models_load_through_native_ipc_for_an_unsaved_agent() {
     assert_eq!(result["models"][0]["id"], "catalog.schema.goose-glm-5-3");
     assert_eq!(result["host"], "");
 }
+
+#[test]
+#[cfg(unix)]
+fn goose_connection_test_uses_the_draft_model_and_environment() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _, _app, view) = fixture();
+    let goose = dir.path().join("goose");
+    std::fs::write(
+        &goose,
+        format!(
+            "#!/bin/sh\n[ \"$1 $2\" = 'info --check' ] || exit 1\n[ \"$GOOSE_PROVIDER\" = 'openai' ] || exit 1\n[ \"$GOOSE_MODEL\" = 'effective-model' ] || exit 1\n[ \"$GOOSE_MAX_TOKENS\" = '10' ] || exit 1\n[ \"$GOOSE_THINKING_EFFORT\" = 'off' ] || exit 1\n[ \"$OPENAI_API_KEY\" = 'draft-key' ] || exit 1\n[ \"$(pwd)\" = '{}' ] || exit 1\nexit 0\n",
+            dir.path().canonicalize().unwrap().display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let edit = json!({"name":"Goose","systemPrompt":"","workspace":dir.path(),
+        "harness":{"command":goose,"args":["acp"],"provider":"openai","model":"visible-model"},
+        "environment":{"GOOSE_MODEL":"effective-model","OPENAI_API_KEY":"draft-key"}});
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"","filter":"","action":"test","edit":edit
+        }}),
+    );
+    assert_eq!(result.unwrap()["models"], json!([]));
+    let mut bad = edit;
+    bad["environment"]["OPENAI_API_KEY"] = json!("bad-key");
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let error = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"","filter":"","action":"test","edit":bad
+        }}),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("could not complete a request"));
+}
 #[test]
 fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     let fake = Arc::new(Fake::default());

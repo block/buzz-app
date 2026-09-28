@@ -7,6 +7,74 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 const METHOD: &str = "_goose/unstable/providers/supported-models/list";
 
+struct CheckChild(tokio::process::Child);
+impl Drop for CheckChild {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.0.id() {
+            unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+        }
+        let _ = self.0.start_kill();
+    }
+}
+
+/// Goose's `info --check` runs a direct provider completion with no tools.
+/// The selected draft and write-only overrides are resolved by the controller.
+pub(super) async fn test(context: GooseModelContext) -> Result<(), String> {
+    if context.model_id.trim().is_empty()
+        || context.model_id.len() > 512
+        || context.model_id.chars().any(char::is_control)
+    {
+        return Err("Choose a valid Goose model to test".into());
+    }
+    if !context.workspace.is_absolute() || !context.workspace.is_dir() {
+        return Err("Choose an existing absolute workspace before testing Goose".into());
+    }
+    let mut command = tokio::process::Command::new(context.command);
+    command
+        .args(["info", "--check"])
+        .current_dir(context.workspace)
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    for name in [
+        "HOME",
+        "TMPDIR",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    command
+        .envs(context.environment)
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
+    command
+        .env("GOOSE_PROVIDER", context.provider_id)
+        .env("GOOSE_MODEL", context.model_id)
+        .env("GOOSE_MAX_TOKENS", "10")
+        .env("GOOSE_THINKING_EFFORT", "off");
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = CheckChild(
+        command
+            .spawn()
+            .map_err(|_| "Could not start Goose to test the model".to_owned())?,
+    );
+    let status = tokio::time::timeout(Duration::from_secs(30), child.0.wait()).await;
+    match status {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(_) => Err("Goose could not complete a request with this provider and model. Check its credentials, model and network, then test again.".into()),
+        Err(_) => Err("Goose connection test timed out. Check the network, then test again.".into()),
+    }
+}
+
 pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, String> {
     let provider_id = context.provider_id.clone();
     let mut command = tokio::process::Command::new(context.command);
@@ -170,7 +238,9 @@ mod tests {
         std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
         let result = fetch(GooseModelContext {
             command,
+            workspace: dir.path().into(),
             provider_id: "openai".into(),
+            model_id: "gpt-6-sol".into(),
             environment: [("OPENAI_API_KEY".into(), "test-key".into())]
                 .into_iter()
                 .collect(),

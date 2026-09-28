@@ -579,7 +579,19 @@ it("adds a Pi provider API key for lookup and drops it when the provider changes
         }),
       }),
     );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Cancel model lookup" }),
+      ).not.toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Model" }));
     await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      ),
+    );
     await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
     await user.click(await screen.findByRole("option", { name: "Not set" }));
     expect(screen.queryByLabelText("Google Gemini API key")).toBeNull();

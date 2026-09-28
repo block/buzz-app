@@ -3,7 +3,7 @@
 **Experimental macOS test candidate, not merge-ready or release-validated.**
 Branch: `feature/agent-activity-preview`.
 
-This branch integrates main through `7834fffa` with the Activity implementation.
+This branch integrates main through `1f71ee94` with the Activity implementation.
 Main's identity, packaged communities, harness setup, profiles and close-to-hide
 behavior remain authoritative. Native Activity/history uses that same identity;
 the temporary preview-only account connection has been retired. This preview is
@@ -102,6 +102,16 @@ The preview publication repairs stale test fixtures without production behavior
 changes: message capability stubs, the DOM-only ResizeObserver stub, and Activity
 identity-name selectors. The merged adapter retains main HTTP writes and adds a scoped native socket/history
 lease. Legacy preview team snapshots remain readable without rewriting saved agents.
+
+The main-integration batch passed 22 representative Activity, thread-navigation and
+mocked-native browser journeys across Chromium and WebKit; Rust Clippy, the native
+build, controller tests and focused identity/relay/Activity-history/IPC tests passed.
+Independent source reviews found no remaining merge blocker in the inspected
+ownership/lifecycle and conversation/profile boundaries. These are local synthetic
+checks, not a whole-feature security certification. The staged-runtime ignored
+native gates and packaged real-account acceptance have not been rerun for this
+reconciled identity path. The profile channel selector's cycling label remains a
+known accessibility follow-up outside the merge.
 
 No hosted CI approval, code-owner approval, release signing,
 or cross-platform acceptance is claimed. A branch push alone does not run PR CI.

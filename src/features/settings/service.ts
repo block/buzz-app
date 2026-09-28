@@ -61,13 +61,24 @@ export class SettingsCardsService extends Service implements SettingsCards {
     return () => this.listeners.delete(listener);
   };
   retainVisibility() {
-    const releases = this.entries
-      .snapshot()
-      .flatMap((entry) =>
-        entry.visibility ? [entry.visibility.ensure()] : [],
-      );
+    const retained = new Map<Contribution<SettingsCard>, () => void>();
+    const sync = () => {
+      const active = new Set(this.entries.snapshot());
+      for (const [entry, release] of retained)
+        if (!active.has(entry)) {
+          release();
+          retained.delete(entry);
+        }
+      for (const entry of active)
+        if (entry.visibility && !retained.has(entry))
+          retained.set(entry, entry.visibility.ensure());
+    };
+    const stop = this.entries.subscribe(sync);
+    sync();
     return () => {
-      for (const release of releases) release();
+      stop();
+      for (const release of retained.values()) release();
+      retained.clear();
     };
   }
   register(card: SettingsCard) {

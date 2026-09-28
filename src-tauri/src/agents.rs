@@ -21,18 +21,31 @@ pub(crate) struct Snapshot {
     harness_options: Vec<HarnessOption>,
     databricks_defaults: crate::agent_models::Defaults,
     agent_defaults: buzz_agent_controller::BuildDefaults,
+    /// Running agents restarted by this save; absent on other responses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restarted: Option<usize>,
+    /// Agents whose automatic restart after this save failed (not skipped).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restart_failures: Option<usize>,
 }
 impl Snapshot {
-    fn from(data: ControlSnapshot, import_available: bool, workspace: &std::path::Path) -> Self {
+    fn from(
+        data: ControlSnapshot,
+        import_available: bool,
+        workspace: &std::path::Path,
+        app_data: &std::path::Path,
+    ) -> Self {
         Self {
             data,
             import_available,
             create_available: import_available,
             avatar_editing_available: true,
             default_workspace: workspace.to_string_lossy().into_owned(),
-            harness_options: harness_options(),
+            harness_options: harness_options(app_data),
             databricks_defaults: crate::agent_models::defaults(),
             agent_defaults: buzz_agent_controller::build_defaults(),
+            restarted: None,
+            restart_failures: None,
         }
     }
 }
@@ -126,13 +139,46 @@ fn pi_status(cli: bool, adapter: bool, node: bool) -> &'static str {
     }
 }
 
-fn harness_options() -> Vec<HarnessOption> {
+struct PiTools {
+    cli: Option<PathBuf>,
+    adapter: Option<PathBuf>,
+    node: Option<PathBuf>,
+}
+
+fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str) {
+    // An existing, complete user install always wins. Otherwise use the
+    // app-owned pair only when its pinned Node can run its npm shims.
+    let selected = if user.cli.is_some() && user.adapter.is_some() && user.node.is_some() {
+        user
+    } else if managed.adapter.is_some() && managed.node.is_some() {
+        PiTools {
+            cli: managed.cli.or(user.cli),
+            ..managed
+        }
+    } else {
+        user
+    };
+    let status = pi_status(
+        selected.cli.is_some(),
+        selected.adapter.is_some(),
+        selected.node.is_some(),
+    );
+    (selected.adapter, status)
+}
+
+fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
     let goose = installed_goose();
-    let pi = buzz_agent_controller::installed("buzz-pi-acp");
-    let pi_status = pi_status(
-        buzz_agent_controller::installed("pi").is_some(),
-        pi.is_some(),
-        buzz_agent_controller::installed("node").is_some(),
+    let (pi, pi_status) = pi_choice(
+        PiTools {
+            cli: buzz_agent_controller::installed("pi"),
+            adapter: buzz_agent_controller::installed("buzz-pi-acp"),
+            node: buzz_agent_controller::installed("node"),
+        },
+        PiTools {
+            cli: buzz_agent_controller::managed_tool(app_data, "pi"),
+            adapter: buzz_agent_controller::managed_tool(app_data, "buzz-pi-acp"),
+            node: buzz_agent_controller::managed_tool(app_data, "node"),
+        },
     );
     vec![
         HarnessOption {
@@ -171,30 +217,13 @@ fn harness_options() -> Vec<HarnessOption> {
             label: "Pi",
             available: pi_status == "ready",
             status: pi_status,
-            install_supported: None,
+            install_supported: Some(cfg!(all(
+                any(target_os = "macos", target_os = "linux"),
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ))),
             default_args: &[],
-            providers: &[
-                ProviderOption {
-                    value: "anthropic",
-                    label: "Anthropic",
-                },
-                ProviderOption {
-                    value: "openai",
-                    label: "OpenAI",
-                },
-                ProviderOption {
-                    value: "openai-codex",
-                    label: "OpenAI Codex",
-                },
-                ProviderOption {
-                    value: "google",
-                    label: "Google",
-                },
-                ProviderOption {
-                    value: "openrouter",
-                    label: "OpenRouter",
-                },
-            ],
+            // Pi reports signed-in providers through its model catalog.
+            providers: &[],
         },
     ]
 }
@@ -216,6 +245,7 @@ struct Host {
     imports: Imports,
     legacy_parent: PathBuf,
     workspace: PathBuf,
+    app_data: PathBuf,
     closed: bool,
     credentials: Arc<dyn Credentials>,
     starts: BTreeMap<String, (u64, Option<String>, ProcessStatus)>,
@@ -236,6 +266,10 @@ impl Host {
         bundle: Result<RuntimeBundle, String>,
         credentials: Arc<dyn Credentials>,
     ) -> Result<Self, String> {
+        let app_data = root
+            .parent()
+            .ok_or("Invalid local agent storage")?
+            .to_path_buf();
         let store = Store::open(root)?;
         let queued = store
             .snapshot()?
@@ -261,6 +295,7 @@ impl Host {
             imports: Imports::default(),
             legacy_parent,
             workspace,
+            app_data,
             closed: false,
             credentials,
             starts: BTreeMap::new(),
@@ -288,6 +323,7 @@ impl Host {
             data,
             cfg!(target_os = "macos"),
             &self.workspace,
+            &self.app_data,
         ))
     }
     fn action(&mut self, id: &str, action: Action) -> Result<Snapshot, String> {
@@ -453,7 +489,7 @@ impl AgentHost {
         for id in ids {
             let begin = std::time::Instant::now();
             startup_trace(serde_json::json!({"phase": "start", "agent": id}));
-            let result = start(self.clone(), id.clone(), Action::Start, true, None, false).await;
+            let result = start(self.clone(), id.clone(), Action::Start, true, None, None).await;
             let agent = result
                 .as_ref()
                 .ok()
@@ -468,15 +504,30 @@ impl AgentHost {
     pub(crate) async fn ensure_open(&self) -> Result<(), String> {
         run(self.clone(), |_| Ok(())).await
     }
+    pub(crate) async fn inherited_workspace(&self) -> Result<Option<String>, String> {
+        run(self.clone(), |host| host.controller.inherited_workspace()).await
+    }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(crate) async fn waiting_for_goose(&self) -> Result<Vec<String>, String> {
+        self.waiting_for(crate::harness_setup::waiting_for_goose)
+            .await
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(crate) async fn waiting_for_pi(&self) -> Result<Vec<String>, String> {
+        self.waiting_for(crate::harness_setup::waiting_for_pi).await
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn waiting_for(
+        &self,
+        predicate: fn(&buzz_agent_controller::AgentView) -> bool,
+    ) -> Result<Vec<String>, String> {
         run(self.clone(), move |host| {
             Ok(host
                 .controller
                 .snapshot()?
                 .agents
                 .iter()
-                .filter(|agent| crate::harness_setup::waiting_for_goose(agent))
+                .filter(|agent| predicate(agent))
                 .map(|agent| agent.id.clone())
                 .collect())
         })
@@ -530,7 +581,7 @@ impl AgentHost {
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.model_context(id, revision, edit),
-            (None, None) => Controller::draft_model_context(edit),
+            (None, None) => Controller::draft_model_context(host.controller.effective_draft(edit)?),
             _ => Err("Invalid agent model context".into()),
         })
         .await
@@ -544,7 +595,9 @@ impl AgentHost {
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.goose_model_context(id, revision, edit),
-            (None, None) => Controller::draft_goose_model_context(edit),
+            (None, None) => {
+                Controller::draft_goose_model_context(host.controller.effective_draft(edit)?)
+            }
             _ => Err("Invalid agent model context".into()),
         })
         .await
@@ -558,7 +611,9 @@ impl AgentHost {
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.pi_model_context(id, revision, edit),
-            (None, None) => Controller::draft_pi_model_context(edit),
+            (None, None) => {
+                Controller::draft_pi_model_context(host.controller.effective_draft(edit)?)
+            }
             _ => Err("Invalid agent model context".into()),
         })
         .await
@@ -629,11 +684,100 @@ pub(crate) async fn agent_control_save(
     expected_revision: u64,
     edit: AgentEdit,
 ) -> Result<Snapshot, String> {
-    run(state.inner().clone(), move |host| {
-        host.controller.save(&id, expected_revision, edit)?;
-        host.snapshot()
+    save_and_restart(state.inner().clone(), move |host| {
+        host.controller.save(&id, expected_revision, edit).map(drop)
     })
     .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_save_defaults(
+    state: tauri::State<'_, AgentHost>,
+    edit: buzz_agent_controller::AgentDefaultsEdit,
+) -> Result<Snapshot, String> {
+    save_and_restart(state.inner().clone(), move |host| {
+        host.controller.save_defaults(edit).map(drop)
+    })
+    .await
+}
+/// Save, then restart only agents that were running before and after it and whose
+/// effective settings changed. Stopped or disabled agents are never started.
+async fn save_and_restart(
+    owner: AgentHost,
+    save: impl FnOnce(&mut Host) -> Result<(), String> + Send + 'static,
+) -> Result<Snapshot, String> {
+    let changed = run(owner.clone(), move |host| {
+        let before = host.controller.running_settings()?;
+        save(host)?;
+        let after = host.controller.running_settings()?;
+        Ok(changed_running(before, after))
+    })
+    .await?;
+    let (mut restarted, mut failures) = (0, 0);
+    for id in changed {
+        // Re-checked under the lock: Stop wins, and a subsequent user Start
+        // may already have launched the saved settings.
+        let result = start_guarded(
+            owner.clone(),
+            id.clone(),
+            Action::Restart,
+            false,
+            None,
+            Some((needs_save_restart, NO_SAVE_RESTART)),
+        )
+        .await;
+        match restart_outcome(&id, result) {
+            RestartOutcome::Restarted => restarted += 1,
+            RestartOutcome::Skipped => {}
+            RestartOutcome::Failed => failures += 1,
+        }
+    }
+    let mut snapshot = run(owner, |host| host.snapshot()).await?;
+    snapshot.restarted = Some(restarted);
+    snapshot.restart_failures = Some(failures);
+    Ok(snapshot)
+}
+#[derive(Debug, PartialEq)]
+enum RestartOutcome {
+    Restarted,
+    /// No longer needed, or an explicit Stop/newer action won: not a failure.
+    Skipped,
+    Failed,
+}
+const NO_SAVE_RESTART: &str = "Agent no longer needs a save restart";
+fn restart_outcome(id: &str, result: Result<Snapshot, String>) -> RestartOutcome {
+    match result {
+        Err(error) if error == NO_SAVE_RESTART || error == START_CANCELLED => {
+            RestartOutcome::Skipped
+        }
+        Err(_) => RestartOutcome::Failed,
+        Ok(snapshot) => match snapshot.data.agents.iter().find(|agent| agent.id == id) {
+            // A denied credential prompt or failed stop leaves the old process
+            // running; only a launch of the saved settings counts as a restart.
+            Some(agent) if is_running(agent) && agent.restart_diff.is_empty() => {
+                RestartOutcome::Restarted
+            }
+            // Stop disabled it while the restart was in flight.
+            Some(agent) if !agent.enabled => RestartOutcome::Skipped,
+            _ => RestartOutcome::Failed,
+        },
+    }
+}
+/// Agents live both before and after a save whose effective settings differ.
+fn changed_running(
+    before: BTreeMap<String, serde_json::Value>,
+    after: BTreeMap<String, serde_json::Value>,
+) -> Vec<String> {
+    after
+        .into_iter()
+        .filter(|(id, settings)| before.get(id).is_some_and(|old| old != settings))
+        .map(|(id, _)| id)
+        .collect()
+}
+fn is_running(agent: &buzz_agent_controller::AgentView) -> bool {
+    agent.enabled && agent.status == buzz_agent_controller::ProcessStatus::Running
+}
+fn needs_save_restart(agent: &buzz_agent_controller::AgentView) -> bool {
+    is_running(agent) && !agent.restart_diff.is_empty()
 }
 #[tauri::command]
 pub(crate) async fn agent_control_start_on_app_launch(
@@ -676,7 +820,7 @@ pub(crate) async fn agent_control_action(
     if matches!(action, Action::Stop) {
         return run(owner, move |host| host.action(&id, action)).await;
     }
-    start(owner, id, action, false, replay_floor, false).await
+    start(owner, id, action, false, replay_floor, None).await
 }
 // Only explicit nonsecret fields belong here; never pass snapshots/config/errors.
 fn startup_trace(value: serde_json::Value) {
@@ -690,13 +834,56 @@ fn startup_trace(value: serde_json::Value) {
     }
 }
 pub(crate) const NOT_WAITING_FOR_GOOSE: &str = "Agent no longer waiting for Goose";
+pub(crate) const NOT_WAITING_FOR_PI: &str = "Agent no longer waiting for Pi";
+#[derive(Clone, Copy)]
+pub(crate) enum InstallRestart {
+    Goose,
+    Pi,
+}
 pub(crate) async fn start(
     owner: AgentHost,
     id: String,
     action: Action,
     restore: bool,
     replay_floor: Option<u64>,
-    from_goose_install: bool,
+    install_restart: Option<InstallRestart>,
+) -> Result<Snapshot, String> {
+    let guard = install_restart.map(|harness| -> StartGuard {
+        match harness {
+            InstallRestart::Goose => (
+                crate::harness_setup::waiting_for_goose,
+                NOT_WAITING_FOR_GOOSE,
+            ),
+            InstallRestart::Pi => (crate::harness_setup::waiting_for_pi, NOT_WAITING_FOR_PI),
+        }
+    });
+    start_guarded(owner, id, action, restore, replay_floor, guard).await
+}
+const START_CANCELLED: &str = "Start cancelled by a newer action";
+type StartGuard = (fn(&buzz_agent_controller::AgentView) -> bool, &'static str);
+fn check_guard(host: &mut Host, id: &str, guard: Option<StartGuard>) -> Result<(), String> {
+    let Some((eligible, refusal)) = guard else {
+        return Ok(());
+    };
+    if host
+        .controller
+        .snapshot()?
+        .agents
+        .iter()
+        .any(|agent| agent.id == id && eligible(agent))
+    {
+        Ok(())
+    } else {
+        Err(refusal.into())
+    }
+}
+async fn start_guarded(
+    owner: AgentHost,
+    id: String,
+    action: Action,
+    restore: bool,
+    replay_floor: Option<u64>,
+    guard: Option<StartGuard>,
 ) -> Result<Snapshot, String> {
     let target = id.clone();
     let prepared = run(owner.clone(), move |host| {
@@ -705,18 +892,9 @@ pub(crate) async fn start(
         if restore && (host.acted.contains(&id) || !host.controller.launch_ids()?.contains(&id)) {
             return Err("Agent disabled before restore".into());
         }
-        // Re-check while holding the controller, not just at install start:
-        // Stop or Edit may have changed this agent while the download ran.
-        if from_goose_install
-            && !host
-                .controller
-                .snapshot()?
-                .agents
-                .iter()
-                .any(|agent| agent.id == id && crate::harness_setup::waiting_for_goose(agent))
-        {
-            return Err(NOT_WAITING_FOR_GOOSE.into());
-        }
+        // Re-check while holding the controller, not just when the caller
+        // chose this agent: Stop or Edit may have changed it since.
+        check_guard(host, &id, guard)?;
         if host.starts.contains_key(&id) {
             return Err("Agent start already in progress; use Stop to cancel".into());
         }
@@ -750,7 +928,7 @@ pub(crate) async fn start(
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
     let acquired = tauri::async_runtime::spawn_blocking(move || {
-        if !restore && replay_floor.is_none() && !from_goose_install {
+        if !restore && replay_floor.is_none() && guard.is_none() {
             credentials.retry();
         }
         credentials.read(&credential, &pubkey)
@@ -766,7 +944,7 @@ pub(crate) async fn start(
                 .starts
                 .get_mut(&target)
                 .filter(|(current, _, _)| *current == ticket)
-                .ok_or("Start cancelled by a newer action")?;
+                .ok_or(START_CANCELLED)?;
             pending.2 = ProcessStatus::Starting;
             Ok(())
         })
@@ -774,7 +952,7 @@ pub(crate) async fn start(
     }
     run(owner, move |host| {
         if host.starts.get(&id).map(|(ticket, _, _)| *ticket) != Some(ticket) {
-            return Err("Start cancelled by a newer action".into());
+            return Err(START_CANCELLED.into());
         }
         host.starts.remove(&id);
         let key = match acquired {
@@ -788,6 +966,9 @@ pub(crate) async fn start(
             host.controller.record_error(&id, error);
             return host.snapshot();
         }
+        // The OS credential prompt can outlast the agent (e.g. its listener
+        // exited); eligibility must still hold right before Restart enables it.
+        check_guard(host, &id, guard)?;
         if let Err(error) =
             host.controller
                 .action_with_key(&id, action, revision, &key, replay_floor)

@@ -1110,3 +1110,96 @@ for (const status of ["waiting", "starting"] as const) {
     control.dispose();
   });
 }
+
+it("runs Pi installation outside agent writes, fences Goose, and preserves the report after Stop", async () => {
+  const fixture = controlFixture();
+  const install = deferred<GooseInstallReport>();
+  const goose = vi.fn();
+  fixture.host.installPi = () => install.promise;
+  fixture.host.installGoose = goose;
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const installing = control.installPi?.();
+  expect(control.snapshot().piInstall?.installing).toBe(true);
+  expect(control.snapshot().busy).toBe(false);
+  expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+  await expect(control.installGoose?.()).rejects.toThrow("in progress");
+  await control.action(fixture.agent.id, "stop");
+  expect(fixture.calls).toContainEqual(
+    expect.objectContaining({ action: "stop" }),
+  );
+  const reads = fixture.calls.filter(
+    (call) => call.action === "snapshot",
+  ).length;
+  install.resolve({
+    ready: true,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/pi-install.log",
+    output: "done",
+    error: null,
+  });
+  await installing;
+  expect(control.snapshot().piInstall?.report?.ready).toBe(true);
+  expect(control.snapshot().data?.agents[0]?.enabled).toBe(false);
+  expect(
+    fixture.calls.filter((call) => call.action === "snapshot"),
+  ).toHaveLength(reads + 1);
+  expect(goose).not.toHaveBeenCalled();
+  control.dispose();
+});
+
+for (const operation of ["save", "saveDefaults"] as const) {
+  it(`${operation} restart credential wait admits Stop and drops the late result`, async () => {
+    const fixture = controlFixture();
+    const before = structuredClone(fixture.data);
+    const saved = structuredClone(before);
+    saved.restarted = 1;
+    const gate = deferred<void>();
+    const started = deferred<void>();
+    const write = vi.fn(async () => {
+      started.resolve();
+      await gate.promise;
+      return saved;
+    });
+    fixture.host.save = write;
+    fixture.host.saveDefaults = write;
+    const stopped = structuredClone(before);
+    stopped.agents[0] = {
+      ...fixture.agent,
+      enabled: false,
+      status: "stopped",
+      runningRevision: null,
+    };
+    const action = vi.spyOn(fixture.host, "action").mockResolvedValue(stopped);
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    const pending = (
+      operation === "save"
+        ? control.save(
+            fixture.agent.id,
+            fixture.agent.revision,
+            agentEdit(agentDraft(fixture.agent)),
+          )
+        : control.saveDefaults?.({
+            harness: "buzz-agent",
+            provider: "",
+            model: "next",
+            effort: "",
+            environment: {},
+          })
+    )?.catch((error: Error) => error);
+    await started.promise;
+    expect(control.snapshot().busy).toBe(true);
+    expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+    await control.action(fixture.agent.id, "stop");
+    expect(action).toHaveBeenCalledExactlyOnceWith(fixture.agent.id, "stop");
+    expect(control.snapshot().data?.agents[0]?.status).toBe("stopped");
+    gate.resolve();
+    expect(await pending).toBeInstanceOf(Error);
+    // The superseded save cannot overwrite the newer Stop's evidence.
+    expect(control.snapshot().data?.agents[0]?.status).toBe("stopped");
+    expect(control.snapshot().busy).toBe(false);
+    control.dispose();
+  });
+}

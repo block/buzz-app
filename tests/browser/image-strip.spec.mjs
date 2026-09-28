@@ -167,6 +167,52 @@ test("posted image strips keep counts visible and every image reachable beside d
       .getByRole("button", { name: "Close fullscreen viewer" })
       .click();
     await expect(links.last()).toBeFocused();
+
+    // Pointer activation uses the new shared-image motion; keyboard skips it.
+    await page.evaluate(() => {
+      window.stripMotionFrames = [];
+      const animate = HTMLElement.prototype.animate;
+      HTMLElement.prototype.animate = function (frames, options) {
+        if (this.hasAttribute("data-review-media"))
+          window.stripMotionFrames.push(frames);
+        return animate.call(this, frames, options);
+      };
+    });
+    await links.first().click();
+    await expect(viewer).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => window.stripMotionFrames.length))
+      .toBeGreaterThan(0);
+    await expect(viewer).not.toHaveAttribute("data-review-opening");
+    const motion = await page.evaluate(() => {
+      const media = document.querySelector("[data-review-media]");
+      const bounds = media.getBoundingClientRect();
+      const height =
+        bounds.height -
+        (parseFloat(getComputedStyle(media).paddingBottom) || 0);
+      const tile = document.querySelector("[data-thumbnail]");
+      const image = tile.querySelector("img");
+      const aspect = image.naturalWidth / image.naturalHeight;
+      const preview = tile.getBoundingClientRect();
+      const coverWidth = Math.max(preview.width, preview.height * aspect);
+      const targetWidth = Math.min(bounds.width, height * aspect);
+      return {
+        frames: window.stripMotionFrames,
+        scale: coverWidth / targetWidth,
+      };
+    });
+    const start = motion.frames[0][0];
+    expect(Number(start.transform.match(/scale\(([^)]+)\)/)[1])).toBeCloseTo(
+      motion.scale,
+      5,
+    );
+    expect(start.clipPath).toBeTruthy();
+    await expect(viewer).not.toHaveAttribute("data-review-opening");
+    await viewer
+      .getByRole("button", { name: "Close fullscreen viewer" })
+      .click();
+    await expect(viewer).toHaveCount(0);
+    await expect(links.first()).toBeFocused();
   } finally {
     await server.close();
   }

@@ -664,7 +664,7 @@ it.each(["escape", "backdrop"])(
   },
 );
 
-it("opens and closes a wide image from its cropped square thumbnail", () => {
+it("opens and closes a wide image from its cropped square thumbnail", async () => {
   const { animate, release } = setup("image");
   const opener = screen.getByRole("link", { name: "Open image attachment" });
   Object.defineProperty(opener, "getBoundingClientRect", {
@@ -694,6 +694,6 @@ it("opens and closes a wide image from its cropped square thumbnail", () => {
   });
   act(() => animate.mock.results[exitStart]?.value.onfinish?.());
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(opener).toHaveFocus();
+  await waitFor(() => expect(opener).toHaveFocus());
   release();
 });

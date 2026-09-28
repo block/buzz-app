@@ -555,15 +555,30 @@ export function createAgentControl(
     },
     refresh,
     save: (id, revision, edit) =>
-      run((native) => native.save(id, revision, edit), ready),
+      // Save may restart running agents and wait on their OS credential
+      // prompts; like other credential waits, recovery Stop stays available
+      // and a superseded result never replaces the newer Stop's evidence.
+      run(
+        (native) => native.save(id, revision, edit),
+        ready,
+        false,
+        undefined,
+        true,
+      ),
     ...(host?.saveDefaults
       ? {
           saveDefaults: (edit: AgentDefaultsEdit) =>
-            run((native) => {
-              if (!native.saveDefaults)
-                throw new Error("Agent defaults are unavailable.");
-              return native.saveDefaults(edit);
-            }, ready),
+            run(
+              (native) => {
+                if (!native.saveDefaults)
+                  throw new Error("Agent defaults are unavailable.");
+                return native.saveDefaults(edit);
+              },
+              ready,
+              false,
+              undefined,
+              true,
+            ),
         }
       : {}),
     ...(host?.delete

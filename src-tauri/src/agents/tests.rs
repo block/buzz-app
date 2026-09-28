@@ -773,12 +773,28 @@ fn legacy_guard_is_process_path_evidence_not_name_substring_or_coexistence_claim
         " 100 /Applications/Buzz.app/Contents/MacOS/buzz-desktop",
         " 200 /checkout/target/debug/buzz-desktop",
     ] {
-        assert!(refuse_legacy_listing(listing).is_err());
+        assert!(refuse_legacy_listing(listing, 999).is_err());
     }
     assert!(refuse_legacy_listing(
-        "123 /tmp/buzz-agent\n456 /tmp/buzz-foundation\n789 /tmp/buzz-desktop-notes"
+        "123 /tmp/buzz-agent\n456 /tmp/buzz-foundation\n789 /tmp/buzz-desktop-notes",
+        999
     )
     .is_ok());
+}
+
+#[test]
+fn legacy_guard_excludes_only_the_current_process() {
+    let current = "100 /Applications/Buzz.app/Contents/MacOS/buzz-desktop";
+    assert!(refuse_legacy_listing(current, 100).is_ok());
+    assert!(refuse_legacy_listing("100 /tmp/buzz-desktop", 100).is_ok());
+    for other in [
+        "200 /Applications/Buzz.app/Contents/MacOS/buzz-desktop",
+        "200 /Applications/Buzz Dev.app/Contents/MacOS/buzz-desktop",
+        "200 /tmp/buzz-desktop",
+    ] {
+        assert!(refuse_legacy_listing(&format!("{current}\n{other}"), 100).is_err());
+        assert!(refuse_legacy_listing(&format!("{other}\n{current}"), 100).is_err());
+    }
 }
 
 #[tokio::test]

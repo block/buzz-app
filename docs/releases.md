@@ -27,3 +27,9 @@ ID signature. The app retains the signed files' hashes in memory and checks them
 before each launch. Development builds and other platforms still require the
 manifest hashes to match. The release workflow verifies the signed seal,
 notarization, and manifest identity before publishing.
+
+## Preparing the legacy app replacement
+
+The production identity overlay is separate from these test releases. See
+[desktop identity](desktop-identity.md) for bundle identity, profile storage, and
+migration requirements before an updater cutover.

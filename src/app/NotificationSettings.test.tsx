@@ -16,6 +16,12 @@ import { NotificationsService } from "../features/notifications/service";
 import { NotificationSettings } from "./NotificationSettings";
 import { PluginRuntime } from "../plugins/runtime";
 
+// Presentation timing is covered in notifications/presentation.test.ts; settings
+// tests must not leave browser frame callbacks running after jsdom teardown.
+vi.mock("../features/notifications/presentation", () => ({
+  afterPresentation: () => Promise.resolve(),
+}));
+
 const contexts: Context[] = [];
 afterEach(async () => {
   cleanup();

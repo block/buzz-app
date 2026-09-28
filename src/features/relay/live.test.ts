@@ -237,11 +237,16 @@ it("keeps quiet-channel unread evidence when another filter fills its replay all
         ["p", h.key.pubkey],
       ],
     });
+    // Model 501 distinct hot relay records without signing each one. Replay
+    // counts wire frames, so deliver a signed representative for each hot record;
+    // unread deduplicates those repeated event IDs.
+    const hot = message(author, "hot", "hot", now - 1);
     const history = [
-      quiet,
-      ...Array.from({ length: 501 }, (_, i) =>
-        message(author, "hot", `hot-${i}`, now - 1),
-      ),
+      { id: quiet.id, event: quiet },
+      ...Array.from({ length: 501 }, (_, i) => ({
+        id: `hot-${i}`,
+        event: hot,
+      })),
     ];
     // Relay's existing OR contract applies each filter's limit separately.
     // The former multi-h filter loses quiet to the 500 newer hot events.
@@ -249,23 +254,24 @@ it("keeps quiet-channel unread evidence when another filter fills its replay all
     for (const filter of filtersOf(batch)) {
       const matches = history
         .filter(
-          (e) =>
-            filter.kinds.includes(e.kind) &&
-            e.created_at >= filter.since &&
-            e.tags.some(
+          ({ event }) =>
+            filter.kinds.includes(event.kind) &&
+            event.created_at >= filter.since &&
+            event.tags.some(
               ([k, v]) =>
                 k === "h" && v !== undefined && filter["#h"]?.includes(v),
             ),
         )
-        .sort((a, b) => b.created_at - a.created_at)
+        .sort((a, b) => b.event.created_at - a.event.created_at)
         .slice(0, filter.limit);
-      for (const event of matches)
-        if (!delivered.has(event.id)) {
-          delivered.add(event.id);
+      for (const { id, event } of matches)
+        if (!delivered.has(id)) {
+          delivered.add(id);
           await h.first.receive(["EVENT", batch[1], event]);
         }
     }
     await h.first.receive(["EOSE", batch[1]]);
+    expect(delivered.size).toBe(501); // 500 hot frames plus quiet's own allowance.
     expect(delivered.has(quiet.id)).toBe(true);
     expect(
       owner.session.unread.snapshot({ kind: "channel", channelId: "quiet" }),

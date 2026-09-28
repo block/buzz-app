@@ -121,7 +121,17 @@ fn delete_entry(entry: &impl Backend, root: &Path, service: &str, account: &str)
     entry.delete()
 }
 
-fn acquire(root: &Path, service: &str, account: &str) -> Result<File> {
+struct Lock(File);
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        // fork/dup can retain the open-file description after our descriptor
+        // closes. Explicitly release ownership when the operation finishes.
+        let _ = self.0.unlock();
+    }
+}
+
+fn acquire(root: &Path, service: &str, account: &str) -> Result<Lock> {
     if !root.is_absolute() {
         return Err(Error::Unavailable);
     }
@@ -146,7 +156,7 @@ fn acquire(root: &Path, service: &str, account: &str) -> Result<File> {
         std::fs::TryLockError::WouldBlock => Error::Busy,
         std::fs::TryLockError::Error(_) => Error::Unavailable,
     })?;
-    Ok(file)
+    Ok(Lock(file))
 }
 
 #[cfg(test)]

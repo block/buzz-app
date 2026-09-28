@@ -102,6 +102,9 @@ fn lock_contention_blocks_create_and_delete_but_not_other_namespaces() {
     let root = tempfile::tempdir().unwrap();
     let store = Memory::default();
     let lock = acquire(root.path(), SERVICE, ACCOUNT).unwrap();
+    // Model a descriptor inherited by a concurrently spawning process. Closing
+    // only our descriptor must not leave the completed operation holding a lock.
+    let inherited = lock.0.try_clone().unwrap();
     assert_eq!(
         add_entry(&store, root.path(), SERVICE, ACCOUNT, b"new"),
         Err(Error::Busy)
@@ -118,6 +121,13 @@ fn lock_contention_blocks_create_and_delete_but_not_other_namespaces() {
     add_entry(&store, root.path(), SERVICE, ACCOUNT, b"new").unwrap();
     delete_entry(&store, root.path(), SERVICE, ACCOUNT).unwrap();
     assert_eq!(store.read(), Err(Error::Absent));
+    let reacquired = acquire(root.path(), SERVICE, ACCOUNT).unwrap();
+    drop(inherited);
+    assert!(matches!(
+        acquire(root.path(), SERVICE, ACCOUNT),
+        Err(Error::Busy)
+    ));
+    drop(reacquired);
 }
 
 #[test]

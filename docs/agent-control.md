@@ -200,11 +200,17 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
 
   ```sh
   npm install -g @earendil-works/pi-coding-agent
-  npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#86b201e'
+  npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#fb8f846'
   ```
 
 **Check again** re-detects installed Harnesses without reopening Buzz. Status
 is executable detection, not a guarantee of sign-in, ACP readiness or inference.
+The reviewed Pi adapter revision supports native steering. An app-owned Pi
+installation offers **Update adapter** when Ready; it replaces only the adapter.
+For a user-global installation, Settings shows the manual adapter update command
+without changing the user's npm prefix. Settings also shows the selected Pi
+adapter path. Restart running Pi agents after either update so new sessions load
+the adapter.
 Add/Edit links to Settings → Agents for setup instead of telling people to reopen
 the app. The ACP tooltip says:
 

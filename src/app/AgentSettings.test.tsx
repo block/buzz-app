@@ -93,7 +93,9 @@ function setupHarnesses(
     installGoose?: NonNullable<AgentControlHost["installGoose"]>;
   } = {},
   pi: {
+    command?: string;
     installSupported?: boolean;
+    updateSupported?: boolean;
     installPi?: NonNullable<AgentControlHost["installPi"]>;
   } = {},
 ) {
@@ -119,12 +121,15 @@ function setupHarnesses(
       providers: [],
     },
     {
-      command: "buzz-pi-acp",
+      command: pi.command ?? "buzz-pi-acp",
       label: "Pi",
       available: piStatus === "ready",
       status: piStatus,
       ...(pi.installSupported !== undefined
         ? { installSupported: pi.installSupported }
+        : {}),
+      ...(pi.updateSupported !== undefined
+        ? { updateSupported: pi.updateSupported }
         : {}),
       providers: [],
     },
@@ -159,7 +164,7 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
       ).toBeVisible();
       expect(
         screen.getByText(
-          /git\+https:\/\/github.com\/salman1993\/buzz-pi-acp.git#86b201e/,
+          /git\+https:\/\/github.com\/salman1993\/buzz-pi-acp.git#fb8f846/,
         ),
       ).toBeVisible();
       const write = vi
@@ -169,7 +174,7 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
         screen.getByRole("button", { name: "Copy Adapter command" }),
       );
       expect(write).toHaveBeenCalledWith(
-        "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#86b201e'",
+        "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#fb8f846'",
       );
       expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
         "Adapter command copied.",
@@ -405,6 +410,70 @@ it.each([
   },
 );
 
+it("offers the reviewed adapter command for a ready user-global Pi install", async () => {
+  const user = userEvent.setup();
+  setupHarnesses(
+    "ready",
+    {},
+    {
+      command: "/opt/homebrew/bin/buzz-pi-acp",
+      installSupported: true,
+      updateSupported: false,
+      installPi: vi.fn(),
+    },
+  );
+  const pi = within(await screen.findByRole("list")).getAllByRole(
+    "listitem",
+  )[2];
+  if (!pi) throw new Error("Missing Pi row");
+  expect(
+    within(pi).queryByRole("button", { name: "Update adapter" }),
+  ).toBeNull();
+  expect(screen.getByText(/Selected Pi adapter:/)).toHaveTextContent(
+    "/opt/homebrew/bin/buzz-pi-acp",
+  );
+  expect(screen.getByText(/For a user-global Pi install/)).toBeVisible();
+  expect(screen.getByText(/buzz-pi-acp.git#fb8f846/)).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Copy Pi command" })).toBeNull();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  await user.click(
+    screen.getByRole("button", { name: "Copy Adapter command" }),
+  );
+  expect(write).toHaveBeenCalledWith(
+    "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#fb8f846'",
+  );
+});
+
+it("updates a ready app-owned Pi adapter and tells the user to restart running agents", async () => {
+  const user = userEvent.setup();
+  const installPi = vi.fn().mockResolvedValue({
+    ready: true,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/pi-install.log",
+    output: "done",
+    error: null,
+  });
+  setupHarnesses(
+    "ready",
+    {},
+    {
+      installSupported: true,
+      updateSupported: true,
+      installPi,
+    },
+  );
+  const pi = within(await screen.findByRole("list")).getAllByRole(
+    "listitem",
+  )[2];
+  if (!pi) throw new Error("Missing Pi row");
+  await user.click(within(pi).getByRole("button", { name: "Update adapter" }));
+  expect(installPi).toHaveBeenCalledTimes(1);
+  expect(
+    await screen.findByText(/Restart running Pi agents to use it/),
+  ).toBeVisible();
+});
+
 it("keeps Pi install progress and report across Settings remounts without taking the agent-write lane", async () => {
   const user = userEvent.setup();
   let complete!: (report: GooseInstallReport) => void;
@@ -445,12 +514,16 @@ it("keeps Pi install progress and report across Settings remounts without taking
     error: null,
   });
   expect(
-    await screen.findByText("Pi installed. Restarted 1 waiting agents."),
+    await screen.findByText(
+      /Pi adapter installed.*Restarted 1 waiting agents\./,
+    ),
   ).toBeVisible();
   cleanup();
   render(<AgentSettings control={control} />, { wrapper: ToastProvider });
   expect(
-    await screen.findByText("Pi installed. Restarted 1 waiting agents."),
+    await screen.findByText(
+      /Pi adapter installed.*Restarted 1 waiting agents\./,
+    ),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Copy Pi command" })).toBeNull();
 });

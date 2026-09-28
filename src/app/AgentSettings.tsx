@@ -17,7 +17,7 @@ const acpHint =
   "Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.";
 const piCommand = "npm install -g @earendil-works/pi-coding-agent";
 const adapterCommand =
-  "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#86b201e'";
+  "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#fb8f846'";
 const labels = {
   ready: "Ready",
   "cli-needed": "CLI needed",
@@ -150,7 +150,7 @@ export function AgentSettings({
                       {option?.status ? labels[option.status] : "Unknown"}
                     </span>
                     {option?.label === "Pi" &&
-                      option.status !== "ready" &&
+                      (option.status !== "ready" || option.updateSupported) &&
                       option.installSupported &&
                       control.installPi &&
                       !piResult?.ready && (
@@ -168,7 +168,9 @@ export function AgentSettings({
                             void control.installPi?.().catch(() => {});
                           }}
                         >
-                          Install
+                          {option.status === "ready"
+                            ? "Update adapter"
+                            : "Install"}
                         </Button>
                       )}
                     {option?.label === "Goose" &&
@@ -197,13 +199,19 @@ export function AgentSettings({
                 </li>
               ))}
             </ul>
+            {pi?.status === "ready" && (
+              <p className="text-body-sm text-secondary break-all">
+                Selected Pi adapter: <code>{pi.command}</code>
+              </p>
+            )}
             {installing && <p role="status">Installing Goose…</p>}
             {installingPi && (
               <p role="status">Installing Pi and its ACP adapter…</p>
             )}
             {!installingPi && piResult?.ready && pi?.status === "ready" && (
               <p role="status">
-                Pi installed. Restarted {piResult.restarted} waiting agents.
+                Pi adapter installed. Restart running Pi agents to use it.
+                Restarted {piResult.restarted} waiting agents.
                 {piResult.restartFailures > 0 &&
                   ` ${piResult.restartFailures} agents could not restart; check Agents.`}
               </p>
@@ -248,6 +256,30 @@ export function AgentSettings({
                     </pre>
                   </details>
                 )}
+              </div>
+            )}
+            {pi?.status === "ready" && pi.updateSupported === false && (
+              <div className="space-y-3 text-body-sm">
+                <p className="m-0 text-secondary">
+                  Native steering needs the reviewed adapter revision. For a
+                  user-global Pi install, update it if needed, then restart
+                  running Pi agents.
+                </p>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <code
+                    className={`${styles.command} min-w-0 flex-1 text-mono`}
+                  >
+                    {adapterCommand}
+                  </code>
+                  <Button
+                    size="sm"
+                    type="button"
+                    onClick={() => void copy("Adapter", adapterCommand)}
+                  >
+                    Copy Adapter command
+                  </Button>
+                </div>
+                {copyMessage && <p role="status">{copyMessage}</p>}
               </div>
             )}
             {pi?.status !== "ready" && (

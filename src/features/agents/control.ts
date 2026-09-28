@@ -100,6 +100,8 @@ export interface ControlSnapshot {
     status?: "ready" | "cli-needed" | "adapter-needed";
     /** The native installer is available on macOS/Linux, not Windows. */
     installSupported?: boolean;
+    /** The selected Pi adapter is app-owned and can be updated here. */
+    updateSupported?: boolean;
     defaultArgs?: string[];
     providers: { value: string; label: string }[];
   }[];

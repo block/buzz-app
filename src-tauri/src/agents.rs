@@ -64,6 +64,8 @@ struct HarnessOption {
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     install_supported: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update_supported: Option<bool>,
     default_args: &'static [&'static str],
     providers: &'static [ProviderOption],
 }
@@ -149,12 +151,14 @@ struct PiTools {
     node: Option<PathBuf>,
 }
 
-fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str) {
+fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str, bool) {
     // An existing, complete user install always wins. Otherwise use the
     // app-owned pair only when its pinned Node can run its npm shims.
-    let selected = if user.cli.is_some() && user.adapter.is_some() && user.node.is_some() {
+    let user_ready = user.cli.is_some() && user.adapter.is_some() && user.node.is_some();
+    let managed_selected = !user_ready && managed.adapter.is_some() && managed.node.is_some();
+    let selected = if user_ready {
         user
-    } else if managed.adapter.is_some() && managed.node.is_some() {
+    } else if managed_selected {
         PiTools {
             cli: managed.cli.or(user.cli),
             ..managed
@@ -167,12 +171,12 @@ fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str)
         selected.adapter.is_some(),
         selected.node.is_some(),
     );
-    (selected.adapter, status)
+    (selected.adapter, status, managed_selected)
 }
 
 fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
     let goose = installed_goose();
-    let (pi, pi_status) = pi_choice(
+    let (pi, pi_status, pi_managed) = pi_choice(
         PiTools {
             cli: buzz_agent_controller::installed("pi"),
             adapter: buzz_agent_controller::installed("buzz-pi-acp"),
@@ -191,6 +195,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             available: true,
             status: "ready",
             install_supported: None,
+            update_supported: None,
             default_args: &[],
             providers: &[ProviderOption {
                 value: "databricks_v2",
@@ -210,6 +215,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                 "cli-needed"
             },
             install_supported: Some(cfg!(any(target_os = "macos", target_os = "linux"))),
+            update_supported: None,
             default_args: &["acp"],
             providers: GOOSE_PROVIDERS,
         },
@@ -225,6 +231,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                 any(target_os = "macos", target_os = "linux"),
                 any(target_arch = "x86_64", target_arch = "aarch64")
             ))),
+            update_supported: Some(pi_managed && pi_status == "ready"),
             default_args: &[],
             // Pi reports signed-in providers through its model catalog.
             providers: &[],

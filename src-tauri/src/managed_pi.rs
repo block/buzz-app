@@ -13,8 +13,8 @@ use std::{
 const VERSION: &str = "v24.18.0";
 const MAX_ARCHIVE: u64 = 90 * 1024 * 1024;
 const PI: &str = "@earendil-works/pi-coding-agent";
-const ADAPTER: &str = "git+https://github.com/salman1993/buzz-pi-acp.git#86b201e";
-const NPM_FAILED: &str = "npm couldn't install Pi; see the install log. If your network blocks the public npm registry, set your mirror in ~/.npmrc or npm_config_registry, then try again, or use the commands below.";
+const ADAPTER: &str = "git+https://github.com/salman1993/buzz-pi-acp.git#fb8f846";
+const NPM_FAILED: &str = "npm couldn't install Pi or its adapter; see the install log. If your network blocks the public npm registry, set your mirror in ~/.npmrc or npm_config_registry, then try again, or use the commands below.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Artifact {
@@ -310,6 +310,7 @@ pub(crate) async fn install(
     setup: &HarnessSetup,
     app_data: &Path,
     log: File,
+    adapter_only: bool,
 ) -> Result<bool, String> {
     let home = PathBuf::from(std::env::var_os("HOME").ok_or("Pi install requires HOME")?);
     let spec = artifact(std::env::consts::OS, std::env::consts::ARCH)
@@ -318,7 +319,12 @@ pub(crate) async fn install(
     let prefix = app_data.join("node-tools");
     refuse_linked_prefix(&prefix)?;
     std::fs::create_dir_all(&prefix).map_err(|_| "Could not create app-owned npm prefix")?;
-    for (package, install_links) in [(PI, false), (ADAPTER, true)] {
+    let packages: &[(&str, bool)] = if adapter_only {
+        &[(ADAPTER, true)]
+    } else {
+        &[(PI, false), (ADAPTER, true)]
+    };
+    for &(package, install_links) in packages {
         refuse_linked_prefix(&prefix)?;
         let mut command = npm_command(&node, app_data, &home, package, install_links)?;
         run_step(setup, &mut command, &log, NPM_FAILED).await?;

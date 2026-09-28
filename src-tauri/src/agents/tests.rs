@@ -148,10 +148,11 @@ fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_nod
         adapter: path("managed-adapter"),
         node: path("managed-node"),
     };
-    let (command, status) = pi_choice(empty(), managed());
+    let (command, status, managed_selected) = pi_choice(empty(), managed());
     assert_eq!(command, path("managed-adapter"));
     assert_eq!(status, "ready");
-    let (command, status) = pi_choice(
+    assert!(managed_selected);
+    let (command, status, managed_selected) = pi_choice(
         PiTools {
             cli: path("user-pi"),
             adapter: path("user-adapter"),
@@ -161,7 +162,8 @@ fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_nod
     );
     assert_eq!(command, path("user-adapter"));
     assert_eq!(status, "ready");
-    let (command, status) = pi_choice(
+    assert!(!managed_selected);
+    let (command, status, managed_selected) = pi_choice(
         PiTools {
             cli: path("user-pi"),
             ..empty()
@@ -173,7 +175,8 @@ fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_nod
     );
     assert_eq!(command, path("managed-adapter"));
     assert_eq!(status, "ready");
-    let (command, status) = pi_choice(
+    assert!(managed_selected);
+    let (command, status, managed_selected) = pi_choice(
         empty(),
         PiTools {
             node: None,
@@ -182,6 +185,7 @@ fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_nod
     );
     assert!(command.is_none());
     assert_eq!(status, "cli-needed");
+    assert!(!managed_selected);
 }
 
 #[test]
@@ -434,6 +438,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         before["harnessOptions"][2]["status"] == "ready"
     );
     assert_eq!(before["harnessOptions"][2]["defaultArgs"], json!([]));
+    assert_eq!(before["harnessOptions"][2]["updateSupported"], false);
     // Pi's signed-in providers come from its catalog, never a static list.
     assert_eq!(before["harnessOptions"][2]["providers"], json!([]));
     assert_eq!(

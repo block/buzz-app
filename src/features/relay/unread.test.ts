@@ -1662,9 +1662,15 @@ it.each(["markThrough", "clearUnreadLocal", "markChannelRead"] as const)(
   },
 );
 
-it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
-  "queued local unread stays invalid after %s",
-  async (action) => {
+it.each(
+  (["clearCache", "dispose", "revoke-regrant"] as const).flatMap((action) =>
+    (["markUnreadLocal", "markMessageRead", "markMessageUnread"] as const).map(
+      (markAction) => ({ action, markAction }),
+    ),
+  ),
+)(
+  "queued $markAction stays invalid after $action",
+  async ({ action, markAction }) => {
     const h = setup();
     h.grant("room");
     const row = message(h.alice, "room", "root", 11);
@@ -1676,16 +1682,62 @@ it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
     const pending = [rejectedRead];
     try {
       await held.started;
-      const mark = h.session.unread.markUnreadLocal(h.target);
+      const mark =
+        markAction === "markUnreadLocal"
+          ? h.session.unread.markUnreadLocal(h.target)
+          : h.session.unread[markAction]("room", row.id);
       pending.push(expect(mark).rejects.toThrow());
       if (action === "revoke-regrant") {
         h.emit([roster(h.relay, "room", [], 20)]);
         h.grant("room", 21);
       } else await h[action]();
+      if (action !== "dispose") {
+        h.grant("room", 22);
+        h.emit([row]); // Restored evidence must not revive pre-invalidation intent.
+      }
     } finally {
       held.release();
     }
     await Promise.all(pending);
     expect(h.journal()?.localUnread.room).toBeUndefined();
+    expect(h.journal()?.localUnread["message-force:room"]).toBeUndefined();
+    expect(h.journal()?.state.frontiers[`msg:${row.id}`]).toBeUndefined();
+  },
+);
+
+it("queued message read does not consume a reply arriving after the click", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  h.emit([root]);
+  const unread = h.session.unread;
+  await unread.enterChannel("room");
+  const held = h.holdSaveStarted();
+  const prior = unread.markUnreadLocal(h.target);
+  let clicked: Promise<unknown> | undefined;
+  const late = message(h.alice, "room", "late reply", 13, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  try {
+    await held.started;
+    clicked = unread.markMessageRead("room", root.id);
+    h.emit([late]);
+    expect(unread.attention("room", late.id).unread).toBe(true);
+  } finally {
+    held.release();
+  }
+  await Promise.all([prior, clicked]);
+  expect(h.journal()?.state.frontiers[`msg:${root.id}`]).toBe(11);
+  expect(h.journal()?.state.frontiers[`msg:${late.id}`]).toBeUndefined();
+  expect(unread.attention("room", late.id).unread).toBe(true);
+});
+
+it.each(["markMessageRead", "markMessageUnread"] as const)(
+  "%s rejects invalid targets asynchronously",
+  async (action) => {
+    const h = setup();
+    h.grant("room");
+    await expect(h.session.unread[action]("room", "missing")).rejects.toThrow();
   },
 );

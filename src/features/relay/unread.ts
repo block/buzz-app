@@ -959,11 +959,11 @@ export function createUnread({
         ),
       );
     },
-    markMessageUnread(channelId, messageId) {
+    async markMessageUnread(channelId, messageId) {
       const visit = visits.get(channelId) ?? 0;
+      const rows = messageSubtree(channelId, messageId);
+      const generation = epoch;
       return serialize(channelId, async () => {
-        const rows = messageSubtree(channelId, messageId);
-        const generation = epoch;
         const valid = () =>
           !closed &&
           generation === epoch &&
@@ -985,11 +985,11 @@ export function createUnread({
         return result;
       });
     },
-    markMessageRead(channelId, messageId) {
+    async markMessageRead(channelId, messageId) {
       const visit = visits.get(channelId) ?? 0;
+      const rows = messageSubtree(channelId, messageId);
+      const generation = epoch;
       return serialize(channelId, async () => {
-        const rows = messageSubtree(channelId, messageId);
-        const generation = epoch;
         const valid = () =>
           !closed &&
           generation === epoch &&

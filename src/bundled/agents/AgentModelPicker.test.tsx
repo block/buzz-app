@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -460,6 +460,65 @@ it("Pi loads its signed-in providers when selected, without Browse", async () =>
       1,
       expect.objectContaining({ action: "connect" }),
     );
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("Pi's automatic lookup survives a StrictMode remount under single native admission", async () => {
+  const f = controlFixture();
+  let pending: number | null = null;
+  let next = 0;
+  const started = new Set<number>();
+  const begin = vi.fn(async () => {
+    if (pending !== null)
+      throw "Another model connection request is in progress; cancel it first";
+    pending = ++next;
+    return pending;
+  });
+  f.host.models = {
+    begin,
+    run: async (ticket) => {
+      started.add(ticket);
+      pending = null;
+      return {
+        host: "",
+        models: [{ id: "databricks/model-a", name: "databricks/model-a" }],
+        modelOverridden: false,
+        disconnected: false,
+      };
+    },
+    cancel: async (ticket) => {
+      if (pending === ticket && !started.has(ticket)) pending = null;
+    },
+  };
+  const control = createAgentControl(f.host);
+  const providers = vi.fn();
+  const view = render(
+    <StrictMode>
+      <AgentModelPicker
+        draft={{
+          ...agentDraft(f.agent),
+          command: "/local/buzz-pi-acp",
+          provider: "",
+          model: "",
+        }}
+        control={control}
+        defaults={undefined}
+        onPiProviders={providers}
+        onChange={() => {}}
+      />
+    </StrictMode>,
+  );
+  try {
+    await waitFor(() =>
+      expect(providers).toHaveBeenLastCalledWith(["databricks"]),
+    );
+    // The remount's lookup waited for the first ticket instead of being refused.
+    expect(begin).toHaveBeenCalledTimes(2);
+    expect(providers).toHaveBeenCalledWith(null);
+    expect(screen.queryByText(/Another model connection/)).toBeNull();
   } finally {
     view.unmount();
     control.dispose();

@@ -29,6 +29,9 @@ export function createAgentModels(
   host: ModelHost | undefined,
 ): AgentModels & { dispose(): void } {
   const active = new Set<AbortController>();
+  // Native admits one lookup and holds it until a cancelled one is dropped. A
+  // replacement waits for that retirement instead of being refused as busy.
+  const retiring = new Set<Promise<unknown>>();
   let disposed = false;
   return {
     async request(request, signal) {
@@ -50,21 +53,36 @@ export function createAgentModels(
         local.signal.addEventListener("abort", rejectCancelled, { once: true });
       });
       const timer = setTimeout(cancel, 185_000);
+      let running: Promise<ModelCatalog> | undefined;
       try {
+        if (retiring.size) {
+          await Promise.race([Promise.allSettled([...retiring]), cancelled]);
+          if (local.signal.aborted || disposed)
+            throw new Error("Connection cancelled.");
+        }
         const begun = host.begin().then((value) => {
           ticket = value;
           if (local.signal.aborted || disposed) retire();
           return value;
         });
+        local.signal.addEventListener(
+          "abort",
+          () => {
+            const retired = begun
+              .then((value): Promise<unknown> => running ?? host.cancel(value))
+              .catch(() => {})
+              .finally(() => retiring.delete(retired));
+            retiring.add(retired);
+          },
+          { once: true },
+        );
         ticket = await Promise.race([begun, cancelled]);
         if (local.signal.aborted || disposed) {
           await host.cancel(ticket);
           throw new Error("Connection cancelled.");
         }
-        const result = await Promise.race([
-          host.run(ticket, request),
-          cancelled,
-        ]);
+        running = host.run(ticket, request);
+        const result = await Promise.race([running, cancelled]);
         if (local.signal.aborted || disposed)
           throw new Error("Connection cancelled.");
         return result;

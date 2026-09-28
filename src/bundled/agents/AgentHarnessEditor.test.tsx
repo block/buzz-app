@@ -220,3 +220,33 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
     model: "",
   });
 });
+
+it("disables Pi's provider list while signed-in providers load and keeps the current choice", () => {
+  const f = controlFixture();
+  render(
+    <AgentHarnessEditor
+      draft={{
+        ...agentDraft(f.agent),
+        command: "/local/buzz-pi-acp",
+        provider: "databricks",
+      }}
+      options={[
+        {
+          command: "/local/buzz-pi-acp",
+          label: "Pi",
+          providers: [],
+          defaultArgs: [],
+        },
+      ]}
+      piProviders={null}
+      onChange={() => {}}
+    />,
+  );
+  const provider = screen.getByRole("combobox", { name: "LLM Provider" });
+  expect(provider).toHaveTextContent("databricks");
+  expect(provider).toHaveAttribute("data-disabled");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading signed-in providers…",
+  );
+  expect(screen.queryByLabelText("Custom provider")).toBeNull();
+});

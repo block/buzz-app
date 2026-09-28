@@ -20,7 +20,7 @@ export function AgentHarnessEditor({
   draft: AgentDraft;
   onOpenHarnesses?: (() => void) | undefined;
   discardEdits?: boolean;
-  piProviders?: string[];
+  piProviders?: string[] | null;
   options: NonNullable<ControlSnapshot["harnessOptions"]>;
   disabled?: boolean;
   defaultProvider?: string | undefined;
@@ -37,6 +37,7 @@ export function AgentHarnessEditor({
         )
       : undefined);
   const external = harness?.label === "Goose" || harness?.label === "Pi";
+  const piLoading = harness?.label === "Pi" && piProviders === null;
   const missingGoose = options.some(
     (option) => isGoose(option.command) && option.available === false,
   );
@@ -102,7 +103,7 @@ export function AgentHarnessEditor({
         </div>
       )}
       <ConfigChoice
-        disabled={disabled}
+        disabled={disabled || piLoading}
         key={harness?.label ?? draft.command}
         label={external ? "LLM Provider" : "Provider"}
         customLabel="Custom provider / current value"
@@ -116,21 +117,8 @@ export function AgentHarnessEditor({
                 ? `Build default (${defaultProvider})`
                 : "Not set",
           },
-          // Pi lists providers its catalog reports as signed in, then the
-          // providers someone can sign in to here with an API key.
           ...(harness?.label === "Pi"
-            ? [
-                ...piProviders.map((value) => ({
-                  value,
-                  label: PI_API_KEYS[value]?.label ?? value,
-                })),
-                ...Object.entries(PI_API_KEYS)
-                  .filter(([value]) => !piProviders.includes(value))
-                  .map(([value, { label }]) => ({
-                    value,
-                    label: `${label} (API key needed)`,
-                  })),
-              ]
+            ? piOptions(piProviders, draft.provider)
             : (harness?.providers ?? [])),
         ]}
         onChange={(provider) =>
@@ -140,8 +128,27 @@ export function AgentHarnessEditor({
           })
         }
       />
+      {piLoading && (
+        <p role="status" className="text-body-sm text-secondary">
+          Loading signed-in providers…
+        </p>
+      )}
     </div>
   );
+}
+
+// Pi lists providers its catalog reports as signed in, then the providers
+// someone can sign in to here with an API key. While the catalog loads, keep
+// a current custom choice listed so the selection stays put.
+function piOptions(signedIn: string[] | null, current: string) {
+  const known = signedIn ?? (current && !PI_API_KEYS[current] ? [current] : []);
+  const label = (value: string) => PI_API_KEYS[value]?.label ?? value;
+  return [
+    ...known.map((value) => ({ value, label: label(value) })),
+    ...Object.keys(PI_API_KEYS)
+      .filter((value) => !known.includes(value))
+      .map((value) => ({ value, label: `${label(value)} (API key needed)` })),
+  ];
 }
 
 function ConfigChoice({

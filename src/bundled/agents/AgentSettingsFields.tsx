@@ -57,7 +57,7 @@ export function AgentSettingsFields({
   environmentKeys?: string[];
   onChange(patch: Partial<AgentDraft>): void;
 }) {
-  const [piProviders, setPiProviders] = useState<string[]>([]);
+  const [piProviders, setPiProviders] = useState<string[] | null>([]);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
   const buzzProvider =

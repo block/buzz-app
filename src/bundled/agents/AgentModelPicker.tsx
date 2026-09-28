@@ -26,7 +26,8 @@ export function AgentModelPicker({
   disabled = false,
 }: {
   disabled?: boolean;
-  onPiProviders?(providers: string[]): void;
+  /** Pi's signed-in providers, or null while its catalog is loading. */
+  onPiProviders?(providers: string[] | null): void;
   id?: string | undefined;
   savedRevision?: number | undefined;
   draft: AgentDraft;
@@ -79,13 +80,11 @@ export function AgentModelPicker({
     setQuery(null);
     setOpen(false);
     attempted.current = null;
-    onPiProviders?.([]);
     return () => {
       pending.current?.abort();
       pending.current = null;
-      onPiProviders?.([]);
     };
-  }, [key, onPiProviders]);
+  }, [key]);
   // Provider is only a filter for Pi's catalog, but pending search text belongs
   // to the provider the person was editing.
   // biome-ignore lint/correctness/useExhaustiveDependencies: provider changes retire its pending search text without invalidating Pi’s catalog.
@@ -129,10 +128,6 @@ export function AgentModelPicker({
       );
       if (abort.signal.aborted || currentKey.current !== key) return;
       setCatalog({ key, data });
-      if (pi)
-        onPiProviders?.([
-          ...new Set(data.models.map((m) => m.id.split("/")[0] ?? "")),
-        ]);
       setStatus(
         data.disconnected
           ? "Disconnected from this workspace in Foundation."
@@ -161,6 +156,17 @@ export function AgentModelPicker({
     if (pi) void run("connect");
   }, [pi, draft.command]);
   const fresh = catalog?.key === key ? catalog.data : null;
+  const reportedProviders = JSON.stringify(
+    !pi
+      ? []
+      : busy
+        ? null
+        : [...new Set(fresh?.models.map((m) => m.id.split("/")[0] ?? ""))],
+  );
+  useEffect(() => {
+    onPiProviders?.(JSON.parse(reportedProviders));
+  }, [reportedProviders, onPiProviders]);
+  useEffect(() => () => onPiProviders?.([]), [onPiProviders]);
   const entries = (fresh?.models ?? []).filter(
     (m) => !pi || !draft.provider || m.id.startsWith(`${draft.provider}/`),
   );

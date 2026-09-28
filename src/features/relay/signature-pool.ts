@@ -2,8 +2,11 @@ import type { Event } from "nostr-tools";
 
 /** Background Schnorr checks for bulk relay reads. Workers only answer
  * valid/invalid for copies the caller already owns; they never supply event data. */
-type Reply = { id: number; ok: boolean; ms: number };
-type Slot = { worker: Worker; jobs: Map<number, (reply?: Reply) => void> };
+type Reply = { ok: boolean; ms: number };
+type Job = { events: readonly Event[]; settle: (reply?: Reply) => void };
+/** Each worker holds at most one chunk, so a cancelled read's undispatched
+ * chunks leave the queue instead of delaying the reads behind them. */
+type Slot = { worker: Worker; job?: Job | undefined };
 
 const CHUNK = 64;
 const SIZE = Math.max(
@@ -12,16 +15,17 @@ const SIZE = Math.max(
 );
 /** Created on first use; empty once workers proved unavailable. */
 let slots: Slot[] | undefined;
-let sequence = 0;
+const queue: Job[] = [];
 
 function spawn(): Slot {
   const worker = new Worker(new URL("./signature.worker.ts", import.meta.url), {
     type: "module",
   });
-  const slot: Slot = { worker, jobs: new Map() };
+  const slot: Slot = { worker };
   worker.onmessage = ({ data }: MessageEvent<Reply>) => {
-    slot.jobs.get(data.id)?.(data);
-    slot.jobs.delete(data.id);
+    slot.job?.settle(data);
+    slot.job = undefined;
+    dispatch();
   };
   worker.onerror = disable;
   return slot;
@@ -42,36 +46,55 @@ function start() {
 function disable() {
   for (const slot of slots ?? []) {
     slot.worker.terminate();
-    for (const settle of slot.jobs.values()) settle();
+    slot.job?.settle();
   }
+  for (const job of queue.splice(0)) job.settle();
   slots = [];
 }
 
-function run(slots: Slot[], events: readonly Event[]) {
-  const slot = slots.reduce((a, b) => (b.jobs.size < a.jobs.size ? b : a));
-  const id = ++sequence;
-  return new Promise<Reply | undefined>((resolve) => {
-    slot.jobs.set(id, resolve);
-    slot.worker.postMessage({ id, events });
-  });
+function dispatch() {
+  for (const slot of slots ?? []) {
+    if (slot.job) continue;
+    const job = queue.shift();
+    if (!job) return;
+    slot.job = job;
+    slot.worker.postMessage(job.events);
+  }
 }
 
 /** Whether every signature is valid, plus summed worker time, or undefined when
- * the caller must check inline (no Worker support, or the workers failed). */
+ * the caller must check inline (no Worker support, or the workers failed) or the
+ * read was cancelled. Cancelling drops chunks that have not reached a worker. */
 export async function checkSignatures(
   events: readonly Event[],
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; ms: number } | undefined> {
-  if (typeof Worker === "undefined") return undefined;
+  if (typeof Worker === "undefined" || signal?.aborted) return undefined;
   slots ??= start();
-  const pool = slots;
-  if (!pool.length) return undefined;
-  const chunks: Promise<Reply | undefined>[] = [];
+  if (!slots.length) return undefined;
+  const jobs: Job[] = [];
+  const replies: Promise<Reply | undefined>[] = [];
   for (let index = 0; index < events.length; index += CHUNK)
-    chunks.push(run(pool, events.slice(index, index + CHUNK)));
-  const replies = await Promise.all(chunks);
-  if (replies.some((reply) => !reply)) return undefined;
+    replies.push(
+      new Promise((settle) =>
+        jobs.push({ events: events.slice(index, index + CHUNK), settle }),
+      ),
+    );
+  const cancel = () => {
+    for (const job of jobs) {
+      const queued = queue.indexOf(job);
+      if (queued >= 0) queue.splice(queued, 1);
+      job.settle();
+    }
+  };
+  queue.push(...jobs);
+  signal?.addEventListener("abort", cancel, { once: true });
+  dispatch();
+  const settled = await Promise.all(replies);
+  signal?.removeEventListener("abort", cancel);
+  if (settled.some((reply) => !reply)) return undefined;
   return {
-    ok: replies.every((reply) => reply?.ok),
-    ms: replies.reduce((total, reply) => total + (reply?.ms ?? 0), 0),
+    ok: settled.every((reply) => reply?.ok),
+    ms: settled.reduce((total, reply) => total + (reply?.ms ?? 0), 0),
   };
 }

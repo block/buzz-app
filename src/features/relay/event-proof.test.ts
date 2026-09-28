@@ -200,44 +200,46 @@ it("restores saved events without a signature check but rejects edited signed fi
 });
 
 describe("background signature checks", () => {
-  /** Runs the worker's check in-process, with the real (unmocked) verifier. */
-  async function stubWorker(fail = false) {
+  /** Runs the worker's check in-process, with the real (unmocked) verifier.
+   * `held` keeps each reply until the test releases it. */
+  async function stubWorker({ fail = false, held = false } = {}) {
     const actual =
       await vi.importActual<typeof import("nostr-tools")>("nostr-tools");
-    const posted: unknown[] = [];
+    const posted: unknown[][] = [];
+    const pending: (() => void)[] = [];
     class FakeWorker {
       onmessage?: (message: { data: unknown }) => void;
       onerror?: () => void;
-      postMessage(data: { id: number; events: unknown[] }) {
-        posted.push(data);
-        const copy = structuredClone(data);
-        setTimeout(() =>
+      postMessage(events: unknown[]) {
+        posted.push(events);
+        const copy = structuredClone(events);
+        const reply = () =>
           fail
             ? this.onerror?.()
             : this.onmessage?.({
                 data: {
-                  id: copy.id,
-                  ok: copy.events.every((item) =>
-                    actual.verifyEvent(item as never),
-                  ),
+                  ok: copy.every((item) => actual.verifyEvent(item as never)),
                   ms: 1,
                 },
-              }),
-        );
+              });
+        if (held) pending.push(reply);
+        else setTimeout(reply);
       }
       terminate() {}
     }
     vi.stubGlobal("Worker", FakeWorker);
     vi.resetModules();
     const { createEventVerifier } = await import("./events");
-    return { verify: createEventVerifier(), posted };
+    return { verify: createEventVerifier(), posted, pending };
   }
+  const messages = (count: number, prefix = "m") =>
+    Array.from({ length: count }, (_, index) =>
+      signed(key, { kind: 9, content: `${prefix}${index}`, tags: [] }),
+    );
 
   it("checks new signatures off the main thread and rejects the whole batch on one bad signature", async () => {
     const { verify, posted } = await stubWorker();
-    const batch = Array.from({ length: 70 }, (_, index) =>
-      signed(key, { kind: 9, content: `m${index}`, tags: [] }),
-    );
+    const batch = messages(70);
     const events = await verify.many(batch);
     expect(events.map((item) => item.id)).toEqual(batch.map((item) => item.id));
     expect(events.every((item) => Object.isFrozen(item))).toBe(true);
@@ -251,11 +253,56 @@ describe("background signature checks", () => {
   });
 
   it("falls back to inline checks when the worker fails", async () => {
-    const { verify } = await stubWorker(true);
+    const { verify } = await stubWorker({ fail: true });
     expect(await verify.many([wire()])).toHaveLength(1);
     expect(verifyEvent).toHaveBeenCalledTimes(1);
     await expect(
       verify.many([{ ...wire(), content: "x", id: event.id }]),
     ).rejects.toThrow(/malformed/);
+  });
+
+  it("copies and rehashes a warm batch in bounded turns that let the host run", async () => {
+    const { verify } = await stubWorker();
+    const batch = messages(100);
+    await verify.many(batch); // every proof now hits
+    const touched = new Set<number>();
+    const values = batch.map((item, index) => ({
+      ...item,
+      get content() {
+        touched.add(index);
+        return item.content;
+      },
+    }));
+    const read = verify.many(values);
+    expect(touched.size).toBeLessThanOrEqual(12); // the rest waits for a later turn
+    expect(await read).toHaveLength(100);
+    expect(touched.size).toBe(100);
+  });
+
+  it("keeps a cancelled read's unsent chunks away from the workers", async () => {
+    vi.stubGlobal("navigator", { hardwareConcurrency: 2 }); // one worker
+    const { verify, posted, pending } = await stubWorker({ held: true });
+    const abort = new AbortController();
+    const cancelled = verify.many(messages(256, "old"), abort.signal);
+    await vi.waitFor(() => expect(posted).toHaveLength(1));
+    abort.abort();
+    await expect(cancelled).rejects.toThrow(/cancelled/);
+    const next = verify.many(messages(1, "new"));
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending.shift()?.(); // the obsolete chunk already on the worker finishes
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending.shift()?.();
+    expect(await next).toHaveLength(1);
+    expect(posted.map((events) => events.length)).toEqual([64, 1]);
+  });
+
+  it("does not dispatch a read that was cancelled before its checks", async () => {
+    const { verify, posted } = await stubWorker({ held: true });
+    const abort = new AbortController();
+    abort.abort();
+    await expect(verify.many(messages(3), abort.signal)).rejects.toThrow(
+      /cancelled/,
+    );
+    expect(posted).toHaveLength(0);
   });
 });

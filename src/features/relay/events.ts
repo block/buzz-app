@@ -74,12 +74,18 @@ export function createEventVerifier() {
       if (signal?.aborted)
         throw new DOMException("Read cancelled", "AbortError");
     };
-    let started = performance.now();
-    const owned = values.map(wireFields);
-    const fresh = owned.filter((event) => !proven(event));
-    clientMetrics.cpu("verify.read", performance.now() - started, owned.length);
+    const owned: Event[] = [];
+    const fresh: Event[] = [];
+    await inBatches(values.length, cancelled, (index) => {
+      const event = wireFields(values[index]);
+      owned.push(event);
+      if (!proven(event)) fresh.push(event);
+    });
+    clientMetrics.cpu("verify.read", 0, owned.length);
     clientMetrics.cpu("verify.reused", 0, owned.length - fresh.length);
-    const worker = fresh.length ? await checkSignatures(fresh) : undefined;
+    const worker = fresh.length
+      ? await checkSignatures(fresh, signal)
+      : undefined;
     cancelled();
     if (worker) {
       clientMetrics.cpu("verify.worker", worker.ms, fresh.length);
@@ -87,23 +93,39 @@ export function createEventVerifier() {
       for (const event of fresh) remember(event);
     } else {
       // No worker (tests, or it failed to load): check inline between yields.
-      for (let index = 0; index < fresh.length; index += 12) {
-        cancelled();
-        started = performance.now();
-        const batch = fresh.slice(index, index + 12);
-        for (const event of batch) {
-          if (!verifyEvent(event)) throw invalidEvent();
-          remember(event);
-        }
-        clientMetrics.cpu("verify.read", performance.now() - started, 0);
-        if (index + 12 < fresh.length) await yieldToHost();
-      }
+      await inBatches(fresh.length, cancelled, (index) => {
+        const event = fresh[index] as Event;
+        if (!verifyEvent(event)) throw invalidEvent();
+        remember(event);
+      });
     }
-    return owned.map(sealed);
+    const result: RelayEvent[] = [];
+    await inBatches(owned.length, cancelled, (index) =>
+      result.push(sealed(owned[index] as Event)),
+    );
+    return result;
   }
   return Object.assign(verify, { many });
 }
 export type EventVerifier = ReturnType<typeof createEventVerifier>;
+
+const BATCH = 12;
+/** Main-thread work over a bulk read, in bounded batches that yield to input
+ * and rendering and stop at the next boundary once the read is cancelled. */
+async function inBatches(
+  length: number,
+  cancelled: () => void,
+  step: (index: number) => void,
+) {
+  for (let index = 0; index < length; index += BATCH) {
+    cancelled();
+    const started = performance.now();
+    for (let item = index; item < Math.min(length, index + BATCH); item++)
+      step(item);
+    clientMetrics.cpu("verify.read", performance.now() - started, 0);
+    if (index + BATCH < length) await yieldToHost();
+  }
+}
 
 /** Disk restore of events this app saved only after verifying them. Rehashing
  * catches corruption and any edit to signed fields; the Schnorr check is skipped.

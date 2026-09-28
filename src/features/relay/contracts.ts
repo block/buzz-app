@@ -1,3 +1,4 @@
+import type { MessageAudience } from "./message-audience";
 import type { CustomEmoji } from "./emoji";
 import type { ReadOptions } from "./reader";
 import type { Delivery } from "./outbox";
@@ -79,6 +80,9 @@ export type ChannelMessage = Readonly<{
   content: string;
   /** Unprojected current body when attachment presentation removed Markdown. */
   sourceContent?: string;
+  /** Original-event audience declaration, never inherited from edits or identity.
+   * Missing/invalid declarations retain legacy presentation. Not a permission. */
+  audience?: MessageAudience;
   /** Original kind 40002, regardless of edits; self-declared display evidence, not authority. */
   agentEnvelope?: true;
   /** Original kind 40008. Untrusted display metadata; content stays a raw patch. */

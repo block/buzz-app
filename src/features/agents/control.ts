@@ -44,6 +44,8 @@ export interface AgentView {
   error: string | null;
   diagnostics: string[];
   profilePending?: boolean;
+  /** Existing snapshot import lacks its selected local team; completion never starts it. */
+  teamImportRequired?: boolean;
   /** Launch restore preference; saving it never changes the running process. */
   startOnAppLaunch: boolean;
   /** Effective response policy for the next start; null when it is invalid. */

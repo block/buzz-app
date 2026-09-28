@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import userEvent from "@testing-library/user-event";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import {
+  activitySelection,
+  profileActivityTarget,
+} from "../../features/agents/activity-target";
+import { ActivityPanel } from "../agent-activity/ActivityPanel";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
@@ -228,6 +234,160 @@ it("recovers provider-owned names in the same live session and releases demand w
   }
 });
 
+it("lazily embeds the registered Activity tab, keeps focus and falls back when disabled", async () => {
+  const user = userEvent.setup();
+  const owner = createRelaySession(null);
+  const ensure = vi.fn(owner.session.profiles.ensure);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: {
+      ...owner.session,
+      profiles: { ...owner.session.profiles, ensure },
+    },
+  };
+  const relay = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    disconnect() {},
+    clearCache: async () => {},
+  } as RelayData;
+  const renderActivity = vi.fn();
+  const entry: RegisteredPanel = {
+    id: "activity",
+    key: "activity",
+    pluginId: "test.activity",
+    revision: "one",
+    title: "Agent Activity",
+    matches: (target) => !!activitySelection(target),
+    component: (props) => {
+      renderActivity(props.target);
+      return <ActivityPanel relay={relay} target={props.target} />;
+    },
+  };
+  let entries = [entry];
+  const listeners = new Set<() => void>();
+  const panels: Panels = {
+    snapshot: () => entries,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    register() {},
+    resolve: (target) => entries.find((item) => item.matches(target)),
+  };
+  const open = vi.fn(() => true);
+  const view = render(
+    <ProfilePanel
+      relay={relay}
+      panels={panels}
+      target={profileTarget(key) ?? ""}
+      context={{
+        channelId: "alpha",
+        canOpen: (target) => !!panels.resolve(target),
+        open,
+      }}
+      close={() => {}}
+    />,
+    { reactStrictMode: true },
+  );
+  try {
+    await waitFor(() => expect(ensure).toHaveBeenCalled());
+    const reads = ensure.mock.calls.length;
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Info",
+      "Channels",
+      "Activity",
+    ]);
+    expect(renderActivity).not.toHaveBeenCalled();
+    const activityTab = screen.getByRole("tab", { name: "Activity" });
+    await user.click(activityTab);
+    expect(document.activeElement).toBe(activityTab);
+    expect(renderActivity).toHaveBeenLastCalledWith(
+      profileActivityTarget(key, "alpha"),
+    );
+    expect(
+      screen.getByRole("tabpanel", { name: "Activity" }).textContent,
+    ).toContain("Activity isn't available");
+    expect(screen.queryByRole("combobox", { name: "Agent" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "View activity" })).toBeNull();
+    expect(open).not.toHaveBeenCalled();
+    expect(ensure.mock.calls.length).toBe(reads);
+    await user.click(screen.getByRole("button", { name: "Details" }));
+    expect(
+      screen
+        .getByRole("button", { name: "Details" })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(screen.queryByRole("combobox", { name: "Channel" })).toBeNull();
+    expect(screen.getByLabelText("Activity channel").textContent).toContain(
+      "alpha",
+    );
+    // Ordinary tabs own local inspection state, not capture or the session journal.
+    await user.click(screen.getByRole("tab", { name: "Info" }));
+    expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(screen.getByLabelText("Activity channel").textContent).toContain(
+      "alpha",
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Details" })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+    await user.click(screen.getByRole("button", { name: "Details" }));
+    // Replacing the contribution with the same key/revision/component resets it too.
+    act(() => {
+      entries = [{ ...entry }];
+      for (const listener of listeners) listener();
+    });
+    expect(
+      screen
+        .getByRole("button", { name: "Details" })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+    expect(ensure.mock.calls.length).toBe(reads);
+    act(() => {
+      entries = [];
+      for (const listener of listeners) listener();
+    });
+    expect(screen.queryByRole("tab", { name: "Activity" })).toBeNull();
+    expect(
+      screen.getByRole("tab", { name: "Info" }).getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(document.activeElement).toBe(
+      screen.getByRole("tab", { name: "Info" }),
+    );
+    act(() => {
+      entries = [{ ...entry }];
+      for (const listener of listeners) listener();
+    });
+    expect(
+      screen.getByRole("tab", { name: "Info" }).getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(
+      screen.queryByText("Activity isn't available on this connection."),
+    ).toBeNull();
+    view.rerender(
+      <ProfilePanel
+        relay={relay}
+        panels={panels}
+        target={profileTarget("b".repeat(64)) ?? ""}
+        close={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(renderActivity).toHaveBeenLastCalledWith(
+      profileActivityTarget("b".repeat(64)),
+    );
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});
 it.each(["action", "initial read"])(
   "Info gives %s failures one recovery owner",
   async (failure) => {

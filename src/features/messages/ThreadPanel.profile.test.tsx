@@ -7,7 +7,7 @@ import { cpus, hostname, loadavg, release } from "node:os";
 import { Session } from "node:inspector/promises";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { it, vi } from "vitest";
+import { beforeEach, afterEach, it, vi } from "vitest";
 import { ThreadPanel } from "./ThreadPanel";
 import {
   threadData,
@@ -22,6 +22,18 @@ import type { ThreadView } from "../relay/threads";
 // jsdom observes DOM commit, NOT browser layout/paint or native interaction.
 vi.mock("./MessageComposer", () => ({ MessageComposer: () => null }));
 vi.mock("./use-reading", () => ({ useReading: () => {} }));
+
+// This fixture measures mounted data/DOM work, not browser geometry.
+beforeEach(() =>
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  ),
+);
+afterEach(() => vi.unstubAllGlobals());
 
 function mount(session: RelaySession, channelId: string, messageId: string) {
   const container = document.createElement("div");

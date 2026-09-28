@@ -3,6 +3,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GlobeIcon, PlusIcon } from "../../shared/design-system/icons/index";
 import type { Communities } from "./service";
+import { ExistingAccountDialog } from "./ExistingAccountDialog";
 import { CommunityDialog } from "./CommunityDialog";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import styles from "./Communities.module.css";
@@ -32,7 +33,7 @@ export function CommunityRail({
     .map((membership) => membership.id)
     .join("\n");
   useEffect(() => {
-    if (client.status !== "ready") return;
+    if (client.status !== "ready" || communities.accountConnection) return;
     const controller = new AbortController();
     // Icon discovery is optional. Reserve browser connections for foreground work
     // even when saved relays hold their NIP-11 responses indefinitely.
@@ -56,7 +57,12 @@ export function CommunityRail({
     );
     void Promise.all(workers);
     return () => controller.abort();
-  }, [client.status, membershipIds]);
+  }, [client.status, membershipIds, communities.accountConnection]);
+  const addLabel = communities.accountConnection
+    ? client.viewer
+      ? "Native account connection"
+      : "Connect existing account"
+    : "Add a community";
   const select = (id: string | null) => {
     if (onSelect) onSelect(id);
     else communities.select(id);
@@ -76,7 +82,7 @@ export function CommunityRail({
         {client.memberships.map((membership) => (
           <Tooltip content={membership.name} side="right" key={membership.id}>
             <IconButton
-              aria-label={`Switch to ${membership.name}`}
+              aria-label={`Switch to ${membership.name}${membership.nativeAccess ? ` · Native endpoint (${membership.nativeAccess === "connected" ? "connected; channel membership checked separately" : membership.nativeAccess === "checking" ? "checking access" : "access unavailable"})` : ""}`}
               aria-current={
                 client.selected === membership.id ? "true" : undefined
               }
@@ -94,23 +100,29 @@ export function CommunityRail({
             />
           </Tooltip>
         ))}
-        <Tooltip content="Add a community" side="right">
+        <Tooltip content={addLabel} side="right">
           <IconButton
             ref={addRef}
-            aria-label="Add a community"
+            aria-label={addLabel}
             icon={<PlusIcon size={22} aria-hidden="true" />}
             onClick={() => setJoining(true)}
           />
         </Tooltip>
       </nav>
-      {joining && (
-        <CommunityDialog
-          communities={communities}
-          mode="join"
-          onJoined={(id) => select(id)}
-          close={() => setJoining(false)}
-        />
-      )}
+      {joining &&
+        (communities.accountConnection ? (
+          <ExistingAccountDialog
+            connection={communities.accountConnection}
+            close={() => setJoining(false)}
+          />
+        ) : (
+          <CommunityDialog
+            communities={communities}
+            mode="join"
+            onJoined={(id) => select(id)}
+            close={() => setJoining(false)}
+          />
+        ))}
     </>
   );
 }

@@ -66,16 +66,26 @@ export type ContributionReader<T> = Readonly<{
   subscribe(listener: () => void): () => void;
 }>;
 export type ComposerAccessoryProps = Readonly<{
+  /** Conversation placement: absent at the live tail, present above a message body. */
+  message?: ChannelMessage | undefined;
+  /** Thread host's own latest request awaiting these exact agent replies. Local
+   * intent only; delivery/typing remain separate from observed execution. */
+  request?:
+    | Readonly<{ message: ChannelMessage; agents: readonly string[] }>
+    | undefined;
   session: RelaySession;
   scope: string;
   channelId: string;
   threadRootId?: string | undefined;
   /** Presentation only; the host re-resolves targets. No editor or access grant. */
   canOpen(target: string): boolean;
-  /** False after contribution removal or the originating composer retires. */
+  /** False after contribution removal or the originating conversation scope retires. */
   open(target: string): boolean;
 }>;
 export type ComposerAccessory = Readonly<{
+  /** Omitted retains the above-composer placement. Conversation mounts at the
+   * live history tail and above individual message bodies, without creating messages. */
+  placement?: "composer" | "conversation";
   id: string;
   title: string;
   order?: number;

@@ -416,6 +416,9 @@ export function createOutbox(
     attempt.controller = controller;
     const signal = controller.signal;
     let publishing = false;
+    let preparedPublisher:
+      | { publish(): Promise<string> | Promise<void>; dispose(): void }
+      | undefined;
     const total = profiling.start("send.delivery", id);
     const aborted = new Promise<never>((_, reject) =>
       signal.addEventListener(
@@ -453,6 +456,19 @@ export function createOutbox(
       replace({ ...current, signed });
       await Promise.race([persist(id), aborted]);
       if (closed || signal.aborted || !find(id)) return;
+      preparedPublisher = writer.preparePublish
+        ? await Promise.race([
+            writer.preparePublish(signed, signal).then((prepared) => {
+              if (signal.aborted || closed || !find(id)) {
+                prepared.dispose();
+                signal.throwIfAborted();
+                throw abortError();
+              }
+              return prepared;
+            }),
+            aborted,
+          ])
+        : undefined;
       const check = preparePublish
         ? await profiling.measureAsync("send.prepare", id, () =>
             Promise.race([preparePublish(signed, signal), aborted]),
@@ -466,7 +482,12 @@ export function createOutbox(
         check?.();
         checkAdmission(id);
         publishing = true;
-        return Promise.race([writer.publish(signed, signal), aborted]);
+        return Promise.race([
+          preparedPublisher
+            ? preparedPublisher.publish()
+            : writer.publish(signed, signal),
+          aborted,
+        ]);
       });
       if (closed || signal.aborted) return;
       if (awaitsReceipt(signed))
@@ -517,6 +538,7 @@ export function createOutbox(
       if (publishing && latest?.signed && !(error instanceof PublishRejected))
         onAccepted(latest.signed);
     } finally {
+      preparedPublisher?.dispose();
       // Keep a failed invitation fenced for an explicit retry in this session.
       if (
         !find(id) ||

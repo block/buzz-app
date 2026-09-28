@@ -158,22 +158,56 @@ or packaged/native acceptance; validation results and remaining gates belong in 
 pull request. Updating the native bundled catalog requires a desktop rebuild/restart;
 frontend hot reload alone cannot add the entry.
 
-### Composer accessories
+### Conversation accessories
 
-`ctx.conversation.registerAccessory({ id, title, order?, component })` contributes
-read-only contextual UI above the shared composer. The host passes
-`{ session, scope, channelId, threadRootId?, canOpen, open }`: no editor commands,
-new socket, or implied access grant. Channels supplies target resolution and panel
-placement; other composer consumers can omit navigation and return unavailable.
-The shared renderer owns deterministic order, error isolation and command
-revocation on removal/unmount. Composer destination keys fence session/channel/
-thread changes. The accessory remains usable on read-only connections.
+`ctx.conversation.registerAccessory({ id, title, order?, placement?, component })`
+contributes read-only contextual UI. Omitted `placement` (or `"composer"`) retains
+above-composer placement. `"conversation"` mounts at the thread-history tail and
+above individual message bodies; the latter receives `message`. The thread tail
+also receives `request?`, its latest viewer request with unresolved exact agent
+recipients. These are decorations, not fabricated messages, unread entries,
+delivery intent or persisted history.
 
-Agent Activity is the first consumer. Plugin activation owns its telemetry lease;
-multiple composers subscribe to the same session capability. No global selected
-channel or activity-specific dependency is added to reusable message components.
-The persistent sidebar reads the same session activity snapshot for its quiet marker;
-it owns presentation, not capture or an additional activity lease.
+The host passes `{ session, scope, channelId, threadRootId?, message?, request?,
+canOpen, open }`: no editor commands, new socket, or implied access grant. Channels supplies
+target resolution and panel placement; other consumers can omit navigation and
+return unavailable. The shared renderer owns deterministic order, error isolation
+and command revocation on removal/unmount. Session/channel/thread/message keys
+fence retargeting. The accessory remains usable on read-only connections.
+History owners retain bottom-follow and older-reading intent when the tail changes.
+
+Thread reply ancestry remains host-owned. Within each sibling list, only explicit
+original `audience=agents` messages from a known agent or agent envelope can enter
+coordination groups; human-facing/legacy messages remain ordinary visible rows.
+A loaded human-facing descendant keeps its coordination ancestry outside the group
+and open. Pending decoration has one request/branch owner; it is not reply causality.
+Collapsing unmounts decoration and message DOM, never capture or the composer.
+Exact navigation reopens the matching group unless that visit was explicitly collapsed.
+
+Agent Activity uses thread-only conversation placement. A regular channel send
+with exact known-agent recipients immediately opens its root thread; human-only
+sends and flat Sessions retain existing behavior. The thread reader folds the
+outgoing root locally while signing/publishing and begins finite thread repair
+only after verified root observation. Local intent never becomes verified evidence.
+The pending agent entry distinguishes sending, unconfirmed/failed delivery, waiting
+and exact-thread typing, and leaves when a later same-agent thread reply is shown.
+The channel retains a thread-opening action even before reply-count evidence.
+Plugin activation owns the telemetry lease; all decorations reuse that capability. Collapsed message entries
+do not build a transcript or fetch profiles. No global selected channel or
+Activity-plugin import is added to reusable message components. Channels reads the
+same activity snapshot for its sidebar marker and retains an open thread when the
+registered activity target opens in an additional column. Other panel behavior is
+unchanged. Pending activity/general inspection remains exact-agent/channel scoped.
+Completed message entries carry the exact agent/channel/message ID into a pure
+retained-event selector. A supported, successful send-tool result closes each
+response interval; the preceding send or retained turn start opens it. Missing or
+ambiguous evidence is unavailable, never a channel-wide fallback. Both inline and
+detached response views use this selector, without scope-changing selectors in the
+response panel. This is best-effort reported activity, not verified causal proof.
+Inline expansion, pointer drag-right and a Base UI context menu preserve selection; the menu supplies right-click, long-press and Shift+F10 access without an
+always-visible panel button. Narrow multi-pane layouts scroll horizontally rather
+than destroying the thread or its draft.
+
 This is a host-matched preview addition, not cross-version capability negotiation.
 
 ### Channel-header launchers

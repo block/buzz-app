@@ -143,6 +143,20 @@ const CHANNEL_KINDS = [
   9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
   39005, 20002,
 ];
+/** Minimal socket boundary: browsers use WebSocket; native keeps IO/keys in host. */
+type SocketMessageHandler = {
+  handle(event: { data: unknown }): void | Promise<void>;
+}["handle"];
+export type LiveSocket = Pick<
+  WebSocket,
+  "readyState" | "close" | "onclose" | "onerror"
+> & {
+  send(frame: string): void;
+  onmessage: SocketMessageHandler | null;
+  /** Native signs only the challenge observed on this exact physical socket. */
+  authenticate?: () => Promise<VerifiedEvent>;
+  onobserver?: ((wire: string, frame: ObserverFrame) => void) | null;
+};
 /** One authenticated socket, independently established channel routes and two explicit globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
 export function subscribeRelayTraffic(
@@ -150,11 +164,11 @@ export function subscribeRelayTraffic(
   sign: (event: EventTemplate) => Promise<VerifiedEvent>,
   viewer: string,
   callbacks: LiveCallbacks,
-  socketFactory: (url: string) => WebSocket = (url) => new WebSocket(url),
+  socketFactory: (url: string) => LiveSocket = (url) => new WebSocket(url),
   admission: LiveAdmission = createLiveAdmission(),
 ): LiveSubscription {
   let closed = false;
-  let socket: WebSocket | undefined;
+  let socket: LiveSocket | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   let dispatchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -434,7 +448,7 @@ export function subscribeRelayTraffic(
       connectionError = reason;
       notify();
     };
-    let ws: WebSocket;
+    let ws: LiveSocket;
     try {
       ws = socketFactory(url);
       socket = ws;
@@ -469,15 +483,17 @@ export function subscribeRelayTraffic(
       ) {
         authenticating = true;
         try {
-          const auth = await sign({
-            kind: 22242,
-            content: "",
-            created_at: Math.floor(Date.now() / 1000),
-            tags: [
-              ["relay", url],
-              ["challenge", data[1]],
-            ],
-          });
+          const auth = ws.authenticate
+            ? await ws.authenticate()
+            : await sign({
+                kind: 22242,
+                content: "",
+                created_at: Math.floor(Date.now() / 1000),
+                tags: [
+                  ["relay", url],
+                  ["challenge", data[1]],
+                ],
+              });
           if (!valid()) return;
           if (auth.pubkey !== viewer) {
             terminal("Live signer does not match viewer");
@@ -586,6 +602,18 @@ export function subscribeRelayTraffic(
             : "Relay closed live subscription",
         );
       }
+    };
+    ws.onobserver = (wire, frame) => {
+      const route = wires.get(wire);
+      if (
+        !valid() ||
+        !authenticated ||
+        observer === null ||
+        route?.id !== "observer" ||
+        frame.createdAt < route.since
+      )
+        return;
+      callbacks.observer?.(frame, observer);
     };
     ws.onerror = () => reconnect("Live connection interrupted");
     ws.onclose = () => reconnect("Live connection closed");

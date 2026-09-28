@@ -1,3 +1,4 @@
+import { messageAudience } from "./message-audience";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
@@ -275,9 +276,11 @@ export function foldMessages(
     const attachmentNames = new Map<string, string>();
     for (const { url, name } of projected.names)
       if (!attachmentNames.has(url)) attachmentNames.set(url, name);
+    const audience = messageAudience(event.kind, event.tags);
     rows.push(
       Object.freeze({
         id: event.id,
+        ...(audience ? { audience } : {}),
         channelId,
         threadRootId: threadReference(event)?.rootId,
         replyParentId: threadReference(event)?.parentId,

@@ -68,7 +68,10 @@ export function AgentImport({
     };
   }, [initialDestination, load]);
   const candidates = preview?.candidates.filter(
-    (candidate) => !managedAgents.some((agent) => agent.id === candidate.id),
+    (candidate) =>
+      !managedAgents.some(
+        (agent) => agent.id === candidate.id && !agent.teamImportRequired,
+      ),
   );
   return (
     <section
@@ -76,8 +79,10 @@ export function AgentImport({
       className="flex flex-col gap-4 pt-3"
     >
       <p className="m-0 text-body-sm text-secondary">
-        These agents are not imported into this app. Import keeps the same
-        identity and leaves the agent stopped.
+        Import keeps the same identity and leaves the agent stopped. Complete
+        team import adds a missing team snapshot without replacing saved
+        settings or credentials. Both enable owner-visible Activity when the
+        agent runs.
       </p>
       {destination && (
         <p className="m-0 break-all text-body-sm">Community: {destination}</p>
@@ -100,48 +105,66 @@ export function AgentImport({
       {candidates?.length === 0 && (
         <p>No agents left to import from this library for this community.</p>
       )}
-      {candidates?.map((candidate) => (
-        <div
-          key={candidate.id}
-          className="flex flex-wrap items-center justify-between gap-3 border-t border-primary pt-3"
-        >
-          <div className="flex min-w-0 flex-col gap-1">
-            <p className="m-0 font-semibold">{candidate.name}</p>
-            <p className="m-0 text-body-sm text-secondary">Not imported</p>
-            <details className="text-body-sm text-secondary">
-              <summary className="cursor-pointer">Identity</summary>
-              <p className="break-all font-mono text-mono-sm">
-                {candidate.pubkey}
-              </p>
-            </details>
-          </div>
-          <Button
-            disabled={disabled || previewing || !commitAvailable}
-            aria-label={`Import ${candidate.name}`}
-            onClick={() => {
-              if (!preview) return;
-              const current = generation.current;
-              void control
-                .commitImport(preview.token, [candidate.id])
-                .then((result) => {
-                  if (generation.current !== current) return;
-                  onImported?.(
-                    result.agents.filter((agent) => agent.id === candidate.id),
-                  );
-                })
-                .catch(() => {
-                  if (generation.current !== current) return;
-                  setPreview(null);
-                  setError(
-                    "Import did not complete. Reload the list before trying again.",
-                  );
-                });
-            }}
+      {candidates?.map((candidate) => {
+        const existing = managedAgents.find(
+          (agent) => agent.id === candidate.id,
+        );
+        const completing = !!existing?.teamImportRequired;
+        const mustStop =
+          completing &&
+          (existing.enabled ||
+            !["stopped", "failed"].includes(existing.status));
+        return (
+          <div
+            key={candidate.id}
+            className="flex flex-wrap items-center justify-between gap-3 border-t border-primary pt-3"
           >
-            Import
-          </Button>
-        </div>
-      ))}
+            <div className="flex min-w-0 flex-col gap-1">
+              <p className="m-0 font-semibold">{candidate.name}</p>
+              <p className="m-0 text-body-sm text-secondary">
+                {completing
+                  ? mustStop
+                    ? "Stop this agent before completing its team import."
+                    : "Team import incomplete"
+                  : "Not imported"}
+              </p>
+              <details className="text-body-sm text-secondary">
+                <summary className="cursor-pointer">Identity</summary>
+                <p className="break-all font-mono text-mono-sm">
+                  {candidate.pubkey}
+                </p>
+              </details>
+            </div>
+            <Button
+              disabled={disabled || previewing || !commitAvailable || mustStop}
+              aria-label={`${completing ? "Complete team import for" : "Import"} ${candidate.name}`}
+              onClick={() => {
+                if (!preview) return;
+                const current = generation.current;
+                void control
+                  .commitImport(preview.token, [candidate.id])
+                  .then((result) => {
+                    if (generation.current !== current) return;
+                    onImported?.(
+                      result.agents.filter(
+                        (agent) => agent.id === candidate.id,
+                      ),
+                    );
+                  })
+                  .catch(() => {
+                    if (generation.current !== current) return;
+                    setPreview(null);
+                    setError(
+                      "Import did not complete. Reload the list before trying again.",
+                    );
+                  });
+              }}
+            >
+              {completing ? "Complete team import" : "Import"}
+            </Button>
+          </div>
+        );
+      })}
       <details open={!initialDestination || undefined} className="text-body-sm">
         <summary className="cursor-pointer text-secondary">
           Import options

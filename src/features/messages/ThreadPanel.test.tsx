@@ -188,6 +188,7 @@ function setup(
   const session = {
     thread,
     profiles: { ensure },
+    typing: { snapshot: () => [], subscribe: () => () => {} },
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry: vi.fn() },
     // Geometry fixtures are read-only; reading behavior has its own boundary tests.

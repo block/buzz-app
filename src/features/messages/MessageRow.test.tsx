@@ -37,6 +37,7 @@ it("badges agent and human bylines with known presence", () => {
   const status = vi.fn<() => "online" | "unknown">(() => "online");
   const channels = { channels: [], status: "ready" };
   const session = {
+    messages: {},
     presence: { subscribe, status, limited: () => false },
     channels: {
       subscribeList: () => () => {},
@@ -768,3 +769,49 @@ it.each([9, 40002])(
     }
   },
 );
+
+it("labels the first local pending agent slot as one reply without altering relay counts", () => {
+  const recipient = "agent";
+  const root = { ...row, replyCount: 0, mentions: [recipient] };
+  const channels = { status: "ready", channels: [] };
+  const session = {
+    messages: {},
+    viewer: root.authorId,
+    channels: {
+      subscribeList: () => () => {},
+      list: () => channels,
+    },
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+  } as unknown as import("../relay/session").RelaySession;
+  const renderCount = (
+    count: number,
+    delivery?: ChannelMessage["delivery"],
+  ) => {
+    const view = renderDom(
+      <MessageRow
+        row={{ ...root, replyCount: count, delivery }}
+        session={session}
+        profile={undefined}
+        agentPubkeys={new Set([recipient])}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        onOpenThread={() => {}}
+      />,
+    );
+    const html = view.container.innerHTML;
+    view.unmount();
+    return html;
+  };
+  expect(renderCount(0)).toContain("1 reply</span>");
+  expect(renderCount(0)).toContain('aria-description="Agent response pending"');
+  expect(renderCount(2)).toContain("2 replies</span>");
+  expect(renderCount(2)).not.toContain("Agent response pending");
+  expect(renderCount(0, "failed")).not.toContain("1 reply</span>");
+  expect(root.replyCount).toBe(0);
+});

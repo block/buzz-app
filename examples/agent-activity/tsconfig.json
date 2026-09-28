@@ -1,0 +1,4 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["./main.tsx", "./stream.tsx", "./week.tsx", "./vite.config.ts"]
+}

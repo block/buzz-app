@@ -167,3 +167,186 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   expect(bodyRender).toHaveBeenCalled();
   owner.dispose();
 });
+
+it("collapses only explicit coordination with ready choices and keeps human-facing replies visible", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    agent = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let traffic!: LiveCallbacks;
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      traffic = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  traffic.receive([
+    profile(agent, { name: "Helper", is_agent: true }),
+    profile(viewer, { name: "Human" }),
+  ]);
+  const make = (
+    id: string,
+    authorId: string,
+    content: string,
+  ): ChannelMessage => ({
+    id,
+    authorId,
+    content,
+    channelId: "a",
+    createdAt: 1,
+    mentions: [],
+    attachments: [],
+    reactions: [],
+    participants: [],
+    replyCount: 0,
+  });
+  const root = make(
+    "1111111111111111111111111111111111111111111111111111111111111111",
+    viewer.pubkey,
+    "Human root",
+  );
+  const answer = {
+    ...make(
+      "2222222222222222222222222222222222222222222222222222222222222222",
+      agent.pubkey,
+      "Agent answer",
+    ),
+    audience: "agents" as const,
+    threadRootId: root.id,
+  };
+  let snapshot = {
+    status: "ready" as const,
+    root,
+    replies: [answer] as ChannelMessage[],
+    canLoadMore: false,
+    limited: false,
+    error: undefined,
+  };
+  let choices = {
+    ...owner.session.agentChoices.snapshot(),
+    status: "loading" as const as "loading" | "ready",
+    identities: [{ pubkey: agent.pubkey, name: "Helper", managed: true }],
+  };
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...owner.session.agentChoices,
+      snapshot: () => choices,
+      subscribe,
+    },
+    thread: () => ({
+      snapshot: () => snapshot,
+      subscribe,
+      refresh: async () => {},
+      loadMore: async () => {},
+      dispose() {},
+    }),
+  };
+  const view = render(
+    <ThreadPanel
+      session={session}
+      scope="test"
+      channelName="A"
+      channelId="a"
+      messageId={root.id}
+      close={() => {}}
+      onOpenLink={() => false}
+    />,
+    { reactStrictMode: true },
+  );
+  try {
+    expect(await screen.findByText("Agent answer")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Agent coordination and activity" }),
+    ).toBeNull();
+    act(() => {
+      choices = { ...choices, status: "ready" };
+      for (const listener of listeners) listener();
+    });
+    const group = screen.getByRole("button", {
+      name: "1 agent · 1 coordination message",
+    });
+    expect(screen.queryByText("Agent answer")).toBeNull();
+    fireEvent.click(group);
+    expect(screen.getByText("Agent answer")).toBeInTheDocument();
+    fireEvent.click(group);
+    expect(
+      view.container.querySelector(
+        '[data-message-id="2222222222222222222222222222222222222222222222222222222222222222"]',
+      ),
+    ).toBeNull();
+    const human = {
+      ...make(
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        viewer.pubkey,
+        "Always visible follow-up",
+      ),
+      threadRootId: root.id,
+    };
+    const later = {
+      ...make(
+        "4444444444444444444444444444444444444444444444444444444444444444",
+        agent.pubkey,
+        "Later answer",
+      ),
+      audience: "agents" as const,
+      threadRootId: root.id,
+    };
+    act(() => {
+      snapshot = { ...snapshot, replies: [answer, human, later] };
+      for (const listener of listeners) listener();
+    });
+    expect(screen.getByText("Always visible follow-up")).toBeInTheDocument();
+    expect(screen.queryByText("Agent answer")).toBeNull();
+    expect(screen.queryByText("Later answer")).toBeNull();
+    expect(
+      screen.getAllByRole("region", {
+        name: "Agent coordination and activity",
+      }),
+    ).toHaveLength(2);
+    expect(
+      screen.getAllByRole("button", {
+        name: "1 agent · 1 coordination message",
+      })[0],
+    ).toBe(group);
+    const final = {
+      ...make(
+        "5555555555555555555555555555555555555555555555555555555555555555",
+        agent.pubkey,
+        "Human-facing result",
+      ),
+      threadRootId: root.id,
+      audience: "everyone" as const,
+    };
+    act(() => {
+      snapshot = { ...snapshot, replies: [answer, human, later, final] };
+      for (const listener of listeners) listener();
+    });
+    expect(screen.getByText("Human-facing result")).toBeInTheDocument();
+    expect(
+      view.container
+        .querySelector(
+          '[data-message-id="5555555555555555555555555555555555555555555555555555555555555555"]',
+        )
+        ?.closest('[aria-label="Agent coordination and activity"]'),
+    ).toBeNull();
+    // A public isAgent hint still cannot hide content after local evidence retires.
+    act(() => {
+      choices = { ...choices, status: "loading" };
+      for (const listener of listeners) listener();
+    });
+    expect(screen.getByText("Agent answer")).toBeInTheDocument();
+    expect(screen.getByText("Later answer")).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});

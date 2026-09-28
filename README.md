@@ -4,6 +4,13 @@ Shared React frontend for web and Tauri desktop, with bundled page plugins and
 local desktop plugins managed by `buzzodz`. Channels reads the relay through a
 shared data service; the GitHub plugin adds rich reference panels to channels.
 
+## Activity test candidate
+
+This branch is an experimental Activity preview on a pinned main checkpoint, not
+merge-ready. See the [testing guide](docs/agent-activity-preview.md) for safe setup,
+what to try, and the remaining packaged saved-history acceptance checks. Run only
+one native Buzz controller at a time; ports do not isolate agent ownership.
+
 ## Run
 
 Hermit pins just, Node.js 24, pnpm 11.8.0, and Rust in `bin/`; no global tool
@@ -69,6 +76,12 @@ dev builds register themselves at launch. See [OS deep links](docs/deep-links.md
 per-platform steps and limits.
 
 ## Relay channels
+
+The non-live macOS desktop now exposes an explicit
+[existing-account native connection](docs/native-account.md) for finite channel/message
+reads and ordinary sends through the existing outbox, plus a native shared live socket
+and owner-visible Activity decode. [Saved Activity](docs/activity-history.md) retains
+new encrypted capture; attended packaged live-account acceptance remains unverified. Development setup is below.
 
 Live development currently requires **an existing Buzz account in the OS credential
 store**: the `buzz-desktop` / `secrets` Keychain entry on macOS, or the same entry in

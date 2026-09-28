@@ -176,7 +176,9 @@ export function AgentControlPanel({
           items={[
             {
               value: "old-buzz",
-              title: "Not imported from old Buzz",
+              title: state.data.agents.some((agent) => agent.teamImportRequired)
+                ? "Complete team imports"
+                : "Not imported from old Buzz",
               content: importSections.includes("old-buzz") ? (
                 <AgentImport
                   key={importDestination}

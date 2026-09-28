@@ -254,6 +254,7 @@ it.each(["held", "plaintext"] as const)(
       screen.getByRole("region", { name: "Agent memories" }),
     ).toBeVisible();
 
+    screen.getByRole("tab", { name: "Memories" }).focus();
     const revoked = signed(agent, {
       kind: 0,
       content: JSON.stringify({ name: "Agent", is_agent: true }),
@@ -272,6 +273,7 @@ it.each(["held", "plaintext"] as const)(
       "true",
     );
     expect(screen.queryByRole("region", { name: "Agent memories" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Info" })).toHaveFocus();
     if (mode === "held") await act(async () => pending[0]?.resolve(listing));
     expect(screen.queryByText(memoryBody)).toBeNull();
     expect(read).toHaveBeenCalledTimes(1);

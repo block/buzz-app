@@ -20,6 +20,7 @@ import {
 import {
   type ReactNode,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,8 +31,14 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { ProfileActivity } from "./ProfileActivity";
-import type { PanelProps } from "../../features/panels/service";
+import { profileActivityTarget } from "../../features/agents/activity-target";
+import { PanelView } from "../../features/panels/PanelView";
+import { contributionKey } from "../../features/conversation/ContributionBoundary";
+import type {
+  PanelProps,
+  Panels,
+  RegisteredPanel,
+} from "../../features/panels/service";
 import { profileKey, profileTarget } from "../../features/profiles/target";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useRelayConnection } from "../../features/relay/react";
@@ -43,17 +50,24 @@ import {
 } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
 
+const noPanels: readonly RegisteredPanel[] = [];
+const emptyPanels = () => noPanels;
+const noSubscription = () => () => {};
+
 export function ProfilePanel({
   relay,
   target,
   context,
   navigation,
   control,
+  panels,
+  close,
   instanceId,
 }: PanelProps & {
   relay: RelayData;
   navigation?: Navigation;
   control?: AgentControl;
+  panels?: Panels;
   instanceId?: string | undefined;
 }) {
   const connection = useRelayConnection(relay);
@@ -70,6 +84,8 @@ export function ProfilePanel({
       context={context}
       navigation={navigation}
       control={control}
+      panels={panels}
+      close={close}
       scope={connection.scope}
       viewer={connection.viewer}
     >
@@ -91,6 +107,8 @@ function ProfileDetails({
   context,
   navigation,
   control,
+  panels,
+  close,
   scope,
   viewer,
   instanceId,
@@ -102,6 +120,8 @@ function ProfileDetails({
   context: PanelProps["context"];
   navigation: Navigation | undefined;
   control: AgentControl | undefined;
+  panels: Panels | undefined;
+  close(): void;
   scope: string | undefined;
   viewer: string | undefined;
 }) {
@@ -120,9 +140,23 @@ function ProfileDetails({
   );
   const [attempt, retry] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
-  const [tab, setTab] = useState<"info" | "runtime" | "channels" | "memories">(
-    "info",
+  const [tab, setTab] = useState<
+    "info" | "channels" | "activity" | "runtime" | "memories"
+  >("info");
+  const available = useSyncExternalStore(
+    panels?.subscribe ?? noSubscription,
+    panels?.snapshot ?? emptyPanels,
+    emptyPanels,
   );
+  const activity = profileActivityTarget(pubkey, context?.channelId);
+  const resolvedActivity = panels?.resolve(activity);
+  const activityPanel =
+    resolvedActivity &&
+    available.includes(resolvedActivity) &&
+    (!context || context.canOpen(activity))
+      ? resolvedActivity
+      : undefined;
+
   const region = useRef<HTMLElement>(null);
   const messageAttempt = useRef<AbortController>(undefined);
   const [openingMessage, setOpeningMessage] = useState(false);
@@ -169,17 +203,19 @@ function ProfileDetails({
   const runtimeAgent = useRuntimeAgent(control, scope, pubkey);
   const canViewRuntime = isOwner && !!runtimeAgent;
   const selectedTab =
-    (tab === "memories" && !isOwner) || (tab === "runtime" && !canViewRuntime)
+    (tab === "activity" && !activityPanel) ||
+    (tab === "memories" && !isOwner) ||
+    (tab === "runtime" && !canViewRuntime)
       ? "info"
       : tab;
-  useEffect(() => {
-    if (!isOwner)
-      setTab((current) => (current === "memories" ? "info" : current));
-  }, [isOwner]);
-  useEffect(() => {
-    if (!canViewRuntime)
-      setTab((current) => (current === "runtime" ? "info" : current));
-  }, [canViewRuntime]);
+  useLayoutEffect(() => {
+    if (selectedTab !== tab) {
+      setTab("info");
+      region.current
+        ?.querySelector<HTMLElement>('[data-tab-value="info"]')
+        ?.focus();
+    }
+  }, [selectedTab, tab]);
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
     try {
@@ -194,6 +230,7 @@ function ProfileDetails({
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
     : null;
+  const portrait = !!picture && selectedTab !== "activity";
   // As in New message, a known agent needs this community's ready native control.
   const messageable = () =>
     !agentPubkeys.has(pubkey) ||
@@ -253,16 +290,16 @@ function ProfileDetails({
       className={styles.root}
     >
       <div
-        className={`${styles.identity} ${picture ? styles.withPortrait : ""}`}
+        className={`${styles.identity} ${portrait ? styles.withPortrait : ""}`}
       >
-        <div className={picture ? styles.portrait : undefined}>
+        <div className={portrait ? styles.portrait : undefined}>
           <Avatar
             src={picture}
             alt={
               tab === "info" && presence !== "unknown" ? "" : `${name} avatar`
             }
             fallback={name}
-            size={picture ? "fill" : "large"}
+            size={portrait ? "fill" : "large"}
             shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
             statusBadge={presence === "unknown" ? undefined : presence}
           />
@@ -278,6 +315,9 @@ function ProfileDetails({
             ? [{ value: "runtime" as const, label: "Runtime" }]
             : []),
           { value: "channels", label: "Channels" },
+          ...(activityPanel
+            ? [{ value: "activity" as const, label: "Activity" }]
+            : []),
           ...(isOwner
             ? [{ value: "memories" as const, label: "Memories" }]
             : []),
@@ -319,11 +359,6 @@ function ProfileDetails({
                   />
                 )}
                 {children}
-                <ProfileActivity
-                  session={session}
-                  pubkey={pubkey}
-                  context={context}
-                />
                 {control && (
                   <ProfileInstances
                     errorHandledByActions
@@ -405,6 +440,18 @@ function ProfileDetails({
                   </Button>
                 )}
               </>
+            ) : selected === "activity" ? (
+              selectedTab === "activity" &&
+              activityPanel && (
+                <PanelView
+                  // A new contribution may reuse the same bundled key/revision/component.
+                  key={contributionKey(activityPanel)}
+                  panel={activityPanel}
+                  target={activity}
+                  context={context}
+                  close={close}
+                />
+              )
             ) : selected === "runtime" &&
               canViewRuntime &&
               control &&

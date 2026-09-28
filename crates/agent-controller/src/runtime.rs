@@ -43,7 +43,6 @@ impl RuntimeBundle {
         if record["backend"]["type"]
             .as_str()
             .is_some_and(|s| s != "local")
-            || record["team_id"].as_str().is_some_and(|s| !s.is_empty())
             || record["persona_team_dir"]
                 .as_str()
                 .is_some_and(|s| !s.is_empty())
@@ -52,6 +51,7 @@ impl RuntimeBundle {
         {
             return Err("This imported agent requires a remote/team/mesh integration not supported by the local controller".into());
         }
+        let team_instructions = crate::team::instructions(agent)?;
         let respond_to = agent.respond_to(defaults.owner_only)?;
         if agent.auth_tag.is_none() {
             return Err("This identity has no saved owner attestation; native owner binding is required before starting".into());
@@ -123,7 +123,17 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
             .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
-            .env("BUZZ_ACP_RELAY_OBSERVER", "false");
+            .env(
+                "BUZZ_ACP_RELAY_OBSERVER",
+                if agent.extra.get("activityPublication") == Some(&serde_json::Value::Bool(true)) {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+        if let Some(instructions) = team_instructions {
+            command.env("BUZZ_ACP_TEAM_INSTRUCTIONS", instructions);
+        }
         if defaults.owner_only {
             command
                 .env("BUZZ_ACP_ALLOWED_RESPOND_TO", "owner-only")
@@ -452,6 +462,15 @@ impl Controller {
         imports.prepare(token, ids, &self.store)
     }
     pub fn commit_import(&mut self, prepared: crate::CredentialedImport) -> Result<()> {
+        if prepared
+            .repair_ids()
+            .any(|id| self.running.contains_key(id))
+        {
+            return Err(
+                "Stop the selected agent and confirm cleanup before completing its team import"
+                    .into(),
+            );
+        }
         prepared.commit(&mut self.store)
     }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<ControlSnapshot> {
@@ -546,6 +565,7 @@ impl Controller {
             .ok_or("Agent no longer exists")?;
         let workspace = effective_databricks(&agent)?.map(|s| s.host);
         self.bundle.as_ref().map_err(Clone::clone)?;
+        crate::team::instructions(&agent)?;
         Ok((agent.credential_id, agent.pubkey, agent.revision, workspace))
     }
     pub fn action_with_key(

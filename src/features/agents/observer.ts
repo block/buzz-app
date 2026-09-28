@@ -6,6 +6,8 @@ export type ObserverFrame = Readonly<{
   agent: string;
   createdAt: number;
   plaintext: string;
+  saved?: boolean;
+  saveError?: string;
 }>;
 export function observerFrame(value: unknown): ObserverFrame {
   const frame = value as ObserverFrame | null;
@@ -30,6 +32,10 @@ export function observerFrame(value: unknown): ObserverFrame {
     agent: frame.agent,
     createdAt: frame.createdAt,
     plaintext: frame.plaintext,
+    ...(typeof frame.saved === "boolean" ? { saved: frame.saved } : {}),
+    ...(typeof frame.saveError === "string"
+      ? { saveError: frame.saveError.slice(0, 200) }
+      : {}),
   });
 }
 export function observerGeneration(value: unknown): number | null {

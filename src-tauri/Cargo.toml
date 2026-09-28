@@ -20,7 +20,7 @@ buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-buzz-agent = { git = "https://github.com/block/buzz.git", rev = "48884848f566d02c42ce07636636c4ad5f164c27" }
+buzz-agent = { git = "https://github.com/block/buzz.git", rev = "19da8950126168dbb7af610c4304f58951cf344f" }
 tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util"] }
 sha2 = "0.10"
 base64 = "0.22"
@@ -31,6 +31,13 @@ tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 uuid = { version = "1", features = ["v4"] }
+# Same protocol version as the pinned Buzz runtime lock, without SDK/network features.
+nostr = { version = "=0.44.7", default-features = false, features = ["std", "nip44"] }
+# Reuse the locked physical socket implementation; live policy remains shared TS.
+tokio-tungstenite = { version = "=0.29.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+futures-util = { version = "0.3", features = ["sink"] }
+zeroize = "1.9"
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -41,6 +48,7 @@ portable-pty = "0.9"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
 mac-notification-sys = "=0.6.15"
 block2 = "=0.6.2"
 objc2 = "=0.6.4"

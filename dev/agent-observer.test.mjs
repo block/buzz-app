@@ -56,6 +56,26 @@ test("purpose-bound host decoder preserves raw JSON and never returns keys", () 
     plaintext: raw,
   });
 });
+test("another participant cannot decode owner activity even if handed the encrypted event", () => {
+  const event = frame();
+  const participant = getPublicKey(stranger);
+  expect(() => decodeAgentObserver(event, stranger, participant)).toThrow();
+  // Even an otherwise valid agent-signed envelope with a changed recipient tag
+  // cannot turn owner-encrypted ciphertext into participant-readable activity.
+  const relabelled = finalizeEvent(
+    {
+      kind: event.kind,
+      created_at: event.created_at,
+      tags: [["p", participant], ...event.tags.slice(1)],
+      content: event.content,
+    },
+    agent,
+  );
+  expect(() =>
+    decodeAgentObserver(relabelled, stranger, participant),
+  ).toThrow();
+  expect(decodeAgentObserver(event, owner, viewer).plaintext).toBe(raw);
+});
 test("rejects signature, recipient, sender, direction, cardinality, freshness, content and captured-viewer violations", () => {
   const tags = frame().tags;
   const invalid = [

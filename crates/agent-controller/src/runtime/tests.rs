@@ -979,6 +979,130 @@ fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
     controller.action(&a.id, Action::Stop).unwrap();
 }
 
+#[test]
+#[cfg(unix)]
+fn imported_local_team_snapshot_and_explicit_publication_reach_the_scrubbed_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let mut agent = agent(dir.path());
+    let env = |agent: &Agent| -> BTreeMap<String, String> {
+        runtime
+            .command(agent, &key)
+            .unwrap()
+            .get_envs()
+            .filter_map(|(k, v)| {
+                v.map(|v| (k.to_string_lossy().into(), v.to_string_lossy().into()))
+            })
+            .collect()
+    };
+    assert_eq!(env(&agent)["BUZZ_ACP_RELAY_OBSERVER"], "false");
+    agent.imported["record"]["team_id"] = json!("local-team");
+    assert!(runtime.command(&agent, &key).is_err());
+    agent.imported["team"] = json!({"id":"local-team","instructions":"  Shared instructions  "});
+    agent
+        .extra
+        .insert("activityPublication".into(), json!(true));
+    let values = env(&agent);
+    assert_eq!(values["BUZZ_ACP_TEAM_INSTRUCTIONS"], "Shared instructions");
+    assert_eq!(values["BUZZ_ACP_SYSTEM_PROMPT"], "test prompt");
+    assert_eq!(values["BUZZ_ACP_RELAY_OBSERVER"], "true");
+    assert_eq!(values["BUZZ_ACP_MODEL"], "test-model");
+    agent.imported["team"]["instructions"] = json!("  ");
+    assert!(!env(&agent).contains_key("BUZZ_ACP_TEAM_INSTRUCTIONS"));
+    for patch in [
+        json!({"backend":{"type":"remote"}}),
+        json!({"persona_team_dir":"/pack"}),
+        json!({"relay_mesh":{}}),
+    ] {
+        let mut bad = agent.clone();
+        for (k, v) in patch.as_object().unwrap() {
+            bad.imported["record"][k] = v.clone();
+        }
+        assert!(runtime.command(&bad, &key).is_err());
+    }
+    agent.imported["team"]["id"] = json!("other");
+    assert!(runtime.command(&agent, &key).is_err());
+}
+
+#[test]
+#[cfg(unix)]
+fn team_completion_cannot_replace_configuration_until_process_cleanup_is_confirmed() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let old = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let id = a.id.clone();
+    let root = dir.path().join("config");
+    let mut store = Store::open(root.clone()).unwrap();
+    store.insert(vec![a]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    controller.action(&id, Action::Start).unwrap();
+    // Simulate a stopped-intent store whose earlier process cleanup is unconfirmed.
+    // Production completion must not equate disabled intent with absent process ownership.
+    let path = root.join("agents.json");
+    let mut doc: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    doc["agents"][0]["enabled"] = json!(false);
+    doc["agents"][0]["imported"]["record"]["team_id"] = json!("team");
+    fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+    let source = old
+        .path()
+        .join(crate::LegacySource::Installed.app_directory())
+        .join("agents");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("managed-agents.json"),
+        serde_json::to_vec(&json!([{ "pubkey":PUB,"name":"Test agent","team_id":"team" }]))
+            .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        source.join("teams.json"),
+        br#"[{"id":"team","instructions":"Shared"}]"#,
+    )
+    .unwrap();
+    let mut imports = crate::Imports::default();
+    let preview = imports
+        .preview(
+            crate::LegacySource::Installed,
+            old.path().into(),
+            dir.path().into(),
+            "wss://relay.example",
+        )
+        .unwrap();
+    let prepared = controller
+        .prepare_import(&mut imports, &preview.token, std::slice::from_ref(&id))
+        .unwrap()
+        .acquire(&Memory)
+        .unwrap();
+    assert!(controller
+        .commit_import(prepared)
+        .unwrap_err()
+        .contains("confirm cleanup"));
+    assert!(controller.store.agents().unwrap()[0]
+        .imported
+        .get("team")
+        .is_none());
+    controller.action(&id, Action::Stop).unwrap();
+    let prepared = controller
+        .prepare_import(&mut imports, &preview.token, std::slice::from_ref(&id))
+        .unwrap()
+        .acquire(&Memory)
+        .unwrap();
+    controller.commit_import(prepared).unwrap();
+    assert!(!controller.store.agents().unwrap()[0].enabled);
+    assert_eq!(
+        crate::team::instructions(&controller.store.agents().unwrap()[0]).unwrap(),
+        Some("Shared")
+    );
+}
+
 fn deployment_defaults() -> crate::BuildDefaults {
     crate::BuildDefaults {
         host: "https://build.example.com".into(),

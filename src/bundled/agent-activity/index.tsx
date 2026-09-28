@@ -29,6 +29,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "activity",
     title: "Agent Activity",
     component: ActivityAccessory,
+    placement: "conversation",
   });
   ctx.panels.register({
     id: "activity",

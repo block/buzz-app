@@ -2,6 +2,7 @@
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
+import { File as NodeFile } from "node:buffer";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
@@ -539,7 +540,10 @@ it("sends channel messages and thread replies through real form and keyboard eve
     [],
   );
   expect(h.messages.send).toHaveBeenCalledTimes(1);
-  expect(h.onSend.mock.calls).toEqual([["channel-id"], ["reply-id"]]);
+  expect(h.onSend.mock.calls).toEqual([
+    ["channel-id", []],
+    ["reply-id", []],
+  ]);
   expect(h.input()).toHaveValue("");
 });
 
@@ -1709,7 +1713,9 @@ it.each([undefined, "root"])(
     });
     h.submit();
     expect(h.input()).toHaveValue("@Honey @Honey @Honey hello");
+    expect(h.onSend).not.toHaveBeenCalled();
     h.submit();
+    expect(h.onSend.mock.calls.at(-1)?.[1]).toEqual([second.pubkey]);
     expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([
       first.pubkey,
       second.pubkey,
@@ -2373,6 +2379,111 @@ it.each([undefined, "thread-root"])(
     expect(h.messages.edit).not.toHaveBeenCalled();
   },
 );
+
+it.each([undefined, "root"])(
+  "reports a native-only exact recipient once at enqueue (thread=%s)",
+  async (threadRootId) => {
+    const fixture = controlFixture();
+    fixture.agent.pubkey = second.pubkey;
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    const h = mount(
+      {
+        scope: `https://relay.example.test:${first.pubkey}`,
+        ...(threadRootId ? { threadRootId } : {}),
+      },
+      control,
+      first.pubkey,
+    );
+    try {
+      expect(h.session.agentLibrary.snapshot().identities).toEqual([]);
+      expect(h.session.profiles.snapshot().has(second.pubkey)).toBe(false);
+      act(() => {
+        h.commands().insertMention(second);
+        h.commands().insertText("Request");
+      });
+      h.submit();
+      expect(h.onSend).toHaveBeenCalledExactlyOnceWith(
+        threadRootId ? "reply-id" : "channel-id",
+        [second.pubkey],
+      );
+      expect(
+        threadRootId ? h.messages.reply : h.messages.send,
+      ).toHaveBeenCalledOnce();
+      expect(
+        threadRootId ? h.messages.send : h.messages.reply,
+      ).not.toHaveBeenCalled();
+    } finally {
+      h.unmount();
+      control.dispose();
+    }
+  },
+);
+
+it("reports attachment-only enqueue once and does not notify while upload is pending", async () => {
+  let resolveUpload:
+    | ((value: {
+        name: string;
+        type: string;
+        size: number;
+        sha256: string;
+        url: string;
+      }) => void)
+    | undefined;
+  const upload = vi.fn(
+    () =>
+      new Promise<{
+        name: string;
+        type: string;
+        size: number;
+        sha256: string;
+        url: string;
+      }>((resolve) => {
+        resolveUpload = resolve;
+      }),
+  );
+  const h = mount();
+  h.retarget({
+    session: {
+      ...h.session,
+      attachments: { upload },
+    } as unknown as RelaySession,
+  });
+  const uploaded = {
+    name: "notes.txt",
+    type: "text/plain",
+    size: 5,
+    sha256: "a".repeat(64),
+    url: "https://fixture.test/media/notes.txt",
+  };
+  try {
+    fireEvent.change(screen.getByLabelText("Choose attachments"), {
+      target: {
+        files: [new NodeFile(["notes"], "notes.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+    h.submit();
+    expect(h.onSend).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => resolveUpload?.(uploaded));
+  }
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Send message" }),
+    ).not.toBeDisabled(),
+  );
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "",
+    [],
+    [uploaded],
+  );
+  expect(h.onSend).toHaveBeenCalledExactlyOnceWith("channel-id", []);
+  expect(h.messages.reply).not.toHaveBeenCalled();
+});
 
 it("uses the full channel choice set for one selected chip and follows membership and policy changes", () => {
   const h = mount();

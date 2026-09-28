@@ -274,6 +274,11 @@ export const PencilSimpleIcon = defineIcon(
   PhosphorPencilSimpleIcon,
 );
 
+import { BrainIcon as PhosphorBrainIcon } from "@phosphor-icons/react/dist/csr/Brain";
+export const BrainIcon = defineIcon("phosphor", PhosphorBrainIcon);
+
+import { ImageIcon as PhosphorImageIcon } from "@phosphor-icons/react/dist/csr/Image";
+export const ImageIcon = defineIcon("phosphor", PhosphorImageIcon);
 import { ListChecksIcon as PhosphorListChecksIcon } from "@phosphor-icons/react/dist/csr/ListChecks";
 export const ListChecksIcon = defineIcon("phosphor", PhosphorListChecksIcon);
 

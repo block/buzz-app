@@ -33,6 +33,14 @@ checks, not that an OS banner was displayed or read.
   unread/visibility facts. Structured kind-40002 bodies use the same decoded text
   as message rows. No new socket, unread engine or background-community
   subscription is added.
+- An original signed message with exactly one valid `audience=agents` declaration
+  stays quiet, including explicit human mentions and DMs, regardless of the
+  notify-while-viewing preference. This is declared presentation intent, not an
+  agent identity or privacy boundary; edits cannot change it. `everyone`, missing,
+  malformed and unsupported declarations retain normal alert policy. Producers
+  without audience tags therefore retain legacy notifications; wording such as
+  “Coordination” is never classification evidence. This alert-only rule does not
+  mark messages read or remove unread counts, thread activity or Dock badges.
 - History, initial/reconnect replay and own messages stay quiet. Candidates older
   than two minutes (or over 30 seconds in the future) are ignored. Unknown read
   readiness waits; off/access loss cancels pending candidates. The app-global binding

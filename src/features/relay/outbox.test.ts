@@ -984,3 +984,55 @@ it("does not replay a guarded addition through generic retry or after hydration"
   restored.outbox.retry(id, () => true); // Explicit renewed admission may reuse the exact event.
   await vi.waitFor(() => expect(restored.sign).toHaveBeenCalledOnce());
 });
+
+it("disposes a late host publication reservation without dispatch after the attempt expires", async () => {
+  vi.useFakeTimers();
+  let ready!: () => void;
+  let release!: (value: {
+    publish: () => Promise<void>;
+    dispose: () => void;
+  }) => void;
+  const started = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const reservation = new Promise<{
+    publish: () => Promise<void>;
+    dispose: () => void;
+  }>((resolve) => {
+    release = resolve;
+  });
+  const publish = vi.fn(async () => {}),
+    dispose = vi.fn();
+  const owner = createOutbox(
+    viewer.pubkey,
+    {
+      kinds: [9],
+      sign: async (event) => signed(viewer, event),
+      publish,
+      preparePublish: async () => {
+        ready();
+        return reservation;
+      },
+    },
+    memoryStorage(),
+    { timeoutMs: 100 },
+  );
+  try {
+    owner.outbox.send({
+      kind: 9,
+      content: "never dispatched",
+      tags: [["h", "c"]],
+    });
+    await started;
+    await vi.advanceTimersByTimeAsync(101);
+    expect(owner.outbox.snapshot()[0]?.delivery).toBe("failed");
+    release({ publish, dispose });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(publish).not.toHaveBeenCalled();
+  } finally {
+    release({ publish, dispose });
+    owner.dispose();
+    vi.useRealTimers();
+  }
+});

@@ -398,3 +398,24 @@ it("keeps the identity selectable and explains manual recovery when copy fails",
   expect((publicKey as HTMLInputElement).selectionStart).toBe(0);
   expect((publicKey as HTMLInputElement).selectionEnd).toBe(viewer.length);
 });
+
+it("native current-session mode does not start broker profile reads or expose profile writes", () => {
+  const base = communities();
+  const inspect = vi.spyOn(communityApi, "inspectProfile");
+  const publish = vi.spyOn(communityApi, "publishProfile");
+  const service = { ...base, accountConnection: {} } as Communities;
+  render(
+    <ProfileSettings
+      communities={service}
+      community={{ id: "https://relay.example", name: "Relay" }}
+    />,
+  );
+  expect(
+    screen.getByText(
+      "Profile editing is unavailable on the native connection.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Save profile" })).toBeNull();
+  expect(inspect).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalled();
+});

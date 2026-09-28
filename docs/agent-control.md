@@ -40,8 +40,23 @@ The dev broker and native host must both support this flow. Packaged human
 signing remains unavailable.
 
 **Not imported from old Buzz** is a separate collapsible section. Expanding it
-loads installed identities for the connected community; already-managed exact
-identities are excluded. Each remaining row says **Not imported** and has its own
+loads installed identities for the connected community; fully imported exact
+identities are excluded. Earlier local team imports without their team snapshot
+appear under **Complete team imports**. Stop/disable that agent first, choose its
+original source and destination, then use **Complete team import**. Completion
+snapshots the exact saved team (including legitimately empty instructions), preserves
+the current native settings/credentials and increments the settings revision. It
+never enables or restarts the agent, reads/copies its key, or rewrites the old source.
+Changed source, mismatched team, duplicate matching team, concurrent native edits
+and unconfirmed process teardown prevent completion.
+
+Import and team completion explicitly enable owner-visible Activity publication
+when the selected agent next runs. Existing untouched/native-created agents retain
+their prior publication behavior. The setting is native-owned, not an environment
+escape hatch. Team instructions are passed through ACP's existing separate team
+section, trimmed as in old Buzz; there is no team workspace or membership migration.
+
+Each remaining unimported row says **Not imported** and has its own
 **Import** action. Source/destination overrides and source warnings stay under
 Import options. Import focuses the imported card and says **Imported, not started**.
 It does not start a listener, invite an agent or change the old library.
@@ -354,7 +369,20 @@ Re-run the resource preparation and native build commands above, then validate:
 ```sh
 bin/cargo test --locked -p buzz-foundation -p buzz-agent-controller -- --include-ignored
 bin/node --test tests/integration/agent-runtime.test.mjs
+# Explicit staged-tool check: ephemeral identities, loopback HTTP, no real relay.
+bin/node --test tests/integration/agent-audience-smoke.mjs
 ```
+
+The audience-capable runtime is pinned to upstream `19da8950`. Its
+`buzz messages send` requires `--audience agents|everyone`; omitted/invalid intent
+fails before network work. The bundled base prompt and CLI must move together.
+The SDK requires explicit audience application; other producers and historical
+untagged messages are not retroactively classified. User-authored system prompts
+and team instructions are preserved. A fresh runner/session is required to load
+updated embedded base instructions. Audience is presentation intent, not access
+control, membership or completion evidence. The explicit smoke test verifies
+signed events and receipts for kinds9/45001/45003, thread/recipient preservation,
+and denied-member rejection. It is not a live agent-response acceptance test.
 
 These checks use isolated fixtures, including the staged binaries; they do not
 launch the app or access live credentials. Exercise upstream behavior changes
@@ -421,7 +449,10 @@ is macOS-only. Custom harnesses require an absolute executable and are not
 certified by bundled Buzz Agent tests. Unsupported settings stay editable but
 Start refuses them. OAuth files are owner-only, not Keychain-encrypted. A failed
 import can leave create-only app custody for retry but no enabled/configured agent.
-No remote/team/mesh runtime or conditional attestation is added. Synthetic checks
+No remote/mesh or directory-backed team runtime, live legacy-team synchronization,
+shared team editor, or conditional attestation is added. Local team bindings use
+explicit import snapshots; missing/broken snapshots fail visibly rather than
+silently omitting team instructions. Synthetic checks
 do not establish actual Keychain ACLs, production TLS/inference, live replies,
 forced native quit, signed packaging or other-platform behavior.
 

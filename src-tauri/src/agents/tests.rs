@@ -920,3 +920,59 @@ fn real_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
     .is_err());
     host.shutdown().unwrap();
 }
+
+#[test]
+fn real_ipc_completes_only_missing_team_metadata_without_credential_access_or_launch() {
+    let (dir, _host, _app, view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let mut document: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    document["agents"][0]["enabled"] = json!(false);
+    document["agents"][0]["imported"] =
+        json!({"record":{"team_id":"team"},"definition":{"preserve":true}});
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    let source = dir.path().join("legacy/xyz.block.buzz.app/agents");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("managed-agents.json"),serde_json::to_vec(&json!([{"pubkey":"ab".repeat(32),"name":"Source name must not overwrite","team_id":"team"}])).unwrap()).unwrap();
+    std::fs::write(
+        source.join("teams.json"),
+        br#"[{"id":"team","instructions":"Selected team instructions"}]"#,
+    )
+    .unwrap();
+    let before = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+    assert_eq!(before["agents"][0]["teamImportRequired"], true);
+    let preview = invoke(
+        &view,
+        "agent_control_import_preview",
+        json!({"source":"installed","destination":"wss://relay.example"}),
+    )
+    .unwrap();
+    // RejectingCredentials always fails. Success proves repair-only IPC skipped custody.
+    let completed = invoke(
+        &view,
+        "agent_control_import_commit",
+        json!({"token":preview["token"],"ids":[id]}),
+    )
+    .unwrap();
+    assert_eq!(completed["agents"][0]["teamImportRequired"], false);
+    assert_eq!(completed["agents"][0]["revision"], 2);
+    assert_eq!(completed["agents"][0]["name"], "Sample");
+    assert_eq!(completed["agents"][0]["systemPrompt"], "Original");
+    assert_eq!(completed["agents"][0]["enabled"], false);
+    assert_eq!(completed["agents"][0]["status"], "stopped");
+    assert!(!completed.to_string().contains("Selected team instructions"));
+    let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        saved["agents"][0]["credentialId"],
+        document["agents"][0]["credentialId"]
+    );
+    assert_eq!(
+        saved["agents"][0]["environment"],
+        document["agents"][0]["environment"]
+    );
+    assert_eq!(saved["agents"][0]["activityPublication"], true);
+    assert_eq!(
+        saved["agents"][0]["imported"]["team"]["instructions"],
+        "Selected team instructions"
+    );
+}

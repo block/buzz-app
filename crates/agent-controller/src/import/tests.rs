@@ -634,3 +634,328 @@ fn duplicate_keys_ignore_pin_differences_and_source_pin_changes_still_invalidate
     assert!(keys.keys.lock().unwrap().is_empty());
     assert!(store.agents().unwrap().is_empty());
 }
+
+fn team_source(root: &Path, teams: Value) {
+    source(root);
+    let base = root
+        .join(LegacySource::Installed.app_directory())
+        .join("agents");
+    let path = base.join("managed-agents.json");
+    let mut rows: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    rows[1]["team_id"] = json!("powerpuff");
+    rows[1]["backend"] = json!({"type":"local"});
+    fs::write(path, serde_json::to_vec(&rows).unwrap()).unwrap();
+    fs::write(base.join("teams.json"), serde_json::to_vec(&teams).unwrap()).unwrap();
+}
+fn preview_team(imports: &mut Imports, old: &Path, workspace: &Path) -> ImportPreview {
+    imports
+        .preview(
+            LegacySource::Installed,
+            old.into(),
+            workspace.into(),
+            "wss://relay.example",
+        )
+        .unwrap()
+}
+#[test]
+fn explicit_team_import_snapshots_instructions_and_publication_without_start_or_source_write() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    team_source(
+        old.path(),
+        json!([{ "id":"powerpuff", "instructions":"  Preserve team instructions.  ", "future":"kept" }]),
+    );
+    let path = old
+        .path()
+        .join(LegacySource::Installed.app_directory())
+        .join("agents/teams.json");
+    let before = fs::read(&path).unwrap();
+    let mut imports = Imports::default();
+    let preview = preview_team(&mut imports, old.path(), dest.path());
+    assert!(!serde_json::to_string(&preview)
+        .unwrap()
+        .contains("Preserve team instructions"));
+    let mut store = Store::open(dest.path().into()).unwrap();
+    imports
+        .commit(
+            &preview.token,
+            &[preview.candidates[0].id.clone()],
+            &mut store,
+            &Memory::default(),
+        )
+        .unwrap();
+    let agent = store.agents().unwrap().remove(0);
+    assert_eq!(
+        crate::team::instructions(&agent).unwrap(),
+        Some("Preserve team instructions.")
+    );
+    assert_eq!(agent.imported["team"]["future"], "kept");
+    assert_eq!(agent.extra["activityPublication"], true);
+    assert!(!agent.enabled);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    fs::remove_file(path).unwrap();
+    assert_eq!(
+        crate::team::instructions(&store.agents().unwrap()[0]).unwrap(),
+        Some("Preserve team instructions.")
+    );
+}
+#[test]
+fn incomplete_team_completion_preserves_native_settings_and_credentials_with_atomic_revision_fence()
+{
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    team_source(old.path(), json!([{ "id":"powerpuff" }])); // Absent instructions are legitimately empty.
+    let data = read_source(&old.path().join(LegacySource::Installed.app_directory())).unwrap();
+    let mut saved = resolve(&data, &data.records[1], dest.path(), "wss://relay.example").unwrap();
+    saved.imported.as_object_mut().unwrap().remove("team");
+    saved.extra.remove("activityPublication");
+    saved.system_prompt = "Current native prompt, not legacy prompt".into();
+    saved.harness.model = "current-native-model".into();
+    saved
+        .environment
+        .insert("CUSTOM_CURRENT".into(), "preserve".into());
+    let id = saved.id.clone();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    assert!(store.snapshot().unwrap().agents[0].team_import_required);
+    let mut imports = Imports::default();
+    let preview = preview_team(&mut imports, old.path(), dest.path());
+    let credentials = Memory::default();
+    imports
+        .commit(
+            &preview.token,
+            std::slice::from_ref(&id),
+            &mut store,
+            &credentials,
+        )
+        .unwrap();
+    assert_eq!(credentials.reads.load(Ordering::SeqCst), 0);
+    assert!(credentials.keys.lock().unwrap().is_empty());
+    let completed = store.agents().unwrap().remove(0);
+    assert_eq!(completed.revision, saved.revision + 1);
+    assert!(!completed.enabled);
+    assert_eq!(completed.credential_id, saved.credential_id);
+    assert_eq!(completed.auth_tag, saved.auth_tag);
+    assert_eq!(completed.pubkey, saved.pubkey);
+    assert_eq!(completed.relay_url, saved.relay_url);
+    assert_eq!(completed.workspace, saved.workspace);
+    assert_eq!(completed.system_prompt, saved.system_prompt);
+    assert_eq!(completed.harness.model, saved.harness.model);
+    assert_eq!(completed.environment, saved.environment);
+    assert_eq!(completed.imported["record"], saved.imported["record"]);
+    assert_eq!(crate::team::instructions(&completed).unwrap(), None);
+    assert!(!store.snapshot().unwrap().agents[0].team_import_required);
+    assert!(imports.prepare(&preview.token, &[id], &store).is_err());
+}
+#[test]
+fn team_source_drift_and_bad_snapshots_fail_before_keys_and_do_not_guess_defaults() {
+    for teams in [
+        json!([]),
+        json!([{ "id":"other" }]),
+        json!([{ "id":"powerpuff", "instructions": 3 }]),
+        json!([{ "id":"powerpuff", "source_dir":"/some/pack" }]),
+        json!([{ "id":"powerpuff", "instructions":"x".repeat(128*1024+1) }]),
+    ] {
+        let old = tempfile::tempdir().unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        team_source(old.path(), teams);
+        let mut imports = Imports::default();
+        let preview = preview_team(&mut imports, old.path(), dest.path());
+        let mut store = Store::open(dest.path().into()).unwrap();
+        let credentials = Memory::default();
+        assert!(imports
+            .commit(
+                &preview.token,
+                &[preview.candidates[0].id.clone()],
+                &mut store,
+                &credentials
+            )
+            .is_err());
+        assert_eq!(credentials.reads.load(Ordering::SeqCst), 0);
+        assert!(store.agents().unwrap().is_empty());
+    }
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    team_source(
+        old.path(),
+        json!([{ "id":"powerpuff", "instructions":"one" }]),
+    );
+    let mut imports = Imports::default();
+    let preview = preview_team(&mut imports, old.path(), dest.path());
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let credentials = Memory::default();
+    let prepared = imports
+        .prepare(&preview.token, &[preview.candidates[0].id.clone()], &store)
+        .unwrap();
+    let acquired = prepared.acquire(&credentials).unwrap();
+    let path = old
+        .path()
+        .join(LegacySource::Installed.app_directory())
+        .join("agents/teams.json");
+    fs::write(&path, r#"[{"id":"powerpuff","instructions":"changed"}]"#).unwrap();
+    assert!(acquired.commit(&mut store).is_err());
+    assert!(store.agents().unwrap().is_empty());
+    fs::write(&path, r#"[{"id":"powerpuff"},{"id":"powerpuff"}]"#).unwrap();
+    let preview = preview_team(&mut imports, old.path(), dest.path());
+    assert!(imports
+        .prepare(&preview.token, &[preview.candidates[0].id.clone()], &store)
+        .is_err());
+    fs::remove_file(&path).unwrap();
+    let preview = preview_team(&mut imports, old.path(), dest.path());
+    assert!(imports
+        .prepare(&preview.token, &[preview.candidates[0].id.clone()], &store)
+        .is_err());
+}
+#[test]
+fn team_completion_refuses_native_changes_while_prepared() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    team_source(
+        old.path(),
+        json!([{ "id":"powerpuff", "instructions":"team" }]),
+    );
+    let data = read_source(&old.path().join(LegacySource::Installed.app_directory())).unwrap();
+    let mut agent = resolve(&data, &data.records[1], dest.path(), "wss://relay.example").unwrap();
+    agent.imported.as_object_mut().unwrap().remove("team");
+    let id = agent.id.clone();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    store.insert(vec![agent]).unwrap();
+    let mut imports = Imports::default();
+    let preview = preview_team(&mut imports, old.path(), dest.path());
+    let prepared = imports
+        .prepare(&preview.token, std::slice::from_ref(&id), &store)
+        .unwrap()
+        .acquire(&Memory::default())
+        .unwrap();
+    store.enabled(&id, true).unwrap();
+    assert!(prepared.commit(&mut store).is_err());
+    assert!(store.agents().unwrap()[0].imported.get("team").is_none());
+    assert!(imports
+        .prepare(&preview.token, std::slice::from_ref(&id), &store)
+        .is_err());
+}
+
+#[test]
+fn missing_or_unrelated_teams_do_not_block_selection_of_nonteam_agents() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    team_source(
+        old.path(),
+        json!([{ "invalid unrelated":"entry" }, {"id":"other"}, {"id":"other"}]),
+    );
+    let base = old
+        .path()
+        .join(LegacySource::Installed.app_directory())
+        .join("agents");
+    let mut rows: Value =
+        serde_json::from_slice(&fs::read(base.join("managed-agents.json")).unwrap()).unwrap();
+    // Unselected team-linked definition remains; selected keyed record is ordinary.
+    rows[0]["team_id"] = json!("unrelated");
+    rows[1].as_object_mut().unwrap().remove("team_id");
+    fs::write(
+        base.join("managed-agents.json"),
+        serde_json::to_vec(&rows).unwrap(),
+    )
+    .unwrap();
+    for missing in [false, true] {
+        if missing {
+            fs::remove_file(base.join("teams.json")).unwrap();
+        }
+        let target = tempfile::tempdir().unwrap();
+        let mut store = Store::open(target.path().into()).unwrap();
+        let mut imports = Imports::default();
+        let preview = preview_team(&mut imports, old.path(), dest.path());
+        imports
+            .commit(
+                &preview.token,
+                &[preview.candidates[0].id.clone()],
+                &mut store,
+                &Memory::default(),
+            )
+            .unwrap();
+        assert_eq!(store.agents().unwrap().len(), 1);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn chosen_team_source_rejects_symlink_files_without_echoing_paths() {
+    use std::os::unix::fs::symlink;
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    team_source(old.path(), json!([{ "id":"powerpuff" }]));
+    let base = old
+        .path()
+        .join(LegacySource::Installed.app_directory())
+        .join("agents");
+    let path = base.join("teams.json");
+    let actual = old.path().join("private-team-source");
+    fs::rename(&path, &actual).unwrap();
+    symlink(&actual, &path).unwrap();
+    let mut imports = Imports::default();
+    let error = imports
+        .preview(
+            LegacySource::Installed,
+            old.path().into(),
+            dest.path().into(),
+            "wss://relay.example",
+        )
+        .err()
+        .unwrap();
+    assert!(!error.contains("private-team-source"));
+    fs::remove_file(&path).unwrap();
+    fs::rename(&actual, &path).unwrap();
+    let held = old.path().join("held");
+    fs::rename(&base, &held).unwrap();
+    symlink(&held, &base).unwrap();
+    assert!(imports
+        .preview(
+            LegacySource::Installed,
+            old.path().into(),
+            dest.path().into(),
+            "wss://relay.example"
+        )
+        .is_err());
+}
+
+#[test]
+fn team_completion_preserves_revisionless_launch_preference_and_profile_receipt() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    team_source(
+        old.path(),
+        json!([{ "id":"powerpuff", "instructions":"team" }]),
+    );
+    let data = read_source(&old.path().join(LegacySource::Installed.app_directory())).unwrap();
+    let mut agent = resolve(&data, &data.records[1], dest.path(), "wss://relay.example").unwrap();
+    agent.imported.as_object_mut().unwrap().remove("team");
+    agent.extra.insert("profilePending".into(), json!(true));
+    let id = agent.id.clone();
+    let revision = agent.revision;
+    let mut store = Store::open(dest.path().into()).unwrap();
+    store.insert(vec![agent]).unwrap();
+    let mut imports = Imports::default();
+    let preview = preview_team(&mut imports, old.path(), dest.path());
+    let credentials = Memory::default();
+    let prepared = imports
+        .prepare(&preview.token, std::slice::from_ref(&id), &store)
+        .unwrap()
+        .acquire(&credentials)
+        .unwrap();
+    store.start_on_app_launch(&id, true).unwrap();
+    store.profile_published(&id, revision).unwrap();
+    let before = store.agents().unwrap().remove(0);
+    prepared.commit(&mut store).unwrap();
+    let saved = store.agents().unwrap().remove(0);
+    let mut expected = before;
+    expected.imported["team"] = json!({"id":"powerpuff", "instructions":"team"});
+    expected
+        .extra
+        .insert("activityPublication".into(), json!(true));
+    expected.revision += 1;
+    assert_eq!(
+        serde_json::to_value(saved).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    assert_eq!(credentials.reads.load(Ordering::SeqCst), 0);
+}

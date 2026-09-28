@@ -82,7 +82,8 @@ export type MessageComposerProps = {
   sessionConversation?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
-  onSend?: (id: string) => void;
+  /** Enqueued intent, not proof of delivery or agent execution. */
+  onSend?: (id: string, agents: readonly string[]) => void;
   /** Threads supply their own retained rows; channels use the shared window. */
   editMessages?: readonly ChannelMessage[] | undefined;
   onOpenLink?: ((target: string) => boolean) | undefined;
@@ -543,7 +544,13 @@ function Composer({
             )
           : session.messages.send(channelId, content, recipients, uploaded);
       attachments.store.clear();
-      onSend?.(id);
+      const notifiedAgents = knownAgentPubkeys(
+        session.profiles.snapshot(),
+        session.agentChoices.snapshot(),
+      );
+      onSend?.(id, [
+        ...new Set(recipients.filter((key) => notifiedAgents.has(key))),
+      ]);
       completion.invalidate();
       clearMediaTime?.();
       const agents = knownAgentPubkeys(

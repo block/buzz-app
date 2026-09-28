@@ -375,6 +375,64 @@ it("viewing suppression uses the shared lease, and suppressed candidates never b
   visible.dispose();
   view.dispose();
 });
+it.each([false, true])(
+  "signed coordination stays quiet but human answers alert (notifyWhileViewing=%s)",
+  async (notifyWhileViewing) => {
+    vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
+    const h = await setup();
+    h.notifications.updatePreferences({ notifyWhileViewing });
+    const root = message(h.viewer, "room", "request", 1_779_999_990);
+    h.emit([root], "replay");
+    const peer = keypair();
+    const coordination = [h.peer, peer].map((author, index) =>
+      message(author, "room", "agent exchange", 1_780_000_000, [
+        ["e", root.id, "", "reply"],
+        ["audience", "agents"],
+        ...(index
+          ? [
+              ["p", h.viewer.pubkey],
+              ["broadcast", "1"],
+            ]
+          : []),
+      ]),
+    );
+    const answers = [[], [["audience", "everyone"]]].map((tags, index) =>
+      message(h.peer, "room", `answer ${index}`, 1_780_000_000, [
+        ["e", root.id, "", "reply"],
+        ...tags,
+      ]),
+    );
+    const lease = h.owner.session.unread.reading("room");
+    cleanups.push(lease.dispose);
+    // Even explicit viewing/mentions cannot turn coordination into an alert.
+    lease.view(
+      coordination.map((row) => row.id),
+      () => true,
+    );
+    const admit = vi.spyOn(h.notifications, "admit");
+    h.emit([...coordination, ...answers], "live");
+    // The positive controls complete the same synchronous incoming batch and its
+    // asynchronous notification delivery; no timing-only negative assertion.
+    await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(2));
+    expect(admit.mock.calls.map((call) => call[2].sourceKey)).toEqual(
+      answers.map((row) => row.id),
+    );
+    for (const row of coordination)
+      expect(h.owner.session.unread.attention("room", row.id)).toMatchObject({
+        status: "ineligible",
+        unread: true,
+        rootId: root.id,
+      });
+    expect(
+      h.owner.session.unread.snapshot({
+        kind: "thread",
+        channelId: "room",
+        rootId: root.id,
+      }).observedCount,
+    ).toBe(4);
+  },
+);
+
 it("community switching stops new production but keeps prior scoped click intent", async () => {
   const h = await setup();
   const row = h.make("fresh");

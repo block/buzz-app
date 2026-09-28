@@ -52,7 +52,13 @@ Implemented with isolated filesystem/credential/subprocess fixtures:
   supported by this process adapter. The fixture uses macOS `/usr/bin/python3`.
 - Status is process-alive, **not relay readiness, accepted mention, working or idle**.
   Worker wake and idle sleep are configured on ACP; no live ACP test has run here.
-- Owner-less legacy agents, conditional attestations, teams, remote deployment,
+- Local team-linked imports snapshot the selected team's JSON at explicit import
+  or stopped-import completion. Matching nonempty instructions use ACP's separate
+  team section; absent/blank instructions are valid. Existing-import completion is
+  revision/enabled/process fenced and leaves settings and credentials intact.
+  Explicit new import/completion also approves owner-visible observer publication;
+  untouched imports and native-created agents are not implicitly opted in.
+- Owner-less legacy agents, conditional attestations, directory-backed teams, remote deployment,
   relay mesh and unrecognized legacy catalog harnesses fail closed. Custom harness
   definitions can be imported but provider mappings outside buzz-agent/goose require
   explicit environment configuration. Compiled-in legacy provider defaults cannot

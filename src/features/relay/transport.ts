@@ -1,3 +1,4 @@
+import type { ActivityHistoryHost } from "../agents/activity-history";
 import {
   memoryResponseText,
   type MemoryReader,
@@ -56,6 +57,12 @@ import {
 export interface RelayWriter {
   readonly kinds?: readonly number[];
   sign(event: EventTemplate, signal: AbortSignal): Promise<RelayEvent>;
+  /** Optional host reservation before publication. No dispatch may occur here;
+   * the returned publisher is entered only after the final synchronous checks. */
+  preparePublish?(
+    event: RelayEvent,
+    signal: AbortSignal,
+  ): Promise<{ publish(): Promise<string> | Promise<void>; dispose(): void }>;
   /** Accepted receipt text is ephemeral; callers must never journal it. */
   publish(
     event: RelayEvent,
@@ -63,6 +70,7 @@ export interface RelayWriter {
   ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
+  readonly activityHistory?: ActivityHistoryHost;
   readonly projectGit?: ProjectGit;
   readonly readAgentMemories?: MemoryReader;
   readonly uploadAttachment?: AttachmentUpload;

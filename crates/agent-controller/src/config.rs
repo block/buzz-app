@@ -33,6 +33,7 @@ pub struct AgentView {
     pub error: Option<String>,
     pub diagnostics: Vec<String>,
     pub profile_pending: bool,
+    pub team_import_required: bool,
     /// Effective launch restore intent; legacy records follow `enabled`.
     pub start_on_app_launch: bool,
     /// Effective response policy for the next start; `None` when it is invalid.
@@ -140,6 +141,7 @@ impl Agent {
             error: None,
             diagnostics: Vec::new(),
             profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true)),
+            team_import_required: crate::team::required(self),
             start_on_app_launch: self.starts_on_launch(),
             respond_to: self.respond_to(defaults.owner_only).ok().map(str::to_owned),
             backend: (self.imported["record"]["backend"]["type"] == "provider")

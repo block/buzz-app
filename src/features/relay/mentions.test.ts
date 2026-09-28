@@ -143,6 +143,29 @@ it.each([false, true])(
     expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("accepted");
   },
 );
+it.each([3, 32])(
+  "publishes %s distinct recipients in one signed intent",
+  async (count) => {
+    const h = setup();
+    const keys = Array.from({ length: count }, () => keypair().pubkey);
+    await h.members([viewer.pubkey, ...keys]);
+    const id = h.session.messages.send("c", "Please collaborate", keys);
+    await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    expect(h.publish.mock.calls[0]?.[0]).toMatchObject({ id });
+    expect(
+      h.publish.mock.calls[0]?.[0]?.tags.filter(([tag]) => tag === "p"),
+    ).toEqual(keys.map((key) => ["p", key]));
+    expect(h.sign).toHaveBeenCalledOnce();
+    if (count === 32) {
+      expect(() =>
+        h.session.messages.send("c", "Too many", [...keys, keypair().pubkey]),
+      ).toThrow("Choose at most 32 valid mention recipients");
+      expect(h.sign).toHaveBeenCalledOnce();
+      expect(h.publish).toHaveBeenCalledOnce();
+    }
+  },
+);
+
 it("typed names create no recipient tags; unconfirmed or forged membership cannot grant mention permission", async () => {
   const h = setup();
   expect(() => h.session.messages.send("c", "@Honey", [honey.pubkey])).toThrow(

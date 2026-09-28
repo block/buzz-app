@@ -77,3 +77,59 @@ it("revokes navigation after contribution removal, replacement and composer unmo
   expect(open).toHaveBeenCalledTimes(3);
   expect(canOpen).toHaveBeenCalledTimes(1);
 });
+
+it("keeps composer placement unchanged and fences conversation commands on retarget/session replacement", () => {
+  const saved: ComposerAccessoryProps[] = [];
+  function Decoration(props: ComposerAccessoryProps) {
+    useLayoutEffect(() => {
+      saved.push(props);
+    }, [props]);
+    return <span>Conversation decoration</span>;
+  }
+  const entries: Contribution<ComposerAccessory>[] = [
+    {
+      id: "activity",
+      key: "activity",
+      pluginId: "test",
+      revision: "one",
+      title: "Activity",
+      placement: "conversation",
+      component: Decoration,
+    },
+  ];
+  const registry = { snapshot: () => entries, subscribe: () => () => {} };
+  const session = {} as RelaySession;
+  const open = vi.fn(() => true);
+  const props = {
+    registry,
+    session,
+    scope: "scope",
+    channelId: "a",
+    canOpen: () => true,
+    open,
+  };
+  const view = render(<ComposerAccessories {...props} />, {
+    reactStrictMode: true,
+  });
+  expect(view.queryByText("Conversation decoration")).toBeNull();
+  view.rerender(<ComposerAccessories {...props} placement="conversation" />);
+  const first = saved.at(-1);
+  expect(first?.open("target")).toBe(true);
+  view.rerender(
+    <ComposerAccessories {...props} placement="conversation" channelId="b" />,
+  );
+  expect(first?.open("target")).toBe(false);
+  const second = saved.at(-1);
+  expect(second?.open("target")).toBe(true);
+  view.rerender(
+    <ComposerAccessories
+      {...props}
+      placement="conversation"
+      channelId="b"
+      session={{} as RelaySession}
+    />,
+  );
+  expect(second?.open("target")).toBe(false);
+  view.unmount();
+  expect(saved.at(-1)?.open("target")).toBe(false);
+});

@@ -238,8 +238,8 @@ it.each([false, true])(
             channelName="Work"
             messageId={h.root.id}
             initialTime={0}
-            close={() => {}}
             onOpenLink={() => false}
+            close={() => {}}
           />
         </OuterComposer>
       </StrictMode>,

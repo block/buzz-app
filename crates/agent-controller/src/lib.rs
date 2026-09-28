@@ -16,6 +16,7 @@ mod secret;
 mod store;
 #[cfg(unix)]
 mod supervisor;
+mod team;
 #[cfg(unix)]
 pub use supervisor::dispatch as dispatch_agent_supervisor;
 

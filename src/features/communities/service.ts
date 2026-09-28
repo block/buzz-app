@@ -1,4 +1,5 @@
 // FOUNDATION: Client identity and membership selection outlive community query sessions.
+import type { AccountConnection } from "./account-connection";
 import type { AgentControl } from "../agents/control";
 import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
@@ -9,7 +10,12 @@ import { communityDestination, isCommunityAlias } from "./destination";
 
 export const PROFILE_ABOUT_MAX_LENGTH = 500;
 export type PersonalProfile = { name: string; picture: string; about?: string };
-export type Membership = { id: string; name: string; icon?: string };
+export type Membership = {
+  id: string;
+  name: string;
+  icon?: string;
+  nativeAccess?: "checking" | "connected" | "unavailable";
+};
 type Saved = {
   profile: PersonalProfile;
   memberships: Membership[];
@@ -17,7 +23,7 @@ type Saved = {
 };
 export type ClientSnapshot = Saved & {
   status: "loading" | "ready" | "unavailable";
-  viewer?: string;
+  viewer?: string | undefined;
   error?: string;
 };
 const empty = (): Saved => ({
@@ -31,6 +37,7 @@ export function createCommunities(
   identityNames?: IdentityNames,
   openRelay = "",
   agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
+  accountConnection?: AccountConnection,
 ) {
   let state: ClientSnapshot = {
     ...empty(),
@@ -45,7 +52,8 @@ export function createCommunities(
   const listeners = new Set<() => void>();
   const relayListeners = new Set<() => void>();
   const sessions = new Map<string, RelayData>();
-  const scopes: Context[] = [];
+  const scopes = new Set<Context>();
+  const sessionOwners = new Map<string, () => void>();
   const disconnected = provideRelay(
     newScope(),
     undefined,
@@ -54,7 +62,7 @@ export function createCommunities(
   );
   function newScope() {
     const scope = new Context();
-    scopes.push(scope);
+    scopes.add(scope);
     return scope;
   }
   const current = () =>
@@ -69,7 +77,7 @@ export function createCommunities(
     // A deliberate selection supersedes an unavailable saved selection; profile edits do not.
     if (persist && Object.hasOwn(patch, "selected")) unresolvedSelection = null;
     try {
-      if (persist && next.viewer)
+      if (persist && next.viewer && !accountConnection)
         localStorage.setItem(
           `buzz-client.v1:${next.viewer}`,
           JSON.stringify({
@@ -88,16 +96,48 @@ export function createCommunities(
   const acquire = (id: string) => {
     let session = sessions.get(id);
     if (!session) {
+      const scope = newScope();
       session = provideRelay(
-        newScope(),
-        (signal) => connectBrokerTransport("", signal, id),
+        scope,
+        (signal) =>
+          accountConnection
+            ? Promise.resolve(accountConnection.transport(id, signal))
+            : connectBrokerTransport("", signal, id),
         presenceActivity,
         identityNames,
         agentChoices,
       );
       sessions.set(id, session);
-      session.subscribe(() => {
+      const owned = session;
+      const stop = session.subscribe(() => {
+        if (accountConnection) {
+          const snapshot = owned.snapshot();
+          const access =
+            snapshot.status === "error"
+              ? "unavailable"
+              : snapshot.status === "ready"
+                ? "connected"
+                : "checking";
+          if (
+            state.memberships.some(
+              (m) => m.id === id && m.nativeAccess !== access,
+            )
+          )
+            update(
+              {
+                memberships: state.memberships.map((m) =>
+                  m.id === id ? { ...m, nativeAccess: access } : m,
+                ),
+              },
+              false,
+            );
+        }
         if (state.selected === id) emitRelay();
+      });
+      sessionOwners.set(id, () => {
+        stop();
+        owned.disconnect();
+        void scope.fiber.dispose().then(() => scopes.delete(scope));
       });
     }
     return session;
@@ -116,6 +156,53 @@ export function createCommunities(
     clearCache: () => current().clearCache(),
   };
   ctx.provide("relay", relay);
+  if (accountConnection)
+    ctx.effect(() =>
+      accountConnection.subscribe(() => {
+        if (disposed) return;
+        const native = accountConnection.snapshot();
+        const account =
+          native.status === "connected" ? native.account : undefined;
+        if (
+          account &&
+          state.viewer === account.viewer &&
+          state.memberships[0]?.id === account.origin
+        )
+          return;
+        for (const dispose of sessionOwners.values()) dispose();
+        sessionOwners.clear();
+        sessions.clear();
+        if (!account) {
+          presenceActivity.setViewer("");
+          update(
+            { ...empty(), viewer: undefined, status: "unavailable" },
+            false,
+          );
+          return;
+        }
+        presenceActivity.setViewer(account.viewer);
+        // This is a selected endpoint, not evidence of relay membership. The session
+        // independently verifies discovery/roster before any conversation participation.
+        update(
+          {
+            ...empty(),
+            viewer: account.viewer,
+            status: "ready",
+            memberships: [
+              {
+                id: account.origin,
+                name: new URL(account.origin).host,
+                nativeAccess: "checking",
+              },
+            ],
+            selected: account.origin,
+          },
+          false,
+        );
+        acquire(account.origin);
+        emitRelay();
+      }),
+    );
   if (live)
     void fetch("/api/relay/identity", { signal: controller.signal })
       .then(async (response) => {
@@ -222,9 +309,10 @@ export function createCommunities(
     presenceActivity.dispose();
     listeners.clear();
     relayListeners.clear();
-    return Promise.all(scopes.map((scope) => scope.fiber.dispose()));
+    return Promise.all([...scopes].map((scope) => scope.fiber.dispose()));
   });
   return {
+    accountConnection,
     presence: presenceActivity,
     relay,
     snapshot: () => state,
@@ -245,6 +333,10 @@ export function createCommunities(
       update({ profile });
     },
     joined(membership: Membership, profile: PersonalProfile) {
+      if (accountConnection)
+        throw new Error(
+          "Joining communities is unavailable on this native connection",
+        );
       membership = {
         ...membership,
         id: communityDestination(membership.id).id,

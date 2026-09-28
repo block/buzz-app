@@ -1,3 +1,5 @@
+import { useKnownAgentPubkeys } from "../agents/use-known";
+import { useReplacedTypers } from "../conversation/typing-presentation";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
@@ -22,9 +24,16 @@ export function TypingIndicator({
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
+  // Agent progress has one presentation owner: Activity. This remains true
+  // before telemetry arrives and while its disclosure is collapsed or disabled.
+  const agents = useKnownAgentPubkeys(session, profiles);
+  const replaced = useReplacedTypers(session, channelId, threadRootId);
   const matching = entries.filter(
     (entry) =>
-      entry.channelId === channelId && entry.threadRootId === threadRootId,
+      entry.channelId === channelId &&
+      entry.threadRootId === threadRootId &&
+      !agents.has(entry.pubkey) &&
+      !replaced.has(entry.pubkey),
   );
   if (!matching.length) return null;
   // Reuse already available names; optional typing must not trigger profile reads.

@@ -64,6 +64,10 @@ export function ProfileSettings({
     setSaved(false);
     setLoadError("");
     setError("");
+    if (communities.accountConnection) {
+      setLoadStatus("ready");
+      return;
+    }
     if (!community) {
       setLoadStatus("ready");
       return;
@@ -85,7 +89,7 @@ export function ProfileSettings({
     return () => {
       current = false;
     };
-  }, [community, loadAttempt]);
+  }, [community, loadAttempt, communities.accountConnection]);
   const persisted =
     community && loaded?.exists ? loaded.profile : client.profile;
   const profile = draft ?? persisted;
@@ -117,7 +121,11 @@ export function ProfileSettings({
             ? "Set your profile details for this community. Any existing community profiles won’t be changed."
             : "Set your profile details. Any existing community profiles won’t be changed."}
         </p>
-        {client.status !== "ready" ? (
+        {communities.accountConnection ? (
+          <p role="status">
+            Profile editing is unavailable on the native connection.
+          </p>
+        ) : client.status !== "ready" ? (
           <p role="status">
             {client.status === "loading"
               ? "Opening your local identity…"

@@ -301,8 +301,8 @@ it.each(["image", "video"] as const)(
             channelName="General"
             messageId={exactTarget ? exact.id : root.id}
             initialTime={5}
-            close={() => {}}
             onOpenLink={() => false}
+            close={() => {}}
           />,
           { reactStrictMode: true },
         );

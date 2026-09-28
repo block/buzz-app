@@ -4,7 +4,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { AgentControl } from "../../features/agents/control";
 import { useAgentControl } from "../../features/agents/control-react";
 import type { Navigation } from "../../features/navigation/controller";
-import type { PanelProps } from "../../features/panels/service";
+import type { PanelProps, Panels } from "../../features/panels/service";
 import {
   exactProfileAgent,
   type InstanceTarget,
@@ -22,6 +22,7 @@ export function InstanceProfilePanel(
     relay: RelayData;
     control: AgentControl;
     navigation?: Navigation;
+    panels?: Panels;
   },
 ) {
   const [attempt, retry] = useState(0);
@@ -48,6 +49,7 @@ function InstanceDetails(
     relay: RelayData;
     control: AgentControl;
     navigation?: Navigation;
+    panels?: Panels;
   },
 ) {
   const connection = useRelayConnection(props.relay);

@@ -4,16 +4,20 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { Host } from "../features/host/service";
 import { createServices, type AppServices } from "./services";
 
+const accountIpc = vi.hoisted(() => ({ isTauri: false, invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", async (actual) => ({
+  ...(await actual<typeof import("@tauri-apps/api/core")>()),
+  isTauri: vi.fn(() => accountIpc.isTauri),
+  invoke: accountIpc.invoke,
+  Channel: class {
+    onmessage = () => {};
+  },
+}));
 const plugin = vi.hoisted(() => ({
   cleanup: vi.fn<() => void | Promise<void>>(),
   host: undefined as Host | undefined,
 }));
-vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
-  isTauri: vi.fn(() => false),
-  invoke: vi.fn(),
-}));
-// Only the plugin module is a fixture. Exercise the real app composition,
+// Only native IPC and the installed plugin are fixtures. Exercise the real app composition,
 // manager, runtime, Cordis root and community/relay services.
 vi.mock("../bundled", () => ({
   bundledPlugins: [
@@ -44,11 +48,13 @@ let storageReads: ReturnType<typeof vi.fn>;
 let values: Map<string, string>;
 
 beforeEach(() => {
+  accountIpc.isTauri = false;
+  accountIpc.invoke.mockReset();
   vi.useFakeTimers();
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
   plugin.cleanup.mockReset();
   plugin.host = undefined;
-  vi.mocked(isTauri).mockReturnValue(false);
+  vi.mocked(isTauri).mockImplementation(() => accountIpc.isTauri);
   vi.mocked(invoke).mockReset();
   values = new Map<string, string>();
   storageReads = vi.fn((key: string) => values.get(key) ?? null);
@@ -280,4 +286,30 @@ it("joins cleanup already started by disabling a plugin", async () => {
   await disposal;
   expect(finished).toBe(true);
   expect(plugin.cleanup).toHaveBeenCalledTimes(1);
+});
+
+it("exposes the native prerequisite without reading keys or connecting during packaged startup", async () => {
+  await services.dispose();
+  vi.stubEnv("VITE_BUZZ_LIVE", "0");
+  accountIpc.isTauri = true;
+  accountIpc.invoke.mockResolvedValue({ available: false });
+  vi.mocked(fetch).mockClear();
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.communities.accountConnection?.snapshot()).toEqual({
+    status: "idle",
+  });
+  expect(services.communities.snapshot().status).toBe("unavailable");
+  expect(
+    accountIpc.invoke.mock.calls.filter(([name]) =>
+      String(name).startsWith("account_connection"),
+    ),
+  ).toHaveLength(0);
+  expect(fetch).not.toHaveBeenCalled();
+  await services.dispose();
+  expect(
+    accountIpc.invoke.mock.calls.filter(([name]) =>
+      String(name).startsWith("account_connection"),
+    ),
+  ).toHaveLength(0);
 });

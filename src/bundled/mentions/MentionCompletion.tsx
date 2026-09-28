@@ -122,6 +122,19 @@ export function MentionCompletion({
       !draftRoster && (!inviteAgents || !!channel) && !channel?.members;
     const membershipError = !draftRoster && list.error;
     const missing = !draftRoster && members.some((key) => !profiles.has(key));
+    const needsRecovery =
+      !!directory.error ||
+      directory.loading ||
+      agents.status === "error" ||
+      !!agents.error ||
+      membershipMissing ||
+      !!membershipError ||
+      error ||
+      missing;
+    // Completed mentions can still match the broad syntax while ordinary prose
+    // is typed. Do not publish/withdraw an empty result on each such remount.
+    // Unresolved names and failed sources must still expose their existing retry.
+    if (!admitted && !needsRecovery) return;
     const withdraw = publish({
       items: matching.slice(0, 20).map(({ recipient, label }) => ({
         id: recipient.pubkey,

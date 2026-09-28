@@ -1,3 +1,15 @@
+use account_connection::history::{account_history_delete, account_history_read};
+use account_connection::socket::{
+    account_socket_ack, account_socket_auth, account_socket_close, account_socket_open,
+    account_socket_send,
+};
+mod account_connection;
+use account_connection::session::{
+    account_connection_close, account_relay_begin, account_relay_cancel, account_relay_run,
+};
+use account_connection::{
+    account_connection_begin, account_connection_cancel, account_connection_run, AccountConnection,
+};
 mod browser;
 #[cfg(test)]
 mod browser_permissions_tests;
@@ -360,6 +372,20 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_start_on_app_launch,
         agent_control_import_preview,
         agent_control_import_commit,
+        account_connection_begin,
+        account_connection_run,
+        account_connection_cancel,
+        account_connection_close,
+        account_relay_begin,
+        account_relay_run,
+        account_relay_cancel,
+        account_socket_open,
+        account_socket_send,
+        account_socket_auth,
+        account_socket_ack,
+        account_socket_close,
+        account_history_read,
+        account_history_delete,
         agent_models_begin,
         agent_models_cancel,
         agent_models_run,
@@ -424,6 +450,12 @@ pub fn run() {
                 .map(|root| root.join("agent-runtime"))
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
             app.manage(AgentHost::initialize(paths, resources));
+            let account = app
+                .path()
+                .app_data_dir()
+                .map(|root| AccountConnection::with_archive(root.join("activity-history")))
+                .unwrap_or_default();
+            app.manage(account);
             Ok(())
         });
     #[cfg(target_os = "macos")]
@@ -453,12 +485,23 @@ pub fn run() {
                 }
             }
         })
-        .on_page_load(browser::page_load)
-        .on_window_event(browser::window_event)
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main" && payload.event() == tauri::webview::PageLoadEvent::Started {
+                webview.state::<AccountConnection>().revoke();
+            }
+            browser::page_load(webview, payload);
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) {
+                window.state::<AccountConnection>().revoke();
+            }
+            browser::window_event(window, event);
+        })
         .build(app_context())
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                app.state::<AccountConnection>().revoke();
                 app.state::<ModelHost>().shutdown();
                 if app.state::<AgentHost>().shutdown().is_err() {
                     api.prevent_exit();
@@ -470,6 +513,7 @@ pub fn run() {
                 if let Err(error) = app.state::<Terminals>().shutdown() {
                     eprintln!("Terminal shutdown failed: {error}");
                 }
+                app.state::<AccountConnection>().shutdown();
                 app.state::<ModelHost>().shutdown();
                 if app.state::<AgentHost>().shutdown().is_err() {
                     eprintln!("Native agent shutdown could not be confirmed");

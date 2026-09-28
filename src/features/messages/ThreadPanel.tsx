@@ -34,6 +34,10 @@ import { messageViewKey } from "./view-key";
 import type { MediaPlayback } from "./MediaAttachment";
 import { formatMediaTime } from "./media-timecode";
 import { useKnownAgentPubkeys } from "../agents/use-known";
+import { pendingAgentRequest } from "./agent-request";
+import { threadAgentGroups, isAgentCoordination } from "./thread-agent-groups";
+import { ThreadAgentGroup } from "./ThreadAgentGroup";
+import { ComposerAccessories } from "../conversation/ComposerAccessories";
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -273,6 +277,45 @@ function ThreadMessages({
   }, [session.profiles, authors]);
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const request = useMemo(
+    () =>
+      pendingAgentRequest(
+        rows,
+        session.viewer,
+        agentPubkeys,
+        snapshot.root?.id,
+      ),
+    [rows, session.viewer, agentPubkeys, snapshot.root?.id],
+  );
+  // Use the same cached exact-agent evidence as the rest of this thread,
+  // including profile hints, rather than a narrower second inventory view.
+  const groupAgents = new Set(agentPubkeys);
+  if (session.viewer) groupAgents.delete(session.viewer);
+  // A visible descendant breaks coordination collapse along its loaded ancestry.
+  // Ordinary non-coordination branches retain main's explicit branch controls.
+  const byId = new Map(snapshot.replies.map((row) => [row.id, row]));
+  const visibleAncestors = new Set(
+    snapshot.replies
+      .filter(
+        (row) =>
+          !isAgentCoordination(row, groupAgents, session.viewer) &&
+          tree.ancestors(row.id).some((id) => {
+            const ancestor = byId.get(id);
+            return (
+              ancestor &&
+              isAgentCoordination(ancestor, groupAgents, session.viewer)
+            );
+          }),
+      )
+      .flatMap((row) => tree.ancestors(row.id)),
+  );
+  // Keep the active reply target reachable if new identity evidence regroups it.
+  if (replyParent) {
+    visibleAncestors.add(replyParent);
+    for (const id of tree.ancestors(replyParent)) visibleAncestors.add(id);
+  }
+  const collapsedReveal = useRef<AbortSignal | undefined>(undefined);
+  const accessoryTail = useRef<HTMLOListElement>(null);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
   const follow = useRef(true);
@@ -485,103 +528,201 @@ function ThreadMessages({
     positioned.current = true;
     follow.current = false;
   };
-  let previousReply: ChannelMessage | undefined = snapshot.root;
+  useLayoutEffect(() => {
+    const tail = accessoryTail.current;
+    if (!tail) return;
+    const observer = new ResizeObserver(() => {
+      const element = scroller.current;
+      if (element && positioned.current && follow.current)
+        element.scrollTop = element.scrollHeight;
+    });
+    observer.observe(tail);
+    return () => observer.disconnect();
+  }, []);
+  const renderActivity = (pending: typeof request) =>
+    snapshot.root && extensions?.accessories ? (
+      <ComposerAccessories
+        registry={extensions.accessories}
+        placement="conversation"
+        session={session}
+        scope={scope}
+        channelId={channelId}
+        threadRootId={snapshot.root.id}
+        request={pending}
+        canOpen={(target) => canOpenLink?.(target) ?? false}
+        open={onOpenLink}
+      />
+    ) : null;
+  // Each parent owns its sibling sequence; never flatten ancestry to form a group.
+  const requestBranch =
+    request &&
+    request.message.id !== snapshot.root?.id &&
+    ((request.message.replyParentId &&
+      request.message.replyParentId !== snapshot.root?.id) ||
+      tree.children.has(request.message.id));
+  const blocksFor = (parent: string | undefined) =>
+    threadAgentGroups(
+      parent ? byId.get(parent) : snapshot.root,
+      tree.children.get(parent) ?? [],
+      groupAgents,
+      requestBranch && parent !== request?.message.id ? undefined : request,
+      session.viewer,
+      visibleAncestors,
+    );
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
-    return (tree.children.get(parent) ?? []).map((row) => {
-      const children = tree.children.get(row.id);
-      const continuation =
-        previousReply?.authorId === row.authorId &&
-        row.createdAt >= previousReply.createdAt &&
-        row.createdAt - previousReply.createdAt <= 10 * 60 &&
-        !row.membership;
-      previousReply =
-        children?.length && !expanded.has(row.id) ? undefined : row;
-      const descendants = branchReplies.get(row.id) ?? [];
-      const unreadCount = descendants.filter(
-        (reply) => session.unread.attention(channelId, reply.id).unread,
-      ).length;
-      const unreadLabel = unreadCount
-        ? `${unreadCount} new in available replies`
-        : undefined;
-      const message = (branchControl?: ReactNode) => (
-        <MessageRow
-          branchControl={branchControl}
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          onReply={snapshot.root ? targetReply : undefined}
-          row={row}
-          profile={profiles.get(row.authorId)}
-          participantProfiles={profiles}
-          agentPubkeys={agentPubkeys}
-          media={session.media}
-          onOpenLink={onOpenLink}
-          canOpenLink={canOpenLink}
-          day={false}
-          layout={continuation ? "continuation" : "thread"}
-          retry={session.messages.retry}
-          {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
-          {...(onOpenMediaReview && rootId
-            ? { onOpenMediaReview: openRootMedia }
-            : {})}
-        />
-      );
-      return (
-        <li
-          key={row.id}
-          ref={row.id === messageId ? selectedBranchRef : undefined}
-          className={styles.replyItem}
-          data-layout={continuation ? "continuation" : "thread"}
-        >
-          {!parent && row.replyParentId && row.replyParentId !== rootId && (
-            <p className={styles.threadNote}>
-              Earlier reply unavailable in loaded history.
-            </p>
-          )}
-
-          <ReplyBranch
-            message={message}
-            collapsible={!!children?.length}
-            layout={continuation ? "continuation" : "thread"}
-            label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
-            summary={
-              <ReplySummary
-                count={descendants.length}
-                participants={[
-                  ...new Set(descendants.map((reply) => reply.authorId)),
-                ]}
-                profiles={profiles}
-                agentPubkeys={agentPubkeys}
-                resolveName={resolveName}
-                media={session.media}
-                unreadLabel={unreadLabel}
-                unreadCount={unreadCount}
-              />
+    return blocksFor(parent).map((block) => {
+      if (block.kind === "message")
+        return renderReply(block.row, parent, depth);
+      // A disclosure is a visual boundary even when its children are unmounted.
+      // Do not omit an answer's byline because a hidden coordination row matched it.
+      previousReply = undefined;
+      const group = (
+        <li key={`agents:${block.id}`}>
+          <ThreadAgentGroup
+            block={block}
+            session={session}
+            profiles={profiles}
+            reveal={
+              !rootTarget &&
+              collapsedReveal.current !== navigation?.signal &&
+              block.rows.some(
+                (row) =>
+                  row.id === messageId ||
+                  tree.ancestors(messageId).includes(row.id),
+              )
+                ? navigation?.signal
+                : undefined
             }
-            depth={depth}
-            open={expanded.has(row.id)}
-            onOpenChange={(open) => {
-              follow.current = false;
-              targetAnchor.current = undefined;
-              setExpanded((current) => {
-                const next = new Set(current);
-                if (open) next.add(row.id);
-                else {
-                  next.delete(row.id);
-                  for (const id of current)
-                    if (tree.ancestors(id).includes(row.id)) next.delete(id);
-                }
-                return next;
-              });
+            onCollapse={() => {
+              if (
+                block.rows.some(
+                  (row) =>
+                    row.id === messageId ||
+                    tree.ancestors(messageId).includes(row.id),
+                )
+              )
+                collapsedReveal.current = navigation?.signal;
             }}
           >
-            {expanded.has(row.id) && (
-              <ol>{renderReplies(row.id, depth + 1)}</ol>
-            )}
-          </ReplyBranch>
+            <ol>{block.rows.map((row) => renderReply(row, parent, depth))}</ol>
+            {block.request
+              ? renderActivity(block.request)
+              : !parent && block.tail
+                ? renderActivity(undefined)
+                : null}
+          </ThreadAgentGroup>
         </li>
       );
+      previousReply = undefined;
+      return group;
     });
+  }
+  let previousReply: ChannelMessage | undefined = snapshot.root;
+  function renderReply(
+    row: ChannelMessage,
+    parent: string | undefined,
+    depth: number,
+  ): ReactNode {
+    const children = tree.children.get(row.id);
+    const ownsPending = requestBranch && request?.message.id === row.id;
+    const continuation =
+      previousReply?.authorId === row.authorId &&
+      row.createdAt >= previousReply.createdAt &&
+      row.createdAt - previousReply.createdAt <= 10 * 60 &&
+      !row.membership;
+    previousReply =
+      children?.length && !expanded.has(row.id) && !visibleAncestors.has(row.id)
+        ? undefined
+        : row;
+    const descendants = branchReplies.get(row.id) ?? [];
+    const unreadCount = descendants.filter(
+      (reply) => session.unread.attention(channelId, reply.id).unread,
+    ).length;
+    const unreadLabel = unreadCount
+      ? `${unreadCount} new in available replies`
+      : undefined;
+    const message = (branchControl?: ReactNode) => (
+      <MessageRow
+        branchControl={branchControl}
+        extensions={extensions}
+        session={session}
+        scope={scope}
+        onReply={snapshot.root ? targetReply : undefined}
+        row={row}
+        {...(rootId ? { conversationThreadRootId: rootId } : {})}
+        profile={profiles.get(row.authorId)}
+        participantProfiles={profiles}
+        agentPubkeys={agentPubkeys}
+        media={session.media}
+        onOpenLink={onOpenLink}
+        canOpenLink={canOpenLink}
+        day={false}
+        layout={continuation ? "continuation" : "thread"}
+        retry={session.messages.retry}
+        {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
+        {...(onOpenMediaReview && rootId
+          ? { onOpenMediaReview: openRootMedia }
+          : {})}
+      />
+    );
+    return (
+      <li
+        key={row.id}
+        ref={row.id === messageId ? selectedBranchRef : undefined}
+        className={styles.replyItem}
+        data-layout={continuation ? "continuation" : "thread"}
+      >
+        {!parent && row.replyParentId && row.replyParentId !== rootId && (
+          <p className={styles.threadNote}>
+            Earlier reply unavailable in loaded history.
+          </p>
+        )}
+
+        <ReplyBranch
+          message={message}
+          collapsible={!!children?.length && !visibleAncestors.has(row.id)}
+          layout={continuation ? "continuation" : "thread"}
+          label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+          summary={
+            <ReplySummary
+              count={descendants.length}
+              participants={[
+                ...new Set(descendants.map((reply) => reply.authorId)),
+              ]}
+              profiles={profiles}
+              agentPubkeys={agentPubkeys}
+              resolveName={resolveName}
+              media={session.media}
+              unreadLabel={unreadLabel}
+              unreadCount={unreadCount}
+            />
+          }
+          depth={depth}
+          open={expanded.has(row.id) || visibleAncestors.has(row.id)}
+          onOpenChange={(open) => {
+            follow.current = false;
+            targetAnchor.current = undefined;
+            setExpanded((current) => {
+              const next = new Set(current);
+              if (open) next.add(row.id);
+              else {
+                next.delete(row.id);
+                for (const id of current)
+                  if (tree.ancestors(id).includes(row.id)) next.delete(id);
+              }
+              return next;
+            });
+          }}
+        >
+          {(expanded.has(row.id) || visibleAncestors.has(row.id)) && (
+            <ol>{renderReplies(row.id, depth + 1)}</ol>
+          )}
+        </ReplyBranch>
+        {ownsPending && !children?.length && (
+          <ol>{renderReplies(row.id, depth + 1)}</ol>
+        )}
+      </li>
+    );
   }
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
   return (
@@ -624,6 +765,7 @@ function ThreadMessages({
               scope={scope}
               onReply={focusReply}
               row={snapshot.root}
+              conversationThreadRootId={snapshot.root.id}
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
               agentPubkeys={agentPubkeys}
@@ -660,7 +802,20 @@ function ThreadMessages({
         ) : snapshot.status !== "loading" ? (
           <p className={styles.empty}>Original message unavailable.</p>
         ) : null}
-        <ol>{renderReplies(undefined)}</ol>
+        <div className={styles.threadDivider}>
+          {snapshot.replies.length}{" "}
+          {snapshot.replies.length === 1 ? "reply" : "replies"}
+          {request?.agents.length && request.message.delivery !== "failed"
+            ? ` · ${request.agents.length} pending`
+            : ""}
+        </div>
+        <ol ref={accessoryTail}>
+          {renderReplies(undefined)}
+          {!blocksFor(undefined).some(
+            (block) => block.kind === "agents" && block.tail,
+          ) &&
+            extensions?.accessories && <li>{renderActivity(undefined)}</li>}
+        </ol>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>

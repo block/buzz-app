@@ -19,6 +19,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           relay={ctx.relay}
           navigation={ctx.navigation}
           control={ctx.agentControl}
+          panels={ctx.panels}
         />
       ) : (
         <ProfilePanel
@@ -26,6 +27,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           relay={ctx.relay}
           navigation={ctx.navigation}
           control={ctx.agentControl}
+          panels={ctx.panels}
         />
       );
     },

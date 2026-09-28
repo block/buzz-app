@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
@@ -60,10 +60,10 @@ function fixture() {
     canLoadMore: false,
   };
   const activity = {
-    status: "ready",
+    status: "listening",
     records: [],
     turns: [],
-    typing: [{ channelId: "c", agent: a }],
+    typing: [{ channelId: "c", threadRootId: "m", agent: a }],
     trimmed: 0,
   };
   const subscribe = (listener: () => void) => {
@@ -153,6 +153,7 @@ it("uses channel scope in link previews and activity, and participant scope in s
         session={f.session}
         scope="test"
         channelId="c"
+        threadRootId="m"
         canOpen={() => true}
         open={() => true}
       />
@@ -160,16 +161,17 @@ it("uses channel scope in link previews and activity, and participant scope in s
   );
   expect(view.container.querySelector("strong")).toHaveTextContent("Larry");
   expect(screen.getByLabelText("DM label")).toHaveTextContent(/^Larry$/);
-  expect(
-    screen.getByRole("button", {
-      name: `View activity for Larry ${a.slice(0, 12)}`,
-    }),
-  ).toBeVisible();
+  const activity = within(
+    screen.getByRole("region", { name: "Agent activity in this thread" }),
+  );
+  expect(activity.getByText("Larry")).toBeVisible();
+  expect(activity.getByRole("button", { name: "Working…" })).toBeVisible();
   act(() => f.setPresence("away"));
+  expect(activity.getByText("Larry")).toBeVisible();
   expect(
-    screen.getByRole("button", {
-      name: `View activity for Larry ${a.slice(0, 12)}, Presence: away`,
-    }),
+    view.container.querySelector(
+      '[aria-label="Agent activity in this thread"] [data-status="away"]',
+    ),
   ).toBeVisible();
   act(() => f.join());
   expect(view.container.querySelector("strong")).toHaveTextContent(
@@ -178,10 +180,11 @@ it("uses channel scope in link previews and activity, and participant scope in s
   expect(screen.getByLabelText("DM label")).toHaveTextContent(
     "Larry · rcaj, Larry · 04hu",
   );
+  expect(activity.getByText("Larry · rcaj")).toBeVisible();
   expect(
-    screen.getByRole("button", {
-      name: `View activity for Larry · rcaj ${a.slice(0, 12)}, Presence: away`,
-    }),
+    view.container.querySelector(
+      '[aria-label="Agent activity in this thread"] [data-status="away"]',
+    ),
   ).toBeVisible();
 });
 it("scopes search DM labels and message authors to their own conversation", async () => {

@@ -43,6 +43,7 @@ import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
+import { ComposerAccessories } from "../conversation/ComposerAccessories";
 
 const emptySubscribe = () => () => {};
 const EMPTY_CHANNEL_LIST = Object.freeze({
@@ -74,6 +75,8 @@ export type MessageRowProps = {
   quickControls?: ReactNode;
   branchControl?: ReactNode;
   overflowItems?: ReactNode;
+  /** Owning rendered thread, not inferred from the message's wire references. */
+  conversationThreadRootId?: string;
   layout?: "timeline" | "thread" | "continuation";
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
@@ -106,6 +109,7 @@ export const MessageRow = memo(function MessageRow({
   branchControl,
   overflowItems,
   participantProfiles,
+  conversationThreadRootId,
   layout = "timeline",
   mediaMode = "inline",
   mediaSeekTo,
@@ -154,6 +158,19 @@ export const MessageRow = memo(function MessageRow({
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
+  const pendingAgentCount =
+    row.authorId === session?.viewer && row.delivery !== "failed"
+      ? new Set(row.mentions.filter((key) => agentPubkeys?.has(key))).size
+      : 0;
+  // A new request's first local response slot opens the thread before relay
+  // reply-count evidence exists. Never write this presentation into relay state.
+  const onePending = row.replyCount === 0 && pendingAgentCount === 1;
+  const threadLabel =
+    row.replyCount > 0
+      ? `${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}`
+      : onePending
+        ? "1 reply"
+        : `${pendingAgentCount} pending responses`;
   const canReact = !!(
     extensions &&
     session &&
@@ -383,6 +400,19 @@ export const MessageRow = memo(function MessageRow({
               <MessageTimestamp createdAt={row.createdAt} />
             )}
           </div>
+          {session && scope && extensions?.accessories && (
+            <ComposerAccessories
+              registry={extensions.accessories}
+              placement="conversation"
+              session={session}
+              scope={scope}
+              channelId={row.channelId}
+              threadRootId={conversationThreadRootId}
+              message={row}
+              canOpen={(target) => canOpenLink?.(target) ?? false}
+              open={onOpenLink}
+            />
+          )}
           {timeReply && onMediaTime && (
             <span className={styles.mediaTimeLink}>
               <Button
@@ -521,27 +551,34 @@ export const MessageRow = memo(function MessageRow({
               </div>
             )
           )}
-          {row.replyCount > 0 && onOpenThread && (
+          {(row.replyCount > 0 || pendingAgentCount > 0) && onOpenThread && (
             <Button
               variant="ghost"
               size="sm"
               style={{ paddingInlineStart: "var(--space-1)" }}
               type="button"
-              aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+              aria-label={`View thread: ${threadLabel}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+              aria-description={
+                onePending ? "Agent response pending" : undefined
+              }
               onClick={(event) => {
                 event.currentTarget.focus();
                 onOpenThread(row.id, row.threadRootId ?? row.id);
               }}
             >
-              <ReplySummary
-                count={row.replyCount}
-                participants={row.participants}
-                profiles={participantProfiles}
-                agentPubkeys={agentPubkeys}
-                resolveName={resolveName}
-                media={media}
-                unreadLabel={unreadLabel}
-              />
+              {row.replyCount === 0 ? (
+                <span>{threadLabel}</span>
+              ) : (
+                <ReplySummary
+                  count={row.replyCount}
+                  participants={row.participants}
+                  profiles={participantProfiles}
+                  agentPubkeys={agentPubkeys}
+                  resolveName={resolveName}
+                  media={media}
+                  unreadLabel={unreadLabel}
+                />
+              )}
             </Button>
           )}
         </div>

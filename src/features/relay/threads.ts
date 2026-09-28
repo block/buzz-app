@@ -72,6 +72,7 @@ export function createThreadView({
   let disposed = false;
   let rootId: string | undefined;
   let rootUnavailable = false;
+  let localRootPending = false;
   let targetStatus: ThreadSnapshot["targetStatus"] = exact
     ? "loading"
     : undefined;
@@ -209,6 +210,37 @@ export function createThreadView({
     });
     notifyListeners();
   }
+  const localRoot = () =>
+    local
+      ?.snapshot()
+      .find(
+        ({ event }) =>
+          event.id === messageId &&
+          event.kind === 9 &&
+          inChannel(event, channelId) &&
+          !threadReference(event),
+      );
+  function releaseDismissedRoot() {
+    if (disposed || !canAccess() || !localRootPending || localRoot())
+      return false;
+    // Outbox dismissal removes local intent, not verified replies/tombstones.
+    // A seen local root still exists until receive() supplies its verification.
+    localRootPending = false;
+    return true;
+  }
+  function restoreLocalRoot() {
+    if (rootId || !canAccess()) return;
+    const item = localRoot();
+    if (!item) return;
+    rootId = messageId;
+    rootUnavailable = false;
+    // A signature/receipt alone is not relay observation. Only the outbox's
+    // verified seen completion can seed remote evidence after shared eviction.
+    localRootPending = !(item.delivery === "seen" && item.signed);
+    if (!localRootPending && item.signed) remote = [item.signed];
+    if (exact) targetStatus = "ready";
+    publish({ status: "ready", error: undefined, canLoadMore: false });
+  }
   function retain(events: readonly RelayEvent[], commit = true) {
     if (events.length > MAX_EVENTS || byteSize(events) > MAX_BYTES) {
       // Never silently evict a deletion/ancestor then display resurrected content.
@@ -216,6 +248,7 @@ export function createThreadView({
       remote = [];
       staged = [];
       rootId = undefined;
+      localRootPending = false;
       cursor = undefined;
       pages = 0;
       again = false;
@@ -237,7 +270,16 @@ export function createThreadView({
     const incoming = related(events);
     if (!incoming.length) return;
     if (retain(union(remote, incoming))) {
+      const confirmed =
+        localRootPending &&
+        incoming.some(
+          (event) =>
+            event.id === rootId && event.kind === 9 && !threadReference(event),
+        );
+      if (confirmed) localRootPending = false;
       publish();
+      // One finite repair catches replies that arrived before the view opened.
+      if (confirmed) void run(true);
     }
   }
   if (seed && canAccess() && contentKind(seed) && inChannel(seed, channelId)) {
@@ -245,6 +287,7 @@ export function createThreadView({
     if (seed.id === rootId) remote = [seed];
     publish();
   }
+  restoreLocalRoot();
   function purge(clear = false) {
     controller?.abort();
     controller = undefined;
@@ -255,6 +298,7 @@ export function createThreadView({
       remote = [];
       staged = [];
       rootId = undefined;
+      localRootPending = false;
       cursor = undefined;
       pages = 0;
     } else remote = visible(remote);
@@ -275,6 +319,13 @@ export function createThreadView({
     }
     if (!canAccess()) {
       purge();
+      return;
+    }
+    releaseDismissedRoot();
+    restoreLocalRoot();
+    if (localRootPending) {
+      if (exact) targetStatus = "ready";
+      publish({ status: "ready", error: undefined, canLoadMore: false });
       return;
     }
     if (!replace && (!snapshot.canLoadMore || snapshot.limited)) return;
@@ -481,7 +532,11 @@ export function createThreadView({
       [...remote, ...staged].find((event) => event.id === id),
     receive,
     purge,
-    changed: () => publish(),
+    changed: () => {
+      const repair = releaseDismissedRoot();
+      publish();
+      if (repair) void run(true);
+    },
     view: {
       snapshot: () => snapshot,
       subscribe(listener: () => void) {

@@ -26,6 +26,7 @@ import {
   type RelayReader,
 } from "./reader";
 import { createAgentActivity } from "../agents/activity";
+import { createActivityHistory } from "../agents/activity-history";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createDirectMessages } from "./direct-messages";
 import { createWorkSessions } from "./work-sessions";
@@ -345,6 +346,7 @@ export function createRelaySession(
       emoji.clear();
       statuses.clear();
       activity.clear();
+      activityHistory.clear();
       memories.clear();
       presence.clear();
       channelActivity.clear();
@@ -549,6 +551,11 @@ export function createRelaySession(
     (generation) => traffic?.observe?.(generation),
     (channel) => canAccess(channel),
     notify,
+  );
+  const activityHistory = createActivityHistory(
+    transport?.activityHistory,
+    (channel) => !closed && canAccess(channel),
+    () => activity.clear(),
   );
   const archives = createIdentityArchives(
     requests.reader,
@@ -1414,6 +1421,7 @@ export function createRelaySession(
       : undefined,
     channelLifecycle: lifecycle.capability,
     agentActivity: activity.queries,
+    activityHistory: activityHistory.queries,
     agentMemories: memories.capability,
     archives: archives.queries,
     media: (url: string, size?: "small") => transport?.media(url, size),
@@ -1948,6 +1956,7 @@ export function createRelaySession(
         cancelUploads();
         cacheClearEpoch++;
         activity.clear();
+        activityHistory.clear();
         memories.clear();
         presence.clear();
         channelActivity.clear();
@@ -1979,6 +1988,7 @@ export function createRelaySession(
       closed = true;
       typing.dispose();
       lifetime.abort();
+      activityHistory.dispose();
       activity.dispose();
       memories.dispose();
       presence.dispose();

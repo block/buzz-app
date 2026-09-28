@@ -1042,6 +1042,111 @@ it("projects event attention through the same mention, DM, participation and fro
   expect(attention("f".repeat(64)).status).toBe("unknown");
   lease.dispose();
 });
+it.each(["thread", "mention", "direct", "unresolved thread"])(
+  "explicit coordination suppresses %s alerts without marking evidence read",
+  async (context) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.viewer, "room", "request", 11);
+    const row = message(h.alice, "room", "coordination", 12, [
+      ["audience", "agents"],
+      ...(context === "mention" ? [["p", h.viewer.pubkey]] : []),
+      ...(context.includes("thread") ? [["e", root.id, "", "reply"]] : []),
+    ]);
+    if (context === "direct")
+      h.emit([
+        signed(h.relay, {
+          kind: 39000,
+          created_at: 20,
+          content: "",
+          tags: [
+            ["d", "room"],
+            ["name", "DM"],
+            ["t", "dm"],
+          ],
+        }),
+      ]);
+    h.emit(context === "unresolved thread" ? [row] : [root, row]);
+    const before = h.snapshot();
+    const activity = h.session.unread.activity("room");
+    const lease = h.session.unread.reading("room");
+    lease.view([row.id], () => true);
+    expect(h.session.unread.attention("room", row.id)).toMatchObject({
+      status: "ineligible",
+      unread: true,
+      viewing: true,
+    });
+    expect(h.session.unread.attention("room", row.id).category).toBeUndefined();
+    expect(h.snapshot()).toBe(before);
+    expect(h.snapshot().observedCount).toBe(1);
+    expect(h.session.unread.activity("room")).toBe(activity);
+    if (context !== "unresolved thread")
+      expect(h.snapshot().attentionCount).toBe(1);
+    await flush();
+    expect(h.journal()?.state.frontiers).toEqual({});
+    expect(h.host.sign).not.toHaveBeenCalled();
+    lease.dispose();
+  },
+);
+
+it.each(
+  [
+    [],
+    [["audience", "everyone"]],
+    [["audience", "agents", "extra"]],
+    [
+      ["audience", "agents"],
+      ["audience", "everyone"],
+    ],
+  ].map((tags) => ({ tags })),
+)(
+  "legacy/everyone/invalid audience $tags retains normal attention",
+  ({ tags }) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.viewer, "room", "request", 11);
+    const row = message(h.alice, "room", "answer", 12, [
+      ["e", root.id, "", "reply"],
+      ...tags,
+    ]);
+    h.emit([root, row]);
+    expect(h.session.unread.attention("room", row.id)).toMatchObject({
+      status: "eligible",
+      category: "thread",
+      rootId: root.id,
+      unread: true,
+    });
+  },
+);
+
+it("edits cannot add or remove original coordination alert intent", () => {
+  const h = setup();
+  h.grant("room");
+  for (const audience of ["agents", "everyone"] as const) {
+    const row = message(h.alice, "room", audience, 11, [
+      ["p", h.viewer.pubkey],
+      ["audience", audience],
+    ]);
+    h.emit([
+      row,
+      signed(h.alice, {
+        kind: 40003,
+        created_at: 12,
+        content: "edited",
+        tags: [
+          ["h", "room"],
+          ["e", row.id],
+          ["audience", audience === "agents" ? "everyone" : "agents"],
+        ],
+      }),
+    ]);
+    expect(h.session.unread.attention("room", row.id)).toMatchObject({
+      status: audience === "agents" ? "ineligible" : "eligible",
+      unread: true,
+    });
+  }
+});
+
 it("qualified viewing is lease-scoped and never writes a read marker", async () => {
   const h = setup();
   h.grant("room");

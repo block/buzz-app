@@ -1,3 +1,4 @@
+import { TypingPresentation } from "../../features/conversation/typing-presentation";
 import type { AgentControl } from "../../features/agents/control";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { newSessionParent } from "../../features/channel-navigation/routes";
@@ -14,6 +15,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
+import { activitySelection } from "../../features/agents/activity-target";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import {
@@ -615,6 +617,13 @@ function ChannelWorkspace({
     },
     [currentId, navigator, viewer, scope, open],
   );
+  const onAgentRequestSend = useCallback(
+    (id: string, agents: readonly string[]) => {
+      onComposerSend(id);
+      if (!flatSession && agents.length) openThread(id, id);
+    },
+    [onComposerSend, flatSession, openThread],
+  );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
     channelId: string;
@@ -744,8 +753,10 @@ function ChannelWorkspace({
           document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null;
-        if (context.routedThread) select(context.channelId);
-        setThread(undefined);
+        if (!activitySelection(url)) {
+          if (context.routedThread) select(context.channelId);
+          setThread(undefined);
+        }
         open({
           channelId: context.channelId,
           panel: candidate,
@@ -806,9 +817,9 @@ function ChannelWorkspace({
   const drawer = useChannelPanels(panels, drawerContext, () =>
     setSettings(undefined),
   );
-  return (
+  const board = (
     <div
-      className={`${styles.board} ${!composingMessage && (showingSettings || panel || showingThread || companion || drawer.side) ? styles.withPanel : ""}`}
+      className={`${styles.board} ${!composingMessage && (showingSettings || panel || showingThread || companion || drawer.side) ? styles.withPanel : ""} ${!composingMessage && !showingSettings && !showingMediaReview && panel && showingThread && opened && activitySelection(opened.target) ? styles.withActivity : ""}`}
     >
       {current && !current.readOnly && canvasOpen && (
         <ChannelCanvasDialog
@@ -994,7 +1005,7 @@ function ChannelWorkspace({
                         ? "Message this session"
                         : undefined
                     }
-                    onSend={onComposerSend}
+                    onSend={onAgentRequestSend}
                   />
                 )}
               </SessionColumn>
@@ -1168,18 +1179,20 @@ function ChannelWorkspace({
               </div>
             )}
 
-            {panel && opened && (
-              <div className={styles.retainedPanel} inert={showingSettings}>
-                <PanelCard
-                  key="target"
-                  panel={panel}
-                  target={opened.target}
-                  context={panelContext}
-                  close={close}
-                  closeLabel="Close channel panel"
-                />
-              </div>
-            )}
+            {panel &&
+              opened &&
+              !(showingThread && activitySelection(opened.target)) && (
+                <div className={styles.retainedPanel} inert={showingSettings}>
+                  <PanelCard
+                    key="target"
+                    panel={panel}
+                    target={opened.target}
+                    context={panelContext}
+                    close={close}
+                    closeLabel="Close channel panel"
+                  />
+                </div>
+              )}
             {drawer.side && (
               <div className={styles.retainedPanel} hidden={showingSettings}>
                 {drawer.side}
@@ -1192,7 +1205,30 @@ function ChannelWorkspace({
             )}
           </div>
         )}
+      {!composingMessage &&
+        !showingMediaReview &&
+        showingThread &&
+        panel &&
+        opened &&
+        activitySelection(opened.target) && (
+          <div className={styles.activityPane} hidden={showingSettings}>
+            <PanelCard
+              panel={panel}
+              target={opened.target}
+              context={panelContext}
+              close={close}
+              closeLabel="Close channel panel"
+            />
+          </div>
+        )}
     </div>
+  );
+  return (
+    <TypingPresentation
+      active={!composingMessage && !showingSettings && !showingMediaReview}
+    >
+      {board}
+    </TypingPresentation>
   );
 }
 

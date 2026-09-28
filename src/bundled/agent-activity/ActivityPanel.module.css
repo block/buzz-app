@@ -1,0 +1,24 @@
+@reference "../../shared/styles/globals.css";
+
+.scope {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+.channels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.dot {
+  display: block;
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--text-subtle);
+}
+.dot[data-selected] {
+  width: var(--space-4);
+  background: var(--text-standard);
+}

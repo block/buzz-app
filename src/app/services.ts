@@ -1,4 +1,5 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
+import { nativeAccountConnection } from "../features/communities/account-connection";
 import { SettingsCardsService } from "../features/settings/service";
 import { TemplateProvidersService } from "../features/channel-templates/provider";
 import { IdentityNamesService } from "../features/identity-names/service";
@@ -45,12 +46,18 @@ export function createServices() {
   const settingsCards = new SettingsCardsService(ctx);
   const channelTemplates = new TemplateProvidersService(ctx);
   const identityNames = new IdentityNamesService(ctx, agentControl);
+  const accountConnection =
+    import.meta.env.VITE_BUZZ_LIVE === "1"
+      ? undefined
+      : nativeAccountConnection();
+  if (accountConnection) ctx.effect(() => () => accountConnection.dispose());
   const communities = createCommunities(
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
     identityNames,
     import.meta.env.VITE_BUZZ_OPEN_RELAY ?? "",
     agentControl,
+    accountConnection,
   );
   const relay = communities.relay;
   ctx.effect(() => bindAgentMentions(agentControl, communities));

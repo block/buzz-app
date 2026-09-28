@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import { connectBrokerTransport } from "../relay/transport";
 import type { PersonalProfile } from "./service";
 export type CommunityInfo = {
@@ -10,11 +11,16 @@ export type CommunityInfo = {
     age_attestation_required: boolean;
   } | null;
 };
+function requireBroker() {
+  if (isTauri() && import.meta.env.VITE_BUZZ_LIVE !== "1")
+    throw new Error("This operation is unavailable on the native connection.");
+}
 export async function communityRequest<T>(
   id: string,
   route: string,
   body?: unknown,
 ): Promise<T> {
+  requireBroker();
   const response = await fetch(
     `/api/relay/${encodeURIComponent(id)}/${route}`,
     {
@@ -36,6 +42,7 @@ export async function communityRequest<T>(
   return result as T;
 }
 export async function inspectProfile(id: string) {
+  requireBroker();
   const transport = await connectBrokerTransport(
     "",
     AbortSignal.timeout(12000),

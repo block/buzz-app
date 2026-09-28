@@ -15,6 +15,7 @@ import type {
 import type { Priority, RelayReader } from "./reader";
 import { foldMessages } from "./fold";
 import { threadReference } from "./thread-reference";
+import { messageAudience } from "./message-audience";
 
 export type UnreadSnapshot = Readonly<{
   target: ReadTarget;
@@ -61,7 +62,8 @@ export type ReadingHandle = Readonly<{
 }>;
 export interface UnreadCapability {
   snapshot(target: ReadTarget): UnreadSnapshot;
-  /** Same verified attention/frontier policy as badges, not a notification event source. */
+  /** Verified alert eligibility and reading facts, not a notification event source.
+   * Explicit coordination is alert-ineligible without changing unread/badge counts. */
   attention(channelId: string, messageId: string): MessageAttention;
   subscribe(target: ReadTarget, listener: () => void): () => void;
   activity(channelId: string): ThreadActivitySnapshot;
@@ -304,6 +306,15 @@ export function createUnread({
     const viewing = [...views.values()].some(
       (view) => view.ids.has(messageId) && view.visible(),
     );
+    // Original signed intent only: edits cannot change this policy. Preserve
+    // reading facts and counts; coordination suppression never marks it read.
+    if (messageAudience(event.kind, event.tags) === "agents")
+      return Object.freeze({
+        status: "ineligible",
+        ...(entry.rootId ? { rootId: entry.rootId } : {}),
+        unread: isUnread(entry, reads.state()),
+        viewing,
+      });
     return Object.freeze({
       status: kind
         ? "eligible"

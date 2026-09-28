@@ -1,0 +1,100 @@
+@reference "../../shared/styles/globals.css";
+
+.stream {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.turn {
+  min-width: 0;
+}
+.heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.label {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  text-align: start;
+}
+.label > svg {
+  flex-shrink: 0;
+  align-self: center;
+}
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-standard);
+}
+.detail {
+  padding: var(--space-1) 0 var(--space-2) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 65ch;
+}
+.detail pre {
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+  color: var(--text-standard);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.toolGroup {
+  padding-left: var(--space-4);
+}
+.progress {
+  padding-block: var(--space-2);
+}
+
+.progressBody {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.progressBody > svg {
+  flex-shrink: 0;
+  margin-top: var(--space-half);
+}
+
+.entryLabel {
+  align-items: flex-start;
+  flex-wrap: nowrap;
+}
+.entryLabel > svg {
+  align-self: flex-start;
+  margin-top: var(--space-half);
+}
+.entryStatus {
+  display: block;
+  margin-top: var(--space-half);
+}
+
+.messageContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-inline-start: var(--space-6);
+}
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* The shared disclosure trigger owns row height, as it does for tools. */
+  padding-block: 0;
+  min-width: 0;
+}

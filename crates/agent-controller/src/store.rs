@@ -198,6 +198,31 @@ impl Store {
         agent.extra.remove("profilePending");
         self.write(&doc)
     }
+    pub(crate) fn complete_import(
+        &mut self,
+        agents: Vec<Agent>,
+        repairs: Vec<(u64, Agent)>,
+    ) -> Result<()> {
+        let mut doc = self.read()?;
+        for (revision, repaired) in repairs {
+            let saved = doc
+                .agents
+                .iter_mut()
+                .find(|a| a.id == repaired.id)
+                .ok_or("Agent no longer exists")?;
+            if saved.revision != revision || saved.enabled || !crate::team::required(saved) {
+                return Err("Agent changed during team import; reload before trying again".into());
+            }
+            saved.imported["team"] = repaired.imported["team"].clone();
+            saved.extra.insert(
+                "activityPublication".into(),
+                repaired.extra["activityPublication"].clone(),
+            );
+            saved.revision = repaired.revision;
+        }
+        doc.agents.extend(agents);
+        self.write(&doc)
+    }
     pub(crate) fn insert(&mut self, agents: Vec<Agent>) -> Result<()> {
         let mut doc = self.read()?;
         doc.agents.extend(agents);

@@ -199,7 +199,10 @@ export function PageSearch({
                   ? currentTarget.channelId
                   : undefined
               }
-              onScopeChange={(channelId) => setScopedChannelId(channelId)}
+              onScopeChange={(channelId) => {
+                setScopedChannelId(channelId);
+                input.current?.focus();
+              }}
               close={() => {
                 returnFocus.current = document.getElementById("main-content");
                 setSearchOpen(false);

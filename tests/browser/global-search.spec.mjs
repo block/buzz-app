@@ -100,6 +100,43 @@ test("search arrows traverse the conversation action and recent activity, Enter 
   ).toBeVisible();
 });
 
+test("changing search scope returns focus to the input without clearing the query", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await button(page, "Search Buzz").click();
+  const scopeAction = page
+    .getByRole("dialog", { name: "Search Buzz" })
+    .getByRole("group", { name: "This conversation" })
+    .getByRole("option");
+  await scopeAction.click();
+
+  const scoped = page.getByRole("dialog", { name: "Search this conversation" });
+  const scopedInput = scoped.getByRole("combobox", {
+    name: "Search this conversation",
+  });
+  await expect(scopedInput).toBeFocused();
+  await page.keyboard.type("hello");
+  await expect(scopedInput).toHaveValue("hello");
+
+  const chip = scoped.getByRole("button", {
+    name: /Remove .* search scope/,
+  });
+  await chip.focus();
+  await chip.press("Enter");
+  const global = page.getByRole("dialog", { name: "Search Buzz" });
+  const input = global.getByRole("combobox", { name: "Search Buzz" });
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("hello");
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    global
+      .getByRole("group", { name: "This conversation" })
+      .getByRole("option"),
+  ).toHaveAttribute("aria-selected", "true");
+});
+
 // Real portal → routed timeline/thread ownership and focus, in both browser engines.
 test.describe("public search destination", () => {
   test.use({ openSearch: true, productionBroker: true });

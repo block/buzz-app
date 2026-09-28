@@ -2,6 +2,7 @@ import { getLogger, setLogLevel } from "../developer/logging";
 import { assert, afterEach, expect, it, vi } from "vitest";
 import {
   createLiveAdmission,
+  LIVE_REPLAY_LIMIT,
   liveChannels,
   subscribeRelayTraffic,
   type LiveCallbacks,
@@ -205,11 +206,18 @@ it("batches joined background interests without rebalance and fences retired bat
   expect(vi.getTimerCount()).toBe(0);
 });
 
+// Signing is fixture cost, not replay behavior: sign the over-limit history
+// once at import so the test body measures only relay receive work.
+const replayAuthor = keypair();
+const replayNow = Math.floor(Date.now() / 1000);
+const hotReplay = Array.from({ length: LIVE_REPLAY_LIMIT + 1 }, (_, i) =>
+  message(replayAuthor, "hot", `hot-${i}`, replayNow - 1),
+);
 it("keeps quiet-channel unread evidence when another filter fills its replay allowance", async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ now: replayNow * 1000 });
   const h = setup([]);
   const relay = keypair(),
-    author = keypair();
+    author = replayAuthor;
   const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
   const owner = createRelaySession({
     ...wire.transport,
@@ -227,7 +235,7 @@ it("keeps quiet-channel unread evidence when another filter fills its replay all
     assert.exists(batch);
     const incoming = vi.fn();
     owner.session.subscribeIncoming(incoming);
-    const now = Math.floor(Date.now() / 1000);
+    const now = replayNow;
     const quiet = signed(author, {
       kind: 9,
       content: "quiet mention",
@@ -237,12 +245,7 @@ it("keeps quiet-channel unread evidence when another filter fills its replay all
         ["p", h.key.pubkey],
       ],
     });
-    const history = [
-      quiet,
-      ...Array.from({ length: 501 }, (_, i) =>
-        message(author, "hot", `hot-${i}`, now - 1),
-      ),
-    ];
+    const history = [quiet, ...hotReplay];
     // Relay's existing OR contract applies each filter's limit separately.
     // The former multi-h filter loses quiet to the 500 newer hot events.
     const delivered = new Set<string>();

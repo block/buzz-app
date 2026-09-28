@@ -39,7 +39,12 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { ProfileActivity } from "./ProfileActivity";
 import type { PanelProps } from "../../features/panels/service";
-import { profileKey, profileTarget } from "../../features/profiles/target";
+import {
+  profileAgentHint,
+  profileKey,
+  profileTarget,
+} from "../../features/profiles/target";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
@@ -87,6 +92,7 @@ export function ProfilePanel({
       refreshControl={refreshControl}
       session={connection.session}
       pubkey={pubkey}
+      agentHint={profileAgentHint(target)}
       instanceId={instanceId}
       context={context}
       navigation={navigation}
@@ -108,6 +114,7 @@ export function ProfilePanel({
 }
 function ProfileDetails({
   children,
+  agentHint,
   refreshControl,
   session,
   pubkey,
@@ -119,6 +126,7 @@ function ProfileDetails({
   instanceId,
   close,
 }: {
+  agentHint: boolean;
   instanceId?: string | undefined;
   refreshControl: boolean;
   children?: ReactNode;
@@ -188,6 +196,8 @@ function ProfileDetails({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const presence = usePresenceStatus(session.presence, pubkey, true);
   const knownAgent = agentPubkeys.has(pubkey);
+  // Navigation carries appearance, not the evidence used by private controls.
+  const displayAgent = knownAgent || agentHint;
   const ownership = useAgentOwnerEvidence(
     session,
     knownAgent ? pubkey : undefined,
@@ -247,7 +257,8 @@ function ProfileDetails({
   const identityName = useChannelIdentityNames(session, context?.channelId);
   const name = identityName(
     pubkey,
-    profile?.name ?? (knownAgent ? "Agent" : "Unknown profile"),
+    profile?.name ??
+      `${displayAgent ? "Agent " : ""}${formatPublicKey(pubkey)}`,
   );
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
@@ -351,7 +362,7 @@ function ProfileDetails({
                 }
                 fallback={name}
                 size={picture ? "fill" : "large"}
-                shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
+                shape={displayAgent ? "squircle" : "circle"}
                 statusBadge={presence === "unknown" ? undefined : presence}
               />
             </div>
@@ -437,7 +448,7 @@ function ProfileDetails({
                           scope={scope}
                           communityOrigin={communityOrigin}
                           viewer={viewer}
-                          knownAgent={knownAgent}
+                          knownAgent={displayAgent}
                         />
                       )}
                     <div className={styles.publicKey}>

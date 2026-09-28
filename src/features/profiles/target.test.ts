@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { profileKey, profileTarget } from "./target";
+import { profileAgentHint, profileKey, profileTarget } from "./target";
 it("round-trips only exact public identity locators", () => {
   const key = "ab".repeat(32);
   const target = profileTarget(key);
@@ -17,4 +17,24 @@ it("round-trips only exact public identity locators", () => {
     "nostr:npub1abc",
   ])
     expect(profileKey(invalid)).toBeUndefined();
+});
+
+it("keeps agent appearance in an exact app-local target without changing public links", () => {
+  const key = "ab".repeat(32);
+  const target = profileTarget(key.toUpperCase(), { agent: true });
+  expect(target).toBe(`buzz:agent-profile:${key}`);
+  expect(profileKey(target ?? "")).toBe(key);
+  expect(profileAgentHint(target ?? "")).toBe(true);
+  expect(profileAgentHint(profileTarget(key) ?? "")).toBe(false);
+  expect(profileTarget(key, { agent: false })).toBe(profileTarget(key));
+  for (const invalid of [
+    "buzz:agent-profile:",
+    `${target}?owner=true`,
+    `${target}/`,
+    `${target}x`,
+    `buzz:agent-profile:${"g".repeat(64)}`,
+  ]) {
+    expect(profileKey(invalid)).toBeUndefined();
+    expect(profileAgentHint(invalid)).toBe(false);
+  }
 });

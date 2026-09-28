@@ -31,6 +31,41 @@ const row: ChannelMessage = {
   replyCount: 23,
 };
 
+it.each([false, true])(
+  "carries agent-envelope appearance into avatar navigation: %s",
+  (agentEnvelope) => {
+    const authorId = "ab".repeat(32);
+    const open = vi.fn(() => true);
+    try {
+      renderDom(
+        <MessageRow
+          row={{
+            ...row,
+            authorId,
+            ...(agentEnvelope ? { agentEnvelope: true as const } : {}),
+          }}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={open}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: `View ${authorId.slice(0, 10)} profile`,
+        }),
+      );
+      expect(open).toHaveBeenCalledWith(
+        profileTarget(authorId, { agent: agentEnvelope }),
+      );
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it("badges agent and human bylines with known presence", () => {
   const agentRow = { ...row, authorId: "a".repeat(64) };
   const subscribe = vi.fn(() => () => {});

@@ -14,6 +14,7 @@ import { createRelaySession } from "../../features/relay/session";
 import { keypair, profile } from "../../features/relay/testing";
 import type { ReadTransport } from "../../features/relay/transport";
 import { ProfilePanel } from "./ProfilePanel";
+import { formatPublicKey } from "../../shared/identity/public-key";
 
 afterEach(cleanup);
 
@@ -70,6 +71,8 @@ function fixture(configuredNames = false) {
     person,
     control,
     query,
+    relay,
+    session: owner.session,
     panel: (pubkey = person.pubkey) => (
       <StrictMode>
         <ProfilePanel
@@ -87,42 +90,41 @@ function fixture(configuredNames = false) {
   };
 }
 
-it("uses Agent only when shared choices identify the exact unnamed profile", async () => {
+it("identifies unnamed profiles by public key and scopes shared agent hints to the exact community", async () => {
   const f = fixture();
+  const label = formatPublicKey(f.person.pubkey) ?? "";
   try {
     const view = render(f.panel());
     await screen.findByText(
       "No profile metadata is available in this community.",
     );
+    expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Unknown profile" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("img", { name: "Unknown profile avatar" }),
+      screen.getByRole("img", { name: `${label} avatar` }),
     ).toHaveAttribute("data-avatar-shape", "circle");
 
     await act(() => f.control.refresh());
-    expect(screen.getByRole("heading", { name: "Agent" })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Agent avatar" })).toHaveAttribute(
-      "data-avatar-shape",
-      "squircle",
-    );
+    expect(
+      screen.getByRole("heading", { name: `Agent ${label}` }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: `Agent ${label} avatar` }),
+    ).toHaveAttribute("data-avatar-shape", "squircle");
 
-    view.rerender(f.panel(keypair().pubkey));
+    const stranger = keypair().pubkey;
+    view.rerender(f.panel(stranger));
     await screen.findByText(
       "No profile metadata is available in this community.",
     );
     expect(
-      screen.getByRole("heading", { name: "Unknown profile" }),
+      screen.getByRole("heading", { name: formatPublicKey(stranger) ?? "" }),
     ).toBeInTheDocument();
 
     view.rerender(f.panel());
-    await screen.findByRole("heading", { name: "Agent" });
+    await screen.findByRole("heading", { name: `Agent ${label}` });
     f.local.agent.relayUrl = "wss://other.example.test";
     await act(() => f.control.refresh());
-    expect(
-      screen.getByRole("heading", { name: "Unknown profile" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
   } finally {
     f.dispose();
   }
@@ -139,7 +141,11 @@ it("keeps the known-agent fallback on profile failure and replaces it with relay
     });
     render(f.panel());
     await screen.findByText("Could not load this profile.");
-    expect(screen.getByRole("heading", { name: "Agent" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: `Agent ${formatPublicKey(f.person.pubkey)}`,
+      }),
+    ).toBeInTheDocument();
 
     const publicProfile = profile(f.person, {
       name: "Relay agent",
@@ -165,6 +171,67 @@ it("keeps the known-agent fallback on profile failure and replaces it with relay
     expect(
       screen.queryByText("Could not load this profile."),
     ).not.toBeInTheDocument();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("keeps an agent-avatar hint without granting ownership or native controls", async () => {
+  const f = fixture();
+  const name = `Agent ${formatPublicKey(f.person.pubkey)}`;
+  try {
+    f.local.data.agents = [];
+    await f.control.refresh();
+    const show = (hint: boolean) => (
+      <StrictMode>
+        <ProfilePanel
+          relay={f.relay}
+          control={f.control}
+          target={profileTarget(f.person.pubkey, { agent: hint }) ?? ""}
+          close={() => {}}
+        />
+      </StrictMode>
+    );
+    const view = render(show(true));
+    await screen.findByText(
+      "No profile metadata is available in this community.",
+    );
+    expect(screen.getByRole("heading", { name })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: `${name} avatar` })).toHaveAttribute(
+      "data-avatar-shape",
+      "squircle",
+    );
+    expect(
+      await screen.findByText("Not managed on this device."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Runtime" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Memories" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: /^(Start|Stop|Restart|Delete agent)$/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Managed by")).not.toBeInTheDocument();
+    expect(f.session.agentChoices.snapshot().identities).toEqual([]);
+
+    view.rerender(show(false));
+    expect(
+      screen.getByRole("heading", {
+        name: formatPublicKey(f.person.pubkey) ?? "",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Not managed on this device."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("img", {
+        name: `${formatPublicKey(f.person.pubkey)} avatar`,
+      }),
+    ).toHaveAttribute("data-avatar-shape", "circle");
   } finally {
     f.dispose();
   }

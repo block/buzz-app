@@ -147,6 +147,27 @@ function setup(
     },
   };
 }
+it("surfaces credit exhaustion in the editor without opening technical details", async () => {
+  const message =
+    "No OpenAI API credits remaining. Add credits in OpenAI billing, then send a new message.";
+  setup("ready", (f) => {
+    f.agent.diagnostics = [message];
+  });
+  const cards = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  const card = cards[0];
+  if (!card) throw Error("Agent card missing");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    `Last runtime error: ${message}`,
+  );
+});
+
 it("shows native controls per exact destination and separate read-only discovered identities", async () => {
   const { f } = setup();
   const cards = await screen.findAllByRole("article", {

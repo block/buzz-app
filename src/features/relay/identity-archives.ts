@@ -1,6 +1,14 @@
+import { getEventHash } from "nostr-tools";
+import { authTagOwner, withinTimeBounds } from "../agents/owner-attestation";
 import { byteSize } from "./budget";
-import type { RelayEvent } from "./events";
+import { newer, type RelayEvent } from "./events";
+import {
+  archiveRequestTemplate,
+  type IdentityArchiveAction,
+} from "./identity-archive-protocol";
+import { PublishRejected } from "./outbox";
 import type { RelayReader } from "./reader";
+import type { RelayWriter } from "./transport";
 
 export type IdentityArchiveSnapshot = Readonly<{
   status: "unavailable" | "idle" | "loading" | "ready" | "error";
@@ -16,13 +24,18 @@ const MAX_BYTES = 2 * 1024 * 1024;
 
 /** Relay-scoped NIP-IA visibility, never access, membership or liveness evidence.
  * The caller supplies only explicit NIP-11 self, never the contact-key fallback.
- * Reads are lazy finite snapshots, not a live archive subscription. */
+ * Reads are lazy finite snapshots, not a live archive subscription.
+ * Requests are optional NIP-IA 9035/9036 writes; the relay re-verifies consent. */
 export function createIdentityArchives(
   reader: RelayReader,
   authority: string | undefined,
   notify = (listener: () => void) => listener(),
+  write?: { writer: RelayWriter | undefined; viewer: string | undefined },
 ) {
   const available = !!authority && HEX.test(authority);
+  const writer = available ? write?.writer : undefined;
+  const viewer = write?.viewer;
+  const requests = new Set<AbortController>();
   const listeners = new Set<() => void>();
   let closed = false;
   let controller: AbortController | undefined;
@@ -111,7 +124,105 @@ export function createIdentityArchives(
     })();
     return completion;
   }
+  /** Render and submit guard: self, relay owner/admin from the relay-signed
+   * 13534 roster, or verified NIP-OA owner. `auth` is ownership evidence even
+   * when `admin` is the path used to sign. Null means no path. */
+  async function consent(
+    target: string,
+    signal: AbortSignal,
+  ): Promise<{ auth?: readonly string[]; admin?: true } | null> {
+    if (closed || !writer || !viewer || !authority || !HEX.test(target))
+      return null;
+    if (target === viewer) return {};
+    const events = await reader.read(
+      [
+        { kinds: [0], authors: [target], limit: 1 },
+        { kinds: [13534], authors: [authority], limit: 1 },
+      ],
+      { signal, priority: "foreground", fresh: true },
+    );
+    signal.throwIfAborted();
+    const profile = events
+      .filter((event) => event.kind === 0 && event.pubkey === target)
+      .reduce<RelayEvent | undefined>(newer, undefined);
+    // NIP-IA ownership ignores kind clauses; request time bounds apply at signing.
+    const [tag, ...extra] =
+      profile?.tags.filter(([name]) => name === "auth") ?? [];
+    const auth =
+      tag && !extra.length && (await authTagOwner(target, tag)) === viewer
+        ? tag
+        : undefined;
+    signal.throwIfAborted();
+    const roster = events
+      .filter((event) => event.kind === 13534 && event.pubkey === authority)
+      .reduce<RelayEvent | undefined>(newer, undefined);
+    const role = roster?.tags.find(
+      ([name, key]) => name === "member" && key === viewer,
+    )?.[2];
+    const admin = role === "owner" || role === "admin";
+    if (!auth && !admin) return null;
+    return { ...(auth && { auth }), ...(admin && { admin: true as const }) };
+  }
+  async function request(
+    action: IdentityArchiveAction,
+    target: string,
+    caller?: AbortSignal,
+  ): Promise<void> {
+    if (!writer) throw new Error("Archive is unavailable on this connection");
+    const owned = new AbortController();
+    let uncertain: unknown;
+    requests.add(owned);
+    const signal = AbortSignal.any([
+      owned.signal,
+      AbortSignal.timeout(20_000),
+      ...(caller ? [caller] : []),
+    ]);
+    try {
+      const path = await consent(target, signal);
+      if (!path) throw new Error("You can no longer archive this identity");
+      // Relay order: role authority stands alone, so never attach a credential
+      // whose time bounds could fail it.
+      const auth = path.admin ? undefined : path.auth;
+      const template = archiveRequestTemplate(action, target, auth);
+      if (auth && !withinTimeBounds(auth[2] ?? "", template.created_at))
+        throw new Error("You can no longer archive this identity");
+      const signed = await writer.sign(structuredClone(template), signal);
+      signal.throwIfAborted();
+      if (
+        signed.pubkey !== viewer ||
+        signed.kind !== template.kind ||
+        signed.created_at !== template.created_at ||
+        signed.content !== template.content ||
+        JSON.stringify(signed.tags) !== JSON.stringify(template.tags) ||
+        getEventHash(signed) !== signed.id
+      )
+        throw new Error("Signer changed the archive request");
+      try {
+        await writer.publish(signed, signal);
+      } catch (error) {
+        // A definitive rejection changed nothing; an unknown outcome may have applied.
+        if (error instanceof PublishRejected) throw error;
+        uncertain = error;
+      }
+    } finally {
+      requests.delete(owned);
+    }
+    // A read started before acceptance cannot confirm it; a failed re-read stays unknown.
+    await pending;
+    await refresh();
+    if (closed) throw new Error("Archive request was interrupted");
+    const expected = action === "archive" ? "archived" : "not-archived";
+    if (state(target) !== expected)
+      throw (
+        uncertain ?? new Error("The relay did not confirm the change. Retry.")
+      );
+  }
+  function state(pubkey: string): "unknown" | "archived" | "not-archived" {
+    if (snapshot.status !== "ready" || !HEX.test(pubkey)) return "unknown";
+    return snapshot.archived.includes(pubkey) ? "archived" : "not-archived";
+  }
   function clear() {
+    for (const owned of requests) owned.abort();
     controller?.abort();
     controller = undefined;
     pending = undefined;
@@ -130,13 +241,13 @@ export function createIdentityArchives(
           listeners.delete(listener);
         };
       },
-      state(pubkey: string): "unknown" | "archived" | "not-archived" {
-        if (snapshot.status !== "ready" || !HEX.test(pubkey)) return "unknown";
-        return snapshot.archived.includes(pubkey) ? "archived" : "not-archived";
-      },
+      state,
       ensure: () =>
         snapshot.status === "idle" ? refresh() : (pending ?? Promise.resolve()),
       refresh,
+      writable: !!writer,
+      consent,
+      request,
     }),
     clear,
     dispose() {

@@ -18,6 +18,7 @@ import {
   SHORTCUT_BINDINGS_KEY,
 } from "../../features/shortcuts/preferences";
 import { ShortcutsService } from "../../features/shortcuts/service";
+import { isApplePlatform } from "../../features/shortcuts/format";
 
 afterEach(() => {
   cleanup();
@@ -121,6 +122,72 @@ it("clears selection on typing, handles empty results, and retains pointer activ
   expect(select).toHaveBeenCalledExactlyOnceWith("settings");
 });
 
+it("closes search when the backdrop is clicked", async () => {
+  const user = userEvent.setup();
+  render(<PageSearch pages={[]} onSelect={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+  expect(screen.getByRole("dialog", { name: "Search Buzz" })).toBeVisible();
+  const backdrop = document.querySelector(".buzz-dialog-backdrop");
+  expect(backdrop).not.toBeNull();
+  await user.click(backdrop as Element);
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Search Buzz" })).toBeNull(),
+  );
+});
+
+it("keeps result shortcuts without badges and follows the hovered row", async () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const select = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <PageSearch
+      pages={[
+        {
+          key: "buzz.channels/channels",
+          pluginId: "buzz.channels",
+          id: "channels",
+          title: "Channels",
+          revision: "bundled",
+          component: () => null,
+        },
+      ]}
+      onSelect={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+  const dialog = await screen.findByRole("dialog", { name: "Search Buzz" });
+  const input = within(dialog).getByRole("combobox", { name: "Search Buzz" });
+  const messages = within(dialog).getByRole("option", { name: "Messages" });
+  const settings = within(dialog).getByRole("option", { name: "Settings" });
+  const apple = isApplePlatform(navigator.platform);
+  expect(messages).toHaveAttribute(
+    "aria-keyshortcuts",
+    `Shift+${apple ? "Meta" : "Control"}+1`,
+  );
+  expect(settings).toHaveAttribute(
+    "aria-keyshortcuts",
+    `Shift+${apple ? "Meta" : "Control"}+2`,
+  );
+  expect(dialog.querySelector("kbd")).toBeNull();
+  await user.keyboard("{ArrowDown}");
+  expect(messages).toHaveAttribute("aria-selected", "true");
+  fireEvent.pointerEnter(settings, { pointerType: "mouse" });
+  expect(settings).toHaveAttribute("aria-selected", "true");
+  expect(messages).toHaveAttribute("aria-selected", "false");
+  expect(input).toHaveAttribute("aria-activedescendant", settings.id);
+  fireEvent.keyDown(input, {
+    key: "@",
+    code: "Digit2",
+    metaKey: apple,
+    ctrlKey: !apple,
+    shiftKey: true,
+  });
+  expect(select).toHaveBeenCalledExactlyOnceWith("settings");
+});
+
 it("invalidates selection when result identities change, even at the same index", async () => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
@@ -217,6 +284,66 @@ it("shows the live search shortcut in the trigger hint and follows a rebind", as
   }
 });
 
+it("opens conversation-scoped search with Command F and returns to overall search", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const connection = { status: "disconnected", generation: 0 };
+  const navigation = {
+    entry: { target: { kind: "conversation", channelId: "crew" } },
+  };
+  const community = { selected: null, viewer: null };
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => navigation,
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  try {
+    render(<PageSearch pages={[]} onSelect={vi.fn()} services={services} />);
+    const apple = isApplePlatform(navigator.platform);
+    fireEvent.keyDown(window, {
+      key: "f",
+      metaKey: apple,
+      ctrlKey: !apple,
+    });
+    const scoped = await screen.findByRole("dialog", {
+      name: "Search this conversation",
+    });
+    expect(
+      within(scoped).getByRole("combobox", {
+        name: "Search this conversation",
+      }),
+    ).toHaveFocus();
+    expect(
+      within(scoped).getByRole("button", {
+        name: "Remove This conversation search scope",
+      }),
+    ).toBeVisible();
+    fireEvent.click(
+      within(scoped).getByRole("button", {
+        name: "Remove This conversation search scope",
+      }),
+    );
+    expect(screen.getByRole("dialog", { name: "Search Buzz" })).toBeVisible();
+  } finally {
+    cleanup();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
 it("renders a restored prototype-named search key and remains resettable", async () => {
   localStorage.setItem(
     SHORTCUT_BINDINGS_KEY,
@@ -251,3 +378,33 @@ it("renders a restored prototype-named search key and remains resettable", async
     await root.fiber.dispose();
   }
 });
+
+it.each(["pointer", "keyboard"])(
+  "hands %s page selection to main, not its first control",
+  async (method) => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const user = userEvent.setup();
+    const select = vi.fn();
+    render(
+      <>
+        <PageSearch pages={[]} onSelect={select} />
+        <main id="main-content" tabIndex={-1}>
+          <button type="button">First control</button>
+        </main>
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Search Buzz" });
+    await user.click(trigger);
+    if (method === "pointer")
+      await user.click(screen.getByRole("option", { name: "Settings" }));
+    else await user.keyboard("{ArrowDown}{Enter}");
+    expect(select).toHaveBeenCalledExactlyOnceWith("settings");
+    await vi.waitFor(() => expect(screen.getByRole("main")).toHaveFocus());
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(trigger).toHaveFocus());
+  },
+);

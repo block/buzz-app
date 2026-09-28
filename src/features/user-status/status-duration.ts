@@ -17,17 +17,22 @@ export function statusDeadline(duration: string, now: number) {
   return Math.floor(date.getTime() / 1000);
 }
 
+/** Presets are not saved, so infer the one whose deadline is closest to the
+ * saved expiry. Near 16:00 both "8 hours" and "Today" fall within tolerance. */
 export function statusDuration(
   expiresAt: number | undefined,
   updatedAt: number,
 ) {
   if (expiresAt === undefined) return "never";
-  return (
-    statusDurations.find(
-      ([value]) =>
-        value !== "custom" &&
-        value !== "never" &&
-        Math.abs(statusDeadline(value, updatedAt) - expiresAt) <= 120,
-    )?.[0] ?? "custom"
-  );
+  let best: string = "custom";
+  let bestDistance = 121;
+  for (const [value] of statusDurations) {
+    if (value === "custom" || value === "never") continue;
+    const distance = Math.abs(statusDeadline(value, updatedAt) - expiresAt);
+    if (distance < bestDistance) {
+      best = value;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }

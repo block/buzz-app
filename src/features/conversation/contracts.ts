@@ -126,9 +126,15 @@ export type CompletionSuggestion = Readonly<{
   /** Decorative presentation only; the host owns option semantics and interaction. */
   preview?: import("react").ReactNode;
   edit: CompletionEdit;
+  /** Keep an installed identity in place after eligibility is revoked. */
+  disabled?: string | undefined;
+  /** Final synchronous evidence check; false never falls through to sending. */
+  canSelect?: ((key: string) => boolean) | undefined;
 }>;
 export type CompletionResult = Readonly<{
   items: readonly CompletionSuggestion[];
+  /** Provider-verified unique exact match across its uncapped candidate set. */
+  spaceId?: string | undefined;
   status?: string;
   /** Optional explicit recovery. A new query or disposal revokes this action. */
   retry?: () => void;

@@ -4,6 +4,34 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 
+test("settings-enabled mentions fixture renders the composer and preference", async ({
+  page,
+}) => {
+  // This optional fixture mode mounts the real Vite entry point, not an exported component.
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?settings`,
+    );
+    await expect(page.getByRole("textbox")).toBeVisible();
+    await expect(page.getByText("Remember mentioned agents")).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
 test("actual composer selects namesakes by exact key, publishes channel/reply tags, and blocks removed members", async ({
   page,
 }) => {
@@ -18,7 +46,12 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     envFile: false,
     plugins: [react()],
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      // Match the app server: native builds must not reload an editing fixture.
+      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+    },
   });
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
@@ -60,7 +93,8 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         name: "Mention a member or agent",
       });
       const search = picker.getByRole("searchbox");
-      await search.fill(key);
+      // Both fixture keys are Honey namesakes; public keys are not search terms.
+      await search.fill("Honey");
       await expect(
         picker.getByRole("button", { name: new RegExp(key) }),
       ).toBeVisible();
@@ -476,7 +510,12 @@ test("selected mentions inside code remain visible through draft restore and cha
     envFile: false,
     plugins: [react()],
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      // Match the app server: native builds must not reload an editing fixture.
+      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+    },
   });
   try {
     await server.listen();
@@ -567,7 +606,12 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
     envFile: false,
     plugins: [react()],
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      // Match the app server: native builds must not reload an editing fixture.
+      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+    },
   });
   try {
     await server.listen();

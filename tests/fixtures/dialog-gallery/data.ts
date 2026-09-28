@@ -68,6 +68,7 @@ export function installCommunityFixture() {
 export function communityFixture(): Communities {
   let state: ClientSnapshot = {
     status: "ready",
+    relayAvailable: true,
     viewer: viewer.pubkey,
     profile: { name: "Alex Morgan", picture: "" },
     selected: "https://relay.example.test",

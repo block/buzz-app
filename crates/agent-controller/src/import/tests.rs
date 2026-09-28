@@ -634,3 +634,195 @@ fn duplicate_keys_ignore_pin_differences_and_source_pin_changes_still_invalidate
     assert!(keys.keys.lock().unwrap().is_empty());
     assert!(store.agents().unwrap().is_empty());
 }
+
+fn team_source(root: &Path, instructions: Value) -> PathBuf {
+    source(root);
+    let root = root.join(LegacySource::Installed.app_directory());
+    let path = root.join("agents/managed-agents.json");
+    let mut records: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    records[1]["team_id"] = json!("crew");
+    records[1]["backend"] = json!({"type":"local"});
+    fs::write(path, serde_json::to_vec(&records).unwrap()).unwrap();
+    let teams = root.join("agents/teams.json");
+    fs::write(
+        &teams,
+        serde_json::to_vec(&json!([{"id":"crew","instructions":instructions}])).unwrap(),
+    )
+    .unwrap();
+    teams
+}
+fn team_preview(imports: &mut Imports, old: &Path, workspace: &Path) -> ImportPreview {
+    imports
+        .preview(
+            LegacySource::Installed,
+            old.into(),
+            workspace.into(),
+            "wss://relay.example",
+        )
+        .unwrap()
+}
+#[test]
+fn team_import_snapshots_instructions_and_fences_both_source_changes() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let teams = team_source(old.path(), json!("  team prompt\n"));
+    let before = fs::read(&teams).unwrap();
+    let mut imports = Imports::default();
+    let keys = Memory::default();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    let ids = [preview.candidates[0].id.clone()];
+    assert!(!serde_json::to_string(&preview)
+        .unwrap()
+        .contains("team prompt"));
+    fs::write(&teams, b"[]").unwrap();
+    assert!(imports
+        .prepare(&preview.token, &ids, &store)
+        .err()
+        .unwrap()
+        .contains("Source changed"));
+    fs::write(&teams, &before).unwrap();
+    let prepared = imports
+        .prepare(&preview.token, &ids, &store)
+        .unwrap()
+        .acquire(&keys)
+        .unwrap();
+    fs::write(&teams, b"[]").unwrap();
+    assert!(prepared
+        .commit(&mut store)
+        .unwrap_err()
+        .contains("Source changed"));
+    assert!(store.agents().unwrap().is_empty());
+    fs::write(&teams, &before).unwrap();
+    imports
+        .commit(&preview.token, &ids, &mut store, &keys)
+        .unwrap();
+    let agent = &store.agents().unwrap()[0];
+    assert_eq!(agent.imported["teamInstructions"], "team prompt");
+    assert_eq!(agent.imported["record"]["team_id"], "crew");
+    assert!(!agent.needs_team_import());
+    assert!(!agent.enabled);
+    assert_eq!(fs::read(teams).unwrap(), before);
+}
+#[test]
+fn repair_only_adds_team_snapshot_without_keys_or_overwriting_edits() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    team_source(old.path(), json!("team prompt"));
+    let mut imports = Imports::default();
+    let keys = Memory::default();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    let ids = [preview.candidates[0].id.clone()];
+    let data = read_source(&old.path().join(LegacySource::Installed.app_directory())).unwrap();
+    let mut agent = resolve(&data, &data.records[1], dest.path(), "wss://relay.example").unwrap();
+    agent
+        .imported
+        .as_object_mut()
+        .unwrap()
+        .remove("teamInstructions");
+    agent.name = "Edited name".into();
+    agent.harness.model = "edited-model".into();
+    agent.environment.insert("KEEP".into(), "private".into());
+    agent.enabled = true;
+    assert!(agent.view().needs_team_import);
+    let mut expected = serde_json::to_value(&agent).unwrap();
+    expected["revision"] = json!(2);
+    expected["imported"]["teamInstructions"] = json!("team prompt");
+    store.insert(vec![agent]).unwrap();
+    let prepared = imports.prepare(&preview.token, &ids, &store).unwrap();
+    // Stop is allowed during an import wait; repair must not re-enable it.
+    store.enabled(&ids[0], false).unwrap();
+    expected["enabled"] = json!(false);
+    prepared.acquire(&keys).unwrap().commit(&mut store).unwrap();
+    assert_eq!(keys.reads.load(Ordering::SeqCst), 0);
+    assert!(keys.keys.lock().unwrap().is_empty());
+    assert_eq!(
+        serde_json::to_value(&store.agents().unwrap()[0]).unwrap(),
+        expected
+    );
+    assert!(imports.prepare(&preview.token, &ids, &store).is_err());
+}
+#[test]
+fn repair_refuses_changed_settings_and_wrong_source_team_binding() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    team_source(old.path(), json!("team prompt"));
+    let mut imports = Imports::default();
+    let keys = Memory::default();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let data = read_source(&old.path().join(LegacySource::Installed.app_directory())).unwrap();
+    let mut agent = resolve(&data, &data.records[1], dest.path(), "wss://relay.example").unwrap();
+    agent
+        .imported
+        .as_object_mut()
+        .unwrap()
+        .remove("teamInstructions");
+    let ids = [agent.id.clone()];
+    store.insert(vec![agent.clone()]).unwrap();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    let prepared = imports
+        .prepare(&preview.token, &ids, &store)
+        .unwrap()
+        .acquire(&keys)
+        .unwrap();
+    let mut doc: Value =
+        serde_json::from_slice(&fs::read(dest.path().join("agents.json")).unwrap()).unwrap();
+    doc["agents"][0]["revision"] = json!(2);
+    fs::write(
+        dest.path().join("agents.json"),
+        serde_json::to_vec(&doc).unwrap(),
+    )
+    .unwrap();
+    assert!(prepared
+        .commit(&mut store)
+        .unwrap_err()
+        .contains("settings changed"));
+    assert!(store.agents().unwrap()[0].needs_team_import());
+    let path = old
+        .path()
+        .join(LegacySource::Installed.app_directory())
+        .join("agents/managed-agents.json");
+    let mut records: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    records[1]["team_id"] = json!("different");
+    fs::write(path, serde_json::to_vec(&records).unwrap()).unwrap();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    assert!(imports
+        .prepare(&preview.token, &ids, &store)
+        .err()
+        .unwrap()
+        .contains("binding differs"));
+}
+#[test]
+fn team_snapshot_handles_empty_deleted_and_invalid_teams() {
+    let old = tempfile::tempdir().unwrap();
+    let teams = team_source(old.path(), json!("   "));
+    let root = old.path().join(LegacySource::Installed.app_directory());
+    let data = read_source(&root).unwrap();
+    assert_eq!(team_instructions(&data, &data.records[1]).unwrap(), "");
+    fs::remove_file(&teams).unwrap();
+    let data = read_source(&root).unwrap();
+    assert_eq!(team_instructions(&data, &data.records[1]).unwrap(), "");
+    // A directory-only legacy binding does not resolve instructions in old Buzz.
+    assert_eq!(
+        team_instructions(&data, &json!({"persona_team_dir":"/old/pack"})).unwrap(),
+        ""
+    );
+    for value in [json!({}), json!([{"id":"crew"},{"id":"crew"}])] {
+        fs::write(&teams, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(read_source(&root).is_err());
+    }
+    for value in [
+        json!(4),
+        json!("nul\0text"),
+        json!("x".repeat(128 * 1024 + 1)),
+    ] {
+        fs::write(
+            &teams,
+            serde_json::to_vec(&json!([{"id":"crew","instructions":value}])).unwrap(),
+        )
+        .unwrap();
+        let data = read_source(&root).unwrap();
+        assert!(team_instructions(&data, &data.records[1]).is_err());
+    }
+}

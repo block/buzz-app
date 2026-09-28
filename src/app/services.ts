@@ -1,4 +1,8 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
+import {
+  createIdentity,
+  nativeIdentityEnabled,
+} from "../features/identity/service";
 import { SettingsCardsService } from "../features/settings/service";
 import { TemplateProvidersService } from "../features/channel-templates/provider";
 import { IdentityNamesService } from "../features/identity-names/service";
@@ -13,6 +17,7 @@ import {
   bindMessageNotifications,
   notificationAuthorized,
 } from "../features/notifications/messages";
+import { AccountActionsService } from "../features/account-actions/service";
 import { ShortcutsService } from "../features/shortcuts/service";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
@@ -41,16 +46,19 @@ export function createServices() {
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
+  const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
   const channelTemplates = new TemplateProvidersService(ctx);
   const identityNames = new IdentityNamesService(ctx, agentControl);
+  const identity = nativeIdentityEnabled() ? createIdentity() : undefined;
   const communities = createCommunities(
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
     identityNames,
     import.meta.env.VITE_BUZZ_OPEN_RELAY ?? "",
     agentControl,
+    identity?.ready,
   );
   const relay = communities.relay;
   ctx.effect(() => bindAgentMentions(agentControl, communities));
@@ -70,12 +78,14 @@ export function createServices() {
     );
   let disposal: Promise<void> | undefined;
   return {
+    identity,
     agentControl,
     browser,
     notifications,
     navigation,
     navigationHost,
     shortcuts,
+    accountActions,
     shortcutBindings,
     conversation,
     settingsCards,
@@ -87,6 +97,7 @@ export function createServices() {
     communities,
     appearance,
     dispose() {
+      identity?.dispose();
       appearance.dispose();
       shortcutBindings.dispose();
       // Start root cancellation without waiting for plugin-owned cleanup. Cordis

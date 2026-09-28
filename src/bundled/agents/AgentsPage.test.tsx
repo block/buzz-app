@@ -3,6 +3,7 @@ import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { npubEncode } from "nostr-tools/nip19";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -256,6 +257,11 @@ it("shows one managed card per exact destination and keeps unimported templates 
   );
   fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
   const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Technical details" }),
+  );
+  expect(within(dialog).getByText(npubEncode(f.agent.pubkey))).toBeVisible();
+  expect(dialog.textContent).not.toContain(f.agent.pubkey);
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "Exact destination" },
   });
@@ -546,6 +552,12 @@ it("confirms local deletion, keeps the card on failure, and removes it only afte
       ).getByRole("button", { name: "Delete agent" }),
     ).toBeEnabled(),
   );
+  expect(
+    within(
+      screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
+    ).getByRole("alert"),
+  ).toHaveTextContent("Could not remove the saved credential");
+  expect(remove).toHaveBeenCalledTimes(1);
   fireEvent.click(
     within(
       screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
@@ -870,6 +882,60 @@ it("shows an unavailable Goose harness without allowing selection", async () => 
   ).toHaveAttribute("aria-disabled", "true");
   expect(within(dialog).getByText(/Install the Goose CLI/)).toBeVisible();
 });
+
+it.each(["Create agent", "Edit agent"] as const)(
+  "%s links a missing Harness to Settings › Agents",
+  async (dialogName) => {
+    const open = vi.fn(async () => ({ status: "opened" as const }));
+    setup(
+      "ready",
+      (fixture) => {
+        fixture.data.harnessOptions?.push({
+          command: "goose",
+          label: "Goose",
+          available: false,
+          status: "cli-needed",
+          providers: [],
+        });
+      },
+      undefined,
+      open,
+    );
+    if (dialogName === "Create agent") {
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Add agent" }),
+      );
+    } else {
+      const [card] = await screen.findAllByRole("article", {
+        name: "Agent Fixture agent",
+      });
+      if (!card) throw Error("Missing managed card");
+      await userEvent.click(
+        within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: "Edit" }),
+      );
+    }
+    const dialog = screen.getByRole("dialog", { name: dialogName });
+    fireEvent.change(within(dialog).getByLabelText("Name"), {
+      target: { value: "Edited before setup" },
+    });
+    expect(
+      within(dialog).getByText("Opening Settings discards unsaved edits."),
+    ).toBeVisible();
+    await userEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Open Harnesses in Settings",
+      }),
+    );
+    expect(open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "settings",
+      section: "agents",
+    });
+  },
+);
 
 it("shows Harness, Provider and Model in order while preserving settings on Save", async () => {
   const { f } = setup();
@@ -1219,6 +1285,10 @@ it("retries the same saved profile even if the runtime becomes unavailable", asy
   f.data.runtimeAvailable = false;
   await act(async () => control.refresh());
   const retry = within(dialog).getByRole("button", { name: "Retry profile" });
+  expect(control.snapshot().error).toBeNull();
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Synthetic profile failure",
+  );
   expect(retry).toBeEnabled();
   await user.click(retry);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -1227,33 +1297,30 @@ it("retries the same saved profile even if the runtime becomes unavailable", asy
   expect(profile.mock.calls).toEqual([["created"], ["created"]]);
 });
 
-for (const error of [
-  "Agent runtime is initializing; retry shortly",
-  "Another native agent operation is in progress",
-]) {
-  it(`shows agents without manual Retry after a transient native read: ${error}`, async () => {
-    vi.useFakeTimers();
-    let snapshot!: ReturnType<typeof vi.spyOn>;
-    setup("ready", (f) => {
-      snapshot = vi.spyOn(f.host, "snapshot").mockRejectedValueOnce(error);
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    expect(screen.getByText("Reading local agent status…")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
-    expect(snapshot).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
-    });
-    expect(
-      screen.getAllByRole("article", { name: "Agent Fixture agent" }),
-    ).toHaveLength(2);
-    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
-    expect(snapshot).toHaveBeenCalledTimes(2);
+it("shows agents without manual Retry after native startup", async () => {
+  vi.useFakeTimers();
+  let snapshot!: ReturnType<typeof vi.spyOn>;
+  setup("ready", (f) => {
+    snapshot = vi
+      .spyOn(f.host, "snapshot")
+      .mockRejectedValueOnce("Agent runtime is initializing; retry shortly");
   });
-}
-it("shows Retry after persistent or genuine read failure without hiding the error", async () => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByText("Reading local agent status…")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+  expect(snapshot).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(250);
+  });
+  expect(
+    screen.getAllByRole("article", { name: "Agent Fixture agent" }),
+  ).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+  expect(snapshot).toHaveBeenCalledTimes(2);
+});
+it("keeps persistent read failures visible and recovers on the next periodic read", async () => {
   vi.useFakeTimers();
   const { f } = setup("ready", (f) => {
     vi.spyOn(f.host, "snapshot").mockRejectedValue(
@@ -1266,17 +1333,135 @@ it("shows Retry after persistent or genuine read failure without hiding the erro
   expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
   expect(screen.getByText(/Could not refresh local agents/)).toBeVisible();
   expect(f.host.snapshot).toHaveBeenCalledTimes(21);
+  vi.mocked(f.host.snapshot).mockRejectedValue("Store is unreadable");
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(10000);
+    await vi.advanceTimersByTimeAsync(4999);
   });
   expect(f.host.snapshot).toHaveBeenCalledTimes(21);
-  vi.mocked(f.host.snapshot).mockRejectedValue("Store is unreadable");
-  fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(1);
   });
   expect(f.host.snapshot).toHaveBeenCalledTimes(22);
   expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(23);
+  expect(screen.queryByText("Reading local agent status…")).toBeNull();
+  vi.mocked(f.host.snapshot).mockResolvedValue(structuredClone(f.data));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(24);
+  expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+  expect(screen.queryByText(/Could not refresh local agents/)).toBeNull();
+  expect(
+    screen.getAllByRole("article", { name: "Agent Fixture agent" }),
+  ).toHaveLength(2);
+});
+
+it.each(["running", "failed"] as const)(
+  "recovers Start status to %s without replay or cross-agent errors",
+  async (status) => {
+    vi.useFakeTimers();
+    const { f, control } = setup("ready", (f) => {
+      f.agent.enabled = false;
+      f.agent.status = "stopped";
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const [card] = screen.getAllByRole("article", {
+      name: "Agent Fixture agent",
+    });
+    if (!card) throw Error("Missing managed card");
+    const action = vi
+      .spyOn(f.host, "action")
+      .mockRejectedValueOnce("Synthetic start failure.");
+    fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const error = screen.getByRole("alert");
+    const retry = screen.getByRole("button", { name: "Retry status" });
+    expect(error).toHaveTextContent("Synthetic start failure.");
+    for (const notice of [error, retry]) {
+      expect(
+        notice.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+    expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
+    f.agent.enabled = true;
+    f.agent.status = status;
+    f.agent.error = status === "failed" ? "Synthetic start failure." : null;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(control.snapshot().status).toBe("ready");
+    expect(control.snapshot().error).toBeNull();
+    if (status === "failed") {
+      expect(within(card).getByRole("alert")).toHaveTextContent(
+        "Synthetic start failure.",
+      );
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+    } else {
+      expect(
+        within(card).getByText("Process running · relay readiness unverified"),
+      ).toBeVisible();
+      expect(screen.queryByRole("alert")).toBeNull();
+    }
+    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+    expect(action).toHaveBeenCalledExactlyOnceWith(f.agent.id, "start");
+    const other = screen.getAllByRole("article", {
+      name: "Agent Fixture agent",
+    })[1];
+    if (!other) throw Error("Missing other agent");
+    expect(within(other).queryByRole("alert")).toBeNull();
+    fireEvent.click(
+      within(other).getByRole("button", { name: "Actions for Fixture agent" }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(
+      within(screen.getByRole("dialog", { name: "Edit agent" })).queryByRole(
+        "alert",
+      ),
+    ).toBeNull();
+  },
+);
+
+it("pauses error polling while hidden and clears the timer on unmount", async () => {
+  vi.useFakeTimers();
+  const visibility = vi
+    .spyOn(document, "visibilityState", "get")
+    .mockReturnValue("visible");
+  const { f } = setup("ready", (f) => {
+    vi.spyOn(f.host, "snapshot").mockRejectedValue("Store is unreadable");
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
+  expect(f.host.snapshot).toHaveBeenCalledTimes(1);
+  visibility.mockReturnValue("hidden");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(1);
+  visibility.mockReturnValue("visible");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(2);
+  cleanup();
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(f.host.snapshot).toHaveBeenCalledTimes(2);
 });
 
 for (const mode of ["edit", "create"] as const) {
@@ -1612,9 +1797,9 @@ it("closes a routed editor back to the unrouted Agents page", async () => {
   );
 });
 
-it("retains a routed draft when the native save fails", async () => {
+it("retains a routed draft and its save error after status recovery only in that editor", async () => {
   const { navigation } = routed("ab".repeat(32));
-  const { f } = setup(
+  const { f, control } = setup(
     "connected",
     (fixture) => fixture.failSave(true),
     navigation,
@@ -1626,7 +1811,15 @@ it("retains a routed draft when the native save fails", async () => {
   fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
   await within(dialog).findByText(/Your edits are retained/);
   expect(within(dialog).getByLabelText("Name")).toHaveValue("Unsaved draft");
-  expect(f.calls.some((call) => call.action === "save")).toBe(true);
+  await act(() => control.refresh());
+  expect(control.snapshot()).toMatchObject({ status: "ready", error: null });
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "The host could not save settings.",
+  );
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Unsaved draft");
+  expect(f.calls.filter((call) => call.action === "save")).toHaveLength(1);
+  // Include the dialog-inert page so a leaked global banner cannot hide.
+  expect(document.querySelectorAll('[role="alert"]')).toHaveLength(1);
 });
 
 it("waits for a connecting relay before opening a routed editor", async () => {
@@ -1693,3 +1886,200 @@ it("clears an obsolete route before editing another card", async () => {
     { replace: true },
   );
 });
+
+it("offers explicit repair for an existing team import without replacing or starting it", async () => {
+  let finish: (() => void) | undefined;
+  let commit = vi.fn();
+  const { f } = setup("ready", (fixture) => {
+    fixture.agent.needsTeamImport = true;
+    fixture.host.previewImport = async () => ({
+      token: "team-preview",
+      sourcePath: "/fixture/installed/managed-agents.json",
+      warnings: [],
+      candidates: [
+        {
+          id: fixture.agent.id,
+          pubkey: fixture.agent.pubkey,
+          name: fixture.agent.name,
+          relayUrl: fixture.agent.relayUrl,
+        },
+      ],
+    });
+    commit = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      fixture.agent.needsTeamImport = false;
+      fixture.agent.revision++;
+      return structuredClone(fixture.data);
+    });
+    fixture.host.commitImport = commit;
+  });
+  await screen.findAllByRole("article", { name: "Agent Fixture agent" });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Import or repair from old Buzz" }),
+  );
+  fireEvent.change(screen.getByLabelText("Destination community"), {
+    target: { value: f.agent.relayUrl },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+  const button = await screen.findByRole("button", {
+    name: "Repair team import for Fixture agent",
+  });
+  expect(commit).not.toHaveBeenCalled();
+  fireEvent.click(button);
+  await waitFor(() =>
+    expect(commit).toHaveBeenCalledWith("team-preview", [f.agent.id]),
+  );
+  expect(button).toBeDisabled();
+  await act(async () => finish?.());
+  expect(
+    await screen.findByText(/Team instructions imported for Fixture agent/),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", {
+      name: "Repair team import for Fixture agent",
+    }),
+  ).toBeNull();
+  expect(f.data.agents).toHaveLength(2);
+  expect(f.calls.some((call) => call.action === "start")).toBe(false);
+});
+
+it("refreshes the consumed preview after a repair so the next agent can be repaired", async () => {
+  let token: string | undefined;
+  let previews = 0;
+  const commits: string[] = [];
+  const { f } = setup("ready", (fixture) => {
+    fixture.agent.needsTeamImport = true;
+    fixture.data.agents.push({
+      ...structuredClone(fixture.agent),
+      id: "second-agent",
+      pubkey: "cd".repeat(32),
+      name: "Second agent",
+    });
+    fixture.host.previewImport = async () => {
+      token = `team-preview-${++previews}`;
+      return {
+        token,
+        sourcePath: "/fixture/installed/managed-agents.json",
+        warnings: [],
+        candidates: fixture.data.agents.filter(
+          (agent) => agent.relayUrl === fixture.agent.relayUrl,
+        ),
+      };
+    };
+    fixture.host.commitImport = async (selected, ids) => {
+      if (!token || selected !== token) throw "Import preview expired";
+      token = undefined;
+      commits.push(selected);
+      for (const agent of fixture.data.agents) {
+        if (ids.includes(agent.id)) {
+          agent.needsTeamImport = false;
+          agent.revision++;
+        }
+      }
+      return structuredClone(fixture.data);
+    };
+  });
+  await screen.findAllByRole("article", { name: "Agent Fixture agent" });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Import or repair from old Buzz" }),
+  );
+  fireEvent.change(screen.getByLabelText("Destination community"), {
+    target: { value: f.agent.relayUrl },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Repair team import for Fixture agent",
+    }),
+  );
+  await screen.findByText(/Team instructions imported for Fixture agent/);
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Repair team import for Second agent",
+    }),
+  );
+  await screen.findByText(/Team instructions imported for Second agent/);
+  expect(commits).toEqual(["team-preview-1", "team-preview-2"]);
+  expect(f.calls.some((call) => call.action === "start")).toBe(false);
+});
+
+it.each([
+  {
+    name: "mismatched source library",
+    rejection:
+      "Source team binding differs from the imported agent; choose its original library",
+    expected: "choose its original library",
+    fromControl: false,
+  },
+  {
+    name: "changed saved revision",
+    rejection: "Agent settings changed; preview the team import again",
+    expected: "Agent settings changed; preview the team import again",
+    fromControl: false,
+  },
+  {
+    name: "unknown native failure",
+    rejection: new Error("raw private diagnostic"),
+    expected: "Could not confirm the operation.",
+    fromControl: false,
+  },
+  {
+    name: "unknown control failure",
+    rejection: { detail: "raw private diagnostic" },
+    expected: "Import did not complete. Reload the list before trying again.",
+    fromControl: true,
+  },
+])(
+  "retains safe repair recovery after status refresh: $name",
+  async ({ rejection, expected, fromControl }) => {
+    const commit = vi.fn().mockRejectedValue(rejection);
+    const { f, control } = setup("ready", (fixture) => {
+      fixture.agent.needsTeamImport = true;
+      fixture.host.previewImport = async () => ({
+        token: "team-preview",
+        sourcePath: "/fixture/installed/managed-agents.json",
+        warnings: [],
+        candidates: [fixture.agent],
+      });
+      if (!fromControl) fixture.host.commitImport = commit;
+    });
+    // Unexpected control-level failures retain the fallback; native failures go
+    // through the real projection's sanitized error boundary.
+    if (fromControl)
+      vi.spyOn(control, "commitImport").mockImplementation(commit);
+    await screen.findAllByRole("article", { name: "Agent Fixture agent" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Import or repair from old Buzz" }),
+    );
+    fireEvent.change(screen.getByLabelText("Destination community"), {
+      target: { value: f.agent.relayUrl },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+    const panel = within(
+      screen.getByRole("region", { name: "Import from old Buzz" }),
+    );
+    fireEvent.click(
+      await panel.findByRole("button", {
+        name: "Repair team import for Fixture agent",
+      }),
+    );
+    expect(await panel.findByRole("alert")).toHaveTextContent(expected);
+    await act(async () => control.refresh());
+    expect(control.snapshot()).toMatchObject({ status: "ready", error: null });
+    expect(panel.getByRole("alert")).toHaveTextContent(expected);
+    expect(screen.queryByText(/raw private diagnostic/)).toBeNull();
+    expect(f.agent.needsTeamImport).toBe(true);
+    expect(commit).toHaveBeenCalledExactlyOnceWith("team-preview", [
+      f.agent.id,
+    ]);
+    expect(f.calls.some((call) => call.action === "start")).toBe(false);
+    fireEvent.click(panel.getByRole("button", { name: "Retry" }));
+    await panel.findByRole("button", {
+      name: "Repair team import for Fixture agent",
+    });
+    expect(panel.queryByRole("alert")).toBeNull();
+    expect(commit).toHaveBeenCalledTimes(1);
+  },
+);

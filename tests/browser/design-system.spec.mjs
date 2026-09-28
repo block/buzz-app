@@ -12,6 +12,9 @@ test("shared tokens reach app controls without history or chip overrides", async
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Appearance", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Increase text size", exact: true })
+    .click();
   const reset = page.getByRole("button", {
     name: "Reset text size",
     exact: true,
@@ -90,8 +93,8 @@ test("shared tokens reach app controls without history or chip overrides", async
       content: `:root, :root[data-color-mode] {
         --affordance-subtle: rgb(12, 34, 56);
         --text-standard: rgb(10, 20, 30);
-        --text-label: 19px;
-        --space-6: 29px;
+        --text-label-sm: 19px;
+        --space-4: 29px;
         --surface-popover: rgb(23, 45, 67);
         --border-standard: rgb(45, 67, 89);
         --radius-control: 13px;
@@ -108,8 +111,8 @@ test("shared tokens reach app controls without history or chip overrides", async
       ]) {
         await expect(control).toHaveCSS("background-color", "rgb(12, 34, 56)");
         await expect(control).toHaveCSS("color", "rgb(10, 20, 30)");
-        await expect(control).toHaveCSS("padding-left", "16px");
-        await expect(control).toHaveCSS("font-size", "14px");
+        await expect(control).toHaveCSS("padding-left", "29px");
+        await expect(control).toHaveCSS("font-size", "19px");
       }
       await expect(page.locator("#probe-chip")).toHaveCSS(
         "background-color",

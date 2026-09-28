@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
@@ -56,10 +57,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   const messages = async () => {
     const disclosure = button("Show navigation");
     if (await disclosure.isVisible()) await disclosure.click();
-    await page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages", exact: true })
-      .click();
+    await openPage(page, "Messages");
     await expect(
       page
         .getByRole("article", { name: "Conversation" })
@@ -154,6 +152,41 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await expect(assignee).toHaveAttribute("data-size", "sm");
     await expect(assignee).toHaveAttribute("data-variant", "ghost");
   };
+  // Channel-specific drawers stay off placeholder destinations, but returning
+  // to the same channel can reopen its Canvas-backed content with a live launcher.
+  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  for (const destination of ["Inbox", "Bestie"]) {
+    await sidebar
+      .getByRole("button", { name: destination, exact: true })
+      .click();
+    await expect(
+      page.getByText("Content coming soon", { exact: true }),
+    ).toBeVisible();
+    await expect(drawer).toHaveCount(0);
+    await expect(launcher).toHaveCount(0);
+    const placeholder = page.getByRole("article", {
+      name: "Conversation",
+      exact: true,
+    });
+    await expect
+      .poll(() =>
+        placeholder.evaluate((el) => {
+          const board = el.parentElement;
+          return Math.abs(
+            el.getBoundingClientRect().width -
+              board.getBoundingClientRect().width,
+          );
+        }),
+      )
+      .toBeLessThan(2);
+    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await expect(drawer).toHaveCount(0);
+    await expect(launcher).toHaveAttribute("aria-pressed", "false");
+    await launcher.click();
+    await expect(drawer).toBeVisible();
+    await expect(todo).toBeChecked();
+    await expect(assignee).toContainText("Fixture Reader");
+  }
   await expectCompactRow();
   await page.screenshot({
     path: test.info().outputPath("todos-light-wide.png"),

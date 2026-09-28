@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { wheel, open, settle, anchor, expectAnchor } from "./timeline.mjs";
 
@@ -49,15 +50,9 @@ sized(
     await bottom(page, app, "cold Beta");
     await select(page, "Alpha");
     await bottom(page, app, "warm Alpha");
-    await page
-      .getByRole("button", { name: "Projects", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Projects");
     await page.reload();
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Messages");
     await bottom(page, app, "persisted bottom Alpha");
     await select(page, "Beta");
     await bottom(page, app, "persisted bottom Beta");
@@ -109,15 +104,9 @@ readingTest(
     ).toBeGreaterThan(0);
     expect(app.pending).toHaveLength(0);
     const reading = await anchor(page);
-    await page
-      .getByRole("button", { name: "Projects", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Projects");
     await page.reload();
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Messages");
     await settle(page);
     await expectAnchor(page, reading);
   },

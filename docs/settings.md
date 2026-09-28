@@ -11,17 +11,21 @@ Settings has two groups:
   groups**, **Templates & teams**, and future community-scoped personal or
   permission-gated settings.
 - **App** contains Appearance, Notifications, Shortcuts, Agents, and Plugins.
-  These preferences apply across communities on this device.
+  These preferences apply across communities on this device. In Personal space,
+  **Profile** is also in App so identity details and the local profile remain
+  accessible before joining. With a community selected, Profile stays under its
+  name; the identity details explicitly apply across all communities.
 
 Selecting another community in the rail leaves Settings and opens that
 community's view. Opening Settings there captures the new community context; the
 contents do not change underneath an open form.
 
-The current Profile implementation still edits a device-local seed and does not
-publish to the named community. That is a transitional implementation, not the
-final product contract. The community-settings batch must make Profile edit the
-captured community profile, update the local seed only after an accepted publish,
-and leave other existing community profiles unchanged.
+Profile in Personal space edits the device-local default without publishing. With
+a live community selected, it edits that captured community profile, confirms the
+accepted publish, then updates the local default; other existing community profiles
+remain unchanged. Without relay transport the community editor is unavailable,
+but public identity details and supported native private-key backup remain
+accessible. See [profile behavior](communities.md) and [native identity](identity.md).
 
 ## Appearance roadmap
 
@@ -82,8 +86,10 @@ Do not expose the control until the native host owns the complete lifecycle:
 
 The first implementation may be macOS-only if other platforms show an explicit
 unsupported state. Linux and Windows need their own inhibitor decisions and native
-acceptance. Agent runtime catalogs and inherited global defaults remain separate
-product slices; individual-agent configuration stays on the Agents page.
+acceptance. The approved
+[Harnesses and global agent defaults](agent-control.md#planned-harnesses-and-agent-defaults)
+are separate implementation slices; individual-agent configuration stays on the
+Agents page.
 
 ## Settings coverage ledger
 
@@ -93,8 +99,9 @@ when a product decision or complete Buzz 1.0 owner exists.
 
 | Area | Current Buzz 1.0 decision |
 | --- | --- |
-| Profile details and public identity | Implemented as a device-local default; existing community profiles remain independent. |
-| Identity backup, sign out, and delete data | Pending a security-reviewed identity and destructive-data lifecycle. |
+| Profile details and public identity | Local default in Personal space; selected-community profile with live transport. Public identity applies across communities. |
+| Identity backup | Native macOS nsec Reveal/Hide/Copy implemented; private export enters UI memory deliberately. Native persistence/consent acceptance remains pending; see [identity](identity.md). |
+| Sign out and delete data | Pending a security-reviewed destructive-data lifecycle; not offered by identity backup. |
 | Color mode and text size | Implemented as personal device preferences across communities. |
 | Conversation density, link previews, and thread layout | Approved as future personal device preferences; modes not yet implemented. |
 | Theme style, accent color, and native glass | Undecided; do not imply a user-selectable theme system from design tokens alone. |
@@ -102,10 +109,10 @@ when a product decision or complete Buzz 1.0 owner exists.
 | Per-category sounds and sound preview | Pending a sound catalog, assets, preview, persistence, and delivery contract. |
 | Agent conversation behavior | Implemented under **Agents**. |
 | Keep awake while agents are active | Approved as a future device-wide preference; requires the bounded native lifecycle above. |
-| Agent runtimes and inherited defaults | Separate future native-agent product decisions; individual configuration remains on the Agents page. |
+| Harnesses and global agent defaults | Approved for Settings → Agents, pending implementation; individual configuration remains on the Agents page. See [the planned contract](agent-control.md#planned-harnesses-and-agent-defaults). |
 | Voice, custom emoji, local archive, and channel templates | Pending dedicated product and implementation slices. |
 | Compute, experiments, mobile pairing, and updates | Pending dedicated native/app capability owners. |
-| Community profiles and administration | Planned for the Communities list-detail architecture below. |
+| Community profiles and administration | Live community profile editing is implemented; permission-gated administration requires its own capability owner. |
 
 Do not add empty destinations or functional-looking placeholders for pending rows.
 
@@ -136,11 +143,49 @@ authorization owners:
 
 ## Current implementation boundary
 
-This change establishes the selected community and **App** groups, places the
-existing Profile and contributed community cards under the community name, and
-places agent conversation behavior under **Agents**. It does not yet change the
-local-only Profile persistence contract or add permission-gated community
+Settings has selected-community and **App** groups, with contributed community
+cards under the community name and agent conversation behavior under **Agents**.
+Profile is available in either context as described above. Native identity setup
+and backup do not provide packaged relay transport or permission-gated community
 administration.
 
 Add new community entries only with real behavior and honest unavailable,
 permission, loading, and recovery states.
+
+## Development logging
+
+Local Vite development builds expose **Developer → Runtime settings → Log level**.
+The choice applies immediately to broker terminal logs and browser relay
+diagnostics, and is saved in the worktree's ignored `.buzz/developer-settings.json`.
+It survives app/dev-server restarts and is shared by tabs using that server, not
+by other worktrees or communities on other installations. It works even without a
+configured relay broker. Only servers with the settings plugin advertise this
+capability; standalone fixtures and production clients never request the endpoint.
+Responses and tab updates carry a server revision so delayed responses cannot
+replace a newer saved choice. Vite reloads the page after a server restart, resetting the sequence.
+
+- **Info** (default): connection lifecycle, warnings and errors.
+- **Debug**: every completed broker HTTP request and each relay application
+  WebSocket frame in both directions, including identical repeats; no sampling or
+  duplicate suppression.
+- **Trace**: Debug plus bounded query/filter metadata.
+- **Warn**, **Error**, and **Silent** progressively reduce output.
+
+Traffic summaries include method/action, status and duration for HTTP, and
+relay host, direction, frame type, short event/subscription IDs, kind and size for
+WebSockets. They omit message bodies, signatures, auth challenges, URL credentials
+and query strings. Trace shows filter kinds, limits, time bounds and ID counts,
+not searches or full authors/tags, and does not generate call stacks. Rejected
+oversized text frames report code-unit length without allocating a UTF-8 copy.
+This is diagnostic output, not a retained audit
+log or an OS/network packet capture: native Rust transport and WebSocket control
+frames are outside this TypeScript logger.
+
+The implementation uses [Consola](https://github.com/unjs/consola) through
+`src/features/developer/logging.ts`; new owned TypeScript diagnostics can reuse
+`getLogger("component")`. Do not wrap the global console or dump raw payloads.
+The shared TypeScript logger is also bundled with production clients at Info;
+only its Vite settings endpoint/control and live level synchronization are dev-only.
+The former `buzz.debug.relay` localStorage switch is replaced by this control.
+Failure logs use static WebSocket reasons and allowlisted broker exception categories
+and network codes, not arbitrary error messages/stacks that may embed private data.

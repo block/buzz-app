@@ -1099,19 +1099,32 @@ test("rejected deletion shows a toast, restores the card, and permits one delibe
   await expect(page.getByRole("dialog", { name: "Edit workflow" })).toHaveCount(
     0,
   );
-  await button("Dismiss notice").click();
-  await button("Dismiss notice and continue").click();
-  await expect(
-    page.getByText("Couldn't delete Fixture A helper", { exact: true }),
-  ).toHaveCount(0);
   await remove();
   await expect
     .poll(() =>
       page.evaluate(() => window.workflowSessionFixture.publications()),
     )
     .toBe(2);
+  await expect(
+    page.getByText("Couldn't delete Fixture A helper", { exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() => window.workflowSessionFixture.echoPublished());
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.workflowSessionFixture
+            .operations()
+            .find((operation) => operation.outcome !== "rejected")?.delivery,
+      ),
+    )
+    .toBe("seen");
+  await expect(
+    page.getByText("Couldn't delete Fixture A helper", { exact: true }),
+  ).toHaveCount(0);
   await page.evaluate(() => window.workflowSessionFixture.settleDelete(true));
   await expect(button("Open Fixture A helper")).toHaveCount(0);
+  await expect(page.getByText(/^Couldn't delete/)).toHaveCount(0);
   expect(
     await page.evaluate(() => window.workflowSessionFixture.publications()),
   ).toBe(2);

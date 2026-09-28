@@ -186,6 +186,9 @@ Object.assign(window, {
     switchCommunity: switchScope,
     revokeSelectedChannel,
     publications: () => publishCount,
+    echoPublished: () => {
+      if (lastPublished) incoming?.([lastPublished]);
+    },
     state: (status: "connected" | "retrying") =>
       traffic.state({ status, routes: [] }),
     settle: () =>

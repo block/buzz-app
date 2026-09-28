@@ -522,6 +522,20 @@ it("returns to the grid before completion, then shows rejection and restores act
   ).toBeEnabled();
   await confirmDeletion();
   expect(fixture.calls.delete).toBe(2);
+  await waitFor(() =>
+    expect(screen.queryByText("Couldn't delete Message helper")).toBeNull(),
+  );
+  await act(async () => {
+    fixture.definitions.update({
+      status: "ready",
+      data: { items: [], partial: false },
+    });
+    fixture.finish("succeeded");
+  });
+  expect(
+    screen.queryByRole("button", { name: "Open Message helper" }),
+  ).toBeNull();
+  expect(screen.queryByText(/^Couldn't delete/)).toBeNull();
 });
 
 it.each(["unknown", "succeeded"] as const)(

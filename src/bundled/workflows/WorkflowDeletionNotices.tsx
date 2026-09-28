@@ -59,7 +59,21 @@ export function WorkflowDeletionNotices({
   return (
     <>
       {operations
-        .filter((operation) => operation.action === "delete")
+        .filter(
+          (operation) =>
+            operation.action === "delete" &&
+            // Completed outbox entries can move ahead of rejected ones. A newer
+            // non-rejected attempt supersedes the old failure regardless of order.
+            (operation.outcome !== "rejected" ||
+              !operations.some(
+                (other) =>
+                  other.action === "delete" &&
+                  other.outcome !== "rejected" &&
+                  other.workflow.id === operation.workflow.id &&
+                  other.workflow.owner === operation.workflow.owner &&
+                  other.workflow.channelId === operation.workflow.channelId,
+              )),
+        )
         .map((operation) => {
           const snapshot = snapshots[operation.workflow.channelId];
           if (

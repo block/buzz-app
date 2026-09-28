@@ -24,6 +24,7 @@ import {
   MessageManagementStatus,
 } from "./MessageManagement";
 import { createRelaySession } from "../relay/session";
+import { readJournal, type ReadJournal } from "../relay/read-state-storage";
 import { PublishRejected } from "../relay/outbox";
 import {
   keypair,
@@ -34,6 +35,9 @@ import {
   bounds,
   signed,
 } from "../relay/testing";
+import type { ReadStateSigning } from "../relay/read-state-host";
+// @ts-expect-error Exercise the production codec with disposable identities.
+import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
 import type { RelayEvent } from "../relay/events";
 
 composerDOMFixture();
@@ -53,6 +57,7 @@ function deferred<T>() {
 }
 async function fixture(
   own = true,
+  readSync = false,
   withAttachments = false,
   originalAttachment = false,
   originalMention = false,
@@ -93,8 +98,20 @@ async function fixture(
     event: RelayEvent;
     result: ReturnType<typeof deferred<void>>;
   }[] = [];
+  let journal: ReadJournal | undefined;
   const owner = createRelaySession(
     {
+      ...(readSync
+        ? {
+            readState: {
+              decode: async (events: readonly RelayEvent[]) =>
+                decodeReadState(events, viewer.secret),
+              sign: async (intent: ReadStateSigning) =>
+                signReadState(intent, viewer.secret),
+              publish: async () => {},
+            },
+          }
+        : {}),
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       media: () => undefined,
@@ -143,6 +160,14 @@ async function fixture(
     },
     {
       outboxStorage: { load: () => [], save() {} },
+      readPublisherLock: async (_signal, work) => work(),
+      readStateStorage: {
+        close() {},
+        async update(change) {
+          journal = readJournal(change(journal), viewer.pubkey);
+          return journal;
+        },
+      },
     },
   );
   owners.push(owner);
@@ -256,7 +281,7 @@ it("edits in the composer, retains a rejected change and retries the same operat
 
 it("does not expose edit or delete for another person's message", async () => {
   await fixture(false);
-  await screen.findByRole("menu");
+  await screen.findByRole("menuitem", { name: /Mark (unread|read)/ });
   expect(screen.queryByRole("menuitem", { name: "Edit message" })).toBeNull();
   expect(screen.queryByRole("menuitem", { name: "Delete message" })).toBeNull();
 });
@@ -279,7 +304,7 @@ it("restores the unsent draft on cancel without publishing and keeps menu focus 
 });
 
 it("closes an unchanged bound-mention edit without publishing and restores the unsent draft", async () => {
-  const h = await fixture(true, false, false, true);
+  const h = await fixture(true, false, false, false, true);
   // Dismiss the initial menu before entering an unsent draft.
   fireEvent.keyDown(screen.getByRole("menuitem", { name: "Edit message" }), {
     key: "Escape",
@@ -325,7 +350,7 @@ it("offers deletion for an empty edit, permits cancel and then confirms deletion
 });
 
 it("hides unsent attachments during edit and restores them after cancel and save", async () => {
-  const h = await fixture(true, true);
+  const h = await fixture(true, false, true);
   fireEvent.keyDown(screen.getByRole("menuitem", { name: "Edit message" }), {
     key: "Escape",
   });
@@ -369,7 +394,7 @@ it("hides unsent attachments during edit and restores them after cancel and save
 });
 
 it("rejects an empty edit of a message with original attachments without deleting it", async () => {
-  const h = await fixture(true, false, true);
+  const h = await fixture(true, false, false, true);
   expect(
     h.owner.session.channels.window("room").rows[0]?.attachments.length,
   ).toBeGreaterThan(0);
@@ -388,6 +413,87 @@ it("rejects an empty edit of a message with original attachments without deletin
     screen.queryByRole("alertdialog", { name: "Delete message?" }),
   ).toBeNull();
   expect(h.owner.session.channels.window("room").rows).toHaveLength(1);
+  expect(h.publications).toHaveLength(0);
+});
+
+it("reverses an own message force from its menu without changing notification eligibility", async () => {
+  const h = await fixture();
+  const target = {
+    kind: "message" as const,
+    channelId: "room",
+    messageId: h.original.id,
+  };
+  const channelTarget = { kind: "channel" as const, channelId: "room" };
+  expect(h.owner.session.unread.snapshot(target).manual).toBe("none");
+  expect(h.owner.session.unread.attention("room", h.original.id)).toMatchObject(
+    {
+      status: "ineligible",
+      unread: false,
+      forced: false,
+    },
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark unread" }));
+  await waitFor(() =>
+    expect(
+      h.owner.session.unread.attention("room", h.original.id),
+    ).toMatchObject({
+      status: "ineligible",
+      unread: false,
+      forced: true,
+    }),
+  );
+  expect(h.owner.session.unread.snapshot(target)).toMatchObject({
+    observedCount: 0,
+    manual: "local-only",
+  });
+  expect(h.owner.session.unread.snapshot(channelTarget).manual).toBe(
+    "local-only",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark read" }));
+  await waitFor(() =>
+    expect(h.owner.session.unread.attention("room", h.original.id).forced).toBe(
+      false,
+    ),
+  );
+  expect(h.owner.session.unread.snapshot(target)).toMatchObject({
+    observedCount: 0,
+    manual: "none",
+  });
+  expect(h.owner.session.unread.snapshot(channelTarget).manual).toBe("none");
+  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Mark unread" }),
+  ).toBeVisible();
+  expect(h.publications).toHaveLength(0);
+});
+
+it("toggles actual unread state immediately without a dialog", async () => {
+  const h = await fixture(false, true);
+  const target = {
+    kind: "message" as const,
+    channelId: "room",
+    messageId: h.original.id,
+  };
+  expect(h.owner.session.unread.attention("room", h.original.id).unread).toBe(
+    true,
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark read" }));
+  await waitFor(() =>
+    expect(h.owner.session.unread.attention("room", h.original.id).unread).toBe(
+      false,
+    ),
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark unread" }));
+  await waitFor(() =>
+    expect(h.owner.session.unread.attention("room", h.original.id).unread).toBe(
+      true,
+    ),
+  );
+  expect(h.owner.session.unread.snapshot(target).observedCount).toBe(1);
+  expect(screen.queryByRole("dialog")).toBeNull();
   expect(h.publications).toHaveLength(0);
 });
 
@@ -443,4 +549,49 @@ it("recovers an uncertain deletion after the row and dialog disappear", async ()
   await waitFor(() => expect(h.publications).toHaveLength(2));
   expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
   await act(async () => h.publication(1).result.resolve());
+});
+
+it("waits for confirmed membership before entering a restored channel visit", async () => {
+  const h = await fixture();
+  cleanup();
+  const live = h.owner.session.channels.list();
+  let snapshot: typeof live = {
+    ...live,
+    channels: live.channels.map((channel) => ({
+      ...channel,
+      cached: true,
+      readOnly: true,
+    })),
+  };
+  const listeners = new Set<() => void>();
+  const enterChannel = vi.fn(h.owner.session.unread.enterChannel);
+  const leaveChannel = vi.fn(h.owner.session.unread.leaveChannel);
+  const session = {
+    ...h.owner.session,
+    channels: {
+      ...h.owner.session.channels,
+      list: () => snapshot,
+      subscribeList(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    unread: { ...h.owner.session.unread, enterChannel, leaveChannel },
+  };
+  const mounted = render(
+    <MessageManagement session={session} channelId="room">
+      Restored conversation
+    </MessageManagement>,
+  );
+  await act(async () => {});
+  expect(enterChannel).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  await act(async () => {
+    snapshot = live;
+    for (const listener of listeners) listener();
+  });
+  expect(enterChannel).toHaveBeenCalledExactlyOnceWith("room");
+  expect(screen.queryByRole("alert")).toBeNull();
+  mounted.unmount();
+  expect(leaveChannel).toHaveBeenCalledExactlyOnceWith("room");
 });

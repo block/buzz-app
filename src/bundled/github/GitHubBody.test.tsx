@@ -322,6 +322,28 @@ it("separates adjacent HTML table header and data cells", () => {
   expect(container).toHaveTextContent("old new");
 });
 
+it("preserves single line breaks alongside paragraphs, lists and code blocks", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      body={
+        "First requirement.\nSecond requirement.\nThird requirement.\n\nSeparate paragraph.\n\n- one\n- two\n\n```\nline one\nline two\n```"
+      }
+    />,
+  );
+  const code = container.querySelector("pre code");
+  expect(code).toHaveTextContent(/line one\s+line two/);
+  expect(code?.querySelector("br")).toBeNull();
+  expect(container.querySelectorAll("br")).toHaveLength(2);
+  expect(screen.getByText(/First requirement\./).innerHTML).toMatch(
+    /First requirement\.<br>.*Second requirement\.<br>.*Third requirement\./s,
+  );
+  expect(screen.getByText("Separate paragraph.")).toBeVisible();
+  expect(
+    [...container.querySelectorAll("li")].map((item) => item.textContent),
+  ).toEqual(["one", "two"]);
+});
+
 it("preserves surrounding prose and formatted labels after an inline video loads", () => {
   const { container } = render(
     <GitHubBody

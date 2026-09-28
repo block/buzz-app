@@ -12,6 +12,10 @@ const after =
   "https://github.com/user-attachments/assets/dd1f7e4f-e2a4-4aec-b661-cb45032f29c5";
 const picture =
   "https://github.com/user-attachments/assets/cd0773ee-9861-46d9-8a0f-352ae951ec7f";
+// GitHub media downloads redirect to the objects CDN; the packaged media
+// policy must allow the redirect origin, not only the original URL.
+const redirected =
+  "https://objects.githubusercontent.com/github-production-user-asset-6210df/659873452-after.mp4";
 const videoPath = fileURLToPath(
   new URL("../fixtures/message-gallery/assets/sample.mp4", import.meta.url),
 );
@@ -61,6 +65,7 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
   for (const [url, path, contentType] of [
     [before, videoPath, "video/mp4"],
     [after, videoPath, "video/mp4"],
+    [redirected, videoPath, "video/mp4"],
     [picture, imagePath, "image/png"],
   ]) {
     const bytes = await readFile(path);
@@ -140,7 +145,10 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
   const viewer = page.getByRole("dialog", { name: "Video attachment" });
   await expect(viewer).toBeVisible();
   const fullscreen = viewer.locator("video");
-  await expect(fullscreen).toHaveAttribute("controls", "");
+  // The shared VideoPlayer supplies custom controls instead of native ones.
+  await expect(
+    viewer.getByRole("slider", { name: "Video timeline" }),
+  ).toBeVisible();
   await expect
     .poll(() => fullscreen.evaluate((element) => element.readyState))
     .toBeGreaterThanOrEqual(2);
@@ -169,6 +177,31 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
   await page.screenshot({ path: testInfo.outputPath("fullscreen.png") });
   await page.getByRole("button", { name: "Close fullscreen viewer" }).click();
   await expect(viewer).toHaveCount(0);
+  // Supported file downloads redirect to the objects CDN. Neither engine can
+  // synthesize a redirect through routing, so exercise the redirect origin
+  // directly under the enforced packaged media policy: removing it from
+  // media-src makes this probe fail with a CSP media error.
+  const redirectReady = await panel.evaluate(async (element, source) => {
+    const probe = document.createElement("video");
+    probe.muted = true;
+    probe.preload = "metadata";
+    probe.src = source;
+    element.append(probe);
+    try {
+      await new Promise((resolve, reject) => {
+        probe.addEventListener("loadedmetadata", resolve, { once: true });
+        probe.addEventListener(
+          "error",
+          () => reject(new Error("blocked by media policy")),
+          { once: true },
+        );
+      });
+      return probe.readyState;
+    } finally {
+      probe.remove();
+    }
+  }, redirected);
+  expect(redirectReady).toBeGreaterThanOrEqual(1);
   for (const width of [800, 480]) {
     await page.setViewportSize({ width, height: 850 });
     await panel

@@ -8,6 +8,7 @@ import {
 } from "react";
 import Markdown, { type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import type { PhrasingContent, Root, RootContent } from "mdast";
 import { MediaAttachment } from "../../features/messages/MediaAttachment";
 import { AudioAttachment } from "../../features/messages/AudioAttachment";
@@ -255,7 +256,7 @@ export const GitHubBody = memo(function GitHubBody({
   return (
     <div className={styles.body}>
       <Markdown
-        remarkPlugins={[remarkGfm, githubHtml]}
+        remarkPlugins={[remarkGfm, remarkBreaks, githubHtml]}
         urlTransform={(value) => bodyUrl(value, url) ?? ""}
         components={{
           // Players are block elements, including when embedded in prose.

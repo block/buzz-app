@@ -8,6 +8,7 @@ import { AgentModelPicker } from "./AgentModelPicker";
 import { agentDraft } from "./agent-edit";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
+import type { ModelCatalog } from "../../features/agents/models";
 
 afterEach(cleanup);
 for (const opening of ["typing", "ArrowDown", "closed"] as const) {
@@ -712,8 +713,10 @@ it("loads Codex defaults in the background, reuses cached settings on remount, a
         />
       </StrictMode>,
     );
-    await waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    // Native admits one discovery at a time. The new context waits for the
+    // cancelled request to retire, then starts its own probe.
     await act(async () => oldRelease(data));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(3));
     expect(screen.queryByText(/Default model: fixture-default/)).toBeNull();
     await act(async () =>
       release({ ...data, defaults: { model: "other-default", effort: "low" } }),
@@ -1001,10 +1004,12 @@ it("browses an inherited Agent defaults workspace without repeating it in the fo
       expect(run).toHaveBeenCalledWith(
         1,
         expect.objectContaining({
-          host: "",
-          filter: "",
           action: "connect",
           inheritWorkspace: true,
+          integration: {
+            kind: "databricks",
+            settings: { host: "", filter: "" },
+          },
         }),
       ),
     );
@@ -1024,10 +1029,13 @@ it("browses an inherited Agent defaults workspace without repeating it in the fo
       expect(run).toHaveBeenLastCalledWith(
         1,
         expect.objectContaining({
-          host: "",
           action: "disconnect",
           inheritWorkspace: true,
           edit: undefined,
+          integration: {
+            kind: "databricks",
+            settings: { host: "", filter: "" },
+          },
         }),
       ),
     );

@@ -10,25 +10,10 @@ pub mod connection;
 mod create;
 mod credentials;
 mod defaults;
-#[cfg(unix)]
 mod diagnostics;
-pub mod openai;
-#[cfg(not(unix))]
-mod diagnostics {
-    pub(crate) struct Diagnostics;
-    impl Diagnostics {
-        pub(crate) fn capture(_: &mut std::process::Command) -> crate::Result<Self> {
-            Err("Agent process containment is not supported on this platform yet".into())
-        }
-        pub(crate) fn snapshot(&self) -> Vec<String> {
-            Vec::new()
-        }
-    }
-}
 mod import;
 pub mod logs;
-#[cfg(target_os = "macos")]
-mod orphans;
+pub mod openai;
 mod ownership;
 pub mod pi;
 mod process;

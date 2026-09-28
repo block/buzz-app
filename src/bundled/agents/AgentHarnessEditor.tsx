@@ -29,7 +29,9 @@ export function AgentHarnessEditor({
   const executable = draft.command.replaceAll("\\", "/").split("/").at(-1);
   const harness =
     options.find((option) => option.command === draft.command) ??
-    (executable === "goose" || executable === "buzz-pi-acp"
+    (executable === "goose" ||
+    executable === "buzz-pi-acp" ||
+    executable === "codex-acp"
       ? options.find(
           (option) =>
             option.command.replaceAll("\\", "/").split("/").at(-1) ===
@@ -37,12 +39,16 @@ export function AgentHarnessEditor({
         )
       : undefined);
   const external = harness?.label === "Goose" || harness?.label === "Pi";
+  const codex = harness?.id === "codex" || executable === "codex-acp";
   const piLoading = harness?.label === "Pi" && piProviders === null;
   const missingGoose = options.some(
     (option) => isGoose(option.command) && option.available === false,
   );
   const missingPi = options.some(
     (option) => option.label === "Pi" && option.available === false,
+  );
+  const missingCodex = options.some(
+    (option) => option.id === "codex" && option.available === false,
   );
   return (
     <div className="space-y-4">
@@ -61,17 +67,32 @@ export function AgentHarnessEditor({
           const option = options.find((item) => item.command === command);
           const enteringExternal =
             option?.label === "Goose" || option?.label === "Pi";
+          const enteringCodex = option?.id === "codex";
           onChange({
             command,
-            ...(pickedOption && (enteringExternal || external)
+            ...(pickedOption && enteringCodex
               ? {
-                  args: JSON.stringify(option?.defaultArgs ?? []),
-                  provider: enteringExternal
-                    ? ""
-                    : (option?.providers[0]?.value ?? ""),
+                  args: JSON.stringify(option.defaultArgs ?? []),
+                  provider: "",
                   model: "",
+                  configuration:
+                    draft.configuration?.mode === "advanced"
+                      ? {
+                          mode: "advanced" as const,
+                          effort: { kind: "unsupported" as const },
+                        }
+                      : { mode: "default" as const },
                 }
-              : {}),
+              : pickedOption && (enteringExternal || external || codex)
+                ? {
+                    args: JSON.stringify(option?.defaultArgs ?? []),
+                    provider: enteringExternal
+                      ? ""
+                      : (option?.providers[0]?.value ?? ""),
+                    model: "",
+                    ...(enteringExternal ? { configuration: undefined } : {}),
+                  }
+                : {}),
           });
         }}
       />
@@ -85,7 +106,13 @@ export function AgentHarnessEditor({
           Pi needs its CLI, Node.js and buzz-pi-acp before you can select it.
         </p>
       )}
-      {(missingGoose || missingPi) && onOpenHarnesses && (
+      {missingCodex && (
+        <p className="text-body-sm text-secondary">
+          Install codex-acp to use Codex as a harness. Sign-in is checked when
+          models are loaded.
+        </p>
+      )}
+      {(missingGoose || missingPi || missingCodex) && onOpenHarnesses && (
         <div className="space-y-1">
           <Button
             type="button"
@@ -102,31 +129,42 @@ export function AgentHarnessEditor({
           )}
         </div>
       )}
-      <ConfigChoice
-        disabled={disabled || piLoading}
-        key={harness?.label ?? draft.command}
-        label={external ? "LLM Provider" : "Provider"}
-        customLabel="Custom provider / current value"
-        inputLabel="Custom provider"
-        value={draft.provider}
-        options={[
-          {
-            value: "",
-            label: defaultProvider
-              ? `Use agent defaults (${defaultProvider})`
-              : "Not set",
-          },
-          ...(harness?.label === "Pi"
-            ? piOptions(piProviders, draft.provider)
-            : (harness?.providers ?? [])),
-        ]}
-        onChange={(provider) =>
-          onChange({
-            provider,
-            ...(external ? { model: "" } : {}),
-          })
-        }
-      />
+      {!codex && (
+        <ConfigChoice
+          disabled={disabled || piLoading}
+          key={harness?.label ?? draft.command}
+          label={external ? "LLM Provider" : "Provider"}
+          customLabel="Custom provider / current value"
+          inputLabel="Custom provider"
+          value={draft.provider}
+          options={[
+            {
+              value: "",
+              label: defaultProvider
+                ? `Use agent defaults (${defaultProvider})`
+                : "Not set",
+            },
+            ...(harness?.label === "Pi"
+              ? piOptions(piProviders, draft.provider)
+              : (harness?.providers ?? [])),
+          ]}
+          onChange={(provider) =>
+            onChange({
+              provider,
+              ...(external ? { model: "" } : {}),
+              ...(draft.command === "buzz-agent" && provider === "openai"
+                ? {
+                    model: "",
+                    configuration: {
+                      mode: "advanced",
+                      effort: { kind: "default" },
+                    },
+                  }
+                : {}),
+            })
+          }
+        />
+      )}
       {piLoading && (
         <p role="status" className="text-body-sm text-secondary">
           Loading signed-in providers…

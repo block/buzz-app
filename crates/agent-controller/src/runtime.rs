@@ -26,8 +26,13 @@ impl RuntimeBundle {
         if !Path::new(&agent.workspace).is_dir() {
             return Err("Agent workspace does not exist".into());
         }
+        let codex = crate::codex::is_codex(&harness.command)
+            .then(|| crate::codex::Context::new(&harness, &agent.environment, &agent.workspace))
+            .transpose()?;
         let worker = if harness.command == "buzz-agent" {
             self.executable("buzz-agent")?
+        } else if let Some(context) = &codex {
+            context.adapter.clone()
         } else {
             let path = PathBuf::from(&harness.command);
             if !path.is_absolute() {
@@ -136,6 +141,19 @@ impl RuntimeBundle {
         )
         .map_err(|_| "Invalid runtime tools path")?;
         command.envs(environment).env("PATH", path);
+        if let Some(context) = &codex {
+            context.apply_environment(&mut command)?;
+            let codex_path = command
+                .get_envs()
+                .find(|(key, _)| *key == "PATH")
+                .and_then(|(_, value)| value)
+                .ok_or("Missing Codex executable path")?;
+            let path = std::env::join_paths(
+                std::iter::once(self.directory.clone()).chain(std::env::split_paths(codex_path)),
+            )
+            .map_err(|_| "Invalid Codex runtime path")?;
+            command.env("PATH", path);
+        }
         let key_hex = key.hex();
         command
             .env("BUZZ_PRIVATE_KEY", &*key_hex)
@@ -216,6 +234,24 @@ impl RuntimeBundle {
         }
         if let Some(effort) = crate::agent_defaults::effort(agent) {
             command.env("BUZZ_ACP_EFFORT_LEVEL", effort);
+        }
+        if let Some(configuration) = &harness.configuration {
+            harness.validate_configuration()?;
+            for key in ["BUZZ_ACP_MODEL", "BUZZ_ACP_EFFORT_LEVEL"] {
+                command.env_remove(key);
+            }
+            if let Some((model_key, _)) = selected.keys {
+                command.env_remove(model_key);
+            }
+            if let crate::AiConfiguration::Advanced { effort } = configuration {
+                command.env("BUZZ_ACP_MODEL", &harness.model);
+                if let Some((model_key, _)) = selected.keys {
+                    command.env(model_key, &harness.model);
+                }
+                if let crate::EffortSelection::Value { value } = effort {
+                    command.env("BUZZ_ACP_EFFORT_LEVEL", value);
+                }
+            }
         }
         Ok(command)
     }
@@ -364,6 +400,10 @@ impl Drop for Running {
 }
 /// Deliberately not serializable: only the native connection owner consumes it.
 pub struct ModelContext {
+    /// Official OpenAI credential context, never serialized.
+    pub openai: Option<crate::openai::Context>,
+    /// Native-only Codex execution context, including saved write-only values.
+    pub codex: Option<crate::codex::Context>,
     pub host: Option<String>,
     pub filter: Option<String>,
     pub model_overridden: bool,
@@ -419,6 +459,11 @@ impl Controller {
         for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
             agent.acp_command.clone_from(&acp_command);
             agent.mcp_command.clone_from(&mcp_command);
+            if let Ok(path) = crate::logs::path(self.store.root(), &agent.id) {
+                if let Ok(log) = crate::logs::read(&path) {
+                    agent.diagnostics = crate::diagnostics::from_log(&log);
+                }
+            }
             if let Some(run) = self.running.get_mut(&agent.id) {
                 match run.process.alive() {
                     Ok(true) => {
@@ -475,9 +520,29 @@ impl Controller {
             &self.store.defaults()?,
         ))
     }
-    pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
-        let agent = self.edited_agent(id, revision, edit)?;
-        model_context(&agent.harness, &agent.environment)
+    pub fn model_context(
+        &self,
+        id: &str,
+        revision: u64,
+        mut edit: AgentEdit,
+    ) -> Result<ModelContext> {
+        let mut agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err(
+                "Saved settings changed; discard or reconcile the draft before connecting".into(),
+            );
+        }
+        // Discovery fills incomplete choices; only Save/Create require them complete.
+        let configuration = edit.harness.configuration.take();
+        agent.apply(edit)?;
+        agent.harness.configuration = configuration;
+        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
+        model_context(&agent.harness, &agent.environment, &agent.workspace)
     }
     pub fn goose_model_context(
         &self,
@@ -524,7 +589,7 @@ impl Controller {
     }
     pub fn draft_model_context(edit: AgentEdit) -> Result<ModelContext> {
         let environment = draft_environment(edit.environment);
-        model_context(&edit.harness, &environment)
+        model_context(&edit.harness, &environment, &edit.workspace)
     }
     pub fn requires_legacy_handover(&self, id: &str) -> Result<bool> {
         let agent = self
@@ -843,6 +908,7 @@ impl Controller {
             .tempdir_in(&runs)
             .map_err(|_| "Could not create private runtime directory")?;
         let mut command = bundle.command(&agent, key)?;
+        crate::openai::apply(&agent.harness, &agent.environment, &mut command)?;
         // Per-send startup input, never saved configuration or inherited environment.
         if let Some(floor) = replay_floor {
             command.env("BUZZ_ACP_REPLAY_FLOOR", floor.to_string());
@@ -947,15 +1013,39 @@ fn draft_environment(patch: BTreeMap<String, Option<String>>) -> BTreeMap<String
 fn model_context(
     harness: &crate::HarnessEdit,
     environment: &BTreeMap<String, String>,
+    workspace: &str,
 ) -> Result<ModelContext> {
-    model_context_with_defaults(harness, environment, &crate::build_defaults())
+    model_context_with_defaults(harness, environment, workspace, &crate::build_defaults())
 }
 fn model_context_with_defaults(
     harness: &crate::HarnessEdit,
     environment: &BTreeMap<String, String>,
+    workspace: &str,
     defaults: &crate::BuildDefaults,
 ) -> Result<ModelContext> {
     let harness = defaults.resolve(harness, environment);
+    if harness.command == "buzz-agent" && harness.provider == "openai" {
+        return Ok(ModelContext {
+            openai: Some(crate::openai::context(&harness, environment)?),
+            codex: None,
+            host: None,
+            filter: None,
+            model_overridden: false,
+        });
+    }
+    if crate::codex::is_codex(&harness.command) {
+        return Ok(ModelContext {
+            openai: None,
+            codex: Some(crate::codex::Context::new(
+                &harness,
+                environment,
+                workspace,
+            )?),
+            host: None,
+            filter: None,
+            model_overridden: false,
+        });
+    }
     if Path::new(&harness.command)
         .file_name()
         .and_then(|s| s.to_str())
@@ -976,6 +1066,8 @@ fn model_context_with_defaults(
         return Err("A saved or draft token override conflicts with this app-isolated OAuth connection. Remove it explicitly or keep manual model entry".into());
     }
     Ok(ModelContext {
+        openai: None,
+        codex: None,
         host: environment
             .get("DATABRICKS_HOST")
             .cloned()
@@ -984,7 +1076,8 @@ fn model_context_with_defaults(
             .get("DATABRICKS_MODEL_FILTER")
             .cloned()
             .or_else(|| harness.databricks.as_ref().map(|s| s.filter.clone())),
-        model_overridden: environment.contains_key("BUZZ_AGENT_MODEL"),
+        model_overridden: harness.configuration.is_none()
+            && environment.contains_key("BUZZ_AGENT_MODEL"),
     })
 }
 

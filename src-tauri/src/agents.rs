@@ -17,6 +17,7 @@ pub(crate) struct Snapshot {
     inventory_warnings: Vec<String>,
     import_available: bool,
     create_available: bool,
+    configuration_available: bool,
     avatar_editing_available: bool,
     local_inventory_actions: bool,
     default_workspace: String,
@@ -47,6 +48,7 @@ impl Snapshot {
                 target_os = "windows",
                 target_os = "linux"
             )),
+            configuration_available: true,
             avatar_editing_available: true,
             local_inventory_actions: true,
             default_workspace: workspace.to_string_lossy().into_owned(),
@@ -63,6 +65,8 @@ impl Snapshot {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HarnessOption {
+    id: &'static str,
+    capabilities: HarnessCapabilities,
     command: String,
     label: &'static str,
     available: bool,
@@ -71,6 +75,12 @@ struct HarnessOption {
     install_supported: Option<bool>,
     default_args: &'static [&'static str],
     providers: &'static [ProviderOption],
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HarnessCapabilities {
+    model_discovery: Option<&'static str>,
+    openai: bool,
 }
 #[derive(Serialize)]
 struct ProviderOption {
@@ -189,8 +199,14 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             node: buzz_agent_controller::managed_tool(app_data, "node"),
         },
     );
+    let codex = buzz_agent_controller::installed("codex-acp");
     vec![
         HarnessOption {
+            id: "buzz-agent",
+            capabilities: HarnessCapabilities {
+                model_discovery: Some("databricks"),
+                openai: true,
+            },
             command: "buzz-agent".into(),
             label: "Buzz Agent",
             available: true,
@@ -210,6 +226,11 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             ][usize::from(cfg!(windows))..],
         },
         HarnessOption {
+            id: "goose",
+            capabilities: HarnessCapabilities {
+                model_discovery: Some("goose"),
+                openai: false,
+            },
             command: goose.as_ref().map_or_else(
                 || "goose".into(),
                 |path| path.to_string_lossy().into_owned(),
@@ -226,6 +247,11 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             providers: GOOSE_PROVIDERS,
         },
         HarnessOption {
+            id: "pi",
+            capabilities: HarnessCapabilities {
+                model_discovery: Some("pi"),
+                openai: false,
+            },
             command: pi.map_or_else(
                 || "buzz-pi-acp".into(),
                 |p| p.to_string_lossy().into_owned(),
@@ -239,6 +265,27 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             ))),
             default_args: &[],
             // Pi reports signed-in providers through its model catalog.
+            providers: &[],
+        },
+        HarnessOption {
+            id: "codex",
+            capabilities: HarnessCapabilities {
+                model_discovery: Some("codex"),
+                openai: false,
+            },
+            command: codex.as_ref().map_or_else(
+                || "codex-acp".into(),
+                |path| path.to_string_lossy().into_owned(),
+            ),
+            label: "Codex",
+            available: codex.is_some(),
+            status: if codex.is_some() {
+                "ready"
+            } else {
+                "adapter-needed"
+            },
+            install_supported: None,
+            default_args: &[],
             providers: &[],
         },
     ]
@@ -1173,10 +1220,13 @@ pub(crate) async fn agent_control_import_commit(
 #[tauri::command]
 pub(crate) async fn agent_control_create_prepare(
     state: tauri::State<'_, AgentHost>,
+    models: tauri::State<'_, crate::agent_models::ModelHost>,
     request_id: String,
     destination: String,
     owner: String,
-) -> Result<serde_json::Value, String> {
+    edit: AgentEdit,
+) -> Result<serde_json::Value, crate::agent_models::ModelError> {
+    models.validate_creation(&edit).await?;
     run(state.inner().clone(), move |host| {
         if uuid::Uuid::parse_str(&request_id).is_err() {
             return Err("Invalid create request".into());
@@ -1194,6 +1244,7 @@ pub(crate) async fn agent_control_create_prepare(
         Ok(serde_json::json!({"id": agent.id, "pubkey": agent.key.pubkey()}))
     })
     .await
+    .map_err(crate::agent_models::ModelError::from)
 }
 /// Owner attestation for the pending create's generated key only. The
 /// identity may read OS credentials, so the agent host stays unlocked.

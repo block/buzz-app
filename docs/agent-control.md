@@ -183,7 +183,7 @@ installation guidance and device-wide defaults.
 
 ### Harnesses
 
-The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
+The **Harnesses** card lists **Buzz Agent**, **Goose**, **Pi**, and **Codex**:
 
 - **Buzz Agent** is bundled and shows **Ready**.
 - **Goose** shows **Ready** or **CLI needed**, with **Install** when needed.
@@ -204,13 +204,23 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
   npm install -g @earendil-works/pi-coding-agent
   npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#86b201e'
   ```
+- **Codex** shows **Ready**, **CLI needed**, or **Adapter needed**. Buzz does not
+  install either executable. The setup card gives terminal guidance for the
+  supported `@agentclientprotocol/codex-acp` adapter and links Add/Edit back to
+  Settings → Agents. Existing Codex CLI configuration and sign-in remain owned
+  by Codex:
+
+  ```sh
+  npm install -g @agentclientprotocol/codex-acp@1.3.0
+  codex login
+  ```
 
 **Check again** re-detects installed Harnesses without reopening Buzz. Status
 is executable detection, not a guarantee of sign-in, ACP readiness or inference.
 Add/Edit links to Settings → Agents for setup instead of telling people to reopen
 the app. The ACP tooltip says:
 
-> Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.
+> Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi and Codex need adapters. Your existing CLI setup and sign-in are left untouched.
 
 ### Global agent defaults and saving
 
@@ -556,33 +566,84 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   secret build keys fail closed. With no saved or build workspace, enter one
   explicitly before browsing models.
 
+## Explicit AI configuration
+
+New Buzz Agent and Codex agents start with **Harness defaults**: Buzz sends
+neither a model nor an effort override. **Advanced** requires current
+authenticated discovery and an available model before Create is enabled.
+Databricks exposes no effort control; Codex supplies model-dependent effort
+choices through ACP. Native creation repeats headless validation before it
+generates an identity, then follows the normal save-and-start flow. Changing the
+workspace, harness, provider, arguments, or environment retires stale discovery
+evidence.
+
+Goose and Pi keep their existing provider/model flows. They do not gain the
+Harness defaults/Advanced contract in this change. Existing records without an
+explicit configuration mode retain their previous precedence until edited into
+one. Saving an existing agent is not live validation of inference access or of
+the configuration already applied to a running session.
+
 ## Open AI API-key setup
 
 Choose **Buzz Agent → Provider: Open AI** in the shared create/edit form. Enter a
-key in **Open AI API Key** and choose **Check key and load models**.
-Select a returned model explicitly; effort stays at **Runtime default** because
-the model list does not report effort choices. Listing a model does not certify
+key in **Open AI API Key** and choose **Check key and load models**. Select a
+returned model explicitly; effort stays at **Runtime default** because the model
+list does not report effort choices. Listing a model does not certify
 agent-conversation compatibility, inference quota, or a successful reply.
 
 Successful lookup stages `OPENAI_COMPAT_API_KEY` in the environment draft.
-Save/Create persists it with the model in the local `agent-controller/agents.json`
-store, in plaintext with owner-only permissions on Unix. Cancelling writes nothing;
-failed Save preserves the previous settings. Saved values remain write-only in
-snapshots; Refresh resolves them natively. The masked input clears on submission.
-Restart applies saved changes to new work.
-Native creation rechecks the submitted model and key before creating an identity.
-Provider-key storage has no Keychain dependency; existing identity storage and
-process-containment platform limits are unchanged.
+Save/Create persists it with the model in the local
+`agent-controller/agents.json` store, in plaintext with owner-only permissions
+on Unix. Cancelling writes nothing; failed Save preserves the previous settings.
+Saved values remain write-only in snapshots, and the masked input clears after
+submission. Native creation rechecks the submitted model and key before creating
+an identity.
 
-This flow uses the official OpenAI endpoint and rejects conflicting saved/draft
-provider, model, effort, endpoint and proxy environment overrides. Remove them
-explicitly before setup. Keys never enter shared model caches, returned diagnostics,
-or shell arguments. Existing manual/imported configurations remain
-separate until explicitly configured through this flow. Codex and Goose do not
-use this key setup. The attended check passed model listing but inference returned
-`credit_balance_exhausted`; successful replies remain pending. That error is shown
-as a sanitized no-credits diagnostic and editor alert. See the
-[implementation scope and checkpoint](add-codex-harness/buzz-openai-api-key.md).
+This flow uses the official OpenAI endpoint and rejects conflicting
+provider/model/effort/endpoint/proxy environment overrides. Keys never enter
+shared model caches, returned diagnostics, or shell arguments. Codex, Goose, and
+Pi do not use this key setup. OpenAI's `credit_balance_exhausted` response becomes
+a sanitized no-credits diagnostic rather than exposing provider output.
+
+## Codex harness
+
+Codex uses a separate `codex login status` probe and the model choices advertised
+by `codex-acp`. This is not an assertion of fresh remote discovery or account
+entitlement; the adapter may use its own cache. No model or effort list is
+hardcoded. Catalog normalization prefers stable model configuration options and
+keeps effort in its own field.
+
+Choose Codex, an existing workspace, and **Harness defaults** or **Advanced**.
+Defaults leaves model and effort to Codex configuration. Advanced loads models
+and model-specific effort choices in one bounded session and requires an explicit
+selection. Discovery results are cached in memory for the execution context for
+up to one minute; Refresh reloads them. Drafts with environment patches bypass
+cache storage so secret values never become cache keys. Native creation repeats
+headless validation before identity generation.
+
+Discovery and launch share the resolved adapter, workspace, arguments, isolated
+environment, and `CODEX_HOME`. Discovery and login probes strip `SSH_AUTH_SOCK`;
+running coding agents retain the existing SSH-agent access for authenticated Git
+operations. Lookup checks the explicit adapter directory, original Buzz managed
+Node tools, and common local/system executable directories. An absolute
+`CODEX_PATH` override selects the effective CLI. Buzz never launches a login
+shell or installs executables.
+
+The supported baseline is `@agentclientprotocol/codex-acp` **1.3.0** with ACP v1.
+Adapter identity/version, CLI version, executable, login, timeout, and oversized
+output failures produce fixed repair guidance; raw child output is not returned.
+Login recovery is explicit terminal guidance (`codex login`). Buzz does not log
+out, rewrite Codex configuration, or read account credentials into the frontend.
+Checks initialize ACP and inspect configuration only; they never send an inference
+prompt. The current contained discovery transport is Unix-only.
+
+Managed Codex agents default to `INITIAL_AGENT_MODE=agent-full-access` for both
+discovery and launch. Adapter 1.3.0's default `agent` mode applies a
+network-disabled policy on each turn, which prevents Buzz CLI replies. Full access
+permits network access and file access outside the workspace. A saved per-agent
+`INITIAL_AGENT_MODE` override takes precedence; `agent` and `read-only` retain
+their restricted behavior. Other harnesses are unaffected, and existing listeners
+must restart to receive the new default.
 
 ## Runtime resources
 

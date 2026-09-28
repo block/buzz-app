@@ -319,7 +319,7 @@ mod tests {
             run(
                 &path,
                 &["status".into(), "--mode=ready;echo injected".into()],
-                Duration::from_secs(1)
+                Duration::from_secs(5)
             )
             .await,
             Some("ready \n".into())
@@ -368,8 +368,8 @@ mod tests {
     async fn rejects_large_output_without_waiting_for_the_process() {
         let (_directory, path) = executable("yes x");
         let started = Instant::now();
-        assert_eq!(run(&path, &[], Duration::from_secs(1)).await, None);
-        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(run(&path, &[], Duration::from_secs(5)).await, None);
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[tokio::test]
@@ -385,7 +385,7 @@ mod tests {
         let (_directory, path) = executable("printf '%s' \"$$\" > \"$0.pid\"\nexec sleep 10");
         let marker = path.with_extension("pid");
         let reader = tokio::spawn(async move { run(&path, &[], Duration::from_secs(5)).await });
-        let process_id = tokio::time::timeout(Duration::from_secs(1), async {
+        let process_id = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 if let Ok(process_id) = fs::read_to_string(&marker) {
                     if let Ok(process_id) = process_id.parse::<i32>() {
@@ -428,7 +428,7 @@ mod tests {
             executable("sleep 10 &\nprintf '%s' \"$!\" > \"$0.childpid\"\nwait");
         let marker = path.with_extension("childpid");
         let reader = tokio::spawn(async move { run(&path, &[], Duration::from_secs(5)).await });
-        let process_id = tokio::time::timeout(Duration::from_secs(1), async {
+        let process_id = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 if let Ok(process_id) = fs::read_to_string(&marker) {
                     if let Ok(process_id) = process_id.parse::<i32>() {

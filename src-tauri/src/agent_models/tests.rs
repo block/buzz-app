@@ -86,114 +86,54 @@ impl Connection for Arc<Fake> {
     }
 }
 fn request(dir: &std::path::Path, id: &str, action: &str) -> Value {
-    json!({"id":id,"expectedRevision":1,"integration":{"kind":"databricks","settings":{"host":"https://workspace.example.com","filter":""}}, "action":action,
-    "edit":{"name":"Sample","systemPrompt":"Original","workspace":dir.to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"custom-unchanged","provider":"databricks_v2"},"environment":{}}})
-}
-#[test]
-fn advanced_creation_validates_before_identity_and_binds_the_submitted_draft() {
-    let fake = Arc::new(Fake::default());
-    let (dir, host, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
-        let host = ModelHost::new(Ok(dir.join("store")));
-        ModelHost {
-            state: host.state,
-            openai_endpoint: host.openai_endpoint,
-            factory: Arc::new(fake.clone()),
-        }
-    });
-    let mut edit = request(dir.path(), "unused", "refresh")["edit"].clone();
-    edit["harness"]["configuration"] = json!({"mode":"advanced","effort":{"kind":"unsupported"}});
-    edit["harness"]["model"] = json!("endpoint-two");
-    edit["harness"]["databricks"] = json!({"host":"https://workspace.example.com","filter":""});
-    let request_id = uuid::Uuid::new_v4().to_string();
-    let prepare = |edit: Value| {
-        invoke(
-            &view,
-            "agent_control_create_prepare",
-            json!({
-                "requestId":request_id, "destination":"wss://relay.example", "owner":"ab".repeat(32), "edit":edit
-            }),
-        )
-    };
-    let mut missing_mode = edit.clone();
-    missing_mode["harness"]
-        .as_object_mut()
-        .unwrap()
-        .remove("configuration");
-    assert_eq!(prepare(missing_mode).unwrap_err()["code"], "configuration");
-    assert!(!crate::agents::tests::has_prepared_identity(&host));
-    for (failure, model, effort, code) in [
-        (
-            1,
-            "endpoint-two",
-            json!({"kind":"unsupported"}),
-            "authentication",
-        ),
-        (
-            2,
-            "endpoint-two",
-            json!({"kind":"unsupported"}),
-            "unavailable",
-        ),
-        (0, "Endpoint Two", json!({"kind":"unsupported"}), "model"),
-        (
-            0,
-            "endpoint-two",
-            json!({"kind":"value","value":"high"}),
-            "effort",
-        ),
-    ] {
-        fake.failure.store(failure, Ordering::SeqCst);
-        let mut invalid = edit.clone();
-        invalid["harness"]["model"] = json!(model);
-        invalid["harness"]["configuration"]["effort"] = effort;
-        assert_eq!(prepare(invalid).unwrap_err()["code"], code);
-        assert!(!crate::agents::tests::has_prepared_identity(&host));
-    }
-    assert_eq!(fake.connects.load(Ordering::SeqCst), 0);
-    let first = prepare(edit.clone()).unwrap();
-    assert!(crate::agents::tests::has_prepared_identity(&host));
-    assert_eq!(prepare(edit.clone()).unwrap(), first); // retry keeps identity
-    edit["harness"]["model"] = json!("changed-after-validation");
-    let error = invoke(
-        &view,
-        "agent_control_create_commit",
-        json!({"requestId":request_id,"edit":edit,"auth":"unused"}),
-    )
-    .unwrap_err();
-    assert!(error.as_str().unwrap().contains("settings changed"));
-    assert_eq!(
-        invoke(&view, "agent_control_snapshot", json!({})).unwrap()["agents"],
-        json!([])
-    );
+    json!({"id":id,"expectedRevision":1,"host":"https://workspace.example.com","filter":"", "action":action,
+    "edit":{"name":"Sample","systemPrompt":"Original","workspace":dir.to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"custom-unchanged","provider":"databricks_v2","databricks":{"host":"https://workspace.example.com","filter":""}},"environment":{}}})
 }
 
 #[test]
-fn existing_agent_can_discover_before_completing_advanced_selection() {
-    let fake = Arc::new(Fake::default());
-    let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
-        let host = ModelHost::new(Ok(dir.join("store")));
-        ModelHost {
-            state: host.state,
-            openai_endpoint: host.openai_endpoint,
-            factory: Arc::new(fake.clone()),
-        }
-    });
-    let id = seed(dir.path());
-    let mut req = request(dir.path(), &id, "refresh");
-    // Catalog lookup uses the provider connection, not the agent's ACP argv.
-    req["edit"]["harness"]["args"] = json!(["--legacy-argument"]);
-    req["edit"]["harness"]["model"] = json!("");
-    req["edit"]["harness"]["configuration"] =
-        json!({"mode":"advanced","effort":{"kind":"unsupported"}});
-    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
-    let catalog = invoke(
-        &view,
-        "agent_models_run",
-        json!({"ticket":ticket,"request":req}),
+#[cfg(unix)]
+fn goose_databricks_models_load_through_native_ipc_for_an_unsaved_agent() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _, _app, view) = fixture();
+    let goose = dir.path().join("goose");
+    let invoked = dir.path().join("invoked");
+    std::fs::write(
+        &goose,
+        format!(
+            "#!/bin/sh\n: > '{}'\nread request\nprintf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"providerId\":\"databricks_v2\",\"models\":[\"catalog.schema.goose-glm-5-3\"]}}}}'\n",
+            invoked.display()
+        ),
     )
     .unwrap();
-    assert_eq!(catalog["discovery"]["authentication"], "authenticated");
-    assert_eq!(catalog["models"][0]["effort"]["status"], "unsupported");
+    std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let edit = json!({"name":"Goose","systemPrompt":"","workspace":dir.path(),
+        "harness":{"command":goose,"args":["acp"],"provider":"databricks_v2","model":""},
+        "environment":{}});
+    let refresh_ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    assert!(invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":refresh_ticket,"request":{
+            "host":"", "filter":"", "action":"refresh", "edit":edit
+        }})
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("explicit Browse or Retry"));
+    assert!(!invoked.exists());
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"", "filter":"", "action":"connect",
+            "edit":edit
+        }}),
+    )
+    .unwrap();
+    assert!(invoked.exists());
+    assert_eq!(result["models"][0]["id"], "catalog.schema.goose-glm-5-3");
+    assert_eq!(result["host"], "");
 }
 
 #[test]
@@ -255,8 +195,8 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
         let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
-            openai_endpoint: host.openai_endpoint,
             factory: Arc::new(fake.clone()),
+            openai_endpoint: host.openai_endpoint,
         }
     });
     let id = seed(dir.path());
@@ -279,7 +219,8 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     assert_eq!(result["models"][0]["name"], "Model Service");
     assert!(!result.to_string().contains("DO_NOT_PROJECT"));
     let mut filtered = req.clone();
-    filtered["integration"]["settings"]["filter"] = json!("endpoint-*");
+    filtered["filter"] = json!("endpoint-*");
+    filtered["edit"]["harness"]["databricks"]["filter"] = filtered["filter"].clone();
     let filtered_result = call(filtered).unwrap();
     assert_eq!(
         filtered_result["models"],
@@ -311,7 +252,8 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     }
     fake.failure.store(0, Ordering::SeqCst);
     let mut other = req.clone();
-    other["integration"]["settings"]["host"] = json!("https://other.example.com");
+    other["host"] = json!("https://other.example.com");
+    other["edit"]["harness"]["databricks"]["host"] = other["host"].clone();
     call(other).unwrap();
     assert_eq!(fake.opened.lock().unwrap().last().unwrap().1, first_cache);
     let count = fake.opened.lock().unwrap().len();
@@ -376,6 +318,7 @@ fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
         ModelHost {
             state: host.state,
             factory: Arc::new(fake.clone()),
+            openai_endpoint: host.openai_endpoint,
         }
     });
     let id = seed(dir.path());
@@ -408,7 +351,7 @@ fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
     let result = call(req.clone()).unwrap();
     assert_eq!(
         result["models"],
-        json!([{"id":"endpoint-two","name":"Endpoint Two"}])
+        json!([{"id":"endpoint-two","name":"Endpoint Two","effort":{"status":"unsupported"}}])
     );
     assert_eq!(result["host"], ""); // The write-only inherited URL stays native.
     assert!(!result.to_string().contains("https://inherited.example.com"));
@@ -456,6 +399,7 @@ fn disconnect_recovers_an_inherited_workspace_without_revealing_it() {
         ModelHost {
             state: host.state,
             factory: Arc::new(fake.clone()),
+            openai_endpoint: host.openai_endpoint,
         }
     });
     let id = seed(dir.path());
@@ -509,8 +453,8 @@ fn native_discovery_preserves_absolute_harness_and_saved_or_draft_provider_overr
         let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
-            openai_endpoint: host.openai_endpoint,
             factory: Arc::new(fake.clone()),
+            openai_endpoint: host.openai_endpoint,
         }
     });
     let id = seed(dir.path());
@@ -702,27 +646,6 @@ fn workspace_policy_and_cache_are_canonical_and_separate() {
         b.cache("https://example.com").unwrap()
     );
 }
-#[path = "../../build_config.rs"]
-mod build_config;
-#[test]
-fn private_build_allowlist_excludes_secrets_and_does_not_rewrite_model() {
-    assert_eq!(
-        build_config::parse("").unwrap(),
-        (String::new(), String::new())
-    );
-    assert_eq!(build_config::parse("DATABRICKS_HOST=https://example.com\nDATABRICKS_MODEL=unused\nDATABRICKS_MODEL_FILTER=foo*").unwrap(),("https://example.com".into(),"foo*".into()));
-    for raw in [
-        "DATABRICKS_TOKEN=NEVER_PRINT",
-        "OTHER=NEVER_PRINT",
-        "DATABRICKS_HOST=x\nDATABRICKS_HOST=y",
-        "malformed",
-    ] {
-        assert!(!build_config::parse(raw)
-            .unwrap_err()
-            .to_string()
-            .contains("NEVER_PRINT"));
-    }
-}
 
 #[cfg(unix)]
 #[test]
@@ -744,8 +667,8 @@ fn real_ipc_refuses_linked_helper_namespace_before_opening_connection() {
         let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
-            openai_endpoint: host.openai_endpoint,
             factory: Arc::new(fake.clone()),
+            openai_endpoint: host.openai_endpoint,
         }
     });
     let id = seed(dir.path());
@@ -793,71 +716,38 @@ async fn unstarted_ticket_expires_and_old_run_cannot_claim_its_replacement() {
     assert!(host.begin().is_ok());
 }
 
+#[cfg(unix)]
 #[test]
-fn invalid_integration_variants_never_reach_auth_and_ticket_can_be_cancelled() {
-    let fake = Arc::new(Fake::default());
-    let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
-        let host = ModelHost::new(Ok(dir.join("store")));
-        ModelHost {
-            state: host.state,
-            openai_endpoint: host.openai_endpoint,
-            factory: Arc::new(fake.clone()),
+fn pi_catalog_uses_native_ticket_and_draft_configuration_without_saving() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _host, _app, view) = fixture();
+    std::fs::create_dir(dir.path().join("local-config")).unwrap();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    for tool in ["pi", "node", "buzz-pi-acp"] {
+        let file = tools.join(tool);
+        std::fs::write(&file, r#"#!/bin/sh
+read request
+[ "$PI_CODING_AGENT_DIR" -ef "./local-config" ] || exit 1
+[ "$BUZZ_PRIVATE_KEY" = "" ] || exit 1
+printf '%s\n' '{"id":"catalog","type":"response","command":"get_available_models","success":true,"data":{"models":[{"provider":"extension","id":"namespace/model.v1"}]}}'
+"#).unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result=invoke(&view,"agent_models_run",json!({"ticket":ticket,"request":{
+        "host":"","filter":"","action":"connect","edit":{
+            "name":"Pi draft","systemPrompt":"","workspace":dir.path(),
+            "harness":{"command":tools.join("buzz-pi-acp"),"args":[],"provider":"extension","model":"invalid-old-id"},
+            "environment":{"PI_CODING_AGENT_DIR":dir.path().join("local-config")}
         }
-    });
-    let id = seed(dir.path());
-    for integration in [
-        json!({"kind":"codex","settings":{}}),
-        json!({"kind":"databricks","settings":{"host":"https://workspace.example.com","filter":"","apiKey":"SYNTHETIC"}}),
-        json!({"kind":"databricks","settings":{"host":false,"filter":""}}),
-    ] {
-        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
-        let mut req = request(dir.path(), &id, "connect");
-        req["integration"] = integration;
-        assert!(invoke(
-            &view,
-            "agent_models_run",
-            json!({"ticket":ticket,"request":req})
-        )
-        .is_err());
-        invoke(&view, "agent_models_cancel", json!({"ticket":ticket})).unwrap();
-    }
-    assert!(fake.opened.lock().unwrap().is_empty());
-    assert_eq!(fake.connects.load(Ordering::SeqCst), 0);
-}
-
-#[test]
-fn advanced_selection_requires_remote_authenticated_catalog_evidence() {
-    let mut catalog = Catalog {
-        defaults: None,
-        integration: CatalogIntegration::Databricks {
-            host: "https://workspace.example.com".into(),
-        },
-        models: vec![Model {
-            id: "chosen".into(),
-            name: "Chosen".into(),
-            effort: EffortOptions::Unsupported,
-            error: None,
-        }],
-        discovery: None,
-        model_overridden: false,
-        disconnected: false,
-    };
-    let effort = buzz_agent_controller::EffortSelection::Unsupported;
-    assert!(catalog.validate_selection("chosen", &effort).is_err());
-    for evidence in ["cached", "fallback", "unknown", "remote"] {
-        catalog.discovery = Some(Discovery {
-            source: "databricksCatalog",
-            authentication: "authenticated",
-            catalog: evidence,
-        });
-        assert_eq!(
-            catalog.validate_selection("chosen", &effort).is_ok(),
-            evidence == "remote"
-        );
-    }
-    catalog.disconnected = true;
-    assert!(catalog.validate_selection("chosen", &effort).is_err());
-    catalog.disconnected = false;
-    catalog.discovery.as_mut().unwrap().authentication = "unknown";
-    assert!(catalog.validate_selection("chosen", &effort).is_err());
+    }})).unwrap();
+    assert_eq!(
+        result["models"],
+        json!([{"id":"extension/namespace/model.v1","name":"extension/namespace/model.v1","effort":{"status":"unknown"}}])
+    );
+    assert_eq!(
+        invoke(&view, "agent_control_snapshot", json!({})).unwrap()["agents"],
+        json!([])
+    );
 }

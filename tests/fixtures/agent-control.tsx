@@ -146,7 +146,7 @@ fixture.host.models = {
     releaseModels?.();
   },
   run: async (_ticket, request) => {
-    if (request.integration.kind !== "databricks")
+    if (request.integration?.kind !== "databricks")
       throw new Error("Fixture supports Databricks only");
     modelCalls.push(request.action);
     if (modelMode === "wait")

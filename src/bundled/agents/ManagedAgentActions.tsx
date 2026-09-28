@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  agentFailureReason,
   canStopAgent,
+  agentLaunchBlock,
   type AgentControl,
   type AgentControlState,
   type AgentView,
@@ -28,31 +30,53 @@ export function ManagedAgentActions({
 }) {
   const [settingUp, setSettingUp] = useState(false);
   const details = useRef<HTMLDivElement>(null);
+  const [checking, setChecking] = useState(false);
+  // Describes one refreshed status; any later status change supersedes it.
+  const [notice, setNotice] = useState<{
+    text: string;
+    status: AgentView["status"];
+  } | null>(null);
+  // Retire on an observed transition away from the notice's status, from any
+  // surface (editor, mention start), so returning to it cannot revive the notice.
+  const [observed, setObserved] = useState(agent.status);
+  if (observed !== agent.status) {
+    setObserved(agent.status);
+    if (notice && notice.status !== agent.status) setNotice(null);
+  }
   useEffect(() => {
     if (imported) {
       details.current?.scrollIntoView?.({ block: "nearest" });
       details.current?.focus();
     }
   }, [imported]);
-  const transitioning =
-    agent.status === "starting" || agent.status === "stopping";
-  const startBlock =
-    state.status !== "ready"
-      ? "Refresh status before starting."
-      : state.pendingLaunch === agent.id
-        ? "Starting this agent."
-        : state.queuedLaunches?.includes(agent.id)
-          ? "Queued to start after the current agent."
-          : state.busy && (!state.pendingLaunch || state.stopping)
-            ? "Waiting for the current operation."
-            : !state.data?.runtimeAvailable
-              ? state.data?.runtimeMessage ||
-                "The bundled agent runtime is unavailable."
-              : transitioning
-                ? "Waiting for the process transition."
-                : null;
+  const startBlock = agentLaunchBlock(state, agent);
   const act = (action: "start" | "stop") => {
-    void control.action(agent.id, action).catch(() => {});
+    setNotice(null);
+    void control.action(agent.id, action).catch(async (problem: unknown) => {
+      setChecking(true);
+      await control.refresh();
+      setChecking(false);
+      const refreshed = control.snapshot();
+      const current = refreshed.data?.agents.find(
+        (item) => item.id === agent.id,
+      );
+      // A recorded agent error already explains the outcome on this card.
+      if (!current || current.error) return;
+      if (
+        action === "start"
+          ? current.status === "running"
+          : current.status === "stopped" && !current.enabled
+      )
+        return;
+      const reason = agentFailureReason(problem);
+      setNotice({
+        status: current.status,
+        text:
+          refreshed.status === "ready"
+            ? `The agent didn't ${action}.${reason && ` ${reason}`} Try again.`
+            : `We couldn't confirm whether the agent ${action === "start" ? "started" : "stopped"}. Refresh status before trying again.`,
+      });
+    });
   };
   return (
     <div ref={details} tabIndex={-1} className="flex flex-col gap-2">
@@ -104,11 +128,13 @@ export function ManagedAgentActions({
           {agent.error}
         </p>
       )}
+      {checking && <p role="status">Checking agent status…</p>}
+      {!checking && notice?.status === agent.status && !agent.error && (
+        <p role="alert">{notice.text}</p>
+      )}
       {agent.profilePending && (
         <div className="space-y-2">
-          <p role="status">
-            Agent saved. Publish its profile so people can find it by name.
-          </p>
+          <p role="status">Settings saved. Profile publication is pending.</p>
           <Button
             disabled={
               state.busy || state.status !== "ready" || !control.publishProfile

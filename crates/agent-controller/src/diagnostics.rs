@@ -1,21 +1,26 @@
 //! Bounded native listener diagnostics. Raw child output is never retained or
 //! exposed: only known ACP milestones are projected into the existing editor.
+use std::{collections::VecDeque, sync::Mutex};
+
+#[cfg(test)]
 use crate::Result;
+#[cfg(test)]
 use std::{
-    collections::VecDeque,
     io::Read,
     net::Shutdown,
     os::{fd::OwnedFd, unix::net::UnixStream},
     process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::Arc,
     thread::JoinHandle,
 };
 
+#[cfg(test)]
 pub(crate) struct Diagnostics {
     socket: UnixStream,
     messages: Arc<Mutex<VecDeque<&'static str>>>,
     reader: Option<JoinHandle<()>>,
 }
+#[cfg(test)]
 impl Diagnostics {
     pub(crate) fn capture(command: &mut Command) -> Result<Self> {
         let (mut socket, writer) =
@@ -82,6 +87,7 @@ impl Diagnostics {
         }
     }
 }
+#[cfg(test)]
 impl Drop for Diagnostics {
     fn drop(&mut self) {
         let _ = self.socket.shutdown(Shutdown::Both);
@@ -174,6 +180,20 @@ fn record(messages: &Mutex<VecDeque<&'static str>>, line: &[u8]) {
             "Listener reported an error (raw details withheld).",
         );
     }
+}
+
+/// Project retained private output into a bounded set of known, redacted states.
+pub(crate) fn from_log(log: &str) -> Vec<String> {
+    let messages = Mutex::new(VecDeque::new());
+    for line in log.lines() {
+        record(&messages, line.as_bytes());
+    }
+    messages
+        .into_inner()
+        .unwrap_or_default()
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
 }
 
 #[cfg(test)]

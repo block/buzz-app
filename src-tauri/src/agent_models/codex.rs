@@ -200,9 +200,30 @@ mod unix {
             for _ in 0..128 {
                 let mut line = Vec::new();
                 loop {
-                    let available = self.stream.fill_buf().await.map_err(|_| {
-                        ModelError::new("unavailable", "Could not read Codex response.")
-                    })?;
+                    let available = match self.stream.fill_buf().await {
+                        Ok(available) => available,
+                        // A child that exits without reading the request can reset
+                        // the socket on Linux instead of returning a clean EOF.
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::BrokenPipe
+                                    | std::io::ErrorKind::UnexpectedEof
+                            ) =>
+                        {
+                            return Err(ModelError::new(
+                                "unavailable",
+                                "Codex exited before responding. Check its configuration and login.",
+                            ));
+                        }
+                        Err(_) => {
+                            return Err(ModelError::new(
+                                "unavailable",
+                                "Could not read Codex response.",
+                            ));
+                        }
+                    };
                     if available.is_empty() {
                         return Err(ModelError::new(
                             "unavailable",
@@ -389,6 +410,7 @@ mod unix {
             }
             Ok(Catalog {
                 integration: CatalogIntegration::Codex,
+                host: None,
                 defaults: Some(defaults),
                 models: available,
                 discovery: Some(Discovery {

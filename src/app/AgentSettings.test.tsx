@@ -96,6 +96,7 @@ function setupHarnesses(
     installSupported?: boolean;
     installPi?: NonNullable<AgentControlHost["installPi"]>;
   } = {},
+  codexStatus?: "ready" | "cli-needed" | "adapter-needed",
 ) {
   const fixture = controlFixture();
   if (goose.installGoose) fixture.host.installGoose = goose.installGoose;
@@ -128,6 +129,17 @@ function setupHarnesses(
         : {}),
       providers: [],
     },
+    ...(codexStatus
+      ? [
+          {
+            command: "codex-acp",
+            label: "Codex",
+            available: codexStatus === "ready",
+            status: codexStatus,
+            providers: [],
+          },
+        ]
+      : []),
   ];
   const control = createAgentControl(fixture.host);
   disposals.push(() => control.dispose());
@@ -177,7 +189,45 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
     }
     await user.hover(screen.getByRole("button", { name: "About ACP" }));
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.",
+      "Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi and Codex need adapters. Your existing CLI setup and sign-in are left untouched.",
+    );
+  },
+);
+
+it.each(["cli-needed", "adapter-needed", "ready"] as const)(
+  "shows Codex as the fourth Harness with setup guidance only when needed (%s)",
+  async (codexStatus) => {
+    const user = userEvent.setup();
+    setupHarnesses("ready", {}, {}, codexStatus);
+    const rows = within(await screen.findByRole("list")).getAllByRole(
+      "listitem",
+    );
+    expect(rows).toHaveLength(4);
+    expect(rows[3]).toHaveTextContent(
+      `Codex${codexStatus === "ready" ? "Ready" : codexStatus === "cli-needed" ? "CLI needed" : "Adapter needed"}`,
+    );
+    const copyCodex = screen.queryByRole("button", {
+      name: "Copy Codex command",
+    });
+    if (codexStatus === "ready") {
+      expect(copyCodex).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(
+          "npm install -g @agentclientprotocol/codex-acp@1.3.0",
+        ),
+      ).not.toBeInTheDocument();
+      return;
+    }
+    expect(copyCodex).toBeVisible();
+    expect(
+      screen.getByText("npm install -g @agentclientprotocol/codex-acp@1.3.0"),
+    ).toBeVisible();
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue();
+    await user.click(copyCodex as HTMLElement);
+    expect(write).toHaveBeenCalledWith(
+      "npm install -g @agentclientprotocol/codex-acp@1.3.0",
     );
   },
 );

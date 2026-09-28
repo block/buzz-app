@@ -23,14 +23,21 @@ for (const multiple of [false, true]) {
       await expect(
         alpha.getByRole("img", { name: /unread threads?/ }),
       ).toBeVisible();
-      await alpha.hover();
       const popup = page.getByRole("dialog", { name: "Activity in Alpha" });
       const rows = popup.getByRole("button", {
         name: /Open unread thread from/,
       });
-      await expect(rows).toHaveCount(multiple ? 2 : 1);
-      await rows.first().hover();
-      await expect(popup).not.toHaveAttribute("data-starting-style", "");
+      const openPopup = async () => {
+        await alpha.hover();
+        await expect(rows).toHaveCount(multiple ? 2 : 1);
+        await rows.first().hover();
+        await expect(popup).not.toHaveAttribute("data-starting-style", "");
+      };
+      const closePopup = async () => {
+        await page.keyboard.press("Escape");
+        await page.mouse.move(0, 0);
+        await expect(popup).toHaveCount(0);
+      };
       for (const mode of ["light", "dark"]) {
         await page.evaluate((mode) => {
           document.documentElement.dataset.colorMode = mode;
@@ -44,6 +51,9 @@ for (const multiple of [false, true]) {
               width === 640 ? "2" : "1",
             );
           }, width);
+          // Resize only while closed: moving a hover popup away from the pointer
+          // legitimately dismisses it, racing the next row interaction.
+          await openPopup();
           await expect
             .poll(
               () =>
@@ -80,18 +90,28 @@ for (const multiple of [false, true]) {
           await popup.screenshot({
             path: testInfo.outputPath(`hover-corners-${mode}-${width}.png`),
           });
+          await closePopup();
         }
       }
       // A short viewport makes this same real popover scroll, without replacing
       // its rows or disabling clipping to make the corner assertion pass.
       await page.setViewportSize({ width: 640, height: 240 });
+      await openPopup();
+      if (multiple) {
+        await expect
+          .poll(() =>
+            popup.evaluate(
+              (element) => element.scrollHeight > element.clientHeight,
+            ),
+          )
+          .toBe(true);
+      }
       await rows.last().scrollIntoViewIfNeeded();
       await rows.last().hover();
       await expect(rows.last()).toBeInViewport();
       await popup.screenshot({
         path: testInfo.outputPath("hover-corners-scrolled.png"),
       });
-      await page.setViewportSize({ width: 640, height: 950 });
       await rows.last().focus();
       await expect(rows.last()).toBeFocused();
       await rows.last().press("Enter");

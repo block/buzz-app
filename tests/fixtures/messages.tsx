@@ -28,6 +28,7 @@ import type { Attachment } from "../../src/features/relay/contracts";
 import "../../src/shared/styles/globals.css";
 
 const strictWindows = new URLSearchParams(location.search).has("threadWindow");
+const nestedWindow = new URLSearchParams(location.search).has("nestedWindow");
 const channelOne = strictWindows
   ? "00000000-0000-0000-0000-000000000001"
   : "one";
@@ -128,6 +129,25 @@ const message = "${"wide-content-".repeat(35)}";
 );
 const exactReply = replies[0];
 if (!exactReply) throw new Error("Missing exact reply fixture");
+// The oldest reply in the initial window has a parent in page two.
+// Keep the rest of the fixture flat for existing scrollback tests.
+const nestedParent = replies[292];
+const nestedChild = replies[293];
+if (nestedWindow && (!nestedParent || !nestedChild))
+  throw new Error("Missing nested window fixture");
+if (nestedWindow && nestedParent && nestedChild) {
+  const child = message(
+    viewer,
+    channelOne,
+    "Nested window child",
+    nestedChild.created_at,
+    [
+      ["e", roots[0].id, "", "root"],
+      ["e", nestedParent.id, "", "reply"],
+    ],
+  );
+  replies.splice(293, 1, child);
+}
 const exactReaction = signed(viewer, {
   kind: 7,
   content: "👍",

@@ -161,3 +161,55 @@ test("newest window positions immediately; scrollback preserves the visible repl
     await server.close();
   }
 });
+
+test("older page reveals a reparented visible reply without moving its viewport anchor", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1`,
+    );
+    const history = page.getByRole("region", { name: "Thread messages" });
+    const child = history.getByText("Nested window child", { exact: true });
+    await expect(history.locator("ol [data-message-id]")).toHaveCount(10);
+    await page.evaluate(() => window.messagesFixture.holdOlderPage());
+    await history.hover();
+    await page.mouse.wheel(0, -4000);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.filters.length),
+      )
+      .toBe(2);
+    await child.scrollIntoViewIfNeeded();
+    await expect(child).toBeInViewport();
+    const before = await child.evaluate((el) => el.getBoundingClientRect().top);
+    await page.evaluate(() => window.messagesFixture.releaseOlderPage());
+    const parent = history.getByText("First root reply 292", { exact: true });
+    await expect(parent).toBeVisible();
+    await expect(child).toBeVisible();
+    await expect(child).toBeInViewport();
+    await expect
+      .poll(() => child.evaluate((el) => el.getBoundingClientRect().top))
+      .toBeCloseTo(before, -1);
+    // Verify the reply moved under its real parent, not just that it remained flat.
+    expect(
+      await parent.evaluate((el) =>
+        el.closest("li")?.textContent.includes("Nested window child"),
+      ),
+    ).toBe(true);
+  } finally {
+    await page
+      .evaluate(() => window.messagesFixture.releaseOlderPage())
+      .catch(() => {});
+    await server.close();
+  }
+});

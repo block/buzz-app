@@ -298,9 +298,9 @@ function ThreadMessages({
     },
     [],
   );
-  const olderAnchor = useRef<{ id: string; top: number } | undefined>(
-    undefined,
-  );
+  const olderAnchor = useRef<
+    { id: string; top: number; ancestors: readonly string[] } | undefined
+  >(undefined);
   const olderDemand = useRef(false);
   const targetAnchor = useRef<number | undefined>(undefined);
   const selectedRow = useCallback(
@@ -361,6 +361,22 @@ function ThreadMessages({
     follow.current = false;
   }, []);
   const revealedAncestors = useRef(new Set<string>());
+  const deliberatelyCollapsed = useRef(new Set<string>());
+  // A continuation may supply the parent of the visible reply. Commit its new
+  // ancestors before restoring geometry; never reopen a branch the reader closed.
+  useLayoutEffect(() => {
+    const anchor = olderAnchor.current;
+    if (!anchor || snapshot.status === "loading") return;
+    const added = tree
+      .ancestors(anchor.id)
+      .filter((id) => !anchor.ancestors.includes(id));
+    if (added.some((id) => deliberatelyCollapsed.current.has(id))) return;
+    if (added.length)
+      setExpanded((current) => {
+        if (added.every((id) => current.has(id))) return current;
+        return new Set([...current, ...added]);
+      });
+  }, [tree, snapshot.status]);
   // Exact targets may precede their ancestors in bounded history. Reveal every
   // available ancestor as it arrives; missing parents remain visible at the top.
   useLayoutEffect(() => {
@@ -526,12 +542,19 @@ function ThreadMessages({
       return;
     if (olderAnchor.current) {
       const anchor = olderAnchor.current;
-      const row = [
-        ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-      ].find((row) => row.dataset.messageId === anchor.id);
-      if (row)
-        element.scrollTop += row.getBoundingClientRect().top - anchor.top;
-      if (snapshot.status !== "loading") olderAnchor.current = undefined;
+      const added = tree
+        .ancestors(anchor.id)
+        .filter((id) => !anchor.ancestors.includes(id));
+      if (added.some((id) => deliberatelyCollapsed.current.has(id))) {
+        olderAnchor.current = undefined;
+      } else if (added.every((id) => expanded.has(id))) {
+        const row = [
+          ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
+        ].find((row) => row.dataset.messageId === anchor.id);
+        if (row)
+          element.scrollTop += row.getBoundingClientRect().top - anchor.top;
+        if (snapshot.status !== "loading") olderAnchor.current = undefined;
+      }
     }
     if (targetAnchor.current !== undefined) {
       const offset = selectedOffset();
@@ -568,6 +591,8 @@ function ThreadMessages({
     rootTarget,
     revealed,
     selectedOffset,
+    tree,
+    expanded,
   ]);
   // An own send can land in the middle of a branch, not at the list bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
@@ -693,6 +718,8 @@ function ThreadMessages({
             onOpenChange={(open) => {
               follow.current = false;
               targetAnchor.current = undefined;
+              if (open) deliberatelyCollapsed.current.delete(row.id);
+              else deliberatelyCollapsed.current.add(row.id);
               setExpanded((current) => {
                 const next = new Set(current);
                 if (open) next.add(row.id);
@@ -739,6 +766,7 @@ function ThreadMessages({
       olderAnchor.current = {
         id: row.dataset.messageId,
         top: row.getBoundingClientRect().top,
+        ancestors: tree.ancestors(row.dataset.messageId),
       };
     void view.loadMore();
   };

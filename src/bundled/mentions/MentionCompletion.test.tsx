@@ -260,10 +260,10 @@ it("rejects a refuted choice before roster notifications return and keeps main s
   }
 });
 
-it("preserves missing-name recovery for unresolved multi-word queries across loading/ready evidence", () => {
+it("preserves missing-name recovery for an admitted prefix across loading/ready evidence", () => {
   const h = fixture({ missing: true, absent: true });
   try {
-    h.type("@Alice F");
+    h.type("@Ali");
     expect(
       screen.getByRole("option", { name: "Retry suggestions" }),
     ).toBeVisible();

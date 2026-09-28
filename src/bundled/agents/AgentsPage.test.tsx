@@ -2005,6 +2005,9 @@ it("offers explicit repair for an existing team import without replacing or star
   let commit = vi.fn();
   const { f } = setup("ready", (fixture) => {
     fixture.agent.needsTeamImport = true;
+    fixture.agent.enabled = false;
+    fixture.agent.status = "stopped";
+    fixture.agent.runningRevision = null;
     fixture.host.previewImport = async () => ({
       token: "team-preview",
       sourcePath: "/fixture/installed/managed-agents.json",
@@ -2064,6 +2067,9 @@ it("refreshes the consumed preview after a repair so the next agent can be repai
   const commits: string[] = [];
   const { f } = setup("ready", (fixture) => {
     fixture.agent.needsTeamImport = true;
+    fixture.agent.enabled = false;
+    fixture.agent.status = "stopped";
+    fixture.agent.runningRevision = null;
     fixture.data.agents.push({
       ...structuredClone(fixture.agent),
       id: "second-agent",
@@ -2150,6 +2156,9 @@ it.each([
     const commit = vi.fn().mockRejectedValue(rejection);
     const { f, control } = setup("ready", (fixture) => {
       fixture.agent.needsTeamImport = true;
+      fixture.agent.enabled = false;
+      fixture.agent.status = "stopped";
+      fixture.agent.runningRevision = null;
       fixture.host.previewImport = async () => ({
         token: "team-preview",
         sourcePath: "/fixture/installed/managed-agents.json",

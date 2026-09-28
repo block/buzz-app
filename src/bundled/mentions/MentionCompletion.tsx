@@ -76,13 +76,7 @@ export function MentionCompletion({
       !admitted &&
       !model.pending &&
       !model.directory.loading &&
-      !model.directory.error &&
-      !membershipMissing &&
-      !membershipError &&
-      !missing &&
-      !error &&
-      agents.status !== "error" &&
-      !agents.error
+      !model.directory.error
     ) {
       const withdraw = publish({ items: [] });
       return () => {

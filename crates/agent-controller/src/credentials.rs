@@ -34,7 +34,7 @@ impl Failure {
             }
             Self::Denied => "Secure storage access was denied; allow access explicitly and retry",
             Self::Corrupt => "Selected secure-storage credential is malformed",
-            Self::Busy => "Another Buzz app is accessing this credential; retry shortly",
+            Self::Busy => "Credentials are busy; retry after the current operation finishes",
             Self::Unavailable => "The OS credential store is unavailable on this platform",
         }
         .into()

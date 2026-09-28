@@ -483,3 +483,91 @@ fn busy_and_corrupt_individual_migration_do_not_poison_other_agents() {
     // No retry reset: the next restore row can still migrate and start.
     assert!(credentials.read(&good, PUB).unwrap().is_some());
 }
+
+#[test]
+fn rollback_delete_then_reimport_reuses_retained_bundle_without_writing() {
+    let legacy = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let root = legacy
+        .path()
+        .join(LegacySource::Development.app_directory())
+        .join("agents");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("managed-agents.json"),
+        serde_json::to_vec(&json!([
+            {"pubkey": PUB, "name": "Fixture"}
+        ]))
+        .unwrap(),
+    )
+    .unwrap();
+    let (old_credentials, fake) = fixture();
+    fake.put("buzz-desktop-dev", "secrets", blob());
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let mut imports = Imports::default();
+    let preview = imports
+        .preview(
+            LegacySource::Development,
+            legacy.path().into(),
+            dest.path().into(),
+            "wss://relay.example",
+        )
+        .unwrap();
+    let id = preview.candidates[0].id.clone();
+    imports
+        .commit(
+            &preview.token,
+            std::slice::from_ref(&id),
+            &mut store,
+            &old_credentials,
+        )
+        .unwrap();
+
+    // Upgrade migrates the individual credential, retaining the rollback copy.
+    let credentials = bundled(fake.clone());
+    assert!(credentials.read(&id, PUB).unwrap().is_some());
+    drop(credentials);
+    // An older Foundation build removes only the individual item and settings.
+    old_credentials.delete(&id, PUB).unwrap();
+    store
+        .remove(&id, store.agents().unwrap()[0].revision)
+        .unwrap();
+    assert!(store.agents().unwrap().is_empty());
+    assert!(old_credentials.read(&id, PUB).unwrap().is_none());
+    let before = fake.entries.lock().unwrap().clone();
+    assert!(before.contains_key(&(SERVICE.into(), bundle::ACCOUNT.into())));
+
+    // Re-upgrade takes the actual native import path, not a direct add probe.
+    let credentials = bundled(fake.clone());
+    let preview = imports
+        .preview(
+            LegacySource::Development,
+            legacy.path().into(),
+            dest.path().into(),
+            "wss://relay.example",
+        )
+        .unwrap();
+    fake.calls.lock().unwrap().clear();
+    imports
+        .prepare(&preview.token, std::slice::from_ref(&id), &store)
+        .unwrap()
+        .acquire(&credentials)
+        .unwrap()
+        .commit(&mut store)
+        .unwrap();
+    assert_eq!(store.agents().unwrap().len(), 1);
+    assert_eq!(store.agents().unwrap()[0].id, id);
+    assert!(!store.agents().unwrap()[0].enabled);
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        vec![
+            ("legacy".into(), "buzz-desktop-dev".into(), "secrets".into()),
+            ("saved".into(), SERVICE.into(), bundle::ACCOUNT.into()),
+        ]
+    );
+    assert_eq!(*fake.entries.lock().unwrap(), before);
+    // Re-import reuses custody; it does not weaken the create-only API.
+    assert!(credentials
+        .add(&id, &Secret::parse(KEY, PUB).unwrap())
+        .is_err());
+}

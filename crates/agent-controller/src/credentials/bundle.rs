@@ -166,3 +166,15 @@ fn persist(
     state.cached = Some((epoch, verified));
     Ok(())
 }
+
+#[test]
+fn same_process_contention_reports_busy_without_blame_or_keychain_access() {
+    let bundle = Bundle::default();
+    let _pending = bundle.0.lock().unwrap();
+    // Unit-test OsKeychain rejects access; the held session mutex must fail first.
+    let result = bundle.read(&super::platform::OsKeychain, "agent:fixture", "fixture");
+    assert_eq!(
+        result.err().unwrap(),
+        "Credentials are busy; retry after the current operation finishes"
+    );
+}

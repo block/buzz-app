@@ -141,7 +141,7 @@ export function AgentModelPicker({
             : goose
               ? "No models found for this Goose provider. Check its configuration or enter a custom ID."
               : pi
-                ? "No Pi models found. Check local configuration or enter a custom ID."
+                ? "No signed-in Pi providers found. Buzz doesn’t use API keys exported in your shell profile. Choose a provider under LLM Provider to add its API key, or enter a custom ID."
                 : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
       );
     } catch (error) {
@@ -165,7 +165,7 @@ export function AgentModelPicker({
     (m) => !pi || !draft.provider || m.id.startsWith(`${draft.provider}/`),
   );
   const piNoModelsMessage =
-    "No Pi models for this provider. If it needs an API key, add the provider's key variable under Advanced → Environment overrides or configure it in Pi's auth.json (for example, with /login). Then refresh models.";
+    "No Pi models for this provider. Buzz doesn’t use API keys exported in your shell profile. Add this provider’s API key for this agent, then browse models again.";
   const selectedId =
     pi && draft.provider && draft.model
       ? `${draft.provider}/${draft.model}`

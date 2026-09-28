@@ -469,7 +469,7 @@ it("Pi loads its signed-in providers when selected, without Browse", async () =>
 it("explains an empty Pi provider in the open model list without discarding other providers", async () => {
   const f = controlFixture();
   const message =
-    "No Pi models for this provider. If it needs an API key, add the provider's key variable under Advanced → Environment overrides or configure it in Pi's auth.json (for example, with /login). Then refresh models.";
+    "No Pi models for this provider. Buzz doesn’t use API keys exported in your shell profile. Add this provider’s API key for this agent, then browse models again.";
   const run = vi.fn(async () => ({
     host: "",
     models: [{ id: "openai/model", name: "openai/model" }],

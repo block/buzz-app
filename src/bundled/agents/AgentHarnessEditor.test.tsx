@@ -169,7 +169,7 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
             defaultArgs: [],
           },
         ]}
-        piProviders={["extension"]}
+        piProviders={["extension", "openai"]}
         onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
       />
     );
@@ -186,7 +186,18 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
   });
   await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
   const extension = await screen.findByRole("option", { name: "extension" });
-  // Only catalog-reported (signed-in) providers are offered for Pi.
+  // Signed-in providers come from the catalog; the static harness list is
+  // ignored, and key providers that are not signed in say so.
+  expect(screen.getByRole("option", { name: "OpenAI" })).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: "Anthropic (API key needed)" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: "Google Gemini (API key needed)" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("option", { name: "OpenAI (API key needed)" }),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("option", { name: "Anthropic" }),
   ).not.toBeInTheDocument();

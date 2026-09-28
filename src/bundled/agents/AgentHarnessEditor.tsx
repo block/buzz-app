@@ -4,7 +4,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { useState } from "react";
 import type { ControlSnapshot } from "../../features/agents/control";
-import { isGoose, type AgentDraft } from "./agent-edit";
+import { isGoose, PI_API_KEYS, type AgentDraft } from "./agent-edit";
 
 /** Choices come from the injected native snapshot, never a plugin runtime catalog. */
 export function AgentHarnessEditor({
@@ -116,9 +116,21 @@ export function AgentHarnessEditor({
                 ? `Build default (${defaultProvider})`
                 : "Not set",
           },
-          // Pi lists only providers its catalog reports as signed in.
+          // Pi lists providers its catalog reports as signed in, then the
+          // providers someone can sign in to here with an API key.
           ...(harness?.label === "Pi"
-            ? piProviders.map((value) => ({ value, label: value }))
+            ? [
+                ...piProviders.map((value) => ({
+                  value,
+                  label: PI_API_KEYS[value]?.label ?? value,
+                })),
+                ...Object.entries(PI_API_KEYS)
+                  .filter(([value]) => !piProviders.includes(value))
+                  .map(([value, { label }]) => ({
+                    value,
+                    label: `${label} (API key needed)`,
+                  })),
+              ]
             : (harness?.providers ?? [])),
         ]}
         onChange={(provider) =>

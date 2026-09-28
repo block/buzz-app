@@ -260,6 +260,7 @@ export function Settings({
             </nav>
           </aside>
           <div className={styles.detail}>
+            {navigationPane && <h1 className="sr-only">Settings</h1>}
             <div hidden={selected !== "notifications"}>
               <NotificationSettings
                 notifications={notifications}

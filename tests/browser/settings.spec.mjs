@@ -23,6 +23,9 @@ test("Settings replaces the channel sidenav and Back restores the prior view", a
   });
   await expect(settingsSidebar).toBeVisible();
   await expect(
+    page.getByRole("heading", { name: "Settings", level: 1, exact: true }),
+  ).toHaveCount(1);
+  await expect(
     page.getByRole("complementary", { name: "Channel sidebar" }),
   ).toHaveCount(0);
   await expect(communityRail).toBeVisible();

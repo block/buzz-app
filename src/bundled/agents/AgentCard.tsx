@@ -15,7 +15,7 @@ import {
   UsersIcon,
 } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { AgentAvatar } from "../../features/agents/AgentAvatar";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { avatarSource } from "../../shared/avatar-source";
 import { usePresenceStatus } from "../../features/presence/react";
@@ -170,7 +170,11 @@ export function AgentCard({
               : "flex min-h-36 items-center justify-center py-5"
           }
         >
-          <Avatar
+          <AgentAvatar
+            session={session}
+            agentPubkey={
+              identities.length === 1 ? identities[0]?.pubkey : undefined
+            }
             alt={name}
             fallback={name}
             src={picture ?? null}

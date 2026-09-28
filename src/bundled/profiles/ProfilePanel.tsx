@@ -33,7 +33,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { CopyIcon } from "../../shared/design-system/icons/index";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { AgentAvatar } from "../../features/agents/AgentAvatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -335,11 +335,12 @@ function ProfileDetails({
         />
       ) : (
         <>
-          <div
-            className={`${styles.identity} ${picture ? styles.withPortrait : ""}`}
-          >
-            <div className={picture ? styles.portrait : undefined}>
-              <Avatar
+          <div className={styles.identity}>
+            <div className={styles.portrait}>
+              <AgentAvatar
+                session={session}
+                agentPubkey={pubkey}
+                channelId={context?.channelId}
                 src={picture}
                 alt={
                   tab === "info" && presence !== "unknown"
@@ -347,7 +348,7 @@ function ProfileDetails({
                     : `${name} avatar`
                 }
                 fallback={name}
-                size={picture ? "fill" : "large"}
+                size="fill"
                 shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
                 statusBadge={presence === "unknown" ? undefined : presence}
               />

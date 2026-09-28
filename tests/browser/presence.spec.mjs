@@ -210,9 +210,9 @@ test("foreground send and cold channel entry remain available during a profile s
   }
 });
 
-test.describe("human message bylines show known presence", () => {
+test.describe("human message bylines omit presence", () => {
   test.use({ threadUnread: true, historyCounts: { alpha: 20, beta: 20 } });
-  test("timeline and thread bylines demand presence alongside an explicit profile", async ({
+  test("timeline and thread omit badges while the profile retains presence", async ({
     page,
     app,
   }) => {
@@ -238,13 +238,13 @@ test.describe("human message bylines show known presence", () => {
         .getByRole("button", { name: "View Alice Fixture profile" })
         .first()
         .locator(".buzz-avatar-status"),
-    ).toHaveAttribute("data-status", "online");
+    ).not.toHaveAttribute("data-status");
     await expect(
       thread
         .getByRole("button", { name: "View Alice Fixture profile" })
         .first()
         .locator(".buzz-avatar-status"),
-    ).toHaveAttribute("data-status", "online");
+    ).not.toHaveAttribute("data-status");
     await thread
       .getByRole("button", { name: "View Alice Fixture profile", exact: true })
       .first()

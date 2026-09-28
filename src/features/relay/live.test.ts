@@ -8,6 +8,17 @@ import {
 } from "./live";
 import { keypair, message, roster, signed, scriptedTransport } from "./testing";
 import { createRelaySession } from "./session";
+type WireFilter = {
+  kinds: number[];
+  "#h"?: string[];
+  "#p"?: string[];
+  since: number;
+  limit: number;
+};
+type WireRequest = [string, string, WireFilter, ...WireFilter[]];
+const filtersOf = (request: WireRequest) => request.slice(2) as WireFilter[];
+const scopeOf = (request: WireRequest) =>
+  filtersOf(request).flatMap((f) => f["#h"] ?? []);
 class Socket {
   readyState = 1;
   onmessage?: (event: { data: string }) => Promise<void>;
@@ -25,17 +36,7 @@ class Socket {
     await this.onmessage?.({ data: JSON.stringify(value) });
   }
   requests() {
-    return this.sent.filter((entry) => entry[0] === "REQ") as [
-      string,
-      string,
-      {
-        kinds: number[];
-        "#h"?: string[];
-        "#p"?: string[];
-        since: number;
-        limit: number;
-      },
-    ][];
+    return this.sent.filter((entry) => entry[0] === "REQ") as WireRequest[];
   }
   async auth() {
     await this.receive(["AUTH", "challenge"]);
@@ -125,6 +126,449 @@ it("uses independent explicit channel routes and self-p globals; equal interests
   h.owner.dispose();
   expect(vi.getTimerCount()).toBe(0);
 });
+it("batches joined background interests without rebalance and fences retired batch wires", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    const joined = Array.from(
+      { length: 332 },
+      (_, i) => `c${String(i).padStart(3, "0")}`,
+    );
+    h.owner.prioritize?.(["c331"]);
+    h.owner.update([...joined, "preview"], joined);
+    await h.first.auth();
+    // Each EOSE is the setup completion barrier and releases the next slot.
+    for (let i = 0; i < h.first.requests().length; i++)
+      await h.first.receive(["EOSE", h.first.requests()[i]?.[1]]);
+    const requests = h.first.requests();
+    expect(requests).toHaveLength(38);
+    const batches = requests.filter((r) => scopeOf(r).length > 1);
+    expect(batches.map((r) => scopeOf(r).length)).toEqual(Array(33).fill(10));
+    for (const r of requests) {
+      expect(filtersOf(r).length).toBeLessThanOrEqual(10);
+      for (const f of filtersOf(r))
+        if (f["#h"]) {
+          expect(f["#h"]).toHaveLength(1);
+          expect(f.limit).toBe(500);
+        }
+    }
+    expect(
+      requests.filter((r) => scopeOf(r).length === 1).map(scopeOf),
+    ).toEqual([["c331"], ["preview"], ["c330"]]);
+    expect(h.callbacks.established).toHaveBeenCalledTimes(38);
+    expect(h.callbacks.state.mock.lastCall?.[0].routes).toHaveLength(335);
+    const batch = batches[0];
+    assert.exists(batch);
+    const first = message(h.key, "c000", "first", 1700000000);
+    await h.first.receive(["EVENT", batch[1], first]);
+    expect(h.callbacks.receive).toHaveBeenLastCalledWith([first], {
+      phase: "live",
+      channelId: "c000",
+    });
+    const other = message(h.key, "preview", "wrong wire", 1700000001);
+    h.callbacks.receive.mockClear();
+    await h.first.receive(["EVENT", batch[1], other]);
+    expect(h.callbacks.receive).not.toHaveBeenCalled();
+    const typing = signed(h.key, {
+      kind: 20002,
+      tags: [["h", "c001"]],
+      content: "",
+    });
+    await h.first.receive(["EVENT", batch[1], typing]);
+    expect(h.callbacks.receive).toHaveBeenLastCalledWith([typing], {
+      phase: "live",
+      channelId: "c001",
+    });
+    h.owner.prioritize?.(["c001"]);
+    expect(h.first.requests()).toHaveLength(38);
+    const retained = joined.filter((id) => id !== "c000");
+    h.owner.update([...retained, "preview"], retained);
+    // Healthy survivors keep one scope and overlap the old wire until EOSE.
+    expect(h.first.requests()).toHaveLength(39);
+    const replacement = h.first.requests().at(-1);
+    assert.exists(replacement);
+    expect(replacement[2].limit).toBe(0);
+    expect(h.first.sent.filter(([kind]) => kind === "CLOSE")).toEqual([]);
+    await h.first.receive(["EOSE", replacement[1]]);
+    expect(h.first.sent.filter(([kind]) => kind === "CLOSE")).toEqual([
+      ["CLOSE", batch[1]],
+    ]);
+    h.callbacks.receive.mockClear();
+    h.callbacks.established.mockClear();
+    await h.first.receive(["EVENT", batch[1], first]);
+    await h.first.receive(["EOSE", batch[1]]);
+    expect(h.callbacks.receive).not.toHaveBeenCalled();
+    expect(h.callbacks.established).not.toHaveBeenCalled();
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps quiet-channel unread evidence when another filter fills its replay allowance", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  const relay = keypair(),
+    author = keypair();
+  const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      h.callbacks.receive.mockImplementation(callbacks.receive);
+      h.callbacks.state.mockImplementation(callbacks.state);
+      return h.owner;
+    },
+  });
+  try {
+    const ids = ["hot", "quiet"];
+    h.callbacks.receive(ids.map((id) => roster(relay, id, [h.key.pubkey])));
+    await h.first.auth();
+    const batch = h.first.requests().find((r) => scopeOf(r).includes("quiet"));
+    assert.exists(batch);
+    const incoming = vi.fn();
+    owner.session.subscribeIncoming(incoming);
+    const now = Math.floor(Date.now() / 1000);
+    const quiet = signed(author, {
+      kind: 9,
+      content: "quiet mention",
+      created_at: now - 100,
+      tags: [
+        ["h", "quiet"],
+        ["p", h.key.pubkey],
+      ],
+    });
+    const history = [
+      quiet,
+      ...Array.from({ length: 501 }, (_, i) =>
+        message(author, "hot", `hot-${i}`, now - 1),
+      ),
+    ];
+    // Relay's existing OR contract applies each filter's limit separately.
+    // The former multi-h filter loses quiet to the 500 newer hot events.
+    const delivered = new Set<string>();
+    for (const filter of filtersOf(batch)) {
+      const matches = history
+        .filter(
+          (e) =>
+            filter.kinds.includes(e.kind) &&
+            e.created_at >= filter.since &&
+            e.tags.some(
+              ([k, v]) =>
+                k === "h" && v !== undefined && filter["#h"]?.includes(v),
+            ),
+        )
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, filter.limit);
+      for (const event of matches)
+        if (!delivered.has(event.id)) {
+          delivered.add(event.id);
+          await h.first.receive(["EVENT", batch[1], event]);
+        }
+    }
+    await h.first.receive(["EOSE", batch[1]]);
+    expect(delivered.has(quiet.id)).toBe(true);
+    expect(
+      owner.session.unread.snapshot({ kind: "channel", channelId: "quiet" }),
+    ).toMatchObject({ observedCount: 1, attentionCount: 1 });
+    expect(incoming).not.toHaveBeenCalled();
+    // Aggregate replay evidence stays conservative for every logical channel.
+    expect(
+      h.callbacks.state.mock.lastCall?.[0].routes
+        .filter((r) => r.channelId)
+        .every((r) => r.replay === "limited"),
+    ).toBe(true);
+  } finally {
+    owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(["single", "chained"])(
+  "preserves survivor alerts before replacement EOSE and deduplicates the overlapping live copy (%s removal)",
+  async (removal) => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    const relay = keypair(),
+      author = keypair();
+    const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+    const owner = createRelaySession({
+      ...wire.transport,
+      subscribe(callbacks) {
+        h.callbacks.receive.mockImplementation(callbacks.receive);
+        h.callbacks.state.mockImplementation(callbacks.state);
+        return h.owner;
+      },
+    });
+    try {
+      h.callbacks.receive(
+        ["a", "b", "c"].map((id) => roster(relay, id, [h.key.pubkey])),
+      );
+      await h.first.auth();
+      const initial = h.first.requests().find((r) => scopeOf(r).length === 3);
+      assert.exists(initial);
+      expect(initial[2].limit).toBe(500);
+      await h.first.receive(["EOSE", initial[1]]);
+      const incoming = vi.fn();
+      owner.session.subscribeIncoming(incoming);
+      // Signed membership removes A through the real session's interest callback.
+      await h.first.receive([
+        "EVENT",
+        initial[1],
+        roster(relay, "a", [], 1700000001),
+      ]);
+      let replacement = h.first.requests().at(-1);
+      assert.exists(replacement);
+      expect(scopeOf(replacement)).toEqual(["b", "c"]);
+      expect(filtersOf(replacement)).toEqual([
+        expect.objectContaining({
+          "#h": ["b", "c"],
+          since: initial[2].since,
+          limit: 0,
+        }),
+      ]);
+      expect(h.first.sent.filter(([kind]) => kind === "CLOSE")).toEqual([]);
+      if (removal === "chained") {
+        const intermediate = replacement;
+        // Hold both EOSEs. The original is still the only established source.
+        await h.first.receive([
+          "EVENT",
+          initial[1],
+          roster(relay, "b", [], 1700000001),
+        ]);
+        replacement = h.first.requests().at(-1);
+        assert.exists(replacement);
+        expect(replacement[2]).toMatchObject({
+          "#h": ["c"],
+          since: initial[2].since,
+          limit: 0,
+        });
+        expect(h.first.sent.filter(([kind]) => kind === "CLOSE")).toEqual([
+          ["CLOSE", intermediate[1]],
+        ]);
+        // Superseded EVENT/EOSE/CLOSED frames cannot retire or establish a source.
+        h.callbacks.receive.mockClear();
+        h.callbacks.established.mockClear();
+        await h.first.receive([
+          "EVENT",
+          intermediate[1],
+          message(author, "c", "superseded", 1700000002),
+        ]);
+        await h.first.receive(["EOSE", intermediate[1]]);
+        await h.first.receive([
+          "CLOSED",
+          intermediate[1],
+          "restricted: not a channel member",
+        ]);
+        expect(h.callbacks.receive).not.toHaveBeenCalled();
+        expect(h.callbacks.established).not.toHaveBeenCalled();
+        // Count at every sent frame, not only at the end of the handoff.
+        const retained = new Set<unknown>();
+        for (const [kind, id, filter] of h.first.sent) {
+          if (kind === "REQ" && (filter as { "#h"?: string[] })["#h"])
+            retained.add(id);
+          if (kind === "CLOSE") retained.delete(id);
+          expect(retained.size).toBeLessThanOrEqual(2);
+        }
+      }
+      // Replacement-first and original-first orders both produce one incoming item.
+      const firstChannel = removal === "chained" ? "c" : "b";
+      for (const [first, second, id] of [
+        [replacement[1], initial[1], firstChannel],
+        [initial[1], replacement[1], "c"],
+      ] as const) {
+        const event = message(author, id, `fresh-${id}-${first}`, 1700000002);
+        await h.first.receive(["EVENT", first, event]);
+        await h.first.receive(["EVENT", second, event]);
+      }
+      expect(
+        incoming.mock.calls.map(([events]) => events[0].channelId),
+      ).toEqual([firstChannel, "c"]);
+      h.callbacks.receive.mockClear();
+      for (const id of removal === "chained" ? ["a", "b"] : ["a"])
+        for (const source of [initial, replacement])
+          await h.first.receive([
+            "EVENT",
+            source[1],
+            message(author, id, "retired", 1700000003),
+          ]);
+      expect(h.callbacks.receive).not.toHaveBeenCalled();
+      // Re-adding A creates a new lifetime; the old scope must stay retired for A.
+      h.callbacks.receive([roster(relay, "a", [h.key.pubkey], 1700000004)]);
+      h.callbacks.receive.mockClear();
+      await h.first.receive([
+        "EVENT",
+        initial[1],
+        message(author, "a", "old lifetime", 1700000005),
+      ]);
+      expect(h.callbacks.receive).not.toHaveBeenCalled();
+      await h.first.receive(["EOSE", replacement[1]]);
+      expect(h.first.sent).toContainEqual(["CLOSE", initial[1]]);
+    } finally {
+      owner.dispose();
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+it("renews with one bounded overlap and releases both wires on timeout and disposal", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    h.owner.update(["a", "b", "c"], ["a", "b", "c"]);
+    await h.first.auth();
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    const initial = h.first.requests()[2];
+    assert.exists(initial);
+    await vi.advanceTimersByTimeAsync(59999);
+    expect(h.first.requests()).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(1);
+    const renewal = h.first.requests().at(-1);
+    assert.exists(renewal);
+    expect(h.first.requests()).toHaveLength(4);
+    expect(scopeOf(renewal)).toEqual(["a", "b", "c"]);
+    expect(filtersOf(renewal)).toEqual([
+      expect.objectContaining({
+        "#h": ["a", "b", "c"],
+        kinds: initial[2].kinds,
+        limit: 0,
+        since: initial[2].since,
+      }),
+    ]);
+    expect(h.first.sent.filter(([kind]) => kind === "CLOSE")).toEqual([]);
+    const event = message(h.key, "b", "fresh", 1700000000);
+    await h.first.receive(["EVENT", renewal[1], event]);
+    expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+      phase: "live",
+      channelId: "b",
+    });
+    // Removal during a pending renewal never stacks a third retained wire.
+    h.owner.update(["b", "c"], ["b", "c"]);
+    const survivor = h.first.requests().at(-1);
+    assert.exists(survivor);
+    expect(h.first.sent.filter(([kind]) => kind === "CLOSE")).toEqual([
+      ["CLOSE", renewal[1]],
+    ]);
+    h.callbacks.receive.mockClear();
+    await h.first.receive(["EVENT", initial[1], event]);
+    expect(h.callbacks.receive).toHaveBeenCalledWith([event], {
+      phase: "live",
+      channelId: "b",
+    });
+    h.callbacks.receive.mockClear();
+    await h.first.receive([
+      "EVENT",
+      initial[1],
+      message(h.key, "a", "removed", 1700000001),
+    ]);
+    expect(h.callbacks.receive).not.toHaveBeenCalled();
+    await h.first.receive(["EOSE", renewal[1]]);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(h.first.sent).toContainEqual(["CLOSE", survivor[1]]);
+    expect(h.first.sent).toContainEqual(["CLOSE", initial[1]]);
+    expect(
+      h.callbacks.state.mock.lastCall?.[0].routes
+        .filter((r) => r.channelId)
+        .every((r) => r.status === "error"),
+    ).toBe(true);
+    h.owner.retry();
+    const retry = h.first.requests().at(-1);
+    assert.exists(retry);
+    expect(filtersOf(retry)).toEqual(filtersOf(survivor));
+    expect(filtersOf(retry)).toHaveLength(1);
+    expect(retry[2]).toMatchObject({ "#h": ["b", "c"], limit: 0 });
+    await h.first.receive([
+      "CLOSED",
+      retry[1],
+      "rate-limited: quota exceeded; retry in 2s",
+    ]);
+    await vi.advanceTimersByTimeAsync(3000);
+    const quotaRetry = h.first.requests().at(-1);
+    assert.exists(quotaRetry);
+    expect(filtersOf(quotaRetry)).toEqual(filtersOf(retry));
+    await h.first.receive(["EOSE", quotaRetry[1]]);
+    await vi.advanceTimersByTimeAsync(47000);
+    const nextRenewal = h.first.requests().at(-1);
+    assert.exists(nextRenewal);
+    expect(filtersOf(nextRenewal)).toEqual(filtersOf(retry));
+  } finally {
+    h.owner.dispose();
+  }
+  expect(h.first.readyState).toBe(3);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("applies a batch denial through the session before rescheduling surviving interests", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  const relay = keypair();
+  const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      h.callbacks.receive.mockImplementation(callbacks.receive);
+      h.callbacks.state.mockImplementation(callbacks.state);
+      h.callbacks.denied.mockImplementation(callbacks.denied);
+      return h.owner;
+    },
+  });
+  try {
+    h.callbacks.receive(
+      ["a", "b", "c"].map((id) => roster(relay, id, [h.key.pubkey])),
+    );
+    await h.first.auth();
+    const batch = h.first.requests().find((r) => scopeOf(r).length === 3);
+    assert.exists(batch);
+    await h.first.receive([
+      "CLOSED",
+      batch[1],
+      "restricted: not a channel member",
+    ]);
+    expect(owner.session.channels.list().channels).toEqual([]);
+    expect(h.callbacks.denied.mock.calls.map(([id]) => id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    expect(h.first.requests().filter((r) => r[2]["#h"])).toHaveLength(1);
+  } finally {
+    owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("batch denial does not cross a synchronous removal and re-addition", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    h.owner.update(["a", "b", "c"], ["a", "b", "c"]);
+    await h.first.auth();
+    const batch = h.first.requests().find((r) => scopeOf(r).length === 3);
+    assert.exists(batch);
+    h.callbacks.denied.mockImplementation((id) => {
+      if (id === "a") {
+        h.owner.update(["c"], ["c"]);
+        h.owner.update(["b", "c"], ["b", "c"]);
+      } else h.owner.update(["b"], ["b"]);
+    });
+    await h.first.receive([
+      "CLOSED",
+      batch[1],
+      "restricted: not a channel member",
+    ]);
+    expect(h.callbacks.denied.mock.calls.map(([id]) => id)).toEqual(["a", "c"]);
+    expect(
+      h.first
+        .requests()
+        .filter((r) => r[2]["#h"])
+        .map(scopeOf),
+    ).toEqual([["a", "b", "c"], ["b"]]);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("isolates denial, fences removed/readded routes and late sockets, and disposes retries", async () => {
   vi.useFakeTimers();
   const h = setup();
@@ -597,35 +1041,52 @@ it("requests statuses and community emoji on the profile route and delivers veri
   h.owner.dispose();
 });
 
-it("a reconnect starts a new replay phase even for previously established routes", async () => {
-  vi.useFakeTimers();
-  const h = setup(["a"]);
-  await h.first.auth();
-  await vi.advanceTimersByTimeAsync(750);
-  const request = h.first.requests()[2];
-  assert.exists(request);
-  await h.first.receive(["EOSE", request[1]]);
-  const event = message(keypair(), "a", "live", 1700000000);
-  await h.first.receive(["EVENT", request[1], event]);
-  expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
-    phase: "live",
-    channelId: "a",
-  });
-  h.first.close();
-  await vi.advanceTimersByTimeAsync(500);
-  const socket = h.sockets[1];
-  assert.exists(socket);
-  await socket.auth();
-  await vi.advanceTimersByTimeAsync(750);
-  const replay = socket.requests()[2];
-  assert.exists(replay);
-  await socket.receive(["EVENT", replay[1], event]);
-  expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
-    phase: "replay",
-    channelId: "a",
-  });
-  h.owner.dispose();
-});
+it.each([false, true])(
+  "a reconnect restores per-channel replay after established/renewed routes (joined=%s)",
+  async (joined) => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    h.owner.update(["a", "b"], joined ? ["a", "b"] : []);
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    const request = h.first.requests()[2];
+    assert.exists(request);
+    await h.first.receive(["EOSE", request[1]]);
+    const event = message(keypair(), "a", "live", 1700000000);
+    await h.first.receive(["EVENT", request[1], event]);
+    expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+      phase: "live",
+      channelId: "a",
+    });
+    if (joined) {
+      await vi.advanceTimersByTimeAsync(60000);
+      const renewal = h.first.requests().at(-1);
+      assert.exists(renewal);
+      expect(filtersOf(renewal)).toHaveLength(1);
+      expect(renewal[2]).toMatchObject({ "#h": ["a", "b"], limit: 0 });
+      await h.first.receive(["EOSE", renewal[1]]);
+    }
+    h.first.close();
+    await vi.advanceTimersByTimeAsync(500);
+    const socket = h.sockets[1];
+    assert.exists(socket);
+    await socket.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    const replay = socket.requests()[2];
+    assert.exists(replay);
+    expect(filtersOf(replay)).toEqual(
+      (joined ? ["a", "b"] : ["a"]).map((id) =>
+        expect.objectContaining({ "#h": [id], limit: 500 }),
+      ),
+    );
+    await socket.receive(["EVENT", replay[1], event]);
+    expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+      phase: "replay",
+      channelId: "a",
+    });
+    h.owner.dispose();
+  },
+);
 
 it("live channel provenance excludes observer telemetry while preserving membership traffic", async () => {
   vi.useFakeTimers();
@@ -848,6 +1309,9 @@ it("keeps misrouted activity out of accessible conversations; session rejects am
     roster(relay, "a", [h.key.pubkey]),
     roster(relay, "b", [h.key.pubkey]),
   ]);
+  // This case exercises distinct wire scopes. Joined background batching is
+  // covered separately below; membership alone no longer implies one wire each.
+  h.owner.update(["a", "b"]);
   await h.first.auth();
   await vi.advanceTimersByTimeAsync(750);
   const requests = h.first.requests();

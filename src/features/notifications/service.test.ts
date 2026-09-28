@@ -339,30 +339,43 @@ it("a deferred submission revalidates the sound decision before playing", async 
   await settle();
   expect(t.plays).toEqual([]);
   t.service.selectViewer(viewer);
-  // Turning Sound off mid-flight cancels the outstanding decision.
+  // Turning Sound off mid-flight cancels the outstanding decision — stickily:
+  // restoring it before the submission resolves must not resurrect the sound.
   await t.submit("muted");
   await flush();
   t.service.updatePreferences({ sound: false });
+  t.service.updatePreferences({ sound: true });
+  await settle();
+  expect(t.plays).toEqual([]);
+  // Master alerts off → on mid-flight stays cancelled.
+  await t.submit("alerts-toggled");
+  await flush();
+  t.service.updatePreferences({ enabled: false });
+  t.service.updatePreferences({ enabled: true });
   await settle();
   expect(t.plays).toEqual([]);
   // A banner submitted while Sound was off stays silent after off → on.
+  t.service.updatePreferences({ sound: false });
   await t.submit("resurrected");
   await flush();
   t.service.updatePreferences({ sound: true });
   await settle();
   expect(t.plays).toEqual([]);
-  // Disabling the category mid-flight cancels the sound.
+  // Disabling the category mid-flight cancels the sound, even if re-enabled.
   await t.submit("category-off");
   await flush();
   t.service.updatePreferences({ categories: { mention: false } });
+  t.service.updatePreferences({ categories: { mention: true } });
   await settle();
   expect(t.plays).toEqual([]);
-  t.service.updatePreferences({ categories: { mention: true } });
-  // Losing eligibility (access/producer revocation) mid-flight cancels it.
+  // Losing eligibility (access/producer revocation) mid-flight cancels it,
+  // even when eligibility is restored before the submission resolves.
   let eligible: boolean | "wait" = true;
   await t.submit("revoked", () => eligible);
   await flush();
   eligible = false;
+  t.service.revalidate();
+  eligible = true;
   await settle();
   expect(t.plays).toEqual([]);
   // An undisturbed deferred submission still plays exactly once.

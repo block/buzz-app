@@ -526,8 +526,7 @@ function Timeline({
           {rows.map((row, index) => {
             const day =
               index === 0
-                ? queries.channels.get?.(channelId)?.channelType !== "dm" ||
-                  window.hasMore
+                ? true
                 : new Date(
                     (rows[index - 1]?.createdAt ?? 0) * 1000,
                   ).toDateString() !==

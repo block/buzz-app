@@ -240,6 +240,7 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.day}>
           <span>
             {new Date(row.createdAt * 1000).toLocaleDateString(undefined, {
+              year: "numeric",
               weekday: "long",
               month: "long",
               day: "numeric",

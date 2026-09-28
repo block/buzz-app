@@ -525,6 +525,10 @@ function ThreadMessages({
     return (tree.children.get(parent) ?? []).map((row) => {
       const children = tree.children.get(row.id);
       const continuation = continuesMessageGroup(previousReply, row);
+      const day =
+        !previousReply ||
+        new Date(previousReply.createdAt * 1000).toDateString() !==
+          new Date(row.createdAt * 1000).toDateString();
       previousReply =
         children?.length && !expanded.has(row.id) ? undefined : row;
       const descendants = branchReplies.get(row.id) ?? [];
@@ -548,7 +552,7 @@ function ThreadMessages({
           media={session.media}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
-          day={false}
+          day={day}
           layout={continuation ? "continuation" : "thread"}
           retry={session.messages.retry}
           {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
@@ -661,7 +665,7 @@ function ThreadMessages({
               media={session.media}
               onOpenLink={onOpenLink}
               canOpenLink={canOpenLink}
-              day={false}
+              day={true}
               layout="thread"
               retry={session.messages.retry}
               mediaMode="thread"

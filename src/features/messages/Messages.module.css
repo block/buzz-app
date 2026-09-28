@@ -1489,21 +1489,15 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
   }
 }
 @media (hover: hover) and (pointer: fine) and (min-width: 640px) {
-  .messageActions {
-    position: absolute;
-    inset-inline-end: 0;
-    top: 0;
-    opacity: 0;
-    pointer-events: none;
-  }
-  /* Thread controls keep their own row so hover never obscures reply text
-     or shifts neighboring branch controls. */
-  .threadHistory .messageBody {
+  /* Keep actions clear of prose without hover shifts. Every layout reserves
+     the same footer so regrouping on prepend preserves the reading anchor. */
+  .messageBody {
     display: flex;
     flex-direction: column;
   }
-  .threadHistory .messageActions {
-    position: static;
+  .messageActions {
+    opacity: 0;
+    pointer-events: none;
     order: 1;
     flex-wrap: nowrap;
     max-width: none;

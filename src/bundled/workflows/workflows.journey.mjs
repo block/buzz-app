@@ -3,6 +3,7 @@ import { createServer } from "../../../tests/browser/vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { watchPageErrors } from "../../../tests/browser/page-errors.mjs";
 
 let server;
 let url;
@@ -98,8 +99,7 @@ function editorControls(page) {
 test("workflow editor preserves YAML, resolves exact saves, retains conflicts and purges access", async ({
   page,
 }) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   await page.goto(url);
   const editor = editorControls(page);
   const { button, yaml, tab } = editor;
@@ -230,7 +230,7 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
       page.evaluate(() => window.workflowFixture.definitions.disposed()),
     )
     .toBe(true);
-  expect(errors).toEqual([]);
+  expect(errors.unexplained()).toEqual([]);
 });
 
 // Real layout and native menu focus cannot be established by jsdom.
@@ -301,10 +301,10 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   page,
   browserName,
 }) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
+  const consoleErrors = [];
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
+    if (message.type() === "error") consoleErrors.push(message.text());
   });
   // Wide layout: the inspector sits beside the flow, so its controls and the
   // footer share one keyboard layer.
@@ -442,7 +442,7 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await expect(dialog).toContainText("It will run for every new message");
   expect(await saves()).toBe(3);
   await page.keyboard.press("Escape");
-  expect(errors).toEqual([]);
+  expect([...errors.unexplained(), ...consoleErrors]).toEqual([]);
 });
 
 test("history stays lazy and paged; acknowledging an unknown run never repeats it", async ({
@@ -493,7 +493,7 @@ test("history stays lazy and paged; acknowledging an unknown run never repeats i
   );
   await button("Dismiss notice").click();
   await expect(page.getByRole("alertdialog")).toContainText(
-    "does not undo, cancel or repeat",
+    "does not undo, cancel, or repeat",
   );
   await button("Dismiss notice and continue").click();
   await editor.expectAction("Run now", true);
@@ -509,8 +509,7 @@ test("history stays lazy and paged; acknowledging an unknown run never repeats i
 test("real session page under StrictMode fences community changes, warns before discarding a dirty draft and purges access", async ({
   page,
 }) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   await page.goto(url.replace("/fixture.html", "/session-fixture.html"));
   const editor = editorControls(page);
   const { button } = editor;
@@ -583,14 +582,13 @@ test("real session page under StrictMode fences community changes, warns before 
   expect(await page.locator("body").innerText()).not.toContain(
     "Revoked private text",
   );
-  expect(errors).toEqual([]);
+  expect(errors.unexplained()).toEqual([]);
 });
 
 test("landing batches 129 channels into two workflow reads", async ({
   page,
 }) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   await page.goto(url.replace("/fixture.html", "/session-fixture.html?many"));
   await expect(
     page.getByRole("button", { name: "Open Fixture A helper", exact: true }),
@@ -600,7 +598,7 @@ test("landing batches 129 channels into two workflow reads", async ({
       page.evaluate(() => window.workflowSessionFixture.definitionQueries()),
     )
     .toBe(2);
-  expect(errors).toEqual([]);
+  expect(errors.unexplained()).toEqual([]);
 });
 
 test("landing scan survives channel presentation churn without restarting", async ({
@@ -948,39 +946,187 @@ test("landing keeps a succeeded toggle locked until its exact revision is read b
   ).toBeEnabled();
 });
 
-test("landing keeps a workflow locked while deletion remains undismissed", async ({
+for (const from of ["grid", "detail"]) {
+  test(`deletion from ${from} stays on the grid while the session reconciles removal`, async ({
+    page,
+  }) => {
+    await page.goto(
+      url.replace(
+        "/fixture.html",
+        `/session-fixture.html?writes${from === "detail" ? "&hold-editor" : ""}`,
+      ),
+    );
+    const editor = editorControls(page);
+    const { button } = editor;
+    let editorMounted = false;
+    if (from === "detail") {
+      await expect(page.getByRole("status")).toHaveText("Workflows loaded.");
+      await page.evaluate(() =>
+        window.workflowSessionFixture.holdNextEditorRead(),
+      );
+      await button("Open Fixture A helper").click();
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            window.workflowSessionFixture.definitionReadHeld(),
+          ),
+        )
+        .toBe(true);
+      await editor.rename("Unsaved name");
+      await editor.action("Delete workflow");
+    } else {
+      // Observe all DOM mutations, including a detail that mounts and closes between assertions.
+      await page.evaluate(() => {
+        window.deletionEditorMounted = false;
+        window.deletionObserver = new MutationObserver((records) => {
+          for (const record of records)
+            for (const node of record.addedNodes)
+              if (
+                node instanceof Element &&
+                (node.matches('[aria-label="Workflow editor"]') ||
+                  node.querySelector('[aria-label="Workflow editor"]'))
+              )
+                window.deletionEditorMounted = true;
+        });
+        window.deletionObserver.observe(document.body, {
+          childList: true,
+          subtree: true,
+        });
+      });
+      await button("Actions for Fixture A helper").click();
+      await page
+        .getByRole("menuitem", { name: "Delete workflow", exact: true })
+        .click();
+      await expect(
+        page.getByRole("dialog", { name: "Edit workflow" }),
+      ).toHaveCount(0);
+    }
+    const confirm = page.getByRole("alertdialog", {
+      name: "Delete this workflow?",
+    });
+    await expect(
+      confirm.getByRole("button", { name: "Delete workflow", exact: true }),
+    ).toHaveAttribute("data-variant", "destructive");
+    await confirm
+      .getByRole("button", { name: "Delete workflow", exact: true })
+      .click();
+    try {
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.workflowSessionFixture.publications()),
+        )
+        .toBe(1);
+      await expect(
+        page.getByRole("dialog", { name: "Edit workflow" }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("alertdialog", { name: "Leave this draft?" }),
+      ).toHaveCount(0);
+      await expect(button("Open Fixture A helper")).toBeDisabled();
+      await expect(page.getByText("Deleting…", { exact: true })).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => window.workflowSessionFixture.operations().at(-1)?.outcome,
+        ),
+      ).toBe("pending");
+      await button("Actions for Fixture A helper").click();
+      await expect(
+        page.getByRole("menuitem", { name: "Delete workflow", exact: true }),
+      ).toBeDisabled();
+      await page.keyboard.press("Escape");
+    } finally {
+      await page.evaluate(() => {
+        window.workflowSessionFixture.releaseDefinitionRead();
+        window.workflowSessionFixture.settleDelete(true);
+      });
+    }
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.workflowSessionFixture.operations().at(-1)?.outcome,
+        ),
+      )
+      .toBe("succeeded");
+    await expect(button("Open Fixture A helper")).toHaveCount(0);
+    await expect(page.getByRole("status")).toHaveText("Workflows loaded.");
+    await expect(page.getByText(/^Couldn't confirm deletion/)).toHaveCount(0);
+    if (from === "grid")
+      editorMounted = await page.evaluate(() => {
+        window.deletionObserver.disconnect();
+        return window.deletionEditorMounted;
+      });
+    expect(editorMounted).toBe(false);
+    await button("New workflow").click();
+    await expect(
+      page.getByRole("dialog", { name: "Create workflow" }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => window.workflowSessionFixture.publications()),
+    ).toBe(1);
+  });
+}
+
+test("rejected deletion shows a toast, restores the card, and permits one deliberate retry", async ({
   page,
 }) => {
   await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
-  const editor = editorControls(page);
-  const { button } = editor;
-  await button("Open Fixture A helper").click();
-  await editor.action("Delete workflow");
-  await button("Request deletion").click();
+  const button = editorControls(page).button;
+  const remove = async () => {
+    await button("Actions for Fixture A helper").click();
+    await page
+      .getByRole("menuitem", { name: "Delete workflow", exact: true })
+      .click();
+    await button("Delete workflow").click();
+  };
+  await remove();
   await expect
     .poll(() =>
       page.evaluate(() => window.workflowSessionFixture.publications()),
     )
     .toBe(1);
-  await button("Close editor").click();
-  await button("Leave draft").click();
-  const enable = page.getByRole("switch", {
-    name: "Enabled in configuration: Fixture A helper",
-    exact: true,
-  });
-  await expect(enable).toBeDisabled();
-  await page.evaluate(() => window.workflowSessionFixture.settleDelete());
+  await page.evaluate(() => window.workflowSessionFixture.reject());
+  await expect(
+    page.getByText("Couldn't delete Fixture A helper", { exact: true }),
+  ).toBeVisible();
+  await expect(button("Open Fixture A helper")).toBeEnabled();
+  await expect(
+    page.getByRole("switch", {
+      name: "Enabled in configuration: Fixture A helper",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await expect(page.getByRole("dialog", { name: "Edit workflow" })).toHaveCount(
+    0,
+  );
+  await remove();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.publications()),
+    )
+    .toBe(2);
+  await expect(
+    page.getByText("Couldn't delete Fixture A helper", { exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() => window.workflowSessionFixture.echoPublished());
   await expect
     .poll(() =>
       page.evaluate(
-        () => window.workflowSessionFixture.operations().at(-1)?.outcome,
+        () =>
+          window.workflowSessionFixture
+            .operations()
+            .find((operation) => operation.outcome !== "rejected")?.delivery,
       ),
     )
-    .toBe("succeeded");
-  await expect(enable).toBeDisabled();
+    .toBe("seen");
+  await expect(
+    page.getByText("Couldn't delete Fixture A helper", { exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() => window.workflowSessionFixture.settleDelete(true));
+  await expect(button("Open Fixture A helper")).toHaveCount(0);
+  await expect(page.getByText(/^Couldn't delete/)).toHaveCount(0);
   expect(
     await page.evaluate(() => window.workflowSessionFixture.publications()),
-  ).toBe(1);
+  ).toBe(2);
 });
 
 test("a lost save response can be checked and adopted without resubmitting", async ({
@@ -1052,7 +1198,7 @@ test("different-head recovery needs explicit review; failed dismissal keeps the 
     .toBe(2);
 });
 
-test("optimistic dismissal keeps confirmation mounted until persistence settles", async ({
+test("durable dismissal keeps confirmation mounted until persistence settles", async ({
   page,
 }) => {
   await page.goto(url);
@@ -1085,13 +1231,13 @@ test("optimistic dismissal keeps confirmation mounted until persistence settles"
               window.workflowFixture.capability.operations.snapshot().length,
           ),
         )
-        .toBe(0);
+        .toBe(1);
       await expect(dialog).toBeVisible();
       await expect(button("Dismissing…")).toBeDisabled();
       await expect(button("Keep editing")).toBeDisabled();
       await page.keyboard.press("Escape");
       await expect(dialog).toBeVisible();
-      // The modal must keep navigation/submission inaccessible during the gap.
+      // The modal must keep navigation/submission inaccessible until persistence completes.
       await expect(button("Close editor")).toHaveCount(0);
       await expect(button("New workflow")).toHaveCount(0);
       expect(await page.evaluate(() => window.workflowFixture.calls.save)).toBe(
@@ -1130,31 +1276,48 @@ test("optimistic dismissal keeps confirmation mounted until persistence settles"
     .toBe(2);
 });
 
-test("legacy deletion is a request, not verified runtime removal", async ({
+test("legacy deletion offers durable recovery on the grid without claiming removal", async ({
   page,
 }) => {
-  await page.goto(url);
-  const editor = editorControls(page);
-  const { button } = editor;
-  await button("Message helper").click();
-  await editor.action("Delete workflow");
-  await expect(page.getByRole("alertdialog")).toContainText(
-    "does not confirm runtime deletion",
-  );
-  await button("Request deletion").click();
-  await page.evaluate(() => window.workflowFixture.finish("succeeded"));
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
+  const button = editorControls(page).button;
+  await button("Actions for Fixture A helper").click();
+  await page
+    .getByRole("menuitem", { name: "Delete workflow", exact: true })
+    .click();
+  await button("Delete workflow").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.publications()),
+    )
+    .toBe(1);
+  await page.evaluate(() => window.workflowSessionFixture.settleDelete());
   await expect(
-    page.getByText(/Deletion request accepted\. The saved configuration/),
+    page.getByText("Couldn't confirm deletion of Fixture A helper", {
+      exact: true,
+    }),
   ).toBeVisible();
+  await expect(button("Open Fixture A helper")).toBeDisabled();
+  await expect(page.getByText(/Saved workflow deleted/)).toHaveCount(0);
+  const reads = await page.evaluate(() =>
+    window.workflowSessionFixture.definitionQueries(),
+  );
+  await button("Check saved configuration").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.definitionQueries()),
+    )
+    .toBeGreaterThan(reads);
+  await expect(button("Check saved configuration")).toBeEnabled();
   await button("Dismiss notice").click();
   await button("Dismiss notice and continue").click();
-  await expect(button("Save changes")).toBeEnabled();
-  expect(await page.evaluate(() => window.workflowFixture.calls.delete)).toBe(
-    1,
+  await expect(button("Open Fixture A helper")).toBeEnabled();
+  await expect(page.getByRole("dialog", { name: "Edit workflow" })).toHaveCount(
+    0,
   );
-  // The saved configuration may remain listed after an accepted request.
-  await button("Close editor").click();
-  await expect(button("Message helper")).toBeVisible();
+  expect(
+    await page.evaluate(() => window.workflowSessionFixture.publications()),
+  ).toBe(1);
 });
 
 test("invalid timeout text stays in the draft and blocks saves in both editor modes", async ({
@@ -1234,8 +1397,7 @@ test("invalid timeout text stays in the draft and blocks saves in both editor mo
 test("schedule presets round-trip into YAML and warn before enabling a frequent one", async ({
   page,
 }) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   // Wide layout keeps the trigger inspector beside the footer tabs.
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(url);
@@ -1351,14 +1513,13 @@ test("schedule presets round-trip into YAML and warn before enabling a frequent 
     parseYaml(await page.evaluate(() => window.workflowFixture.input().yaml))
       .trigger,
   ).toEqual({ on: "schedule", interval: "1h" });
-  expect(errors).toEqual([]);
+  expect(errors.unexplained()).toEqual([]);
 });
 
 test("a webhook save shows its one-time secret once and asks before leaving it behind", async ({
   page,
 }) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   await page.addInitScript(() => {
     window.__copied = [];
     Object.defineProperty(navigator, "clipboard", {
@@ -1467,7 +1628,7 @@ test("a webhook save shows its one-time secret once and asks before leaving it b
     ),
   ).toBeUndefined();
   await expect(button("Save changes")).toBeEnabled();
-  expect(errors).toEqual([]);
+  expect(errors.unexplained()).toEqual([]);
 });
 
 // Browser boundary: the routed page must deliver a real session's late receipt
@@ -1690,8 +1851,7 @@ test("generic Outbox offers message retry but no workflow replay", async ({
 test("a created workflow saves, reads back exactly and reopens unchanged", async ({
   page,
 }) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(url);
   const editor = editorControls(page);
@@ -1759,7 +1919,7 @@ test("a created workflow saves, reads back exactly and reopens unchanged", async
   await tab("YAML").click();
   await expect(yaml).toHaveValue(submitted);
   expect(await saves()).toBe(1);
-  expect(errors).toEqual([]);
+  expect(errors.unexplained()).toEqual([]);
 });
 
 // Browser-only boundary: nested modal hit testing, focus guards and return

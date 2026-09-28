@@ -81,7 +81,9 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
       .poll(() => app.report.presencePublications.length, { timeout: 75000 })
       .toBeGreaterThan(0);
     expect(
-      app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
+      app.relay.requests.some(({ filters }) =>
+        filters.some((filter) => filter.kinds.includes(20001)),
+      ),
     ).toBe(false);
     await profile.screenshot({
       path: test.info().outputPath("presence-profile.png"),
@@ -266,7 +268,9 @@ test.describe("human message bylines show known presence", () => {
       profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
     ).toHaveCount(0);
     expect(
-      app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
+      app.relay.requests.some(({ filters }) =>
+        filters.some((filter) => filter.kinds.includes(20001)),
+      ),
     ).toBe(false);
   });
 });
@@ -289,8 +293,8 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     .toBe(1);
   const owner = (await presenceLocks(page)).held[0];
   const second = await context.newPage();
+  const pageErrors = app.watchPageErrors(second);
   const errors = [];
-  second.on("pageerror", (error) => errors.push(error.message));
   second.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
@@ -336,7 +340,7 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     expect(app.report.presencePublications.at(-1).event.content).toBe(
       "offline",
     );
-    expect(errors).toEqual([]);
+    expect([...pageErrors.unexplained(), ...errors]).toEqual([]);
     app.report.measurements.push({
       publisherLockHandoff: { owner: owner.clientId, successor },
     });
@@ -387,7 +391,7 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
         ([kind, id]) =>
           kind === "EOSE" &&
           app.relay.requests.some(
-            (req) => req.id === id && req.route === "alpha",
+            (req) => req.id === id && req.routes.includes("alpha"),
           ),
       ),
     ).toBe(false);

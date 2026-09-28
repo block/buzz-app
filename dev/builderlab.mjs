@@ -10,6 +10,8 @@ const API = "https://app.builderlab.xyz/api/goose";
 // Builderlab checks Origin on identity binding; it also seeds the challenge origin.
 export const BUILDERLAB_ORIGIN = "https://app.builderlab.xyz";
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_RESPONSE_BYTES = 64 * 1024;
+const RESPONSE_STATUS = Symbol("builderlabResponseStatus");
 const COMPLETE_HTML =
   "<!doctype html><meta charset=utf-8><title>Buzz authentication complete</title><p>You're signed in. You can close this window and return to Buzz.";
 
@@ -22,12 +24,24 @@ const ROUTES = {
   create: ["/v1/buzz/communities", ["name"]],
   archive: ["/v1/buzz/communities/archive", ["community_id"]],
   unarchive: ["/v1/buzz/communities/unarchive", ["community_id"]],
+  delete: [
+    "/v1/buzz/communities/delete",
+    ["community_id", "host", "request_id", "acknowledgement_version"],
+  ],
+  "delete-receipt": [
+    "/v1/buzz/communities/delete/receipt",
+    ["community_id", "host", "request_id", "acknowledgement_version"],
+  ],
   // Builderlab's transfer endpoint takes camelCase keys.
   transfer: [
     "/v1/buzz/communities/transfer",
     ["communityId", "transfereeNpub"],
   ],
 };
+
+/** Upstream status is metadata, not part of the public JSON body. */
+export const builderlabResponseStatus = (value) =>
+  value?.[RESPONSE_STATUS] ?? 200;
 
 /** Signs the kind 24243 challenge exactly as block/buzz desktop does, after the same checks. */
 export function bindingEvent(key, challenge, now = Date.now()) {
@@ -161,10 +175,23 @@ export function createBuilderlab({
       redirect: "error",
       signal: AbortSignal.timeout(60000),
     });
-    const value = await response.json().catch(() => undefined);
+    const text = await response.text();
+    if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES)
+      throw new Error("Builderlab response was too large");
+    let value;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      throw new Error("Builderlab returned an invalid response");
+    }
     // Structured `{ error: { code, ... } }` bodies pass through for friendly UI messages.
-    if (value && typeof value === "object" && (response.ok || value.error))
+    if (value && typeof value === "object" && (response.ok || value.error)) {
+      Object.defineProperty(value, RESPONSE_STATUS, {
+        value: response.status,
+        enumerable: false,
+      });
       return value;
+    }
     throw new Error(`Builderlab request failed (HTTP ${response.status}).`);
   };
   const me = async (session, signal) => {
@@ -177,8 +204,16 @@ export function createBuilderlab({
       throw new Error(
         `Builderlab session check failed with HTTP ${response.status}`,
       );
-    const { email, name, expires_at } = await response.json();
-    return { email, name, expiresAt: expires_at };
+    const { email, name, expires_at, capabilities } = await response.json();
+    return {
+      email,
+      name,
+      expiresAt: expires_at,
+      capabilities: {
+        can_delete_buzz_communities:
+          capabilities?.can_delete_buzz_communities === true,
+      },
+    };
   };
   // Sign-in and sign-out bump the generation; late results from an older one never
   // write, clear or describe the current session.
@@ -271,7 +306,12 @@ export function createBuilderlab({
       const body = {};
       for (const field of fields) {
         const value = input?.[field];
-        if (typeof value !== "string" || !value || value.length > 200)
+        if (field === "acknowledgement_version") {
+          if (!Number.isInteger(value)) throw new Error(`Missing ${field}`);
+          body[field] = value;
+          continue;
+        }
+        if (typeof value !== "string" || !value || value.length > 253)
           throw new Error(`Missing ${field}`);
         body[field] = value;
       }

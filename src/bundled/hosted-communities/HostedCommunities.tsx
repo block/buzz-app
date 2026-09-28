@@ -10,6 +10,7 @@ import {
 import { npubEncode } from "nostr-tools/nip19";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -23,16 +24,25 @@ import {
   CircleNotchIcon,
   LinkBreakIcon,
   SignOutIcon,
+  TrashIcon,
   WarningCircleIcon,
 } from "../../shared/design-system/icons";
 import {
+  admitDeletion,
+  ApiFailure,
   boundKey,
   call,
   check,
+  checkDeletionStatus,
+  clearPendingDeletion,
   getAuth,
   HOST_SUFFIX,
-  LIMIT,
+  isAcceptanceUnknown,
   login,
+  makePendingDeletion,
+  persistPendingDeletion,
+  quota,
+  readPendingDeletion,
   relayUrl,
   signOut,
   Unsupported,
@@ -40,6 +50,8 @@ import {
   type Account,
   type Community,
   type Identity,
+  type PendingDeletion,
+  type Quota,
 } from "./api";
 
 const card = "mt-6 rounded-xl border border-default p-5";
@@ -57,6 +69,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const [auth, setAuth] = useState<Account | null>();
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
+  const [quotaState, setQuotaState] = useState<Quota | null>(null);
   // This device's key: undefined while loading, null when it could not be read.
   const [local, setLocal] = useState<string | null>();
   const [unsupported, setUnsupported] = useState("");
@@ -64,6 +77,10 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [transfer, setTransfer] = useState<Community | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Community | null>(null);
+  const [pendingDeletion, setPendingDeletion] =
+    useState<PendingDeletion | null>(null);
+  const [deletionNotice, setDeletionNotice] = useState("");
   // The last address handed off for joining, and whether the clipboard took it.
   const [handoff, setHandoff] = useState<{
     url: string;
@@ -73,18 +90,101 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const loginAbort = useRef<AbortController | null>(null);
   // Bumped by every operation and unmount; a read applies only if none happened since it began.
   const generation = useRef(0);
+  const acceptedDeletionIds = useRef(new Set<string>());
+  const loadedOwner = useRef<string | null | undefined>(undefined);
+  const recoveryAttempted = useRef("");
 
   const load = useCallback(async () => {
     const at = generation.current;
     const [current, list] = await Promise.all([call("identity"), call("list")]);
-    if (at !== generation.current) return;
+    if (at !== generation.current) return null;
     // An account without a linked identity is the connect state, not a failure.
     if (current.error?.code !== "unauthorized" && !current.error?.setup_needed)
       check(current, "Could not load the connected Buzz identity.");
     if (!list.error?.setup_needed) check(list, "Could not load communities.");
-    setIdentity(current.identity ?? null);
-    setCommunities(list.communities ?? []);
+    const nextIdentity = current.identity ?? null;
+    const nextOwner = boundKey(nextIdentity);
+    if (
+      loadedOwner.current !== undefined &&
+      loadedOwner.current !== nextOwner
+    ) {
+      acceptedDeletionIds.current.clear();
+      setDeletionNotice("");
+    }
+    loadedOwner.current = nextOwner;
+    const stored = readPendingDeletion();
+    if (
+      stored &&
+      (stored.owner_pubkey !== nextOwner ||
+        stored.backend_origin !== window.location.origin)
+    ) {
+      clearPendingDeletion(stored);
+      setPendingDeletion(null);
+    }
+    const listed = list.communities ?? [];
+    const nextCommunities = listed.filter(
+      (community) =>
+        !community.id || !acceptedDeletionIds.current.has(community.id),
+    );
+    // One authoritative omission establishes that the accepted fence reached
+    // the list projection. A later privileged abort may then restore the row.
+    for (const id of acceptedDeletionIds.current)
+      if (!listed.some((community) => community.id === id))
+        acceptedDeletionIds.current.delete(id);
+    const nextQuota = quota(list);
+    setIdentity(nextIdentity);
+    setCommunities(nextCommunities);
+    setQuotaState(nextQuota);
+    return { identity: nextIdentity, communities: nextCommunities };
   }, []);
+
+  const markDeletionAccepted = useCallback(
+    (pending: PendingDeletion, at: number) => {
+      if (at !== generation.current || !active()) return false;
+      clearPendingDeletion(pending);
+      acceptedDeletionIds.current.add(pending.request.community_id);
+      setPendingDeletion(null);
+      setCommunities((list) =>
+        list.filter((item) => item.id !== pending.request.community_id),
+      );
+      setDeletionNotice("Deletion started");
+      setError("");
+      return true;
+    },
+    [active],
+  );
+
+  const recoverDeletion = useCallback(
+    async (owner: string | null, at: number) => {
+      const stored = readPendingDeletion();
+      if (!stored) return;
+      if (
+        stored.owner_pubkey !== owner ||
+        stored.backend_origin !== window.location.origin
+      ) {
+        clearPendingDeletion(stored);
+        return;
+      }
+      setPendingDeletion(stored);
+      if (recoveryAttempted.current === stored.request.request_id) return;
+      recoveryAttempted.current = stored.request.request_id;
+      try {
+        await checkDeletionStatus(stored.request);
+        markDeletionAccepted(stored, at);
+      } catch (reason) {
+        if (at !== generation.current || !active()) return;
+        if (
+          reason instanceof ApiFailure &&
+          reason.code === "deletion_aborted"
+        ) {
+          clearPendingDeletion(stored);
+          setPendingDeletion(null);
+        }
+        setError(message(reason));
+      }
+    },
+    [active, markDeletionAccepted],
+  );
 
   const localRead = useRef(0);
   const loadLocal = useCallback(() => {
@@ -108,9 +208,15 @@ export function HostedCommunities({ active }: { active(): boolean }) {
         if (at !== generation.current) return;
         setAuth(next);
         if (next)
-          return load().catch(
-            (reason) => at === generation.current && setError(message(reason)),
-          );
+          return load()
+            .then((snapshot) => {
+              if (snapshot && at === generation.current)
+                return recoverDeletion(boundKey(snapshot.identity), at);
+            })
+            .catch(
+              (reason) =>
+                at === generation.current && setError(message(reason)),
+            );
       })
       .catch((reason) => {
         if (at !== generation.current) return;
@@ -122,10 +228,10 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       generation.current++;
       loginAbort.current?.abort();
     };
-  }, [load, loadLocal]);
+  }, [load, loadLocal, recoverDeletion]);
 
   /** Runs one account operation at a time; resolves whether it succeeded. */
-  async function run(label: string, operation: () => Promise<void>) {
+  async function run(label: string, operation: () => Promise<unknown>) {
     if (!active()) return false;
     const at = ++generation.current;
     setAction(label);
@@ -163,6 +269,79 @@ export function HostedCommunities({ active }: { active(): boolean }) {
         ),
     );
   };
+  const discardPendingDeletion = () => {
+    const stored = readPendingDeletion();
+    if (stored) clearPendingDeletion(stored);
+    setPendingDeletion(null);
+  };
+  const attemptDeletion = async (
+    pending: PendingDeletion,
+    preserveNotOwner: boolean,
+  ) => {
+    const at = generation.current;
+    try {
+      await admitDeletion(pending.request);
+      if (!markDeletionAccepted(pending, at)) return;
+      await settle();
+    } catch (reason) {
+      if (at !== generation.current || !active()) return;
+      if (
+        isAcceptanceUnknown(reason) ||
+        (preserveNotOwner &&
+          reason instanceof ApiFailure &&
+          reason.code === "not_owner")
+      ) {
+        setPendingDeletion(pending);
+        setError(message(reason));
+        return;
+      }
+      clearPendingDeletion(pending);
+      setPendingDeletion(null);
+      throw reason;
+    }
+  };
+  const checkPendingDeletion = (pending: PendingDeletion) =>
+    run("receipt", async () => {
+      const at = generation.current;
+      try {
+        await checkDeletionStatus(pending.request);
+        if (!markDeletionAccepted(pending, at)) return;
+        await settle();
+      } catch (reason) {
+        if (at !== generation.current || !active()) return;
+        if (
+          reason instanceof ApiFailure &&
+          reason.code === "deletion_aborted"
+        ) {
+          clearPendingDeletion(pending);
+          setPendingDeletion(null);
+        }
+        throw reason;
+      }
+    });
+  const retryPendingDeletion = (pending: PendingDeletion) =>
+    run("delete", async () => {
+      const currentAuth = await getAuth();
+      if (currentAuth?.capabilities?.can_delete_buzz_communities !== true)
+        throw new Error("Community deletion is no longer available.");
+      setAuth(currentAuth);
+      const snapshot = await load();
+      const row = snapshot?.communities.find(
+        (community) =>
+          community.id === pending.request.community_id &&
+          community.normalized_host === pending.request.host &&
+          Boolean(community.archived_at),
+      );
+      if (
+        !snapshot ||
+        boundKey(snapshot.identity) !== pending.owner_pubkey ||
+        !row
+      )
+        throw new Error(
+          "The exact archived community is not currently available for a safe retry. Check deletion status instead.",
+        );
+      await attemptDeletion(pending, true);
+    });
   const busy = action !== null;
   // Repeated inside open dialogs, whose modal backdrop hides the page copy.
   const failure = error && (
@@ -181,6 +360,18 @@ export function HostedCommunities({ active }: { active(): boolean }) {
     Boolean(identity) && (!bound || (Boolean(local) && bound !== local));
   // Acting requires this device's key to be known and to match the account's.
   const ready = bound !== null && bound === local;
+  const deletionEnabled =
+    auth?.capabilities?.can_delete_buzz_communities === true;
+  const retryableDeletion =
+    pendingDeletion &&
+    deletionEnabled &&
+    ready &&
+    communities.some(
+      (community) =>
+        community.id === pendingDeletion.request.community_id &&
+        community.normalized_host === pendingDeletion.request.host &&
+        Boolean(community.archived_at),
+    );
   // A handoff belongs to the bound identity: whenever it changes, by a local
   // action or a refresh, drop the handoff and any clipboard result in flight.
   // Layout effect, so a stale handoff is never painted beside the new identity.
@@ -306,9 +497,11 @@ export function HostedCommunities({ active }: { active(): boolean }) {
               onClick={() =>
                 void run("sign-out", async () => {
                   await signOut();
+                  discardPendingDeletion();
                   setAuth(null);
                   setIdentity(null);
                   setCommunities([]);
+                  setQuotaState(null);
                 })
               }
             >
@@ -376,6 +569,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                       await call("unbind"),
                       "Could not release the previously connected Buzz identity.",
                     );
+                    discardPendingDeletion();
                     // Unbound is a valid resting state; Connect recovers it.
                     setIdentity(null);
                     if (active()) await bind();
@@ -411,6 +605,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                         await call("unbind"),
                         "Could not unpair the Buzz identity.",
                       );
+                      discardPendingDeletion();
                       setIdentity(null);
                       await settle();
                     },
@@ -425,7 +620,9 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             <h3 className="m-0 text-label">
               Your communities{" "}
               <span className="text-body-sm text-muted">
-                {communities.length} of {LIMIT} used
+                {quotaState
+                  ? `${quotaState.used} of ${quotaState.limit} used`
+                  : "Community quota unavailable"}
               </span>
             </h3>
             <Button
@@ -437,6 +634,43 @@ export function HostedCommunities({ active }: { active(): boolean }) {
               <ArrowsClockwiseIcon aria-hidden="true" /> Refresh
             </Button>
           </div>
+          {deletionNotice && (
+            <p role="status" className={`${card} text-body-sm`}>
+              {deletionNotice}
+            </p>
+          )}
+          {pendingDeletion && (
+            <div className={card}>
+              <p className="m-0 text-label">Deletion status is unknown</p>
+              <p className="text-body-sm text-muted">
+                Keep this request while Buzz checks its durable receipt. A
+                missing receipt does not prove the deletion was never accepted.
+              </p>
+              <p className="break-all font-mono text-body-sm">
+                {pendingDeletion.request.host}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="primary"
+                  loading={action === "receipt"}
+                  disabled={busy}
+                  onClick={() => void checkPendingDeletion(pendingDeletion)}
+                >
+                  Check deletion status
+                </Button>
+                {retryableDeletion && (
+                  <Button
+                    variant="outline"
+                    loading={action === "delete"}
+                    disabled={busy}
+                    onClick={() => void retryPendingDeletion(pendingDeletion)}
+                  >
+                    Retry same deletion request
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
           {communities.length === 0 ? (
             <p className={`${card} text-body-sm text-muted`}>
               No hosted communities yet.
@@ -454,6 +688,8 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                     community.name ?? community.slug ?? "Hosted community";
                   const url = relayUrl(community);
                   const archived = Boolean(community.archived_at);
+                  const deletionPending =
+                    pendingDeletion?.request.community_id === community.id;
                   return (
                     <li
                       key={community.id ?? community.normalized_host ?? index}
@@ -468,27 +704,44 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {archived ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={busy || !community.id}
-                            onClick={() =>
-                              setConfirm({
-                                title: `Unarchive ${name}?`,
-                                description:
-                                  "This address becomes connectable again. Connections that closed during archival will not reconnect automatically.",
-                                action: "Unarchive",
-                                run: () =>
-                                  mutate(
-                                    "unarchive",
-                                    community,
-                                    "Could not unarchive the community.",
-                                  ),
-                              })
-                            }
-                          >
-                            <BoxArrowUpIcon aria-hidden="true" /> Unarchive
-                          </Button>
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={
+                                busy || !community.id || deletionPending
+                              }
+                              onClick={() =>
+                                setConfirm({
+                                  title: `Unarchive ${name}?`,
+                                  description:
+                                    "This address becomes connectable again. Connections that closed during archival will not reconnect automatically.",
+                                  action: "Unarchive",
+                                  run: () =>
+                                    mutate(
+                                      "unarchive",
+                                      community,
+                                      "Could not unarchive the community.",
+                                    ),
+                                })
+                              }
+                            >
+                              <BoxArrowUpIcon aria-hidden="true" /> Unarchive
+                            </Button>
+                            {deletionEnabled &&
+                              ready &&
+                              community.id &&
+                              community.normalized_host && (
+                                <Button
+                                  variant="prominent"
+                                  size="sm"
+                                  disabled={busy || deletionPending}
+                                  onClick={() => setDeleteTarget(community)}
+                                >
+                                  <TrashIcon aria-hidden="true" /> Delete
+                                </Button>
+                              )}
+                          </>
                         ) : (
                           <>
                             {url && ready && (
@@ -565,8 +818,14 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             </div>
           )}
           <CreateCommunity
-            enabled={ready && communities.length < LIMIT}
-            atLimit={communities.length >= LIMIT}
+            enabled={ready && quotaState?.canCreate === true}
+            atLimit={Boolean(
+              quotaState &&
+                !quotaState.canCreate &&
+                quotaState.used >= quotaState.limit,
+            )}
+            quotaUnavailable={!quotaState}
+            {...(quotaState ? { limit: quotaState.limit } : {})}
             busy={busy}
             creating={action === "create"}
             onCreate={(name) =>
@@ -583,6 +842,30 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             }
           />
         </>
+      )}
+      {deleteTarget && bound && (
+        <DeleteCommunityDialog
+          community={deleteTarget}
+          pending={action === "delete"}
+          failure={failure}
+          close={() => setDeleteTarget(null)}
+          onDelete={() => {
+            let pending: PendingDeletion;
+            try {
+              pending = makePendingDeletion(bound, deleteTarget);
+              persistPendingDeletion(pending);
+            } catch {
+              setError(
+                "Deletion was not sent because its recovery record could not be saved.",
+              );
+              return;
+            }
+            setPendingDeletion(pending);
+            void run("delete", () => attemptDeletion(pending, false)).then(
+              (ok) => ok && setDeleteTarget(null),
+            );
+          }}
+        />
       )}
       {confirm && (
         <AlertDialog
@@ -639,15 +922,86 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   );
 }
 
+function DeleteCommunityDialog({
+  community,
+  pending,
+  failure,
+  close,
+  onDelete,
+}: {
+  community: Community;
+  pending: boolean;
+  failure: ReactNode;
+  close(): void;
+  onDelete(): void;
+}) {
+  const [host, setHost] = useState("");
+  const [acknowledged, setAcknowledged] = useState(false);
+  const expected = community.normalized_host ?? "";
+  const name = community.name ?? community.slug ?? "this community";
+  const confirmed = host === expected && acknowledged;
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => !open && close()}
+      title={`Permanently delete ${name}?`}
+      description="This starts an irreversible deletion."
+      preventClose={pending}
+      actions={
+        <>
+          <Button disabled={pending} onClick={close}>
+            Cancel
+          </Button>
+          <Button
+            variant="prominent"
+            loading={pending}
+            disabled={!confirmed || pending}
+            onClick={onDelete}
+          >
+            Start deletion
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4 text-body-sm">
+        <p className="m-0">
+          This request cannot be canceled by an owner. All community content
+          will be deleted eventually, the host stays permanently reserved, and
+          your quota slot is released only after logical cleanup finishes.
+        </p>
+        <Field label="Type the exact host">
+          <Input
+            autoComplete="off"
+            spellCheck={false}
+            value={host}
+            onValueChange={setHost}
+          />
+        </Field>
+        <p className="m-0 break-all font-mono">{expected}</p>
+        <Checkbox
+          checked={acknowledged}
+          onCheckedChange={(checked) => setAcknowledged(checked === true)}
+          label="I understand this cannot be canceled and deletion continues after acceptance."
+        />
+        {failure}
+      </div>
+    </Dialog>
+  );
+}
+
 function CreateCommunity({
   enabled,
   atLimit,
+  quotaUnavailable,
+  limit,
   busy,
   creating,
   onCreate,
 }: {
   enabled: boolean;
   atLimit: boolean;
+  quotaUnavailable: boolean;
+  limit?: number;
   busy: boolean;
   creating: boolean;
   onCreate(name: string): Promise<boolean>;
@@ -694,8 +1048,14 @@ function CreateCommunity({
       </p>
       {atLimit && (
         <p className="text-body-sm text-muted">
-          You’ve reached the limit of {LIMIT} hosted communities. Transfer one
+          You’ve reached the limit of {limit} hosted communities. Transfer one
           to free up a slot before creating another.
+        </p>
+      )}
+      {quotaUnavailable && (
+        <p className="text-body-sm text-muted">
+          Community quota unavailable. Creating is paused until the server
+          returns authoritative usage.
         </p>
       )}
       <Field

@@ -362,6 +362,84 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   }
 });
 
+test("hosted deletion reload recovery uses only the read-only receipt while capability is off", async ({
+  page,
+  app,
+}) => {
+  const owner = "a".repeat(64);
+  const request = {
+    community_id: "11111111-1111-4111-8111-111111111111",
+    host: "North.communities.buzz.xyz",
+    request_id: "22222222-2222-4222-8222-222222222222",
+    acknowledgement_version: 1,
+  };
+  const calls = [];
+  await page.route("**/api/relay/identity", (route) =>
+    route.fulfill({ json: { viewer: owner } }),
+  );
+  await page.route("**/api/builderlab/**", async (route) => {
+    const action = new URL(route.request().url()).pathname.split("/").at(-1);
+    calls.push(action);
+    if (action === "auth")
+      return route.fulfill({
+        json: {
+          auth: {
+            email: "owner@example.com",
+            expiresAt: "2030",
+            capabilities: { can_delete_buzz_communities: false },
+          },
+        },
+      });
+    if (action === "identity")
+      return route.fulfill({ json: { identity: { pubkey_hex: owner } } });
+    if (action === "list")
+      return route.fulfill({
+        json: {
+          communities: [],
+          quota_used: 1,
+          quota_limit: 5,
+          can_create: false,
+        },
+      });
+    if (action === "delete-receipt")
+      return route.fulfill({
+        status: 202,
+        json: { ...request, status: "accepted" },
+      });
+    return route.fulfill({ status: 404, json: { error: "unexpected" } });
+  });
+
+  await page.goto(app.origin);
+  await page.evaluate(
+    ({ owner, request }) =>
+      localStorage.setItem(
+        "buzz.hosted-community-deletion.v1",
+        JSON.stringify({
+          version: 1,
+          owner_pubkey: owner,
+          backend_origin: window.location.origin,
+          request,
+        }),
+      ),
+    { owner, request },
+  );
+  await page.reload();
+  await button(page, "Your profile").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await button(page, "Hosted communities").click();
+  await expect(
+    page.getByText("Deletion started", { exact: true }),
+  ).toBeVisible();
+  expect(calls.filter((action) => action === "delete-receipt")).toHaveLength(1);
+  expect(calls.filter((action) => action === "delete")).toHaveLength(0);
+  await expect(button(page, "Delete")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("buzz.hosted-community-deletion.v1"),
+    ),
+  ).toBeNull();
+});
+
 test("Settings loads and publishes the selected community profile", async ({
   page,
   app,

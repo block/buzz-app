@@ -3,6 +3,7 @@ import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import {
   BUILDERLAB_ORIGIN,
   bindingEvent,
+  builderlabResponseStatus,
   createBuilderlab,
 } from "./builderlab.mjs";
 
@@ -107,6 +108,7 @@ it("completes browser sign-in through a loopback callback without exposing the c
     email: "a@example.com",
     name: "A",
     expiresAt: "2030",
+    capabilities: { can_delete_buzz_communities: false },
   });
   expect(JSON.stringify(auth)).not.toContain("secret");
   expect(h.opened().pathname).toBe("/api/goose/v1/auth/login");
@@ -151,6 +153,83 @@ it("forwards only allowlisted fields and ignores unknown actions", async () => {
   );
   expect(await h.builderlab.call("toString", {})).toBeUndefined();
   expect(await h.builderlab.call("../auth/me", {})).toBeUndefined();
+});
+
+it("forwards the exact deletion tuple to admission and read-only receipt", async () => {
+  const h = account({
+    "/v1/buzz/communities/delete": () =>
+      Response.json({ status: "accepted" }, { status: 202 }),
+    "/v1/buzz/communities/delete/receipt": () =>
+      Response.json({ error: { code: "acceptance_unknown" } }, { status: 503 }),
+  });
+  await signIn(h);
+  const request = {
+    community_id: "community",
+    host: "North.communities.buzz.xyz",
+    request_id: "11111111-1111-4111-8111-111111111111",
+    acknowledgement_version: 1,
+    owner_pubkey: "must-not-pass",
+    extra: "dropped",
+  };
+  const admitted = await h.builderlab.call("delete", request);
+  expect(builderlabResponseStatus(admitted)).toBe(202);
+  expect(h.requests.at(-1).path).toBe("/v1/buzz/communities/delete");
+  expect(JSON.parse(h.requests.at(-1).init.body)).toEqual({
+    community_id: request.community_id,
+    host: request.host,
+    request_id: request.request_id,
+    acknowledgement_version: 1,
+  });
+  const receipt = await h.builderlab.call("delete-receipt", request);
+  expect(builderlabResponseStatus(receipt)).toBe(503);
+  expect(h.requests.at(-1).path).toBe("/v1/buzz/communities/delete/receipt");
+  expect(JSON.parse(h.requests.at(-1).init.body)).toEqual({
+    community_id: request.community_id,
+    host: request.host,
+    request_id: request.request_id,
+    acknowledgement_version: 1,
+  });
+});
+
+it.each([
+  [true, true],
+  ["true", false],
+  [1, false],
+  [undefined, false],
+])("maps delete capability %j to literal true=%s", async (value, expected) => {
+  const h = account({
+    "/v1/auth/me": () =>
+      Response.json({
+        email: "a@example.com",
+        expires_at: "2030",
+        capabilities: { can_delete_buzz_communities: value },
+      }),
+  });
+  expect((await signIn(h)).capabilities).toEqual({
+    can_delete_buzz_communities: expected,
+  });
+});
+
+it.each([
+  ["malformed", "{"],
+  ["oversize", JSON.stringify({ value: "x".repeat(70_000) })],
+])("rejects a %s downstream response after dispatch", async (_label, body) => {
+  const h = account({
+    "/v1/buzz/communities/delete": () =>
+      new Response(body, {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      }),
+  });
+  await signIn(h);
+  await expect(
+    h.builderlab.call("delete", {
+      community_id: "community",
+      host: "north.communities.buzz.xyz",
+      request_id: "11111111-1111-4111-8111-111111111111",
+      acknowledgement_version: 1,
+    }),
+  ).rejects.toThrow(/invalid response|too large/);
 });
 
 it("binds the local key by verifying a signed challenge and passes structured errors through", async () => {

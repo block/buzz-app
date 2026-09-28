@@ -61,7 +61,7 @@ import {
   readSnapshotCommunity,
 } from "../src/features/relay/read-state-snapshot.ts";
 import { readAgentLibrary } from "./agent-library.mjs";
-import { createBuilderlab } from "./builderlab.mjs";
+import { builderlabResponseStatus, createBuilderlab } from "./builderlab.mjs";
 import {
   decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
@@ -818,7 +818,7 @@ export function relayBrokerPlugin({
                 raw ? JSON.parse(raw) : {},
               );
               return result
-                ? json(res, 200, result)
+                ? json(res, builderlabResponseStatus(result), result)
                 : json(res, 404, { error: "Unknown Builderlab route" });
             } catch (error) {
               return json(res, 502, {

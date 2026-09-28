@@ -13,22 +13,34 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import { HostedCommunities } from "./HostedCommunities";
+import { DELETION_PENDING_KEY } from "./api";
 
 const local = "a".repeat(64);
 const other = "b".repeat(64);
-type Handler = (body: Record<string, string>) => unknown;
+type Handler = (body: Record<string, string | number>) => unknown;
 let routes: Record<string, Handler>;
-let calls: [string, Record<string, string>][];
+let calls: [string, Record<string, string | number>][];
 
 beforeEach(() => {
+  localStorage.clear();
   calls = [];
   routes = {
     "/api/relay/identity": () => ({ viewer: local }),
     "/api/builderlab/auth": () => ({
-      auth: { email: "a@example.com", name: "Ada", expiresAt: "2030" },
+      auth: {
+        email: "a@example.com",
+        name: "Ada",
+        expiresAt: "2030",
+        capabilities: { can_delete_buzz_communities: true },
+      },
     }),
     "/api/builderlab/identity": () => ({ identity: { pubkey_hex: local } }),
-    "/api/builderlab/list": () => ({ communities: [] }),
+    "/api/builderlab/list": () => ({
+      communities: [],
+      quota_used: 0,
+      quota_limit: 5,
+      can_create: true,
+    }),
   };
   vi.stubGlobal(
     "fetch",
@@ -36,14 +48,31 @@ beforeEach(() => {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       calls.push([url, body]);
       const handler = routes[url];
-      return handler
-        ? Response.json(await handler(body))
-        : Response.json({ error: "missing" }, { status: 404 });
+      if (!handler) return Response.json({ error: "missing" }, { status: 404 });
+      const result = await handler(body);
+      if (result instanceof Response) return result;
+      if (
+        url === "/api/builderlab/list" &&
+        result &&
+        typeof result === "object" &&
+        "communities" in result &&
+        !("quota_used" in result)
+      ) {
+        const communities = (result as { communities: unknown[] }).communities;
+        return Response.json({
+          ...result,
+          quota_used: communities.length,
+          quota_limit: 5,
+          can_create: communities.length < 5,
+        });
+      }
+      return Response.json(result);
     }),
   );
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -788,4 +817,302 @@ it("keeps a failed copy handoff for another address when a community is archived
   expect(
     screen.getByRole("button", { name: "Try copying again" }),
   ).toBeEnabled();
+});
+
+const archived = {
+  id: "11111111-1111-4111-8111-111111111111",
+  name: "north",
+  normalized_host: "North.communities.buzz.xyz",
+  archived_at: "2026-09-24",
+};
+const accepted = (request: Record<string, string | number>) => ({
+  ...request,
+  status: "accepted",
+  correlation_id: "corr-delete",
+});
+
+async function openDeletion() {
+  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  return screen.findByRole("dialog", { name: /Permanently delete north/ });
+}
+
+async function confirmDeletion(host = archived.normalized_host) {
+  const dialog = await openDeletion();
+  fireEvent.change(within(dialog).getByLabelText("Type the exact host"), {
+    target: { value: host },
+  });
+  fireEvent.click(
+    within(dialog).getByRole("checkbox", {
+      name: /I understand this cannot be canceled/,
+    }),
+  );
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Start deletion" }),
+  );
+}
+
+it("uses authoritative quota and fails closed when the projection is missing", async () => {
+  routes["/api/builderlab/list"] = () => Response.json({ communities: [] });
+  renderCard();
+  expect(await screen.findByText("Community quota unavailable")).toBeVisible();
+  expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
+  expect(screen.queryByText(/0 of 5 used/)).not.toBeInTheDocument();
+});
+
+it("shows deletion only for literal capability true and requires the byte-exact host plus explicit confirmation", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  let storedBeforeDispatch = false;
+  routes["/api/builderlab/delete"] = (request) => {
+    storedBeforeDispatch = localStorage.getItem(DELETION_PENDING_KEY) !== null;
+    return Response.json(accepted(request), { status: 202 });
+  };
+  renderCard();
+  const dialog = await openDeletion();
+  expect(dialog).toHaveTextContent("cannot be canceled by an owner");
+  expect(dialog).toHaveTextContent("All community content will be deleted");
+  expect(dialog).toHaveTextContent("permanently reserved");
+  expect(dialog).toHaveTextContent("logical cleanup finishes");
+  const input = within(dialog).getByLabelText("Type the exact host");
+  const submit = within(dialog).getByRole("button", {
+    name: "Start deletion",
+  });
+  fireEvent.change(input, {
+    target: { value: archived.normalized_host.toLowerCase() },
+  });
+  fireEvent.click(
+    within(dialog).getByRole("checkbox", {
+      name: /I understand this cannot be canceled/,
+    }),
+  );
+  expect(submit).toBeDisabled();
+  fireEvent.change(input, {
+    target: { value: ` ${archived.normalized_host}` },
+  });
+  expect(submit).toBeDisabled();
+  fireEvent.change(input, { target: { value: archived.normalized_host } });
+  expect(submit).toBeEnabled();
+  fireEvent.click(submit);
+  expect(await screen.findByText("Deletion started")).toBeVisible();
+  expect(storedBeforeDispatch).toBe(true);
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  const request = calls.find(([url]) => url === "/api/builderlab/delete")?.[1];
+  expect(request).toEqual({
+    community_id: archived.id,
+    host: archived.normalized_host,
+    request_id: expect.stringMatching(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    ),
+    acknowledgement_version: 1,
+  });
+});
+
+it("keeps deletion hidden when the capability is absent", async () => {
+  routes["/api/builderlab/auth"] = () => ({
+    auth: { email: "a@example.com", expiresAt: "2030", capabilities: {} },
+  });
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  renderCard();
+  expect(
+    await screen.findByRole("button", { name: "Unarchive" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Delete" }),
+  ).not.toBeInTheDocument();
+});
+
+it("does not dispatch when the pending envelope cannot be persisted", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("storage full");
+  });
+  renderCard();
+  await confirmDeletion();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Deletion was not sent because its recovery record could not be saved",
+  );
+  expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
+});
+
+it("preserves one UUID across an ambiguous response, manual receipt check, and acceptance", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = () =>
+    new Response("{", {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  routes["/api/builderlab/delete-receipt"] = () =>
+    Response.json(
+      { error: { code: "acceptance_unknown" }, correlation_id: "corr-unknown" },
+      { status: 503 },
+    );
+  renderCard();
+  await confirmDeletion();
+  expect(await screen.findByText("Deletion status is unknown")).toBeVisible();
+  const saved = JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "");
+  const requestId = saved.request.request_id;
+  expect(
+    calls.filter(([url]) => url === "/api/builderlab/delete"),
+  ).toHaveLength(1);
+  expect(
+    calls.filter(([url]) => url === "/api/builderlab/delete-receipt"),
+  ).toHaveLength(1);
+
+  routes["/api/builderlab/delete-receipt"] = (request) =>
+    Response.json(accepted(request), { status: 202 });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Check deletion status" }),
+  );
+  expect(await screen.findByText("Deletion started")).toBeVisible();
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  expect(
+    calls
+      .filter(([url]) => url === "/api/builderlab/delete-receipt")
+      .at(-1)?.[1].request_id,
+  ).toBe(requestId);
+});
+
+it("performs one read-only recovery on reopen even when admission capability is off", async () => {
+  const request = {
+    community_id: archived.id,
+    host: archived.normalized_host,
+    request_id: "22222222-2222-4222-8222-222222222222",
+    acknowledgement_version: 1,
+  };
+  localStorage.setItem(
+    DELETION_PENDING_KEY,
+    JSON.stringify({
+      version: 1,
+      owner_pubkey: local,
+      backend_origin: window.location.origin,
+      request,
+    }),
+  );
+  routes["/api/builderlab/auth"] = () => ({
+    auth: { email: "a@example.com", expiresAt: "2030", capabilities: {} },
+  });
+  routes["/api/builderlab/list"] = () => ({ communities: [] });
+  routes["/api/builderlab/delete-receipt"] = (body) =>
+    Response.json(accepted(body), { status: 202 });
+  renderCard();
+  expect(await screen.findByText("Deletion started")).toBeVisible();
+  expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
+  expect(
+    calls.filter(([url]) => url === "/api/builderlab/delete-receipt"),
+  ).toHaveLength(1);
+});
+
+it("discards a recovery envelope bound to another owner without contacting receipt", async () => {
+  localStorage.setItem(
+    DELETION_PENDING_KEY,
+    JSON.stringify({
+      version: 1,
+      owner_pubkey: other,
+      backend_origin: window.location.origin,
+      request: {
+        community_id: archived.id,
+        host: archived.normalized_host,
+        request_id: "33333333-3333-4333-8333-333333333333",
+        acknowledgement_version: 1,
+      },
+    }),
+  );
+  renderCard();
+  await screen.findByText(npubEncode(local));
+  await waitFor(() =>
+    expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull(),
+  );
+  expect(calls.map(([url]) => url)).not.toContain(
+    "/api/builderlab/delete-receipt",
+  );
+});
+
+it("manually resubmits the same UUID only after a fresh capable archived-owner list", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = () =>
+    Response.json(
+      { error: { code: "acceptance_unknown" }, correlation_id: "corr-unknown" },
+      { status: 503 },
+    );
+  renderCard();
+  await confirmDeletion();
+  expect(await screen.findByText("Deletion status is unknown")).toBeVisible();
+  const first = calls.find(([url]) => url === "/api/builderlab/delete")?.[1];
+  routes["/api/builderlab/delete"] = (request) =>
+    Response.json(accepted(request), { status: 202 });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry same deletion request" }),
+  );
+  expect(await screen.findByText("Deletion started")).toBeVisible();
+  const admissions = calls.filter(([url]) => url === "/api/builderlab/delete");
+  expect(admissions).toHaveLength(2);
+  expect(admissions[1]?.[1]).toEqual(first);
+  expect(calls.filter(([url]) => url === "/api/builderlab/auth")).toHaveLength(
+    3,
+  ); // StrictMode startup twice, then the fresh capability check.
+  expect(
+    calls.filter(([url]) => url === "/api/builderlab/list").length,
+  ).toBeGreaterThan(2); // Startup and the fresh owner/archive check before retry.
+});
+
+it("terminates pending recovery on a bound aborted receipt", async () => {
+  const request = {
+    community_id: archived.id,
+    host: archived.normalized_host,
+    request_id: "44444444-4444-4444-8444-444444444444",
+    acknowledgement_version: 1,
+  };
+  localStorage.setItem(
+    DELETION_PENDING_KEY,
+    JSON.stringify({
+      version: 1,
+      owner_pubkey: local,
+      backend_origin: window.location.origin,
+      request,
+    }),
+  );
+  routes["/api/builderlab/delete-receipt"] = () =>
+    Response.json(
+      { error: { code: "deletion_aborted" }, correlation_id: "corr-aborted" },
+      { status: 409 },
+    );
+  renderCard();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This deletion was aborted",
+  );
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  expect(
+    screen.queryByText("Deletion status is unknown"),
+  ).not.toBeInTheDocument();
+});
+
+it("does not let a late admission response clear another account's envelope", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  const admission = hold();
+  routes["/api/builderlab/delete"] = admission.answer as Handler;
+  const view = render(<HostedCommunities active={() => true} />);
+  await confirmDeletion();
+  await waitFor(() =>
+    expect(calls.map(([url]) => url)).toContain("/api/builderlab/delete"),
+  );
+  const old = JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "");
+  view.unmount();
+  const next = {
+    ...old,
+    owner_pubkey: other,
+    request: {
+      ...old.request,
+      request_id: "55555555-5555-4555-8555-555555555555",
+    },
+  };
+  localStorage.setItem(DELETION_PENDING_KEY, JSON.stringify(next));
+  await act(async () =>
+    admission.release(
+      Response.json(accepted(old.request), {
+        status: 202,
+      }),
+    ),
+  );
+  expect(JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "")).toEqual(
+    next,
+  );
 });

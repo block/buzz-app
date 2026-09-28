@@ -128,8 +128,12 @@ personal groups and the existing + creation buttons, independently of this plugi
 Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
 under Settings → Communities. It manages Block-hosted relays through a Builderlab
 account: browser sign-in, binding the local Buzz identity (a locally signed kind
-24243 challenge), and create/archive/unarchive/transfer. Joining stays in the
-existing Add a community dialog; the card only copies the new relay address. Its
+24243 challenge), and create/archive/unarchive/transfer. A server-declared,
+default-off capability also exposes owner deletion for archived communities. The
+card persists the bound four-field request before admission, uses the read-only
+receipt route for uncertain recovery, and consumes server-authoritative quota;
+it never signs deletion or infers acceptance from a missing list row. Joining
+stays in the existing Add a community dialog; the card only copies the new relay address. Its
 `/api/builderlab/*` routes live in the development broker (`dev/builderlab.mjs`),
 which keeps the session credential and signing key in Node. Packaged builds ship no
 broker, so this plugin cannot sign in or manage communities there until a native

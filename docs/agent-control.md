@@ -166,13 +166,12 @@ and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
 See [configuration parity](configuration.md) for development routing, release
 flag exclusions and the supported deployment boundary.
 
-## Planned: Harnesses and agent defaults
+## Harnesses and planned agent defaults
 
-This is the approved Settings → Agents contract for the next implementation
-slices, not a description of controls already shipped. The current desktop still
-requires a restart to discover newly installed CLIs, and Save currently leaves
-running agents unchanged. Individual-agent configuration stays on the Agents
-page; Settings → Agents owns installation guidance and device-wide defaults.
+The Harnesses card is available in Settings → Agents. Check again re-detects
+installed CLIs without reopening the desktop app. Save currently leaves running
+agents unchanged; the global defaults below are planned separately.
+Individual-agent configuration stays on the Agents page.
 
 ### Harnesses
 
@@ -184,8 +183,14 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
   did; Goose then uses built-in `goose acp`. One install runs at a time.
   Afterward Buzz re-detects, writes an install log, and restarts agents that
   were waiting for Goose.
-- **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. V1 shows a hint
-  and copyable commands (Node.js required); one-click Pi install comes later:
+- **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. On macOS/Linux,
+  **Install** downloads checksum-verified Node v24.18.0 into app-data, then uses
+  that Node/npm to install Pi and `buzz-pi-acp` into an app-owned npm prefix.
+  Installation has a private log, re-detects the executables, and restarts only
+  enabled Pi agents that previously failed because their executable was missing.
+  User-global Pi installations remain untouched. Windows and unsupported
+  architectures retain manual setup. The copyable commands remain the manual
+  fallback (Node.js required):
 
   ```sh
   npm install -g @earendil-works/pi-coding-agent
@@ -322,7 +327,7 @@ containment on non-Unix platforms.
 - Arguments use a JSON string array rather than splitting shell text, preserving
   spaces and literal quoting. Empty/comma-containing arguments are rejected because
   the current ACP transport cannot represent them faithfully. The executable is a per-agent
-  harness choice; Settings → Agents owns the planned Harnesses setup card. The
+  harness choice; Settings → Agents owns the Harnesses setup card. The
   host must validate launch configuration and unsupported imported semantics
   before execution.
 - Harness and Provider choices come from native `harnessOptions` through the
@@ -539,9 +544,10 @@ forced native quit, signed packaging or other-platform behavior.
 
 ## Pi harness
 
-Install Pi, Node.js, and the `buzz-pi-acp` adapter. In the planned Harnesses
-card, choose **Check again** to re-detect without reopening the app; until that
-ships, reopen the current desktop app. Pi appears alongside Buzz Agent and Goose.
+On macOS/Linux, Settings → Agents offers **Install** for a missing Pi CLI or
+adapter. It uses an app-owned Node and npm prefix; manual setup still works.
+Choose **Check again** to re-detect without reopening the app. Pi appears
+alongside Buzz Agent and Goose.
 Availability means the executables were found, not that authentication or
 inference has been verified. This
 integration uses the adapter's Pi argument forwarding after `--` (verified with

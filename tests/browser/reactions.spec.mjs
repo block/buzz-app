@@ -384,7 +384,7 @@ sourceTest(
 sourceTest(
   "standalone message gallery hosts clipboard success and failure toasts",
   async ({ page }) => {
-    const pageErrors = watchPageErrors(page);
+    const errors = watchPageErrors(page);
     await page.addInitScript(() => {
       let attempts = 0;
       Object.defineProperty(navigator, "clipboard", {
@@ -422,6 +422,6 @@ sourceTest(
       notifications.getByText("Message copied", { exact: true }),
     ).toBeVisible();
     await expect(row).toBeVisible();
-    expect(pageErrors.errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   },
 );

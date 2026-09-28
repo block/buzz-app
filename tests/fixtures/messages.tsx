@@ -1,6 +1,7 @@
 // A second source consumer: ordinary prop changes, no caller remount keys.
 // Real React/session/outbox; local ephemeral signed events, never a live broker.
 import { StrictMode, useRef, useState } from "react";
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { createRoot } from "react-dom/client";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
@@ -152,6 +153,13 @@ const report = {
   rootId: roots[0].id,
   exactReplyId: exactReply.id,
 };
+function createClipboardGate() {
+  let release = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { writes: 0, release, released };
+}
 let incoming = (_events: readonly RelayEvent[]) => {};
 const rejected = new Set<string>();
 const owner = createRelaySession({
@@ -242,7 +250,9 @@ Object.assign(window, {
     extensionsActive() {
       return extensions.inline.snapshot().map((entry) => entry.id);
     },
-    imageClipboard(outcome: "success" | "failure") {
+    imageClipboard(outcome: "success" | "failure", mode?: "deferred") {
+      const clipboardGate = createClipboardGate();
+      window.messagesFixture.clipboardGate = clipboardGate;
       class FixtureClipboardItem {
         constructor(readonly items: Record<string, Promise<Blob>>) {}
       }
@@ -257,6 +267,8 @@ Object.assign(window, {
         configurable: true,
         value: {
           write: async () => {
+            clipboardGate.writes++;
+            if (mode === "deferred") await clipboardGate.released;
             if (outcome === "failure") throw new Error("fixture denied");
           },
         },
@@ -292,6 +304,7 @@ Object.assign(window, {
   },
 });
 function Fixture() {
+  useKeyboardFocusVisibility();
   const [selected, select] = useState(0),
     [scope, setScope] = useState("fixture"),
     [review, setReview] = useState<Attachment>();

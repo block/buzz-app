@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import type { Updates } from "./updates";
@@ -15,11 +15,12 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
     updates.inlineVisible,
     updates.inlineVisible,
   );
-  const [dismissed, setDismissed] = useState(false);
+  const dismissed = useSyncExternalStore(
+    updates.subscribe,
+    updates.noticeDismissed,
+    updates.noticeDismissed,
+  );
   const visible = state === "ready" || state === "installing";
-  useEffect(() => {
-    if (!visible) setDismissed(false);
-  }, [visible]);
   if (!visible || dismissed || inline) return null;
   const pending = state === "installing";
   return (
@@ -27,7 +28,7 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
       title="Ready to update!"
       description={pending ? "Updating" : "Click to update"}
       tone="info"
-      onDismiss={() => setDismissed(true)}
+      onDismiss={updates.dismissNotice}
       closeLabel="Dismiss update notification"
     >
       <Button

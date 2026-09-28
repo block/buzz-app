@@ -44,7 +44,7 @@ async function readyUpdate() {
     check: async () => checks.shift() ?? null,
     relaunch,
   });
-  render(
+  const view = render(
     <ToastProvider>
       <UpdateNotice updates={updates} />
     </ToastProvider>,
@@ -53,7 +53,7 @@ async function readyUpdate() {
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   download.resolve();
   await screen.findByRole("dialog", { name: "Ready to update!" });
-  return { updates, update, install, relaunch };
+  return { updates, update, install, relaunch, view };
 }
 
 it("offers update and restart once the download is ready", async () => {
@@ -90,6 +90,31 @@ it("stays dismissed until the update leaves the ready state", async () => {
 
   await updates.checkForUpdate();
   expect(updates.snapshot().state).toBe("up-to-date");
+  void updates.checkForUpdate();
+  expect(
+    await screen.findByRole("dialog", { name: "Ready to update!" }),
+  ).toBeVisible();
+});
+
+it("stays dismissed when the notice remounts, e.g. during community restoration", async () => {
+  const { updates, view } = await readyUpdate();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Dismiss update notification" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+
+  view.unmount();
+  render(
+    <ToastProvider>
+      <UpdateNotice updates={updates} />
+    </ToastProvider>,
+  );
+  expect(updates.snapshot().state).toBe("ready");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  await updates.checkForUpdate();
   void updates.checkForUpdate();
   expect(
     await screen.findByRole("dialog", { name: "Ready to update!" }),

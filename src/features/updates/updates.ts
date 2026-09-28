@@ -59,12 +59,15 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
   let installInFlight = false;
   let manualResultRequested = false;
   let inlineViews = 0;
+  let noticeDismissed = false;
   const listeners = new Set<() => void>();
   const notify = () => {
     for (const listener of listeners) listener();
   };
   const setStatus = (next: UpdateStatus) => {
     status = next;
+    if (next.state !== "ready" && next.state !== "installing")
+      noticeDismissed = false;
     notify();
   };
 
@@ -169,6 +172,12 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       };
     },
     inlineVisible: () => inlineViews > 0,
+    /** The ready notice stays dismissed across remounts until the update resolves. */
+    dismissNotice() {
+      noticeDismissed = true;
+      notify();
+    },
+    noticeDismissed: () => noticeDismissed,
     checkForUpdate: () => runCheck(false),
     installAndRelaunch,
     dispose() {

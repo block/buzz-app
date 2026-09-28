@@ -44,6 +44,7 @@ export const test = base.extend({
   sortingSidebar: [false, { option: true }],
   initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
+  lifecycleRole: ["owner", { option: true }],
   lifecycleVisibility: [{ archived: [], hidden: [] }, { option: true }],
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
@@ -81,6 +82,7 @@ export const test = base.extend({
       sortingSidebar,
       initialSidebarSort,
       channelLifecycle,
+      lifecycleRole,
       lifecycleVisibility,
       sidebarIcons,
       channelNames,
@@ -673,7 +675,7 @@ export const test = base.extend({
               39001,
               [
                 ["d", row.id],
-                ["p", viewer, "owner"],
+                ...(lifecycleRole === "owner" ? [["p", viewer, "owner"]] : []),
               ],
               "",
               relayKey,
@@ -690,7 +692,9 @@ export const test = base.extend({
                 "p",
                 viewer,
                 "",
-                lifecycleRows.some((row) => row.id === id) ? "owner" : "member",
+                lifecycleRows.some((row) => row.id === id)
+                  ? lifecycleRole
+                  : "member",
               ],
               ...(dmLabels && id === "dm-peer"
                 ? [["p", participants[0], "", "member"]]

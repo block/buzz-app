@@ -374,13 +374,16 @@ describe("device-local startup", () => {
     expect(channels.window("beta").rows).toEqual([]);
   });
   it.each(["confirm", "omit", "deny"])(
-    "revalidates demanded cached membership omitted by capped discovery: %s",
+    "revalidates demanded cached membership omitted by capacity-limited discovery: %s",
     async (outcome) => {
       const { owner, channels, query, membership, storage } = setup();
       await owner.restore();
       channels.ensureList();
       await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
       const exact = deferred<RelayEvent[]>();
+      const others = Array.from({ length: 1024 }, (_, i) =>
+        roster(relay, `other-${i}`, [viewer.pubkey]),
+      ).sort((a, b) => a.id.localeCompare(b.id));
       query.mockImplementation(async (filters) => {
         if (
           filters.some(
@@ -388,20 +391,23 @@ describe("device-local startup", () => {
           )
         )
           return exact.promise;
-        if (filters.some((f) => f.kinds?.includes(39002)))
-          return membership.promise;
+        const rosterFilter = filters.find((f) => f.kinds?.includes(39002));
+        if (rosterFilter)
+          return others
+            .filter(
+              (event) =>
+                !rosterFilter.before_id || event.id > rosterFilter.before_id,
+            )
+            .slice(0, rosterFilter.limit);
         if (filters.some((f) => f["#h"]?.includes("alpha")))
           return head("fresh");
         return [];
       });
-      membership.resolve(
-        Array.from({ length: 500 }, (_, i) =>
-          roster(relay, `other-${i}`, [viewer.pubkey]),
-        ),
-      );
+      membership.resolve(others.slice(0, 500));
       await vi.waitFor(() =>
         expect(owner.session.live.snapshot().roster.state).toBe("verified"),
       );
+      expect(channels.list().coverage).toBe("partial");
       expect(channels.get?.("alpha")?.cached).toBe(true);
       expect(
         (await storage.readStartup?.())?.discovery?.events.some((e) =>

@@ -288,7 +288,7 @@ it("joins cleanup already started by disabling a plugin", async () => {
 });
 
 it.each(["MacIntel", "Linux x86_64", "Win32"])(
-  "composes the packaged %s identity without a broker identity or session",
+  "composes the packaged %s connection without opening a community or contacting the broker",
   async (platform) => {
     await services.dispose();
     vi.stubEnv("VITE_BUZZ_LIVE", "0");
@@ -307,7 +307,7 @@ it.each(["MacIntel", "Linux x86_64", "Win32"])(
     expect(services.identity?.snapshot()).toEqual({ status: "ready", viewer });
     expect(services.communities.snapshot()).toMatchObject({
       status: "ready",
-      relayAvailable: false,
+      relayAvailable: true,
       viewer,
       selected: null,
     });
@@ -340,7 +340,18 @@ it.each(["Linux x86_64", "Win32"])(
       status: "error",
       error: "Fixture native capability unavailable",
     });
-    expect(services.communities.snapshot().relayAvailable).toBe(false);
+    // Transport capability exists, but a failed identity cannot start a session.
+    expect(services.communities.snapshot()).toMatchObject({
+      status: "loading",
+      relayAvailable: true,
+      selected: null,
+    });
+    expect(services.communities.snapshot().viewer).toBeUndefined();
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === "relay_http"),
+    ).toBe(false);
     expect(services.pages.snapshot()).toHaveLength(1);
     expect(
       vi
@@ -351,6 +362,61 @@ it.each(["Linux x86_64", "Win32"])(
     expect(fetch).not.toHaveBeenCalled();
   },
 );
+
+it("restores the selected native community and recovers discovery failure without a broker fallback", async () => {
+  await services.dispose();
+  vi.stubEnv("VITE_BUZZ_LIVE", "0");
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(fetch).mockClear();
+  const community = "https://restored-native.test";
+  values.set(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Native", picture: "" },
+      memberships: [
+        { id: community, name: "Selected" },
+        { id: "https://unopened.test", name: "Unopened" },
+      ],
+      selected: community,
+    }),
+  );
+  let unavailable = true;
+  const destinations: string[] = [];
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "identity_restore") return viewer;
+    if (command === "deep_link_take") return [];
+    if (command === "deep_link_watch") return null;
+    if (command === "relay_http") {
+      const request = args as { community: string; path: string };
+      destinations.push(request.community);
+      if (unavailable) throw new Error("Discovery offline");
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify(
+          request.path === "/" ? { self: "b".repeat(64) } : [],
+        ),
+      };
+    }
+    throw new Error("Fixture native capability unavailable");
+  });
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.relay.snapshot()).toMatchObject({
+    status: "error",
+    error: expect.stringContaining("Discovery offline"),
+  });
+  unavailable = false;
+  services.relay.retry();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.relay.snapshot()).toMatchObject({
+    status: "ready",
+    viewer,
+    scope: `${community}:${viewer}`,
+  });
+  expect(new Set(destinations)).toEqual(new Set([community]));
+  expect(fetch).not.toHaveBeenCalled();
+});
 
 it("keeps pinned macOS desktop development on the broker identity", async () => {
   await services.dispose();

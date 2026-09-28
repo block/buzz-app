@@ -327,6 +327,36 @@ it("checks Start failure and keeps lifecycle controls available", async () => {
   await act(async () => control.refresh());
   expect(within(card).queryByText(/The agent didn't start/)).toBeNull();
 });
+it("retires a card Start failure after the editor starts and stops the agent", async () => {
+  const { f } = setup();
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(within(card).getByRole("button", { name: "Stop" }));
+  await within(card).findByRole("button", { name: "Start" });
+  const action = f.host.action;
+  f.host.action = async () => {
+    throw "synthetic start failure";
+  };
+  fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+  await within(card).findByText(/The agent didn't start/);
+  f.host.action = action;
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Runtime" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Start" }));
+  await within(card).findByText("Process running · relay readiness unverified");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Stop" }));
+  await within(card).findByText("Process stopped");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close editor" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(within(card).getByText("Process stopped")).toBeVisible();
+  expect(within(card).queryByText(/The agent didn't start/)).toBeNull();
+});
 it("Add opens a focused creation dialog and retains a dirty draft on Escape", async () => {
   const { f } = setup();
   const add = await screen.findByRole("button", { name: "Add agent" });

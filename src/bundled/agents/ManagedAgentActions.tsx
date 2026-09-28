@@ -28,6 +28,13 @@ export function ManagedAgentActions({
     text: string;
     status: AgentView["status"];
   } | null>(null);
+  // Retire on an observed transition away from the notice's status, from any
+  // surface (editor, mention start), so returning to it cannot revive the notice.
+  const [observed, setObserved] = useState(agent.status);
+  if (observed !== agent.status) {
+    setObserved(agent.status);
+    if (notice && notice.status !== agent.status) setNotice(null);
+  }
   useEffect(() => {
     if (imported) {
       details.current?.scrollIntoView?.({ block: "nearest" });

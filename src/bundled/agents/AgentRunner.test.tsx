@@ -48,10 +48,27 @@ function mount() {
   );
 }
 it("starts in the selected scope and exposes stop after native success", async () => {
-  invoke
-    .mockResolvedValueOnce(stopped)
-    .mockResolvedValueOnce({ ...stopped, state: "running" })
-    .mockResolvedValueOnce(stopped);
+  let computeConnected = false;
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "agent_runner_status") return stopped;
+    if (command === "community_compute_status")
+      return {
+        available: true,
+        state: computeConnected ? "running" : "off",
+        generation: computeConnected ? 1 : 0,
+        mode: computeConnected ? "client" : null,
+        community: computeConnected ? "https://community.example" : null,
+        viewer: computeConnected ? "owner" : null,
+      };
+    if (command === "community_compute_start") {
+      computeConnected = true;
+      return { state: "starting", mode: "client" };
+    }
+    if (command === "agent_runner_start")
+      return { ...stopped, state: "running" };
+    if (command === "agent_runner_stop") return stopped;
+    throw new Error(`Unexpected command: ${command}`);
+  });
   mount();
   fireEvent.click(await screen.findByRole("button", { name: "Start agent" }));
   await screen.findByRole("button", { name: "Stop agent" });
@@ -59,14 +76,35 @@ it("starts in the selected scope and exposes stop after native success", async (
     viewer: "owner",
     community: "https://community.example",
   });
+  expect(invoke).toHaveBeenCalledWith("community_compute_start", {
+    request: {
+      mode: "client",
+      modelId: "remote",
+      maxVramGb: null,
+      community: "https://community.example",
+      viewer: "owner",
+    },
+  });
   fireEvent.click(screen.getByRole("button", { name: "Stop agent" }));
   await screen.findByRole("button", { name: "Start agent" });
   expect(invoke).toHaveBeenCalledWith("agent_runner_stop", {});
 });
 it("shows start failures without falsely reporting a running agent", async () => {
-  invoke
-    .mockResolvedValueOnce(stopped)
-    .mockRejectedValueOnce(new Error("Stop old Buzz first"));
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "agent_runner_status") return stopped;
+    if (command === "community_compute_status")
+      return {
+        available: true,
+        state: "running",
+        generation: 2,
+        mode: "client",
+        community: "https://community.example",
+        viewer: "owner",
+      };
+    if (command === "agent_runner_start")
+      throw new Error("Stop old Buzz first");
+    throw new Error(`Unexpected command: ${command}`);
+  });
   mount();
   fireEvent.click(await screen.findByRole("button", { name: "Start agent" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(

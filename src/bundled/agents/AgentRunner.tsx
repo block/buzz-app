@@ -10,6 +10,39 @@ type Status = {
   pubkey?: string;
   detail?: string;
 };
+type ComputeStatus = {
+  available: boolean;
+  generation: number;
+  state: string;
+  mode: string | null;
+  community: string | null;
+  viewer: string | null;
+  detail?: string | null;
+};
+async function waitForConsumerSession(
+  community: string,
+  viewer: string,
+  initial: ComputeStatus,
+) {
+  let current = initial;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if (
+      current.available &&
+      current.state === "running" &&
+      current.mode === "client" &&
+      current.community === community &&
+      current.viewer === viewer
+    )
+      return;
+    if (current.state === "failed")
+      throw new Error(current.detail || "Could not connect to shared compute.");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    current = await invoke<ComputeStatus>("community_compute_status");
+  }
+  throw new Error(
+    "Shared compute is still connecting. Try starting Moonpal again shortly.",
+  );
+}
 export function useAgentRunner(relay: RelayData) {
   const session = useSyncExternalStore(
     relay.subscribe,
@@ -43,6 +76,36 @@ export function useAgentRunner(relay: RelayData) {
     setPending(true);
     setError(undefined);
     try {
+      if (start && session.status === "ready") {
+        const compute = await invoke<ComputeStatus>("community_compute_status");
+        const matchesSession =
+          compute.available &&
+          compute.state === "running" &&
+          compute.mode === "client" &&
+          compute.community === session.community &&
+          compute.viewer === session.viewer;
+        if (!matchesSession) {
+          if (compute.state !== "off") {
+            await invoke("community_compute_stop", {
+              generation: compute.generation,
+            });
+          }
+          await invoke("community_compute_start", {
+            request: {
+              mode: "client",
+              modelId: "remote",
+              maxVramGb: null,
+              community: session.community,
+              viewer: session.viewer,
+            },
+          });
+          await waitForConsumerSession(
+            session.community!,
+            session.viewer!,
+            compute,
+          );
+        }
+      }
       setStatus(
         await invoke<Status>(
           start ? "agent_runner_start" : "agent_runner_stop",

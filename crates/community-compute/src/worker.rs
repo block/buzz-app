@@ -79,7 +79,7 @@ impl StartRequest {
         Ok(())
     }
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerInput {
     pub api_port: u16,
@@ -462,7 +462,7 @@ pub fn entry() -> ! {
         .enable_all()
         .build()
         .expect("compute worker runtime");
-    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         let mut line = String::new();
         let _ = std::io::stdin().lock().read_line(&mut line);
@@ -471,9 +471,23 @@ pub fn entry() -> ! {
     mesh_llm_events::set_output_sink(Arc::new(Progress));
     rt.block_on(async move {
         let cleanup = Arc::new(tokio::sync::Mutex::new(None));
-        let result = tokio::select! {
-            result=run(input,cleanup.clone())=>result,
-            _=stop_rx=>Ok(()),
+        let mut admission_retries = 0;
+        let result = loop {
+            tokio::select! {
+                biased;
+                _ = &mut stop_rx => break Ok(()),
+                result = run(input.clone(), cleanup.clone()) => match result {
+                    Err(error) if is_admission_change(&error) && admission_retries < 5 => {
+                        admission_retries += 1;
+                        state("starting", "Community membership changed; refreshing trusted peers…");
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                    Err(error) if is_admission_change(&error) => {
+                        break Err(anyhow::anyhow!("Community membership kept changing; sharing stopped. Turn sharing off and on to retry."));
+                    }
+                    result => break result,
+                }
+            }
         };
         state("stopping", "Stopping shared compute…");
         if let Some((broker, owner)) = cleanup.lock().await.as_ref() {
@@ -490,12 +504,25 @@ pub fn entry() -> ! {
         }
     })
 }
+fn is_admission_change(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        let message = cause.to_string();
+        message.contains("Community admission changed")
+    })
+}
 mod models;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
+    #[test]
+    fn retries_runtime_when_community_admission_changes() {
+        assert!(is_admission_change(&anyhow::anyhow!(
+            "Community admission changed; sharing stopped"
+        )));
+        assert!(!is_admission_change(&anyhow::anyhow!("relay unavailable")));
+    }
     #[test]
     fn admission_uses_membership_and_owner_proof_but_not_device_liveness() {
         let member = Keys::generate();

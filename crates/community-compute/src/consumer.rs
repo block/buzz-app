@@ -58,12 +58,36 @@ async fn run_request(api: &str, prompt: &str) -> anyhow::Result<String> {
         .build()?;
     let models = read(client.get(format!("{api}/models")).send().await?).await?;
     let model = models.pointer("/data/0/id").and_then(Value::as_str).context("No remote model is available yet. Start the provider, then reconnect if admission changed.")?;
-    let response = read(client.post(format!("{api}/chat/completions")).json(&json!({"model":model,"messages":[{"role":"user","content":prompt}],"max_tokens":128,"stream":false})).send().await?).await?;
+    let request = completion_request(model, prompt);
+    let response = read(
+        client
+            .post(format!("{api}/chat/completions"))
+            .json(&request)
+            .send()
+            .await?,
+    )
+    .await?;
     let text = response
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .context("The provider returned no text")?;
     Ok(text.to_owned())
+}
+
+fn completion_request(model: &str, prompt: &str) -> Value {
+    let mut request = json!({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 128,
+        "stream": false,
+    });
+    // Qwen 3.5 defaults to reasoning mode. The short connectivity probe's
+    // 128-token budget can be consumed entirely by its hidden reasoning output,
+    // yielding `content: null` even though the provider is healthy.
+    if model.to_ascii_lowercase().contains("qwen3.5") {
+        request["chat_template_kwargs"] = json!({"enable_thinking": false});
+    }
+    request
 }
 
 #[cfg(test)]
@@ -77,6 +101,15 @@ mod tests {
             Arc,
         },
     };
+    #[test]
+    fn short_probe_disables_qwen_35_reasoning_only_for_that_model_family() {
+        let qwen = completion_request("unsloth/Qwen3.5-9B-GGUF:Q4_K_M", "hello");
+        assert_eq!(qwen["chat_template_kwargs"]["enable_thinking"], false);
+        assert_eq!(qwen["max_tokens"], 128);
+
+        let other = completion_request("some/other-model", "hello");
+        assert!(other.get("chat_template_kwargs").is_none());
+    }
     #[tokio::test]
     async fn refuses_non_owned_endpoints_and_cancels_pending_model_lookup() {
         assert!(test_request("https://example.com/v1", "hello", || true)

@@ -14,9 +14,57 @@ import {
   nip44,
 } from "nostr-tools";
 import { createRelaySession } from "../src/features/relay/session.ts";
-import { relayBrokerPlugin } from "./relay-broker.mjs";
+import {
+  identityCredentialCommand,
+  relayBrokerPlugin,
+} from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
+
+test("live identity reads the configured account credential service", () => {
+  expect(
+    identityCredentialCommand("buzz-desktop-dev.mesh-lender", "darwin"),
+  ).toEqual({
+    command: "/usr/bin/security",
+    args: [
+      "find-generic-password",
+      "-s",
+      "buzz-desktop-dev.mesh-lender",
+      "-a",
+      "secrets",
+      "-w",
+    ],
+    failure: "Keychain read unavailable or declined; no credential fallback",
+  });
+  expect(
+    identityCredentialCommand("buzz-desktop-dev.mesh-leech", "linux").args,
+  ).toEqual([
+    "lookup",
+    "service",
+    "buzz-desktop-dev.mesh-leech",
+    "username",
+    "secrets",
+  ]);
+  expect(() => identityCredentialCommand("bad\nservice", "darwin")).toThrow(
+    "Invalid Keychain credential service",
+  );
+});
+
+test("local development session advertises the required compute capability", async () => {
+  const h = await harness();
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/${encodeURIComponent(fixtureRelayUrl)}/session`,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      relayUrl: fixtureRelayUrl,
+      computeStatus: true,
+    });
+  } finally {
+    await h.close();
+  }
+});
 
 /** Real HTTP setup/response cancellation and production subscriber; only upstream
  * WS I/O is substituted. No Keychain access or network outside localhost. */

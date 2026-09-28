@@ -19,6 +19,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 import { AgentControlPanel } from "./AgentControlPanel";
 import { ManagedAgentActions } from "./ManagedAgentActions";
+import { AgentRunner, useAgentRunner } from "./AgentRunner";
 
 export function AgentsPage({
   relay,
@@ -145,6 +146,7 @@ export function AgentsPage({
                         remove={remove}
                         importedId={importedId}
                         control={control}
+                        relay={relay}
                         connection={connection}
                       />
                     )
@@ -173,6 +175,7 @@ function ManagedAgents({
   remove,
   importedId,
   control,
+  relay,
   connection,
   label,
 }: {
@@ -183,8 +186,10 @@ function ManagedAgents({
   remove(agent: AgentView): void;
   importedId: string | null;
   control: AgentControl;
+  relay: RelayData;
   connection: RelaySnapshot;
 }) {
+  const runnerControls = useAgentRunner(relay);
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(
     library.subscribe,
@@ -194,47 +199,75 @@ function ManagedAgents({
   useEffect(() => {
     if (connection.status === "ready") void library.refresh();
   }, [library, connection.status]);
+  const meshAgent = state.data?.agents.find(
+    (agent) => agent.harness.provider === "relay-mesh",
+  );
   return (
     <section aria-label="My agents" className="flex flex-col gap-4">
       <h2 className="sr-only">My agents</h2>
       <p className="m-0 text-body-sm text-secondary">
-        Mention an agent in a channel to add it and start it. Stop old Buzz and
-        its listeners before using an imported identity here.
+        Manage local agents and shared-compute agents for this community.
       </p>
       {state.data?.agents.length === 0 && (
         <p>No agents yet. Create an agent or import one from old Buzz below.</p>
       )}
+      {meshAgent && (
+        <article
+          aria-label={`Shared-compute agent ${meshAgent.name}`}
+          className="flex flex-col gap-3 rounded-2xl border border-primary p-4"
+        >
+          <h3 className="m-0 text-label">{meshAgent.name} · shared compute</h3>
+          {!runnerControls.status ? (
+            <p role="status" className="m-0 text-body-sm text-secondary">
+              Checking this app’s shared-compute runner…
+            </p>
+          ) : runnerControls.status.available &&
+            runnerControls.status.pubkey ? (
+            <AgentRunner
+              controls={runnerControls}
+              pubkeys={[runnerControls.status.pubkey]}
+            />
+          ) : (
+            <p role="alert" className="m-0 text-body-sm text-secondary">
+              {runnerControls.status.detail ??
+                "This app has no configured shared-compute runner."}
+            </p>
+          )}
+        </article>
+      )}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
-        {state.data?.agents.map((agent) => {
-          const identity = snapshot.identities.find(
-            (entry) => entry.pubkey === agent.pubkey,
-          );
-          const avatar =
-            identity?.avatar ??
-            snapshot.definitions.find(
-              (entry) => entry.id === identity?.definitionId,
-            )?.avatar;
-          return (
-            <AgentCard
-              key={agent.id}
-              name={label(agent)}
-              avatar={avatar}
-              identities={[agent]}
-              session={connection.session}
-              editable={[agent]}
-              onEdit={edit}
-              onDuplicate={duplicate}
-              onDelete={control.delete ? remove : undefined}
-            >
-              <ManagedAgentActions
-                agent={agent}
-                state={state}
-                control={control}
-                imported={agent.id === importedId}
-              />
-            </AgentCard>
-          );
-        })}
+        {state.data?.agents
+          .filter((agent) => agent.harness.provider !== "relay-mesh")
+          .map((agent) => {
+            const identity = snapshot.identities.find(
+              (entry) => entry.pubkey === agent.pubkey,
+            );
+            const avatar =
+              identity?.avatar ??
+              snapshot.definitions.find(
+                (entry) => entry.id === identity?.definitionId,
+              )?.avatar;
+            return (
+              <AgentCard
+                key={agent.id}
+                name={label(agent)}
+                avatar={avatar}
+                identities={[agent]}
+                session={connection.session}
+                editable={[agent]}
+                onEdit={edit}
+                onDuplicate={duplicate}
+                onDelete={control.delete ? remove : undefined}
+              >
+                <ManagedAgentActions
+                  agent={agent}
+                  state={state}
+                  control={control}
+                  imported={agent.id === importedId}
+                />
+              </AgentCard>
+            );
+          })}
       </div>
     </section>
   );

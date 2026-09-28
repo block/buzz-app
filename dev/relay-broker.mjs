@@ -73,6 +73,7 @@ import {
 import { createHostAdmission } from "../src/features/relay/host-admission.ts";
 import { relayKlipySearchPath } from "../src/features/relay/gifs.ts";
 import { validReactionContent } from "../src/features/relay/emoji.ts";
+import { createComputeStatusSigner } from "./compute-status.mjs";
 // Dev-only relay broker. Holds the local Buzz identity in this Node process and signs NIP-98 reads
 // for the browser, so no key ever reaches page JavaScript. The dev server loads it whenever
 // BUZZ_DEV_VIEWER is configured; production builds and tests never load it.
@@ -192,7 +193,35 @@ export function createUpstream(base) {
   };
 }
 
-function loadIdentity(authorizedViewer) {
+export function identityCredentialCommand(
+  credentialService = "buzz-desktop",
+  platform = process.platform,
+) {
+  const service = credentialService?.trim() || "buzz-desktop";
+  if (service.length > 256 || /[\u0000-\u001f\u007f]/.test(service))
+    throw new Error("Invalid Keychain credential service");
+  const readers = {
+    darwin: {
+      command: "/usr/bin/security",
+      args: ["find-generic-password", "-s", service, "-a", "secrets", "-w"],
+      failure: "Keychain read unavailable or declined; no credential fallback",
+    },
+    linux: {
+      command: "secret-tool",
+      args: ["lookup", "service", service, "username", "secrets"],
+      failure:
+        "Secret service read unavailable (needs libsecret-tools, an unlocked keyring in this desktop session, and Buzz desktop signed in); no credential fallback",
+    },
+  };
+  const reader = readers[platform];
+  if (!reader)
+    throw new Error(
+      `Live identity is read from the OS credential store on macOS or Linux only (this is ${platform}); no credential fallback`,
+    );
+  return reader;
+}
+
+function loadIdentity(authorizedViewer, credentialService = "buzz-desktop") {
   // Validate the explicit public pin before prompting for any credential access.
   const configured = authorizedViewer?.trim() ?? "";
   let expected;
@@ -214,31 +243,7 @@ function loadIdentity(authorizedViewer) {
   // or the freedesktop secret service on Linux (read through libsecret's
   // `secret-tool`). Both reads are the OS's own tools; there is no file or
   // environment fallback on any platform.
-  const readers = {
-    darwin: {
-      command: "/usr/bin/security",
-      args: [
-        "find-generic-password",
-        "-s",
-        "buzz-desktop",
-        "-a",
-        "secrets",
-        "-w",
-      ],
-      failure: "Keychain read unavailable or declined; no credential fallback",
-    },
-    linux: {
-      command: "secret-tool",
-      args: ["lookup", "service", "buzz-desktop", "username", "secrets"],
-      failure:
-        "Secret service read unavailable (needs libsecret-tools, an unlocked keyring in this desktop session, and Buzz desktop signed in); no credential fallback",
-    },
-  };
-  const reader = readers[process.platform];
-  if (!reader)
-    throw new Error(
-      `Live identity is read from the OS credential store on macOS or Linux only (this is ${process.platform}); no credential fallback`,
-    );
+  const reader = identityCredentialCommand(credentialService);
   let raw;
   try {
     raw = execFileSync(reader.command, reader.args, {
@@ -633,9 +638,10 @@ const json = (res, code, body) => {
 /** @returns {import('vite').Plugin} */
 export function relayBrokerPlugin({
   authorizedViewer,
+  credentialService = "buzz-desktop",
   relayUrl,
   communityAliases,
-  identity = () => loadIdentity(authorizedViewer),
+  identity = () => loadIdentity(authorizedViewer, credentialService),
   authority = relayAuthority,
   upstreamFetch,
   socketFactory,
@@ -650,6 +656,7 @@ export function relayBrokerPlugin({
       const log = getLogger("relay-broker");
       const key = identity();
       const viewer = getPublicKey(key);
+      const signComputeStatus = createComputeStatusSigner(viewer, key);
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
@@ -1393,6 +1400,9 @@ export function relayBrokerPlugin({
               relayUrl: relay,
               // Display base for relay HTTP routes such as /hooks/{workflow_id}.
               relayHttpUrl: relay,
+              // The local development broker explicitly enables shared compute.
+              // Production relays must advertise their own capability state.
+              computeStatus: true,
               directMessages: true,
               writeKinds: [
                 30315,
@@ -1428,6 +1438,78 @@ export function relayBrokerPlugin({
               presence: true,
               agentActivity: true,
             });
+          }
+          if (route === "/api/relay/compute-status" && req.method === "POST") {
+            let payload;
+            try {
+              let raw = "";
+              for await (const part of req) {
+                raw += part;
+                if (Buffer.byteLength(raw) > 2 * 1024 * 1024)
+                  return json(res, 413, { error: "Compute status too large" });
+              }
+              payload = JSON.parse(raw);
+            } catch {
+              return json(res, 400, { error: "Invalid compute status" });
+            }
+            let event;
+            try {
+              event = await signComputeStatus(payload, cancel.signal);
+            } catch {
+              return json(res, 400, { error: "Compute status rejected" });
+            }
+            const body = JSON.stringify(event);
+            try {
+              const requestSignal = AbortSignal.any([
+                cancel.signal,
+                AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+              ]);
+              const auth = finalizeEvent(
+                {
+                  kind: 27235,
+                  created_at: Math.floor(Date.now() / 1000),
+                  content: "",
+                  tags: [
+                    ["u", `${relay}/events`],
+                    ["method", "POST"],
+                    [
+                      "payload",
+                      createHash("sha256").update(body).digest("hex"),
+                    ],
+                    ["nonce", randomBytes(16).toString("hex")],
+                  ],
+                },
+                key,
+              );
+              const response = await admittedApiRequest(
+                admissions(relay, viewer).api,
+                () =>
+                  fetchUpstream(`${relay}/events`, {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Nostr ${Buffer.from(JSON.stringify(auth)).toString("base64")}`,
+                    },
+                    body,
+                    redirect: "error",
+                    signal: requestSignal,
+                  }),
+                requestSignal,
+                "background",
+              );
+              const result = await response.json();
+              const accepted =
+                response.ok &&
+                (result?.ok === true || result?.accepted === true);
+              return accepted
+                ? json(res, 200, { accepted: true, event_id: event.id })
+                : json(res, response.status || 502, {
+                    accepted: false,
+                    error: "Community did not accept compute status",
+                  });
+            } catch {
+              return json(res, 502, { error: "Compute status publish failed" });
+            }
           }
           if (
             [

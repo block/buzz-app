@@ -1,6 +1,13 @@
 /** Build isolated macOS development apps; invoke from an activated Hermit shell. */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, copyFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  copyFileSync,
+  cpSync,
+  renameSync,
+  writeFileSync,
+  rmSync,
+} from "node:fs";
 import { resolve, join } from "node:path";
 const root = process.cwd();
 if (process.platform !== "darwin")
@@ -9,6 +16,12 @@ const output = resolve(
   process.argv[2] ?? resolve(root, ".scratch/compute-pair"),
 );
 mkdirSync(output, { recursive: true });
+const runtimeBuild = spawnSync("node", ["scripts/build-agent-runtime.mjs"], {
+  cwd: root,
+  env: process.env,
+  stdio: "inherit",
+});
+if (runtimeBuild.status !== 0) process.exit(runtimeBuild.status ?? 1);
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 function replaceExecutable(source, destination) {
   const temporary = `${destination}.new`;
@@ -56,20 +69,19 @@ for (const [role, title, web, api, consolePort] of [
     resources = join(contents, "Resources");
   mkdirSync(mac, { recursive: true });
   mkdirSync(resources, { recursive: true });
+  const bundledRuntime = join(resources, "agent-runtime");
+  rmSync(bundledRuntime, { recursive: true, force: true });
+  cpSync(join(root, "src-tauri/resources/agent-runtime"), bundledRuntime, {
+    recursive: true,
+  });
+  // Tauri resolves immutable agent tools under Contents/Resources. Older
+  // test bundles copied three executables beside the app binary, which left
+  // AgentHost unable to find or verify its packaged runtime.
+  rmSync(join(mac, "agent-runtime"), { recursive: true, force: true });
   replaceExecutable(
     join(root, "target/debug/buzz-foundation"),
     join(mac, "buzz-foundation"),
   );
-  if (role === "client" && process.env.BUZZ_AGENT_RUNTIME_SOURCE) {
-    const runtime = join(mac, "agent-runtime");
-    mkdirSync(runtime, { recursive: true });
-    for (const name of ["buzz-acp", "buzz-agent", "buzz-dev-mcp"]) {
-      replaceExecutable(
-        join(process.env.BUZZ_AGENT_RUNTIME_SOURCE, name),
-        join(runtime, name),
-      );
-    }
-  }
   copyFileSync(
     join(root, "src-tauri/icons/icon.icns"),
     join(resources, "icon.icns"),
@@ -80,8 +92,9 @@ for (const [role, title, web, api, consolePort] of [
   );
   // The app bundle has no secret material. Its broker uses the existing authorized Keychain account.
   // Refuse an occupied web port rather than attaching to somebody else's server.
+  const launchScript = join(mac, "launch-env.zsh");
   writeFileSync(
-    join(mac, "launch"),
+    launchScript,
     `#!/bin/zsh
 set -eu
 cd ${quote(root)}
@@ -107,9 +120,34 @@ for attempt in {1..100}; do
   sleep 0.1
 done
 if [[ "$compute_ready" != 1 ]]; then exit 1; fi
-${quote(join(mac, "buzz-foundation"))} >${quote(join(output, `${role}-app.log`))} 2>&1
+compute_app_pid=$$
+(
+  while /bin/kill -0 "$compute_app_pid" 2>/dev/null; do sleep 1; done
+  /bin/kill "$compute_broker_pid" 2>/dev/null || true
+) >/dev/null 2>&1 </dev/null &
+exec ${quote(join(mac, "buzz-foundation"))} >${quote(join(output, `${role}-app.log`))} 2>&1
 `,
     { mode: 0o755 },
   );
+  // LaunchServices requires a native executable at CFBundleExecutable. This
+  // tiny shim execs the environment script so the app retains the bundle PID.
+  const source = join(mac, "launch.c");
+  const scriptPath = launchScript
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"');
+  writeFileSync(
+    source,
+    `#include <unistd.h>\nint main(void) { execl("/bin/zsh", "zsh", "${scriptPath}", (char *)0); return 127; }\n`,
+  );
+  const launcher = spawnSync(
+    "cc",
+    ["-x", "c", "-o", join(mac, "launch"), source],
+    {
+      cwd: root,
+      stdio: "inherit",
+    },
+  );
+  rmSync(source, { force: true });
+  if (launcher.status !== 0) process.exit(launcher.status ?? 1);
   console.log(`Created ${app}`);
 }

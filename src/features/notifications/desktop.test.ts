@@ -128,9 +128,9 @@ it("desktop settings expose app-owned sound and running-app exact clicks", async
   );
   expect(html).toContain("Desktop alerts");
   expect(html).toContain("Mentions");
-  expect(html).toContain("Manage app permissions in your system settings.");
+  expect(html).toContain("Fine-tune what gets through below.");
   expect(html).toContain(
-    "Opening an alert takes you to its message or thread.",
+    "Native desktop alerts are enabled for the categories you have armed below.",
   );
   // Sound is app-owned on desktop: the switch and per-event sound rows render.
   expect(html).toContain("Alert with a sound for the events below.");

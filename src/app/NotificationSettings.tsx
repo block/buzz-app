@@ -208,7 +208,7 @@ export function NotificationSettings({
       <Header
         id="notification-settings-title"
         title="Notifications"
-        subtitle="Buzz sends alerts and badges for new activity in the selected community while it’s running. Manage app permissions in your system settings."
+        subtitle="Desktop alerts are on by default. Fine-tune what gets through below."
       />
       <div className="grid gap-5">
         <div className={styles.preferenceList}>
@@ -227,7 +227,11 @@ export function NotificationSettings({
         </div>
         <PreferenceRow
           label="Desktop alerts"
-          description="Show notifications for new activity. Opening an alert takes you to its message or thread."
+          description={
+            desktopAlertsEnabled
+              ? "Native desktop alerts are enabled for the categories you have armed below."
+              : "Request OS permission and surface new mentions or needs-action items outside the app."
+          }
           checked={desktopAlertsEnabled}
           disabled={state.developmentPaused}
           onCheckedChange={(enabled) =>
@@ -280,7 +284,7 @@ export function NotificationSettings({
         <div className={styles.nestedPreferences}>
           <PreferenceRow
             label="Notify while viewing"
-            description="Show alerts while the conversation is already open."
+            description="Also alert for direct messages in the conversation you have open."
             checked={preferences.notifyWhileViewing}
             disabled={!desktopAlertsEnabled}
             onCheckedChange={(notifyWhileViewing) =>

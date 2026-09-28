@@ -341,10 +341,22 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
     // Disconnect is recovery: changing provider or breaking saved settings must
     // not trap credentials. Its explicit host selects ONLY this app's cache.
     let prepared = if request.action == Operation::Disconnect {
-        controller
-            .ensure_open()
-            .await
-            .and_then(|_| origin(&request.host))
+        // An inherited workspace is sent blank; native resolves it from Agent
+        // defaults without the draft, so recovery survives invalid settings.
+        let named = if request.inherit_workspace && request.host.is_empty() {
+            controller
+                .inherited_workspace()
+                .await
+                .and_then(|workspace| {
+                    workspace.ok_or_else(|| {
+                        "Agent defaults no longer set a Databricks workspace".to_owned()
+                    })
+                })
+        } else {
+            controller.ensure_open().await.map(|_| request.host.clone())
+        };
+        named
+            .and_then(|named| origin(&named))
             .and_then(|workspace| {
                 host.cache(&workspace)
                     .map(|cache| (false, workspace, None, cache))
@@ -376,7 +388,11 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
         if request.action == Operation::Disconnect {
             controller.disconnect(&workspace).await?;
             return Ok(Catalog {
-                host: workspace,
+                host: if hide_inherited_host {
+                    String::new()
+                } else {
+                    workspace
+                },
                 models: vec![],
                 model_overridden,
                 disconnected: true,

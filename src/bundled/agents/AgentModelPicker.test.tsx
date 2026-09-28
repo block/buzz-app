@@ -754,6 +754,19 @@ it("browses an inherited Agent defaults workspace without repeating it in the fo
     expect(
       screen.getByLabelText("Databricks workspace (HTTPS origin)"),
     ).toHaveAttribute("placeholder", "Use agent defaults");
+    // Disconnect names the same hidden workspace for native to resolve.
+    await user.click(screen.getByRole("button", { name: "Disconnect" }));
+    await waitFor(() =>
+      expect(run).toHaveBeenLastCalledWith(
+        1,
+        expect.objectContaining({
+          host: "",
+          action: "disconnect",
+          inheritWorkspace: true,
+          edit: undefined,
+        }),
+      ),
+    );
   } finally {
     control.dispose();
   }

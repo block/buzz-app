@@ -525,6 +525,16 @@ impl Controller {
         self.store.save(id, revision, edit)?;
         self.snapshot()
     }
+    /// Native-only Agent defaults `DATABRICKS_HOST`, for Disconnect recovery of
+    /// an inherited workspace the renderer never sees. Never serialized.
+    pub fn inherited_workspace(&self) -> Result<Option<String>> {
+        Ok(self
+            .store
+            .defaults()?
+            .environment
+            .get("DATABRICKS_HOST")
+            .cloned())
+    }
     pub fn save_defaults(&mut self, edit: crate::AgentDefaultsEdit) -> Result<ControlSnapshot> {
         let mut defaults = self.store.defaults()?;
         defaults.apply(edit)?;

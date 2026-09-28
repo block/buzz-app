@@ -556,6 +556,34 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   secret build keys fail closed. With no saved or build workspace, enter one
   explicitly before browsing models.
 
+## Open AI API-key setup
+
+Choose **Buzz Agent → Provider: Open AI** in the shared create/edit form. Enter a
+key in **Open AI API Key** and choose **Check key and load models**.
+Select a returned model explicitly; effort stays at **Runtime default** because
+the model list does not report effort choices. Listing a model does not certify
+agent-conversation compatibility, inference quota, or a successful reply.
+
+Successful lookup stages `OPENAI_COMPAT_API_KEY` in the environment draft.
+Save/Create persists it with the model in the local `agent-controller/agents.json`
+store, in plaintext with owner-only permissions on Unix. Cancelling writes nothing;
+failed Save preserves the previous settings. Saved values remain write-only in
+snapshots; Refresh resolves them natively. The masked input clears on submission.
+Restart applies saved changes to new work.
+Native creation rechecks the submitted model and key before creating an identity.
+Provider-key storage has no Keychain dependency; existing identity storage and
+process-containment platform limits are unchanged.
+
+This flow uses the official OpenAI endpoint and rejects conflicting saved/draft
+provider, model, effort, endpoint and proxy environment overrides. Remove them
+explicitly before setup. Keys never enter shared model caches, returned diagnostics,
+or shell arguments. Existing manual/imported configurations remain
+separate until explicitly configured through this flow. Codex and Goose do not
+use this key setup. The attended check passed model listing but inference returned
+`credit_balance_exhausted`; successful replies remain pending. That error is shown
+as a sanitized no-credits diagnostic and editor alert. See the
+[implementation scope and checkpoint](add-codex-harness/buzz-openai-api-key.md).
+
 ## Runtime resources
 
 Ordinary `bin/just desktop` and `bin/pnpm tauri build` prepare these resources

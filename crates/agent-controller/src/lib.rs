@@ -12,6 +12,7 @@ mod credentials;
 mod defaults;
 #[cfg(unix)]
 mod diagnostics;
+pub mod openai;
 #[cfg(not(unix))]
 mod diagnostics {
     pub(crate) struct Diagnostics;

@@ -149,6 +149,8 @@ pub enum AiConfiguration {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum EffortSelection {
+    /// Send no effort override; does not claim knowledge of model capabilities.
+    Default,
     /// Stable adapter value, never its display label.
     Value { value: String },
     /// Valid only when the selected integration confirms no effort control.
@@ -387,8 +389,12 @@ impl Agent {
         text(&self.harness.model, 512, "Model")?;
         self.harness.validate_configuration()?;
         text(&self.harness.provider, 128, "Provider")?;
-        if let Some(settings) = &self.harness.databricks {
-            settings.validate()?;
+        // Retain other-provider drafts without letting hidden workspace inputs
+        // block the explicitly selected OpenAI setup.
+        if !(self.harness.command == "buzz-agent" && self.harness.provider == "openai") {
+            if let Some(settings) = &self.harness.databricks {
+                settings.validate()?;
+            }
         }
         validate_environment(&self.environment)
     }

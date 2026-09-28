@@ -32,7 +32,10 @@ isolation from other programs running as the same OS user.
 There is no file/environment fallback, automatic legacy migration, human key
 replacement or human delete command. The existing **explicit agent import** may
 read only the selected old Buzz service/account and copy the selected agent key
-into this app's separate agent namespace; it never writes the old blob.
+into this app's separate agent namespace; it never writes the old blob. The
+Windows/Linux agent adapters are backend groundwork: normal agent import/create
+UI remains macOS-only (see [local agent controls](agent-control.md)). This storage
+change does not enable those actions or Windows agent execution.
 No user key belongs in release configuration.
 
 A shared credential blob can reduce repeated OS prompts by caching many credentials
@@ -108,9 +111,11 @@ and do not connect that identity to a real community for this storage check.
   Without Secret Service, expect an error rather than key generation/fallback.
 - Where two development instances can run, an occupied human/agent item must not
   be overwritten. Lock contention must be retryable; after exit, locks release.
-- Explicitly import a throwaway old-Buzz agent into this app, restart and verify
-  the exact key. Delete only the destination agent; its old source must remain.
-  This does **not** establish Windows agent execution, which remains separate work.
+
+Deferred until agent import/create is enabled on Windows/Linux: explicitly import
+a throwaway old-Buzz agent, restart and verify the exact key, then delete only the
+destination agent and verify the old source remains. This is not a reachable UI
+acceptance step for this storage slice and does not establish Windows execution.
 
 Attended Windows/Linux execution and human confirmation are release gates, not
 claims made by cross-compilation, fake-store tests, or the browser fixture.

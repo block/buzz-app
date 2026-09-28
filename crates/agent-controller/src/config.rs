@@ -7,6 +7,26 @@ use std::path::Path;
 pub(crate) const MAX_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_AGENTS: usize = 2000;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionPolicy {
+    #[default]
+    Channel,
+    Thread,
+}
+
+impl SessionPolicy {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Channel => "channel",
+            Self::Thread => "thread",
+        }
+    }
+}
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 // Only these explicit projections may cross IPC. Environment values and unknown
 // legacy fields remain native-only even when they do not look like credentials.
 #[derive(Clone, Serialize)]
@@ -28,6 +48,8 @@ pub struct AgentView {
     #[serde(default)]
     pub picture: Option<String>,
     pub system_prompt: String,
+    /// Saved choice; null uses Agent defaults unless an imported policy exists.
+    pub session_policy: Option<SessionPolicy>,
     pub workspace: String,
     pub harness: HarnessView,
     pub revision: u64,
@@ -83,6 +105,8 @@ pub struct AgentEdit {
     #[serde(default)]
     pub picture: Option<String>,
     pub system_prompt: String,
+    #[serde(default)]
+    pub session_policy: Option<SessionPolicy>,
     pub workspace: String,
     pub harness: HarnessEdit,
     /// Absence preserves; null deletes; a value replaces. Never a read API.
@@ -108,6 +132,11 @@ pub(crate) struct Agent {
     #[serde(default)]
     pub picture: Option<String>,
     pub system_prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_policy: Option<SessionPolicy>,
+    /// Distinguish an explicit default choice from a legacy imported policy.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub session_policy_inherit: bool,
     pub workspace: String,
     pub harness: HarnessEdit,
     pub environment: BTreeMap<String, String>,
@@ -137,6 +166,7 @@ impl Agent {
             name: self.name.clone(),
             picture: self.picture.clone(),
             system_prompt: self.system_prompt.clone(),
+            session_policy: self.selected_session_policy(),
             workspace: self.workspace.clone(),
             harness: HarnessView {
                 command: self.harness.command.clone(),
@@ -181,6 +211,21 @@ impl Agent {
     pub fn starts_on_launch(&self) -> bool {
         self.start_on_app_launch.unwrap_or(self.enabled)
     }
+    pub(crate) fn selected_session_policy(&self) -> Option<SessionPolicy> {
+        if self.session_policy_inherit {
+            return self.session_policy;
+        }
+        self.session_policy.or_else(|| {
+            let imported = self.imported["definition"]["session_policy"]
+                .as_str()
+                .or_else(|| self.imported["record"]["session_policy"].as_str());
+            match imported {
+                Some("channel") => Some(SessionPolicy::Channel),
+                Some("thread") => Some(SessionPolicy::Thread),
+                _ => None,
+            }
+        })
+    }
     pub fn respond_to(&self, owner_only: bool) -> Result<&str> {
         let respond_to = if owner_only {
             "owner-only"
@@ -214,6 +259,8 @@ impl Agent {
         }
         self.name = edit.name;
         self.system_prompt = edit.system_prompt;
+        self.session_policy = edit.session_policy;
+        self.session_policy_inherit = edit.session_policy.is_none();
         self.workspace = edit.workspace;
         self.harness = edit.harness;
         for (key, value) in edit.environment {

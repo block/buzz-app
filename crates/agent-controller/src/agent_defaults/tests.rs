@@ -7,6 +7,7 @@ fn defaults(harness: &str) -> AgentDefaults {
         provider: "global-provider".into(),
         model: "global-model".into(),
         effort: "high".into(),
+        session_policy: SessionPolicy::Channel,
         environment: BTreeMap::from([
             ("SHARED".into(), "global".into()),
             ("GLOBAL_ONLY".into(), "global".into()),
@@ -19,6 +20,7 @@ fn edit(harness: &str, model: &str, effort: &str) -> AgentDefaultsEdit {
         provider: "p".into(),
         model: model.into(),
         effort: effort.into(),
+        session_policy: SessionPolicy::Channel,
         environment: BTreeMap::new(),
     }
 }
@@ -68,6 +70,54 @@ fn selectors_do_not_cross_harnesses_but_environment_does() {
         effective(&agent, &defaults("pi")).harness.provider,
         "global-provider"
     );
+}
+
+#[test]
+fn conversation_context_inherits_defaults_unless_agent_or_imported_definition_selects_it() {
+    let mut agent = fixture();
+    let mut defaults = defaults("buzz-agent");
+    defaults.session_policy = SessionPolicy::Thread;
+    assert_eq!(agent.view(&defaults).session_policy, None);
+    assert_eq!(
+        effective(&agent, &defaults).session_policy,
+        Some(SessionPolicy::Thread)
+    );
+    let before = crate::restart::spawn_config(&effective(&agent, &AgentDefaults::default()));
+    let after = crate::restart::spawn_config(&effective(&agent, &defaults));
+    assert!(crate::restart::diff(&before, &after)
+        .iter()
+        .any(|entry| entry.field == "session_policy"));
+
+    agent.session_policy = Some(SessionPolicy::Channel);
+    assert_eq!(
+        effective(&agent, &defaults).session_policy,
+        Some(SessionPolicy::Channel)
+    );
+    agent.session_policy = None;
+    agent.imported = serde_json::json!({
+        "record": {"session_policy": "channel"},
+        "definition": {"session_policy": "thread"}
+    });
+    assert_eq!(
+        agent.view(&defaults).session_policy,
+        Some(SessionPolicy::Thread)
+    );
+    assert_eq!(
+        effective(&agent, &defaults).session_policy,
+        Some(SessionPolicy::Thread)
+    );
+    agent.session_policy_inherit = true;
+    assert_eq!(agent.view(&defaults).session_policy, None);
+    assert_eq!(
+        effective(&agent, &AgentDefaults::default()).session_policy,
+        Some(SessionPolicy::Channel)
+    );
+    assert_eq!(
+        AgentDefaults::default().session_policy,
+        SessionPolicy::Channel
+    );
+    let legacy: AgentDefaults = serde_json::from_str(r#"{"harness":"buzz-agent"}"#).unwrap();
+    assert_eq!(legacy.session_policy, SessionPolicy::Channel);
 }
 
 #[test]

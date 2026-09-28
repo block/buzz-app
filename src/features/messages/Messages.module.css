@@ -1065,20 +1065,43 @@ button.mediaPreview {
 .imageReviewDragging {
   cursor: grabbing;
 }
-.imageReviewToolbar {
-  @apply popover-surface;
+.imageReviewToolbarStack {
   position: absolute;
   z-index: 2;
   left: 50%;
   bottom: var(--space-4);
   translate: -50% 0;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+.imageReviewToolbar {
+  @apply popover-surface;
+  display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2);
 }
+.imageReviewCopyNotice {
+  pointer-events: none;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-pill);
+  background: var(--surface-popover);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-standard);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  white-space: nowrap;
+}
+.imageReviewCopyNoticeError {
+  border-color: var(--border-danger);
+  color: var(--text-danger);
+}
 .imageReviewSwitcher,
-.imageReviewZoom {
+.imageReviewZoom,
+.imageReviewActions {
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -1087,8 +1110,7 @@ button.mediaPreview {
   padding-right: var(--space-2);
   border-right: 1px solid var(--border-prominent);
 }
-.imageReviewSwitcher span,
-.imageReviewPercent {
+.imageReviewSwitcher span {
   min-width: 2.8rem;
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
@@ -1099,14 +1121,17 @@ button.mediaPreview {
   accent-color: var(--affordance-prominent);
 }
 @media (max-width: 650px) {
-  .imageReviewToolbar {
+  .imageReviewToolbarStack {
     right: var(--space-2);
     bottom: var(--space-2);
     left: var(--space-2);
     translate: 0 0;
+  }
+  .imageReviewToolbar {
     display: grid;
     grid-template-columns: auto 1fr auto;
     gap: var(--space-1);
+    width: 100%;
     border-radius: var(--radius-control);
   }
   .imageReviewZoom {

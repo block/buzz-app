@@ -54,6 +54,7 @@ export function createWorkflows({
     string,
     {
       data: WorkflowDefinitions;
+      channelIds: readonly string[];
       readAt: number;
       lastUsedAt: number;
     }
@@ -83,12 +84,22 @@ export function createWorkflows({
   }
   function retainDefinitions(
     key: string,
+    requestedChannelIds: readonly string[],
     data: WorkflowDefinitions,
     version: number,
   ) {
     if (version !== definitionCacheVersion) return;
     const now = Date.now();
-    definitionCache.set(key, { data, readAt: now, lastUsedAt: now });
+    const requested = new Set(requestedChannelIds);
+    for (const [existingKey, entry] of definitionCache)
+      if (entry.channelIds.some((id) => requested.has(id)))
+        definitionCache.delete(existingKey);
+    definitionCache.set(key, {
+      data,
+      channelIds: Object.freeze([...requestedChannelIds]),
+      readAt: now,
+      lastUsedAt: now,
+    });
     pruneDefinitionCache(now);
   }
   function invalidateDefinitionCache() {
@@ -452,7 +463,8 @@ export function createWorkflows({
           });
         },
         (data) => {
-          if (aggregate) retainDefinitions(cacheKey, data, readVersion);
+          if (aggregate)
+            retainDefinitions(cacheKey, channelIds, data, readVersion);
           const { items } = data;
           // Only a fresh, verified exact configuration head resolves an unknown
           // save. An echo, another revision, or run history cannot do so.

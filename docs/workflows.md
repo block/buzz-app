@@ -84,10 +84,13 @@ continuations for full pages. Single-channel detail reads remain capped at 100
 events and mark saturated results partial. Completed landing batch reads are
 retained in the session workflow capability: returning within ten seconds can
 reuse the matching batch without another relay read, and older retained results
-can warm the landing while a fresh read runs. Explicit Refresh, save readback,
-configuration commands, receipts, disconnects, access loss, cache clear and
-session disposal bypass or purge that reuse. Retention is memory-only and
-bounded; a finished scan is not proof of an exhaustive runtime inventory.
+can warm the landing while a fresh read runs. Retaining a completed batch evicts
+older retained batches that requested any of the same channels, including empty
+results, so targeted save readback cannot leave an overlapping stale landing
+batch reusable. Explicit Refresh, save readback, configuration commands,
+receipts, disconnects, access loss, cache clear and session disposal bypass or
+purge that reuse. Retention is memory-only and bounded; a finished scan is not
+proof of an exhaustive runtime inventory.
 
 Metadata renames/reordering do not restart discovery; new memberships add only
 their missing reads. One stable status replaces

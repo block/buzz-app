@@ -555,6 +555,37 @@ it("reuses fresh session cache and does not replay readback on landing remount",
   }
 });
 
+it("rereads an overlapping landing batch after queued verified readback", async () => {
+  vi.spyOn(Date, "now").mockImplementation(() => 0);
+  const [a, b] = [channel(1), channel(2)];
+  const saved = event(a.id);
+  const fixture = mount([a, b]);
+  try {
+    await waitFor(() => expect(fixture.reads).toHaveLength(1));
+    fixture.readback(a.id, saved.id);
+    expect(fixture.reads).toHaveLength(1);
+    await fixture.finish(0);
+    await fixture.finish(1, [saved]);
+    expect(fixture.reads.map((read) => read.ids)).toEqual([
+      [a.id, b.id],
+      [a.id],
+    ]);
+    expect(
+      screen.getByRole("button", { name: "Open Message helper" }),
+    ).toBeVisible();
+
+    fixture.remount();
+    await waitFor(() => expect(fixture.reads).toHaveLength(3));
+    expect(fixture.reads[2]?.ids).toEqual([a.id, b.id]);
+    await fixture.finish(2, [saved]);
+    expect(
+      screen.getByRole("button", { name: "Open Message helper" }),
+    ).toBeVisible();
+  } finally {
+    fixture.close();
+  }
+});
+
 it("reuses fresh cached results for every completed batch after navigation", async () => {
   const channels = Array.from({ length: 129 }, (_, i) => channel(i + 1));
   const fixture = mount(channels);

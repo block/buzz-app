@@ -325,6 +325,83 @@ it("reuses completed aggregate definitions only for fresh session-cache reads", 
   );
 });
 
+it("evicts only overlapping aggregate definition cache entries after completed reads", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const h = setup();
+  const other = "44444444-4444-4444-8444-444444444444";
+  const disjoint = "55555555-5555-4555-8555-555555555555";
+  const row = signed(keypair(), {
+    kind: 30620,
+    created_at: 1,
+    content: yaml,
+    tags: [
+      ["h", channelId],
+      ["d", id],
+    ],
+  });
+
+  h.read.mockResolvedValueOnce([]);
+  const emptySuperset = h.capability.definitions([channelId, other]);
+  await emptySuperset.refresh();
+  emptySuperset.dispose();
+
+  h.read.mockResolvedValueOnce([]);
+  const emptyDisjoint = h.capability.definitions([disjoint]);
+  await emptyDisjoint.refresh();
+  emptyDisjoint.dispose();
+
+  h.read.mockResolvedValueOnce([row]);
+  const subset = h.capability.definitions([channelId]);
+  await subset.refresh();
+  subset.dispose();
+  expect(h.read).toHaveBeenCalledTimes(3);
+
+  const cachedDisjoint = h.capability.definitions([disjoint]);
+  expect(cachedDisjoint.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [] },
+  });
+  await cachedDisjoint.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(3);
+  cachedDisjoint.dispose();
+
+  const evictedSuperset = h.capability.definitions([other, channelId]);
+  expect(evictedSuperset.snapshot()).toMatchObject({
+    status: "idle",
+    data: { items: [] },
+  });
+  h.read.mockResolvedValueOnce([row]);
+  await evictedSuperset.refresh({ ifStale: true });
+  expect(evictedSuperset.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [{ revision: row.id }] },
+  });
+  evictedSuperset.dispose();
+  expect(h.read).toHaveBeenCalledTimes(4);
+
+  const evictedSubset = h.capability.definitions([channelId]);
+  expect(evictedSubset.snapshot()).toMatchObject({
+    status: "idle",
+    data: { items: [] },
+  });
+  h.read.mockRejectedValueOnce(new Error("offline"));
+  await evictedSubset.refresh();
+  expect(evictedSubset.snapshot()).toMatchObject({
+    status: "error",
+    data: { items: [] },
+  });
+  evictedSubset.dispose();
+
+  const retainedSuperset = h.capability.definitions([channelId, other]);
+  expect(retainedSuperset.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [{ revision: row.id }] },
+  });
+  await retainedSuperset.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(5);
+});
+
 it.each([true, false])(
   "fresh exact saved configuration resolves a lost save receipt without replay (echo=%s)",
   async (echo) => {

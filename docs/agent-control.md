@@ -313,6 +313,9 @@ containment on non-Unix platforms.
 - `running` is **process-alive evidence only**, labeled “Process running · relay
   readiness unverified.” It is not a Listening/Working badge or proof a mention
   can be received. Native wake/readiness acceptance is separate.
+  The avatar badge is relay presence, which the harness publishes just after
+  the process starts; the card re-reads it briefly after start/stop (see
+  [presence](presence.md#ownership-and-bounds)).
 - Save uses `expectedRevision` and updates only editable fields. The planned
   flow restarts running agents whose effective settings change (see
   [Global agent defaults and saving](#global-agent-defaults-and-saving)).

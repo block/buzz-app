@@ -20,6 +20,8 @@ const PAGE_SIZE = 50;
 const MAX_PAGES = 10;
 const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
+/** The relay's `thread_window` row allowlist excludes legacy diffs (kind 40008). */
+const STRICT_WINDOW_KINDS = [9, 40002];
 const contentKind = (event: EventData) =>
   [9, 40002, 40008].includes(event.kind);
 const inChannel = (event: EventData, channelId: string) =>
@@ -445,6 +447,7 @@ export function createThreadView({
               [
                 {
                   ...filter,
+                  kinds: STRICT_WINDOW_KINDS,
                   thread_window: true,
                   ...(nextCursor
                     ? { until: nextCursor.created_at, before_id: nextCursor.id }

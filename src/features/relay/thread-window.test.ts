@@ -179,6 +179,12 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
       .map((e) => e.id),
   );
   expect(h.requests.filter(([f]) => f?.thread_window)).toHaveLength(7);
+  // The relay's window row allowlist rejects legacy diff kind 40008.
+  expect(
+    h.requests
+      .filter(([f]) => f?.thread_window)
+      .every(([f]) => !f?.kinds?.includes(40008)),
+  ).toBe(true);
   expect(h.requests.every((filters) => filters.length === 1)).toBe(true);
   overlays = [
     signed(author, {
@@ -263,6 +269,7 @@ it("discards an old relay's 200 probe and restarts legacy with clean state", asy
   expect(h.requests.at(-1)).toHaveLength(2);
   expect(h.requests.at(-1)?.[1]).not.toHaveProperty("thread_window");
   expect(h.requests.at(-1)?.[1]).not.toHaveProperty("until");
+  expect(h.requests.at(-1)?.[1]?.kinds).toContain(40008);
   await h.view.loadMore();
   expect(h.requests.at(-1)?.[1]).toMatchObject({
     thread_cursor: old.created_at,

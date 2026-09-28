@@ -16,6 +16,24 @@ use std::{
 use tauri_plugin_opener::OpenerExt;
 
 const CANCELLED: &str = "Connection request cancelled or expired";
+const HOST_BUSY: &str = "Another native agent operation is in progress";
+
+/// Lookup settings reads share the agent host lock with snapshot refreshes.
+/// Wait for it the way snapshot refresh does (up to twenty 250ms waits) rather
+/// than failing the lookup. The wait runs inside the cancellable lookup task,
+/// before any credential or catalog work.
+async fn read_settings<T>(read: impl Fn() -> Result<T, String>) -> Result<T, String> {
+    let mut waits = 0;
+    loop {
+        match read() {
+            Err(error) if error == HOST_BUSY && waits < 20 => {
+                waits += 1;
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            result => return result,
+        }
+    }
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Defaults {
@@ -252,17 +270,21 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             .and_then(|n| n.to_str())
             == Some("buzz-pi-acp")
     }) {
-        let prepared = controller.pi_model_context(
-            request.id.as_deref(),
-            request.expected_revision,
-            request.edit.clone().unwrap(),
-        );
+        let edit = request.edit.clone().unwrap();
         return host
             .run(ticket, async move {
                 if request.action == Operation::Disconnect {
                     return Err("Pi credentials are managed by Pi".into());
                 }
-                let models = crate::pi_models::fetch(prepared?)
+                let context = read_settings(|| {
+                    controller.pi_model_context(
+                        request.id.as_deref(),
+                        request.expected_revision,
+                        edit.clone(),
+                    )
+                })
+                .await?;
+                let models = crate::pi_models::fetch(context)
                     .await?
                     .into_iter()
                     .map(|id| Model {
@@ -295,20 +317,22 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                 })
                 .await;
         }
-        let prepared = request
-            .edit
-            .clone()
-            .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
-            .and_then(|edit| {
-                controller.goose_model_context(
-                    request.id.as_deref(),
-                    request.expected_revision,
-                    edit,
-                )
-            });
         return host
             .run(ticket, async move {
-                let context = prepared?;
+                let context = read_settings(|| {
+                    request
+                        .edit
+                        .clone()
+                        .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
+                        .and_then(|edit| {
+                            controller.goose_model_context(
+                                request.id.as_deref(),
+                                request.expected_revision,
+                                edit,
+                            )
+                        })
+                })
+                .await?;
                 let model_overridden = context.model_overridden;
                 let models = crate::goose_models::fetch(context)
                     .await?
@@ -329,36 +353,47 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
     }
     // Disconnect is recovery: changing provider or breaking saved settings must
     // not trap credentials. Its explicit host selects ONLY this app's cache.
-    let prepared = if request.action == Operation::Disconnect {
-        controller
-            .ensure_open()
-            .and_then(|_| origin(&request.host))
-            .and_then(|workspace| {
-                host.cache(&workspace)
-                    .map(|cache| (false, workspace, None, cache))
-            })
-    } else {
-        // Short settings read only; never hold the controller across network waits.
-        request
-            .edit
-            .clone()
-            .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
-            .and_then(|edit| {
-                controller.model_context(request.id.as_deref(), request.expected_revision, edit)
-            })
-            .and_then(|context| {
-                resolve(&request, &context)
-                    .map(|(workspace, filter)| (context.model_overridden, workspace, filter))
-            })
-            .and_then(|(overridden, workspace, filter)| {
-                host.cache(&workspace)
-                    .map(|cache| (overridden, workspace, filter, cache))
-            })
+    let action = request.action;
+    let prepare = {
+        let (host, controller) = (host.clone(), controller.clone());
+        move || {
+            if action == Operation::Disconnect {
+                controller
+                    .ensure_open()
+                    .and_then(|_| origin(&request.host))
+                    .and_then(|workspace| {
+                        host.cache(&workspace)
+                            .map(|cache| (false, workspace, None, cache))
+                    })
+            } else {
+                // Short settings read only; never hold the controller across network waits.
+                request
+                    .edit
+                    .clone()
+                    .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
+                    .and_then(|edit| {
+                        controller.model_context(
+                            request.id.as_deref(),
+                            request.expected_revision,
+                            edit,
+                        )
+                    })
+                    .and_then(|context| {
+                        resolve(&request, &context).map(|(workspace, filter)| {
+                            (context.model_overridden, workspace, filter)
+                        })
+                    })
+                    .and_then(|(overridden, workspace, filter)| {
+                        host.cache(&workspace)
+                            .map(|cache| (overridden, workspace, filter, cache))
+                    })
+            }
+        }
     };
     let factory = state.factory.clone();
     host.run(ticket, async move {
-        let (model_overridden, workspace, filter, cache) = prepared?;
-        if request.action == Operation::Disconnect {
+        let (model_overridden, workspace, filter, cache) = read_settings(&prepare).await?;
+        if action == Operation::Disconnect {
             controller.disconnect(&workspace)?;
             return Ok(Catalog {
                 host: workspace,
@@ -368,7 +403,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             });
         }
         execute(
-            request.action,
+            action,
             workspace,
             filter,
             cache,

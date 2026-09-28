@@ -229,16 +229,22 @@ fn create_draft_model_browsing_inherits_native_provider_and_environment() {
         "harness":{"command":"buzz-agent","args":[],"provider":"","model":""},
         "environment":{}
     });
-    let context = host
-        .model_context(None, None, serde_json::from_value(draft.clone()).unwrap())
-        .unwrap();
+    let context = tauri::async_runtime::block_on(host.model_context(
+        None,
+        None,
+        serde_json::from_value(draft.clone()).unwrap(),
+    ))
+    .unwrap();
     assert_eq!(context.host.as_deref(), Some("https://models.example"));
     assert_eq!(context.filter.as_deref(), Some("inherited-*"));
     let mut own = draft;
     own["harness"]["databricks"] = json!({"host":"https://own.example", "filter":"own-*"});
-    let context = host
-        .model_context(None, None, serde_json::from_value(own).unwrap())
-        .unwrap();
+    let context = tauri::async_runtime::block_on(host.model_context(
+        None,
+        None,
+        serde_json::from_value(own).unwrap(),
+    ))
+    .unwrap();
     assert_eq!(context.host.as_deref(), Some("https://own.example"));
     assert_eq!(context.filter.as_deref(), Some("own-*"));
 
@@ -265,9 +271,12 @@ fn create_draft_model_browsing_inherits_native_provider_and_environment() {
             "harness":{"command":goose,"args":["acp"],"provider":"","model":""},
             "environment":{}
         });
-        let context = host
-            .goose_model_context(None, None, serde_json::from_value(draft).unwrap())
-            .unwrap();
+        let context = tauri::async_runtime::block_on(host.goose_model_context(
+            None,
+            None,
+            serde_json::from_value(draft).unwrap(),
+        ))
+        .unwrap();
         assert_eq!(context.provider_id, "openai");
         assert_eq!(context.environment["GOOSE_API_KEY"], "write-only-key");
     }

@@ -92,6 +92,13 @@ const uploaded = (file: File) => ({
   size: file.size,
   sha256: "a".repeat(64),
 });
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 it("uploads, suggests a name, saves to the viewer's set and survives a reload", async () => {
   const user = userEvent.setup();
@@ -137,6 +144,33 @@ it("uploads, suggests a name, saves to the viewer's set and survives a reload", 
       "You already have :party_parrot: — saving will replace its image.",
     ),
   ).toBeVisible();
+});
+
+it("preserves name edits and disables Clear until a pending upload settles", async () => {
+  const user = userEvent.setup();
+  const store = relayStore();
+  const pending = deferred<ReturnType<typeof uploaded>>();
+  store.connect(vi.fn(() => pending.promise));
+  await screen.findByText("You haven't added any emoji yet. Add one above.");
+
+  await user.upload(
+    screen.getByLabelText("Upload image"),
+    png("suggested.png"),
+  );
+  await user.type(screen.getByRole("textbox"), "custom_name");
+  const clear = screen.getByRole("button", { name: "Clear" });
+  expect(clear).toBeDisabled();
+
+  pending.resolve(uploaded(png("suggested.png")));
+  await screen.findByRole("img", { name: "Selected custom emoji preview" });
+  expect(screen.getByRole("textbox")).toHaveValue("custom_name");
+  expect(clear).toBeEnabled();
+
+  await user.click(clear);
+  expect(screen.getByRole("textbox")).toHaveValue("");
+  expect(
+    screen.queryByRole("img", { name: "Selected custom emoji preview" }),
+  ).toBeNull();
 });
 
 it("shows reference copy for invalid names, non-images and upload failures", async () => {
@@ -202,11 +236,22 @@ it("shows the failed save, keeps the draft and saves on retry", async () => {
   ]);
 });
 
-it("hides the add form, without new copy, when the session cannot author emoji", async () => {
+it("shows the viewer's emoji but hides authoring without upload or kind-30030 writing", async () => {
   const store = relayStore();
+  store.stored.push(
+    signed(viewer, {
+      kind: 30030,
+      created_at: 1,
+      content: "",
+      tags: [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "mine", `${origin}/media/mine.png`],
+      ],
+    }),
+  );
   const settled = async () => {
-    await screen.findByText("My emoji");
-    await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
+    expect(await screen.findByText("My emoji (1)")).toBeVisible();
+    expect(screen.getByRole("img", { name: ":mine:" })).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByText(/Add one above/)).toBeNull();
   };

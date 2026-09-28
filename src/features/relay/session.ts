@@ -566,12 +566,12 @@ export function createRelaySession(
   const emoji = createEmojiDirectory(
     verified,
     notify,
+    transport?.viewer,
     transport &&
       writer &&
       uploadAttachment &&
       (!writer.kinds || writer.kinds.includes(EMOJI_SET_KIND))
       ? {
-          viewer: transport.viewer,
           writer,
           async upload(file, signal) {
             const combined = AbortSignal.any([

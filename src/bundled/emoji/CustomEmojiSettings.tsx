@@ -71,6 +71,8 @@ function Editor({
   const [error, setError] = useState("");
   const [added, setAdded] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
+  const nameRef = useRef(name);
+  nameRef.current = name;
   const uploadController = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   useEffect(() => {
@@ -104,7 +106,7 @@ function Editor({
         throw new Error("Choose an image file for custom emoji.");
       setImage({ url: result.url, filename: file.name });
       const suggested = suggestShortcode(file.name);
-      if (suggested && !name.trim()) setName(suggested);
+      if (suggested && !nameRef.current.trim()) setName(suggested);
     } catch (reason) {
       if (!controller.signal.aborted && live())
         setError(message(reason, "Failed to upload emoji image."));
@@ -233,7 +235,7 @@ function Editor({
           )}
           <div className="flex justify-end gap-2">
             <Button
-              disabled={saving || (!name && !image)}
+              disabled={uploading || saving || (!name && !image)}
               onClick={() => {
                 setName("");
                 setImage(undefined);

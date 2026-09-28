@@ -22,7 +22,6 @@ export type EmojiSnapshot = Readonly<{
   error?: string | undefined;
 }>;
 export type EmojiAuthoring = Readonly<{
-  viewer: string;
   writer: RelayWriter;
   upload(file: File, signal: AbortSignal): Promise<UploadedAttachment>;
 }>;
@@ -33,6 +32,7 @@ const MAX_BYTES = 2 * 1024 * 1024;
 export function createEmojiDirectory(
   reader: RelayReader,
   notify = (listener: () => void) => listener(),
+  viewer?: string,
   authoring?: EmojiAuthoring,
 ) {
   const sets = new Map<string, { event: RelayEvent; bytes: number }>();
@@ -102,8 +102,8 @@ export function createEmojiDirectory(
           .map(({ emoji }) => emoji)
           .sort((a, b) => a.shortcode.localeCompare(b.shortcode)),
       ),
-      mine: authoring
-        ? emojiTags(sets.get(authoring.viewer)?.event ?? { tags: [] })
+      mine: viewer
+        ? emojiTags(sets.get(viewer)?.event ?? { tags: [] })
         : snapshot.mine,
     });
   }
@@ -153,10 +153,11 @@ export function createEmojiDirectory(
   }
   /** Read-modify-write of the viewer's own set, like Desktop's `setCustomEmoji`. */
   async function publishAdd(
-    { viewer, writer }: EmojiAuthoring,
+    writer: RelayWriter,
     shortcode: string,
     url: string,
   ): Promise<string> {
+    if (!viewer) throw new Error("Failed to add emoji.");
     const timeout = AbortSignal.timeout(12_000);
     const signal = AbortSignal.any([lifetime.signal, timeout]);
     try {
@@ -249,7 +250,7 @@ export function createEmojiDirectory(
               return Promise.reject(new Error("Failed to add emoji."));
             // Serialize local writers so concurrent adds cannot drop each other.
             const run = adding.then(() =>
-              publishAdd(authoring, shortcode, url),
+              publishAdd(authoring.writer, shortcode, url),
             );
             adding = run.catch(() => undefined);
             return run;

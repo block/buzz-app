@@ -720,6 +720,12 @@
   --bg-panel: var(--surface-panel);
   --bg-float: var(--surface-popover);
   --bg-scrim: #000000a6;
+  /* Rebind material aliases locally: a scoped .dark surface otherwise inherits
+     the light root's already-computed glass fills. */
+  --bg-glass-primary: var(--glass-2);
+  --bg-glass-primary-hover: var(--glass-3);
+  --bg-glass-secondary: var(--glass-4);
+  --bg-glass-secondary-hover: var(--glass-5);
   --border-control: var(--border-prominent);
   --bg-chrome-selected: var(--neutral-5);
 

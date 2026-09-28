@@ -286,6 +286,27 @@ still need dismissal, but a late result cannot start a stopped agent. Quit and
 saved-revision fences remain in force. No frontend polling automatically retries
 Start. Windows/Linux retain their existing per-agent credential adapter.
 
+### Development startup diagnostics
+
+Debug builds print `[agent-startup]` and `[agent-keychain]` lines to the existing
+`just desktop` terminal. Selection records include the public key/community ID,
+effective `startOnAppLaunch` and enabled intent, then each auto-start attempt records its
+final process state. Credential records identify bundle/individual/legacy item
+class, operation, begin/end, sanitized failure category and elapsed time. They
+never print keys, raw item accounts, relay URLs, environment, agent names or OS
+error text. Release builds do not emit these diagnostics; no new log store or
+telemetry transport is added. A Keychain API call is not proof of an OS prompt.
+
+For an attended check, retain only these prefixed lines locally, note the dialog's
+item label (never the password), then quit and relaunch the **unchanged binary**.
+Do not manually start agents or send waking mentions during this check: credential
+lines have no agent ID, so overlapping credential operations cannot be attributed
+by order. Already-migrated agents should use the bundle, not individual reads. Native
+signing/OS consent remains a separate observation; do not equate a fixture pass
+or a Keychain call count with password-dialog acceptance. Auto-start off is a
+saved preference, not an execution failure: change **Start on launch** in the
+agent profile's Runtime tab deliberately rather than rewriting settings.
+
 ## Runtime boundary
 
 Native startup opens `app_data_dir/agent-controller`, never the old library as a
@@ -298,6 +319,15 @@ OS credential dialog does not hold the controller: Stop, Disconnect and Quit
 retire late starts; Save during a credential wait requires an explicit retry.
 Synthetic native tests inject rejecting or in-memory credentials and runtime
 resources. Production has no disposable storage override or preview launch mode.
+
+Launch-selected agents start relay listeners; their AI worker pools remain lazy
+until work arrives. Status reads project configured ACP/MCP paths without reading
+or hashing executables. These paths and `runtimeAvailable` describe the bundle
+accepted at initialization, not a fresh integrity check or relay readiness. Every
+actual launch still verifies its bundled worker, ACP and MCP executables before
+spawn, and exposes verification failure on the agent. Native Start projects one
+final snapshot after recording its outcome. This adds no incoming wake service
+for fully stopped listeners and no durable interrupted-turn recovery.
 
 On Unix, an execed supervisor in the same app binary owns each agent's shared
 identity lock, isolated listener session, and temporary runtime directory. App

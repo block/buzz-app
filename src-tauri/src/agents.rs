@@ -237,13 +237,25 @@ impl Host {
         credentials: Arc<dyn Credentials>,
     ) -> Result<Self, String> {
         let store = Store::open(root)?;
+        let queued = store
+            .snapshot()?
+            .agents
+            .into_iter()
+            .filter_map(|agent| {
+                startup_trace(serde_json::json!({
+                    "phase": "selection", "agent": agent.id,
+                    "enabled": agent.enabled, "startOnAppLaunch": agent.start_on_app_launch,
+                    "selected": agent.start_on_app_launch,
+                }));
+                agent.start_on_app_launch.then_some(agent.id)
+            })
+            .collect();
         let controller = Controller::new(
             store,
             credentials.clone(),
             bundle,
             legacy_parent.join("dev.local.buzz.agent-ownership"),
         );
-        let queued = controller.launch_ids()?.into_iter().collect();
         Ok(Self {
             controller,
             imports: Imports::default(),
@@ -439,7 +451,18 @@ impl AgentHost {
         .await
         .unwrap_or_default();
         for id in ids {
-            let _ = start(self.clone(), id, Action::Start, true, None, false).await;
+            let begin = std::time::Instant::now();
+            startup_trace(serde_json::json!({"phase": "start", "agent": id}));
+            let result = start(self.clone(), id.clone(), Action::Start, true, None, false).await;
+            let agent = result
+                .as_ref()
+                .ok()
+                .and_then(|snapshot| snapshot.data.agents.iter().find(|agent| agent.id == id));
+            startup_trace(serde_json::json!({
+                "phase": "end", "agent": id, "status": agent.map(|agent| agent.status),
+                "returnedError": result.is_err(), "agentError": agent.map(|agent| agent.error.is_some()),
+                "elapsedMs": begin.elapsed().as_millis(),
+            }));
         }
     }
     pub(crate) async fn ensure_open(&self) -> Result<(), String> {
@@ -654,6 +677,17 @@ pub(crate) async fn agent_control_action(
         return run(owner, move |host| host.action(&id, action)).await;
     }
     start(owner, id, action, false, replay_floor, false).await
+}
+// Only explicit nonsecret fields belong here; never pass snapshots/config/errors.
+fn startup_trace(value: serde_json::Value) {
+    if cfg!(debug_assertions) {
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "[agent-startup] pid={} {value}",
+            std::process::id()
+        );
+    }
 }
 pub(crate) const NOT_WAITING_FOR_GOOSE: &str = "Agent no longer waiting for Goose";
 pub(crate) async fn start(

@@ -703,6 +703,47 @@ mod overlap {
     }
 
     #[tokio::test]
+    async fn native_start_projects_launch_integrity_failure_after_acquiring_key() {
+        let (dir, host, _app, view) = fixture();
+        seed_pair(dir.path());
+        let path = dir.path().join("store/agents.json");
+        let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        let id = saved["agents"][0]["id"]
+            .as_str()
+            .unwrap()
+            .replacen(&"ab".repeat(32), pubkey, 1);
+        saved["agents"][0]["pubkey"] = json!(pubkey);
+        saved["agents"][0]["id"] = json!(id);
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let gate = Gate::install(&host, dir.path(), &["cred-ab"]);
+        // Bundle initialization succeeded, but launch must recheck these bytes.
+        std::fs::write(dir.path().join("tools/buzz-agent"), "tampered").unwrap();
+        let pending = tokio::task::spawn_blocking({
+            let (view, id) = (view.clone(), id.clone());
+            move || {
+                invoke(
+                    &view,
+                    "agent_control_action",
+                    json!({"id":id,"action":"start"}),
+                )
+            }
+        });
+        assert_eq!(gate.entered().await, "cred-ab");
+        gate.release["cred-ab"].send(()).unwrap();
+        let result = within(pending).await.unwrap();
+        let failed = agent(&result, &id);
+        assert_eq!(failed["status"], "failed");
+        assert!(failed["error"].as_str().unwrap().contains("integrity"));
+        assert!(failed["runningRevision"].is_null());
+        assert_eq!(failed["enabled"], true);
+        assert_eq!(failed["startOnAppLaunch"], true);
+        assert!(host.with(|h| Ok(h.starts.is_empty())).unwrap());
+        let observed = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+        assert_eq!(agent(&observed, &id), failed);
+    }
+
+    #[tokio::test]
     async fn acquired_key_cannot_escape_stop_quit_or_saved_revision_fences() {
         for boundary in ["stop", "quit", "save"] {
             let (dir, host, _app, view) = fixture();
@@ -1485,4 +1526,27 @@ async fn dropped_caller_does_not_release_a_running_native_operation() {
     assert_pending(next.as_mut()).await;
     release.send(()).unwrap();
     assert!(next.await.is_ok());
+}
+
+#[tokio::test]
+async fn restore_uses_serialized_launch_preference_not_enabled_alone() {
+    let (dir, host, _app, _view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let mut data: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    data["agents"][0]["startOnAppLaunch"] = json!(false);
+    std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+    host.restore().await;
+    let data = host.with(|h| h.snapshot()).unwrap().data;
+    assert!(data.agents[0].enabled);
+    assert!(!data.agents[0].start_on_app_launch);
+    assert!(data.agents[0].status == ProcessStatus::Stopped);
+    assert!(data.agents[0].error.is_none());
+    host.with(|h| h.controller.set_start_on_app_launch(&id, true))
+        .unwrap();
+    host.restore().await;
+    let data = host.with(|h| h.snapshot()).unwrap().data;
+    assert!(data.agents[0].start_on_app_launch);
+    assert!(data.agents[0].status == ProcessStatus::Failed);
+    assert_eq!(data.agents[0].error.as_deref(), Some(RUNTIME_GATE));
 }

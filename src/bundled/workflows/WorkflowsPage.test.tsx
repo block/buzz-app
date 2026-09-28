@@ -131,8 +131,7 @@ it("explains another author's disabled controls from the landing through the rea
   );
   const reason = screen.getByText("Only the author can change this workflow.");
   expect(reason).not.toBeVisible();
-  await user.click(screen.getByText("Read-only"));
-  expect(reason).toBeVisible();
+  expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
   await user.click(toggle);
   await user.click(screen.getByRole("button", { name: "Open Message helper" }));
   const dialog = screen.getByRole("dialog", { name: "View workflow" });
@@ -146,10 +145,10 @@ it("explains another author's disabled controls from the landing through the rea
   expect(
     controls.getByRole("button", { name: "Edit workflow name" }),
   ).toBeDisabled();
-  await user.click(controls.getByText("Read-only"));
+  expect(controls.queryByText("Read-only")).not.toBeInTheDocument();
   expect(
     controls.getByText("Only the author can change this workflow."),
-  ).toBeVisible();
+  ).not.toBeVisible();
   expect(
     controls.queryByRole("button", { name: "Save changes" }),
   ).not.toBeInTheDocument();
@@ -185,15 +184,15 @@ it("explains a pending toggle until exact readback and then shows the saved stat
   expect(savedToggle).not.toHaveAccessibleDescription();
 });
 
-it("explains unavailable host saving through a disclosure", async () => {
+it("describes unavailable host saving without a disclosure", async () => {
   const reason = "Saving is unavailable from this host.";
   const fixture = mount(fixtureYaml, fixtureViewer, false);
   const toggle = await screen.findByRole("switch");
   expect(toggle).toHaveAttribute("aria-disabled", "true");
   expect(toggle).toHaveAccessibleDescription(reason);
   const user = userEvent.setup();
-  await user.click(screen.getByText("Saving unavailable"));
-  expect(screen.getByText(reason)).toBeVisible();
+  expect(screen.queryByText("Saving unavailable")).not.toBeInTheDocument();
+  expect(screen.getByText(reason)).not.toBeVisible();
   await user.click(toggle);
   expect(fixture.calls.save).toBe(0);
 });
@@ -201,11 +200,9 @@ it("explains unavailable host saving through a disclosure", async () => {
 it("does not show unreadable YAML as an enabled configuration", async () => {
   const fixture = mount("name: [");
   const restriction = await screen.findByText("Unreadable configuration");
+  expect(restriction).toBeVisible();
+  expect(restriction.closest("details")).toBeNull();
   expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-  await userEvent.setup().click(restriction);
-  expect(
-    screen.getByText("Correct the YAML before changing the configured state."),
-  ).toBeVisible();
   expect(fixture.calls.save).toBe(0);
 });
 

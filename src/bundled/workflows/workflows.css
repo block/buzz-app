@@ -226,20 +226,6 @@
   min-width: 0;
   flex: 1 1 240px;
 }
-.workflow-restriction {
-  min-width: 0;
-}
-.workflow-restriction summary {
-  cursor: pointer;
-}
-.workflow-restriction p {
-  max-width: 24rem;
-  margin: var(--space-2) 0 0;
-}
-.workflow-card-restriction {
-  margin-top: var(--space-2);
-  pointer-events: auto;
-}
 .workflow-steps {
   list-style: none;
   margin: 0;

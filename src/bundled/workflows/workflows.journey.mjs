@@ -771,9 +771,9 @@ test("landing activation confirms once and locks while delivery is unresolved", 
   ).toBe(1);
 });
 
-// Native summary keyboard activation and the card overlay's pointer targets
-// require browser layout/default actions, which jsdom does not implement.
-test("compact restrictions stay reachable above card overlays and in the read-only editor", async ({
+// Keyboard focus order and the card overlay's pointer targets require browser
+// layout/default actions, which jsdom does not implement.
+test("restricted cards and read-only editors keep keyboard controls without disclosures", async ({
   page,
   browserName,
 }) => {
@@ -787,29 +787,32 @@ test("compact restrictions stay reachable above card overlays and in the read-on
     name: "Open Fixture A helper",
     exact: true,
   });
-  const summary = page
-    .locator("summary")
-    .filter({ hasText: "Saving unavailable" });
+  const actions = page.getByRole("button", {
+    name: "Actions for Fixture A helper",
+  });
   const reason = page.getByText("Saving is unavailable from this host.", {
     exact: true,
   });
-  await expect(summary).toBeVisible();
+  await expect(page.locator(".workflow-card details")).toHaveCount(0);
+  await expect(
+    page.getByRole("switch", {
+      name: "Enabled in configuration: Fixture A helper",
+    }),
+  ).toHaveAccessibleDescription("Saving is unavailable from this host.");
   await expect(reason).toBeHidden();
   await open.focus();
   for (let attempt = 0; attempt < 5; attempt++) {
     await page.keyboard.press(tab);
-    if (await summary.evaluate((node) => node === document.activeElement))
+    if (await actions.evaluate((node) => node === document.activeElement))
       break;
   }
-  await expect(summary).toBeFocused();
+  await expect(actions).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(reason).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await summary.click();
-  await expect(reason).toBeHidden();
-  await page
-    .getByRole("button", { name: "Actions for Fixture A helper" })
-    .click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(actions).toBeFocused();
+  await actions.click();
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
   await open.click();
@@ -840,20 +843,33 @@ test("compact restrictions stay reachable above card overlays and in the read-on
     .getByRole("button", { name: "Message helper", exact: true })
     .click();
   const dialog = page.getByRole("dialog", { name: "View workflow" });
-  const readOnly = dialog.locator("summary").filter({ hasText: "Read-only" });
-  await readOnly.focus();
-  await page.keyboard.press("Enter");
+  await expect(dialog.getByText("Read-only", { exact: true })).toHaveCount(0);
   await expect(
     dialog.getByText("Only the author can change this workflow."),
-  ).toBeVisible();
-  await dialog.getByRole("button", { name: "Workflow actions" }).click();
+  ).toBeHidden();
+  const editorActions = dialog.getByRole("button", {
+    name: "Workflow actions",
+  });
+  await editorActions.focus();
+  await page.keyboard.press("Enter");
   await expect(
     page.getByRole("menuitemcheckbox", { name: "Enable", exact: true }),
   ).toBeDisabled();
   await page.keyboard.press("Escape");
+  await expect(editorActions).toBeFocused();
   await expect(
     dialog.getByRole("button", { name: "Edit workflow name" }),
   ).toBeDisabled();
+  await expect(
+    dialog.getByRole("button", { name: "Edit workflow name" }),
+  ).toHaveAccessibleDescription(/Only the author/);
+  await dialog
+    .getByRole("button", { name: "Workflow settings & activity" })
+    .focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    dialog.getByRole("button", { name: "Workflow settings & activity" }),
+  ).toHaveAttribute("aria-expanded", "true");
   await dialog.getByRole("tab", { name: "YAML", exact: true }).click();
   await expect(
     dialog.getByRole("textbox", { name: "Workflow YAML" }),

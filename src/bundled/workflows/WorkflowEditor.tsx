@@ -355,10 +355,9 @@ export function WorkflowEditor({
             )}
           </div>
           {readOnly && (
-            <details className="workflow-restriction text-body-sm text-secondary">
-              <summary>Read-only</summary>
-              <p id={`${id}-control-reason`}>{controlReason}</p>
-            </details>
+            <span id={`${id}-control-reason`} hidden>
+              {controlReason}
+            </span>
           )}
           {create && fields.editable ? (
             <Switch

@@ -97,9 +97,10 @@ test.each([
   await user.keyboard("{Escape}");
   if ("readOnly" in props) {
     expect(screen.getByText(reason)).not.toBeVisible();
-    await userEvent.setup().click(screen.getByText("Read-only"));
+    expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
+  } else {
+    expect(screen.getByText(reason)).toBeVisible();
   }
-  expect(screen.getByText(reason)).toBeVisible();
   expect(change).not.toHaveBeenCalled();
   rerender(
     <WorkflowEditor yaml={fixtureYaml} onChange={change} onSave={vi.fn()} />,

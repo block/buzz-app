@@ -409,13 +409,6 @@ function WorkflowCard({
         : !capability.availability.save
           ? "Saving is unavailable from this host."
           : undefined;
-  const restriction = readonly
-    ? "Read-only"
-    : locked || awaitingReadback
-      ? "Pending change"
-      : !fields.editable
-        ? "Unreadable configuration"
-        : "Saving unavailable";
   const reasonId = useId();
   const warning = getWorkflowActivationWarning(definition.yaml);
   const name = fields.name || "Unnamed or malformed workflow";
@@ -557,11 +550,15 @@ function WorkflowCard({
               {new Date(definition.createdAt * 1000).toLocaleDateString()}
             </time>
           </div>
+          {!fields.editable && (
+            <span className="text-caption text-secondary">
+              Unreadable configuration
+            </span>
+          )}
           {toggleReason && (
-            <details className="workflow-card-restriction workflow-restriction text-caption text-secondary">
-              <summary>{restriction}</summary>
-              <p id={reasonId}>{toggleReason}</p>
-            </details>
+            <span id={reasonId} hidden>
+              {toggleReason}
+            </span>
           )}
         </div>
       </article>

@@ -58,8 +58,13 @@ const secondPhoto: Attachment = {
   kind: "image",
   name: "Second photo",
 };
+const thirdPhoto: Attachment = {
+  ...photo,
+  url: "https://fixture.test/third-photo.png",
+  name: "Third photo",
+};
 const photos = new URLSearchParams(location.search).has("gallery")
-  ? [photo, secondPhoto]
+  ? [photo, secondPhoto, thirdPhoto]
   : [photo];
 const rootMessage = message(viewer, "video-preview", "Media review", 1, [
   ["imeta", `url ${attachment.url}`, "m video/mp4"],
@@ -128,7 +133,7 @@ const owner = createRelaySession(
     media: (url) =>
       url === secondPhoto.url
         ? "/bestie.png"
-        : url === photo.url
+        : url === photo.url || url === thirdPhoto.url
           ? gifPreview
             ? "/tests/fixtures/attachment-media/animated.gif"
             : "/shell-gradient.png"

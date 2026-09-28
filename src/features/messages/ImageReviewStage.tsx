@@ -39,6 +39,8 @@ export function ImageReviewStage({
 }: ImageReviewStageProps) {
   const stage = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null);
+  const previousButton = useRef<HTMLButtonElement>(null);
+  const nextButton = useRef<HTMLButtonElement>(null);
   const drag = useRef<
     { pointer: number; origin: Point; offset: Point } | undefined
   >(undefined);
@@ -73,7 +75,11 @@ export function ImageReviewStage({
       if (!item || item.url === selected?.url) return;
       prepare(index > selectedIndex ? 1 : -1);
       setBoundedZoom(MIN_ZOOM);
-      stage.current?.focus({ preventScroll: true });
+      const active = document.activeElement;
+      const keepsNavigationFocus =
+        (active === previousButton.current && index > 0) ||
+        (active === nextButton.current && index < attachments.length - 1);
+      if (!keepsNavigationFocus) stage.current?.focus({ preventScroll: true });
       select(item.url);
     },
     [
@@ -217,6 +223,7 @@ export function ImageReviewStage({
             <IconButton
               size="compact"
               type="button"
+              ref={previousButton}
               aria-label="Previous image"
               disabled={selectedIndex === 0}
               onClick={() => choose(selectedIndex - 1)}
@@ -228,6 +235,7 @@ export function ImageReviewStage({
             <IconButton
               size="compact"
               type="button"
+              ref={nextButton}
               aria-label="Next image"
               disabled={selectedIndex === attachments.length - 1}
               onClick={() => choose(selectedIndex + 1)}

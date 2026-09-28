@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { Profiler, useState } from "react";
+import userEvent from "@testing-library/user-event";
 import {
   act,
   cleanup,
@@ -237,6 +238,34 @@ it("navigates the gallery with buttons and left/right keys, resetting zoom and s
   fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
   expect(screen.getByText("1 / 3")).toBeVisible();
 });
+
+it.each(["{Enter}", " "])(
+  "keeps enabled gallery buttons focused for repeated %s activation and falls back at endpoints",
+  async (key) => {
+    const user = userEvent.setup();
+    gallery();
+    const next = screen.getByRole("button", { name: "Next image" });
+    const previous = screen.getByRole("button", { name: "Previous image" });
+    const stage = screen.getByRole("group", { name: "Image gallery" });
+    next.focus();
+    await user.keyboard(key);
+    expect(screen.getByText("2 / 3")).toBeVisible();
+    expect(next).toHaveFocus();
+    await user.keyboard(key);
+    expect(screen.getByText("3 / 3")).toBeVisible();
+    expect(next).toBeDisabled();
+    expect(stage).toHaveFocus();
+
+    previous.focus();
+    await user.keyboard(key);
+    expect(screen.getByText("2 / 3")).toBeVisible();
+    expect(previous).toHaveFocus();
+    await user.keyboard(key);
+    expect(screen.getByText("1 / 3")).toBeVisible();
+    expect(previous).toBeDisabled();
+    expect(stage).toHaveFocus();
+  },
+);
 
 it("leaves arrow keys to the comment editor, zoom slider, modifiers, and other overlays", () => {
   gallery();

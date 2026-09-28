@@ -988,6 +988,7 @@ export function createChannelStore(
       const named = new Set<string | undefined>();
       let cursor: RelayEvent | undefined;
       let complete: Set<string> | undefined;
+      let retainedComplete = false;
       let paged = false;
       // At most the retained roster budget plus its final exhaustion read.
       // This also bounds a relay returning repeated coordinates with new versions.
@@ -1034,8 +1035,17 @@ export function createChannelStore(
           ) &&
           (rosters.length < DISCOVERY_LIMIT || !!last);
         const shortPage = advances && rosters.length < DISCOVERY_LIMIT;
-        if (!applyDiscovery(rosters)) return;
+        const pageComplete = shortPage ? ids : undefined;
+        if (
+          !applyDiscovery(
+            rosters,
+            pageComplete && !paged ? pageComplete : undefined,
+            started,
+          )
+        )
+          return;
         const overflowed = discovery.overflowRevision !== overflowRevision;
+        if (overflowed) complete = undefined;
         if (disposed || (!shortPage && generation !== epoch)) return;
         if (!advances)
           throw new ReadError(
@@ -1044,13 +1054,14 @@ export function createChannelStore(
           );
         if (shortPage && !overflowed) {
           complete = ids;
+          retainedComplete = !paged;
           break;
         }
         if (overflowed) break;
         cursor = last;
         paged = true;
       }
-      if (complete) {
+      if (complete && !retainedComplete) {
         denyAllOnFailure = false;
         const current = discovery.rosterVersions();
         const omitted = paged

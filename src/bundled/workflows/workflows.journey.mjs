@@ -874,8 +874,34 @@ test("restricted cards and read-only editors keep keyboard controls without disc
   await expect(
     dialog.getByRole("textbox", { name: "Workflow YAML" }),
   ).toHaveAttribute("readonly", "");
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  const footer = dialog.getByRole("contentinfo");
+  await expect(footer.getByRole("button")).toHaveCount(0);
+  await expect(footer.locator(":scope > *")).toHaveCount(1);
+  await expect(
+    footer.getByRole("tab", { name: "Form", exact: true }),
+  ).toBeVisible();
+  await expect(
+    footer.getByRole("tab", { name: "YAML", exact: true }),
+  ).toBeVisible();
+  const bounds = await footer.boundingBox();
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(390);
+  await dialog
+    .getByRole("button", { name: "Close editor", exact: true })
+    .click();
   await expect(dialog).toHaveCount(0);
+  const reopen = page.getByRole("button", {
+    name: "Message helper",
+    exact: true,
+  });
+  await expect(reopen).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(reopen).toBeFocused();
 });
 
 test("landing keeps a succeeded toggle locked until its exact revision is read back", async ({

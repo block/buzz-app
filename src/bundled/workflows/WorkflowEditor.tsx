@@ -238,11 +238,9 @@ export function WorkflowEditor({
         />
       }
       actions={
-        <>
-          {onCancel && (
-            <Button onClick={onCancel}>{readOnly ? "Close" : "Cancel"}</Button>
-          )}
-          {!readOnly && (
+        !readOnly && (
+          <>
+            {onCancel && <Button onClick={onCancel}>Cancel</Button>}
             <Button
               variant="prominent"
               focusableWhenDisabled={busy || locked}
@@ -271,8 +269,8 @@ export function WorkflowEditor({
                     ? "Create workflow"
                     : "Save changes"}
             </Button>
-          )}
-        </>
+          </>
+        )
       }
     >
       <section aria-label="Workflow editor" className="workflow-editor">

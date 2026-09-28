@@ -152,11 +152,15 @@ it("explains another author's disabled controls from the landing through the rea
   expect(
     controls.queryByRole("button", { name: "Save changes" }),
   ).not.toBeInTheDocument();
+  expect(
+    controls.queryByRole("button", { name: /^(Close|Cancel)$/ }),
+  ).not.toBeInTheDocument();
+  expect(controls.getByRole("tab", { name: "Form" })).toBeVisible();
   await user.click(controls.getByRole("tab", { name: "YAML" }));
   expect(
     controls.getByRole("textbox", { name: "Workflow YAML" }),
   ).toHaveAttribute("readonly");
-  await user.click(controls.getByRole("button", { name: "Close" }));
+  await user.click(controls.getByRole("button", { name: "Close editor" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(fixture.calls.save).toBe(0);
 });

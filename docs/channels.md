@@ -12,16 +12,9 @@ The panel reads GitHub's public API on demand. Private or unavailable objects an
 API limits show an explanation with a direct GitHub link. File and branch links
 continue to open normally. No GitHub account connection is configured yet.
 
-Descriptions render bounded GitHub-flavored Markdown, including task lists and
-tables. GitHub attachment metadata selects inline image, video, and audio players
-in document order; code stays literal and other files stay links. Image descriptions
-remain available; duplicate attachment links disappear after media loads and
-return on failure. Descriptive link labels remain as text beside loaded media.
-Rendered API HTML is parsed only for metadata, never inserted into the page.
-Raw HTML is not generally rendered; only image markup is projected into Markdown.
-Videos request metadata without autoplay. Public attachment redirects use the
-specific GitHub media origins in the packaged CSP; protected files and unsupported
-codecs still require the original link or **Open on GitHub**.
+Descriptions support GitHub-flavored Markdown with inline images, video, and
+audio. Other files remain links; media that cannot load keeps a fallback link.
+Use **Open on GitHub** for attachments that require repository access.
 
 On desktop, an ordinary click on an unhandled HTTP(S) link with
 `target="_blank"` uses the native Tauri opener to launch the default browser,

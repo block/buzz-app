@@ -213,8 +213,8 @@ provider, model, effort and environment variables.
   per-agent field: an imported agent's `effort_level` stays its override.
 - Environment variables apply to every agent and merge **per key**; the agent's
   key wins.
-- Changing the default harness clears the default model and effort carried over
-  from the previous harness.
+- Changing the default harness in the card clears the default model and effort;
+  values entered for the new harness before Save are kept.
 
 The store is `defaults.json` under app-data `agent-controller/`, not
 localStorage, written atomically with owner-only permissions (0600).

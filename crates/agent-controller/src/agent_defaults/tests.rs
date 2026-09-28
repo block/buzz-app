@@ -71,9 +71,16 @@ fn selectors_do_not_cross_harnesses_but_environment_does() {
 }
 
 #[test]
-fn changing_the_harness_clears_carried_model_and_effort() {
+fn submitted_model_and_effort_are_explicit_across_a_harness_change() {
     let mut saved = defaults("buzz-agent");
+    // The card clears both on a harness change; re-entering the same values
+    // for the new harness must survive Save.
     saved.apply(edit("goose", "global-model", "high")).unwrap();
+    assert_eq!(
+        (saved.model.as_str(), saved.effort.as_str()),
+        ("global-model", "high")
+    );
+    saved.apply(edit("goose", "", "")).unwrap();
     assert_eq!((saved.model.as_str(), saved.effort.as_str()), ("", ""));
     // Values chosen together with the new harness are kept.
     saved.apply(edit("pi", "pi-model", "medium")).unwrap();

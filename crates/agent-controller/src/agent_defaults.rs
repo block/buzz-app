@@ -73,20 +73,8 @@ impl AgentDefaults {
         }
     }
     pub(crate) fn apply(&mut self, edit: AgentDefaultsEdit) -> Result<()> {
-        // A model/effort carried over unchanged from the previous harness is
-        // stale; values entered alongside the new harness are kept.
-        let switched = edit.harness != self.harness;
-        let stale = |new: &String, old: &String| switched && new == old;
-        let model = if stale(&edit.model, &self.model) {
-            String::new()
-        } else {
-            edit.model
-        };
-        let effort = if stale(&edit.effort, &self.effort) {
-            String::new()
-        } else {
-            edit.effort
-        };
+        // Submitted values are explicit. The card clears model and effort when
+        // the harness changes, so a value sent with a new harness was re-entered.
         let mut environment = self.environment.clone();
         for (key, value) in edit.environment {
             match value {
@@ -97,8 +85,8 @@ impl AgentDefaults {
         let next = Self {
             harness: edit.harness,
             provider: edit.provider,
-            model,
-            effort,
+            model: edit.model,
+            effort: edit.effort,
             environment,
         };
         next.validate()?;

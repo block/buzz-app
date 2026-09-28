@@ -17,6 +17,22 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     setStartOnAppLaunch: (id, enabled) =>
       invoke("agent_control_start_on_app_launch", { id, enabled }),
     snapshot: () => invoke("agent_control_snapshot"),
+    readLog: async ({ id, pubkey, relayUrl, authorize }) => {
+      const nonce = await invoke<string>("agent_control_log_challenge", {
+        id,
+        pubkey,
+        relayUrl,
+      });
+      const signature = await authorize({ id, pubkey, relayUrl }, nonce);
+      return invoke<string>("agent_control_read_log", {
+        id,
+        pubkey,
+        relayUrl,
+        nonce,
+        signature,
+      });
+    },
+    installGoose: () => invoke("goose_install"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),
     delete: (id, expectedRevision) =>

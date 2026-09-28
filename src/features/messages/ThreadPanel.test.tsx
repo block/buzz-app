@@ -17,7 +17,7 @@ import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import { createAgentLibrary } from "../agents/library";
 import { MessageRow } from "./MessageRow";
 import { MessageMarkdown } from "./MessageMarkdown";
-import { MediaAttachment } from "./MediaAttachment";
+import { AttachmentImage } from "./AttachmentImage";
 import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 import type { PageNavigation } from "../navigation/service";
@@ -408,7 +408,7 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
     retry: undefined,
   });
   const attachments = elements(tree).filter(
-    (element) => element.type === MediaAttachment,
+    (element) => element.type === AttachmentImage,
   );
   expect(attachments).toHaveLength(1);
   expect(attachments[0]?.props.attachment).toEqual({
@@ -439,7 +439,7 @@ it("seeks the media timecode while passing the stripped body to Markdown", () =>
   });
 });
 
-it("preserves a media timecode as compatible text when no player can seek", () => {
+it("shows a non-interactive timecode chip when no player can seek", () => {
   const tree = MessageRow({
     row: { ...row, content: "⏱ 0:42 — Change the title" },
     profile: undefined,
@@ -448,7 +448,15 @@ it("preserves a media timecode as compatible text when no player can seek", () =
     day: false,
     retry: undefined,
   });
-  expect(JSON.stringify(tree)).toContain("⏱ 0:42 — Change the title");
+  const chip = elements(tree).find(
+    (element) => element.type === "span" && element.props.children === "0:42",
+  );
+  expect(chip).toBeDefined();
+  expect(chip?.props.onClick).toBeUndefined();
+  const markdown = elements(tree).find(
+    (element) => element.type === MessageMarkdown,
+  );
+  expect(markdown?.props.row).toMatchObject({ content: "Change the title" });
 });
 
 it("the actual message reply button opens its selected message and canonical thread root while retaining the trigger focus target", () => {
@@ -631,7 +639,7 @@ it("routes media in replies through the resolved root review workspace", () => {
     | undefined;
   expect(handler).toBeDefined();
   handler?.("reply", attachment, 0);
-  expect(open).toHaveBeenCalledExactlyOnceWith("reply", attachment, 0);
+  expect(open).toHaveBeenCalledExactlyOnceWith("reply", attachment, 0, true);
 });
 
 it("uses the resolved root with the shared composer and reveals an own send even while reading above", () => {

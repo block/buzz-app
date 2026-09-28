@@ -52,14 +52,10 @@ Implemented with isolated filesystem/credential/subprocess fixtures:
   supported by this process adapter. The fixture uses macOS `/usr/bin/python3`.
 - Status is process-alive, **not relay readiness, accepted mention, working or idle**.
   Worker wake and idle sleep are configured on ACP; no live ACP test has run here.
-- Local team-linked imports snapshot the selected team's JSON at explicit import
-  or stopped-import completion. Matching nonempty instructions use ACP's separate
-  team section; absent/blank instructions are valid. Existing-import completion is
-  revision/enabled/process fenced and leaves settings and credentials intact.
-  Explicit new import/completion also approves owner-visible observer publication;
-  untouched imports and native-created agents are not implicitly opted in.
-- Owner-less legacy agents, conditional attestations, directory-backed teams, remote deployment,
-  relay mesh and unrecognized legacy catalog harnesses fail closed. Custom harness
+- Owner-less legacy agents, conditional attestations, remote deployment,
+  relay mesh and unrecognized legacy catalog harnesses fail closed. Local team
+  imports snapshot deployment-team instructions; older imports require explicit
+  team repair through the chosen source library before Start. Custom harness
   definitions can be imported but provider mappings outside buzz-agent/goose require
   explicit environment configuration. Compiled-in legacy provider defaults cannot
   be recovered from JSON. Existing instance runtime wins over linked runtime,
@@ -76,3 +72,10 @@ Implemented with isolated filesystem/credential/subprocess fixtures:
 Tests are engineering evidence only. Test-only keys are public secp256k1 vectors;
 no live credential storage, current agent restart, old-library mutation, relay
 publication or enrollment is performed. Do not run this against real data yet.
+
+Activity preview: owner-visible observer publication is enabled only by the disclosed
+import/repair flow or an existing saved `activityPublication: true`. Repair rechecks
+disabled state at the atomic mutation and existing process cleanup before commit.
+Main's team instruction snapshot is canonical; prior preview team snapshots remain
+readable without startup migration. Raw harness logs remain separate from observer
+publication and retain main's exact-instance owner authorization.

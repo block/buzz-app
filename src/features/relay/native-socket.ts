@@ -59,6 +59,7 @@ export function nativeSocket(
     get readyState() {
       return ready;
     },
+    onopen: null,
     onmessage: null,
     onclose: null,
     onerror: null,
@@ -116,8 +117,10 @@ export function nativeSocket(
       .then(async () => {
         if (closed) return;
         try {
-          if (packet.kind === "open") ready = 1;
-          else if (packet.kind === "closed") {
+          if (packet.kind === "open") {
+            ready = 1;
+            socket.onopen?.call(socket as WebSocket, new Event("open"));
+          } else if (packet.kind === "closed") {
             close();
             socket.onclose?.call(
               socket as WebSocket,

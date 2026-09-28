@@ -29,6 +29,7 @@ const profiles = new Map([
 ]);
 const emptyList: readonly never[] = [];
 const emojiSnapshot = { status: "ready" as const, entries: emptyList };
+const archiveSnapshot = { status: "unavailable" as const, archived: emptyList };
 const channelList = {
   status: "ready" as const,
   channels: [
@@ -72,6 +73,14 @@ const rawSession = {
     snapshot: () => library,
     subscribe: empty,
     retain: empty,
+    refresh: async () => {},
+  },
+  archives: {
+    snapshot: () => archiveSnapshot,
+    subscribe: empty,
+    // Archive reads are unavailable here, as the real contract reports them.
+    state: () => "unknown" as const,
+    ensure: async () => {},
     refresh: async () => {},
   },
   emoji: {

@@ -18,12 +18,12 @@ it("offers only explicit stopped-team completion for existing agents without sta
     ...f.agent,
     enabled: false,
     status: "stopped" as const,
-    teamImportRequired: true,
+    needsTeamImport: true,
   };
   const completed = {
     ...agent,
     revision: agent.revision + 1,
-    teamImportRequired: false,
+    needsTeamImport: false,
   };
   const commit = vi.fn(async () => ({ ...f.data, agents: [completed] }));
   const control = createAgentControl({
@@ -48,10 +48,12 @@ it("offers only explicit stopped-team completion for existing agents without sta
   );
   try {
     const button = await screen.findByRole("button", {
-      name: `Complete team import for ${agent.name}`,
+      name: `Repair team import for ${agent.name}`,
     });
     expect(button.hasAttribute("disabled")).toBe(false);
-    expect(screen.getByText(/Both enable owner-visible Activity/)).toBeTruthy();
+    expect(
+      screen.getByText(/Both actions enable owner-visible Activity/),
+    ).toBeTruthy();
     view.rerender(
       <AgentImport
         control={control}
@@ -63,7 +65,7 @@ it("offers only explicit stopped-team completion for existing agents without sta
     );
     expect(button.hasAttribute("disabled")).toBe(true);
     expect(
-      screen.getByText("Stop this agent before completing its team import."),
+      screen.getByText("Stop this agent before repairing its team import."),
     ).toBeTruthy();
     view.rerender(
       <AgentImport
@@ -75,7 +77,12 @@ it("offers only explicit stopped-team completion for existing agents without sta
       />,
     );
     fireEvent.click(button);
-    await waitFor(() => expect(onImported).toHaveBeenCalledWith([completed]));
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(
+        `Team instructions imported for ${agent.name}`,
+      ),
+    );
+    expect(onImported).not.toHaveBeenCalled();
     expect(commit).toHaveBeenCalledWith("chosen-source", [agent.id]);
     expect(f.calls.every((call) => call.action === "snapshot")).toBe(true);
   } finally {

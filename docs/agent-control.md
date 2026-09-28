@@ -22,6 +22,7 @@ process evidence and visible **Start / Stop**. **Edit**, **Duplicate**, and
 settings and a fresh identity; write-only environment values require re-entry.
 Delete stops the local process and removes this app's settings and Keychain key
 after confirmation. It does not archive the relay identity or erase messages.
+Deployed remote records are refused.
 Same-key identities at different destinations have separate
 cards; actions use native ID/revision, never the display name. Managed controls
 remain available when the old library is disconnected, unavailable or archived.
@@ -40,26 +41,26 @@ The dev broker and native host must both support this flow. Packaged human
 signing remains unavailable.
 
 **Not imported from old Buzz** is a separate collapsible section. Expanding it
-loads installed identities for the connected community; fully imported exact
-identities are excluded. Earlier local team imports without their team snapshot
-appear under **Complete team imports**. Stop/disable that agent first, choose its
-original source and destination, then use **Complete team import**. Completion
-snapshots the exact saved team (including legitimately empty instructions), preserves
-the current native settings/credentials and increments the settings revision. It
-never enables or restarts the agent, reads/copies its key, or rewrites the old source.
-Changed source, mismatched team, duplicate matching team, concurrent native edits
-and unconfirmed process teardown prevent completion.
-
-Import and team completion explicitly enable owner-visible Activity publication
-when the selected agent next runs. Existing untouched/native-created agents retain
-their prior publication behavior. The setting is native-owned, not an environment
-escape hatch. Team instructions are passed through ACP's existing separate team
-section, trimmed as in old Buzz; there is no team workspace or membership migration.
-
-Each remaining unimported row says **Not imported** and has its own
+loads installed identities for the connected community; already-managed exact
+identities are excluded. Each remaining row says **Not imported** and has its own
 **Import** action. Source/destination overrides and source warnings stay under
 Import options. Import focuses the imported card and says **Imported, not started**.
 It does not start a listener, invite an agent or change the old library.
+
+Local team-linked imports snapshot the deployment team's instructions from the
+chosen library's `agents/teams.json`, alongside the resolved persona prompt.
+The existing ACP team-instructions input receives that snapshot; later edits in
+old Buzz are not synchronized. As in old Buzz, a deleted team or a directory-only
+legacy binding without a deployment team ID contributes no team instructions.
+Remote backends and relay mesh remain unsupported.
+
+Older imports missing this snapshot show **Import or repair from old Buzz**.
+Choose their original source library and destination, then **Repair team import**.
+This adds only the missing team instructions and advances the saved revision;
+it preserves the identity, credentials, prompt, model, environment and enabled
+intent, and never starts/restarts an agent. Source changes or changed saved
+settings reject the repair. No Keychain read is needed for repair. Before Start,
+perform the same attended old-Buzz handover as for a fresh import.
 
 To use an agent, open a channel and select it from **@ mentions**. Both mention
 menus include the selected community’s people directory alongside channel members
@@ -97,8 +98,9 @@ choices come from the selected harness; model discovery uses the current draft.
 Existing/custom values remain intact when another field changes. Workspace,
 arguments and write-only environment patches remain under **Advanced**;
 Start/Stop/Restart and exact identity are under **Runtime and identity**. Save uses
-native ID/revision and does not restart. Dirty drafts resist backdrop/Escape;
-explicit Cancel/Close discards. Page navigation/reload still discards page-local drafts.
+native ID/revision; the planned restart-on-save flow is described below. Dirty
+drafts resist backdrop/Escape; explicit Cancel/Close discards. Page
+navigation/reload still discards page-local drafts.
 
 **Browse models** requests the current Databricks catalog on explicit button
 activation, including when typing has already opened the local popup. Typing,
@@ -108,7 +110,9 @@ can open browser sign-in. No separate Connect button is required. Errors/cancell
 need explicit Retry; Refresh in **Advanced model settings** stays headless.
 Choose a result or enter a custom ID (blank is allowed); Enter or leaving the field
 commits typed text, Escape abandons the query. Save, close and reopen to check it.
-If no workspace is configured, set it under **Advanced model settings**.
+If no workspace is configured, edit the agent and set **Databricks workspace (HTTPS origin)**
+under **Advanced → Model**. App maintainers can instead supply the nonsecret
+`DATABRICKS_HOST` build default below and rebuild the app.
 
 ### Nonsecret build defaults
 
@@ -162,6 +166,89 @@ and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
 See [configuration parity](configuration.md) for development routing, release
 flag exclusions and the supported deployment boundary.
 
+## Planned: Harnesses and agent defaults
+
+This is the approved Settings → Agents contract for the next implementation
+slices, not a description of controls already shipped. The current desktop still
+requires a restart to discover newly installed CLIs, and Save currently leaves
+running agents unchanged. Individual-agent configuration stays on the Agents
+page; Settings → Agents owns installation guidance and device-wide defaults.
+
+### Harnesses
+
+The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
+
+- **Buzz Agent** is bundled and shows **Ready**.
+- **Goose** shows **Ready** or **CLI needed**, with **Install** when needed.
+  Install runs upstream `download_cli.sh` with `CONFIGURE=false`, as old Buzz
+  did; Goose then uses built-in `goose acp`. One install runs at a time.
+  Afterward Buzz re-detects, writes an install log, and restarts agents that
+  were waiting for Goose.
+- **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. V1 shows a hint
+  and copyable commands (Node.js required); one-click Pi install comes later:
+
+  ```sh
+  npm install -g @earendil-works/pi-coding-agent
+  npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#86b201e'
+  ```
+
+**Check again** re-detects installed Harnesses without reopening Buzz. Status
+is executable detection, not a guarantee of sign-in, ACP readiness or inference.
+Add/Edit links to Settings → Agents for setup instead of telling people to reopen
+the app. The ACP tooltip says:
+
+> Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.
+
+### Global agent defaults and saving
+
+Settings → Agents provides a default harness, provider, model, effort and
+environment variables. The default harness is **copied into each new agent** at
+creation; changing it later does not switch existing agents. Provider, model,
+effort and environment defaults are **looked up at each start** only for fields
+an agent leaves blank; per-agent values win. Per-agent effort is not yet an
+editable field. Changing the default harness clears the default model and effort.
+
+These mutable defaults live in a native store under app-data
+`agent-controller/`, not localStorage. Native files use owner-only permissions
+(0600); environment values are write-only and never read back into the UI, as
+with per-agent API keys. This layer sits above
+[`BuildDefaults::resolve()`](../crates/agent-controller/src/defaults.rs): global
+defaults win over the [nonsecret build floor](#nonsecret-build-defaults), which
+stays compiled and is not the editable store.
+
+Saving an agent or defaults restarts **running agents whose effective settings
+changed** through the native supervisor and reports **“Saved. Restarted N
+agents.”** Unchanged and stopped agents are not restarted. Effective settings
+include inherited defaults, so today's `restartDiff` (raw saved configs) is not
+enough on its own. This supersedes the current Save-without-restart rule.
+
+## Avatar editing
+
+Edit uses the same draft avatar picker as human Profile settings: upload/drop an
+image, paste an HTTPS URL, choose emoji artwork, or remove the picture. Done changes
+the form; Save first persists the exact native ID/revision, then publishes to that
+agent's saved community without restarting it. Older native hosts without
+`avatarEditingAvailable` retain the display-only avatar.
+
+An omitted picture preserves the saved override; an empty string explicitly removes
+it. A changed picture durably marks `profilePending`, so closing/reloading does not
+lose the Retry action. The native publisher reads and verifies the agent's current
+signed kind-0 profile, changes only picture, and preserves unrelated content and
+non-auth tags. Name/bot initialization is only for a missing profile. A local
+configuration rename is not an implicit published-profile rename.
+
+One native publication per agent can run at a time, including across renderer
+reloads. The host verifies current-profile readback after a matching accepted
+receipt before clearing pending at the same saved revision. Conflicting or failed
+reads/publications keep pending for explicit retry; no automatic broadcast or
+retry loop is introduced. Another client can still replace the profile after this
+confirmation; this is not a cross-client transaction.
+
+Browser tests use synthetic profiles/media and controller fixtures. Rust checks
+use temporary stores, public fixture keys and loopback HTTP. They do not establish
+live relay access, native image rendering or packaged human signing. Camera and
+recording are outside this avatar slice.
+
 ## Runtime boundary
 
 Native startup opens `app_data_dir/agent-controller`, never the old library as a
@@ -194,13 +281,22 @@ containment on non-Unix platforms.
   unavailable capability; no fetch fallback, local storage, signing or runner.
 - `bundled/agents/AgentControlPanel.tsx`: compose with `{ control }` independently
   of selected community or relay connectivity. It owns only observation and UI
-  drafts. Its five-second refresh runs while visible/ready; reads coalesce. A read
+  drafts. Its five-second status refresh runs while visible, including after a
+  read or operation error; reads coalesce and never replay writes. A read
   rejected specifically because native startup is initializing or its lock is busy
-  stays pending for at most twenty 250ms waits. Genuine errors or exhausted retries
-  stop polling and expose explicit Retry; writes are never automatically retried.
+  stays pending for at most twenty 250ms waits. Other errors or exhausted retries
+  remain visible above the cards, with explicit Retry as well as the next periodic
+  read. Successful reads clear the global warning; native per-agent errors remain
+  on the affected agent, and failed Save/Create/Delete details stay in their dialog.
   Unmount clears the timer, not enabled intent or processes.
 - Native host owns persistent state, credential custody, process groups, lock and
   duplicate ownership checks, source import validation and sanitized diagnostics.
+  Critical sections wait in arrival order through the host's async admission gate
+  and execute on blocking workers; a status read does not reject a concurrent
+  command as busy. The worker retains admission until it finishes, even if its
+  caller disappears. Credential and network waits release admission so recovery
+  Stop can still invalidate pending launches. Shutdown is checked again after
+  acquiring native state. Failed commands are never automatically replayed.
   It must bound IPC operations and reject with deliberately user-facing strings;
   raw child/OS/parser errors must never cross into these snapshots or rejections.
 
@@ -222,7 +318,9 @@ containment on non-Unix platforms.
 - `running` is **process-alive evidence only**, labeled “Process running · relay
   readiness unverified.” It is not a Listening/Working badge or proof a mention
   can be received. Native wake/readiness acceptance is separate.
-- Save uses `expectedRevision`, updates only editable fields and never restarts.
+- Save uses `expectedRevision` and updates only editable fields. The planned
+  flow restarts running agents whose effective settings change (see
+  [Global agent defaults and saving](#global-agent-defaults-and-saving)).
   Saved/running revisions remain distinct. Dirty drafts survive refresh and save
   failure. A newer saved revision blocks overwrite and offers explicit discard;
   the person can copy their edits before discarding. Drafts are page-local and
@@ -230,13 +328,15 @@ containment on non-Unix platforms.
 - Arguments use a JSON string array rather than splitting shell text, preserving
   spaces and literal quoting. Empty/comma-containing arguments are rejected because
   the current ACP transport cannot represent them faithfully. The executable is a per-agent
-  harness choice, not a new installation/catalog system. The host must validate
-  launch configuration and unsupported imported semantics before execution.
+  harness choice; Settings → Agents owns the planned Harnesses setup card. The
+  host must validate launch configuration and unsupported imported semantics
+  before execution.
 - Harness and Provider choices come from native `harnessOptions` through the
   injected Core snapshot. Buzz Agent offers Databricks v2. Goose appears with an
   absolute executable path when the local CLI is installed, and offers common
-  Goose providers plus a custom ID. A missing CLI leaves Goose disabled until
-  installation and desktop restart. Switching into or out of Goose supplies ACP
+  Goose providers plus a custom ID. A missing CLI leaves Goose disabled; the
+  planned **Check again** action re-detects it after installation without an app
+  restart. Switching into or out of Goose supplies ACP
   arguments and clears the previous provider/model; selecting a Goose provider clears the
   previous model. For Goose, an explicit Browse asks Goose ACP for the selected
   provider's supported-model list and searches it in the existing picker. The
@@ -350,8 +450,10 @@ to the same immutable source revision as the native library. The build script us
 and stages binaries plus revision/target/SHA256 manifest in
 `src-tauri/resources/agent-runtime`. Native build copies them to
 `target/debug/agent-runtime`. Generated binaries/manifest are not committed.
-Startup verifies the exact tool set, target, revision and file hashes; required
-launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
+Startup verifies the exact tool set, target, revision and file hashes. Packaged
+macOS apps may accept signing-induced hash changes only when the runtime belongs
+to the running app and its resource seal verifies under Block's Developer ID.
+The final hashes are retained in memory; required launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
 download. The manifest detects corrupt/mixed resources, not a same-user attacker
 who can replace the app and manifest. Inputs are immutable, not a promise of
 bit-identical machine-independent binaries. This build is not a signed installer.
@@ -369,25 +471,12 @@ Re-run the resource preparation and native build commands above, then validate:
 ```sh
 bin/cargo test --locked -p buzz-foundation -p buzz-agent-controller -- --include-ignored
 bin/node --test tests/integration/agent-runtime.test.mjs
-# Explicit staged-tool check: ephemeral identities, loopback HTTP, no real relay.
-bin/node --test tests/integration/agent-audience-smoke.mjs
 ```
-
-The audience-capable runtime is pinned to upstream `19da8950`. Its
-`buzz messages send` requires `--audience agents|everyone`; omitted/invalid intent
-fails before network work. The bundled base prompt and CLI must move together.
-The SDK requires explicit audience application; other producers and historical
-untagged messages are not retroactively classified. User-authored system prompts
-and team instructions are preserved. A fresh runner/session is required to load
-updated embedded base instructions. Audience is presentation intent, not access
-control, membership or completion evidence. The explicit smoke test verifies
-signed events and receipts for kinds9/45001/45003, thread/recipient preservation,
-and denied-member rejection. It is not a live agent-response acceptance test.
 
 These checks use isolated fixtures, including the staged binaries; they do not
 launch the app or access live credentials. Exercise upstream behavior changes
-with relevant bundled-tool smoke checks. Do not commit generated resources or
-restart running agents implicitly; live handover remains a separate step below.
+with relevant bundled-tool smoke checks. Do not commit generated resources;
+live handover remains a separate step below.
 
 ## Handover and rollback
 
@@ -416,7 +505,8 @@ restart running agents implicitly; live handover remains a separate step below.
 
 `control.test.ts`, `control-native.test.ts`, `agent-edit.test.ts` cover projection
 races, unavailable browser, exact IPC payloads, uncertain result handling,
-save/restart distinction, literal arguments and environment patch semantics.
+the current save/restart distinction, literal arguments and environment patch
+semantics.
 `tests/browser/agent-control.spec.mjs` drives the real editor and capability over
 the isolated fake host in Chromium/WebKit: dirty refresh, save failure, revisions,
 write-only replacement, Stop, unmount without control actions, selected import,
@@ -449,18 +539,17 @@ is macOS-only. Custom harnesses require an absolute executable and are not
 certified by bundled Buzz Agent tests. Unsupported settings stay editable but
 Start refuses them. OAuth files are owner-only, not Keychain-encrypted. A failed
 import can leave create-only app custody for retry but no enabled/configured agent.
-No remote/mesh or directory-backed team runtime, live legacy-team synchronization,
-shared team editor, or conditional attestation is added. Local team bindings use
-explicit import snapshots; missing/broken snapshots fail visibly rather than
-silently omitting team instructions. Synthetic checks
+No remote/mesh runtime, live team synchronization or conditional attestation is added. Synthetic checks
 do not establish actual Keychain ACLs, production TLS/inference, live replies,
 forced native quit, signed packaging or other-platform behavior.
 
 ## Pi harness
 
-Install Pi, Node.js, and the `buzz-pi-acp` adapter, then reopen the desktop app.
-Pi appears alongside Buzz Agent and Goose. Availability means the executables
-were found, not that authentication or inference has been verified. This
+Install Pi, Node.js, and the `buzz-pi-acp` adapter. In the planned Harnesses
+card, choose **Check again** to re-detect without reopening the app; until that
+ships, reopen the current desktop app. Pi appears alongside Buzz Agent and Goose.
+Availability means the executables were found, not that authentication or
+inference has been verified. This
 integration uses the adapter's Pi argument forwarding after `--` (verified with
 buzz-pi-acp 0.0.33) and Pi's `get_available_models` RPC (verified with Pi 0.86.1).
 
@@ -476,8 +565,9 @@ The Advanced model field preserves text literally, including IDs that themselves
 start with the provider name. After Browse, an unlisted ID carries a warning;
 manual IDs remain allowed and an available catalog is not inference validation.
 Clear both fields to keep Pi's own defaults. Choosing a provider requires a model
-before Start; Pi otherwise silently ignores a provider-only flag. Save does not restart a running agent;
-use Restart explicitly to apply changes.
+before Start; Pi otherwise silently ignores a provider-only flag. Until the
+planned restart-on-save flow ships, use Restart explicitly to apply a saved
+change to a running Pi agent.
 
 Discovery launches the same locally resolved Pi used by the ACP adapter, in the
 agent's workspace, with the same explicit environment and extension arguments.
@@ -527,3 +617,14 @@ configuration. The current internal release repository builds the old desktop;
 its generic build environment injection is not a Pi resource-bundling contract
 for this app. Signed bundling, automatic employee provisioning and release
 pipeline migration require separate release work; no release is published here.
+
+### Activity preview integration
+
+The preview keeps main's `teamInstructions` import representation and stopped repair
+workflow. Existing preview records with a validated `imported.team` snapshot remain
+readable, without source reads or rewrites at startup. New imports and explicit team
+repairs disclose and enable owner-visible Activity publication. Unchanged native
+records are not silently opted in. Repair commits recheck revision and disabled
+state and patch only team instructions, approved publication and revision into the
+fresh saved record; a still-owned process blocks completion. Models, prompts,
+workspaces, environment, credentials, launch preferences and unrelated fields remain.

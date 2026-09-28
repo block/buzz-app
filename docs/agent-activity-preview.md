@@ -3,10 +3,11 @@
 **Experimental macOS test candidate, not merge-ready or release-validated.**
 Branch: `feature/agent-activity-preview`.
 
-This branch packages the integrated Activity implementation on main checkpoint
-`09086638`. It does not include later main changes. In particular, main has since
-added identity and agent-management changes that require a separate reconciliation.
-This preview is for trying Activity, not replacing an everyday installation.
+This branch integrates main through `bebb54ec` with the Activity implementation.
+Main's identity, packaged communities, harness setup, profiles and close-to-hide
+behavior remain authoritative. Native Activity/history uses that same identity;
+the temporary preview-only account connection has been retired. This preview is
+for trying Activity, not replacing an everyday installation.
 
 ## What to try
 
@@ -71,13 +72,13 @@ bin/just desktop-bundle
 
 Normally stop the dev app and its agents, then open the produced
 `target/debug/bundle/macos/Buzz Foundation.app`. This is a local debug build, not a
-notarized release. Use **Connect existing account** with your own public identity
-and community origin; approve the OS Keychain prompt yourself.
+notarized release. Follow the native identity setup/import flow and select your existing community;
+approve the OS Keychain prompt yourself. Never paste a key into a fixture.
 
 Required attended checks:
 1. Run a bounded three-agent handoff in a test thread. Verify collapsed coordination,
    visible human answer, and exact reply/profile Activity.
-2. Close/reopen Activity, quit normally, reopen and explicitly reconnect. Verify
+2. Close/reopen Activity, quit normally, reopen and restore the selected community. Verify
    Saved Activity restores without reviving a working indicator.
 3. Disable/re-enable Activity: capture stops, saved history remains.
 4. Confirm deletion only if you intend to erase **all new-app Activity for that
@@ -99,9 +100,10 @@ real-account persistence. The current package still needs the attended checks ab
 
 The preview publication repairs stale test fixtures without production behavior
 changes: message capability stubs, the DOM-only ResizeObserver stub, and Activity
-identity-name selectors. Source feature code is otherwise the tested local candidate.
+identity-name selectors. The merged adapter retains main HTTP writes and adds a scoped native socket/history
+lease. Legacy preview team snapshots remain readable without rewriting saved agents.
 
-No whole-main integration, hosted CI approval, code-owner approval, release signing,
+No hosted CI approval, code-owner approval, release signing,
 or cross-platform acceptance is claimed. A branch push alone does not run PR CI.
 Report the commit, launch mode (dev/package), steps, expected/actual behavior and
 whether the message had a valid audience tag. Do not attach credentials or raw

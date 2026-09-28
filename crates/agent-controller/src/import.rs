@@ -64,8 +64,8 @@ pub struct Imports {
 struct Source {
     records: Vec<Value>,
     global: Value,
+    teams: Vec<Value>,
     custom: BTreeMap<String, Value>,
-    teams: Value,
     digest: String,
 }
 impl Imports {
@@ -119,7 +119,6 @@ impl Imports {
                 "Imports stay disabled. Stop old Buzz before enabling an imported identity.".into(),
                 "Provider defaults baked into the old app cannot be inferred from these files; review the imported harness before starting.".into(),
                 "This copies selected identities and resolved settings; old Buzz remains unchanged.".into(),
-                "Import or Complete team import enables owner-visible Activity publication when the agent runs; no agent starts here.".into(),
             ],
         };
         self.pending = Some(Pending {
@@ -168,25 +167,21 @@ impl Imports {
                 .find(|r| string(r, "pubkey") == candidate.pubkey)
                 .ok_or("Import identity disappeared")?;
             if let Some(saved) = existing.iter().find(|a| a.id == *id) {
-                if !crate::team::required(saved)
-                    || saved.enabled
-                    || saved.pubkey != candidate.pubkey
-                    || crate::team::team_id(&saved.imported["record"])?
-                        != crate::team::team_id(record)?
-                {
-                    return Err("Only a stopped incomplete team import can be completed; refresh and review the selected source".into());
+                if !saved.needs_team_import() {
+                    return Err("Selected identity is already imported".into());
                 }
-                let mut repaired = saved.clone();
-                repaired.imported["team"] = resolve_team(&data, record)?;
-                repaired
-                    .extra
-                    .insert("activityPublication".into(), Value::Bool(true));
-                repaired.revision = repaired
-                    .revision
-                    .checked_add(1)
-                    .ok_or("Agent revision exhausted")?;
-                repaired.validate()?;
-                repairs.push((saved.revision, repaired));
+                let original = &saved.imported["record"];
+                if ["team_id", "persona_team_dir"]
+                    .iter()
+                    .any(|field| string(original, field) != string(record, field))
+                {
+                    return Err("Source team binding differs from the imported agent; choose its original library".into());
+                }
+                repairs.push((
+                    saved.id.clone(),
+                    saved.revision,
+                    team_instructions(&data, original)?,
+                ));
                 continue;
             }
             let agent = resolve(&data, record, &pending.workspace, &candidate.relay_url)?;
@@ -218,14 +213,14 @@ impl Imports {
 /// outside the controller mutex. The source snapshot is copied, never mutated.
 pub struct PreparedImport {
     agents: Vec<(Agent, String)>,
-    repairs: Vec<(u64, Agent)>,
+    repairs: Vec<(String, u64, String)>,
     source_kind: LegacySource,
     source: PathBuf,
     digest: String,
 }
 pub struct CredentialedImport {
     agents: Vec<Agent>,
-    repairs: Vec<(u64, Agent)>,
+    repairs: Vec<(String, u64, String)>,
     source: PathBuf,
     digest: String,
 }
@@ -263,14 +258,14 @@ impl PreparedImport {
     }
 }
 impl CredentialedImport {
-    pub(crate) fn repair_ids(&self) -> impl Iterator<Item = &str> {
-        self.repairs.iter().map(|(_, agent)| agent.id.as_str())
+    pub(crate) fn ids(&self) -> Vec<String> {
+        self.repairs.iter().map(|(id, _, _)| id.clone()).collect()
     }
     pub fn commit(self, store: &mut Store) -> Result<()> {
         if read_source(&self.source)?.digest != self.digest {
             return Err("Source changed during credential access; preview again".into());
         }
-        store.complete_import(self.agents, self.repairs)
+        store.import(self.agents, self.repairs)
     }
 }
 fn string<'a>(value: &'a Value, key: &str) -> &'a str {
@@ -282,28 +277,6 @@ fn object(value: &Value) -> Result<BTreeMap<String, String>> {
     }
     serde_json::from_value(value.clone())
         .map_err(|_| "Source environment must contain string values".into())
-}
-fn resolve_team(data: &Source, record: &Value) -> Result<Value> {
-    let Some(id) = crate::team::team_id(record)? else {
-        return Ok(Value::Null);
-    };
-    let rows = data
-        .teams
-        .as_array()
-        .ok_or("The selected source has no valid team library; nothing was imported")?;
-    let mut matching = rows
-        .iter()
-        .filter(|team| team.get("id").and_then(Value::as_str) == Some(id));
-    let team = matching
-        .next()
-        .ok_or("The selected source has no matching team; nothing was imported")?;
-    if matching.next().is_some() {
-        return Err(
-            "The selected source has duplicate matching teams; nothing was imported".into(),
-        );
-    }
-    crate::team::validate_team(team, id)?;
-    Ok(team.clone())
 }
 fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -> Result<Agent> {
     let definition = if string(record, "persona_id").is_empty() {
@@ -376,6 +349,7 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
         record.remove("private_key_nsec");
     }
     Ok(Agent {
+        picture: None,
         id: id.clone(),
         pubkey,
         relay_url,
@@ -398,19 +372,35 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
             .get("auth_tag")
             .and_then(Value::as_str)
             .map(str::to_owned),
-        imported: json!({ "record": retained, "definition": if std::ptr::eq(definition, record) { Value::Null } else { definition.clone() }, "global": data.global, "harness": custom, "team": resolve_team(data, record)? }),
+        imported: json!({ "record": retained, "definition": if std::ptr::eq(definition, record) { Value::Null } else { definition.clone() }, "global": data.global, "harness": custom, "teamInstructions": team_instructions(data, record)? }),
         extra: BTreeMap::from([("activityPublication".into(), Value::Bool(true))]),
     })
 }
-fn read_source(root: &Path) -> Result<Source> {
-    for directory in [root.to_path_buf(), root.join("agents")] {
-        if !fs::symlink_metadata(directory)
-            .map_err(|_| "Could not inspect chosen source")?
-            .is_dir()
-        {
-            return Err("Chosen source directories must not be symbolic links".into());
-        }
+// Match old Buzz's deployment-team lookup: a deleted team contributes no section.
+fn team_instructions(data: &Source, record: &Value) -> Result<String> {
+    let id = string(record, "team_id");
+    let team = data
+        .teams
+        .iter()
+        .find(|team| !id.is_empty() && string(team, "id") == id);
+    team_text(
+        team.map(|team| &team["instructions"])
+            .unwrap_or(&Value::Null),
+    )
+    .map(str::to_owned)
+}
+pub(crate) fn team_text(value: &Value) -> Result<&str> {
+    let text = if value.is_null() {
+        ""
+    } else {
+        value.as_str().ok_or("Invalid source team instructions")?
+    };
+    if text.len() > 128 * 1024 || text.contains('\0') {
+        return Err("Invalid source team instructions".into());
     }
+    Ok(text.trim())
+}
+fn read_source(root: &Path) -> Result<Source> {
     let records = read_json(&root.join("agents/managed-agents.json"), false)?;
     let global = read_json(&root.join("agents/global-agent-config.json"), true)?;
     let records: Vec<Value> =
@@ -420,6 +410,28 @@ fn read_source(root: &Path) -> Result<Source> {
     }
     if !global.is_object() {
         return Err("Invalid source global configuration".into());
+    }
+    let team_path = root.join("agents/teams.json");
+    let teams: Vec<Value> = if records
+        .iter()
+        .any(|record| !string(record, "team_id").is_empty())
+    {
+        match fs::symlink_metadata(&team_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            _ => serde_json::from_value(read_json(&team_path, false)?)
+                .map_err(|_| "Source team library must be an array")?,
+        }
+    } else {
+        Vec::new()
+    };
+    let mut team_ids = BTreeSet::new();
+    if teams.len() > MAX_AGENTS
+        || teams.iter().any(|team| {
+            let id = string(team, "id");
+            !team.is_object() || id.is_empty() || !team_ids.insert(id)
+        })
+    {
+        return Err("Invalid or duplicate source teams".into());
     }
     let mut custom = BTreeMap::new();
     let directory = root.join("custom_harnesses");
@@ -443,21 +455,7 @@ fn read_source(root: &Path) -> Result<Source> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return Err("Could not read source harness definitions".into()),
     }
-    // Read teams only when referenced. A selected record must match exactly;
-    // no builtin refresh, directory-pack loading or legacy write-on-load.
-    let teams = if records
-        .iter()
-        .any(|record| crate::team::team_id(record).ok().flatten().is_some())
-    {
-        let teams = read_json(&root.join("agents/teams.json"), true)?;
-        if teams.as_array().is_some_and(|rows| rows.len() > MAX_AGENTS) {
-            return Err("Source team library exceeds record limit".into());
-        }
-        teams
-    } else {
-        Value::Null
-    };
-    let bytes = serde_json::to_vec(&(&records, &global, &custom, &teams))
+    let bytes = serde_json::to_vec(&(&records, &global, &teams, &custom))
         .map_err(|_| "Could not snapshot import source")?;
     if bytes.len() > MAX_BYTES {
         return Err("Import source exceeds size limit".into());
@@ -465,8 +463,8 @@ fn read_source(root: &Path) -> Result<Source> {
     Ok(Source {
         records,
         global,
-        custom,
         teams,
+        custom,
         digest: format!("{:x}", Sha256::digest(bytes)),
     })
 }

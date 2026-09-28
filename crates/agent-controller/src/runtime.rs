@@ -43,15 +43,15 @@ impl RuntimeBundle {
         if record["backend"]["type"]
             .as_str()
             .is_some_and(|s| s != "local")
-            || record["persona_team_dir"]
-                .as_str()
-                .is_some_and(|s| !s.is_empty())
             || harness.provider == "relay-mesh"
             || !record["relay_mesh"].is_null()
         {
-            return Err("This imported agent requires a remote/team/mesh integration not supported by the local controller".into());
+            return Err("This imported agent requires a remote/mesh integration not supported by the local controller".into());
         }
-        let team_instructions = crate::team::instructions(agent)?;
+        if agent.needs_team_import() {
+            return Err("Import this agent's team instructions from old Buzz under Agents → Import or repair from old Buzz → Repair team import before starting".into());
+        }
+        let team_instructions = agent.team_instructions()?;
         let respond_to = agent.respond_to(defaults.owner_only)?;
         if agent.auth_tag.is_none() {
             return Err("This identity has no saved owner attestation; native owner binding is required before starting".into());
@@ -115,6 +115,7 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_AGENT_COMMAND", worker)
             .env("BUZZ_ACP_AGENT_ARGS", args.join(","))
             .env("BUZZ_ACP_SYSTEM_PROMPT", &agent.system_prompt)
+            .env("BUZZ_ACP_TEAM_INSTRUCTIONS", team_instructions)
             .env("BUZZ_ACP_DISPLAY_NAME", &agent.name)
             .env("BUZZ_ACP_LAZY_POOL", "true")
             .env("BUZZ_ACP_IDLE_POOL_SLEEP", "900")
@@ -131,9 +132,6 @@ impl RuntimeBundle {
                     "false"
                 },
             );
-        if let Some(instructions) = team_instructions {
-            command.env("BUZZ_ACP_TEAM_INSTRUCTIONS", instructions);
-        }
         if defaults.owner_only {
             command
                 .env("BUZZ_ACP_ALLOWED_RESPOND_TO", "owner-only")
@@ -463,15 +461,57 @@ impl Controller {
     }
     pub fn commit_import(&mut self, prepared: crate::CredentialedImport) -> Result<()> {
         if prepared
-            .repair_ids()
+            .ids()
+            .iter()
             .any(|id| self.running.contains_key(id))
         {
-            return Err(
-                "Stop the selected agent and confirm cleanup before completing its team import"
-                    .into(),
-            );
+            return Err("Stop the agent before repairing its import".into());
         }
         prepared.commit(&mut self.store)
+    }
+    /// Check an exact saved instance has an unconditional signed owner attestation.
+    /// This is not read authorization; the caller must still prove that owner key.
+    pub fn log_target(&self, id: &str, pubkey: &str, relay_url: &str) -> Result<()> {
+        let relay = crate::config::canonical_relay(relay_url)?;
+        let agents = self.store.agents()?;
+        let agent = agents
+            .iter()
+            .find(|agent| agent.id == id && agent.pubkey == pubkey && agent.relay_url == relay)
+            .ok_or("Agent no longer exists")?;
+        crate::secret::validate_attestation(
+            agent
+                .auth_tag
+                .as_deref()
+                .ok_or("Owner authorization is unavailable")?,
+            pubkey,
+        )
+    }
+    /// Read retained output for an exact locally managed identity and community.
+    /// Raw output is never included in a snapshot or published to the relay.
+    pub fn read_log(
+        &self,
+        id: &str,
+        pubkey: &str,
+        relay_url: &str,
+        nonce: &str,
+        signature: &str,
+    ) -> Result<String> {
+        let relay = crate::config::canonical_relay(relay_url)?;
+        let agents = self.store.agents()?;
+        let agent = agents
+            .iter()
+            .find(|agent| agent.id == id && agent.pubkey == pubkey && agent.relay_url == relay)
+            .ok_or("Agent no longer exists")?;
+        let auth = agent
+            .auth_tag
+            .as_deref()
+            .ok_or("Owner authorization is unavailable")?;
+        crate::secret::validate_attestation(auth, pubkey)?;
+        let tag: Vec<String> =
+            serde_json::from_str(auth).map_err(|_| "Owner authorization is unavailable")?;
+        crate::logs::verify_owner_proof(&tag[1], id, pubkey, &relay, nonce, signature)?;
+        let path = crate::logs::path(self.store.root(), id)?;
+        crate::logs::read(&path)
     }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<ControlSnapshot> {
         self.store.save(id, revision, edit)?;
@@ -486,6 +526,9 @@ impl Controller {
             .ok_or("Agent no longer exists")?;
         if agent.revision != revision {
             return Err("Agent settings changed. Reload before deleting".into());
+        }
+        if agent.deployed_remote() {
+            return Err("Deployed remote agents can't be deleted from this app".into());
         }
         // Stop must be confirmed before removing custody or durable settings.
         self.stop(id)?;
@@ -565,7 +608,6 @@ impl Controller {
             .ok_or("Agent no longer exists")?;
         let workspace = effective_databricks(&agent)?.map(|s| s.host);
         self.bundle.as_ref().map_err(Clone::clone)?;
-        crate::team::instructions(&agent)?;
         Ok((agent.credential_id, agent.pubkey, agent.revision, workspace))
     }
     pub fn action_with_key(
@@ -676,9 +718,17 @@ impl Controller {
         // Disarm app-side deletion before a child can use this directory. The
         // supervisor deletes it only after confirmed whole-session teardown.
         #[cfg(unix)]
+        let log_path = crate::logs::path(config, &agent.id)?;
+        #[cfg(unix)]
         let temporary = temporary.keep();
         #[cfg(unix)]
-        let process = Supervised::spawn(&command, &self.ownership_root, &agent.id, &temporary)?;
+        let process = Supervised::spawn(
+            &command,
+            &self.ownership_root,
+            &agent.id,
+            &temporary,
+            &log_path,
+        )?;
         #[cfg(not(unix))]
         let process = Process::spawn(&mut command)?;
         self.running.insert(

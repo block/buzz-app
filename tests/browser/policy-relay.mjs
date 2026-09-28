@@ -101,6 +101,16 @@ export function policyRelay({
     requests,
     rejected,
     expectedHttpErrors: () => rejected.length > 0,
+    /** The broker pauses its API lane for the advertised delay when it reads
+     * the refusal, before the fixture stamps `relayed` on response finish.
+     * Browser-side cooldowns need the page clock; see the retry specs. */
+    brokerCooldownOver(index = 0) {
+      const rejection = rejected[index];
+      return (
+        rejection?.relayed !== undefined &&
+        performance.now() >= rejection.relayed + rejection.retryAfterMs
+      );
+    },
     emptyRoster() {
       emptyRoster = true;
     },
@@ -242,6 +252,27 @@ export function policyRelay({
             filters.flatMap((filter) => answer(communityOf(url), filter)),
           );
         }
+        if (filters.length === 2 && filters[1].kinds?.[0] === 13534) {
+          // Main's profile archive admission reads exact target ownership and
+          // the captured relay's member snapshot, never the sidebar batch.
+          expect(filters).toEqual([
+            {
+              kinds: [0],
+              authors: [expect.stringMatching(/^[0-9a-f]{64}$/)],
+              limit: 1,
+            },
+            { kinds: [13534], authors: [relayAuthor], limit: 1 },
+          ]);
+          for (const filter of filters)
+            report.queries.push({
+              community: communityOf(url),
+              filter,
+              at: performance.now(),
+            });
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
         if (filters.length !== 1) {
           // Sidebar preferences read only these four exact own-author coordinates.
           expect(filters).toHaveLength(4);
@@ -332,7 +363,7 @@ export function policyRelay({
           quotas.delete(quota);
           rejected.push({
             channel,
-            until: performance.now() + (seconds + 1) * 1000,
+            retryAfterMs: (seconds + 1) * 1000,
           });
           return Response.json(
             { error: `rate-limited: quota exceeded; retry in ${seconds}s` },

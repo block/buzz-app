@@ -113,12 +113,16 @@ it("keeps focus in the sidebar when removing its last visible DM", async () => {
     const [visible, setVisible] = useState(true);
     return (
       <div>
-        <details open>
-          <summary>Channels</summary>
-        </details>
-        {visible && (
+        <div data-sidebar-section="">
           <details open>
-            <summary>DMs</summary>
+            <summary>Channels</summary>
+          </details>
+        </div>
+        {visible && (
+          <div data-sidebar-section="">
+            <details open>
+              <summary>DMs</summary>
+            </details>
             <ChannelSidebarRow
               channel={{ id: "dm", name: "Alice", channelType: "dm" }}
               collapsed={false}
@@ -132,7 +136,7 @@ it("keeps focus in the sidebar when removing its last visible DM", async () => {
               onNewSession={() => {}}
               onHideDm={() => setVisible(false)}
             />
-          </details>
+          </div>
         )}
       </div>
     );

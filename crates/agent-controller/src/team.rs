@@ -30,11 +30,6 @@ pub(crate) fn validate_team(team: &Value, id: &str) -> Result<()> {
     }
 }
 
-pub(crate) fn required(agent: &Agent) -> bool {
-    team_id(&agent.imported["record"]).ok().flatten().is_some()
-        && agent.imported.get("team").is_none()
-}
-
 pub(crate) fn instructions(agent: &Agent) -> Result<Option<&str>> {
     let Some(id) = team_id(&agent.imported["record"])? else {
         return Ok(None);

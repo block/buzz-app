@@ -3,14 +3,14 @@ import {
   isVoiceNote,
   videoDemuxer,
   VIDEO_PREPARATION_MS,
-} from "./video-preparation";
-import { safeAttachmentName } from "./message-content";
+} from "./video-preparation.ts";
+import { safeAttachmentName } from "./message-content.ts";
 
 import {
   mediaByteLimit,
   UPLOAD_MAX_BYTES,
   UPLOAD_TIMEOUT_MS,
-} from "./attachment-limits";
+} from "./attachment-limits.ts";
 export { UPLOAD_MAX_BYTES, UPLOAD_TIMEOUT_MS };
 export type UploadedAttachment = Readonly<{
   name: string;

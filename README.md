@@ -77,10 +77,9 @@ per-platform steps and limits.
 
 ## Relay channels
 
-The non-live macOS desktop now exposes an explicit
-[existing-account native connection](docs/native-account.md) for finite channel/message
-reads and ordinary sends through the existing outbox, plus a native shared live socket
-and owner-visible Activity decode. [Saved Activity](docs/activity-history.md) retains
+The packaged macOS desktop uses main's native identity and community connection.
+[Native Activity](docs/native-account.md) shares that identity and live service; it
+adds owner-visible observer decoding and bounded history without another account flow. [Saved Activity](docs/activity-history.md) retains
 new encrypted capture; attended packaged live-account acceptance remains unverified. Development setup is below.
 
 Live development currently requires **an existing Buzz account in the OS credential
@@ -315,6 +314,7 @@ controls are included. Keep Buzz running for existing agents to answer selected
 ## Project resources
 
 - [Contextual identity names: cross-client spec and fixtures](src/bundled/identity-naming/README.md)
+- [Mention rules: cross-client spec and fixtures](src/bundled/mentions/README.md)
 - [Contributing](docs/contributing.md)
 - [Project leads](CODEOWNERS)
 - [Governance](GOVERNANCE.md)

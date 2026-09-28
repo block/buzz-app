@@ -84,7 +84,7 @@ fn native_auth_is_observed_once_and_exact_on_same_socket() {
 #[test]
 fn exact_route_shapes_and_no_publication_or_second_observer() {
     let (s, mut p) = setup();
-    let viewer = s.keys.public_key().to_hex();
+    let viewer = s.viewer.clone();
     let time = Timestamp::now().as_secs();
     let filters = vec![
         vec![observer_filter()],
@@ -129,7 +129,7 @@ fn exact_route_shapes_and_no_publication_or_second_observer() {
 #[test]
 fn decrypt_only_current_observer_wire_no_raw_fallback() {
     let (s, mut p) = setup();
-    let viewer = s.keys.public_key().to_hex();
+    let viewer = s.viewer.clone();
     p.outbound(
         &json!(["REQ", "observe", observer_filter()]).to_string(),
         &viewer,
@@ -314,4 +314,36 @@ fn oversize_commands_are_rejected_before_queue_retention() {
         .socket_control("socket", Control::Write("x".repeat(65537), reply))
         .is_err());
     assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn outbound_event_preserves_presence_and_rejects_foreign_or_unsupported_signed_messages() {
+    let (session, mut protocol) = setup();
+    let sign = |kind, content: &str, key: Keys| {
+        EventBuilder::new(Kind::from(kind), content)
+            .sign_with_keys(&key)
+            .unwrap()
+    };
+    let presence = sign(20001, "online", keys(1));
+    assert!(protocol
+        .outbound(&json!(["EVENT", presence]).to_string(), &session.viewer)
+        .is_ok());
+    assert!(protocol
+        .inbound(&json!(["OK", presence.id, true, ""]).to_string(), &session)
+        .unwrap()
+        .is_some());
+    for event in [
+        sign(20001, "invalid", keys(1)),
+        sign(20001, "online", keys(2)),
+        sign(24200, "bad", keys(1)),
+    ] {
+        assert!(protocol
+            .outbound(&json!(["EVENT", event]).to_string(), &session.viewer)
+            .is_err());
+    }
+    let mut bad = serde_json::to_value(presence).unwrap();
+    bad["content"] = json!("away");
+    assert!(protocol
+        .outbound(&json!(["EVENT", bad]).to_string(), &session.viewer)
+        .is_err());
 }

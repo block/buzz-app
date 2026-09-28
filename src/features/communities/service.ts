@@ -1,21 +1,15 @@
 // FOUNDATION: Client identity and membership selection outlive community query sessions.
-import type { AccountConnection } from "./account-connection";
 import type { AgentControl } from "../agents/control";
 import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
 import { Context } from "@deepseek-ai/cordis";
 import { provideRelay, type RelayData } from "../relay/service";
-import { connectBrokerTransport } from "../relay/transport";
+import { connectBrokerTransport, type ReadTransport } from "../relay/transport";
 import { communityDestination, isCommunityAlias } from "./destination";
 
 export const PROFILE_ABOUT_MAX_LENGTH = 500;
 export type PersonalProfile = { name: string; picture: string; about?: string };
-export type Membership = {
-  id: string;
-  name: string;
-  icon?: string;
-  nativeAccess?: "checking" | "connected" | "unavailable";
-};
+export type Membership = { id: string; name: string; icon?: string };
 type Saved = {
   profile: PersonalProfile;
   memberships: Membership[];
@@ -23,7 +17,9 @@ type Saved = {
 };
 export type ClientSnapshot = Saved & {
   status: "loading" | "ready" | "unavailable";
-  viewer?: string | undefined;
+  // A restored identity does not imply that this build has relay transport.
+  relayAvailable: boolean;
+  viewer?: string;
   error?: string;
 };
 const empty = (): Saved => ({
@@ -37,11 +33,19 @@ export function createCommunities(
   identityNames?: IdentityNames,
   openRelay = "",
   agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
-  accountConnection?: AccountConnection,
+  identityReady?: Promise<string>,
+  nativeConnect?: (id: string, signal: AbortSignal) => Promise<ReadTransport>,
 ) {
+  const connect = live
+    ? (id: string, signal: AbortSignal) =>
+        connectBrokerTransport("", signal, id)
+    : identityReady
+      ? nativeConnect
+      : undefined;
   let state: ClientSnapshot = {
     ...empty(),
-    status: live ? "loading" : "unavailable",
+    status: live || identityReady ? "loading" : "unavailable",
+    relayAvailable: !!connect,
   };
   // Retain temporarily unresolvable deployment aliases in storage, not active UI/sessions.
   const unresolvedMemberships: Membership[] = [];
@@ -52,8 +56,7 @@ export function createCommunities(
   const listeners = new Set<() => void>();
   const relayListeners = new Set<() => void>();
   const sessions = new Map<string, RelayData>();
-  const scopes = new Set<Context>();
-  const sessionOwners = new Map<string, () => void>();
+  const scopes: Context[] = [];
   const disconnected = provideRelay(
     newScope(),
     undefined,
@@ -62,7 +65,7 @@ export function createCommunities(
   );
   function newScope() {
     const scope = new Context();
-    scopes.add(scope);
+    scopes.push(scope);
     return scope;
   }
   const current = () =>
@@ -72,72 +75,52 @@ export function createCommunities(
   const emitRelay = () => {
     for (const fn of relayListeners) fn();
   };
-  const update = (patch: Partial<ClientSnapshot>, persist = true) => {
+  const update = (
+    patch: Partial<ClientSnapshot>,
+    persist = true,
+    required = false,
+  ) => {
     const next = { ...state, ...patch };
-    // A deliberate selection supersedes an unavailable saved selection; profile edits do not.
-    if (persist && Object.hasOwn(patch, "selected")) unresolvedSelection = null;
+    // Commit a deliberate selection only after required persistence succeeds.
+    const selection =
+      persist && Object.hasOwn(patch, "selected") ? null : unresolvedSelection;
     try {
-      if (persist && next.viewer && !accountConnection)
+      if (persist && next.viewer)
         localStorage.setItem(
           `buzz-client.v1:${next.viewer}`,
           JSON.stringify({
             profile: next.profile,
             memberships: [...next.memberships, ...unresolvedMemberships],
-            selected: next.selected ?? unresolvedSelection,
+            selected: next.selected ?? selection,
           }),
         );
     } catch {
+      if (required)
+        throw new Error(
+          "Could not save this community on this device. Try again.",
+        );
       // Preferences are best effort; storage failure must not strand a remote join.
     }
+    unresolvedSelection = selection;
     state = next;
     for (const fn of listeners) fn();
     emitRelay();
   };
-  const acquire = (id: string) => {
+  const acquire = (id: string, viewer = state.viewer) => {
+    if (!connect) return disconnected;
     let session = sessions.get(id);
     if (!session) {
-      const scope = newScope();
       session = provideRelay(
-        scope,
-        (signal) =>
-          accountConnection
-            ? Promise.resolve(accountConnection.transport(id, signal))
-            : connectBrokerTransport("", signal, id),
+        newScope(),
+        (signal) => connect(id, signal),
         presenceActivity,
         identityNames,
         agentChoices,
+        viewer ? { viewer, scope: communityDestination(id).url } : undefined,
       );
       sessions.set(id, session);
-      const owned = session;
-      const stop = session.subscribe(() => {
-        if (accountConnection) {
-          const snapshot = owned.snapshot();
-          const access =
-            snapshot.status === "error"
-              ? "unavailable"
-              : snapshot.status === "ready"
-                ? "connected"
-                : "checking";
-          if (
-            state.memberships.some(
-              (m) => m.id === id && m.nativeAccess !== access,
-            )
-          )
-            update(
-              {
-                memberships: state.memberships.map((m) =>
-                  m.id === id ? { ...m, nativeAccess: access } : m,
-                ),
-              },
-              false,
-            );
-        }
+      session.subscribe(() => {
         if (state.selected === id) emitRelay();
-      });
-      sessionOwners.set(id, () => {
-        stop();
-        owned.disconnect();
-        void scope.fiber.dispose().then(() => scopes.delete(scope));
       });
     }
     return session;
@@ -156,58 +139,20 @@ export function createCommunities(
     clearCache: () => current().clearCache(),
   };
   ctx.provide("relay", relay);
-  if (accountConnection)
-    ctx.effect(() =>
-      accountConnection.subscribe(() => {
-        if (disposed) return;
-        const native = accountConnection.snapshot();
-        const account =
-          native.status === "connected" ? native.account : undefined;
-        if (
-          account &&
-          state.viewer === account.viewer &&
-          state.memberships[0]?.id === account.origin
-        )
-          return;
-        for (const dispose of sessionOwners.values()) dispose();
-        sessionOwners.clear();
-        sessions.clear();
-        if (!account) {
-          presenceActivity.setViewer("");
-          update(
-            { ...empty(), viewer: undefined, status: "unavailable" },
-            false,
-          );
-          return;
-        }
-        presenceActivity.setViewer(account.viewer);
-        // This is a selected endpoint, not evidence of relay membership. The session
-        // independently verifies discovery/roster before any conversation participation.
-        update(
-          {
-            ...empty(),
-            viewer: account.viewer,
-            status: "ready",
-            memberships: [
-              {
-                id: account.origin,
-                name: new URL(account.origin).host,
-                nativeAccess: "checking",
-              },
-            ],
-            selected: account.origin,
+  const identity =
+    identityReady ??
+    (live
+      ? fetch("/api/relay/identity", { signal: controller.signal }).then(
+          async (response) => {
+            if (!response.ok) throw new Error("Local identity unavailable");
+            const { viewer } = await response.json();
+            return viewer as string;
           },
-          false,
-        );
-        acquire(account.origin);
-        emitRelay();
-      }),
-    );
-  if (live)
-    void fetch("/api/relay/identity", { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Local identity unavailable");
-        const { viewer } = await response.json();
+        )
+      : undefined);
+  if (identity)
+    void identity
+      .then((viewer) => {
         if (typeof viewer !== "string" || !/^[a-f0-9]{64}$/.test(viewer))
           throw new Error("Invalid local identity");
         if (disposed) return;
@@ -295,7 +240,7 @@ export function createCommunities(
         if (!saved.memberships.some((m) => m.id === saved.selected))
           saved.selected = null;
         presenceActivity.setViewer(viewer);
-        if (saved.selected) acquire(saved.selected);
+        if (saved.selected) acquire(saved.selected, viewer);
         // A seeded record is saved once so later configuration changes cannot revoke it.
         update({ ...saved, viewer, status: "ready" }, seeded);
       })
@@ -309,10 +254,9 @@ export function createCommunities(
     presenceActivity.dispose();
     listeners.clear();
     relayListeners.clear();
-    return Promise.all([...scopes].map((scope) => scope.fiber.dispose()));
+    return Promise.all(scopes.map((scope) => scope.fiber.dispose()));
   });
   return {
-    accountConnection,
     presence: presenceActivity,
     relay,
     snapshot: () => state,
@@ -333,22 +277,22 @@ export function createCommunities(
       update({ profile });
     },
     joined(membership: Membership, profile: PersonalProfile) {
-      if (accountConnection)
-        throw new Error(
-          "Joining communities is unavailable on this native connection",
-        );
       membership = {
         ...membership,
         id: communityDestination(membership.id).id,
       };
-      update({
-        memberships: [
-          ...state.memberships.filter((m) => m.id !== membership.id),
-          membership,
-        ],
-        profile: state.profile.name ? state.profile : profile,
-        selected: membership.id,
-      });
+      update(
+        {
+          memberships: [
+            ...state.memberships.filter((m) => m.id !== membership.id),
+            membership,
+          ],
+          profile: state.profile.name ? state.profile : profile,
+          selected: membership.id,
+        },
+        true,
+        !!nativeConnect && !live,
+      );
       if (sessions.has(membership.id)) sessions.get(membership.id)?.retry();
       else acquire(membership.id);
       emitRelay();

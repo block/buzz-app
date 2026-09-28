@@ -37,8 +37,8 @@ it("badges agent and human bylines with known presence", () => {
   const status = vi.fn<() => "online" | "unknown">(() => "online");
   const channels = { channels: [], status: "ready" };
   const session = {
-    messages: {},
     presence: { subscribe, status, limited: () => false },
+    messages: { report: undefined },
     channels: {
       subscribeList: () => () => {},
       list: () => channels,
@@ -464,6 +464,69 @@ it.each([
   },
 );
 
+it.each([undefined, { width: 640, height: 400 }])(
+  "keeps cached images silent and unfetched, but explains a live unavailable source (%j)",
+  (dimensions) => {
+    const media = vi.fn(() => undefined);
+    const imageRow: ChannelMessage = {
+      ...row,
+      attachments: [
+        {
+          url: "https://image.test/unavailable.png",
+          kind: "image",
+          ...(dimensions ? { dimensions } : {}),
+        },
+      ],
+    };
+    const show = (cached: boolean) => {
+      const list = {
+        status: "ready",
+        channels: [{ id: row.channelId, cached }],
+      };
+      const session = {
+        messages: {},
+        channels: { list: () => list, subscribeList: () => () => {} },
+      } as unknown as RelaySession;
+      return (
+        <MessageRow
+          row={imageRow}
+          session={session}
+          profile={undefined}
+          media={media}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+      );
+    };
+    const view = renderDom(show(true));
+    try {
+      const placeholder = view.container.querySelector(
+        '[class*="attachmentImage"][aria-hidden="true"]',
+      );
+      expect(placeholder).not.toBeNull();
+      expect(placeholder).toBeEmptyDOMElement();
+      if (dimensions)
+        expect(placeholder).toHaveStyle({
+          width: "360px",
+          aspectRatio: "640 / 400",
+        });
+      else expect(placeholder).not.toHaveAttribute("style"); // Existing CSS owns fallback geometry.
+      expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
+      expect(screen.queryByText("Image unavailable")).not.toBeInTheDocument();
+      view.rerender(show(false));
+      expect(screen.getByRole("status")).toHaveTextContent("Image unavailable");
+      expect(
+        view.container.querySelector('[class*="attachmentImage"]'),
+      ).toBeNull();
+      expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
+      expect(media).toHaveBeenCalledWith("https://image.test/unavailable.png");
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
 it("does not bypass the session media resolver to paint an inaccessible attachment", () => {
   const media = vi.fn(() => undefined);
   const html = renderToStaticMarkup(
@@ -815,3 +878,39 @@ it("labels the first local pending agent slot as one reply without altering rela
   expect(renderCount(0, "failed")).not.toContain("1 reply</span>");
   expect(root.replyCount).toBe(0);
 });
+it.each([
+  { replyCount: 0, threadRootId: undefined, expected: false },
+  { replyCount: 2, threadRootId: undefined, expected: true },
+  { replyCount: 0, threadRootId: "parent", expected: true },
+])(
+  "passes known comment state from the chat photo to its viewer: $expected",
+  ({ replyCount, threadRootId, expected }) => {
+    const attachment = {
+      kind: "image" as const,
+      url: "https://fixture.test/photo.png",
+    };
+    const open = vi.fn();
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          attachments: [attachment],
+          replyCount,
+          ...(threadRootId ? { threadRootId } : {}),
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        onOpenMediaReview={open}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("link", { name: "Open image attachment" }),
+      { detail: 1 },
+    );
+    expect(open).toHaveBeenCalledWith(row.id, attachment, 0, expected);
+    cleanup();
+  },
+);

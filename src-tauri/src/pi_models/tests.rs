@@ -103,6 +103,7 @@ async fn installed_pi_catalog_uses_production_context() {
     let dir = tempfile::tempdir().unwrap();
     let context = Controller::draft_pi_model_context(AgentEdit {
         name: "Probe".into(),
+        picture: None,
         system_prompt: String::new(),
         workspace: dir.path().display().to_string(),
         harness: HarnessEdit {

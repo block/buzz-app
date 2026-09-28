@@ -275,10 +275,7 @@ test("profile activity consumes telemetry, isolates mixed batches, selects agent
       .click();
   };
   const messages = async () => {
-    await page
-      .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Go back", exact: true }).click();
     await page.locator('[data-channel-id="alpha"]').click();
   };
   await toggle();
@@ -683,10 +680,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   await page
     .getByRole("switch", { name: "Enable Agent Activity", exact: true })
     .click();
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await page.locator('[data-channel-id="alpha"]').click();
   await avatar.click();
   await expect(profile).toBeVisible();

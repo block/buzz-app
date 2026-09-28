@@ -113,7 +113,11 @@ it("rebinds a live name view on plugin replacement and disable", async () => {
 it("ignores competing providers and cannot reactivate a disposed view", () => {
   const f = fixture();
   const activate = vi.fn();
-  const provider = { ...agentDirectory, activate, resolve: () => "Override" };
+  const provider = {
+    ...agentDirectory,
+    activate,
+    scope: () => () => ({ name: "Override" }),
+  };
   let entries = [provider, provider];
   let update = () => {};
   const view = bindNames(f.source, {
@@ -185,6 +189,17 @@ it("uses each real session's viewer for human and owned-agent collisions", async
   });
   try {
     for (const { wire, session } of sessions) {
+      // Naming also retains the owner inventory. Complete that startup read
+      // before driving the independent public-profile request.
+      await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+      const inventory = wire.next();
+      expect(inventory.filters).toEqual([
+        { authors: [wire.transport.viewer], kinds: [30175, 30177], limit: 200 },
+      ]);
+      inventory.respond([]);
+      await vi.waitFor(() =>
+        expect(session.agentLibrary.snapshot().status).toBe("ready"),
+      );
       const loading = session.profiles.ensure(
         events.map((event) => event.pubkey),
       );

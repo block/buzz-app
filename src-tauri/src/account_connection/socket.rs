@@ -2,7 +2,9 @@
 //! frontend live owner supplies bounded routes; native owns AUTH and observer keys.
 use super::{session::Session, AccountConnection};
 use futures_util::{SinkExt, StreamExt};
-use nostr::{Event, EventBuilder, Kind, Tag, Timestamp};
+use nostr::{Event, Timestamp};
+#[cfg(test)]
+use nostr::{EventBuilder, Kind, Tag};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
@@ -11,7 +13,6 @@ use tokio_tungstenite::{
     connect_async_with_config,
     tungstenite::{protocol::WebSocketConfig, Message},
 };
-use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, String>;
 const ERROR: &str = "Native live connection unavailable";
 const MAX_FRAME: usize = 1024 * 1024;
@@ -62,19 +63,19 @@ impl Protocol {
         }
         let challenge = self.challenge.take().ok_or(ERROR)?;
         let relay = session.origin.replacen("https:", "wss:", 1);
-        let event = EventBuilder::new(Kind::from(22242), "")
-            .tags(
-                [
-                    Tag::parse(["relay", &relay]),
-                    Tag::parse(["challenge", &challenge]),
-                ]
-                .into_iter()
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|_| ERROR)?,
-            )
-            .sign_with_keys(&session.keys)
-            .map_err(|_| ERROR)?;
-        let value = serde_json::to_value(&event).map_err(|_| ERROR)?;
+        let value = session.identity.sign_activity(
+            &session.viewer,
+            crate::identity::EventTemplate {
+                kind: 22242,
+                created_at: Timestamp::now().as_secs(),
+                content: String::new(),
+                tags: vec![
+                    vec!["relay".into(), relay],
+                    vec!["challenge".into(), challenge],
+                ],
+            },
+        )?;
+        let event: Event = serde_json::from_value(value.clone()).map_err(|_| ERROR)?;
         self.auth = Some(event);
         Ok(value)
     }
@@ -117,6 +118,28 @@ impl Protocol {
                 self.routes.insert(wire.into(), route);
                 Ok(())
             }
+            Some("EVENT") if self.authenticated && parts.len() == 2 => {
+                let event: Event = serde_json::from_value(parts[1].clone()).map_err(|_| ERROR)?;
+                if event.verify().is_err()
+                    || event.pubkey.to_hex() != viewer
+                    || event
+                        .created_at
+                        .as_secs()
+                        .abs_diff(Timestamp::now().as_secs())
+                        > 300
+                    || (event.kind.as_u16() != 20001
+                        && !crate::relay::write_kind(event.kind.as_u16()))
+                {
+                    return Err(ERROR.into());
+                }
+                if event.kind.as_u16() == 20001
+                    && (!event.tags.is_empty()
+                        || !matches!(event.content.as_str(), "online" | "away" | "offline"))
+                {
+                    return Err(ERROR.into());
+                }
+                Ok(())
+            }
             _ => Err(ERROR.into()),
         }
     }
@@ -143,6 +166,13 @@ impl Protocol {
                         == self.auth.as_ref().map(|e| e.id.to_hex()).as_deref() =>
             {
                 self.authenticated = parts[2] == true;
+                Ok(Some(("message", frame)))
+            }
+            Some("OK")
+                if self.authenticated
+                    && parts.len() >= 3
+                    && parts[1].as_str().is_some_and(|s| s.len() == 64) =>
+            {
                 Ok(Some(("message", frame)))
             }
             Some("EVENT") if parts.len() == 3 && self.authenticated => {
@@ -175,7 +205,7 @@ impl Protocol {
                     }
                     session.history.accept_rosters(
                         std::slice::from_ref(&parts[2]),
-                        &session.keys.public_key().to_hex(),
+                        &session.viewer,
                         &session.origin,
                     );
                     Ok(Some(("message", frame)))
@@ -293,21 +323,17 @@ pub(super) fn decode_observer(raw: &Value, session: &Session, since: u64) -> Opt
             .collect();
         tags.len() == 1 && tags[0].as_slice() == [name, value]
     };
-    if !exact("p", &session.keys.public_key().to_hex())
+    if !exact("p", &session.viewer)
         || !exact("agent", &event.pubkey.to_hex())
         || !exact("frame", "telemetry")
         || !(132..=87472).contains(&event.content.len())
     {
         return None;
     }
-    let bytes = Zeroizing::new(
-        nostr::nips::nip44::decrypt_to_bytes(
-            session.keys.secret_key(),
-            &event.pubkey,
-            &event.content,
-        )
-        .ok()?,
-    );
+    let bytes = session
+        .identity
+        .decrypt_activity(&session.viewer, &event)
+        .ok()?;
     if bytes.len() > 65535 {
         return None;
     }
@@ -400,7 +426,7 @@ async fn run(
            if let Ok(frame)=serde_json::from_str::<Value>(&raw){
              if frame[0]=="CLOSE"&&protocol.routes.get(frame[1].as_str().unwrap_or("")).is_some_and(|r|r.observer){session.history.stop_capture();}
            }
-           let result=protocol.outbound(&raw,&session.keys.public_key().to_hex());
+           let result=protocol.outbound(&raw,&session.viewer);
            if let Ok(frame)=serde_json::from_str::<Value>(&raw){if frame[0]=="REQ"{if let Some(route)=protocol.routes.get_mut(frame[1].as_str().unwrap_or("")){route.epoch=session.history.capture_epoch();}}}
            if result.is_err(){let _=reply.send(result);break;}
            // This actor's sequential command boundary orders route registration before

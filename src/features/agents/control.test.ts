@@ -1,5 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { canStopAgent, createAgentControl } from "./control";
+import {
+  canStopAgent,
+  createAgentControl,
+  type GooseInstallReport,
+} from "./control";
 import { controlFixture } from "./control-testing";
 import * as communityApi from "../communities/api";
 import { agentDraft, agentEdit } from "../../bundled/agents/agent-edit";
@@ -91,6 +95,20 @@ it("save leaves running revision alone; omitted environment values stay host-onl
   expect(fixture.calls.filter((call) => call.action === "restart")).toEqual([]);
   await expect(control.save(agent.id, 1, edit)).rejects.toThrow();
 });
+it("delete applies only the native result and reports an unconfirmed delete", async () => {
+  const fixture = controlFixture();
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const deleting = control.delete?.("fixture-agent", 1);
+  expect(control.snapshot().busy).toBe(true);
+  expect(control.snapshot().data?.agents).toHaveLength(1);
+  await deleting;
+  expect(control.snapshot().data?.agents).toEqual([]);
+  expect(control.snapshot().busy).toBe(false);
+  await expect(control.delete?.("fixture-agent", 1)).rejects.toThrow("confirm");
+  expect(control.snapshot().error).toContain("Agent no longer exists");
+  expect(createAgentControl(null).delete).toBeUndefined();
+});
 it("subscription cleanup and disposal never send stop or accept a late snapshot", async () => {
   const fixture = controlFixture();
   const control = createAgentControl(fixture.host);
@@ -118,6 +136,36 @@ it("failed refresh exposes retry while retaining the last snapshot", async () =>
   await control.refresh();
   expect(control.snapshot().status).toBe("error");
   expect(control.snapshot().data?.agents).toHaveLength(1);
+});
+it("keeps read errors visible during recovery and clears global operation errors on success", async () => {
+  const fixture = controlFixture();
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const action = vi
+    .spyOn(fixture.host, "action")
+    .mockRejectedValueOnce("Start was not confirmed.");
+  await expect(control.action(fixture.agent.id, "start")).rejects.toThrow(
+    "confirm",
+  );
+  const snapshot = vi
+    .spyOn(fixture.host, "snapshot")
+    .mockRejectedValueOnce("read failure");
+  await control.refresh();
+  expect(control.snapshot().error).toContain(
+    "Current host status is unconfirmed",
+  );
+  const late = deferred<typeof fixture.data>();
+  snapshot.mockReturnValueOnce(late.promise);
+  const before = control.snapshot();
+  const recovering = control.refresh();
+  expect(control.snapshot()).toBe(before);
+  late.resolve(structuredClone(fixture.data));
+  await recovering;
+  expect(control.snapshot()).toMatchObject({
+    status: "ready",
+    error: null,
+  });
+  expect(action).toHaveBeenCalledExactlyOnceWith(fixture.agent.id, "start");
 });
 it("status failure admits only Stop for a retained identity and still serializes it", async () => {
   const fixture = controlFixture();
@@ -746,39 +794,34 @@ it("a no-match mention is a native no-op and cannot erase an existing wake failu
   control.dispose();
 });
 
-const transientReads = [
-  "Agent runtime is initializing; retry shortly",
-  "Another native agent operation is in progress",
-];
-for (const error of transientReads) {
-  it(`keeps a coalesced read loading until native recovers from ${error}`, async () => {
-    vi.useFakeTimers();
-    const fixture = controlFixture();
-    const snapshot = vi
-      .spyOn(fixture.host, "snapshot")
-      .mockRejectedValueOnce(error)
-      .mockRejectedValueOnce(error);
-    const control = createAgentControl(fixture.host);
-    const pending = control.refresh();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(control.refresh()).toBe(pending);
-    expect(snapshot).toHaveBeenCalledTimes(1);
-    expect(control.snapshot()).toMatchObject({
-      status: "loading",
-      error: null,
-    });
-    await vi.advanceTimersByTimeAsync(250);
-    expect(snapshot).toHaveBeenCalledTimes(2);
-    expect(control.snapshot().status).toBe("loading");
-    await vi.advanceTimersByTimeAsync(250);
-    await pending;
-    expect(snapshot).toHaveBeenCalledTimes(3);
-    expect(control.snapshot().status).toBe("ready");
-    expect(control.snapshot().data).toEqual(fixture.data);
-    expect(fixture.calls).toEqual([{ action: "snapshot" }]);
-    control.dispose();
+const transientRead = "Agent runtime is initializing; retry shortly";
+it("keeps a coalesced read loading until native startup completes", async () => {
+  vi.useFakeTimers();
+  const fixture = controlFixture();
+  const snapshot = vi
+    .spyOn(fixture.host, "snapshot")
+    .mockRejectedValueOnce(transientRead)
+    .mockRejectedValueOnce(transientRead);
+  const control = createAgentControl(fixture.host);
+  const pending = control.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(control.refresh()).toBe(pending);
+  expect(snapshot).toHaveBeenCalledTimes(1);
+  expect(control.snapshot()).toMatchObject({
+    status: "loading",
+    error: null,
   });
-}
+  await vi.advanceTimersByTimeAsync(250);
+  expect(snapshot).toHaveBeenCalledTimes(2);
+  expect(control.snapshot().status).toBe("loading");
+  await vi.advanceTimersByTimeAsync(250);
+  await pending;
+  expect(snapshot).toHaveBeenCalledTimes(3);
+  expect(control.snapshot().status).toBe("ready");
+  expect(control.snapshot().data).toEqual(fixture.data);
+  expect(fixture.calls).toEqual([{ action: "snapshot" }]);
+  control.dispose();
+});
 for (const previousSnapshot of [false, true]) {
   it(`bounds transient reads and retains previous evidence: ${previousSnapshot}`, async () => {
     vi.useFakeTimers();
@@ -787,7 +830,7 @@ for (const previousSnapshot of [false, true]) {
     if (previousSnapshot) await control.refresh();
     const snapshot = vi
       .spyOn(fixture.host, "snapshot")
-      .mockRejectedValue(transientReads[0]);
+      .mockRejectedValue(transientRead);
     const pending = control.refresh();
     await vi.advanceTimersByTimeAsync(4999);
     expect(snapshot).toHaveBeenCalledTimes(20);
@@ -823,7 +866,7 @@ it("does not retry a genuine read failure or replay a write with a transient-loo
   await control.refresh();
   const action = vi
     .spyOn(fixture.host, "action")
-    .mockRejectedValue(transientReads[1]);
+    .mockRejectedValue(transientRead);
   await expect(control.action(fixture.agent.id, "start")).rejects.toThrow(
     "Could not confirm",
   );
@@ -841,7 +884,7 @@ for (const boundary of ["dispose", "newer write"] as const) {
     await control.refresh();
     const snapshot = vi
       .spyOn(fixture.host, "snapshot")
-      .mockRejectedValue(transientReads[1]);
+      .mockRejectedValue(transientRead);
     const pending = control.refresh();
     await vi.advanceTimersByTimeAsync(0);
     expect(snapshot).toHaveBeenCalledTimes(1);
@@ -861,3 +904,190 @@ for (const boundary of ["dispose", "newer write"] as const) {
     control.dispose();
   });
 }
+it("re-detects after a pending Stop settles without undoing its evidence", async () => {
+  const fixture = controlFixture();
+  fixture.data.harnessOptions?.push({
+    command: "goose",
+    label: "Goose",
+    status: "cli-needed",
+    providers: [],
+  });
+  const install = deferred<GooseInstallReport>();
+  const stop = deferred<typeof fixture.data>();
+  fixture.host.installGoose = () => install.promise;
+  vi.spyOn(fixture.host, "action").mockReturnValue(stop.promise);
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const installing = control.installGoose?.();
+  const stopping = control.action(fixture.agent.id, "stop");
+  expect(control.snapshot().busy).toBe(true);
+  const reads = fixture.calls.filter(
+    (call) => call.action === "snapshot",
+  ).length;
+  install.resolve({
+    ready: true,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/goose-install.log",
+    output: "",
+    error: null,
+  });
+  await installing;
+  expect(control.snapshot().gooseInstall?.report?.ready).toBe(true);
+  expect(
+    fixture.calls.filter((call) => call.action === "snapshot"),
+  ).toHaveLength(reads);
+  fixture.agent.enabled = false;
+  fixture.agent.status = "stopped";
+  const goose = fixture.data.harnessOptions?.find(
+    (option) => option.label === "Goose",
+  );
+  if (!goose) throw new Error("Missing Goose fixture");
+  goose.status = "ready";
+  stop.resolve(structuredClone(fixture.data));
+  await stopping;
+  await vi.waitFor(() =>
+    expect(
+      fixture.calls.filter((call) => call.action === "snapshot"),
+    ).toHaveLength(reads + 1),
+  );
+  expect(control.snapshot().data?.agents[0]?.enabled).toBe(false);
+  expect(
+    control
+      .snapshot()
+      .data?.harnessOptions?.find((option) => option.label === "Goose")?.status,
+  ).toBe("ready");
+  control.dispose();
+});
+
+it("waits out an earlier snapshot before reading the installed CLI again", async () => {
+  const fixture = controlFixture();
+  fixture.data.harnessOptions?.push({
+    command: "goose",
+    label: "Goose",
+    status: "cli-needed",
+    providers: [],
+  });
+  const install = deferred<GooseInstallReport>();
+  fixture.host.installGoose = () => install.promise;
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const stale = deferred<typeof fixture.data>();
+  const snapshot = fixture.host.snapshot.bind(fixture.host);
+  const read = vi
+    .spyOn(fixture.host, "snapshot")
+    .mockImplementationOnce(() => stale.promise)
+    .mockImplementation(snapshot);
+  const pendingRead = control.refresh();
+  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  const installing = control.installGoose?.();
+  install.resolve({
+    ready: true,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/goose-install.log",
+    output: "",
+    error: null,
+  });
+  const goose = fixture.data.harnessOptions?.find(
+    (option) => option.label === "Goose",
+  );
+  if (!goose) throw new Error("Missing Goose fixture");
+  goose.status = "ready";
+  stale.resolve({ ...structuredClone(fixture.data), harnessOptions: [] });
+  await pendingRead;
+  await installing;
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(
+    control
+      .snapshot()
+      .data?.harnessOptions?.find((option) => option.label === "Goose")?.status,
+  ).toBe("ready");
+  control.dispose();
+});
+
+it("clears the previous Goose install report on retry and rejects a busy agent lane", async () => {
+  const fixture = controlFixture();
+  const retry = deferred<GooseInstallReport>();
+  const install = vi
+    .fn()
+    .mockResolvedValueOnce({
+      ready: false,
+      restarted: 0,
+      restartFailures: 0,
+      logPath: "/fixture/goose-install.log",
+      output: "failure",
+      error: "Failed",
+    })
+    .mockImplementationOnce(() => retry.promise);
+  fixture.host.installGoose = install;
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  await control.installGoose?.();
+  expect(control.snapshot().gooseInstall?.report?.error).toBe("Failed");
+  const action = deferred<typeof fixture.data>();
+  vi.spyOn(fixture.host, "action").mockReturnValue(action.promise);
+  const stopping = control.action(fixture.agent.id, "stop");
+  await expect(control.installGoose?.()).rejects.toThrow("Refresh");
+  expect(install).toHaveBeenCalledTimes(1);
+  action.resolve(structuredClone(fixture.data));
+  await stopping;
+  const installing = control.installGoose?.();
+  expect(control.snapshot().gooseInstall).toEqual({
+    installing: true,
+    report: null,
+    error: null,
+  });
+  retry.resolve({
+    ready: true,
+    restarted: 1,
+    restartFailures: 0,
+    logPath: "/fixture/goose-install.log",
+    output: "done",
+    error: null,
+  });
+  await installing;
+  expect(control.snapshot().gooseInstall?.report?.restarted).toBe(1);
+  control.dispose();
+});
+
+it("keeps Stop available while Goose installs and refreshes once it settles", async () => {
+  const fixture = controlFixture();
+  const install = deferred<{
+    ready: boolean;
+    restarted: number;
+    restartFailures: number;
+    logPath: string;
+    output: string;
+    error: string | null;
+  }>();
+  fixture.host.installGoose = () => install.promise;
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const installing = control.installGoose?.();
+  expect(control.snapshot().gooseInstall?.installing).toBe(true);
+  expect(control.snapshot().busy).toBe(false);
+  expect(canStopAgent(control.snapshot(), "fixture-agent")).toBe(true);
+  await control.action("fixture-agent", "stop");
+  expect(fixture.calls).toContainEqual(
+    expect.objectContaining({ action: "stop" }),
+  );
+  expect(control.snapshot().gooseInstall?.installing).toBe(true);
+  await expect(control.installGoose?.()).rejects.toThrow("in progress");
+  const reads = fixture.calls.filter((c) => c.action === "snapshot").length;
+  install.resolve({
+    ready: true,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/goose-install.log",
+    output: "",
+    error: null,
+  });
+  await installing;
+  expect(control.snapshot().gooseInstall?.report?.ready).toBe(true);
+  expect(fixture.calls.filter((c) => c.action === "snapshot")).toHaveLength(
+    reads + 1,
+  );
+  expect(control.snapshot().data?.agents[0]?.enabled).toBe(false);
+  control.dispose();
+});

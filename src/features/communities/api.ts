@@ -1,5 +1,7 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { connectBrokerTransport } from "../relay/transport";
+import { nativeIdentityEnabled } from "../identity/service";
+import { nativeCommunityRequest } from "./native-api";
+import { connectCommunityTransport } from "./connection";
+import type { RelaySession } from "../relay/session";
 import type { PersonalProfile } from "./service";
 export type CommunityInfo = {
   name?: string;
@@ -11,16 +13,13 @@ export type CommunityInfo = {
     age_attestation_required: boolean;
   } | null;
 };
-function requireBroker() {
-  if (isTauri() && import.meta.env.VITE_BUZZ_LIVE !== "1")
-    throw new Error("This operation is unavailable on the native connection.");
-}
 export async function communityRequest<T>(
   id: string,
   route: string,
   body?: unknown,
 ): Promise<T> {
-  requireBroker();
+  if (nativeIdentityEnabled())
+    return nativeCommunityRequest(id, route, body) as Promise<T>;
   const response = await fetch(
     `/api/relay/${encodeURIComponent(id)}/${route}`,
     {
@@ -41,17 +40,28 @@ export async function communityRequest<T>(
     );
   return result as T;
 }
-export async function inspectProfile(id: string) {
-  requireBroker();
-  const transport = await connectBrokerTransport(
-    "",
-    AbortSignal.timeout(12000),
-    id,
-  );
-  const events = await transport.query(
-    [{ kinds: [0], authors: [transport.viewer], limit: 5 }],
-    AbortSignal.timeout(12000),
-  );
+export async function inspectProfile(id: string, session?: RelaySession) {
+  // Existing-community editors use the captured session so confirmed reads also
+  // update its shared profile directory. Joining uses the selected host adapter.
+  const transport =
+    session ??
+    (await connectCommunityTransport(id, AbortSignal.timeout(12000)));
+  if (!transport.viewer) throw new Error("Profile identity is unavailable");
+  const filters = [
+    {
+      kinds: [0],
+      authors: [transport.viewer],
+      limit: 5,
+      ...(nativeIdentityEnabled() ? { consistency: "strong" as const } : {}),
+    },
+  ];
+  const events =
+    "read" in transport
+      ? await transport.read(filters, {
+          signal: AbortSignal.timeout(12000),
+          fresh: true,
+        })
+      : await transport.query(filters, AbortSignal.timeout(12000));
   const event = events
     .filter((e) => e.kind === 0 && e.pubkey === transport.viewer)
     .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0];

@@ -1,7 +1,7 @@
 # Saved Activity: native new-only history
 
 Saved Activity is separate from the live RAM projection and from old Buzz's archive.
-It is implemented for the current native account/relay lease. Development-broker
+It is implemented for the main identity owner through per-community native Activity leases. Development-broker
 sessions remain live-only. No old archive is scanned, migrated, imported or modified.
 Packaged/live-account acceptance is still a separate, attended gate.
 

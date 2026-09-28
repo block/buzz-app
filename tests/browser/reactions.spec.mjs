@@ -4,6 +4,37 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 
+test("native reaction emoji fit inside compact pills", async ({ page }) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html?reactions&wrap`,
+    );
+    for (const emoji of ["👍", "🙌"]) {
+      const pill = page.locator(`button[data-reaction="${emoji}"]`);
+      const glyph = pill.locator("span").first();
+      await expect(pill).toHaveCSS("height", "28px");
+      await expect(glyph).toHaveCSS("min-width", "18px");
+      await expect(glyph).toHaveCSS("height", "18px");
+      await expect(glyph).toHaveCSS("font-size", "14px");
+      await expect(glyph).toHaveCSS("line-height", "18px");
+    }
+    await page.locator('button[data-reaction="👍"]').screenshot({
+      path: test.info().outputPath("native-reaction-emoji.png"),
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 test("reaction plus opens a visible emoji-only picker, restores focus and publishes custom emoji", async ({
   page,
 }) => {
@@ -31,13 +62,17 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     const root = page
       .locator("[data-message-id]")
       .filter({ hasText: "Historic" });
-    const plus = root.getByRole("button", {
-      name: "Add reaction",
-      exact: true,
-    });
+    const plus = root
+      .getByRole("group", { name: "Message actions" })
+      .getByRole("button", {
+        name: "Add reaction",
+        exact: true,
+      });
     // Every message exposes first-reaction controls, not just previously reacted rows.
     await expect(
-      page.getByRole("button", { name: "Add reaction", exact: true }),
+      page
+        .getByRole("group", { name: "Message actions" })
+        .getByRole("button", { name: "Add reaction", exact: true }),
     ).toHaveCount(6);
     await root.hover();
     const shortcut = root.getByRole("button", {
@@ -267,14 +302,18 @@ sourceTest(
     // Open the lower row first so its popup does not cover the next trigger.
     const firstRow = rows.nth(1);
     const secondRow = rows.nth(0);
-    const first = firstRow.getByRole("button", {
-      name: "Add reaction",
-      exact: true,
-    });
-    const second = secondRow.getByRole("button", {
-      name: "Add reaction",
-      exact: true,
-    });
+    const first = firstRow
+      .getByRole("group", { name: "Message actions" })
+      .getByRole("button", {
+        name: "Add reaction",
+        exact: true,
+      });
+    const second = secondRow
+      .getByRole("group", { name: "Message actions" })
+      .getByRole("button", {
+        name: "Add reaction",
+        exact: true,
+      });
     const search = page.locator('em-emoji-picker input[type="search"]');
     await firstRow.hover();
     await first.click();

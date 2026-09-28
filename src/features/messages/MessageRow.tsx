@@ -87,6 +87,7 @@ export type MessageRowProps = {
     messageId: string,
     attachment: ChannelMessage["attachments"][number],
     seconds: number,
+    hasComments?: boolean,
   ) => void;
 };
 
@@ -131,6 +132,9 @@ export const MessageRow = memo(function MessageRow({
     session?.channels.list ?? emptyChannelList,
     session?.channels.list ?? emptyChannelList,
   );
+  const cached = channelList.channels.some(
+    (channel) => channel.id === row.channelId && channel.cached,
+  );
   const unreadLabel =
     threadUnread?.manual === "local-only"
       ? "Thread marked unread on this device only"
@@ -155,8 +159,7 @@ export const MessageRow = memo(function MessageRow({
   const presence = usePresenceStatus(session?.presence, row.authorId);
   const presenceId = useId();
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
-  const replaceTime = !!timeReply && !!onMediaTime;
-  const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
+  const displayRow = timeReply ? { ...row, content: timeReply.content } : row;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const pendingAgentCount =
     row.authorId === session?.viewer && row.delivery !== "failed"
@@ -413,15 +416,19 @@ export const MessageRow = memo(function MessageRow({
               open={onOpenLink}
             />
           )}
-          {timeReply && onMediaTime && (
+          {timeReply && (
             <span className={styles.mediaTimeLink}>
-              <Button
-                size="sm"
-                type="button"
-                onClick={() => onMediaTime(timeReply.anchor.seconds)}
-              >
-                {timeReply.label}
-              </Button>
+              {onMediaTime ? (
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => onMediaTime(timeReply.anchor.seconds)}
+                >
+                  {timeReply.label}
+                </Button>
+              ) : (
+                <span>{timeReply.label}</span>
+              )}
             </span>
           )}
           {extensions?.messages ? (
@@ -463,18 +470,26 @@ export const MessageRow = memo(function MessageRow({
                 />
               );
             }
-            if (attachment.kind === "image" && source)
+            if (attachment.kind === "image")
               return (
                 <AttachmentImage
                   key={url}
                   attachment={{ ...attachment, url }}
                   url={url}
                   source={source}
+                  cached={cached}
                   onOpenLink={onOpenLink}
                   {...(onOpenMediaReview
                     ? {
                         onOpenReview: (item, seconds) =>
-                          onOpenMediaReview(row.id, item, seconds),
+                          onOpenMediaReview(
+                            row.id,
+                            item,
+                            seconds,
+                            row.replyCount > 0 ||
+                              (!!row.threadRootId &&
+                                row.threadRootId !== row.id),
+                          ),
                       }
                     : {})}
                 />
@@ -497,31 +512,35 @@ export const MessageRow = memo(function MessageRow({
                 {...(onOpenMediaReview
                   ? {
                       onOpenReview: (item, seconds) =>
-                        onOpenMediaReview(row.id, item, seconds),
+                        onOpenMediaReview(
+                          row.id,
+                          item,
+                          seconds,
+                          row.replyCount > 0 ||
+                            (!!row.threadRootId && row.threadRootId !== row.id),
+                        ),
                     }
                   : {})}
               />
             );
           })}
           {session && scope && extensions ? (
-            <div className={styles.reactions}>
-              <MessageReactions
-                onFocusedRemoval={() => menuTrigger.current?.focus()}
-                row={row}
-                session={session}
-                scope={scope}
-                tools={extensions.tools}
-                inline={extensions.inline}
-                disabled={
-                  !canReact ||
-                  (!!row.delivery &&
-                    !["accepted", "seen"].includes(row.delivery))
-                }
-              />
-            </div>
+            <MessageReactions
+              onFocusedRemoval={() => menuTrigger.current?.focus()}
+              row={row}
+              session={session}
+              scope={scope}
+              tools={extensions.tools}
+              inline={extensions.inline}
+              profiles={directory.profiles}
+              disabled={
+                !canReact ||
+                (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
+              }
+            />
           ) : (
             row.reactions.length > 0 && (
-              <div className={styles.reactions}>
+              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
                 {row.reactions.map((reaction) => (
                   <span
                     key={JSON.stringify([
@@ -555,7 +574,12 @@ export const MessageRow = memo(function MessageRow({
             <Button
               variant="ghost"
               size="sm"
-              style={{ paddingInlineStart: "var(--space-1)" }}
+              data-thread-summary=""
+              data-first-participant-shape={
+                agentPubkeys?.has(row.participants[0] ?? "")
+                  ? "squircle"
+                  : "circle"
+              }
               type="button"
               aria-label={`View thread: ${threadLabel}${unreadLabel ? `. ${unreadLabel}` : ""}`}
               aria-description={

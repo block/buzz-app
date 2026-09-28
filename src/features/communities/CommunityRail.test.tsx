@@ -6,16 +6,27 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { CommunityRail } from "./CommunityRail";
-import type { Communities, ClientSnapshot } from "./service";
+import { Context } from "@deepseek-ai/cordis";
+import {
+  createCommunities,
+  type Communities,
+  type ClientSnapshot,
+} from "./service";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+  vi.unstubAllGlobals();
+});
 
 it("switches using the shared membership owner without acquiring other sessions on render", () => {
   let snapshot: ClientSnapshot = {
     status: "ready",
+    relayAvailable: true,
     profile: { name: "", picture: "" },
     viewer: "a".repeat(64),
     selected: "a",
@@ -76,4 +87,41 @@ it("switches using the shared membership owner without acquiring other sessions 
   expect(
     screen.queryByRole("button", { name: "Switch to Primary" }),
   ).not.toBeInTheDocument();
+});
+
+it("does not discover saved community icons without a relay host", async () => {
+  const viewer = "e".repeat(64);
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Local", picture: "" },
+      memberships: [{ id: "https://saved.example", name: "Saved" }],
+      selected: "https://saved.example",
+    }),
+  );
+  const ctx = new Context();
+  vi.stubGlobal("fetch", vi.fn());
+  const communities = createCommunities(
+    ctx,
+    false,
+    undefined,
+    "",
+    undefined,
+    Promise.resolve(viewer),
+  );
+  try {
+    await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+    render(<CommunityRail communities={communities} />);
+    expect(
+      screen.getByRole("button", { name: "Switch to Saved" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Add a community" }));
+    expect(
+      screen.getByText(/connecting to communities is not available/),
+    ).toBeVisible();
+    expect(fetch).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    await ctx.fiber.dispose();
+  }
 });

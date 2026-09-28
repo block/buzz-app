@@ -1,5 +1,8 @@
 import type { useIdentityNames } from "../../features/identity-names/react";
-import { useAgentControl } from "../../features/agents/control-react";
+import {
+  useAgentControl,
+  useAgentControlRefresh,
+} from "../../features/agents/control-react";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import type { PageNavigation } from "../../features/navigation/service";
 import { useEffect, useState, type ReactNode } from "react";
@@ -28,8 +31,10 @@ export function AgentControlPanel({
   editTarget,
   editRequest,
   onCloseTarget,
+  onOpenHarnesses,
 }: {
   resolveName?: ReturnType<typeof useIdentityNames>;
+  onOpenHarnesses?: (() => void) | undefined;
   control: AgentControl;
   importDestination?: string;
   createOwner?: string | undefined;
@@ -68,6 +73,7 @@ export function AgentControlPanel({
       source: agent,
     });
   const remove = (agent: AgentView) => setDeleting(agent.id);
+  useAgentControlRefresh(control);
   const state = useAgentControl(control);
   useEffect(() => {
     if (
@@ -128,14 +134,8 @@ export function AgentControlPanel({
       aria-label="Local agent controls"
       className="agent-controls flex min-w-0 flex-col gap-section-gap text-body text-primary"
     >
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-2">
-          <h1 className="m-0 text-title">Agents</h1>
-          <p className="m-0 text-body-sm text-secondary">
-            Manage your agents and bring them into a conversation.
-          </p>
-        </div>
-        {state.data && (
+      {state.data && (
+        <div className="flex justify-end">
           <Button
             variant="primary"
             aria-haspopup="dialog"
@@ -149,8 +149,27 @@ export function AgentControlPanel({
             <PlusIcon size={16} aria-hidden="true" />
             Add agent
           </Button>
-        )}
-      </header>
+        </div>
+      )}
+      {(state.status === "idle" || state.status === "loading") && (
+        <p role="status">Reading local agent status…</p>
+      )}
+      {state.error && (
+        <p role={state.status === "unavailable" ? "status" : "alert"}>
+          {state.error}
+        </p>
+      )}
+      {state.status === "error" && state.data && (
+        <p className="text-body-sm text-secondary">
+          Showing the last host snapshot. Current process state and durable
+          enabled intent are unconfirmed. Status retries automatically while
+          this page is visible; actions are never repeated automatically.
+        </p>
+      )}
+      {state.status === "error" && (
+        <Button onClick={() => void control.refresh()}>Retry status</Button>
+      )}
+      {state.busy && <p role="status">Waiting for the host to confirm…</p>}
       {children ? (
         children(state, edit, duplicate, remove, importedId, label)
       ) : (
@@ -176,8 +195,8 @@ export function AgentControlPanel({
           items={[
             {
               value: "old-buzz",
-              title: state.data.agents.some((agent) => agent.teamImportRequired)
-                ? "Complete team imports"
+              title: state.data.agents.some((agent) => agent.needsTeamImport)
+                ? "Import or repair from old Buzz"
                 : "Not imported from old Buzz",
               content: importSections.includes("old-buzz") ? (
                 <AgentImport
@@ -208,26 +227,9 @@ export function AgentControlPanel({
           owner={adding.owner}
           {...(adding.source ? { source: adding.source } : {})}
           onClose={() => setAdding(null)}
+          onOpenHarnesses={onOpenHarnesses}
         />
       )}
-      {(state.status === "idle" || state.status === "loading") && (
-        <p role="status">Reading local agent status…</p>
-      )}
-      {state.error && (
-        <p role={state.status === "unavailable" ? "status" : "alert"}>
-          {state.error}
-        </p>
-      )}
-      {state.status === "error" && state.data && (
-        <p className="text-body-sm text-secondary">
-          Showing the last host snapshot. Current process state and durable
-          enabled intent are unconfirmed.
-        </p>
-      )}
-      {state.status === "error" && (
-        <Button onClick={() => void control.refresh()}>Retry status</Button>
-      )}
-      {state.busy && <p role="status">Waiting for the host to confirm…</p>}
       {editing && (
         <AgentEditor
           key={editing.id}
@@ -236,6 +238,7 @@ export function AgentControlPanel({
           control={control}
           state={state}
           avatar={editTarget ? undefined : selected?.avatar}
+          onOpenHarnesses={onOpenHarnesses}
           onClose={
             editTarget ? (onCloseTarget ?? (() => {})) : () => setSelected(null)
           }

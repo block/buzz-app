@@ -253,10 +253,7 @@ impl History {
             && count > self.deleted_gap.load(Ordering::SeqCst)
         {
             if let Some(archive) = &self.archive {
-                if archive
-                    .mark_gap(&session.keys.public_key().to_hex(), &session.origin)
-                    .is_ok()
-                {
+                if archive.mark_gap(&session.viewer, &session.origin).is_ok() {
                     self.persisted_gap.fetch_max(count, Ordering::SeqCst);
                 }
             }
@@ -288,7 +285,7 @@ impl History {
         drop(state);
         session.current().map_err(|_| ERROR)?;
         archive.append_checked(
-            (&session.keys.public_key().to_hex(), &session.origin),
+            (&session.viewer, &session.origin),
             dto["id"].as_str().ok_or(ERROR)?,
             dto["agent"].as_str().ok_or(ERROR)?,
             &raw.to_string(),
@@ -305,10 +302,7 @@ impl History {
         let Output::Response(response) = session
             .run(op, Request::Query(filters))
             .await
-            .map_err(|_| ERROR)?
-        else {
-            return Err(ERROR.into());
-        };
+            .map_err(|_| ERROR)?;
         if response.status != 200 {
             return Err(ERROR.into());
         }
@@ -353,7 +347,7 @@ impl History {
             self.authorize(session, &read.channel, epoch).await?;
         }
         let storage = archive.clone();
-        let viewer = session.keys.public_key().to_hex();
+        let viewer = session.viewer.clone();
         let origin = session.origin.clone();
         let agent = read.agent.clone();
         let channel = read.channel.clone();
@@ -460,11 +454,7 @@ impl History {
         };
         let result = self.archive.as_ref().ok_or(ERROR).and_then(|archive| {
             archive
-                .delete(
-                    &session.keys.public_key().to_hex(),
-                    &session.origin,
-                    now_ms(),
-                )
+                .delete(&session.viewer, &session.origin, now_ms())
                 .map_err(|_| ERROR)
         });
         let mut state = self.state.lock().map_err(|_| ERROR)?;
@@ -506,21 +496,17 @@ fn decode_history(raw: &Value, session: &Session) -> Result<Value> {
             .collect();
         tags.len() == 1 && tags[0].as_slice() == [name, value]
     };
-    if !exact("p", &session.keys.public_key().to_hex())
+    if !exact("p", &session.viewer)
         || !exact("agent", &event.pubkey.to_hex())
         || !exact("frame", "telemetry")
         || !(132..=87472).contains(&event.content.len())
     {
         return Err(ERROR.into());
     }
-    let bytes = zeroize::Zeroizing::new(
-        nostr::nips::nip44::decrypt_to_bytes(
-            session.keys.secret_key(),
-            &event.pubkey,
-            &event.content,
-        )
-        .map_err(|_| ERROR)?,
-    );
+    let bytes = session
+        .identity
+        .decrypt_activity(&session.viewer, &event)
+        .map_err(|_| ERROR)?;
     if bytes.len() > 65535 {
         return Err(ERROR.into());
     }

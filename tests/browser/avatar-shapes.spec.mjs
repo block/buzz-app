@@ -151,6 +151,22 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
           ).toBeLessThan(distance(paint.shoulder, artwork));
       }
     }
+    const threadControl = page.getByRole("button", {
+      name: "View thread: 2 replies",
+    });
+    await threadControl.hover();
+    const threadShape = await threadControl.evaluate((element) => ({
+      control: getComputedStyle(element).maskImage,
+      background: getComputedStyle(element, "::before").maskImage,
+      avatar: getComputedStyle(
+        element.querySelector('[data-avatar-shape="squircle"]'),
+      ).maskImage,
+    }));
+    expect(threadShape.control).toBe("none");
+    expect(threadShape.background.startsWith(threadShape.avatar)).toBe(true);
+    await threadControl.screenshot({
+      path: testInfo.outputPath("agent-first-thread-hover.png"),
+    });
     for (const mode of ["light", "dark"]) {
       await page.evaluate((mode) => {
         document.documentElement.dataset.colorMode = mode;

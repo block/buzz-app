@@ -37,7 +37,7 @@ it("updates a mounted profile from the shared name view without replacing its id
               activate() {
                 return undefined;
               },
-              resolve: () => name,
+              scope: () => () => ({ name }),
             },
           ],
           subscribe(listener) {
@@ -451,7 +451,7 @@ it.each(["action", "initial read"])(
         expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
       );
       expect(
-        screen.getByRole("region", { name: "Linked agent instances" }),
+        screen.getByRole("region", { name: "Instances" }),
       ).toHaveTextContent(fixture.agent.name);
       expect(screen.getByRole("button", { name: "Stop" })).not.toHaveAttribute(
         "aria-disabled",
@@ -524,7 +524,7 @@ it.each(["ambiguous", "unmatched"])(
         expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
       );
       expect(
-        screen.getByRole("region", { name: "Linked agent instances" }),
+        screen.getByRole("region", { name: "Instances" }),
       ).toBeInTheDocument();
     } finally {
       cleanup();

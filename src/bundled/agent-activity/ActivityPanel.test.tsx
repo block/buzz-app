@@ -310,7 +310,7 @@ it.each(["messageId", "requestId"] as const)(
     let name = "Managed name · abcd";
     const provider = {
       id: "fixture-names",
-      resolve: () => name,
+      scope: () => () => ({ name }),
       activate: () => undefined,
       subscribe: (listener: () => void) => {
         listeners.add(listener);

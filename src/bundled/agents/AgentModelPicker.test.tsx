@@ -235,7 +235,13 @@ it("shows Goose authentication errors while keeping manual model entry available
     expect(await screen.findByText(/Goose needs authentication/)).toBeVisible();
     const input = screen.getByRole("combobox", { name: "Model" });
     await waitFor(() => expect(input).not.toHaveAttribute("aria-busy"));
+    // Authentication can finish before Base UI's next-frame trigger opens the
+    // popup. Escape must follow that opening, not just the request completion.
+    await waitFor(() => expect(input).toHaveAttribute("aria-expanded", "true"));
     await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(input).toHaveAttribute("aria-expanded", "false"),
+    );
     expect(
       await screen.findByRole("button", { name: "Retry models" }),
     ).toBeVisible();

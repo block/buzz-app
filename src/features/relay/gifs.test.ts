@@ -1,10 +1,12 @@
 import { describe, expect, test } from "vitest";
+import { foldMessages } from "./fold";
 import {
   communityFromScope,
   gifMarkdown,
   normalizeKlipyGifs,
   relayKlipySearchPath,
 } from "./gifs";
+import { keypair, message } from "./testing";
 
 const asset = (url: string, width = 320, height = 180) => ({
   url,
@@ -102,4 +104,26 @@ test("gifMarkdown produces attachment syntax without malformed alt text", () => 
       preview: asset("https://cdn.example/wave.webp"),
     }),
   ).toBe("![Wave hello](https://cdn.example/wave%28test%29.gif)");
+});
+
+test("gifMarkdown folds to an image attachment without visible markdown body text", () => {
+  const author = keypair();
+  const relay = keypair();
+  const markdown = gifMarkdown({
+    id: 1,
+    slug: "wave",
+    title: "Wave",
+    original: asset("https://cdn.example/wave.gif"),
+    preview: asset("https://cdn.example/wave.webp"),
+  });
+
+  const [row] = foldMessages("gifs", relay.pubkey, [
+    message(author, "gifs", markdown, 1),
+  ]);
+
+  expect(row?.content).toBe("");
+  expect(row?.attachmentContentRemoved).toBe(true);
+  expect(row?.attachments).toEqual([
+    { url: "https://cdn.example/wave.gif", kind: "image" },
+  ]);
 });

@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -22,8 +23,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     app.report.brokerRequests.filter(({ url }) =>
       url.endsWith("/agent-library"),
     ).length;
-  // Shared naming loads inventory once on session activation. Link previews
-  // reuse that evidence rather than starting another library read.
+  // Owner inventory survives the startup roster; previews add no further read.
   await expect.poll(libraryReads).toBe(1);
   const history = app.histories.get("primary/alpha");
   const target = history.find((row) => row.content === "Broadcast reply");
@@ -45,7 +45,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect(row).not.toContainText("<buzz:");
   const link = row.getByRole("link", { name: "Alpha", exact: true });
   await expect(link).toHaveCSS("text-decoration-line", "none");
-  await expect(link).toHaveCSS("color", "rgb(17, 50, 100)");
+  await expect(link).toHaveCSS("color", "rgb(13, 116, 206)");
   await link.hover();
   const preview = page.getByLabel("Message preview", { exact: true });
   await expect(
@@ -215,7 +215,7 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   await page
     .getByRole("switch", { name: "Enable Links", exact: true })
     .uncheck();
-  await button(page, "Messages").first().click();
+  await openPage(page, "Messages");
   await row.locator("a").first().click();
   const targetRow = page.locator(`[data-message-id="${target.id}"]`);
   await expect(targetRow).toBeFocused();

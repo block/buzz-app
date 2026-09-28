@@ -69,7 +69,9 @@ need their own validation.
   Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
   the adapter derives a stable port from the worktree path (the same derivation
   `just web` uses) and prints the chosen URL. Different paths can still collide.
-  All desktop builds use the `buzz` URL scheme. See [OS deep links](deep-links.md).
+  Ordinary desktop development runs do not claim the OS `buzz` URL scheme or the
+  packaged single-instance lock, so multiple worktrees can run at once. Packaged
+  and debug bundles still use `buzz`. See [OS deep links](deep-links.md).
   Desktop requires the exact port to be free; an occupied port fails rather than
   opening another copy's server. Other arguments, including runner/application arguments after `--`, pass
   through unchanged. Port configuration is prepended so Tauri parses it even with
@@ -320,7 +322,7 @@ the complete suite still runs with `pnpm test` / `just scan`:
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
-- **Browser journeys:** four runners (Chromium and WebKit, two file-level shards
+- **Browser journeys:** six runners (Chromium and WebKit, three file-level shards
   per engine), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. Each runner builds the native
   plugin-manager fixture in a separately logged setup step before starting

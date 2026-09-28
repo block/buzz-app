@@ -1,3 +1,6 @@
+import { getLogger } from "../developer/logging.ts";
+import { logSocketFrame, relayLabel } from "../developer/traffic.ts";
+
 import {
   createSocketPublications,
   SocketRequestError,
@@ -149,7 +152,7 @@ type SocketMessageHandler = {
 }["handle"];
 export type LiveSocket = Pick<
   WebSocket,
-  "readyState" | "close" | "onclose" | "onerror"
+  "readyState" | "close" | "onclose" | "onerror" | "onopen"
 > & {
   send(frame: string): void;
   onmessage: SocketMessageHandler | null;
@@ -167,6 +170,8 @@ export function subscribeRelayTraffic(
   socketFactory: (url: string) => LiveSocket = (url) => new WebSocket(url),
   admission: LiveAdmission = createLiveAdmission(),
 ): LiveSubscription {
+  const log = getLogger("relay-ws");
+  const peer = relayLabel(url);
   let closed = false;
   let socket: LiveSocket | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -213,7 +218,11 @@ export function subscribeRelayTraffic(
     );
   };
   const send = (value: unknown) => {
-    if (!closed && socket?.readyState === 1) socket.send(JSON.stringify(value));
+    if (!closed && socket?.readyState === 1) {
+      const raw = JSON.stringify(value);
+      socket.send(raw);
+      logSocketFrame(peer, "→", raw, value);
+    }
   };
   const requests = createSocketPublications(() => queueMicrotask(pump));
   function remove(route: Route) {
@@ -413,6 +422,7 @@ export function subscribeRelayTraffic(
     for (const route of routes.values()) clearTimeout(route.deadline);
     wires.clear();
     requests.clear();
+    if (socket) log.info(`${peer} disconnect`);
     socket?.close();
     socket = undefined;
   }
@@ -427,6 +437,7 @@ export function subscribeRelayTraffic(
     const valid = () => !closed && current === generation;
     const reconnect = (reason: string) => {
       if (!valid()) return;
+      log.warn(`${peer} ${reason}`);
       clearSocket();
       connection = "retrying";
       connectionError = reason;
@@ -443,6 +454,7 @@ export function subscribeRelayTraffic(
     };
     const terminal = (reason: string) => {
       if (!valid()) return;
+      log.error(`${peer} ${reason}`);
       clearSocket();
       connection = "error";
       connectionError = reason;
@@ -450,6 +462,7 @@ export function subscribeRelayTraffic(
     };
     let ws: LiveSocket;
     try {
+      log.info(`${peer} connecting`);
       ws = socketFactory(url);
       socket = ws;
     } catch {
@@ -462,19 +475,23 @@ export function subscribeRelayTraffic(
       () => reconnect("Live authentication timed out"),
       10000,
     );
+    ws.onopen = () => {
+      if (valid()) log.info(`${peer} connected`);
+    };
     ws.onmessage = async (event) => {
-      if (
-        !valid() ||
-        typeof event.data !== "string" ||
-        event.data.length > 1024 * 1024
-      )
+      if (!valid()) return;
+      if (typeof event.data !== "string" || event.data.length > 1024 * 1024) {
+        logSocketFrame(peer, "←", event.data);
         return;
+      }
       let data: unknown;
       try {
         data = JSON.parse(event.data);
       } catch {
+        logSocketFrame(peer, "←", event.data);
         return;
       }
+      logSocketFrame(peer, "←", event.data, data);
       if (!Array.isArray(data)) return;
       if (
         data[0] === "AUTH" &&

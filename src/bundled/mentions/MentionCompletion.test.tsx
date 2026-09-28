@@ -8,7 +8,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerCompletion,
@@ -121,6 +121,10 @@ function fixture({ missing = false, absent = false } = {}) {
     // Native textarea supplies the same authored-offset contract without rich-editor layout.
     const input = useRef<ComposerInputElement | null>(null);
     const editor = useCompletionEditor(input, true);
+    const [resolved, setResolved] = useState({
+      text: "",
+      recipients: [] as { start: number; end: number }[],
+    });
     return (
       <>
         <textarea
@@ -133,6 +137,16 @@ function fixture({ missing = false, absent = false } = {}) {
         />
         <ComposerCompletions
           registry={registry}
+          resolved={{
+            text: editor.observation?.text ?? "",
+            recipients:
+              resolved.text &&
+              (editor.observation?.text ?? "").startsWith(
+                resolved.text.trimEnd(),
+              )
+                ? resolved.recipients
+                : [],
+          }}
           editor={editor}
           input={input}
           session={session}
@@ -144,6 +158,10 @@ function fixture({ missing = false, absent = false } = {}) {
             if (!field) return false;
             field.value = `${field.value.slice(0, query.start)}@${edit.mention?.name} `;
             field.setSelectionRange(field.value.length, field.value.length);
+            setResolved({
+              text: field.value,
+              recipients: [{ start: query.start, end: field.value.length - 1 }],
+            });
             return true;
           }}
         />
@@ -210,7 +228,7 @@ it("does not publish settled-empty results while typing prose after accepting a 
   }
 });
 
-it("withdraws admitted choices before changed roster/profile notifications return", () => {
+it("rejects a refuted choice before roster notifications return and keeps main stable disabled rows", () => {
   const h = fixture();
   try {
     h.type("@Ali");
@@ -221,11 +239,10 @@ it("withdraws admitted choices before changed roster/profile notifications retur
         status: "ready",
         channels: [{ id: "alpha", name: "Alpha", members: [] }],
       });
-      expect(h.withdrawals).toHaveBeenCalled();
       fireEvent.click(old);
       expect(h.accepted).not.toHaveBeenCalled();
     });
-    expect(screen.queryByRole("option")).toBeNull();
+    expect(screen.getByRole("option")).toHaveAttribute("aria-disabled", "true");
     act(() =>
       h.channel({
         status: "ready",
@@ -236,7 +253,6 @@ it("withdraws admitted choices before changed roster/profile notifications retur
     h.withdrawals.mockClear();
     act(() => {
       h.profiles(new Map([[alice, { name: "Alicia" }]]));
-      expect(h.withdrawals).toHaveBeenCalled();
     });
     expect(screen.getByRole("option", { name: /Alicia/ })).toBeVisible();
   } finally {

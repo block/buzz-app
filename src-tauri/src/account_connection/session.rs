@@ -1,9 +1,13 @@
 //! A single explicit native account/origin lease. No background credential restore.
-use super::{caller_allowed, AccountConnection, Result};
+use crate::identity::{EventTemplate, IdentityHost};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use nostr::{Event, EventBuilder, JsonUtil, Keys, Kind, Tag, Timestamp};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use nostr::Timestamp;
+#[cfg(test)]
+use nostr::{Event, Keys, Kind};
+use serde::Serialize;
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
@@ -12,10 +16,12 @@ use std::{
 };
 use tokio::sync::watch;
 
-pub(super) struct Session {
+pub(crate) struct Session {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub id: String,
     pub origin: String,
-    pub(super) keys: Keys,
+    pub(super) viewer: String,
+    pub(super) identity: IdentityHost,
     pub(super) revoked: watch::Sender<bool>,
     pub(super) socket: Mutex<Option<super::socket::SocketControl>>,
     operations: Mutex<BTreeMap<String, Operation>>,
@@ -27,25 +33,8 @@ struct Operation {
     created: Instant,
     cancelled: watch::Sender<bool>,
 }
-#[derive(Deserialize)]
-#[serde(
-    tag = "kind",
-    content = "value",
-    rename_all = "lowercase",
-    deny_unknown_fields
-)]
-pub(crate) enum Request {
+pub(super) enum Request {
     Query(Value),
-    Sign(Template),
-    Publish(Value),
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Template {
-    kind: u64,
-    created_at: u64,
-    content: String,
-    tags: Vec<Vec<String>>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,7 +45,6 @@ pub(crate) struct HttpResult {
 #[derive(Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "lowercase")]
 pub(crate) enum Output {
-    Signed(Value),
     Response(HttpResult),
 }
 #[derive(Debug, Serialize)]
@@ -82,27 +70,51 @@ impl Failure {
 const INVALID: &str = "This operation is unavailable on the native connection";
 const CLOSED: &str = "Native account connection closed; connect explicitly to retry";
 impl Session {
-    pub fn new(origin: String, keys: Keys) -> Self {
+    pub(super) fn with_identity(
+        id: String,
+        origin: String,
+        viewer: String,
+        identity: IdentityHost,
+        authority: String,
+        archive: Option<Arc<super::archive::Archive>>,
+    ) -> Self {
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
+            id,
             origin,
-            keys,
+            viewer,
+            identity,
             revoked: watch::channel(false).0,
             socket: Mutex::new(None),
             operations: Mutex::new(BTreeMap::new()),
             dispatch: Mutex::new(()),
-            history: super::history::History::new(String::new(), None),
+            history: super::history::History::new(authority, archive),
         }
     }
-    pub fn with_history(
+    #[cfg(test)]
+    pub fn new(origin: String, keys: Keys) -> Self {
+        Self::with_history(origin, keys, String::new(), None)
+    }
+    #[cfg(test)]
+    pub(super) fn with_history(
         origin: String,
         keys: Keys,
         authority: String,
         archive: Option<Arc<super::archive::Archive>>,
     ) -> Self {
-        let mut session = Self::new(origin, keys);
-        session.history = super::history::History::new(authority, archive);
-        session
+        Self::with_identity(
+            uuid::Uuid::new_v4().to_string(),
+            origin,
+            keys.public_key().to_hex(),
+            IdentityHost::fixture_key(keys),
+            authority,
+            archive,
+        )
+    }
+    pub(crate) fn accept_rosters(&self, values: &[Value]) {
+        if self.current().is_ok() {
+            self.history
+                .accept_rosters(values, &self.viewer, &self.origin);
+        }
     }
     pub fn close(&self) {
         let Ok(_dispatch) = self.dispatch.lock() else {
@@ -117,7 +129,7 @@ impl Session {
             }
         }
     }
-    pub(super) fn current(&self) -> std::result::Result<(), Failure> {
+    pub(crate) fn current(&self) -> std::result::Result<(), Failure> {
         if *self.revoked.borrow() {
             Err(Failure::unsent(CLOSED))
         } else {
@@ -145,6 +157,7 @@ impl Session {
         );
         Ok(id)
     }
+    #[cfg(test)]
     fn cancel(&self, id: &str) {
         let Ok(_dispatch) = self.dispatch.lock() else {
             return;
@@ -244,58 +257,31 @@ impl Session {
         };
         current()?;
         let (route, body, max) = match request {
-            Request::Sign(template) => {
-                validate_message(&template)?;
-                if template.created_at.abs_diff(Timestamp::now().as_secs()) > 300 {
-                    return Err(Failure::unsent(INVALID));
-                }
-                current()?;
-                let tags = template
-                    .tags
-                    .into_iter()
-                    .map(Tag::parse)
-                    .collect::<std::result::Result<Vec<_>, _>>()
-                    .map_err(|_| Failure::unsent(INVALID))?;
-                let event = EventBuilder::new(Kind::from(9), template.content)
-                    .tags(tags)
-                    .custom_created_at(Timestamp::from(template.created_at))
-                    .sign_with_keys(&self.keys)
-                    .map_err(|_| Failure::unsent("Could not sign message"))?;
-                current()?;
-                return Ok(Output::Signed(
-                    serde_json::to_value(event).map_err(|_| Failure::unsent(INVALID))?,
-                ));
-            }
             Request::Query(filters) => {
                 validate_filters(&filters)?;
                 ("query", filters, 16 * 1024 * 1024)
-            }
-            Request::Publish(raw) => {
-                let event = verify_message(raw, &self.keys)?;
-                (
-                    "events",
-                    serde_json::to_value(event).map_err(|_| Failure::unsent(INVALID))?,
-                    4096,
-                )
             }
         };
         let body = serde_json::to_vec(&body).map_err(|_| Failure::unsent(INVALID))?;
         let url = format!("{}/{route}", self.origin);
         current()?;
-        let auth = EventBuilder::new(Kind::from(27235), "")
-            .tags(
-                [
-                    Tag::parse(["u", &url]),
-                    Tag::parse(["method", "POST"]),
-                    Tag::parse(["payload", &format!("{:x}", Sha256::digest(&body))]),
-                    Tag::parse(["nonce", &uuid::Uuid::new_v4().to_string()]),
-                ]
-                .into_iter()
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|_| Failure::unsent(INVALID))?,
+        let auth = self
+            .identity
+            .sign_activity(
+                &self.viewer,
+                EventTemplate {
+                    kind: 27235,
+                    created_at: Timestamp::now().as_secs(),
+                    content: String::new(),
+                    tags: vec![
+                        vec!["u".into(), url.clone()],
+                        vec!["method".into(), "POST".into()],
+                        vec!["payload".into(), format!("{:x}", Sha256::digest(&body))],
+                        vec!["nonce".into(), uuid::Uuid::new_v4().to_string()],
+                    ],
+                },
             )
-            .sign_with_keys(&self.keys)
-            .map_err(|_| Failure::unsent("Could not authorize relay request"))?;
+            .map_err(|_| Failure::unsent("Could not authorize history read"))?;
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(10))
@@ -306,7 +292,11 @@ impl Session {
             .post(url)
             .header(
                 "Authorization",
-                format!("Nostr {}", STANDARD.encode(auth.as_json())),
+                format!(
+                    "Nostr {}",
+                    STANDARD
+                        .encode(serde_json::to_vec(&auth).map_err(|_| Failure::unsent(INVALID))?)
+                ),
             )
             .header("Content-Type", "application/json")
             .body(body)
@@ -316,97 +306,19 @@ impl Session {
         let result = read_response(response, max).await?;
         if route == "query" && result.status == 200 {
             if let Ok(events) = serde_json::from_str::<Vec<Value>>(&result.body) {
-                self.history.accept_rosters(
-                    &events,
-                    &self.keys.public_key().to_hex(),
-                    &self.origin,
-                );
+                self.history
+                    .accept_rosters(&events, &self.viewer, &self.origin);
             }
         }
         self.current().map_err(|_| Failure::unknown())?;
         Ok(Output::Response(result))
     }
 }
-fn verify_message(raw: Value, keys: &Keys) -> std::result::Result<Event, Failure> {
-    if raw.get("kind").and_then(Value::as_u64) != Some(9)
-        || serde_json::to_vec(&raw).map_or(true, |v| v.len() > 65536)
-    {
-        return Err(Failure::unsent(INVALID));
-    }
-    let template:Template=serde_json::from_value(json!({"kind":raw["kind"],"created_at":raw["created_at"],"content":raw["content"],"tags":raw["tags"]})).map_err(|_|Failure::unsent(INVALID))?;
-    validate_message(&template)?;
-    let event: Event = serde_json::from_value(raw).map_err(|_| Failure::unsent(INVALID))?;
-    event
-        .verify()
-        .map_err(|_| Failure::unsent("Invalid signed message"))?;
-    if event.pubkey != keys.public_key() {
-        return Err(Failure::unsent("Signed message belongs to another account"));
-    }
-    Ok(event)
-}
 fn canonical_key(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-}
-fn channel(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
-}
-fn validate_message(t: &Template) -> std::result::Result<(), Failure> {
-    let bad = || Failure::unsent(INVALID);
-    if t.kind != 9
-        || t.created_at > 9_007_199_254_740_991
-        || t.content.trim().is_empty()
-        || t.content.len() > 32000
-        || t.tags.len() > 128
-    {
-        return Err(bad());
-    }
-    let mut channels = 0;
-    let mut mentions = 0;
-    let mut references = 0;
-    let mut replies = Vec::new();
-    for tag in &t.tags {
-        if tag.iter().any(|v| v.len() > 4096) || tag.len() > 12 {
-            return Err(bad());
-        }
-        match tag.first().map(String::as_str) {
-            Some("h") if tag.len() == 2 && channel(&tag[1]) => channels += 1,
-            Some("p") if tag.len() == 2 && canonical_key(&tag[1]) => mentions += 1,
-            Some("mention") if tag.len() == 2 && canonical_key(&tag[1]) => references += 1,
-            Some("e")
-                if tag.len() == 4
-                    && canonical_key(&tag[1])
-                    && tag[2].is_empty()
-                    && matches!(tag[3].as_str(), "root" | "reply") =>
-            {
-                replies.push(tag)
-            }
-            Some("emoji") if tag.len() == 3 => {}
-            Some("imeta") if tag.len() >= 2 => {}
-            _ => return Err(bad()),
-        }
-    }
-    let valid_replies = match replies.as_slice() {
-        [] => true,
-        [one] => one[3] == "reply",
-        [root, reply] => root[3] == "root" && reply[3] == "reply" && root[1] != reply[1],
-        _ => false,
-    };
-    if channels != 1
-        || mentions > 32
-        || references > 32
-        || !valid_replies
-        || serde_json::to_vec(t).map_or(true, |v| v.len() > 65536)
-    {
-        return Err(bad());
-    }
-    Ok(())
 }
 fn validate_filters(input: &Value) -> std::result::Result<(), Failure> {
     let bad = || Failure::unsent(INVALID);
@@ -521,71 +433,6 @@ async fn read_response(
         status,
         body: String::from_utf8(bytes).map_err(|_| Failure::unknown())?,
     })
-}
-impl AccountConnection {
-    pub(super) fn session(
-        &self,
-        caller: &str,
-        lease: &str,
-    ) -> std::result::Result<Arc<Session>, Failure> {
-        caller_allowed(caller).map_err(|_| Failure::unsent(CLOSED))?;
-        let state = self.state.lock().map_err(|_| Failure::unsent(CLOSED))?;
-        let session = state
-            .session
-            .as_ref()
-            .filter(|s| s.id == lease)
-            .ok_or(Failure::unsent(CLOSED))?;
-        session.current()?;
-        Ok(session.clone())
-    }
-    pub(super) fn close_session(&self, caller: &str, lease: &str) -> Result<()> {
-        caller_allowed(caller)?;
-        let mut state = self.state.lock().map_err(|_| CLOSED)?;
-        if state.session.as_ref().is_some_and(|s| s.id == lease) {
-            if let Some(session) = state.session.take() {
-                session.close();
-            }
-        }
-        Ok(())
-    }
-}
-#[tauri::command]
-pub(crate) fn account_relay_begin<R: tauri::Runtime>(
-    webview: tauri::Webview<R>,
-    host: tauri::State<'_, AccountConnection>,
-    lease: String,
-) -> std::result::Result<String, Failure> {
-    host.session(webview.label(), &lease)?.begin()
-}
-#[tauri::command]
-pub(crate) async fn account_relay_run<R: tauri::Runtime>(
-    webview: tauri::Webview<R>,
-    host: tauri::State<'_, AccountConnection>,
-    lease: String,
-    operation: String,
-    request: Request,
-) -> std::result::Result<Output, Failure> {
-    host.session(webview.label(), &lease)?
-        .run(operation, request)
-        .await
-}
-#[tauri::command]
-pub(crate) fn account_relay_cancel<R: tauri::Runtime>(
-    webview: tauri::Webview<R>,
-    host: tauri::State<'_, AccountConnection>,
-    lease: String,
-    operation: String,
-) -> std::result::Result<(), Failure> {
-    host.session(webview.label(), &lease)?.cancel(&operation);
-    Ok(())
-}
-#[tauri::command]
-pub(crate) fn account_connection_close<R: tauri::Runtime>(
-    webview: tauri::Webview<R>,
-    host: tauri::State<'_, AccountConnection>,
-    lease: String,
-) -> Result<()> {
-    host.close_session(webview.label(), &lease)
 }
 #[cfg(test)]
 mod tests;

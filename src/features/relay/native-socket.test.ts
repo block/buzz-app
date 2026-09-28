@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { nativeSocket, type NativeSocketHost } from "./native-socket";
 import { subscribeRelayTraffic } from "./live";
 import { createRelaySession } from "./session";
-import { nativeTransport, type NativeRelayHost } from "./native-transport";
+import { connectSignedTransport } from "./transport";
 import { keypair, signed } from "./testing";
 afterEach(() => vi.useRealTimers());
 function fixture() {
@@ -132,23 +132,19 @@ it("acks only after async handling, fences close during open, and closes without
 it("native transport owns one shared observer route and capture reset fences old decoded traffic", async () => {
   const f = fixture();
   const relay = keypair();
-  const h: NativeRelayHost = {
-    sockets: f.host,
-    begin: async () => "op",
-    run: async () => ({ kind: "response", value: { status: 200, body: "[]" } }),
-    cancel: async () => {},
-    close: async () => {},
+  const transport = {
+    ...(await connectSignedTransport(
+      {
+        getPublicKey: async () => f.viewer.pubkey,
+        signEvent: async (template) => signed(f.viewer, template),
+        request: async () => new Response("[]", { status: 200 }),
+      },
+      "https://relay.example",
+      relay.pubkey,
+      () => nativeSocket("lease", f.host),
+    )),
+    agentActivity: true,
   };
-  const transport = nativeTransport(
-    {
-      viewer: f.viewer.pubkey,
-      origin: "https://relay.example",
-      relayAuthor: relay.pubkey,
-      archiveAuthority: null,
-      lease: "lease",
-    },
-    h,
-  );
   const owner = createRelaySession(transport, {
     outboxStorage: { load: () => [], save: () => {} },
   });
@@ -207,3 +203,52 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+it("the native socket retains main's presence EVENT and OK acknowledgement path", async () => {
+  const f = fixture();
+  const native = nativeSocket("lease", f.host);
+  const traffic = subscribeRelayTraffic(
+    "wss://relay.example",
+    async (template) => signed(f.viewer, template),
+    f.viewer.pubkey,
+    { receive() {}, state() {}, established() {}, denied() {} },
+    () => native,
+  );
+  try {
+    await vi.waitFor(() => expect(f.host.open).toHaveBeenCalledOnce());
+    f.emit("socket-1", "open", null);
+    f.emit("socket-1", "message", ["AUTH", "observed"]);
+    await vi.waitFor(() =>
+      expect(f.frames.some(({ frame }) => frame[0] === "AUTH")).toBe(true),
+    );
+    const auth = f.frames.find(({ frame }) => frame[0] === "AUTH")
+      ?.frame[1] as { id: string };
+    f.emit("socket-1", "message", ["OK", auth.id, true, ""]);
+    await vi.waitFor(() =>
+      expect(f.frames.some(({ frame }) => frame[0] === "REQ")).toBe(true),
+    );
+    const pending = traffic.publishPresence?.(
+      "online",
+      new AbortController().signal,
+    );
+    await vi.waitFor(() =>
+      expect(f.frames.some(({ frame }) => frame[0] === "EVENT")).toBe(true),
+    );
+    const event = f.frames.find(({ frame }) => frame[0] === "EVENT")
+      ?.frame[1] as {
+      id: string;
+      kind: number;
+      pubkey: string;
+      content: string;
+    };
+    expect(event).toMatchObject({
+      kind: 20001,
+      pubkey: f.viewer.pubkey,
+      content: "online",
+    });
+    f.emit("socket-1", "message", ["OK", event.id, true, ""]);
+    await expect(pending).resolves.toBeTruthy();
+  } finally {
+    traffic.dispose();
+  }
+});

@@ -1,3 +1,4 @@
+import { npubEncode } from "nostr-tools/nip19";
 import { Fragment, useRef, type ReactNode } from "react";
 import {
   MenuRoot,
@@ -8,6 +9,7 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
+import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import {
   DotsThreeIcon,
   UsersIcon,
@@ -45,16 +47,24 @@ export function AgentCard({
   onDelete?: ((agent: AgentView) => void) | undefined;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
-  const source = avatarSource(avatar);
   const presence = usePresenceStatus(
     session?.presence,
     identities.length === 1 ? identities[0]?.pubkey : undefined,
   );
-  const picture = source?.startsWith("data:")
-    ? source
-    : source
-      ? session?.media(source, "small")
-      : undefined;
+  const managed = editable.length === 1 ? editable[0] : undefined;
+  const source = avatarSource(managed?.picture ?? avatar);
+  const managedPicture = useAvatarPreview(
+    managed?.picture ?? "",
+    managed?.relayUrl,
+  );
+  const picture =
+    managed?.picture != null
+      ? managedPicture
+      : source?.startsWith("data:")
+        ? source
+        : source
+          ? session?.media(source, "small")
+          : undefined;
   return (
     <article
       aria-label={`Agent ${name}`}
@@ -81,7 +91,7 @@ export function AgentCard({
                       onClick={() => {
                         // The menu item unmounts; return from the dialog to the card.
                         trigger.current?.focus();
-                        onEdit(agent, picture);
+                        onEdit(agent, source);
                       }}
                     >
                       {editable.length === 1 ? (
@@ -95,7 +105,7 @@ export function AgentCard({
                                 {agent.relayUrl}
                               </span>
                               <span className="block break-all text-mono-sm text-secondary">
-                                {agent.pubkey}
+                                {npubEncode(agent.pubkey)}
                               </span>
                             </>
                           }
@@ -195,7 +205,7 @@ export function AgentCard({
                         {identityLabel(identity)}
                       </span>
                       <p className="m-0 mt-1 select-all break-all text-mono-sm">
-                        {identity.pubkey}
+                        {npubEncode(identity.pubkey)}
                       </p>
                     </li>
                   ))}

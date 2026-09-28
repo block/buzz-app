@@ -62,7 +62,6 @@ export function createMediaPreparation() {
         relayDebug(
           "avatar",
           outcome,
-          url.slice(-28),
           `${Date.now() - (startedAt.get(url) ?? Date.now())}ms`,
         );
         startedAt.delete(url);

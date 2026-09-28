@@ -3,8 +3,10 @@ import { yieldToHost } from "./yield";
 import { getEventHash, type EventTemplate } from "nostr-tools";
 import { eventDto, type EventData, type RelayEvent } from "./events";
 import type { RelayWriter } from "./transport";
-import { ByteLru, byteSize } from "./budget";
+import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
+import { channelRowKind } from "./membership";
+import { MessageClock } from "./message-order";
 
 export type Delivery = "sending" | "accepted" | "unknown" | "failed" | "seen";
 /** Durable, caller-owned recovery state committed with the operation. */
@@ -83,7 +85,10 @@ export function createOutbox(
     preparePublish,
     needsReceipt = () => false,
     onReceipt = (_event: EventData, _message: string | undefined) => {},
+    clock = new MessageClock(),
   }: {
+    /** The session's send clock, shared with its rendered views. */
+    clock?: MessageClock;
     timeoutMs?: number;
     /** Commands await their receipt even after a verified echo. Never persisted. */
     needsReceipt?: (event: EventData) => boolean;
@@ -416,9 +421,6 @@ export function createOutbox(
     attempt.controller = controller;
     const signal = controller.signal;
     let publishing = false;
-    let preparedPublisher:
-      | { publish(): Promise<string> | Promise<void>; dispose(): void }
-      | undefined;
     const total = profiling.start("send.delivery", id);
     const aborted = new Promise<never>((_, reject) =>
       signal.addEventListener(
@@ -456,19 +458,6 @@ export function createOutbox(
       replace({ ...current, signed });
       await Promise.race([persist(id), aborted]);
       if (closed || signal.aborted || !find(id)) return;
-      preparedPublisher = writer.preparePublish
-        ? await Promise.race([
-            writer.preparePublish(signed, signal).then((prepared) => {
-              if (signal.aborted || closed || !find(id)) {
-                prepared.dispose();
-                signal.throwIfAborted();
-                throw abortError();
-              }
-              return prepared;
-            }),
-            aborted,
-          ])
-        : undefined;
       const check = preparePublish
         ? await profiling.measureAsync("send.prepare", id, () =>
             Promise.race([preparePublish(signed, signal), aborted]),
@@ -482,12 +471,7 @@ export function createOutbox(
         check?.();
         checkAdmission(id);
         publishing = true;
-        return Promise.race([
-          preparedPublisher
-            ? preparedPublisher.publish()
-            : writer.publish(signed, signal),
-          aborted,
-        ]);
+        return Promise.race([writer.publish(signed, signal), aborted]);
       });
       if (closed || signal.aborted) return;
       if (awaitsReceipt(signed))
@@ -538,7 +522,6 @@ export function createOutbox(
       if (publishing && latest?.signed && !(error instanceof PublishRejected))
         onAccepted(latest.signed);
     } finally {
-      preparedPublisher?.dispose();
       // Keep a failed invitation fenced for an explicit retry in this session.
       if (
         !find(id) ||
@@ -667,20 +650,27 @@ export function createOutbox(
         throw new Error("This relay connection cannot publish that event kind");
       if (
         (input.kind === 9 && !input.content.trim()) ||
-        byteSize(input) > 32 * 1024
+        byteSize(input) > OUTBOX_INPUT_MAX_BYTES
       )
         throw new Error("Message is empty or too large");
       if (snapshot.length >= MAX_PENDING)
         throw new Error(
           "Too many outstanding operations; resolve or dismiss a pending operation",
         );
+      // Rendered messages carry send order within their second; the optimistic
+      // row and the signed event share this exact ms and created_at.
+      const channelId = channelRowKind(input.kind)
+        ? input.tags.find(([name]) => name === "h")?.[1]
+        : undefined;
+      const ms = channelId ? clock.next(channelId) : Date.now();
       const template = {
         ...input,
         pubkey: viewer,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: Math.floor(ms / 1000),
         tags: [
           ...input.tags.map((tag) => [...tag]),
           ["client-id", crypto.randomUUID()],
+          ...(channelId ? [["ms", String(ms % 1000)]] : []),
         ],
       };
       const event = Object.freeze({

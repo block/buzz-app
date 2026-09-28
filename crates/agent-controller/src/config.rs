@@ -23,6 +23,8 @@ pub struct AgentView {
     pub pubkey: String,
     pub relay_url: String,
     pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
     pub system_prompt: String,
     pub workspace: String,
     pub harness: HarnessView,
@@ -33,7 +35,6 @@ pub struct AgentView {
     pub error: Option<String>,
     pub diagnostics: Vec<String>,
     pub profile_pending: bool,
-    pub team_import_required: bool,
     /// Effective launch restore intent; legacy records follow `enabled`.
     pub start_on_app_launch: bool,
     /// Effective response policy for the next start; `None` when it is invalid.
@@ -51,6 +52,8 @@ pub struct AgentView {
     pub launch_provider_env: Option<&'static str>,
     /// Redacted saved-versus-running differences while the process is alive.
     pub restart_diff: Vec<crate::restart::RestartDiffEntry>,
+    pub deployed_remote: bool,
+    pub needs_team_import: bool,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,6 +78,8 @@ pub enum ProcessStatus {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentEdit {
     pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
     pub system_prompt: String,
     pub workspace: String,
     pub harness: HarnessEdit,
@@ -98,6 +103,8 @@ pub(crate) struct Agent {
     pub pubkey: String,
     pub relay_url: String,
     pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
     pub system_prompt: String,
     pub workspace: String,
     pub harness: HarnessEdit,
@@ -124,6 +131,7 @@ impl Agent {
             pubkey: self.pubkey.clone(),
             relay_url: self.relay_url.clone(),
             name: self.name.clone(),
+            picture: self.picture.clone(),
             system_prompt: self.system_prompt.clone(),
             workspace: self.workspace.clone(),
             harness: HarnessView {
@@ -141,7 +149,6 @@ impl Agent {
             error: None,
             diagnostics: Vec::new(),
             profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true)),
-            team_import_required: crate::team::required(self),
             start_on_app_launch: self.starts_on_launch(),
             respond_to: self.respond_to(defaults.owner_only).ok().map(str::to_owned),
             backend: (self.imported["record"]["backend"]["type"] == "provider")
@@ -155,6 +162,32 @@ impl Agent {
             launch_model_env: launch.model_env,
             launch_provider_env: launch.provider_env,
             restart_diff: Vec::new(),
+            deployed_remote: self.deployed_remote(),
+            needs_team_import: self.needs_team_import(),
+        }
+    }
+    pub fn needs_team_import(&self) -> bool {
+        let record = &self.imported["record"];
+        ["team_id", "persona_team_dir"].iter().any(|field| {
+            record[field]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        }) && self.imported.get("teamInstructions").is_none()
+            && self.imported.get("team").is_none()
+    }
+    pub(crate) fn team_instructions(&self) -> Result<&str> {
+        if let Some(value) = self.imported.get("teamInstructions") {
+            crate::import::team_text(value)
+        } else if self.imported.get("team").is_some() {
+            if self.imported["record"]["persona_team_dir"]
+                .as_str()
+                .is_some_and(|v| !v.is_empty())
+            {
+                return Err("Directory-backed team snapshots require explicit repair".into());
+            }
+            Ok(crate::team::instructions(self)?.unwrap_or(""))
+        } else {
+            crate::import::team_text(&serde_json::Value::Null)
         }
     }
     pub fn starts_on_launch(&self) -> bool {
@@ -174,7 +207,23 @@ impl Agent {
             Err("Invalid imported response policy".into())
         }
     }
+    /// An imported record for an agent hosted by a remote backend.
+    pub fn deployed_remote(&self) -> bool {
+        let record = &self.imported["record"];
+        record["backend"]["type"]
+            .as_str()
+            .is_some_and(|s| s != "local")
+            && !record["backend_agent_id"].is_null()
+    }
     pub fn apply(&mut self, edit: AgentEdit) -> Result<()> {
+        if let Some(picture) = edit.picture {
+            validate_picture(&picture)?;
+            if self.picture.as_ref() != Some(&picture) {
+                self.picture = Some(picture);
+                self.extra
+                    .insert("profilePending".into(), Value::Bool(true));
+            }
+        }
         self.name = edit.name;
         self.system_prompt = edit.system_prompt;
         self.workspace = edit.workspace;
@@ -209,6 +258,9 @@ impl Agent {
             return Err("Agent name is required".into());
         }
         text(&self.name, 256, "Agent name")?;
+        if let Some(picture) = &self.picture {
+            validate_picture(picture)?;
+        }
         text(&self.system_prompt, 128 * 1024, "System prompt")?;
         text(&self.workspace, 4096, "Workspace")?;
         if !Path::new(&self.workspace).is_absolute() {
@@ -314,4 +366,22 @@ fn validate_env_key(key: &str) -> Result<()> {
     } else {
         Ok(())
     }
+}
+
+fn validate_picture(value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.len() <= 2048 {
+        if let Ok(url) = url::Url::parse(value) {
+            if url.scheme() == "https"
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+            {
+                return Ok(());
+            }
+        }
+    }
+    Err("Avatar must be an HTTPS image URL without credentials".into())
 }

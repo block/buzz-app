@@ -1,6 +1,7 @@
 import { assert, describe, expect, it } from "vitest";
 import { parseAttachments } from "./fold";
 import { foldMessages } from "./fold";
+import { mentionConformance } from "../../bundled/mentions/mention-rules.conformance";
 import { shareMessageRows } from "./row-identity";
 import { foldProfiles } from "./profiles";
 import { DiscoveryState } from "./discovery";
@@ -83,7 +84,7 @@ describe("message fold", () => {
       rootOnly,
     ]);
     const expectedTen = [b, same]
-      .sort((x, y) => y.id.localeCompare(x.id))
+      .sort((x, y) => x.id.localeCompare(y.id))
       .map((event) => event.id);
     expect(rows.map((row) => row.id)).toEqual([
       ...expectedTen,
@@ -1121,3 +1122,16 @@ it("keeps signed reference identities separate from addressed recipients", () =>
   expect(row?.mentions).toEqual([]);
   expect(row?.mentionReferences).toEqual([bob.pubkey]);
 });
+
+it.each(mentionConformance.tags.read)(
+  "conforms to the portable mention tag reading contract: $name",
+  (fixture) => {
+    const [row] = foldMessages(channel, relay.pubkey, [
+      message(alice, channel, "@Someone", 10, fixture.tags),
+    ]);
+    expect({
+      mentions: row?.mentions,
+      references: row?.mentionReferences,
+    }).toEqual(fixture.expected);
+  },
+);

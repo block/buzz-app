@@ -37,7 +37,7 @@ import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage, Profile } from "../relay/contracts";
-import { readView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
@@ -379,6 +379,130 @@ function mount(
     },
   };
 }
+
+it("shows a local draft in the cached composer without completion, typing or transport reads", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const query = vi.fn(async () => []);
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      query,
+      media: () => undefined,
+    },
+    {
+      cachedOnly: true,
+      prepared: true,
+      persistence: {
+        readStartup: async () => ({
+          discovery: {
+            savedAt: Date.now(),
+            relayAuthor: relay.pubkey,
+            events: [
+              roster(relay, "channel", [viewer.pubkey]),
+              metadata(relay, "channel", "General"),
+            ],
+          },
+        }),
+        read: async () => [],
+        write: async () => {},
+        remove: async () => {},
+        retain: async () => {},
+        clear: async () => {},
+        close() {},
+      },
+    },
+  );
+  await owner.restore();
+  writeView("cached-composer", "draft:channel", "!Saved draft");
+  const typing = vi.fn(owner.session.typing.subscribe);
+  const h = mount({
+    session: {
+      ...owner.session,
+      typing: { ...owner.session.typing, subscribe: typing },
+    },
+    scope: "cached-composer",
+  });
+  try {
+    expect(h.input()).toHaveValue("!Saved draft");
+    expect(h.input()).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.queryByText(/does not support sending/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.focus(h.input());
+    fireEvent(document, new Event("selectionchange"));
+    h.submit();
+    await act(async () => {}); // Flush mounted effects before the negative assertions.
+    expect(h.completionRequests).toEqual([]);
+    expect(typing).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    expect(h.input()).toHaveValue("!Saved draft");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    h.unmount();
+    owner.dispose();
+  }
+});
+
+it("autofocuses each selected conversation once without stealing focus on updates", () => {
+  const h = mount({ autoFocus: true });
+  expect(h.input()).toHaveFocus();
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    other.focus();
+    h.retarget({ channelName: "Renamed", autoFocus: false });
+    h.retarget({ autoFocus: true });
+    expect(other).toHaveFocus();
+    h.retarget({ channelId: "another-channel" });
+    expect(h.input()).toHaveFocus();
+    h.retarget({ channelId: "keyboard-navigation" });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    other.remove();
+  }
+});
+
+it("lets an explicit focus restoration in the mount commit win", () => {
+  const h = mount();
+  h.unmount();
+  const target = document.createElement("button");
+  document.body.append(target);
+  function RestoreFocus() {
+    useLayoutEffect(() => target.focus(), []);
+    return null;
+  }
+  try {
+    render(
+      <>
+        <MessageComposer
+          session={h.session}
+          scope="scope"
+          channelId="channel"
+          channelName="General"
+          autoFocus
+        />
+        <RestoreFocus />
+      </>,
+    );
+    expect(target).toHaveFocus();
+  } finally {
+    target.remove();
+  }
+});
+
+it("leaves focus alone unless an enabled composer opts into mount focus", () => {
+  const h = mount();
+  expect(h.input()).not.toHaveFocus();
+  h.retarget({
+    channelId: "disabled-channel",
+    disabled: true,
+    autoFocus: true,
+  });
+  expect(h.input()).not.toHaveFocus();
+});
 
 it("keeps unpublished completions invisible but lets Escape revoke pending work", () => {
   const h = mount();
@@ -2542,8 +2666,7 @@ it("uses the full channel choice set for one selected chip and follows membershi
     providers = [
       {
         ...createAgentDirectory(),
-        resolve: () => "Alternative",
-        qualifier: () => undefined,
+        scope: () => () => ({ name: "Alternative" }),
       },
     ];
     policyChanged();
@@ -2700,3 +2823,77 @@ it.each(["retry", "unmount", "retarget", "disabled"])(
     expect(h.messages.send).toHaveBeenCalledTimes(outcome === "retry" ? 1 : 0);
   },
 );
+
+it("disabled completion keeps the highlighted key and consumes Enter without sending", async () => {
+  const h = mount();
+  h.input().focus();
+  h.fill("!Honey");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No completion request");
+  act(() => {
+    publish({
+      items: [
+        { id: first.pubkey, label: "First Honey", edit: { mention: first } },
+        { id: second.pubkey, label: "Second Honey", edit: { mention: second } },
+      ],
+    });
+  });
+  fireEvent.keyDown(h.input(), { key: "ArrowDown" });
+  act(() => {
+    publish({
+      items: [
+        { id: first.pubkey, label: "First Honey", edit: { mention: first } },
+        {
+          id: second.pubkey,
+          label: "Second Honey",
+          edit: { mention: second },
+          disabled: "Archived",
+        },
+      ],
+    });
+  });
+  expect(screen.getByRole("option", { name: "Second Honey" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("option", { name: "Second Honey" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(h.input()).toHaveValue("!Honey");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("rejects a known archived recipient at send entry without clearing the draft", () => {
+  const h = mount();
+  let archived = false;
+  const snapshot = { status: "ready" as const, archived: [] as string[] };
+  h.retarget({
+    session: {
+      ...h.session,
+      archives: {
+        snapshot: () => snapshot,
+        subscribe: () => () => {},
+        state: () => (archived ? "archived" : "not-archived"),
+        ensure: async () => {},
+        refresh: async () => {},
+        writable: false,
+        consent: vi.fn(),
+        request: vi.fn(),
+      },
+    },
+  });
+  act(() => {
+    expect(h.commands().insertMention(first)).toBe(true);
+  });
+  archived = true;
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue(`@${first.name} `);
+  expect(
+    screen.getByText(
+      "A selected recipient is archived. Remove it before sending.",
+    ),
+  ).toBeVisible();
+});

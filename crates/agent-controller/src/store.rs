@@ -198,27 +198,30 @@ impl Store {
         agent.extra.remove("profilePending");
         self.write(&doc)
     }
-    pub(crate) fn complete_import(
+    /// One atomic import batch; repairs add only the missing team snapshot.
+    pub(crate) fn import(
         &mut self,
         agents: Vec<Agent>,
-        repairs: Vec<(u64, Agent)>,
+        repairs: Vec<(String, u64, String)>,
     ) -> Result<()> {
         let mut doc = self.read()?;
-        for (revision, repaired) in repairs {
-            let saved = doc
+        for (id, revision, instructions) in repairs {
+            let agent = doc
                 .agents
                 .iter_mut()
-                .find(|a| a.id == repaired.id)
-                .ok_or("Agent no longer exists")?;
-            if saved.revision != revision || saved.enabled || !crate::team::required(saved) {
-                return Err("Agent changed during team import; reload before trying again".into());
+                .find(|agent| agent.id == id)
+                .ok_or("Agent no longer exists; preview again")?;
+            if agent.revision != revision || agent.enabled || !agent.needs_team_import() {
+                return Err("Agent settings changed; preview the team import again".into());
             }
-            saved.imported["team"] = repaired.imported["team"].clone();
-            saved.extra.insert(
-                "activityPublication".into(),
-                repaired.extra["activityPublication"].clone(),
-            );
-            saved.revision = repaired.revision;
+            agent.imported["teamInstructions"] = Value::String(instructions);
+            agent
+                .extra
+                .insert("activityPublication".into(), Value::Bool(true));
+            agent.revision = agent
+                .revision
+                .checked_add(1)
+                .ok_or("Agent revision exhausted")?;
         }
         doc.agents.extend(agents);
         self.write(&doc)

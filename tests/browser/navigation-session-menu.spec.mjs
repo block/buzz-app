@@ -28,8 +28,9 @@ test("channel context menu opens and resumes a session draft without a row menu 
     exact: true,
   });
   await beta.hover();
+  // Message rows use page-owned context menus; section actions remain separate.
   await expect(
-    sidebar.getByRole("button", { name: /More options/ }),
+    sidebar.getByRole("button", { name: /More options for (Alpha|Beta)/ }),
   ).toHaveCount(0);
   await beta.click({ button: "right" });
   await expect(start).toBeVisible();
@@ -113,10 +114,10 @@ test.describe("menu placement lifetime", () => {
       includeHidden: true,
     });
     const work = sidebar
-      .locator("details")
+      .locator("[data-sidebar-section]")
       .filter({ has: page.locator("summary", { hasText: /^Work$/ }) });
     const starred = sidebar
-      .locator("details")
+      .locator("[data-sidebar-section]")
       .filter({ has: page.locator("summary", { hasText: /Starred$/ }) });
     const beta = sidebar.locator('[data-channel-id="beta"]');
     const menu = page.getByRole("menu", { name: "Actions for Beta" });

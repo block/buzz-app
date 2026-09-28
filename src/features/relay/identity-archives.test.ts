@@ -1,6 +1,17 @@
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it, vi } from "vitest";
+import { PublishRejected } from "./outbox";
 import { createRelaySession } from "./session";
-import { keypair, signed, scriptedTransport, roster } from "./testing";
+import {
+  archiveRelay,
+  keypair,
+  signed,
+  scriptedTransport,
+  roster,
+  type Key,
+} from "./testing";
 import type { RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 
@@ -271,3 +282,263 @@ it("reentrant cache clear before dispatch prevents a read; a successor is not cl
   await second;
   expect(h.archives.snapshot().createdAt).toBe(2);
 });
+
+function authTag(agent: Key, owner: Key, conditions = "") {
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${agent.pubkey}:${conditions}`)
+    .digest();
+  return [
+    "auth",
+    owner.pubkey,
+    conditions,
+    bytesToHex(schnorr.sign(new Uint8Array(digest), owner.secret)),
+  ];
+}
+function attested(
+  agent: Key,
+  owner: Key,
+  tags: string[][] = [],
+  auth = [authTag(agent, owner)],
+) {
+  return signed(agent, {
+    kind: 0,
+    content: JSON.stringify({ name: "Agent", is_agent: true }),
+    tags: [...auth, ...tags],
+  });
+}
+function writable(fixture: ReturnType<typeof archiveRelay>) {
+  const owner = createRelaySession(fixture.transport);
+  owners.push(owner);
+  return owner.session.archives;
+}
+it("owner path attaches the target's exact live auth tag and confirms by re-read", async () => {
+  const head = attested(target, viewer);
+  const fixture = archiveRelay(viewer, relay, [head]);
+  const archives = writable(fixture);
+  expect(archives.writable).toBe(true);
+  await archives.ensure();
+  expect(archives.state(target.pubkey)).toBe("not-archived");
+  await archives.request("archive", target.pubkey);
+  const [event] = fixture.published;
+  expect(event?.kind).toBe(9035);
+  expect(event?.pubkey).toBe(viewer.pubkey);
+  expect(event?.content).toBe("");
+  expect(Math.abs((event?.created_at ?? 0) - Date.now() / 1000)).toBeLessThan(
+    5,
+  );
+  expect(event?.tags).toEqual([
+    ["-"],
+    ["p", target.pubkey],
+    head.tags.find(([name]) => name === "auth"),
+  ]);
+  expect(archives.state(target.pubkey)).toBe("archived");
+  await archives.request("unarchive", target.pubkey);
+  expect(fixture.published[1]?.kind).toBe(9036);
+  expect(archives.state(target.pubkey)).toBe("not-archived");
+});
+it("relay owner/admin path signs without an auth tag; members and foreign owners have no path", async () => {
+  const stranger = keypair();
+  const admin = archiveRelay(viewer, relay, [attested(target, stranger)], {
+    [viewer.pubkey]: "admin",
+  });
+  const adminArchives = writable(admin);
+  await adminArchives.request("archive", target.pubkey);
+  expect(admin.published[0]?.tags).toEqual([["-"], ["p", target.pubkey]]);
+  for (const roles of [{ [viewer.pubkey]: "member" }, {}]) {
+    const denied = archiveRelay(
+      viewer,
+      relay,
+      [attested(target, stranger)],
+      roles,
+    );
+    const archives = writable(denied);
+    expect(
+      await archives.consent(target.pubkey, new AbortController().signal),
+    ).toBeNull();
+    await expect(archives.request("archive", target.pubkey)).rejects.toThrow(
+      "You can no longer archive this identity",
+    );
+    expect(denied.signedBy).toEqual([]);
+    expect(denied.published).toEqual([]);
+  }
+});
+it("rejects a changed signer echo before publishing", async () => {
+  const fixture = archiveRelay(viewer, relay, [attested(target, viewer)]);
+  const writer = fixture.transport.identityArchive;
+  if (!writer) throw new Error("fixture writer");
+  const sign = writer.sign.bind(writer);
+  writer.sign = async (template, signal) =>
+    sign({ ...template, tags: [...template.tags, ["reason", "x"]] }, signal);
+  const archives = writable(fixture);
+  await expect(archives.request("archive", target.pubkey)).rejects.toThrow(
+    "Signer changed the archive request",
+  );
+  expect(fixture.published).toEqual([]);
+});
+it("an accepted but unconfirmed request fails instead of presenting the new state", async () => {
+  const fixture = archiveRelay(viewer, relay, [attested(target, viewer)]);
+  fixture.script.apply = false;
+  const archives = writable(fixture);
+  await expect(archives.request("archive", target.pubkey)).rejects.toThrow(
+    "The relay did not confirm the change. Retry.",
+  );
+  expect(fixture.published).toHaveLength(1);
+  expect(archives.state(target.pubkey)).toBe("not-archived");
+});
+it("offers no writer without an archive authority", () => {
+  const fixture = archiveRelay(viewer, relay);
+  const { archiveAuthority: _, ...transport } = fixture.transport;
+  const owner = createRelaySession(transport);
+  owners.push(owner);
+  expect(owner.session.archives.writable).toBe(false);
+});
+it("owner consent ignores kind clauses but enforces request time bounds", async () => {
+  const future = Math.floor(Date.now() / 1000) + 3600;
+  const restricted = archiveRelay(viewer, relay, [
+    attested(
+      target,
+      viewer,
+      [],
+      [authTag(target, viewer, `kind=9&created_at<${future}`)],
+    ),
+  ]);
+  await writable(restricted).request("archive", target.pubkey);
+  expect(restricted.published).toHaveLength(1);
+  const expired = archiveRelay(viewer, relay, [
+    attested(target, viewer, [], [authTag(target, viewer, "created_at<2")]),
+  ]);
+  const archives = writable(expired);
+  expect(
+    await archives.consent(target.pubkey, new AbortController().signal),
+  ).not.toBeNull();
+  await expect(archives.request("archive", target.pubkey)).rejects.toThrow(
+    "You can no longer archive this identity",
+  );
+  expect(expired.signedBy).toEqual([]);
+});
+const outOfBounds = () => [
+  ["expired", "created_at<2"],
+  ["future-bound", `created_at>${Math.floor(Date.now() / 1000) + 3600}`],
+];
+it.each(outOfBounds())(
+  "an owner who is also relay admin archives and unarchives despite a %s credential",
+  async (_label, conditions) => {
+    const fixture = archiveRelay(
+      viewer,
+      relay,
+      [attested(target, viewer, [], [authTag(target, viewer, conditions)])],
+      { [viewer.pubkey]: "admin" },
+    );
+    const archives = writable(fixture);
+    // Ownership evidence stays visible to the UI alongside role authority.
+    const path = await archives.consent(
+      target.pubkey,
+      new AbortController().signal,
+    );
+    expect(path?.auth?.[2]).toBe(conditions);
+    expect(path?.admin).toBe(true);
+    await archives.request("archive", target.pubkey);
+    expect(archives.state(target.pubkey)).toBe("archived");
+    await archives.request("unarchive", target.pubkey);
+    expect(archives.state(target.pubkey)).toBe("not-archived");
+    expect(fixture.published.map(({ kind, tags }) => [kind, tags])).toEqual([
+      [9035, [["-"], ["p", target.pubkey]]],
+      [9036, [["-"], ["p", target.pubkey]]],
+    ]);
+  },
+);
+it.each(outOfBounds())(
+  "a non-admin owner with a %s credential can neither archive nor unarchive",
+  async (_label, conditions) => {
+    const fixture = archiveRelay(
+      viewer,
+      relay,
+      [attested(target, viewer, [], [authTag(target, viewer, conditions)])],
+      { [viewer.pubkey]: "member" },
+    );
+    const archives = writable(fixture);
+    for (const action of ["archive", "unarchive"] as const)
+      await expect(archives.request(action, target.pubkey)).rejects.toThrow(
+        "You can no longer archive this identity",
+      );
+    expect(fixture.signedBy).toEqual([]);
+  },
+);
+it.each([
+  [
+    "duplicate auth tags",
+    () =>
+      attested(
+        target,
+        viewer,
+        [],
+        [authTag(target, viewer), authTag(target, viewer)],
+      ),
+  ],
+  [
+    "an auth tag bound to another target",
+    () => attested(target, viewer, [], [authTag(other, viewer)]),
+  ],
+  [
+    "malformed conditions",
+    () => attested(target, viewer, [], [authTag(target, viewer, "kind=x")]),
+  ],
+])("%s grant no owner path", async (_label, profile) => {
+  const fixture = archiveRelay(viewer, relay, [profile()]);
+  const archives = writable(fixture);
+  expect(
+    await archives.consent(target.pubkey, new AbortController().signal),
+  ).toBeNull();
+});
+it("an unknown publish outcome reconciles by re-read; a definitive rejection does not", async () => {
+  const fixture = archiveRelay(viewer, relay, [attested(target, viewer)]);
+  const writer = fixture.transport.identityArchive;
+  if (!writer) throw new Error("fixture writer");
+  const publish = writer.publish.bind(writer);
+  writer.publish = async (event, signal) => {
+    await publish(event, signal);
+    throw new Error("Relay delivery could not be confirmed (502)");
+  };
+  const archives = writable(fixture);
+  await archives.request("archive", target.pubkey);
+  expect(archives.state(target.pubkey)).toBe("archived");
+  fixture.script.apply = false;
+  await expect(archives.request("unarchive", target.pubkey)).rejects.toThrow(
+    "Relay delivery could not be confirmed (502)",
+  );
+  expect(archives.state(target.pubkey)).toBe("archived");
+  writer.publish = async () => {
+    throw new PublishRejected("blocked");
+  };
+  await expect(archives.request("unarchive", target.pubkey)).rejects.toThrow(
+    "blocked",
+  );
+});
+it.each(["cancel", "cache", "dispose"] as const)(
+  "%s during confirmation settles without presenting unconfirmed state",
+  async (action) => {
+    const fixture = archiveRelay(viewer, relay, [attested(target, viewer)]);
+    let release!: () => void;
+    fixture.script.hold = new Promise((resolve) => {
+      release = resolve;
+    });
+    const owner = createRelaySession(fixture.transport);
+    owners.push(owner);
+    const archives = owner.session.archives;
+    const caller = new AbortController();
+    const request = archives.request("archive", target.pubkey, caller.signal);
+    await vi.waitFor(() => expect(fixture.signedBy).toHaveLength(1));
+    if (action === "cancel") caller.abort();
+    else if (action === "cache") await owner.clearCache();
+    else owner.dispose();
+    release();
+    if (action === "dispose") {
+      await expect(request).rejects.toThrow("Archive request was interrupted");
+      expect(archives.state(target.pubkey)).toBe("unknown");
+    } else {
+      // The held publish applied; reconciliation confirms it by fresh re-read.
+      await request;
+      expect(archives.state(target.pubkey)).toBe("archived");
+    }
+  },
+);

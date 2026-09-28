@@ -21,6 +21,8 @@ export type ChannelSummary = Readonly<{
   lastActivityAt?: number | undefined;
   /** Readable public nonmember channel; not part of the joined roster. */
   readOnly?: true;
+  /** Downloaded membership is display-only pending current relay confirmation. */
+  cached?: true;
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
@@ -75,8 +77,10 @@ export type ChannelMessage = Readonly<{
   delivery?: Delivery | undefined;
   deliveryError?: string | undefined;
   authorId: string;
-  /** Unix seconds from the signed event. Ordering is (createdAt asc, id desc); no clock inference. */
+  /** Unix seconds from the signed event. */
   createdAt: number;
+  /** Effective send ms (valid `ms` tag, else createdAt * 1000); ordered by `compareMessages`. */
+  createdAtMs?: number;
   content: string;
   /** Unprojected current body when attachment presentation removed Markdown. */
   sourceContent?: string;

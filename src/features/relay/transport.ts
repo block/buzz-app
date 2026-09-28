@@ -4,6 +4,7 @@ import {
   type MemoryReader,
   type MemoryListing,
 } from "../agents/memory";
+import { publicationRefusal } from "../developer/traffic";
 import { brokerUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
 import type { KitRecord } from "../channel-templates/model";
@@ -20,9 +21,11 @@ import {
 import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
+  type SidebarAssignmentMutator,
+  type SidebarStarMutator,
   type SidebarSortMutator,
-  type SidebarMuteMutator,
   type SidebarDecoder,
+  type SidebarMuteMutator,
   type SidebarPreferences,
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
@@ -41,6 +44,7 @@ import {
   subscribeRelayTraffic,
   type LiveCallbacks,
   type LiveSubscription,
+  type LiveSocket,
 } from "./live";
 import { subscribeBrokerTraffic } from "./broker-live";
 import { PublishRejected } from "./outbox";
@@ -57,12 +61,6 @@ import {
 export interface RelayWriter {
   readonly kinds?: readonly number[];
   sign(event: EventTemplate, signal: AbortSignal): Promise<RelayEvent>;
-  /** Optional host reservation before publication. No dispatch may occur here;
-   * the returned publisher is entered only after the final synchronous checks. */
-  preparePublish?(
-    event: RelayEvent,
-    signal: AbortSignal,
-  ): Promise<{ publish(): Promise<string> | Promise<void>; dispose(): void }>;
   /** Accepted receipt text is ephemeral; callers must never journal it. */
   publish(
     event: RelayEvent,
@@ -73,6 +71,11 @@ export interface ReadTransport {
   readonly activityHistory?: ActivityHistoryHost;
   readonly projectGit?: ProjectGit;
   readonly readAgentMemories?: MemoryReader;
+  /** Session-scoped owner proof, not an arbitrary signing capability. */
+  readonly authorizeAgentLog?: (
+    target: { id: string; pubkey: string; relayUrl: string },
+    nonce: string,
+  ) => Promise<string>;
   readonly uploadAttachment?: AttachmentUpload;
   /** Host-owned idempotent DM opening. The session verifies membership before use. */
   readonly openDirectMessage?: (
@@ -82,6 +85,8 @@ export interface ReadTransport {
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
   readonly channelLifecycle?: RelayWriter;
+  /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
+  readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
   /** Explicit relay-advertised session command support. */
@@ -107,6 +112,9 @@ export interface ReadTransport {
     "online" | "away" | "offline" | "unknown"
   > | null>;
   readonly writeSidebarMute?: SidebarMuteMutator;
+  /** Host-only, relay-scoped mutation of one existing sidebar group assignment. */
+  readonly writeSidebarAssignment?: SidebarAssignmentMutator;
+  readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -155,6 +163,8 @@ export function mediaUrl(
 export interface Signer {
   getPublicKey(): Promise<string>;
   signEvent(event: EventTemplate): Promise<VerifiedEvent>;
+  /** Native hosts authenticate and send exact bytes without exposing credentials to JS. */
+  request?(url: string, body: string, signal?: AbortSignal): Promise<Response>;
 }
 
 /** The host's explicit HTTP base wins; otherwise translate the ws(s) relay URL's scheme. */
@@ -285,6 +295,7 @@ export async function connectBrokerTransport(
     attachmentUploads?: boolean;
     directMessages?: boolean;
     channelLifecycle?: boolean;
+    identityArchives?: boolean;
     relayUrl?: string;
     relayHttpUrl?: string;
     live?: boolean;
@@ -294,8 +305,11 @@ export async function connectBrokerTransport(
     channelActivity?: boolean;
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
+    sidebarPreferenceWrites?: boolean;
+    sidebarStarWrites?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
+    agentLogProof?: boolean;
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
@@ -318,6 +332,30 @@ export async function connectBrokerTransport(
     "Content-Type": "application/json",
     // Matched development frontend/host: publication requires the existing owner.
     "X-Buzz-Live-ID": traffic?.identity?.() ?? "",
+  });
+  /** Dedicated shape-limited host sign/publish routes, separate from the outbox writer. */
+  const routeWriter = (route: string): RelayWriter => ({
+    async sign(template: EventTemplate, signal: AbortSignal) {
+      const response = await fetch(`${endpoint}/${route}-sign`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(template),
+        signal,
+      });
+      if (!response.ok) throw new Error((await readApiFailure(response)).error);
+      return eventDto(await response.json());
+    },
+    async publish(event: RelayEvent, signal: AbortSignal) {
+      const response = await fetch(`${endpoint}/${route}-publish`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: publicationHeaders(),
+        body: JSON.stringify(event),
+        signal,
+      });
+      return acceptPublish(response, event.id);
+    },
   });
   return {
     profiling,
@@ -432,6 +470,37 @@ export async function connectBrokerTransport(
               signal,
             }),
           ),
+        }
+      : {}),
+    ...(session.agentLogProof === true && community
+      ? {
+          authorizeAgentLog: async (
+            target: { id: string; pubkey: string; relayUrl: string },
+            nonce: string,
+          ) => {
+            if (
+              !session.relayUrl ||
+              relayOrigin(target.relayUrl) !== relayOrigin(session.relayUrl)
+            )
+              throw new Error("Log authorization unavailable");
+            const response = await fetch(`${endpoint}/agent-log-proof`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...target, nonce }),
+            });
+            if (!response.ok) throw new Error("Log authorization unavailable");
+            const value: unknown = await response.json();
+            if (
+              !value ||
+              typeof value !== "object" ||
+              !("signature" in value) ||
+              typeof value.signature !== "string" ||
+              !/^[0-9a-f]{128}$/.test(value.signature)
+            )
+              throw new Error("Log authorization unavailable");
+            return value.signature;
+          },
         }
       : {}),
     ...(session.agentMemories === true && community
@@ -662,36 +731,55 @@ export async function connectBrokerTransport(
         }
       : {}),
     ...(session.channelLifecycle === true
+      ? { channelLifecycle: routeWriter("channel-lifecycle") }
+      : {}),
+    ...(session.identityArchives === true
+      ? { identityArchive: routeWriter("identity-archive") }
+      : {}),
+    ...(session.sidebarPreferenceWrites
       ? {
-          channelLifecycle: {
-            async sign(template: EventTemplate, signal: AbortSignal) {
-              const response = await fetch(
-                `${endpoint}/channel-lifecycle-sign`,
-                {
-                  method: "POST",
-                  credentials: "same-origin",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(template),
-                  signal,
-                },
-              );
-              if (!response.ok)
-                throw new Error((await readApiFailure(response)).error);
-              return eventDto(await response.json());
-            },
-            async publish(event: RelayEvent, signal: AbortSignal) {
-              const response = await fetch(
-                `${endpoint}/channel-lifecycle-publish`,
-                {
-                  method: "POST",
-                  credentials: "same-origin",
-                  headers: publicationHeaders(),
-                  body: JSON.stringify(event),
-                  signal,
-                },
-              );
-              return acceptPublish(response, event.id);
-            },
+          async writeSidebarAssignment(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-assignment`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok) {
+              const failure = await readApiFailure(result);
+              throw new Error(failure.error);
+            }
+            const value = (await result.json()) as SidebarPreferences;
+            const groups = projectSidebarPreferences(
+              {
+                version: 1,
+                sections: value.sections,
+                assignments: value.assignments,
+              },
+              undefined,
+            );
+            return {
+              sections: groups.sections,
+              assignments: groups.assignments,
+            };
+          },
+        }
+      : {}),
+    ...(session.sidebarStarWrites
+      ? {
+          async writeSidebarStar(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-star`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok)
+              throw new Error((await readApiFailure(result)).error);
+            return projectSidebarPreferences(undefined, await result.json())
+              .starred;
           },
         }
       : {}),
@@ -798,6 +886,7 @@ export async function connectSignedTransport(
   signer: Signer,
   httpOrigin: string,
   relayAuthor: string,
+  socketFactory?: (url: string) => LiveSocket,
 ): Promise<ReadTransport> {
   const viewer = await signer.getPublicKey();
   httpOrigin = relayOrigin(httpOrigin);
@@ -816,7 +905,7 @@ export async function connectSignedTransport(
           (event) => signer.signEvent(event),
           viewer,
           callbacks,
-          undefined,
+          socketFactory,
           owner.live,
         );
       } catch (error) {
@@ -842,7 +931,7 @@ export async function connectSignedTransport(
     writer: {
       sign: (event) => signer.signEvent(event),
       async publish(event, signal) {
-        await acceptPublish(
+        return acceptPublish(
           await signedPost(
             signer,
             `${httpOrigin}/events`,
@@ -903,6 +992,19 @@ async function signedPost(
   signal?.throwIfAborted();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
+    const request = signer.request?.bind(signer);
+    if (request)
+      return admittedApiRequest(
+        admission,
+        () => {
+          signal?.throwIfAborted();
+          return profiling.measureAsync("http.fetch", id, () =>
+            request(url, body, signal),
+          );
+        },
+        signal,
+        priority,
+      );
     const payload = hex(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
     );
@@ -961,9 +1063,18 @@ async function acceptPublish(response: Response, id: string) {
       throw new PublishRejected(
         `Relay rejected the message (${response.status})`,
       );
-    // A broker that never reached the relay reports `sent: false`; that message
-    // was not delivered and is safe to mark failed and retry.
-    const body = await readApiFailure(response);
+    // Only proven non-delivery is safe to mark failed. Socket quota reasons are
+    // display-only: keep them distinct from HTTP API quota/cooldown ownership.
+    const body = await readApiFailure(response, (value) => {
+      if (!value || typeof value !== "object") return;
+      const failure = value as { sent?: unknown; error?: unknown };
+      if (
+        failure.sent === false &&
+        typeof failure.error === "string" &&
+        failure.error.startsWith("rate-limited:")
+      )
+        return publicationRefusal(failure.error);
+    });
     if (body.sent === false || body.quota === "api")
       throw new PublishRejected(body.error);
     throw new Error(

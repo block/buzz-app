@@ -4,20 +4,20 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { Host } from "../features/host/service";
 import { createServices, type AppServices } from "./services";
 
-const accountIpc = vi.hoisted(() => ({ isTauri: false, invoke: vi.fn() }));
-vi.mock("@tauri-apps/api/core", async (actual) => ({
-  ...(await actual<typeof import("@tauri-apps/api/core")>()),
-  isTauri: vi.fn(() => accountIpc.isTauri),
-  invoke: accountIpc.invoke,
-  Channel: class {
-    onmessage = () => {};
-  },
-}));
 const plugin = vi.hoisted(() => ({
   cleanup: vi.fn<() => void | Promise<void>>(),
   host: undefined as Host | undefined,
 }));
-// Only native IPC and the installed plugin are fixtures. Exercise the real app composition,
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  isTauri: vi.fn(() => false),
+  invoke: vi.fn(),
+  Channel: class {
+    id = 1;
+    onmessage = () => {};
+  },
+}));
+// Only the plugin module is a fixture. Exercise the real app composition,
 // manager, runtime, Cordis root and community/relay services.
 vi.mock("../bundled", () => ({
   bundledPlugins: [
@@ -48,13 +48,12 @@ let storageReads: ReturnType<typeof vi.fn>;
 let values: Map<string, string>;
 
 beforeEach(() => {
-  accountIpc.isTauri = false;
-  accountIpc.invoke.mockReset();
   vi.useFakeTimers();
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  vi.stubGlobal("navigator", { platform: "MacIntel" });
   plugin.cleanup.mockReset();
   plugin.host = undefined;
-  vi.mocked(isTauri).mockImplementation(() => accountIpc.isTauri);
+  vi.mocked(isTauri).mockReturnValue(false);
   vi.mocked(invoke).mockReset();
   values = new Map<string, string>();
   storageReads = vi.fn((key: string) => values.get(key) ?? null);
@@ -288,28 +287,148 @@ it("joins cleanup already started by disabling a plugin", async () => {
   expect(plugin.cleanup).toHaveBeenCalledTimes(1);
 });
 
-it("exposes the native prerequisite without reading keys or connecting during packaged startup", async () => {
+it("composes the packaged native connection without opening a community or contacting the broker", async () => {
   await services.dispose();
   vi.stubEnv("VITE_BUZZ_LIVE", "0");
-  accountIpc.isTauri = true;
-  accountIpc.invoke.mockResolvedValue({ available: false });
+  vi.mocked(isTauri).mockReturnValue(true);
   vi.mocked(fetch).mockClear();
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return viewer;
+    if (command === "deep_link_take") return [];
+    if (command === "deep_link_watch") return null;
+    // Other native owners may initialize, but no actual native operations run.
+    throw new Error("Fixture native capability unavailable");
+  });
   services = createServices();
   await vi.advanceTimersByTimeAsync(0);
-  expect(services.communities.accountConnection?.snapshot()).toEqual({
-    status: "idle",
+  expect(services.identity?.snapshot()).toEqual({ status: "ready", viewer });
+  expect(services.communities.snapshot()).toMatchObject({
+    status: "ready",
+    relayAvailable: true,
+    viewer,
+    selected: null,
   });
-  expect(services.communities.snapshot().status).toBe("unavailable");
-  expect(
-    accountIpc.invoke.mock.calls.filter(([name]) =>
-      String(name).startsWith("account_connection"),
-    ),
-  ).toHaveLength(0);
   expect(fetch).not.toHaveBeenCalled();
-  await services.dispose();
+  expect(services.relay.snapshot().status).not.toBe("ready");
   expect(
-    accountIpc.invoke.mock.calls.filter(([name]) =>
-      String(name).startsWith("account_connection"),
-    ),
-  ).toHaveLength(0);
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "identity_restore"),
+  ).toHaveLength(1);
+});
+
+it.each(["Linux x86_64", "Win32"])(
+  "keeps the unpinned %s shell available without native onboarding",
+  async (platform) => {
+    await services.dispose();
+    vi.stubEnv("VITE_BUZZ_LIVE", "0");
+    vi.stubGlobal("navigator", { platform });
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(fetch).mockClear();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "deep_link_take") return [];
+      if (command === "deep_link_watch") return null;
+      throw new Error("Fixture native capability unavailable");
+    });
+    services = createServices();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(services.identity).toBeUndefined();
+    expect(services.communities.snapshot()).toMatchObject({
+      status: "unavailable",
+      relayAvailable: false,
+    });
+    expect(services.pages.snapshot()).toHaveLength(1);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command.startsWith("identity_")),
+    ).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  },
+);
+
+it("restores the selected native community and recovers discovery failure without a broker fallback", async () => {
+  await services.dispose();
+  vi.stubEnv("VITE_BUZZ_LIVE", "0");
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(fetch).mockClear();
+  const community = "https://restored-native.test";
+  values.set(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Native", picture: "" },
+      memberships: [
+        { id: community, name: "Selected" },
+        { id: "https://unopened.test", name: "Unopened" },
+      ],
+      selected: community,
+    }),
+  );
+  let unavailable = true;
+  const destinations: string[] = [];
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "identity_restore") return viewer;
+    if (command === "deep_link_take") return [];
+    if (command === "deep_link_watch") return null;
+    if (command === "account_activity_open")
+      return {
+        viewer,
+        origin: community,
+        relayAuthor: "b".repeat(64),
+        lease: "11111111-1111-4111-8111-111111111111",
+      };
+    if (command === "account_connection_close") return;
+    if (command === "relay_http") {
+      const request = args as { community: string; path: string };
+      destinations.push(request.community);
+      if (unavailable) throw new Error("Discovery offline");
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify(
+          request.path === "/" ? { self: "b".repeat(64) } : [],
+        ),
+      };
+    }
+    throw new Error("Fixture native capability unavailable");
+  });
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.relay.snapshot()).toMatchObject({
+    status: "error",
+    error: expect.stringContaining("Discovery offline"),
+  });
+  unavailable = false;
+  services.relay.retry();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.relay.snapshot()).toMatchObject({
+    status: "ready",
+    viewer,
+    scope: `${community}:${viewer}`,
+  });
+  expect(new Set(destinations)).toEqual(new Set([community]));
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("keeps pinned macOS desktop development on the broker identity", async () => {
+  await services.dispose();
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "deep_link_take") return [];
+    if (command === "deep_link_watch") return null;
+    throw new Error("Fixture native capability unavailable");
+  });
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.identity).toBeUndefined();
+  expect(services.communities.snapshot()).toMatchObject({
+    status: "ready",
+    viewer,
+    relayAvailable: true,
+  });
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command.startsWith("identity_")),
+  ).toBe(false);
 });

@@ -1,148 +1,76 @@
-# Existing-account native connection
+# Packaged Activity connection
 
-This is the finite-HTTP slice for Apple Silicon macOS: an explicitly selected
-existing account can open one relay endpoint for the current app session, read
-channels/messages and send ordinary channel/thread messages through the existing
-outbox. A native physical WebSocket now feeds the existing shared live owner, including
-owner-visible Activity. [Saved history](activity-history.md) retains new native capture
-in a separate encrypted-envelope store. Attended package acceptance is still open. No packaged live-account
-acceptance is claimed by synthetic tests.
+Main's [native identity](identity.md) and [community connection](communities.md)
+own account creation/import/restore, membership selection, admission recovery,
+profile changes and ordinary relay writes. Activity does not choose an account,
+read a legacy credential blob, export a key or fall back to the dev broker.
 
-## Explicit caller
+The former preview-only **Connect existing account** dialog and kind-9-only native
+message adapter have been removed. Existing installations follow main's identity
+setup; this merge does not migrate or overwrite credentials. Debug/release identity
+items remain separate under main's policy.
 
-In the non-live native shell, **Connect existing account** opens the connection
-form. Enter the account's public key (hex or npub, never nsec) and an existing
-community's HTTPS/WSS origin. Startup, mount, typing and restoration do no
-credential or relay work. Connect authorizes native custody and authenticated
-reads; it does not join, enroll, publish a profile or change the old Buzz store.
+## One identity, scoped Activity leases
 
-The endpoint is labelled as checking access, then connected or unavailable.
-Connection metadata is not channel membership. The session verifies relay-authored
-rosters before participation and performs fresh mention preflight before sends.
-The same account/origin continues to partition drafts, outbox and reading intent.
-Only the connection itself is temporary: no saved auto-unlock or automatic startup
-Keychain access. Recovery of previously queued messages follows the existing outbox.
+The app-owned community connection opens an Activity lease after restoring the
+public viewer. Rust checks that viewer against the ready `IdentityHost`, validates
+the canonical HTTPS origin and independently discovers the NIP-11 `self` authority.
+A contact `pubkey` is not authority evidence. The registry admits at most 32 leases,
+with one pending/active lease per community origin. Failed/cancelled discovery
+releases its reservation. Old close callbacks name the exact lease and cannot
+close a successor or another community.
 
-Closing the dialog keeps the active connection. **Native account connection →
-Disconnect native account** first retires frontend sessions, then awaits native
-revocation. A failed IPC close retains the handle with a retry action and blocks
-account replacement; the UI never silently forgets a held native identity.
-Reconnection requires the explicit form again. Page reload/window destruction/app
-exit revoke native leases independently of asynchronous plugin cleanup.
+Signing and NIP-44 decryption borrow the same in-memory native identity. No key is
+copied to a lease or exposed to JavaScript for Activity. Native-only decrypt accepts
+an already verified telemetry envelope through the bounded observer/history paths;
+there is no browser general-decrypt command. Main's deliberate identity import and
+export controls retain their documented behavior and trust model.
 
-Supported writes are kind-9 messages and thread replies, including existing member
-mentions. Reactions, edits, deletion/reporting, profile writes, uploads, joins,
-invitations, read-state publication and broader broker parity are not exposed by
-the native writer. Unsupported native community API calls fail locally rather than
-contacting `/api/relay`. Profile editing says unavailable. Signed media is not
-implemented; network images may have fallbacks. Live route state and Activity availability follow the real shared connection;
-missing telemetry never proves an agent is idle. Browser and opted-in development-broker behavior is unchanged.
+Frontend cancellation retires its Activity view immediately, requests native close,
+and fences late history/socket results. If native close fails, the cleanup handle
+is retained; reconnect must retry it successfully before acquiring a replacement.
+A failed native cleanup is not reported as successful deletion or revocation.
 
-## Custody and commands
+Window hide on macOS preserves the connection and agents. Actual destruction,
+page reload and app exit revoke all Activity leases. Main's identity/community
+restart policy remains unchanged. These lifecycle semantics require attended
+packaged acceptance; source and synthetic tests are not proof of OS consent.
 
-`src-tauri/src/account_connection.rs` owns explicit begin/run/cancel and a single
-native account lease. Begin validates the public pin and canonical secure origin
-before OS/network work, following `features/communities/destination.ts`:
-HTTPS and WSS identify the same community; credentials, paths, query, fragments,
-backslashes, ambiguous/insecure origins are rejected.
+## Shared live transport and writes
 
-Only macOS's installed `buzz-desktop` / `secrets` item and its `identity` nsec are
-accepted. Duplicate/malformed/oversized data, denial and exact derived-public-key
-mismatch fail without agent-key, environment, file or alternate-store fallback.
-`nostr = 0.44.7` matches the pinned Buzz runtime lock; only its `std` feature is
-currently enabled. No handwritten signature implementation is introduced.
+The existing JavaScript live service remains the sole subscription, authentication
+state, reconnect and retry owner. The native socket adapter replaces physical I/O,
+not that policy. It supplies the native-observed NIP-42 challenge signer and verified
+owner-visible Activity DTOs. There is no second Activity-only socket or timer.
 
-Public NIP-11 discovery has TLS, no redirects, a ten-second timeout and two-MiB
-body limit. Explicit valid `self` stays distinct from contact `pubkey`; neither
-alone grants membership. Only after verification/discovery does native transfer
-custody into a random immutable-origin/viewer lease. Private keys never cross IPC,
-enter arguments/environment, or get copied to a new credential store. Native
-parsing creates transient memory copies; complete zeroization is not guaranteed.
-The lease is removed on close; in-flight owners release their key reference when
-cancellation/cleanup completes. No OS-screen-lock integration is claimed yet.
+Native limits remain: one opening/open/closing socket actor per lease, at most
+1024 routes, 64 commands with 64 KiB checked before enqueue, 1 MiB frames, and
+32 unacknowledged packets / 2 MiB. The terminal-close signal bypasses a saturated
+packet queue. Observer routes are live-only and generation-fenced; plaintext stays
+outside ordinary message/unread/cache reconciliation.
 
-Generated Tauri ACLs restrict commands to the local main webview; native commands
-also check its label. This is a trusted-app boundary, not sandboxing or proof of a
-physical human gesture. Browser CSP is unchanged. No general signer, arbitrary
-URL/header/method API, credential reader or decrypt primitive is exposed.
+Main's HTTP query/sign/publish adapter, capabilities, profile/admission APIs and
+old-event retry/readback policy remain authoritative. The live socket additionally
+accepts signature-verified, exact-viewer supported EVENT publication, including
+bounded kind-20001 presence, and forwards correlated relay OK receipts. AUTH remains
+separate. No HTTP presence fallback or implicit signing-kind expansion is added.
 
-## Native I/O and delivery
+Verified roster responses from main HTTP reads are delivered only to leases captured
+before dispatch and still current on completion. They cannot seed a replacement
+lease. Historical reads use their own bounded native query admission to refresh
+signed roster evidence; this internal path exposes no second message-publishing API.
 
-`account_connection/session.rs` permits only:
-- bounded, allowlisted finite filters to the captured `/query`;
-- signing validated kind-9 templates;
-- verified, same-viewer kind-9 publication to the captured `/events`;
-- operation reservation/cancel and exact lease close.
+## Saved history and limits
 
-Native builds fresh NIP-98 authorization from the actual fixed URL, POST method
-and exact serialized body. Redirects are refused, transport deadlines are ten
-seconds, query bodies are capped at64KiB and query responses at16MiB. Publication
-receipts are bounded at4KiB; the existing frontend receipt contract validates
-accepted/event ID rather than treating HTTP success as delivery. Six host operations
-are admitted at once; operations expire before use, are single-use and are removed
-on all terminal paths. No transparent POST retry exists.
+[Saved Activity](activity-history.md) preserves original encrypted envelopes with
+minimal public index metadata, bounded retention, scoped authorization, explicit
+deletion and gap reporting. Storage location and schema are unchanged; old Buzz
+archives are never imported or modified. Each history result remains separate from
+live working/typing and message delivery state.
 
-The thin `native-transport.ts` adapter reuses shared admission/cooldown, signature
-verification and the existing relay session/outbox. An optional writer preparation
-hook reserves native capacity before the outbox publication phase. Cancellation
-while reservation is held is unsent; late reservation results are disposed. Final
-membership/admission checks run after preparation and immediately before publisher
-entry. Once publication enters native IPC, losing its result may be uncertain.
-Known native pre-dispatch refusal is `PublishRejected`, without erasing prior
-unknown/accepted evidence on retry.
-
-Native dispatch admission shares a mutex with cancel/close. Revocation winning that
-admission prevents network entry. An already-admitted operation may still reach the
-relay even if cancellation arrives before the request's first network poll; its
-result is conservatively potentially sent. No claim of atomic relay membership or
-network rollback is made. Cancellation interrupts awaits and fences returned data.
-A delayed OS prompt cannot reliably be cancelled; credential admission stays occupied
-until the actual read ends and cannot revive a retired connect ticket.
-
-## Shared live connection
-
-The existing `subscribeRelayTraffic` owns routes, authentication state and bounded
-reconnection. Rust creates at most one opening/open/closing physical socket per
-account lease and never retries independently. TLS uses native roots; URL derives
-only from the captured origin. No redirect or arbitrary destination command exists.
-Main-webview commands constrain REQ to the existing exact profile/membership/channel/
-observer filters. Outbound EVENT is refused; HTTP remains the message publisher.
-Presence publication remains unsupported rather than borrowing a general signer.
-
-AUTH signs only the actor's bounded, once-per-socket observed challenge. The same
-signed event must return through that same actor before requests are admitted.
-Observer signature, exact tags, timestamp, and ciphertext/plaintext size are checked
-before native NIP-44 decryption. Only a purpose-bound DTO from an admitted observer
-wire crosses IPC; an observer event on another route never becomes ordinary traffic.
-JS rechecks current socket/wire/demand and session access before capture.
-
-Frames are capped at1MiB, outbound commands at64KiB/64 queued, and unacknowledged
-inbound packets at32/2MiB. ACK follows handling and credits each sequence once.
-Overflow closes with an out-of-band terminal packet; close/revocation stay reachable.
-A replacement socket waits for actual previous actor cleanup. Only the shared JS
-bounded reconnect policy retries. Historical replay is not part of this live route.
-
-## Evidence and remaining work
-
-Synthetic native tests exercise fixed-source custody, validation, deferred cancellation,
-lease isolation/replay, actual registered sign/close IPC, real loopback NIP-98 POST,
-no-redirect/oversize handling, dispatch ordering and post-entry cancellation. Real
-Tauri ACL tests deny guest/remote origins. Tests compile live Keychain calls out.
-
-Colocated tests use the real communities/session/outbox with an injected native I/O
-boundary: activation without a broker, signed sends, fresh mention checks, exact root/
-parent tags, close-failure retry, repeated disconnect cleanup, corrupt signature refusal,
-and controlled reservation timeout versus dispatched uncertainty. Browser tests prove
-modal keyboard/focus/light-dark responsive behavior with no OS or relay access. They
-do not establish attended packaged network operation.
-
-Socket tests additionally exercise a real loopback WebSocket handshake, native AUTH,
-encrypted observer delivery, route teardown, invalid filters/signatures and queue bounds.
-TS fixtures run the shared live/session owners with a fake native boundary, verifying
-native observer routing, cache-generation reset and no chat reconciliation. These do
-not substitute for production WSS or attended Tauri packet ordering.
-
-The new-only native archive now supplies bounded historical reads and deletion;
-see [its policy and acceptance limits](activity-history.md). Next is attended packaged
-acceptance on the exact built candidate.
-No old archive migration, whole-broker parity or live-account test is implied.
+Development with a public viewer pin still uses the existing broker and live-only
+Activity. Packaged Activity is wired through main's identity and community sessions.
+No broker fallback is permitted in packaged mode. Protected media, uploads and
+other capabilities are available only as documented by main's adapter, not implied
+by Activity. Windows/Linux identity custody and attended package/restart/deletion
+validation remain separate gates.

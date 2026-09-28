@@ -6,6 +6,8 @@ import templatesManifest from "./channel-templates/manifest.json";
 import * as templates from "./channel-templates";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
+import feedbackManifest from "./feedback/manifest.json";
+import * as feedback from "./feedback";
 import activityManifest from "./agent-activity/manifest.json";
 import * as activity from "./agent-activity";
 import terminalManifest from "./terminal/manifest.json";
@@ -39,6 +41,7 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  { manifest: { ...feedbackManifest, apiVersion: 1 }, module: feedback },
   {
     manifest: { ...todosManifest, apiVersion: 1 },
     module: todos,

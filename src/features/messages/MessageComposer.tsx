@@ -229,8 +229,11 @@ function Composer({
     autoFocus &&
       !disabled &&
       typeof document !== "undefined" &&
-      // A conversation that loads under an open dialog must not take its focus.
-      !document.activeElement?.closest('[aria-modal="true"]')
+      // A conversation that loads late must not take focus from an open
+      // dialog or menu, or from a trigger that is about to open one.
+      !document.activeElement?.closest(
+        '[aria-modal="true"], [role="menu"], [aria-haspopup]',
+      )
       ? document.activeElement
       : undefined,
   );

@@ -493,22 +493,33 @@ it("lets an explicit focus restoration in the mount commit win", () => {
   }
 });
 
-it("does not take focus from an open dialog when the conversation mounts late", () => {
-  const dialog = document.createElement("div");
-  dialog.setAttribute("role", "dialog");
-  dialog.setAttribute("aria-modal", "true");
-  const search = document.createElement("input");
-  dialog.append(search);
-  document.body.append(dialog);
-  try {
-    search.focus();
-    const h = mount({ autoFocus: true });
-    expect(search).toHaveFocus();
-    expect(h.input()).not.toHaveFocus();
-  } finally {
-    dialog.remove();
-  }
-});
+it.each([
+  ["an open dialog", { role: "dialog", "aria-modal": "true" }, {}],
+  ["an open menu", { role: "menu" }, {}],
+  ["a menu trigger", {}, { "aria-haspopup": "menu" }],
+] as const)(
+  "does not take focus from %s when the conversation mounts late",
+  (_name, layerAttributes, targetAttributes) => {
+    const layer = document.createElement("div");
+    const target = document.createElement("button");
+    for (const [name, value] of Object.entries(layerAttributes)) {
+      layer.setAttribute(name, value);
+    }
+    for (const [name, value] of Object.entries(targetAttributes)) {
+      target.setAttribute(name, value);
+    }
+    layer.append(target);
+    document.body.append(layer);
+    try {
+      target.focus();
+      const h = mount({ autoFocus: true });
+      expect(target).toHaveFocus();
+      expect(h.input()).not.toHaveFocus();
+    } finally {
+      layer.remove();
+    }
+  },
+);
 
 it("leaves focus alone unless an enabled composer opts into mount focus", () => {
   const h = mount();

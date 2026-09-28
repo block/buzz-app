@@ -64,9 +64,18 @@ export function AgentSettingsFields({
     (draft.environment[key] === undefined && environmentKeys.includes(key));
   const overridden = (key: string) =>
     ownOverride(key) || globalKeys.includes(key);
+  // Blank fields inherit Agent defaults for the same harness, then the build
+  // floor (Buzz Agent only). Hidden environment overrides are not guessed.
+  const inherited =
+    state.data?.defaultSettings?.harness === harnessKind(draft.command)
+      ? state.data?.defaultSettings
+      : undefined;
+  // Draft → same-harness Agent default → build floor, as native resolves it.
   const buzzProvider =
     draft.environment.BUZZ_AGENT_PROVIDER ??
-    (draft.provider || state.data?.agentDefaults?.provider);
+    (draft.provider ||
+      inherited?.provider ||
+      state.data?.agentDefaults?.provider);
   const modelDefaultKnown =
     (typeof draft.environment.BUZZ_AGENT_PROVIDER === "string" ||
       !overridden("BUZZ_AGENT_PROVIDER")) &&
@@ -77,12 +86,6 @@ export function AgentSettingsFields({
   const gooseProvider = goose
     ? effectiveGooseProvider(draft, environmentKeys)
     : null;
-  // Blank fields inherit Agent defaults for the same harness, then the build
-  // floor (Buzz Agent only). Hidden environment overrides are not guessed.
-  const inherited =
-    state.data?.defaultSettings?.harness === harnessKind(draft.command)
-      ? state.data?.defaultSettings
-      : undefined;
   const buzzAgent = harnessKind(draft.command) === "buzz-agent";
   // An environment selector can override the visible scalar default.
   const [modelKey, providerKey] = buzzAgent

@@ -35,6 +35,9 @@ jobs:
       - name: Frontend build
         run: pnpm exec vite build
       - name: All Vitest tests
+        env:
+          # Bound contention between suites that sign and verify large fixtures.
+          BUZZ_TEST_WORKERS: "2"
         run: node scripts/ci-test-report.mjs kind=vitest report=test-results/ci/vitest.json evidence=test-results/ci/vitest-timing.json title="Vitest tests" -- pnpm exec vitest run --reporter=default --reporter=json --outputFile=test-results/ci/vitest.json
       - name: Vitest timing evidence
         if: always()

@@ -258,7 +258,7 @@ function ProfileDetails({
   const name = identityName(
     pubkey,
     profile?.name ??
-      `${displayAgent ? "Agent " : ""}${formatPublicKey(pubkey)}`,
+      (displayAgent ? "Unknown agent" : (formatPublicKey(pubkey) ?? pubkey)),
   );
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)

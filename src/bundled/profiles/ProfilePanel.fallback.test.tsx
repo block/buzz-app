@@ -105,10 +105,10 @@ it("identifies unnamed profiles by public key and scopes shared agent hints to t
 
     await act(() => f.control.refresh());
     expect(
-      screen.getByRole("heading", { name: `Agent ${label}` }),
+      screen.getByRole("heading", { name: "Unknown agent" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: `Agent ${label} avatar` }),
+      screen.getByRole("img", { name: "Unknown agent avatar" }),
     ).toHaveAttribute("data-avatar-shape", "squircle");
 
     const stranger = keypair().pubkey;
@@ -121,7 +121,7 @@ it("identifies unnamed profiles by public key and scopes shared agent hints to t
     ).toBeInTheDocument();
 
     view.rerender(f.panel());
-    await screen.findByRole("heading", { name: `Agent ${label}` });
+    await screen.findByRole("heading", { name: "Unknown agent" });
     f.local.agent.relayUrl = "wss://other.example.test";
     await act(() => f.control.refresh());
     expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
@@ -143,7 +143,7 @@ it("keeps the known-agent fallback on profile failure and replaces it with relay
     await screen.findByText("Could not load this profile.");
     expect(
       screen.getByRole("heading", {
-        name: `Agent ${formatPublicKey(f.person.pubkey)}`,
+        name: "Unknown agent",
       }),
     ).toBeInTheDocument();
 
@@ -178,7 +178,7 @@ it("keeps the known-agent fallback on profile failure and replaces it with relay
 
 it("keeps an agent-avatar hint without granting ownership or native controls", async () => {
   const f = fixture();
-  const name = `Agent ${formatPublicKey(f.person.pubkey)}`;
+  const name = "Unknown agent";
   try {
     f.local.data.agents = [];
     await f.control.refresh();

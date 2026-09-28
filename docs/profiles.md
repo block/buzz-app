@@ -167,7 +167,7 @@ supplies agent display metadata, not management authority.
 - Message avatars use an app-local `buzz:agent-profile:<pubkey>` target when
   their existing display evidence identifies an agent, including kind-40002
   messages without profile metadata. This preserves the avatar shape and an
-  unnamed `Agent npub…xyz` heading. Other unnamed identities use `npub…xyz`.
+  unnamed **Unknown agent** heading. Other unnamed identities use `npub…xyz`.
   The full copyable public key and profile-read retry remain available.
   The navigation hint grants no ownership or native control and is not added
   to the shared agent directory. Public metadata and configured names still win.

@@ -182,7 +182,7 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
   await editor.closeInspector();
   expect(
     await page
-      .getByRole("switch", { name: /^Configuration: / })
+      .getByRole("switch", { name: /^Configuration$/ })
       .getAttribute("aria-checked"),
   ).toBe("false");
   await editor.rename("Incomplete editor");
@@ -249,7 +249,7 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   const editor = editorControls(page);
   const { button } = editor;
   const enabled = page.getByRole("switch", {
-    name: /^Configuration: /,
+    name: /^Configuration$/,
   });
   const reply = page.getByRole("switch", {
     name: "Reply in the triggering thread",
@@ -576,9 +576,7 @@ test("landing scan survives channel presentation churn without restarting", asyn
       window.workflowSessionFixture.releaseDefinitionRead(),
     );
   }
-  await expect(page.getByRole("status")).toHaveText(
-    "Workflow scan finished. Lists may be limited by the relay.",
-  );
+  await expect(page.getByRole("status")).toHaveText("Workflows loaded.");
   expect(
     await page.evaluate(() =>
       window.workflowSessionFixture.definitionChannelCount(),
@@ -626,9 +624,7 @@ test("a failed landing scan shows one recovery action instead of an error-card g
     ),
   ).toBe(2);
   await retry.click();
-  await expect(page.getByRole("status")).toHaveText(
-    "Workflow scan finished. Lists may be limited by the relay.",
-  );
+  await expect(page.getByRole("status")).toHaveText("Workflows loaded.");
   await expect(retry).toHaveCount(0);
   expect(
     await page.evaluate(() =>
@@ -709,6 +705,95 @@ test("landing activation confirms once and locks while delivery is unresolved", 
   expect(
     await page.evaluate(() => window.workflowSessionFixture.publications()),
   ).toBe(1);
+});
+
+// Native summary keyboard activation and the card overlay's pointer targets
+// require browser layout/default actions, which jsdom does not implement.
+test("compact restrictions stay reachable above card overlays and in the read-only editor", async ({
+  page,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html"));
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  const open = page.getByRole("button", {
+    name: "Open Fixture A helper",
+    exact: true,
+  });
+  const summary = page
+    .locator("summary")
+    .filter({ hasText: "Saving unavailable" });
+  const reason = page.getByText("Saving is unavailable from this host.", {
+    exact: true,
+  });
+  await expect(summary).toBeVisible();
+  await expect(reason).toBeHidden();
+  await open.focus();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await page.keyboard.press(tab);
+    if (await summary.evaluate((node) => node === document.activeElement))
+      break;
+  }
+  await expect(summary).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(reason).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await summary.click();
+  await expect(reason).toBeHidden();
+  await page
+    .getByRole("button", { name: "Actions for Fixture A helper" })
+    .click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await open.click();
+  await expect(
+    page.getByRole("dialog", { name: "Edit workflow" }),
+  ).toBeVisible();
+
+  await page.goto(url);
+  await page.evaluate(() => {
+    const fixture = window.workflowFixture;
+    const view = fixture.capability.definitions(
+      "44444444-4444-4444-8444-444444444444",
+    );
+    const snapshot = view.snapshot();
+    view.dispose();
+    fixture.definitions.update({
+      ...snapshot,
+      data: {
+        ...snapshot.data,
+        items: snapshot.data.items.map((item) => ({
+          ...item,
+          owner: "22".repeat(32),
+        })),
+      },
+    });
+  });
+  await page
+    .getByRole("button", { name: "Message helper", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "View workflow" });
+  const readOnly = dialog.locator("summary").filter({ hasText: "Read-only" });
+  await readOnly.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    dialog.getByText("Only the author can change this workflow."),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("switch", { name: "Configuration", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    dialog.getByRole("button", { name: "Edit workflow name" }),
+  ).toBeDisabled();
+  await dialog.getByRole("tab", { name: "YAML", exact: true }).click();
+  await expect(
+    dialog.getByRole("textbox", { name: "Workflow YAML" }),
+  ).toHaveAttribute("readonly", "");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
 });
 
 test("landing keeps a succeeded toggle locked until its exact revision is read back", async ({
@@ -1126,7 +1211,7 @@ test("schedule presets round-trip into YAML and warn before enabling a frequent 
   await expect(preset("Custom cron")).toBeChecked();
 
   await pill("Every hour").click();
-  await page.getByRole("switch", { name: /^Configuration: / }).click();
+  await page.getByRole("switch", { name: /^Configuration$/ }).click();
   await editor.primary("Create workflow").click();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText(
@@ -1270,14 +1355,14 @@ test("late webhook receipt survives navigation and exact readback on the landing
   const editor = editorControls(page);
   const { button, yaml } = editor;
   const caveat = page.getByText(
-    /Saving a disabled configuration does not confirm/,
+    /Turning off does not confirm runs have stopped/,
   );
   await expect(caveat).toBeVisible();
   await button("Open Fixture A helper").click();
   // In the editor the caveat lives in the collapsed settings section.
   await editor.disclose("Workflow settings & activity");
   await expect(
-    editor.region.getByText(/Saving a disabled configuration does not confirm/),
+    editor.region.getByText(/Turning off does not confirm runs have stopped/),
   ).toBeVisible();
   await editor.tab("YAML").click();
   await yaml.fill(
@@ -1684,10 +1769,7 @@ for (const lateReadback of [false, true]) {
         page.getByText("Reading configurations…", { exact: true }),
       ).toHaveCount(0);
       await expect(
-        page.getByText(
-          "Workflow scan finished. Lists may be limited by the relay.",
-          { exact: true },
-        ),
+        page.getByText("Workflows loaded.", { exact: true }),
       ).toHaveCount(1);
       await expect(
         page.getByText(/Configuration saved; waiting for a readback/),

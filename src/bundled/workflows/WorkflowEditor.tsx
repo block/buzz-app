@@ -143,16 +143,15 @@ export function WorkflowEditor({
   };
   const disabled = readOnly || busy || locked || chooseChannel;
   const controlReason = readOnly
-    ? "Read-only: this workflow belongs to another identity. Only its author can change it."
-    : busy
-      ? "A workflow operation is pending. Controls are unavailable until it is resolved."
-      : locked
-        ? "Resolve the submitted operation below before editing."
+    ? "Only the author can change this workflow."
+    : (blocked ??
+      (busy || locked
+        ? "Review Recent activity before editing."
         : chooseChannel
           ? "Choose a channel before editing."
           : !fields.editable
-            ? "Correct the YAML before changing the name or configured state."
-            : undefined;
+            ? "Correct the YAML before changing the name or configuration."
+            : undefined));
   return (
     <Dialog
       open
@@ -241,9 +240,6 @@ export function WorkflowEditor({
       <section aria-label="Workflow editor" className="workflow-editor">
         <div className="workflow-toolbar">
           <div className="workflow-name">
-            {!editingName && (
-              <span className="text-label text-secondary">Workflow name</span>
-            )}
             {editingName ? (
               <Field
                 label="Workflow name"
@@ -291,7 +287,7 @@ export function WorkflowEditor({
                 <IconButton
                   ref={nameButton}
                   aria-label="Edit workflow name"
-                  title={controlReason ?? "Edit workflow name"}
+                  title="Edit workflow name"
                   aria-describedby={
                     [
                       controlReason && `${id}-control-reason`,
@@ -320,25 +316,30 @@ export function WorkflowEditor({
               </p>
             )}
           </div>
-          <Switch
-            label={`Configuration: ${fields.enabled !== false ? "On" : "Off"}`}
-            aria-describedby={
-              controlReason ? `${id}-control-reason` : undefined
-            }
-            checked={fields.enabled !== false}
-            disabled={disabled || !fields.editable}
-            onCheckedChange={(enabled) =>
-              changeHeader(yamlWithWorkflowEnabled(yaml, enabled), { enabled })
-            }
-          />
-          {controlReason && (
-            <p
-              id={`${id}-control-reason`}
-              role="status"
-              className="workflow-control-reason text-body-sm text-secondary"
-            >
-              {controlReason}
-            </p>
+          {readOnly && (
+            <details className="workflow-restriction text-body-sm text-secondary">
+              <summary>Read-only</summary>
+              <p id={`${id}-control-reason`}>{controlReason}</p>
+            </details>
+          )}
+          {fields.editable ? (
+            <Switch
+              label="Configuration"
+              aria-describedby={
+                controlReason ? `${id}-control-reason` : undefined
+              }
+              checked={fields.enabled !== false}
+              disabled={disabled}
+              onCheckedChange={(enabled) =>
+                changeHeader(yamlWithWorkflowEnabled(yaml, enabled), {
+                  enabled,
+                })
+              }
+            />
+          ) : (
+            <span className="text-body-sm text-secondary">
+              Unreadable configuration
+            </span>
           )}
         </div>
         <div className="workflow-editor-body">
@@ -389,13 +390,19 @@ export function WorkflowEditor({
                 {error}
               </p>
             )}
-          {blocked && (
-            <p role="status" className="text-secondary">
-              {blocked}
+        </div>
+        <div className="workflow-editor-status">
+          {!readOnly && controlReason && (
+            <p
+              id={`${id}-control-reason`}
+              role="status"
+              className="text-body-sm text-secondary"
+            >
+              {controlReason}
             </p>
           )}
+          {status}
         </div>
-        {status && <div className="workflow-editor-status">{status}</div>}
         {!chooseChannel && (
           <Accordion
             variant="form"

@@ -16,55 +16,60 @@ vi.stubGlobal(
   },
 );
 afterEach(cleanup);
-function Example({ initial = fixtureYaml }: { initial?: string }) {
+function Example({
+  initial = fixtureYaml,
+  onSave = () => {},
+}: {
+  initial?: string;
+  onSave?: (yaml: string) => void;
+}) {
   const [yaml, setYaml] = useState(initial);
   return (
     <WorkflowEditor
       yaml={yaml}
       initialYaml={initial}
       onChange={setYaml}
-      onSave={vi.fn()}
+      onSave={() => onSave(yaml)}
     />
   );
 }
 
-test("labels the name and configured state, and explains the rename control", async () => {
+test("keeps naming compact and applies header changes only on save", async () => {
   const user = userEvent.setup();
-  render(<Example />);
-  expect(screen.getByText("Workflow name")).toBeVisible();
+  const save = vi.fn();
+  render(<Example onSave={save} />);
+  expect(screen.getByText("Message helper")).toBeVisible();
+  expect(screen.queryByText("Workflow name")).not.toBeInTheDocument();
   const rename = screen.getByRole("button", { name: "Edit workflow name" });
   await user.hover(rename);
   expect(await screen.findByRole("tooltip")).toHaveTextContent(
     "Edit workflow name",
   );
   await user.unhover(rename);
-  const toggle = screen.getByRole("switch", { name: "Configuration: Off" });
+  const toggle = screen.getByRole("switch", { name: "Configuration" });
   expect(toggle).not.toBeChecked();
   await user.click(toggle);
-  expect(
-    screen.getByRole("switch", { name: "Configuration: On" }),
-  ).toBeChecked();
+  expect(toggle).toBeChecked();
   await user.click(toggle);
-  expect(
-    screen.getByRole("switch", { name: "Configuration: Off" }),
-  ).not.toBeChecked();
+  expect(toggle).not.toBeChecked();
+  await user.click(rename);
+  const name = screen.getByRole("textbox", { name: "Workflow name" });
+  await user.clear(name);
+  await user.type(name, "Renamed draft{Enter}");
+  expect(save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(parse(save.mock.calls[0]?.[0])).toMatchObject({
+    name: "Renamed draft",
+    enabled: false,
+  });
 });
 
 test.each([
-  [
-    { readOnly: true },
-    "Read-only: this workflow belongs to another identity. Only its author can change it.",
-  ],
-  [
-    { busy: true },
-    "A workflow operation is pending. Controls are unavailable until it is resolved.",
-  ],
-  [{ locked: true }, "Resolve the submitted operation below before editing."],
+  [{ readOnly: true }, "Only the author can change this workflow."],
+  [{ busy: true }, "Review Recent activity before editing."],
+  [{ locked: true }, "Review Recent activity before editing."],
   [{ chooseChannel: true }, "Choose a channel before editing."],
-  [
-    { yaml: "name: [" },
-    "Correct the YAML before changing the name or configured state.",
-  ],
 ])("explains unavailable header controls (%j)", async (props, reason) => {
   const change = vi.fn();
   const { rerender } = render(
@@ -81,6 +86,10 @@ test.each([
   expect(rename).toBeDisabled();
   expect(toggle).toHaveAccessibleDescription(reason);
   expect(rename).toHaveAccessibleDescription(expect.stringContaining(reason));
+  if ("readOnly" in props) {
+    expect(screen.getByText(reason)).not.toBeVisible();
+    await userEvent.setup().click(screen.getByText("Read-only"));
+  }
   expect(screen.getByText(reason)).toBeVisible();
   expect(change).not.toHaveBeenCalled();
   rerender(
@@ -143,6 +152,16 @@ test("form errors follow the editable field and clear when corrected", async () 
 test("YAML errors replace help, retain the draft and restore help after recovery", async () => {
   const user = userEvent.setup();
   render(<Example initial="name: [" />);
+  expect(
+    screen.queryByRole("switch", { name: "Configuration" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("Unreadable configuration")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Edit workflow name" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Edit workflow name" }),
+  ).toHaveAccessibleDescription(expect.stringContaining("Correct the YAML"));
   const yaml = screen.getByRole("textbox", { name: "Workflow YAML" });
   expect(yaml).toHaveAttribute("aria-invalid", "true");
   expect(yaml).toHaveAccessibleDescription(
@@ -155,7 +174,18 @@ test("YAML errors replace help, retain the draft and restore help after recovery
   await user.paste(fixtureYaml);
   expect(yaml).not.toHaveAttribute("aria-invalid", "true");
   expect(yaml).toHaveAccessibleDescription(/Original text is kept/);
+  expect(
+    screen.getByRole("switch", { name: "Configuration" }),
+  ).not.toBeChecked();
+  expect(
+    screen.queryByText("Unreadable configuration"),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+});
+
+test("a readable definition without enabled retains its default on state", () => {
+  render(<Example initial={fixtureYaml.replace("enabled: false\n", "")} />);
+  expect(screen.getByRole("switch", { name: "Configuration" })).toBeChecked();
 });
 
 test("valid advanced YAML stays valid when Form mode cannot represent it", async () => {

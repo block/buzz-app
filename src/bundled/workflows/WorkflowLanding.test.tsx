@@ -137,9 +137,7 @@ it("reads 500 mixed member channels in four serial batches and never rereads on 
       expect(fixture.reads).toHaveLength(i + 1);
       await fixture.finish(i);
     }
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Workflow scan finished.",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Workflows loaded.");
     expect(fixture.reads.map((r) => r.ids.length)).toEqual([
       128, 128, 128, 116,
     ]);
@@ -208,9 +206,7 @@ it("purges globally without automatic reads and recovers remaining channels on m
     expect(fixture.reads).toHaveLength(3);
     fixture.refresh();
     await fixture.finish(3);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Workflow scan finished.",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Workflows loaded.");
   } finally {
     fixture.close();
   }
@@ -393,9 +389,7 @@ for (const interrupt of [false, true]) {
       expect(fixture.reads.slice(2).flatMap((r) => r.ids)).toEqual(
         expected.map((c) => c.id),
       );
-      expect(screen.getByRole("status")).toHaveTextContent(
-        "Workflow scan finished.",
-      );
+      expect(screen.getByRole("status")).toHaveTextContent("Workflows loaded.");
       expect(
         screen.getByRole("button", { name: "Open Message helper" }),
       ).toBeVisible();
@@ -423,9 +417,7 @@ it("reports synchronous view admission failure once and retries its unread roste
     expect(fixture.reads.map((r) => r.ids)).toEqual([
       [channel(1).id, channel(2).id],
     ]);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Workflow scan finished.",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Workflows loaded.");
   } finally {
     for (const view of blockers) view.dispose();
     fixture.close();
@@ -486,9 +478,7 @@ it("drops queued readback for a removed membership without restoring its card", 
     expect(
       screen.queryByRole("button", { name: "Open Message helper" }),
     ).toBeNull();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Workflow scan finished.",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Workflows loaded.");
   } finally {
     fixture.close();
   }
@@ -506,9 +496,7 @@ it("skips already copied revisions and does not replay readback on landing remou
     await fixture.finish(1, [saved]);
     expect(fixture.reads).toHaveLength(2);
     expect(fixture.reads[1]?.ids).toEqual([a.id, b.id]);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Workflow scan finished.",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Workflows loaded.");
     expect(
       screen.getByRole("button", { name: "Open Message helper" }),
     ).toBeVisible();

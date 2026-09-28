@@ -283,16 +283,16 @@ export function WorkflowChannel({
     blocked = "Saving is unavailable from this host.";
   else if (unresolvedWrite && !draft?.operationId)
     blocked =
-      "Check the saved configuration or review the unresolved request in Recent activity before continuing.";
+      "Review the unresolved request in Recent activity before continuing.";
   else if (draft?.operationId)
     blocked =
       operation?.outcome === "succeeded"
         ? operation.action === "delete"
           ? "Deletion request accepted, not verified runtime deletion. The configuration may remain visible. Review Recent activity to continue."
-          : "Configuration saved; waiting for a readback of this exact revision. Check saved configuration or review the current version in Recent activity."
+          : "Configuration saved; waiting for a readback of this exact revision."
         : operation?.outcome === "rejected"
-          ? "Request rejected. Your draft is retained; review the error before continuing."
-          : "Your draft is retained. Check the saved configuration or review the request in Recent activity to continue.";
+          ? "Draft retained. Review the error below before continuing."
+          : undefined;
   if (!snapshot) return <p role="status">Reading configurations…</p>;
   return (
     <section aria-label={`Workflows in ${channelName}`}>
@@ -319,9 +319,8 @@ export function WorkflowChannel({
       )}
       {!detailOnly && (
         <p className="text-body-sm text-secondary">
-          Configured activation may differ from the existing backend’s runtime
-          state. Saving a disabled configuration does not confirm that automatic
-          runs have stopped or cancel work already running.
+          Saved configuration only. Turning off does not confirm runs have
+          stopped or cancel active runs.
         </p>
       )}
       {snapshot.status === "loading" && (
@@ -512,15 +511,12 @@ export function WorkflowChannel({
             details={
               <>
                 <p className="text-body-sm text-subtle">
-                  Configured activation may differ from the existing backend’s
-                  runtime state. Saving a disabled configuration does not
-                  confirm that automatic runs have stopped or cancel work
-                  already running.
+                  Configuration changes apply on save. Turning off does not
+                  confirm runs have stopped or cancel active runs.
                 </p>
                 <p className="text-body-sm text-subtle">
-                  Drafts stay in this editor only. Leaving the Workflows page or
-                  reloading discards unsaved text, but does not cancel submitted
-                  operations.
+                  Unsaved changes stay in this editor. Leaving or reloading
+                  discards them without cancelling submitted operations.
                 </p>
                 {draft.original && (
                   <details>

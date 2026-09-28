@@ -31,7 +31,7 @@ export interface WorkflowView<T> {
     error?: string;
   }>;
   subscribe(listener: () => void): () => void;
-  refresh(): Promise<void>;
+  refresh(options?: { ifStale?: boolean }): Promise<void>;
   dispose(): void;
 }
 

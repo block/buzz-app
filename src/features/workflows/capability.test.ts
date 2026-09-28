@@ -15,6 +15,8 @@ const yaml =
 const disposers: (() => void)[] = [];
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 function setup(relayHttpUrl?: string) {
   const key = keypair();
@@ -268,6 +270,61 @@ it("stale/legacy deletion receipt never proves deletion", async () => {
   expect(h.capability.operations.snapshot()[1]?.outcome).toBe("succeeded");
 });
 
+it("reuses completed aggregate definitions only for fresh session-cache reads", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const h = setup();
+  const other = "44444444-4444-4444-8444-444444444444";
+  const row = signed(keypair(), {
+    kind: 30620,
+    created_at: 1,
+    content: yaml,
+    tags: [
+      ["h", channelId],
+      ["d", id],
+    ],
+  });
+  h.read.mockResolvedValue([row]);
+  const first = h.capability.definitions([channelId, other]);
+  await first.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(1);
+  first.dispose();
+
+  const fresh = h.capability.definitions([other, channelId]);
+  expect(fresh.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [{ revision: row.id }] },
+  });
+  await fresh.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(1);
+  await fresh.refresh();
+  expect(h.read).toHaveBeenCalledTimes(2);
+  fresh.dispose();
+
+  vi.setSystemTime(10_001);
+  const stale = h.capability.definitions([channelId, other]);
+  expect(stale.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [{ revision: row.id }] },
+  });
+  const refreshing = stale.refresh({ ifStale: true });
+  expect(stale.snapshot()).toMatchObject({
+    status: "loading",
+    data: { items: [{ revision: row.id }] },
+  });
+  await refreshing;
+  expect(h.read).toHaveBeenCalledTimes(3);
+  stale.dispose();
+
+  vi.setSystemTime(70_002);
+  expect(h.capability.definitions([channelId, other]).snapshot()).toMatchObject(
+    {
+      status: "idle",
+      data: { items: [] },
+    },
+  );
+});
+
 it.each([true, false])(
   "fresh exact saved configuration resolves a lost save receipt without replay (echo=%s)",
   async (echo) => {
@@ -464,12 +521,9 @@ it("batch definitions use one bounded filter and count unique events before coor
   });
   expect(view.snapshot().data.items).toHaveLength(2);
   expect(h.read).toHaveBeenCalledTimes(4);
-  expect(
-    h.capability.definitions([channelId, other, empty]).snapshot(),
-  ).toMatchObject({
-    status: "idle",
-    data: { items: [] },
-  });
+  const cached = h.capability.definitions([channelId, other, empty]).snapshot();
+  expect(cached.status).toBe("ready");
+  expect(cached.data.items).toHaveLength(2);
   h.read.mockResolvedValue([make("55555555-5555-4555-8555-555555555555", 1)]);
   await view.refresh();
   expect(view.snapshot()).toMatchObject({

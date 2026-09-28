@@ -23,6 +23,10 @@ import {
   UUID,
 } from "./protocol";
 
+const WORKFLOW_DEFINITION_CACHE_FRESH_MS = 10_000;
+const WORKFLOW_DEFINITION_CACHE_RETAIN_MS = 60_000;
+const WORKFLOW_DEFINITION_CACHE_MAX_ENTRIES = 32;
+
 /** Session-owned configuration snapshots and bounded result state; never an engine. */
 export function createWorkflows({
   reader,
@@ -45,6 +49,52 @@ export function createWorkflows({
   notify?: (listener: () => void) => void;
 }) {
   let closed = false;
+  let definitionCacheVersion = 0;
+  const definitionCache = new Map<
+    string,
+    {
+      data: WorkflowDefinitions;
+      readAt: number;
+      lastUsedAt: number;
+    }
+  >();
+  function pruneDefinitionCache(now = Date.now()) {
+    for (const [key, entry] of definitionCache)
+      if (now - entry.readAt > WORKFLOW_DEFINITION_CACHE_RETAIN_MS)
+        definitionCache.delete(key);
+    while (definitionCache.size > WORKFLOW_DEFINITION_CACHE_MAX_ENTRIES) {
+      let oldestKey: string | undefined;
+      let oldest = Infinity;
+      for (const [key, entry] of definitionCache) {
+        if (entry.lastUsedAt >= oldest) continue;
+        oldest = entry.lastUsedAt;
+        oldestKey = key;
+      }
+      if (!oldestKey) break;
+      definitionCache.delete(oldestKey);
+    }
+  }
+  function cachedDefinitions(key: string) {
+    const now = Date.now();
+    pruneDefinitionCache(now);
+    const cached = definitionCache.get(key);
+    if (cached) cached.lastUsedAt = now;
+    return cached;
+  }
+  function retainDefinitions(
+    key: string,
+    data: WorkflowDefinitions,
+    version: number,
+  ) {
+    if (version !== definitionCacheVersion) return;
+    const now = Date.now();
+    definitionCache.set(key, { data, readAt: now, lastUsedAt: now });
+    pruneDefinitionCache(now);
+  }
+  function invalidateDefinitionCache() {
+    definitionCache.clear();
+    definitionCacheVersion++;
+  }
   const views = new Set<{
     clear(): void;
     interrupt(): void;
@@ -137,6 +187,7 @@ export function createWorkflows({
     empty: T,
     load: (signal: AbortSignal) => Promise<T>,
     accept?: (data: T) => void,
+    cached?: { data: T; isFresh(): boolean },
   ): WorkflowView<T> {
     const channelIds =
       typeof channelId === "string" ? [channelId] : [...new Set(channelId)];
@@ -155,8 +206,14 @@ export function createWorkflows({
     const subscribers = new Set<() => void>();
     type Snapshot = ReturnType<WorkflowView<T>["snapshot"]>;
     let snapshot: Snapshot = Object.freeze({
-      status: available && !closed && accessible() ? "idle" : "unavailable",
-      data: empty,
+      status:
+        available && !closed && accessible()
+          ? cached
+            ? "ready"
+            : "idle"
+          : "unavailable",
+      data:
+        available && !closed && accessible() ? (cached?.data ?? empty) : empty,
     });
     const emit = () => {
       for (const listener of subscribers) notify(listener);
@@ -207,7 +264,7 @@ export function createWorkflows({
           subscribers.delete(listener);
         };
       },
-      refresh() {
+      refresh({ ifStale = false } = {}) {
         if (closed || disposed || !available) return Promise.resolve();
         if (!accessible()) {
           clear();
@@ -215,6 +272,8 @@ export function createWorkflows({
           return Promise.resolve();
         }
         if (pending) return pending;
+        if (ifStale && snapshot.status === "ready" && cached?.isFresh())
+          return Promise.resolve();
         const owned = new AbortController();
         controller = owned;
         // Paged batches use the shared reader's deadline for each request.
@@ -308,6 +367,7 @@ export function createWorkflows({
     if (receiptInterest.size >= 256)
       throw new Error("Too many unresolved workflow commands");
     const id = outbox.send(input);
+    if (kind !== 46020) invalidateDefinitionCache();
     receiptInterest.add(id);
     return id;
   }
@@ -317,6 +377,9 @@ export function createWorkflows({
       const aggregate = typeof channelId !== "string";
       const channelIds =
         typeof channelId === "string" ? [channelId] : [...new Set(channelId)];
+      const cacheKey = aggregate ? [...channelIds].sort().join(":") : "";
+      const cached = aggregate ? cachedDefinitions(cacheKey) : undefined;
+      let readVersion = definitionCacheVersion;
       return view<WorkflowDefinitions>(
         channelId,
         !!reader,
@@ -326,6 +389,7 @@ export function createWorkflows({
         }),
         async (signal) => {
           if (!reader) throw new Error("Workflow definitions unavailable");
+          readVersion = definitionCacheVersion;
           const coordinates = new Map<string, WorkflowDefinition>();
           let cursor: { until: number; before_id: string } | undefined;
           let partial = false;
@@ -387,7 +451,9 @@ export function createWorkflows({
             partialChannelIds: Object.freeze(partial ? channelIds : []),
           });
         },
-        ({ items }) => {
+        (data) => {
+          if (aggregate) retainDefinitions(cacheKey, data, readVersion);
+          const { items } = data;
           // Only a fresh, verified exact configuration head resolves an unknown
           // save. An echo, another revision, or run history cannot do so.
           let changed = false;
@@ -411,6 +477,14 @@ export function createWorkflows({
           }
           if (changed) rebuild();
         },
+        cached
+          ? {
+              data: cached.data,
+              isFresh: () =>
+                definitionCache.get(cacheKey) === cached &&
+                Date.now() - cached.readAt < WORKFLOW_DEFINITION_CACHE_FRESH_MS,
+            }
+          : undefined,
       );
     },
     runs(workflow, cursor) {
@@ -486,6 +560,7 @@ export function createWorkflows({
     },
     receipt(event: EventData, message: string | undefined) {
       if (closed || !receiptInterest.delete(event.id)) return;
+      if (event.kind !== 46020) invalidateDefinitionCache();
       if (message === undefined) {
         if (results.get(event.id)?.outcome !== "succeeded")
           results.delete(event.id);
@@ -542,11 +617,13 @@ export function createWorkflows({
       rebuild();
     },
     interrupt() {
+      invalidateDefinitionCache();
       // Socket recovery retires reads, not editor intent or HTTP receipt interest.
       for (const owned of views) owned.interrupt();
       for (const owned of views) owned.emit();
     },
     clear() {
+      invalidateDefinitionCache();
       results.clear();
       secrets.clear();
       receiptInterest.clear();
@@ -558,6 +635,7 @@ export function createWorkflows({
     },
     dispose() {
       closed = true;
+      invalidateDefinitionCache();
       for (const owned of [...views]) owned.dispose();
       results.clear();
       secrets.clear();

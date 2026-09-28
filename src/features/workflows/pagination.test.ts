@@ -87,7 +87,7 @@ it.each([0, 99, 100, 101, 200, 201])(
     expect(h.read.mock.calls.every(([, options]) => options?.fresh)).toBe(true);
     view.dispose();
     expect(h.capability.definitions([channel, other]).snapshot().status).toBe(
-      "idle",
+      "ready",
     );
   },
 );

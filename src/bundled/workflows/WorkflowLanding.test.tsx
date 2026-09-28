@@ -9,7 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { StrictMode } from "react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
@@ -18,7 +18,10 @@ import { WorkflowLanding } from "./WorkflowLanding";
 import type { WorkflowDefinition } from "../../features/workflows/types";
 import { fixtureDefinition, fixtureViewer, fixtureYaml } from "./fixtures";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 const channel = (index: number): ChannelSummary => ({
   id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
   name: `Channel ${index}`,
@@ -529,7 +532,7 @@ it("drops queued readback for a removed membership without restoring its card", 
   }
 });
 
-it("skips already copied revisions and does not replay readback on landing remount", async () => {
+it("reuses fresh session cache and does not replay readback on landing remount", async () => {
   const [a, b] = [channel(1), channel(2)];
   const saved = event(a.id);
   const fixture = mount([a, b]);
@@ -538,15 +541,65 @@ it("skips already copied revisions and does not replay readback on landing remou
     fixture.readback(a.id, saved.id);
     expect(fixture.reads).toHaveLength(1);
     fixture.remount();
-    await fixture.finish(1, [saved]);
-    expect(fixture.reads).toHaveLength(2);
-    expect(fixture.reads[1]?.ids).toEqual([a.id, b.id]);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Workflow scan finished.",
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Workflow scan finished.",
+      ),
     );
+    expect(fixture.reads).toHaveLength(1);
     expect(
       screen.getByRole("button", { name: "Open Message helper" }),
     ).toBeVisible();
+  } finally {
+    fixture.close();
+  }
+});
+
+it("reuses fresh cached results for every completed batch after navigation", async () => {
+  const channels = Array.from({ length: 129 }, (_, i) => channel(i + 1));
+  const fixture = mount(channels);
+  try {
+    await fixture.finish(0, [event(channel(1).id)]);
+    await fixture.finish(1, [event(channel(129).id)]);
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Workflow scan finished.",
+      ),
+    );
+    expect(fixture.reads.map((read) => read.ids.length)).toEqual([128, 1]);
+    fixture.remount();
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Workflow scan finished.",
+      ),
+    );
+    expect(fixture.reads).toHaveLength(2);
+    expect(
+      screen.getAllByRole("button", { name: "Open Message helper" }),
+    ).toHaveLength(2);
+  } finally {
+    fixture.close();
+  }
+});
+
+it("shows stale cached cards on remount while refreshing and retrying", async () => {
+  let now = 0;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const [a, b] = [channel(1), channel(2)];
+  const fixture = mount([a, b]);
+  try {
+    await fixture.finish(0, [event(a.id)]);
+    now = 10_001;
+    fixture.remount();
+    await waitFor(() => expect(fixture.reads).toHaveLength(2));
+    expect(
+      screen.getByRole("button", { name: "Open Message helper" }),
+    ).toBeVisible();
+    await act(async () => fixture.reads[1]?.reject(new Error("offline")));
+    expect(
+      screen.getByRole("button", { name: "Open Message helper" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
   } finally {
     fixture.close();
   }

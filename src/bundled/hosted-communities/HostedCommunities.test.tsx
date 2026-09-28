@@ -1085,7 +1085,6 @@ it("terminates pending recovery on a bound aborted receipt", async () => {
       {
         ...request,
         error: { code: "deletion_aborted" },
-        status: "aborted",
         correlation_id: "corr-aborted",
       },
       { status: 409 },

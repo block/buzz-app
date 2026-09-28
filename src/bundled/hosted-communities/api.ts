@@ -344,7 +344,6 @@ function deletionResult(
     return value;
   if (
     value.error?.code === "deletion_aborted" &&
-    value.status === "aborted" &&
     matchesDeletion(value, request)
   )
     check(value, "Could not check deletion status.");

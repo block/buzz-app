@@ -188,7 +188,6 @@ it("accepts only a full tuple-bound aborted receipt as terminal", async () => {
         {
           ...request,
           error: { code: "deletion_aborted" },
-          status: "aborted",
           correlation_id: "corr-bound-abort",
         },
         { status: 409 },

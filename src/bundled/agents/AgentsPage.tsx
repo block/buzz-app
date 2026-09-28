@@ -50,6 +50,9 @@ export function AgentsPage({
     options?: { replace?: boolean },
   ) => Promise<OpenResult>;
 }) {
+  const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(
+    null,
+  );
   const connection = useRelayConnection(relay);
   const registeredPanels = useSyncExternalStore(
     panels?.subscribe ?? noPanelSubscribe,
@@ -120,6 +123,7 @@ export function AgentsPage({
       <AgentLibrary
         key={`${connection.scope}:${connection.generation}`}
         session={connection.session}
+        headerActions={headerActions}
       />
     ) : (
       <div>
@@ -147,7 +151,10 @@ export function AgentsPage({
       <PanelFrame companion={pageCompanion}>
         <FullPageSurface aria-label="Agents">
           <div className="flex h-full min-h-0 flex-col">
-            <PanelHeader title="Agents" />
+            <PanelHeader
+              title="Agents"
+              actions={<div ref={setHeaderActions} />}
+            />
             <div className="min-h-0 flex-1 overflow-auto p-panel-inset text-body">
               <div className="mx-auto flex max-w-6xl flex-col gap-panel-gap">
                 {control ? (

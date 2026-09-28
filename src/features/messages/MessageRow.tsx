@@ -492,7 +492,14 @@ export const MessageRow = memo(function MessageRow({
                     {...(onOpenMediaReview
                       ? {
                           onOpenReview: (item, seconds) =>
-                            onOpenMediaReview(row.id, item, seconds, row.replyCount > 0 || (!!row.threadRootId && row.threadRootId !== row.id)),
+                            onOpenMediaReview(
+                              row.id,
+                              item,
+                              seconds,
+                              row.replyCount > 0 ||
+                                (!!row.threadRootId &&
+                                  row.threadRootId !== row.id),
+                            ),
                         }
                       : {})}
                   />
@@ -516,7 +523,14 @@ export const MessageRow = memo(function MessageRow({
                   {...(onOpenMediaReview
                     ? {
                         onOpenReview: (item, seconds) =>
-                          onOpenMediaReview(row.id, item, seconds, row.replyCount > 0 || (!!row.threadRootId && row.threadRootId !== row.id)),
+                          onOpenMediaReview(
+                            row.id,
+                            item,
+                            seconds,
+                            row.replyCount > 0 ||
+                              (!!row.threadRootId &&
+                                row.threadRootId !== row.id),
+                          ),
                       }
                     : {})}
                 />

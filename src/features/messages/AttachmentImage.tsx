@@ -26,16 +26,17 @@ export function AttachmentImage({
   onOpenReview?: (attachment: Attachment, seconds: number) => void;
 }) {
   const corners = useMediaCorners();
-  const style = !thumbnail && attachment.dimensions
-    ? {
-        width: Math.min(
-          360,
-          attachment.dimensions.width,
-          (320 * attachment.dimensions.width) / attachment.dimensions.height,
-        ),
-        aspectRatio: `${attachment.dimensions.width} / ${attachment.dimensions.height}`,
-      }
-    : undefined;
+  const style =
+    !thumbnail && attachment.dimensions
+      ? {
+          width: Math.min(
+            360,
+            attachment.dimensions.width,
+            (320 * attachment.dimensions.width) / attachment.dimensions.height,
+          ),
+          aspectRatio: `${attachment.dimensions.width} / ${attachment.dimensions.height}`,
+        }
+      : undefined;
   if (!source)
     return cached ? (
       <span
@@ -46,7 +47,12 @@ export function AttachmentImage({
         aria-hidden="true"
       />
     ) : (
-      <span className={thumbnail ? styles.imageUnavailable : styles.attachmentUnavailable} role="status">
+      <span
+        className={
+          thumbnail ? styles.imageUnavailable : styles.attachmentUnavailable
+        }
+        role="status"
+      >
         Image unavailable
       </span>
     );

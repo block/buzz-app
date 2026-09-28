@@ -825,12 +825,13 @@ it.each([9, 40002])(
 );
 
 it.each([
-  { replyCount: 0, threadRootId: undefined, expected: false },
-  { replyCount: 2, threadRootId: undefined, expected: true },
-  { replyCount: 0, threadRootId: "parent", expected: true },
+  { replyCount: 0, threadRootId: undefined, expected: false, count: 1 },
+  { replyCount: 2, threadRootId: undefined, expected: true, count: 1 },
+  { replyCount: 0, threadRootId: "parent", expected: true, count: 1 },
+  { replyCount: 2, threadRootId: undefined, expected: true, count: 2 },
 ])(
   "passes known comment state from the chat photo to its viewer: $expected",
-  ({ replyCount, threadRootId, expected }) => {
+  ({ replyCount, threadRootId, expected, count }) => {
     const attachment = {
       kind: "image" as const,
       url: "https://fixture.test/photo.png",
@@ -840,7 +841,13 @@ it.each([
       <MessageRow
         row={{
           ...row,
-          attachments: [attachment],
+          attachments:
+            count === 1
+              ? [attachment]
+              : [
+                  attachment,
+                  { ...attachment, url: "https://fixture.test/second.png" },
+                ],
           replyCount,
           ...(threadRootId ? { threadRootId } : {}),
         }}
@@ -853,7 +860,9 @@ it.each([
       />,
     );
     fireEvent.click(
-      screen.getByRole("link", { name: "Open image attachment" }),
+      screen.getByRole("link", {
+        name: count === 1 ? "Open image attachment" : "Open image 1 of 2",
+      }),
       { detail: 1 },
     );
     expect(open).toHaveBeenCalledWith(row.id, attachment, 0, expected);

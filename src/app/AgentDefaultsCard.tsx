@@ -54,7 +54,7 @@ export function AgentDefaultsCard({
         setDraft(null);
         setNewKey("");
         setNewValue("");
-        setNotice(savedMessage(snapshot.restarted));
+        setNotice(savedMessage(snapshot.restarted, snapshot.restartFailures));
       },
       () => setError("Agent defaults weren’t saved. Try again."),
     );

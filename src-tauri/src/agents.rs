@@ -24,6 +24,9 @@ pub(crate) struct Snapshot {
     /// Running agents restarted by this save; absent on other responses.
     #[serde(skip_serializing_if = "Option::is_none")]
     restarted: Option<usize>,
+    /// Agents whose automatic restart after this save failed (not skipped).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restart_failures: Option<usize>,
 }
 impl Snapshot {
     fn from(data: ControlSnapshot, import_available: bool, workspace: &std::path::Path) -> Self {
@@ -37,6 +40,7 @@ impl Snapshot {
             databricks_defaults: crate::agent_models::defaults(),
             agent_defaults: buzz_agent_controller::build_defaults(),
             restarted: None,
+            restart_failures: None,
         }
     }
 }
@@ -591,7 +595,7 @@ async fn save_and_restart(
         Ok(changed_running(before, after))
     })
     .await?;
-    let mut restarted = 0;
+    let (mut restarted, mut failures) = (0, 0);
     for id in changed {
         // Re-checked under the lock: Stop wins, and a subsequent user Start
         // may already have launched the saved settings.
@@ -601,22 +605,41 @@ async fn save_and_restart(
             Action::Restart,
             false,
             None,
-            Some((needs_save_restart, "Agent no longer needs a save restart")),
+            Some((needs_save_restart, NO_SAVE_RESTART)),
         )
         .await;
-        if result.is_ok_and(|snapshot| {
-            snapshot
-                .data
-                .agents
-                .iter()
-                .any(|agent| agent.id == id && is_running(agent))
-        }) {
-            restarted += 1;
+        match restart_outcome(&id, result) {
+            RestartOutcome::Restarted => restarted += 1,
+            RestartOutcome::Skipped => {}
+            RestartOutcome::Failed => failures += 1,
         }
     }
     let mut snapshot = run(owner, |host| host.snapshot()).await?;
     snapshot.restarted = Some(restarted);
+    snapshot.restart_failures = Some(failures);
     Ok(snapshot)
+}
+#[derive(Debug, PartialEq)]
+enum RestartOutcome {
+    Restarted,
+    /// No longer needed, or an explicit Stop/newer action won: not a failure.
+    Skipped,
+    Failed,
+}
+const NO_SAVE_RESTART: &str = "Agent no longer needs a save restart";
+fn restart_outcome(id: &str, result: Result<Snapshot, String>) -> RestartOutcome {
+    match result {
+        Err(error) if error == NO_SAVE_RESTART || error == START_CANCELLED => {
+            RestartOutcome::Skipped
+        }
+        Err(_) => RestartOutcome::Failed,
+        Ok(snapshot) => match snapshot.data.agents.iter().find(|agent| agent.id == id) {
+            Some(agent) if is_running(agent) => RestartOutcome::Restarted,
+            // Stop disabled it while the restart was in flight.
+            Some(agent) if !agent.enabled => RestartOutcome::Skipped,
+            _ => RestartOutcome::Failed,
+        },
+    }
 }
 /// Agents live both before and after a save whose effective settings differ.
 fn changed_running(
@@ -688,6 +711,7 @@ pub(crate) async fn start(
     ));
     start_guarded(owner, id, action, restore, replay_floor, guard).await
 }
+const START_CANCELLED: &str = "Start cancelled by a newer action";
 type StartGuard = (fn(&buzz_agent_controller::AgentView) -> bool, &'static str);
 fn check_guard(host: &mut Host, id: &str, guard: Option<StartGuard>) -> Result<(), String> {
     let Some((eligible, refusal)) = guard else {
@@ -757,7 +781,7 @@ async fn start_guarded(
             .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()));
     run(owner, move |host| {
         if host.starts.get(&id).map(|(ticket, _)| *ticket) != Some(ticket) {
-            return Err("Start cancelled by a newer action".into());
+            return Err(START_CANCELLED.into());
         }
         host.starts.remove(&id);
         let key = match acquired {

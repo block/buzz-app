@@ -96,6 +96,8 @@ export interface ControlSnapshot {
   defaultSettings?: AgentDefaultSettings;
   /** Running agents restarted by the save that produced this snapshot. */
   restarted?: number;
+  /** Agents whose automatic restart after that save failed. */
+  restartFailures?: number;
 }
 export interface AgentDefaultSettings {
   harness: "buzz-agent" | "goose" | "pi";
@@ -110,9 +112,13 @@ export interface AgentDefaultsEdit
   environment: Record<string, string | null>;
 }
 /** Save feedback once native restarted the affected running agents. */
-export function savedMessage(restarted = 0) {
-  if (restarted === 0) return "Saved.";
-  return `Saved. Restarted ${restarted} agent${restarted === 1 ? "" : "s"}.`;
+export function savedMessage(restarted = 0, failures = 0) {
+  const agents = (n: number) => `${n} agent${n === 1 ? "" : "s"}`;
+  const saved =
+    restarted === 0 ? "Saved." : `Saved. Restarted ${agents(restarted)}.`;
+  return failures === 0
+    ? saved
+    : `${saved} ${agents(failures)} couldn’t restart with the new settings; check Agents.`;
 }
 export interface AgentEdit {
   name: string;

@@ -146,7 +146,10 @@ export function AgentEditor({
                       return;
                     }
                   }
-                  if (mounted.current) setNotice(savedMessage(saved.restarted));
+                  if (mounted.current)
+                    setNotice(
+                      savedMessage(saved.restarted, saved.restartFailures),
+                    );
                 })
                 .catch((problem: Error) => setError(problem.message));
             }}

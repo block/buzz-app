@@ -152,6 +152,47 @@ fn restart_on_save_selects_only_live_agents_with_changed_effective_settings() {
 }
 
 #[test]
+fn save_restart_failures_are_reported_separately_from_benign_skips() {
+    let (dir, host, _app, _view) = fixture();
+    let id = seed(dir.path());
+    let snapshot = |enabled: bool, status, error: Option<&str>| {
+        let mut snapshot = host.with(|host| host.snapshot()).unwrap();
+        let agent = &mut snapshot.data.agents[0];
+        agent.enabled = enabled;
+        agent.status = status;
+        agent.error = error.map(str::to_owned);
+        Ok(snapshot)
+    };
+    use buzz_agent_controller::ProcessStatus::{Failed, Running, Stopped};
+    assert_eq!(
+        restart_outcome(&id, snapshot(true, Running, None)),
+        RestartOutcome::Restarted
+    );
+    // The settings were saved, but the new launch failed: warn, don't hide it.
+    assert_eq!(
+        restart_outcome(&id, snapshot(true, Failed, Some("Invalid launch"))),
+        RestartOutcome::Failed
+    );
+    assert_eq!(
+        restart_outcome(&id, Err("Saved agent key is unavailable".into())),
+        RestartOutcome::Failed
+    );
+    // No longer needed, an explicit Stop, or a newer action are not failures.
+    assert_eq!(
+        restart_outcome(&id, Err(NO_SAVE_RESTART.into())),
+        RestartOutcome::Skipped
+    );
+    assert_eq!(
+        restart_outcome(&id, Err(START_CANCELLED.into())),
+        RestartOutcome::Skipped
+    );
+    assert_eq!(
+        restart_outcome(&id, snapshot(false, Stopped, None)),
+        RestartOutcome::Skipped
+    );
+}
+
+#[test]
 fn disabled_live_agent_is_not_eligible_for_a_save_restart() {
     let (dir, host, _app, _view) = fixture();
     seed(dir.path());
@@ -240,6 +281,7 @@ fn saving_defaults_never_starts_or_enables_stopped_agents() {
     )
     .unwrap();
     assert_eq!(result["restarted"], 0);
+    assert_eq!(result["restartFailures"], 0);
     assert_eq!(result["defaultSettings"]["model"], "new-default");
     assert_eq!(
         result["defaultSettings"]["environmentKeys"],

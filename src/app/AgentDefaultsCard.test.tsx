@@ -14,7 +14,7 @@ afterEach(() => {
   for (const dispose of disposals.splice(0)) dispose();
 });
 
-function setup(restarted = 0) {
+function setup(restarted = 0, restartFailures = 0) {
   const fixture = controlFixture();
   fixture.data.defaultSettings = {
     harness: "buzz-agent",
@@ -28,6 +28,7 @@ function setup(restarted = 0) {
   fixture.host.saveDefaults = async (edit) => ({
     ...(await saveDefaults(edit)),
     restarted,
+    restartFailures,
   });
   const control = createAgentControl(fixture.host);
   disposals.push(() => control.dispose());
@@ -44,6 +45,27 @@ it("words save results by restart count", () => {
   expect(savedMessage(undefined)).toBe("Saved.");
   expect(savedMessage(1)).toBe("Saved. Restarted 1 agent.");
   expect(savedMessage(3)).toBe("Saved. Restarted 3 agents.");
+  expect(savedMessage(0, 1)).toBe(
+    "Saved. 1 agent couldn’t restart with the new settings; check Agents.",
+  );
+  expect(savedMessage(2, 3)).toBe(
+    "Saved. Restarted 2 agents. 3 agents couldn’t restart with the new settings; check Agents.",
+  );
+});
+
+it("warns when saved defaults could not be applied by a restart", async () => {
+  const user = userEvent.setup();
+  const { control } = setup(1, 1);
+  await control.refresh();
+  const card = await screen.findByRole("region", { name: "Agent defaults" });
+  await user.clear(within(card).getByLabelText("Default model"));
+  await user.type(within(card).getByLabelText("Default model"), "next");
+  await user.click(within(card).getByRole("button", { name: "Save defaults" }));
+  expect(
+    await within(card).findByText(
+      "Saved. Restarted 1 agent. 1 agent couldn’t restart with the new settings; check Agents.",
+    ),
+  ).toBeVisible();
 });
 
 it("discard clears unfinished environment inputs as well as the saved draft", async () => {

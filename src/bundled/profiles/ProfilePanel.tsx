@@ -245,7 +245,10 @@ function ProfileDetails({
   }
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
   const identityName = useChannelIdentityNames(session, context?.channelId);
-  const name = identityName(pubkey, profile?.name ?? "Unknown profile");
+  const name = identityName(
+    pubkey,
+    profile?.name ?? (knownAgent ? "Agent" : "Unknown profile"),
+  );
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
     : null;

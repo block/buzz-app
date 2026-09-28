@@ -736,7 +736,8 @@
   background: var(--affordance-accent-prominent);
 }
 
-/* Occupies the DM identity box while it replaces the avatar or count. */
+/* Occupies the DM identity box while it replaces the avatar or count; shares
+   the participant-count chip's subtle roles. */
 .typing {
   display: inline-flex;
   width: 22px;
@@ -745,12 +746,14 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-half);
+  border-radius: var(--radius-pill);
+  background: var(--affordance-subtle);
 }
 .typing > span {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--affordance-accent-prominent);
+  background: var(--text-subtle);
 }
 @keyframes typing-pulse {
   50% {

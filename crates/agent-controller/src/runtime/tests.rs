@@ -4,6 +4,7 @@ use crate::config::{agent_id, HarnessEdit};
 use crate::process::Process;
 use crate::Secret;
 use serde_json::json;
+#[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
 use std::time::{Duration, Instant};

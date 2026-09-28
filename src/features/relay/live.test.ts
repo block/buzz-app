@@ -498,6 +498,198 @@ it("renews with one bounded overlap and releases both wires on timeout and dispo
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it.each(["timeout", "error: temporarily unavailable"])(
+  "retains unchanged live coverage after renewal %s and retries on the minute boundary",
+  async (failure) => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    try {
+      h.owner.update(["a", "b"], ["a", "b"]);
+      await h.first.auth();
+      for (const [, id] of h.first.requests())
+        await h.first.receive(["EOSE", id]);
+      const initial = h.first.requests()[2];
+      assert.exists(initial);
+      await vi.advanceTimersByTimeAsync(60000);
+      const renewal = h.first.requests().at(-1);
+      assert.exists(renewal);
+      if (failure === "timeout") await vi.advanceTimersByTimeAsync(10000);
+      else await h.first.receive(["CLOSED", renewal[1], failure]);
+      expect(h.first.sent).toContainEqual(["CLOSE", renewal[1]]);
+      expect(h.first.sent).not.toContainEqual(["CLOSE", initial[1]]);
+      expect(
+        h.callbacks.state.mock.lastCall?.[0].routes.filter((r) => r.channelId),
+      ).toEqual(
+        ["a", "b"].map((channelId) =>
+          expect.objectContaining({
+            channelId,
+            status: "error",
+            error: expect.any(String),
+          }),
+        ),
+      );
+      const event = message(h.key, "b", "still live", 1700000001);
+      h.callbacks.receive.mockClear();
+      h.callbacks.established.mockClear();
+      await h.first.receive(["EVENT", renewal[1], event]);
+      await h.first.receive(["EOSE", renewal[1]]);
+      expect(h.callbacks.receive).not.toHaveBeenCalled();
+      expect(h.callbacks.established).not.toHaveBeenCalled();
+      await h.first.receive(["EVENT", initial[1], event]);
+      expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+        phase: "live",
+        channelId: "b",
+      });
+      await vi.advanceTimersByTimeAsync(failure === "timeout" ? 49999 : 59999);
+      expect(h.first.requests()).toHaveLength(4);
+      await vi.advanceTimersByTimeAsync(1);
+      const retry = h.first.requests().at(-1);
+      assert.exists(retry);
+      expect(h.first.requests()).toHaveLength(5);
+      expect(filtersOf(retry)).toEqual(filtersOf(renewal));
+      expect(
+        h.callbacks.state.mock.lastCall?.[0].routes.find(
+          (r) => r.channelId === "b",
+        ),
+      ).toMatchObject({ status: "pending", error: expect.any(String) });
+      await h.first.receive(["EOSE", retry[1]]);
+      expect(h.first.sent).toContainEqual(["CLOSE", initial[1]]);
+      const state = h.callbacks.state.mock.lastCall?.[0].routes.find(
+        (r) => r.channelId === "b",
+      );
+      expect(state?.status).toBe("live");
+      expect(state?.error).toBeUndefined();
+      h.callbacks.receive.mockClear();
+      await h.first.receive(["EVENT", initial[1], event]);
+      expect(h.callbacks.receive).not.toHaveBeenCalled();
+    } finally {
+      h.owner.dispose();
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+it.each(["recover", "exhaust", "unsupported"])(
+  "retains coverage through renewal quota %s without resetting retry limits",
+  async (outcome) => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    try {
+      h.owner.update(["a", "b"], ["a", "b"]);
+      await h.first.auth();
+      for (const [, id] of h.first.requests())
+        await h.first.receive(["EOSE", id]);
+      const initial = h.first.requests()[2];
+      assert.exists(initial);
+      await vi.advanceTimersByTimeAsync(60000);
+      for (let i = 0; i < (outcome === "exhaust" ? 4 : 1); i++) {
+        const renewal = h.first.requests().at(-1);
+        assert.exists(renewal);
+        const count = h.first.requests().length;
+        await h.first.receive([
+          "CLOSED",
+          renewal[1],
+          `rate-limited: quota exceeded; retry in ${outcome === "unsupported" ? 120 : 2}s`,
+        ]);
+        const event = message(
+          h.key,
+          "b",
+          `during cooldown ${i}`,
+          1700000001 + i,
+        );
+        await h.first.receive(["EVENT", initial[1], event]);
+        expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+          phase: "live",
+          channelId: "b",
+        });
+        expect(h.first.sent).not.toContainEqual(["CLOSE", initial[1]]);
+        // Admission includes one safety second for the relay's rounded hint.
+        await vi.advanceTimersByTimeAsync(2999);
+        expect(h.first.requests()).toHaveLength(count);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(h.first.requests()).toHaveLength(
+          outcome === "unsupported" || i === 3 ? count : count + 1,
+        );
+      }
+      if (outcome === "recover") {
+        const retry = h.first.requests().at(-1);
+        assert.exists(retry);
+        await h.first.receive(["EOSE", retry[1]]);
+        expect(h.first.sent).toContainEqual(["CLOSE", initial[1]]);
+      } else {
+        const count = h.first.requests().length;
+        await vi.advanceTimersByTimeAsync(180000);
+        expect(h.first.requests()).toHaveLength(count);
+        expect(
+          h.callbacks.state.mock.lastCall?.[0].routes.find(
+            (r) => r.channelId === "b",
+          ),
+        ).toMatchObject({
+          status: "error",
+          error: expect.stringContaining("rate-limited:"),
+        });
+        const event = message(h.key, "b", "after stopped retries", 1700000010);
+        await h.first.receive(["EVENT", initial[1], event]);
+        expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+          phase: "live",
+          channelId: "b",
+        });
+        h.owner.retry();
+        expect(h.first.requests()).toHaveLength(count + 1);
+      }
+    } finally {
+      h.owner.dispose();
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+it.each([
+  "previous closed",
+  "restricted: not a channel member",
+  "invalid traffic",
+])("does not preserve a renewal source after %s", async (failure) => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    h.owner.update(["a", "b"], ["a", "b"]);
+    await h.first.auth();
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    const initial = h.first.requests()[2];
+    assert.exists(initial);
+    await vi.advanceTimersByTimeAsync(60000);
+    const renewal = h.first.requests().at(-1);
+    assert.exists(renewal);
+    if (failure === "previous closed") {
+      await h.first.receive(["CLOSED", initial[1], "error: closed"]);
+      await vi.advanceTimersByTimeAsync(10000);
+    } else if (failure === "invalid traffic") {
+      await h.first.receive(["EVENT", renewal[1], {}]);
+    } else await h.first.receive(["CLOSED", renewal[1], failure]);
+    expect(h.first.sent).toContainEqual(["CLOSE", initial[1]]);
+    expect(h.first.sent).toContainEqual(["CLOSE", renewal[1]]);
+    const count = h.first.requests().length;
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(h.first.requests()).toHaveLength(count);
+    h.callbacks.receive.mockClear();
+    await h.first.receive([
+      "EVENT",
+      initial[1],
+      message(h.key, "b", "stale", 1700000001),
+    ]);
+    expect(h.callbacks.receive).not.toHaveBeenCalled();
+    if (failure.startsWith("restricted:"))
+      expect(h.callbacks.denied.mock.calls.map(([id]) => id)).toEqual([
+        "a",
+        "b",
+      ]);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("applies a batch denial through the session before rescheduling surviving interests", async () => {
   vi.useFakeTimers();
   const h = setup([]);

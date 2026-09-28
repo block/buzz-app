@@ -628,8 +628,13 @@ the pending replacement, not that established source. Removed IDs are fenced
 immediately, including after re-addition. Original source scopes stay immutable;
 ambiguous auxiliary events never gain invented alert attribution. Replacements
 use fresh wire IDs, preserve `since`, and request `limit: 0`, so their events are
-live even before EOSE. Pending setup alone does not prove continuity. Timeout,
-failure and disposal release both sources rather than accumulating handoffs.
+live even before EOSE. Pending setup alone does not prove continuity. Narrowed-scope
+failure, denial, invalid traffic and disposal release both sources. For an
+unchanged scope, a renewal timeout or transient relay error retires only the
+replacement and retains the established source, with the error visible until
+fresh EOSE. The existing minute timer retries that renewal; quota failures retain
+the same source but obey the existing cooldown and three-retry limit. Exhausted
+or unsupported quota retries require manual Retry, not a reset each minute.
 
 One 60-second recovery timer renews established joined batches and hints the
 existing roster and unread owners to repair finite evidence. It does not renew

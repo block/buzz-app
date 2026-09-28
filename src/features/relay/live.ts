@@ -172,6 +172,7 @@ type Route = {
   since: number;
   liveOnly?: boolean;
   previous?: Route;
+  retryRenewal?: boolean;
   quotaRetries: number;
   deadline?: ReturnType<typeof setTimeout>;
 };
@@ -287,6 +288,7 @@ export function subscribeRelayTraffic(
     };
     delete next.wire;
     delete next.deadline;
+    delete next.retryRenewal;
     routes.set(next.id, next);
     return next;
   }
@@ -295,9 +297,18 @@ export function subscribeRelayTraffic(
     const current = generation;
     // Only multi-channel scopes can be silently pruned by this relay. Singleton
     // preview/legacy callers retain their existing CLOSED/retry behavior.
-    for (const route of routes.values())
+    for (const route of routes.values()) {
       if (route.channelIds && route.status === "live" && !route.previous)
         replace(route);
+      else if (
+        route.status === "error" &&
+        route.retryRenewal &&
+        route.previous?.wire
+      ) {
+        route.status = "pending";
+        delete route.retryRenewal;
+      }
+    }
     pump();
     notify();
     if (closed || generation !== current) return;
@@ -382,8 +393,24 @@ export function subscribeRelayTraffic(
     pump();
     notify();
   }
-  function fail(route: Route, reason: string) {
+  function fail(route: Route, reason: string, transient = false) {
+    const previous = route.previous;
+    // Only an established, unchanged scope may outlive a failed renewal. Never
+    // restore a retired channel lifetime or bypass denial/invalid-traffic cleanup.
+    const retain =
+      transient &&
+      previous?.status === "live" &&
+      previous.wire &&
+      wires.get(previous.wire) === previous &&
+      JSON.stringify(scope(previous)) === JSON.stringify(scope(route));
+    if (retain) delete route.previous;
     closeWire(route);
+    delete route.retryRenewal;
+    if (retain) {
+      route.previous = previous;
+      // Quota owns its existing bounded retries; the minute timer cannot reset it.
+      route.retryRenewal = !reason.startsWith("rate-limited:");
+    }
     route.status = "error";
     route.error = reason;
     if (reason.startsWith("rate-limited:")) {
@@ -471,7 +498,11 @@ export function subscribeRelayTraffic(
       wires.set(wire, route);
       route.deadline = setTimeout(() => {
         if (wires.get(wire) === route)
-          fail(route, "Live subscription setup timed out; retry available");
+          fail(
+            route,
+            "Live subscription setup timed out; retry available",
+            true,
+          );
       }, 10000);
       active++;
       if (route.id === "observer") route.since = Math.floor(Date.now() / 1000);
@@ -770,11 +801,14 @@ export function subscribeRelayTraffic(
           callbacks.established(route.channelIds ?? route.channelId);
         if (valid()) pump();
       } else if (data[0] === "CLOSED") {
-        fail(
-          route,
+        const reason =
           typeof data[2] === "string"
             ? data[2].slice(0, 512)
-            : "Relay closed live subscription",
+            : "Relay closed live subscription";
+        fail(
+          route,
+          reason,
+          reason.startsWith("rate-limited:") || reason.startsWith("error:"),
         );
       }
     };

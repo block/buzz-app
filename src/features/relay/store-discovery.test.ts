@@ -149,7 +149,11 @@ it("discovers and names 501 same-timestamp memberships, including a workflow on 
       const done = view.refresh();
       const request = await h.next(30620);
       expect(request.filters).toEqual([
-        { kinds: [30620], "#h": batch, limit: WORKFLOW_DEFINITION_LIMIT },
+        {
+          kinds: [30620],
+          "#h": [...batch].sort(),
+          limit: WORKFLOW_DEFINITION_LIMIT,
+        },
       ]);
       request.respond(batch.includes(channelId) ? [workflow] : []);
       await done;

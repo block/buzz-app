@@ -200,6 +200,16 @@ for (const reading of [false, true]) {
       ).toBeVisible();
       if (reading) {
         expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
+        const jumpToLatest = page.getByRole("button", {
+          name: "Jump to latest message",
+          exact: true,
+        });
+        await expect(jumpToLatest).toBeVisible();
+        await jumpToLatest.click();
+        await expect(
+          region.locator(`[data-message-id="${live.id}"]`),
+        ).toBeInViewport();
+        await expect(jumpToLatest).toHaveCount(0);
       } else {
         await expect(
           region.locator(`[data-message-id="${live.id}"]`),

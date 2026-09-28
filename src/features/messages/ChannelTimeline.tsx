@@ -19,6 +19,7 @@ import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
+import { JumpToLatestButton } from "./JumpToLatestButton";
 
 const EDGE_HEIGHT = 56;
 type ReadingPosition = {
@@ -174,7 +175,9 @@ function Timeline({
   const olderDemand = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
-    follow = useRef(true);
+    follow = useRef(true),
+    unseenLatest = useRef(false);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const recordPosition = useCallback(
     (element: HTMLElement) => {
       // A delayed membership event can replace a group's rendered representative.
@@ -214,6 +217,30 @@ function Timeline({
     },
     [rows],
   );
+  const updateJumpToLatest = useCallback((element: HTMLElement) => {
+    const bottom =
+      element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+    if (bottom) unseenLatest.current = false;
+    setShowJumpToLatest(
+      !bottom &&
+        (unseenLatest.current ||
+          element.scrollHeight - element.clientHeight - element.scrollTop >
+            element.clientHeight),
+    );
+  }, []);
+  const jumpToLatest = useCallback(() => {
+    if (!handle.current || !rows.length) return;
+    intent.current++;
+    follow.current = true;
+    unseenLatest.current = false;
+    restoredAnchor.current = undefined;
+    userScrolled.current = false;
+    setShowJumpToLatest(false);
+    handle.current.scrollToIndex(rows.length - 1, {
+      align: "end",
+      smooth: true,
+    });
+  }, [rows.length]);
   const targetId =
     navigation?.target.kind === "conversation"
       ? navigation.target.messageId
@@ -286,7 +313,14 @@ function Timeline({
   useLayoutEffect(() => {
     // Row updates include edits/reactions/replies, not only new message IDs.
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.
+    const previousLast = edges.current.last;
+    const appended =
+      !!previousLast && previousLast !== rows.at(-1)?.id && !prepend;
     edges.current = { first: rows[0]?.id, last: rows.at(-1)?.id };
+    if (appended && !follow.current) {
+      unseenLatest.current = true;
+      if (scroller.current) updateJumpToLatest(scroller.current);
+    }
     if (
       (targetId && navigation && exactRevealed.current !== navigation.signal) ||
       !size.width ||
@@ -393,6 +427,7 @@ function Timeline({
     targetId,
     navigation,
     exactRevealed,
+    updateJumpToLatest,
   ]);
   const revealed = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
@@ -495,6 +530,7 @@ function Timeline({
           element.clientHeight === size.height
         ) {
           recordPosition(element);
+          updateJumpToLatest(element);
         }
         loadNearTop(element);
       }}
@@ -518,6 +554,7 @@ function Timeline({
           </Button>
         ) : null}
       </div>
+      {showJumpToLatest && <JumpToLatestButton onClick={jumpToLatest} />}
       {width > 0 && (
         <Virtualizer
           ref={handle}

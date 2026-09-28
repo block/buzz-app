@@ -2239,3 +2239,23 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .text pre {
   text-wrap-style: auto;
 }
+
+.jumpToLatest {
+  position: sticky;
+  z-index: 2;
+  top: calc(100% - var(--size-control) - var(--space-2));
+  height: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.jumpToLatest [data-icon-variant] {
+  pointer-events: auto;
+  border: 1px solid var(--border-standard);
+  background: color-mix(in srgb, var(--surface-panel) 82%, transparent);
+  box-shadow: var(--shadow-xs);
+  backdrop-filter: blur(20px);
+}
+.jumpToLatest [data-icon-variant]:hover {
+  background: color-mix(in srgb, var(--surface-panel) 94%, transparent);
+}

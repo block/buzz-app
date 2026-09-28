@@ -34,6 +34,7 @@ import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
+import { JumpToLatestButton } from "./JumpToLatestButton";
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -277,6 +278,7 @@ function ThreadMessages({
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
   const follow = useRef(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const targetAnchor = useRef<number | undefined>(undefined);
   const selectedRow = useCallback(
     () =>
@@ -483,6 +485,10 @@ function ThreadMessages({
     // subsequent live changes follow only while the reader is at the bottom.
     if (follow.current) element.scrollTop = element.scrollHeight;
     positioned.current = true;
+    setShowJumpToLatest(
+      !follow.current &&
+        element.scrollHeight - element.clientHeight - element.scrollTop >= 80,
+    );
   }, [
     snapshot.status,
     snapshot.canLoadMore,
@@ -510,6 +516,15 @@ function ThreadMessages({
       setSent(undefined);
     }
   }, [sent, snapshot.replies, expanded]);
+  const jumpToLatest = () => {
+    const element = scroller.current;
+    if (!element) return;
+    targetAnchor.current = undefined;
+    positioned.current = true;
+    follow.current = true;
+    setShowJumpToLatest(false);
+    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+  };
   const keepReadingPosition = () => {
     targetAnchor.current = undefined;
     if (positioned.current) return;
@@ -627,6 +642,7 @@ function ThreadMessages({
           follow.current =
             element.scrollHeight - element.clientHeight - element.scrollTop <
             80;
+          setShowJumpToLatest(!follow.current);
         }}
         onWheel={keepReadingPosition}
         onTouchMove={keepReadingPosition}
@@ -647,6 +663,7 @@ function ThreadMessages({
         }}
         tabIndex={0}
       >
+        {showJumpToLatest && <JumpToLatestButton onClick={jumpToLatest} />}
         {snapshot.root ? (
           <MessageRow
             extensions={extensions}

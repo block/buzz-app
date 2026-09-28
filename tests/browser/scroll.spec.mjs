@@ -171,10 +171,13 @@ readingTest(
     ).toBeAttached();
     await settle(page);
     await expectAnchor(page, reloadedAnchor);
-    await end(page);
+    const jumpToLatest = button(page, "Jump to latest message");
+    await expect(jumpToLatest).toBeVisible();
+    await jumpToLatest.click();
     await expect(
       history(page).locator(`[data-message-id="${held.id}"]`),
     ).toBeInViewport();
+    await expect(jumpToLatest).toHaveCount(0);
     const followed = app.append("primary", "alpha");
     await expect(
       history(page).locator(`[data-message-id="${followed.id}"]`),

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
+import { Select } from "../../shared/design-system/ui/Select";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -49,6 +50,8 @@ export function AgentSettingsFields({
   onChange,
   onOpenHarnesses,
   discardEdits = false,
+  onValidated,
+  validationVersion,
 }: {
   id?: string | undefined;
   onOpenHarnesses?: (() => void) | undefined;
@@ -60,11 +63,27 @@ export function AgentSettingsFields({
   disabled: boolean;
   environmentKeys?: string[];
   onChange(patch: Partial<AgentDraft>): void;
+  onValidated?: ((draft: AgentDraft | null) => void) | undefined;
+  validationVersion?: number | undefined;
 }) {
   const [piProviders, setPiProviders] = useState<string[] | null>([]);
   const [revealed, setRevealed] = useState<string | null>(null);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
+  const executable = draft.command.replaceAll("\\", "/").split("/").at(-1);
+  const harness = state.data?.harnessOptions?.find(
+    (option) =>
+      option.command === draft.command ||
+      option.command.replaceAll("\\", "/").split("/").at(-1) === executable,
+  );
+  const codex =
+    harness?.capabilities?.modelDiscovery === "codex" ||
+    executable === "codex-acp";
+  const openai = draft.command === "buzz-agent" && draft.provider === "openai";
+  // Goose and Pi retain their existing selector semantics. Explicit
+  // Harness defaults / Advanced modes are scoped to the integrations that
+  // advertise this contract.
+  const configurable = !goose && !pi && (codex || executable === "buzz-agent");
   const globalKeys = state.data?.defaultSettings?.environmentKeys ?? [];
   // Saved and global environment values are write-only; removing an agent's
   // key exposes the global key rather than the visible scalar default.
@@ -181,6 +200,50 @@ export function AgentSettingsFields({
             onOpenHarnesses={onOpenHarnesses}
             discardEdits={discardEdits}
           />
+          {state.data?.configurationAvailable && configurable && !openai && (
+            <Select
+              label="Configuration"
+              variant="field"
+              disabled={disabled}
+              value={draft.configuration?.mode ?? "legacy"}
+              groups={[
+                {
+                  label: "",
+                  options: [
+                    ...(!draft.configuration
+                      ? [
+                          {
+                            value: "legacy",
+                            label: "Existing configuration",
+                          },
+                        ]
+                      : []),
+                    { value: "default", label: "Harness defaults" },
+                    { value: "advanced", label: "Advanced" },
+                  ],
+                },
+              ]}
+              onValueChange={(mode) => {
+                if (mode === "default")
+                  change({ configuration: { mode }, model: "" });
+                if (mode === "advanced")
+                  change({
+                    configuration: {
+                      mode,
+                      effort: { kind: "unsupported" },
+                    },
+                  });
+              }}
+            />
+          )}
+          {draft.configuration?.mode === "default" &&
+            configurable &&
+            !openai && (
+              <p className="text-body-sm text-secondary">
+                The harness chooses its model and effort from its own
+                configuration.
+              </p>
+            )}
           {goose && gooseProvider === null && (
             <p role="status" className="text-body-sm text-secondary">
               This agent has a saved GOOSE_PROVIDER override whose value is
@@ -246,6 +309,8 @@ export function AgentSettingsFields({
           )}
           <AgentModelPicker
             onPiProviders={setPiProviders}
+            onValidated={onValidated}
+            validationVersion={validationVersion}
             disabled={disabled}
             id={id}
             savedRevision={savedRevision}
@@ -253,6 +318,13 @@ export function AgentSettingsFields({
             defaults={state.data?.databricksDefaults}
             defaultModel={defaultModel}
             inheritedWorkspace={inheritedWorkspace}
+            capabilities={harness?.capabilities}
+            recoveryAvailable={
+              state.data?.harnessOptions?.some(
+                (option) =>
+                  option.capabilities?.modelDiscovery === "databricks",
+              ) ?? false
+            }
             draft={draft}
             onChange={change}
           />
@@ -311,7 +383,9 @@ export function AgentSettingsFields({
                   <p className="text-body-sm text-secondary">
                     {pi
                       ? 'Pi needs both Provider and Model to override its defaults. Advanced Pi options follow --; for example: ["--", "--extension", "/absolute/path/to/extension.ts"]. PI_CODING_AGENT_DIR can select a local Pi configuration directory.'
-                      : "Environment overrides take precedence over provider and model selections."}{" "}
+                      : configurable
+                        ? "Provider environment overrides take precedence. Explicit AI configuration controls Buzz’s model and effort overrides."
+                        : "Environment overrides take precedence over provider and model selections."}{" "}
                     Arguments are passed literally, not through a shell.
                   </p>
                 </div>

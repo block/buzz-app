@@ -3,7 +3,14 @@
 import type {} from "@deepseek-ai/cordis";
 import { communityRequest } from "../communities/api";
 import { relayOrigin } from "../communities/destination";
-import { createAgentModels, type AgentModels, type ModelHost } from "./models";
+import {
+  createAgentModels,
+  isModelFailure,
+  ModelError,
+  type AiConfiguration,
+  type AgentModels,
+  type ModelHost,
+} from "./models";
 declare module "@deepseek-ai/cordis" {
   interface Context {
     agentControl: AgentControl;
@@ -35,6 +42,7 @@ export interface AgentView {
     command: string;
     args: string[];
     model: string;
+    configuration?: AiConfiguration | null;
     provider: string;
     environmentKeys: string[];
     databricks?: { host: string; filter: string } | null;
@@ -74,6 +82,12 @@ export interface ControlSnapshot {
   /** Native executable presence and editing suggestions, not sign-in or execution evidence.
    * Optional so an older running native host retains editable custom values. */
   harnessOptions?: {
+    /** Stable integration identity, never inferred from the display label. */
+    id?: string;
+    capabilities?: {
+      openai?: boolean;
+      modelDiscovery: "databricks" | "codex" | "goose" | "pi" | null;
+    };
     command: string;
     label: string;
     available?: boolean;
@@ -87,6 +101,8 @@ export interface ControlSnapshot {
   /** False while native credential/import acceptance is outstanding. */
   importAvailable?: boolean;
   createAvailable?: boolean;
+  /** Static support for explicit modes and native pre-identity validation. */
+  configurationAvailable?: boolean;
   avatarEditingAvailable?: boolean;
   defaultWorkspace?: string;
   runtimeMessage?: string | null;
@@ -160,6 +176,7 @@ export interface AgentControlHost {
     requestId: string,
     destination: string,
     owner: string,
+    edit: AgentEdit,
   ): Promise<{ id: string; pubkey: string }>;
   commitCreate?(
     requestId: string,
@@ -397,6 +414,10 @@ export function createAgentControl(
       apply(result);
       return result;
     } catch (error) {
+      if (isModelFailure(error)) {
+        if (current === generation) update({ error: error.message });
+        throw new ModelError(error.code, error.message);
+      }
       // Host rejects with sanitized user-facing strings, never raw child output.
       const detail =
         typeof error === "string"
@@ -540,6 +561,7 @@ export function createAgentControl(
                   requestId,
                   destination,
                   owner,
+                  edit,
                 );
                 id = prepared.id;
                 const result = await communityRequest<{ auth: string[] }>(

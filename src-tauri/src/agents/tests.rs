@@ -6,6 +6,18 @@ use tauri::test::{get_ipc_response, mock_builder, MockRuntime};
 const RUNTIME_GATE: &str = "Synthetic runtime unavailable.";
 const IMPORT_GATE: &str = "Synthetic credential refusal.";
 
+pub(crate) fn has_prepared_identity(host: &AgentHost) -> bool {
+    host.with(|host| Ok(host.creating.is_some())).unwrap()
+}
+
+pub(crate) fn use_credentials(host: &AgentHost, credentials: Arc<dyn Credentials>) {
+    host.with(|host| {
+        host.credentials = credentials;
+        Ok(())
+    })
+    .unwrap();
+}
+
 // Test-only custody. Synthetic fixtures cannot reach PlatformCredentials.
 struct RejectingCredentials;
 impl Credentials for RejectingCredentials {
@@ -432,12 +444,13 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(
         before["harnessOptions"][0],
         json!({
+            "id":"buzz-agent", "capabilities":{"modelDiscovery":"databricks","openai":true},
             "command":"buzz-agent", "label":"Buzz Agent",
             "available":true, "status":"ready", "defaultArgs":[],
-            "providers":[{"value":"databricks_v2", "label":"Databricks v2"}]
+            "providers":[{"value":"openai", "label":"Open AI"},{"value":"databricks_v2", "label":"Databricks v2"}]
         })
     );
-    assert_eq!(before["harnessOptions"].as_array().unwrap().len(), 3);
+    assert_eq!(before["harnessOptions"].as_array().unwrap().len(), 4);
     assert_eq!(before["harnessOptions"][2]["label"], "Pi");
     assert_eq!(
         before["harnessOptions"][2]["available"],
@@ -446,6 +459,12 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["harnessOptions"][2]["defaultArgs"], json!([]));
     // Pi's signed-in providers come from its catalog, never a static list.
     assert_eq!(before["harnessOptions"][2]["providers"], json!([]));
+    assert_eq!(before["harnessOptions"][3]["label"], "Codex");
+    assert_eq!(before["harnessOptions"][3]["id"], "codex");
+    assert_eq!(
+        before["harnessOptions"][3]["available"],
+        buzz_agent_controller::installed("codex-acp").is_some()
+    );
     assert_eq!(
         before["harnessOptions"][2]["status"],
         pi_status(
@@ -1660,7 +1679,11 @@ fn pi_model_lookup_waits_out_brief_host_contention() {
     holder.join().unwrap();
     assert_eq!(
         result["models"],
-        json!([{"id":"databricks/model-a","name":"databricks/model-a"}])
+        json!([{
+            "id":"databricks/model-a",
+            "name":"databricks/model-a",
+            "effort":{"status":"unknown"}
+        }])
     );
 }
 
@@ -1693,7 +1716,9 @@ fn pi_connection_test_prompts_the_draft_selection() {
     assert_eq!(test("model-a").unwrap()["models"], json!([]));
     let error = test("model-b").unwrap_err();
     assert!(
-        error.as_str().unwrap().contains("rejected the API key"),
+        error["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("rejected the API key")),
         "{error}"
     );
 }
@@ -1773,11 +1798,19 @@ async fn native_create_waits_for_a_snapshot_and_keeps_its_prepared_identity() {
     }));
     acquired.await.unwrap();
     let request_id = uuid::Uuid::new_v4().to_string();
+    let edit: AgentEdit = serde_json::from_value(json!({
+        "name":"Create fixture", "picture":null, "systemPrompt":"", "workspace":"/tmp",
+        "harness":{"command":"goose","args":["acp"],"model":"","provider":""},
+        "environment":{}
+    }))
+    .unwrap();
     let mut creating = std::pin::pin!(agent_control_create_prepare(
+        app.state(),
         app.state(),
         request_id.clone(),
         "wss://relay.example".into(),
         "ab".repeat(32),
+        edit.clone(),
     ));
     assert_pending(creating.as_mut()).await;
     release.send(()).unwrap();
@@ -1785,9 +1818,11 @@ async fn native_create_waits_for_a_snapshot_and_keeps_its_prepared_identity() {
     assert!(snapshot.await.unwrap().is_ok());
     let retried = agent_control_create_prepare(
         app.state(),
+        app.state(),
         request_id,
         "wss://relay.example".into(),
         "ab".repeat(32),
+        edit,
     )
     .await
     .unwrap();

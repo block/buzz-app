@@ -82,6 +82,7 @@ pub(super) async fn execute(
     let models = parse_models(&bytes, &key)?;
     Ok(Catalog {
         integration: CatalogIntegration::Openai,
+        host: None,
         models,
         defaults: None,
         discovery: Some(Discovery {

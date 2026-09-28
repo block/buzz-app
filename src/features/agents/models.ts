@@ -35,11 +35,14 @@ export interface ModelRequest {
   id?: string | undefined;
   expectedRevision?: number | undefined;
   edit?: AgentEdit | undefined;
+  /** New callers identify the integration explicitly. Older Databricks callers
+   * retain host/filter until their UI is migrated. Native accepts both shapes. */
   integration?:
     | { kind: "databricks"; settings: { host: string; filter: string } }
     | { kind: "codex" }
-    | { kind: "openai"; settings: { apiKey?: string } };
-  /** Legacy external-harness requests use blank host/filter fields. */
+    | { kind: "openai"; settings: { apiKey?: string } }
+    | { kind: "goose" }
+    | { kind: "pi" };
   host?: string;
   filter?: string;
   /** "test" is Pi only: one tiny prompt with the draft provider and model. */
@@ -51,8 +54,10 @@ export interface ModelCatalog {
   integration?:
     | { kind: "databricks"; host: string }
     | { kind: "codex" }
-    | { kind: "openai" };
-  /** Present for legacy external-harness catalog responses. */
+    | { kind: "openai" }
+    | { kind: "goose" }
+    | { kind: "pi" };
+  /** Legacy Databricks hosts return this alongside the catalog. */
   host?: string;
   models: {
     id: string;
@@ -129,7 +134,7 @@ export function createAgentModels(
   let disposed = false;
   return {
     cached(request) {
-      if (request.integration.kind !== "codex" || !cacheable(request))
+      if (request.integration?.kind !== "codex" || !cacheable(request))
         return undefined;
       const key = cacheKey(request);
       const entry = cache.get(key);
@@ -151,7 +156,8 @@ export function createAgentModels(
       if (!host || disposed)
         throw new Error("Model connections require a rebuilt desktop app.");
       if (signal.aborted) throw new Error("Connection cancelled.");
-      if (request.integration.kind === "codex") cache.delete(cacheKey(request));
+      if (request.integration?.kind === "codex")
+        cache.delete(cacheKey(request));
       const local = new AbortController();
       active.add(local);
       let ticket: number | undefined;

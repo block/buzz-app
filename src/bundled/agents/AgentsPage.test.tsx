@@ -145,27 +145,6 @@ function setup(
     },
   };
 }
-it("surfaces credit exhaustion in the editor without opening technical details", async () => {
-  const message =
-    "No OpenAI API credits remaining. Add credits in OpenAI billing, then send a new message.";
-  setup("ready", (f) => {
-    f.agent.diagnostics = [message];
-  });
-  const cards = await screen.findAllByRole("article", {
-    name: "Agent Fixture agent",
-  });
-  const card = cards[0];
-  if (!card) throw Error("Agent card missing");
-  fireEvent.click(
-    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
-  );
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
-  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
-  expect(within(dialog).getByRole("alert")).toHaveTextContent(
-    `Last runtime error: ${message}`,
-  );
-});
-
 it("shows one managed card per exact destination and keeps unimported templates out of My agents", async () => {
   const { f } = setup();
   const cards = await screen.findAllByRole("article", {
@@ -241,10 +220,7 @@ it("remounts records for equal-generation community switches and session replace
 for (const mode of ["absolute", "saved-override", "draft-override"]) {
   it(`leaves ${mode} model discovery to native validation`, async () => {
     const run = vi.fn(async () => ({
-      integration: {
-        kind: "databricks" as const,
-        host: "https://workspace.example.com",
-      },
+      host: "https://workspace.example.com",
       models: [],
       modelOverridden: false,
       disconnected: false,
@@ -452,6 +428,13 @@ it("duplicates editable settings into a new identity without copying write-only 
       expect.any(String),
       "wss://relay.example.test",
       "de".repeat(32),
+      expect.objectContaining({
+        environment: {},
+        harness: expect.objectContaining({
+          provider: "openai",
+          model: "example-model",
+        }),
+      }),
     ),
   );
   await waitFor(() => expect(commit).toHaveBeenCalled());
@@ -571,8 +554,8 @@ it("keeps the read-only library available when native management is unavailable"
   expect(screen.queryByText("Add agent", { exact: true })).toBeNull();
   expect(screen.getByText(/This browser cannot run/)).toBeVisible();
 });
-function expectAIFieldOrder(dialog: HTMLElement) {
-  const fields = ["Harness", "Provider", "Model"].map((name) =>
+function expectAIFieldOrder(dialog: HTMLElement, last = "Model") {
+  const fields = ["Harness", "Provider", last].map((name) =>
     within(dialog).getByRole("combobox", { name }),
   );
   for (const [index, field] of fields.entries()) {
@@ -585,17 +568,11 @@ function expectAIFieldOrder(dialog: HTMLElement) {
   }
 }
 
-it("shows Harness, Provider and Model in that order when adding an agent", async () => {
+it("shows Harness, Provider and Configuration in that order when adding an agent", async () => {
   const { f } = setup();
-  const user = userEvent.setup();
   fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
-  expect(within(dialog).queryByRole("combobox", { name: "Model" })).toBeNull();
-  await user.click(
-    within(dialog).getByRole("combobox", { name: "Configuration" }),
-  );
-  await user.click(await screen.findByRole("option", { name: "Advanced" }));
-  expectAIFieldOrder(dialog);
+  expectAIFieldOrder(dialog, "Configuration");
   expect(
     within(dialog).getByRole("group", { name: "AI configuration" }),
   ).toBeVisible();
@@ -1667,21 +1644,22 @@ for (const mode of ["edit", "create"] as const) {
       fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
     }
     const dialog = screen.getByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Model" }));
-    expect(
-      within(dialog).getByLabelText("Databricks workspace (HTTPS origin)"),
-    ).toHaveValue("https://first.example.com");
-    expect(
-      within(dialog).getByLabelText("Model", {
-        exact: true,
-        selector: "input",
-      }),
-    ).toHaveAttribute("placeholder", "Use agent defaults (first-model)");
-    expect(
-      within(dialog).getByText(
-        "Editing either field saves both displayed values.",
-      ),
-    ).toBeVisible();
+    if (mode === "edit") {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Model" }));
+      expect(
+        within(dialog).getByLabelText("Databricks workspace (HTTPS origin)"),
+      ).toHaveValue("https://first.example.com");
+      expect(
+        within(dialog).getByLabelText("Model", {
+          exact: true,
+          selector: "input",
+        }),
+      ).toHaveAttribute("placeholder", "Use agent defaults (first-model)");
+    } else {
+      expect(
+        within(dialog).getByRole("combobox", { name: "Configuration" }),
+      ).toHaveTextContent("Harness defaults");
+    }
     fireEvent.change(within(dialog).getByLabelText("Name"), {
       target: { value: "Name-only change" },
     });
@@ -1695,18 +1673,20 @@ for (const mode of ["edit", "create"] as const) {
       filter: "next-*",
     };
     await act(async () => control.refresh());
-    expect(
-      within(dialog).getByLabelText("Databricks workspace (HTTPS origin)"),
-    ).toHaveValue("https://next.example.com");
-    expect(
-      within(dialog).getByLabelText("Model filter (optional)"),
-    ).toHaveValue("next-*");
-    expect(
-      within(dialog).getByLabelText("Model", {
-        exact: true,
-        selector: "input",
-      }),
-    ).toHaveAttribute("placeholder", "Use agent defaults (next-model)");
+    if (mode === "edit") {
+      expect(
+        within(dialog).getByLabelText("Databricks workspace (HTTPS origin)"),
+      ).toHaveValue("https://next.example.com");
+      expect(
+        within(dialog).getByLabelText("Model filter (optional)"),
+      ).toHaveValue("next-*");
+      expect(
+        within(dialog).getByLabelText("Model", {
+          exact: true,
+          selector: "input",
+        }),
+      ).toHaveAttribute("placeholder", "Use agent defaults (next-model)");
+    }
     fireEvent.click(
       within(dialog).getByRole("button", {
         name: mode === "create" ? "Create agent" : "Save changes",

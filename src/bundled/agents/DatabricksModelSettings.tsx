@@ -7,6 +7,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 export function DatabricksModelSettings({
   host,
   filter,
+  inheritedWorkspace,
   disabled,
   busy,
   onChange,
@@ -14,6 +15,7 @@ export function DatabricksModelSettings({
 }: {
   host: string;
   filter: string;
+  inheritedWorkspace?: { host: boolean; filter: boolean };
   disabled: boolean;
   busy: boolean;
   onChange(patch: Partial<AgentDraft>): void;
@@ -25,7 +27,11 @@ export function DatabricksModelSettings({
         <Input
           disabled={disabled}
           value={host}
-          placeholder="https://workspace.example.com"
+          placeholder={
+            inheritedWorkspace?.host
+              ? "Use agent defaults"
+              : "https://workspace.example.com"
+          }
           spellCheck={false}
           onChange={(event) =>
             onChange({
@@ -38,6 +44,9 @@ export function DatabricksModelSettings({
         <Input
           disabled={disabled}
           value={filter}
+          placeholder={
+            inheritedWorkspace?.filter ? "Use agent defaults" : undefined
+          }
           spellCheck={false}
           onChange={(event) =>
             onChange({
@@ -57,7 +66,6 @@ export function DatabricksModelSettings({
       <p className="text-body-sm text-secondary">
         Credentials are shared within Foundation for this workspace, not with
         old Buzz. Disconnect removes this app’s cache, not your browser session.
-        Save does not restart an agent.
       </p>
     </div>
   );

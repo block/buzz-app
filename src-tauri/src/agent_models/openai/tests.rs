@@ -17,6 +17,9 @@ const CATALOG: &str = r#"{"object":"list","data":[{"id":"test-model","object":"m
 #[derive(Default)]
 struct Keys;
 impl Credentials for Keys {
+    fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+        Err("unused".into())
+    }
     fn read_legacy(
         &self,
         _: buzz_agent_controller::LegacySource,

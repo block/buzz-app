@@ -19,6 +19,7 @@ pub(crate) fn fixture() -> Agent {
             command: "buzz-agent".into(),
             args: vec![],
             model: "test-model".into(),
+            configuration: None,
             provider: "test-provider".into(),
         },
         environment: BTreeMap::from([("TEST_TOKEN".into(), "secret-env-value".into())]),

@@ -23,6 +23,18 @@ impl Diagnostics {
                 let count = match reader.read(&mut chunk).await {
                     Ok(0) => break,
                     Ok(count) => count,
+                    // Linux reports a reset when the adapter exits with unread
+                    // request bytes. Preserve stderr already captured before it.
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::ConnectionReset
+                                | std::io::ErrorKind::BrokenPipe
+                                | std::io::ErrorKind::UnexpectedEof
+                        ) =>
+                    {
+                        break;
+                    }
                     Err(_) => return None,
                 };
                 total += count;

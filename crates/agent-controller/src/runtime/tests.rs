@@ -40,6 +40,7 @@ fn agent(workspace: &Path) -> Agent {
             command: "buzz-agent".into(),
             args: vec![],
             model: "test-model".into(),
+            configuration: None,
             provider: "test-provider".into(),
         },
         environment: BTreeMap::from([("PROVIDER_TEST_SETTING".into(), "explicit-value".into())]),
@@ -1177,8 +1178,13 @@ fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_age
     let settings = databricks_with_defaults(&agent, &defaults)
         .unwrap()
         .unwrap();
-    let context =
-        model_context_with_defaults(&agent.harness, &agent.environment, &defaults).unwrap();
+    let context = model_context_with_defaults(
+        &agent.harness,
+        &agent.environment,
+        &agent.workspace,
+        &defaults,
+    )
+    .unwrap();
     assert_eq!(context.host.as_deref(), Some(settings.host.as_str()));
     assert_eq!(context.filter.as_deref(), Some(settings.filter.as_str()));
     assert_eq!(settings.host, defaults.host);
@@ -1254,8 +1260,13 @@ fn saved_selectors_and_environment_override_build_floor_including_empty() {
         "DATABRICKS_HOST".into(),
         "https://override.example.com".into(),
     );
-    let context =
-        model_context_with_defaults(&agent.harness, &agent.environment, &defaults).unwrap();
+    let context = model_context_with_defaults(
+        &agent.harness,
+        &agent.environment,
+        &agent.workspace,
+        &defaults,
+    )
+    .unwrap();
     assert_eq!(
         context.host.as_deref(),
         Some("https://override.example.com")
@@ -1278,13 +1289,25 @@ fn saved_selectors_and_environment_override_build_floor_including_empty() {
     assert!(databricks_with_defaults(&agent, &defaults)
         .unwrap()
         .is_none());
-    assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+    assert!(model_context_with_defaults(
+        &agent.harness,
+        &agent.environment,
+        &agent.workspace,
+        &defaults
+    )
+    .is_err());
     agent.environment.remove("BUZZ_AGENT_PROVIDER");
     agent
         .environment
         .insert("DATABRICKS_TOKEN".into(), "SYNTHETIC".into());
     assert!(databricks_with_defaults(&agent, &defaults).is_err());
-    assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+    assert!(model_context_with_defaults(
+        &agent.harness,
+        &agent.environment,
+        &agent.workspace,
+        &defaults
+    )
+    .is_err());
 }
 
 #[test]
@@ -1356,6 +1379,7 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
             command: goose.display().to_string(),
             args: vec!["acp".into()],
             model: "short-name".into(),
+            configuration: None,
             provider: "databricks_v2".into(),
             databricks: None,
         },
@@ -1405,8 +1429,12 @@ fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
                 }
                 _ => defaults.provider = provider.into(),
             }
-            let context =
-                model_context_with_defaults(&agent.harness, &agent.environment, &defaults);
+            let context = model_context_with_defaults(
+                &agent.harness,
+                &agent.environment,
+                &agent.workspace,
+                &defaults,
+            );
             assert_eq!(
                 context.is_ok(),
                 provider != "databricks",

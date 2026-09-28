@@ -8,7 +8,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
 import { AgentCard } from "./AgentCard";
 import { ManagedAgentActions } from "./ManagedAgentActions";
-import type { AgentInventoryIdentity } from "./inventory-model";
+import { type AgentInventoryIdentity, localSetups } from "./inventory-model";
 
 /** One complete inventory identity; source selection belongs to the enclosing inventory. */
 export function InventoryIdentityCard({
@@ -37,27 +37,29 @@ export function InventoryIdentityCard({
   const data = state.data;
   if (!data) return null;
   const avatar = row.avatar ?? publicProfiles.get(row.pubkey)?.picture;
-  const setupHere = row.localSetups.get(destination);
+  // The app runs every saved setup, so each keeps its controls whether or not
+  // its community is the one currently selected or connected.
+  const setups = localSetups(row, destination);
   return (
     <AgentCard
       name={row.displayName}
       avatar={avatar}
       identities={[{ pubkey: row.pubkey, name: row.displayName }]}
       session={session}
-      editable={setupHere ? [setupHere] : []}
-      onEdit={setupHere ? edit : undefined}
-      onDuplicate={setupHere ? duplicate : undefined}
-      onDelete={setupHere ? remove : undefined}
+      editable={setups}
+      onEdit={setups.length ? edit : undefined}
+      onDuplicate={setups.length ? duplicate : undefined}
+      onDelete={setups.length ? remove : undefined}
     >
-      {setupHere && (
+      {setups.map((agent) => (
         <ManagedAgentActions
-          key={setupHere.id}
-          agent={setupHere}
+          key={agent.id}
+          agent={agent}
           state={state}
           control={control}
-          imported={setupHere.id === importedId}
+          imported={agent.id === importedId}
         />
-      )}
+      ))}
       {row.unconfiguredSetups.map((agent) => (
         <ManagedAgentActions
           key={agent.id}
@@ -73,10 +75,7 @@ export function InventoryIdentityCard({
         <summary className="cursor-pointer">Identity &amp; sources</summary>
         <div className="flex min-w-0 flex-col gap-2 pt-2">
           {[...row.knownCommunities]
-            .filter(
-              (community) =>
-                community && !(setupHere && community === destination),
-            )
+            .filter((community) => community && !row.localSetups.has(community))
             .map((community) => (
               <p key={community} className="m-0 break-all">
                 {community}

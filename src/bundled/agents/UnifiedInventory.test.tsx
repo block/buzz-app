@@ -152,3 +152,23 @@ it("omits redundant profile text and uses configured names for native WSS setups
     screen.queryByRole("article", { name: "Agent Not imported" }),
   ).toBeNull();
 });
+it("keeps exact local controls while disconnected and after switching to another community", async () => {
+  const { changeScope } = setup("disconnected", (f) => {
+    f.data.parked = [];
+  });
+  const card = await screen.findByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  expect(within(card).getByRole("button", { name: "Stop" })).toBeVisible();
+  expect(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  ).toBeVisible();
+  act(() => changeScope(`wss://other.example.test:${"de".repeat(32)}`, 2));
+  const switched = await screen.findByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  expect(within(switched).getByRole("button", { name: "Stop" })).toBeVisible();
+  expect(
+    within(switched).getByRole("button", { name: "Actions for Fixture agent" }),
+  ).toBeVisible();
+});

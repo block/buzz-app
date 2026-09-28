@@ -26,6 +26,18 @@ export interface AgentInventoryIdentity {
   unconfiguredSetups: readonly AgentView[];
 }
 
+/** Configured setups, the destination's setup first: the card represents that first setup. */
+export function localSetups(
+  row: AgentInventoryIdentity,
+  destination: CommunityUrl,
+): LocalSetup[] {
+  const here = row.localSetups.get(destination);
+  return [
+    ...(here ? [here] : []),
+    ...[...row.localSetups.values()].filter((setup) => setup !== here),
+  ];
+}
+
 /** Join public metadata and native-owned facts by key without changing storage. */
 export function inventoryIdentities(
   relayIdentities: AgentLibrary["identities"],

@@ -527,7 +527,12 @@ it("keeps Duplicate and Delete on local cards in the unified inventory", async (
   fireEvent.click(
     within(card).getByRole("button", { name: "Actions for Fixture agent" }),
   );
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Duplicate" }));
+  // Both saved setups of this key keep exact controls, including the one outside this community.
+  const duplicates = await screen.findAllByRole("menuitem", {
+    name: /^Duplicate /,
+  });
+  expect(duplicates).toHaveLength(2);
+  fireEvent.click(duplicates[0] as HTMLElement);
   const duplicate = screen.getByRole("dialog", {
     name: "Duplicate Fixture agent",
   });
@@ -535,7 +540,9 @@ it("keeps Duplicate and Delete on local cards in the unified inventory", async (
   fireEvent.click(
     within(card).getByRole("button", { name: "Actions for Fixture agent" }),
   );
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+  const deletes = await screen.findAllByRole("menuitem", { name: /^Delete / });
+  expect(deletes).toHaveLength(2);
+  fireEvent.click(deletes[0] as HTMLElement);
   expect(
     screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
   ).toBeVisible();

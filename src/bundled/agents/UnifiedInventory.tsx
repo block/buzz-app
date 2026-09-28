@@ -9,7 +9,7 @@ import { relayOrigin } from "../../features/communities/destination";
 import { useIdentityNames } from "../../features/identity-names/react";
 import type { RelaySnapshot } from "../../features/relay/service";
 import { Button } from "../../shared/design-system/ui/Button";
-import { inventoryIdentities } from "./inventory-model";
+import { inventoryIdentities, localSetups } from "./inventory-model";
 import { identityTiles } from "./identity-tiles";
 
 /** Discovery, saved metadata and execution are facts of one exact public key. */
@@ -74,11 +74,8 @@ export function UnifiedInventory({
   const displayFacts = [...rows.values()].map((row) => ({
     pubkey: row.pubkey,
     name:
-      (
-        row.localSetups.get(destination) ??
-        row.localSetups.values().next().value ??
-        row.unconfiguredSetups[0]
-      )?.name ?? row.displayName,
+      (localSetups(row, destination)[0] ?? row.unconfiguredSetups[0])?.name ??
+      row.displayName,
     isAgent: true,
   }));
   for (const fact of displayFacts) {

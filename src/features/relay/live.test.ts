@@ -1,5 +1,5 @@
 import { getLogger, setLogLevel } from "../developer/logging";
-import { assert, afterEach, expect, it, vi } from "vitest";
+import { assert, afterEach, beforeAll, expect, it, vi } from "vitest";
 import {
   createLiveAdmission,
   liveChannels,
@@ -46,6 +46,15 @@ class Socket {
     await this.receive(["OK", event.id, true]);
   }
 }
+// Keep the real 500-event replay boundary without timing fixture signing.
+const replayTime = 1_700_000_100;
+let hotReplay: ReturnType<typeof message>[];
+beforeAll(() => {
+  const author = keypair();
+  hotReplay = Array.from({ length: 501 }, (_, i) =>
+    message(author, "hot", `hot-${i}`, replayTime - 1),
+  );
+});
 afterEach(() => vi.useRealTimers());
 function setup(channels = ["a", "b"]) {
   const key = keypair(),
@@ -207,6 +216,7 @@ it("batches joined background interests without rebalance and fences retired bat
 
 it("keeps quiet-channel unread evidence when another filter fills its replay allowance", async () => {
   vi.useFakeTimers();
+  vi.setSystemTime(replayTime * 1000);
   const h = setup([]);
   const relay = keypair(),
     author = keypair();
@@ -237,12 +247,7 @@ it("keeps quiet-channel unread evidence when another filter fills its replay all
         ["p", h.key.pubkey],
       ],
     });
-    const history = [
-      quiet,
-      ...Array.from({ length: 501 }, (_, i) =>
-        message(author, "hot", `hot-${i}`, now - 1),
-      ),
-    ];
+    const history = [quiet, ...hotReplay];
     // Relay's existing OR contract applies each filter's limit separately.
     // The former multi-h filter loses quiet to the 500 newer hot events.
     const delivered = new Set<string>();

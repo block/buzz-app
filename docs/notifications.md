@@ -126,8 +126,9 @@ focus policy still applies. Dismissal never navigates. Observable send/focus
 failures reach Settings without retry; a focus error does not discard navigation.
 
 Banner permission state is not observable through these backends. Settings
-describes permission as system-controlled, without ineffective desktop
-banner permission controls; sound controls are effective on desktop because
+omits ineffective desktop banner permission controls (the page subtitle uses the
+reference copy and does not describe permission handling); sound controls are
+effective on desktop because
 playback happens in the app. The bridge accepts a submission before waiting for
 interaction: acceptance is **not** proof that a visible banner appeared. The macOS
 backend does not expose all delivery failures, and no uniform withdrawal/receipt

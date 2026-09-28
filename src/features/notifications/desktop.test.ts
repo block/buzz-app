@@ -120,7 +120,7 @@ it("observable SDK failures surface once without retry or a browser fallback", a
   expect(sdk.show).toHaveBeenCalledTimes(2);
 });
 
-it("desktop settings expose app-owned sound and running-app exact clicks", async () => {
+it("desktop settings expose app-owned sound with the reference desktop copy", async () => {
   const { service } = setup();
   await flush();
   const html = renderToStaticMarkup(
@@ -141,6 +141,22 @@ it("desktop settings expose app-owned sound and running-app exact clicks", async
   expect(html).not.toContain("Permission granted");
   expect(html).not.toContain("Check permission");
   expect(html).not.toContain("Allow notifications");
+  // Disabling desktop alerts swaps in the reference's disabled description.
+  service.updatePreferences({ enabled: false });
+  const disabled = renderToStaticMarkup(
+    createElement(NotificationSettings, {
+      notifications: service,
+      // Keep this a pure copy render: `active` gates only preview and toasts,
+      // and this harness has no Toast.Provider.
+      active: false,
+    }),
+  );
+  expect(disabled).toContain(
+    "Request OS permission and surface new mentions or needs-action items outside the app.",
+  );
+  expect(disabled).not.toContain(
+    "Native desktop alerts are enabled for the categories you have armed below.",
+  );
 });
 
 it("non-Tauri runs select the unchanged browser adapter, never the native SDK", async () => {

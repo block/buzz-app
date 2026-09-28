@@ -233,6 +233,57 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
   expect(errors).toEqual([]);
 });
 
+// Real layout and native menu focus cannot be established by jsdom.
+test("existing workflow enablement stays in the header overflow", async ({
+  page,
+}, testInfo) => {
+  await page.goto(url);
+  await page
+    .getByRole("button", { name: "Message helper", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Edit workflow",
+    exact: true,
+  });
+  const actions = dialog.getByRole("button", { name: "Workflow actions" });
+  const close = dialog.getByRole("button", { name: "Close editor" });
+  await expect(
+    dialog.getByRole("switch", { name: "Configuration", exact: true }),
+  ).toHaveCount(0);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const actionBox = await actions.boundingBox();
+    const closeBox = await close.boundingBox();
+    expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(closeBox.x);
+    expect(Math.abs(actionBox.y - closeBox.y)).toBeLessThan(10);
+    await actions.focus();
+    await page.keyboard.press("Enter");
+    const enable = page.getByRole("menuitemcheckbox", {
+      name: "Enable",
+      exact: true,
+    });
+    await expect(enable).not.toBeChecked();
+    await page.keyboard.press("Home");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await expect(enable).toBeFocused();
+    await page.keyboard.press("Space");
+    await expect(enable).toBeChecked();
+    expect(await page.evaluate(() => window.workflowFixture.calls.save)).toBe(
+      0,
+    );
+    const menuBox = await page.getByRole("menu").boundingBox();
+    expect(menuBox.x).toBeGreaterThanOrEqual(0);
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: testInfo.outputPath(`header-${width}.png`) });
+    await page.keyboard.press("Space");
+    await expect(enable).not.toBeChecked();
+    await page.keyboard.press("Escape");
+    await expect(actions).toBeFocused();
+    await expect(dialog).toBeVisible();
+  }
+});
+
 test("keyboard switches feed enabled-save confirmation and disabled readback", async ({
   page,
   browserName,
@@ -248,9 +299,7 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await page.goto(url);
   const editor = editorControls(page);
   const { button } = editor;
-  const enabled = page.getByRole("switch", {
-    name: /^Configuration$/,
-  });
+  let enabled = page.getByRole("switch", { name: /^Configuration$/ });
   const reply = page.getByRole("switch", {
     name: "Reply in the triggering thread",
   });
@@ -267,8 +316,14 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
     await expect(control).toBeFocused();
   };
   const focusEnabled = async () => {
-    await button("Edit workflow name").focus();
-    await page.keyboard.press(tab);
+    if (await button("Workflow actions").count()) {
+      await button("Workflow actions").focus();
+      await page.keyboard.press("Enter");
+      await enabled.focus();
+    } else {
+      await button("Edit workflow name").focus();
+      await page.keyboard.press(tab);
+    }
     await expect(enabled).toBeFocused();
   };
   // Reply lives in step 1's Run controls disclosure.
@@ -331,7 +386,10 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   // The offline capability supplies the exact asynchronous receipt/readback.
   await page.evaluate(() => window.workflowFixture.finish("succeeded"));
   await expect(button("Save changes")).toBeEnabled();
+  enabled = page.getByRole("menuitemcheckbox", { name: "Enable", exact: true });
+  await focusEnabled();
   await expect(enabled).toBeChecked();
+  await page.keyboard.press("Escape");
   await openReply();
   await expect(reply).toBeChecked();
   await editor.message.fill("Ordinary enabled edit");
@@ -343,6 +401,7 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await focusEnabled();
   await page.keyboard.press("Enter");
   await expect(enabled).not.toBeChecked();
+  await page.keyboard.press("Escape");
   await openReply();
   await focusByTab(reply);
   await page.keyboard.press("Space");
@@ -354,11 +413,16 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   expect((await savedYaml()).enabled).toBe(false);
   expect((await savedYaml()).steps[0].reply_in_thread).not.toBe(true);
   await page.evaluate(() => window.workflowFixture.finish("succeeded"));
+  await focusEnabled();
   await expect(enabled).toBeEnabled();
   await expect(enabled).not.toBeChecked();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
   await openReply();
   await expect(reply).not.toBeChecked();
+  await focusEnabled();
   await enabled.click();
+  await page.keyboard.press("Escape");
   await button("Save changes").click();
   await expect(dialog).toContainText("It will run for every new message");
   expect(await saves()).toBe(3);
@@ -782,9 +846,11 @@ test("compact restrictions stay reachable above card overlays and in the read-on
   await expect(
     dialog.getByText("Only the author can change this workflow."),
   ).toBeVisible();
+  await dialog.getByRole("button", { name: "Workflow actions" }).click();
   await expect(
-    dialog.getByRole("switch", { name: "Configuration", exact: true }),
+    page.getByRole("menuitemcheckbox", { name: "Enable", exact: true }),
   ).toBeDisabled();
+  await page.keyboard.press("Escape");
   await expect(
     dialog.getByRole("button", { name: "Edit workflow name" }),
   ).toBeDisabled();

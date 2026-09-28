@@ -9,14 +9,8 @@ import type {
   WorkflowCapability,
   WorkflowDefinition,
 } from "../../features/workflows/types";
-import { DotsThreeIcon, HashIcon } from "../../shared/design-system/icons";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import {
-  MenuItem,
-  MenuPopup,
-  MenuRoot,
-  MenuTrigger,
-} from "../../shared/design-system/ui/Menu";
+import { HashIcon } from "../../shared/design-system/icons";
+import { MenuItem, MenuSeparator } from "../../shared/design-system/ui/Menu";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowEditor } from "./WorkflowEditor";
@@ -400,54 +394,45 @@ export function WorkflowChannel({
                 {channelName}
               </span>
             }
-            actions={
-              draft.original && (
-                <MenuRoot>
-                  <MenuTrigger
-                    render={
-                      <IconButton
-                        aria-label="Workflow actions"
-                        icon={<DotsThreeIcon size={20} aria-hidden="true" />}
-                      />
-                    }
-                  />
-                  <MenuPopup>
+            actions={(enable) => (
+              <>
+                <MenuItem
+                  disabled={!capability.availability.history}
+                  onClick={() => setReadRuns((value) => !value)}
+                >
+                  {readRuns ? "Hide runs" : "Read runs"}
+                </MenuItem>
+                {!readonly && (
+                  <>
                     <MenuItem
-                      disabled={!capability.availability.history}
-                      onClick={() => setReadRuns((value) => !value)}
+                      disabled={
+                        dirty ||
+                        !!draft.operationId ||
+                        unresolvedWrite ||
+                        !capability.availability.trigger
+                      }
+                      onClick={trigger}
                     >
-                      {readRuns ? "Hide runs" : "Read runs"}
+                      Run now
                     </MenuItem>
-                    {!readonly && (
-                      <>
-                        <MenuItem
-                          disabled={
-                            dirty ||
-                            !!draft.operationId ||
-                            unresolvedWrite ||
-                            !capability.availability.trigger
-                          }
-                          onClick={trigger}
-                        >
-                          Run now
-                        </MenuItem>
-                        <MenuItem
-                          tone="danger"
-                          disabled={
-                            !!draft.operationId ||
-                            unresolvedWrite ||
-                            !capability.availability.delete
-                          }
-                          onClick={() => setConfirmDelete(true)}
-                        >
-                          Delete workflow
-                        </MenuItem>
-                      </>
-                    )}
-                  </MenuPopup>
-                </MenuRoot>
-              )
-            }
+                    {enable}
+                    <MenuSeparator />
+                    <MenuItem
+                      tone="danger"
+                      disabled={
+                        !!draft.operationId ||
+                        unresolvedWrite ||
+                        !capability.availability.delete
+                      }
+                      onClick={() => setConfirmDelete(true)}
+                    >
+                      Delete workflow
+                    </MenuItem>
+                  </>
+                )}
+                {readonly && enable}
+              </>
+            )}
             status={
               <>
                 {(snapshot.status === "error" ||

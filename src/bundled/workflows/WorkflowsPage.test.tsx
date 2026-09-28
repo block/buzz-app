@@ -138,9 +138,11 @@ it("explains another author's disabled controls from the landing through the rea
   const dialog = screen.getByRole("dialog", { name: "View workflow" });
   const controls = within(dialog);
   expect(controls.getByText("Message helper")).toBeVisible();
+  await user.click(controls.getByRole("button", { name: "Workflow actions" }));
   expect(
-    controls.getByRole("switch", { name: "Configuration" }),
+    await screen.findByRole("menuitemcheckbox", { name: "Enable" }),
   ).toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Escape}");
   expect(
     controls.getByRole("button", { name: "Edit workflow name" }),
   ).toBeDisabled();

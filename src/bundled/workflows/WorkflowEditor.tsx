@@ -2,10 +2,19 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { PencilSimpleIcon } from "../../shared/design-system/icons";
+import {
+  DotsThreeIcon,
+  PencilSimpleIcon,
+} from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuCheckboxItem,
+} from "../../shared/design-system/ui/Menu";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { ConfirmAction } from "./ConfirmAction";
@@ -55,7 +64,7 @@ export function WorkflowEditor({
   locked?: boolean;
   onCancel?: () => void;
   scope?: ReactNode;
-  actions?: ReactNode;
+  actions?: (enable: ReactNode) => ReactNode;
   details?: ReactNode;
   status?: ReactNode;
   children?: ReactNode;
@@ -152,6 +161,19 @@ export function WorkflowEditor({
           : !fields.editable
             ? "Correct the YAML before changing the name or configuration."
             : undefined));
+  const enableControl = (
+    <MenuCheckboxItem
+      checked={fields.enabled !== false && fields.editable}
+      disabled={disabled || !fields.editable}
+      aria-describedby={controlReason ? `${id}-control-reason` : undefined}
+      closeOnClick={false}
+      onCheckedChange={(enabled) =>
+        changeHeader(yamlWithWorkflowEnabled(yaml, enabled), { enabled })
+      }
+    >
+      Enable
+    </MenuCheckboxItem>
+  );
   return (
     <Dialog
       open
@@ -172,7 +194,23 @@ export function WorkflowEditor({
         setSelection(null);
         return true;
       }}
-      headerActions={actions}
+      headerActions={
+        !create && (
+          <MenuRoot>
+            <MenuTrigger
+              render={
+                <IconButton
+                  aria-label="Workflow actions"
+                  icon={<DotsThreeIcon size={20} aria-hidden="true" />}
+                />
+              }
+            />
+            <MenuPopup align="end">
+              {actions ? actions(enableControl) : enableControl}
+            </MenuPopup>
+          </MenuRoot>
+        )
+      }
       leadingActions={
         <Tabs
           variant="panel"
@@ -322,7 +360,7 @@ export function WorkflowEditor({
               <p id={`${id}-control-reason`}>{controlReason}</p>
             </details>
           )}
-          {fields.editable ? (
+          {create && fields.editable ? (
             <Switch
               label="Configuration"
               aria-describedby={
@@ -336,11 +374,11 @@ export function WorkflowEditor({
                 })
               }
             />
-          ) : (
+          ) : !fields.editable ? (
             <span className="text-body-sm text-secondary">
               Unreadable configuration
             </span>
-          )}
+          ) : null}
         </div>
         <div className="workflow-editor-body">
           {modeError && (

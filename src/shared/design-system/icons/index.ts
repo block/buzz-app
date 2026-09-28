@@ -312,3 +312,11 @@ export const ArrowsDownUpIcon = defineIcon(
 
 import { InfoIcon as PhosphorInfoIcon } from "@phosphor-icons/react/dist/csr/Info";
 export const InfoIcon = defineIcon("phosphor", PhosphorInfoIcon);
+
+import { SpeakerHighIcon as PhosphorSpeakerHighIcon } from "@phosphor-icons/react/dist/csr/SpeakerHigh";
+export const SpeakerHighIcon = defineIcon("phosphor", PhosphorSpeakerHighIcon);
+import { SpeakerSlashIcon as PhosphorSpeakerSlashIcon } from "@phosphor-icons/react/dist/csr/SpeakerSlash";
+export const SpeakerSlashIcon = defineIcon(
+  "phosphor",
+  PhosphorSpeakerSlashIcon,
+);

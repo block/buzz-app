@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
@@ -41,6 +42,7 @@ function setupReview(initialTime = 7) {
     },
   });
   owners.push(owner);
+  const close = vi.fn();
   render(
     <MediaReviewViewer
       attachment={videoAttachment}
@@ -51,10 +53,11 @@ function setupReview(initialTime = 7) {
       messageId={root.id}
       initialTime={initialTime}
       onOpenLink={() => false}
-      close={() => {}}
+      close={close}
     />,
   );
-  return { root };
+  fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
+  return { root, close };
 }
 
 it("opens shared video review at the requested frame and tracks playback time", async () => {
@@ -67,11 +70,16 @@ it("opens shared video review at the requested frame and tracks playback time", 
 
   fireEvent.loadedMetadata(video);
   expect(video.currentTime).toBe(7);
+  expect(video).toHaveAttribute("autoplay");
 
   video.currentTime = 65;
   fireEvent.timeUpdate(video);
 
-  expect(screen.getByText("1:05")).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Media comments" }),
+    ).getByText("01:05"),
+  ).toBeInTheDocument();
   expect(
     screen.getByRole("checkbox", { name: "Comment at current frame" }),
   ).toBeChecked();
@@ -91,4 +99,114 @@ it("shows unavailable treatment when shared video review playback errors", async
     "Media unavailable",
   );
   expect(document.querySelector("video")).toBeNull();
+});
+
+it("keeps the same video and playback position when hiding and showing comments", async () => {
+  setupReview(7);
+  const seek = await screen.findByRole("slider", { name: "Video timeline" });
+  const video = document.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  Object.defineProperty(video, "duration", { configurable: true, value: 120 });
+  fireEvent.durationChange(video);
+  fireEvent.change(seek, { target: { value: "45" } });
+  expect(video.currentTime).toBe(45);
+  expect(seek).toHaveAttribute("aria-valuetext", "00:45 / 02:00");
+  const comments = screen.getByRole("complementary", {
+    name: "Media comments",
+  });
+  const timeOption = screen.getByRole("checkbox", {
+    name: "Comment at current frame",
+  });
+  fireEvent.click(timeOption);
+  fireEvent.click(screen.getByRole("button", { name: "Hide comments" }), {
+    detail: 1,
+  });
+  expect(screen.getByRole("dialog", { name: "Video review" })).toHaveAttribute(
+    "data-comments-motion",
+  );
+  expect(comments).toHaveAttribute("inert");
+  expect(comments).toContainElement(timeOption);
+  expect(
+    screen.queryByRole("complementary", { name: "Media comments" }),
+  ).toBeNull();
+  expect(document.querySelector("video")).toBe(video);
+  expect(video.currentTime).toBe(45);
+  fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
+  expect(
+    screen.getByRole("dialog", { name: "Video review" }),
+  ).not.toHaveAttribute("data-comments-motion");
+  expect(comments).not.toHaveAttribute("inert");
+  expect(
+    screen.getByRole("checkbox", { name: "Comment at current frame" }),
+  ).toBe(timeOption);
+  expect(timeOption).not.toBeChecked();
+  expect(
+    screen.getByRole("complementary", { name: "Media comments" }),
+  ).toBeVisible();
+  expect(document.querySelector("video")).toBe(video);
+  expect(video.currentTime).toBe(45);
+});
+
+it("controls playback, speed and sound without native controls", async () => {
+  setupReview();
+  await screen.findByRole("slider", { name: "Video timeline" });
+  const video = document.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  expect(video).not.toHaveAttribute("controls");
+  const play = vi.spyOn(video, "play").mockImplementation(() => {
+    fireEvent.play(video);
+    return Promise.resolve();
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+  expect(play).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Pause video" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Playback speed: 1x" }));
+  fireEvent.click(screen.getByRole("button", { name: "1.5x" }));
+  expect(video.playbackRate).toBe(1.5);
+  fireEvent.change(screen.getByRole("slider", { name: "Video volume" }), {
+    target: { value: "0.5" },
+  });
+  expect(video.volume).toBe(0.5);
+  fireEvent.click(screen.getByRole("button", { name: "Mute video" }));
+  expect(video.muted).toBe(true);
+});
+
+it("keeps play available after a rejected playback request", async () => {
+  setupReview();
+  await screen.findByRole("slider", { name: "Video timeline" });
+  const video = document.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  vi.spyOn(video, "play").mockRejectedValue(new Error("NotAllowedError"));
+  fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Press play to try again",
+  );
+  expect(screen.getByRole("button", { name: "Play video" })).toBeVisible();
+});
+
+it("closes the speed menu with Escape without closing review", async () => {
+  const { close } = setupReview();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Playback speed: 1x" }),
+  );
+  fireEvent.keyDown(screen.getByRole("button", { name: "1.5x" }), {
+    key: "Escape",
+  });
+  expect(screen.queryByRole("group", { name: "Playback speed" })).toBeNull();
+  expect(close).not.toHaveBeenCalled();
+});
+
+it("keeps the focus loop out of the collapsing comments panel", async () => {
+  setupReview();
+  await screen.findByRole("slider", { name: "Video timeline" });
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 100, 20),
+  ] as unknown as DOMRectList);
+  fireEvent.click(screen.getByRole("button", { name: "Hide comments" }), {
+    detail: 1,
+  });
+  const toggle = screen.getByRole("button", { name: "Show comments" });
+  toggle.focus();
+  fireEvent.keyDown(toggle, { key: "Tab", shiftKey: true });
+  expect(screen.getByRole("slider", { name: "Video volume" })).toHaveFocus();
 });

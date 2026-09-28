@@ -1814,7 +1814,7 @@ fn managed_prefix_detection_and_shim_launch_path_use_pinned_node() {
         prefix.join("pi").display().to_string()
     );
     assert_eq!(
-        std::env::split_paths(&context.path).nth(0).unwrap(),
+        std::env::split_paths(&context.path).next().unwrap(),
         node_bin
     );
     assert_eq!(std::env::split_paths(&context.path).nth(1).unwrap(), prefix);

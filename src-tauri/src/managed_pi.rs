@@ -14,6 +14,7 @@ const VERSION: &str = "v24.18.0";
 const MAX_ARCHIVE: u64 = 90 * 1024 * 1024;
 const PI: &str = "@earendil-works/pi-coding-agent";
 const ADAPTER: &str = "git+https://github.com/salman1993/buzz-pi-acp.git#86b201e";
+const NPM_FAILED: &str = "npm couldn't install Pi; see the install log. If your network blocks the public npm registry, set your mirror in ~/.npmrc or npm_config_registry, then try again, or use the commands below.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Artifact {
@@ -96,11 +97,10 @@ async fn download(spec: Artifact) -> Result<Vec<u8>, String> {
         .build()
         .map_err(|_| "Could not prepare managed Node download")?;
     let url = format!("https://nodejs.org/dist/{VERSION}/{}", spec.filename);
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|_| "Could not download managed Node")?;
+    let mut response =
+        client.get(url).send().await.map_err(|_| {
+            "Could not download Node.js from nodejs.org; check your network or proxy"
+        })?;
     if !response.status().is_success()
         || response
             .content_length()
@@ -138,6 +138,22 @@ fn scrub(
     ])
     .map_err(|_| "Invalid managed Node PATH")?;
     command.env_clear();
+    // npm reads registry, auth, CA and proxy settings from ~/.npmrc (real HOME)
+    // and from npm_config_* variables. Keep those so a mirror still works, but
+    // never let them move the app-owned prefix, cache or global config.
+    for (name, value) in std::env::vars_os() {
+        let Some(key) = name.to_str().map(str::to_ascii_lowercase) else {
+            continue;
+        };
+        if key.starts_with("npm_config_")
+            && !matches!(
+                key.as_str(),
+                "npm_config_prefix" | "npm_config_cache" | "npm_config_globalconfig"
+            )
+        {
+            command.env(name, value);
+        }
+    }
     for name in [
         "TMPDIR",
         "USER",
@@ -162,6 +178,10 @@ fn scrub(
         .env("PATH", path)
         .env("npm_config_cache", app_data.join("node-tools/cache"))
         .env("npm_config_prefix", app_data.join("node-tools"))
+        .env(
+            "npm_config_globalconfig",
+            app_data.join("node-tools/etc/npmrc"),
+        )
         .current_dir(home)
         .stdin(Stdio::null())
         .kill_on_drop(true)
@@ -173,6 +193,7 @@ async fn run_step(
     setup: &HarnessSetup,
     command: &mut tokio::process::Command,
     log: &File,
+    failure: &str,
 ) -> Result<(), String> {
     command
         .stdout(Stdio::from(
@@ -189,7 +210,7 @@ async fn run_step(
     child.reaped = true;
     drop(child);
     if !status.success() {
-        return Err("Pi install step failed; see the install log".into());
+        return Err(failure.into());
     }
     Ok(())
 }
@@ -226,7 +247,13 @@ async fn install_node(
             .arg("-C")
             .arg(&stage)
             .arg("--strip-components=1");
-        run_step(setup, &mut tar, log).await?;
+        run_step(
+            setup,
+            &mut tar,
+            log,
+            "Could not unpack managed Node; see the install log",
+        )
+        .await?;
         std::fs::remove_file(&archive_path).map_err(|_| "Could not remove Node archive")?;
         if !stage.join("bin/node").is_file()
             || !stage.join("lib/node_modules/npm/bin/npm-cli.js").is_file()
@@ -290,7 +317,7 @@ pub(crate) async fn install(
     for (package, install_links) in [(PI, false), (ADAPTER, true)] {
         refuse_linked_prefix(&prefix)?;
         let mut command = npm_command(&node, app_data, &home, package, install_links)?;
-        run_step(setup, &mut command, &log).await?;
+        run_step(setup, &mut command, &log, NPM_FAILED).await?;
     }
     Ok(true)
 }
@@ -349,6 +376,39 @@ mod tests {
             assert_eq!(get("NODE_EXTRA_CA_CERTS"), Some(ca.as_os_str()));
         }
         assert!(env.iter().all(|(name, _)| *name != "BUZZ_PRIVATE_KEY"));
+        assert_eq!(
+            get("npm_config_globalconfig"),
+            Some(std::ffi::OsStr::new("/app/data/node-tools/etc/npmrc"))
+        );
+    }
+    #[test]
+    fn npm_mirror_settings_pass_through_but_cannot_move_the_prefix() {
+        // Process env is shared; use names no other test reads.
+        unsafe {
+            std::env::set_var("NPM_CONFIG_REGISTRY", "https://mirror.example/");
+            std::env::set_var("npm_config_userconfig", "/home/me/.npmrc");
+            std::env::set_var("NPM_CONFIG_PREFIX", "/usr/local");
+            std::env::set_var("NPM_CONFIG_GLOBALCONFIG", "/etc/npmrc");
+        }
+        let mut cmd = tokio::process::Command::new("/usr/bin/env");
+        scrub(
+            &mut cmd,
+            Path::new("/home/me"),
+            Path::new("/managed/node/bin"),
+            Path::new("/app/data"),
+        )
+        .unwrap();
+        let env: std::collections::BTreeMap<_, _> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_str()?.to_owned(), v?.to_str()?.to_owned())))
+            .collect();
+        assert_eq!(env["NPM_CONFIG_REGISTRY"], "https://mirror.example/");
+        assert_eq!(env["npm_config_userconfig"], "/home/me/.npmrc");
+        assert_eq!(env["HOME"], "/home/me");
+        assert!(!env.contains_key("NPM_CONFIG_PREFIX"));
+        assert!(!env.contains_key("NPM_CONFIG_GLOBALCONFIG"));
+        assert_eq!(env["npm_config_prefix"], "/app/data/node-tools");
     }
     #[cfg(unix)]
     #[test]

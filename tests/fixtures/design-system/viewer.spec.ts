@@ -1069,7 +1069,8 @@ test("buttons and icon buttons share size geometry and preserve loading and disa
             )
             .toBe(true);
         } else {
-          await expect(button).toHaveCSS("border-radius", "20px");
+          // Half the 52px large height; shorter sizes clamp to their own half-height.
+          await expect(button).toHaveCSS("border-radius", "26px");
           await expect(button).toHaveCSS(
             "padding-left",
             size === "sm" ? "16px" : "24px",

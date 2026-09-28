@@ -163,10 +163,10 @@ outline and link emphasis. Inverted is for an inverse surface; link keeps its
 background clear and underlines on interaction. Its
 32 / 40 / 52px sizes are sm / md / lg at the default scale, with minimum
 heights that accommodate larger text. Text buttons use `--radius-capsule`
-(1.25rem / 20px): pill-shaped at the default 40px height, clamped naturally on
-shorter controls, and bounded on taller ones. Reuse this role for similarly sized
-actions; `--radius-pill` remains the fully round role for circles and pills of
-any height. Fields retain `--radius-control`.
+(1.625rem / 26px): capsule-shaped through the default 52px large size,
+clamped naturally on shorter controls, and bounded on taller ones. Reuse this
+role for similarly sized actions; `--radius-pill` remains the fully round role
+for circles and pills of any height. Fields retain `--radius-control`.
 
 Button labels stay on one line and do not shrink in flex layouts, following
 shadcn's `whitespace-nowrap shrink-0` behavior without changing Buzz's sizing,

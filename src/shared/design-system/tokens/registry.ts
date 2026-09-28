@@ -1249,8 +1249,8 @@ export const RADII = [
   {
     token: "radius-capsule",
     variable: "--radius-capsule",
-    value: "20px",
-    use: "Text buttons and similarly sized actions: pill-shaped at standard heights, bounded on taller controls.",
+    value: "26px",
+    use: "Text buttons and similarly sized actions: capsule-shaped through large (52px), bounded on taller controls.",
   },
   {
     token: "radius-pill",

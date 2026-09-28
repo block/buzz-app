@@ -493,7 +493,7 @@ test("history stays lazy and paged; acknowledging an unknown run never repeats i
   );
   await button("Dismiss notice").click();
   await expect(page.getByRole("alertdialog")).toContainText(
-    "does not undo, cancel or repeat",
+    "does not undo, cancel, or repeat",
   );
   await button("Dismiss notice and continue").click();
   await editor.expectAction("Run now", true);
@@ -968,7 +968,7 @@ for (const heldEditor of [false, true]) {
         )
         .toBe(true);
     await editor.action("Delete workflow");
-    await button("Request deletion").click();
+    await button("Delete workflow").click();
     try {
       await expect
         .poll(() =>
@@ -976,9 +976,11 @@ for (const heldEditor of [false, true]) {
         )
         .toBe(1);
       await expect(
-        page.getByText("Requesting deletion…", { exact: true }),
+        page
+          .getByRole("region", { name: "Workflow operations" })
+          .getByText("Deleting…", { exact: true }),
       ).toBeVisible();
-      await expect(button("Saving…")).toBeDisabled();
+      await expect(button("Deleting…")).toBeDisabled();
     } finally {
       await page.evaluate(() =>
         window.workflowSessionFixture.settleDelete(true),
@@ -1033,7 +1035,7 @@ test("landing keeps a workflow locked while deletion remains undismissed", async
   const { button } = editor;
   await button("Open Fixture A helper").click();
   await editor.action("Delete workflow");
-  await button("Request deletion").click();
+  await button("Delete workflow").click();
   await expect
     .poll(() =>
       page.evaluate(() => window.workflowSessionFixture.publications()),
@@ -1207,7 +1209,7 @@ test("optimistic dismissal keeps confirmation mounted until persistence settles"
     .toBe(2);
 });
 
-test("legacy deletion is a request, not verified runtime removal", async ({
+test("legacy deletion retains the configuration and offers recovery without claiming removal", async ({
   page,
 }) => {
   await page.goto(url);
@@ -1216,13 +1218,23 @@ test("legacy deletion is a request, not verified runtime removal", async ({
   await button("Message helper").click();
   await editor.action("Delete workflow");
   await expect(page.getByRole("alertdialog")).toContainText(
-    "does not confirm runtime deletion",
+    "Work already running may continue.",
   );
-  await button("Request deletion").click();
+  await expect(button("Delete workflow")).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
+  await button("Delete workflow").click();
   await page.evaluate(() => window.workflowFixture.finish("succeeded"));
   await expect(
-    page.getByText(/Deletion request accepted\. The saved configuration/),
+    page
+      .getByRole("region", { name: "Workflow operations" })
+      .getByText(
+        "This workflow is still in saved configuration. Check again before deleting.",
+      ),
   ).toBeVisible();
+  await expect(button("Delete workflow")).toBeDisabled();
+  await expect(page.getByText(/Saved workflow deleted/)).toHaveCount(0);
   await button("Dismiss notice").click();
   await button("Dismiss notice and continue").click();
   await expect(button("Save changes")).toBeEnabled();

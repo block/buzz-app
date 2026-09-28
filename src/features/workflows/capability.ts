@@ -333,8 +333,7 @@ export function createWorkflows({
             snapshot = Object.freeze({
               status: "error",
               data: empty,
-              error:
-                "Workflow read unavailable. Retry; this is not proof of deletion.",
+              error: "Couldn't read workflow data. Try again.",
             });
             emit();
           })

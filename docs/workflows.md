@@ -47,7 +47,7 @@ See the [capability contract](../src/features/workflows/types.ts).
   it and never enters the outbox journal, operation errors or logs. The hook
   URL needs the relay HTTP base the host advertises; without it the dialog
   shows the relative `/hooks/{id}` route only.
-- Confirmed deletion request, manual run, and on-demand run/trace history in
+- Destructive deletion confirmation, manual run, and on-demand run/trace history in
   20-row pages with the relay's exact `(before,beforeId)` cursor.
 - No approval UI, lifecycle negotiation, alternative signed-host adapter,
   plugin command-replay API or JSON trigger inputs.
@@ -73,6 +73,10 @@ complete channel result. The editor then closes and the landing refreshes withou
 resubmitting the deletion. Missing receipts, partial/failed reads and retained
 definitions keep the editor recoverable through **Check saved configuration**.
 This confirms configuration removal, not cancellation of already running work.
+Deletion uses direct action wording, with pending, checking, retained, and
+unconfirmed states. Success copy uses the same complete-read evidence as editor
+closure; delivery details stay in their disclosure. Dismissing a deletion notice
+keeps the draft and unlocks editing without confirming or repeating deletion.
 
 Saving a configured enabled flag does not prove runtime activation or cancellation.
 Legacy deletion can retain a visible definition; accepted delivery is not proof

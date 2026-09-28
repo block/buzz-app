@@ -8,6 +8,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createRelaySession } from "../relay/session";
@@ -84,6 +85,7 @@ function fixture(
     typeof createSidebarPreferencesStore
   >["queries"],
   status: RelaySnapshot["status"] = "ready",
+  options: { cached?: boolean; readyFailure?: boolean } = {},
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -102,15 +104,26 @@ function fixture(
   const session = {
     ...owner.session,
     ...(sidebarPreferences ? { sidebarPreferences } : {}),
+    ...(options.readyFailure
+      ? {
+          channelKit: {
+            ...owner.session.channelKit,
+            snapshot: () => {
+              throw new Error("Channel kit fixture failed");
+            },
+          },
+        }
+      : {}),
     live: { ...owner.session.live, snapshot: () => live },
     channels: { ...owner.session.channels, list: () => list, ensureList() {} },
   };
   const snapshot: RelaySnapshot = {
     status,
-    ...(status === "ready"
+    ...(status === "ready" || options.cached
       ? { scope: "https://relay.test:viewer", viewer: "viewer" }
       : {}),
     generation: 1,
+    ...(options.cached ? { cached: true as const } : {}),
     session,
   };
   const relay = {
@@ -121,7 +134,7 @@ function fixture(
     async clearCache() {},
   } satisfies RelayData;
   const navigator = { open: vi.fn() } as unknown as Navigation;
-  const view = (id: string, sessionsEnabled = true) => (
+  const view = (id: string, sessionsEnabled = true, children?: ReactNode) => (
     <ChannelNavigationProvider relay={relay}>
       <ChannelSidebar
         relay={relay}
@@ -135,7 +148,9 @@ function fixture(
         }}
         sessionsEnabled={sessionsEnabled}
         agentsEnabled={true}
-      />
+      >
+        {children}
+      </ChannelSidebar>
     </ChannelNavigationProvider>
   );
   return { view, navigator, snapshot, list };
@@ -280,6 +295,52 @@ it.each(["connecting", "disconnected", "error"] as const)(
     expect(h.navigator.open).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  ["ready", "ready", false],
+  ["cached", "connecting", true],
+  ["loading", "connecting", false],
+  ["error", "error", false],
+] as const)(
+  "keeps contributed page navigation available while channels are %s",
+  (_state, status, cached) => {
+    const h = fixture(undefined, status, { cached });
+    render(
+      h.view(
+        "alpha",
+        true,
+        <nav aria-label="Pages">
+          <button type="button">Workflows</button>
+        </nav>,
+      ),
+    );
+    expect(screen.getByRole("navigation", { name: "Pages" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Workflows" })).toBeVisible();
+  },
+);
+
+it("keeps contributed page navigation available in the channel boundary fallback", () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const h = fixture(undefined, "ready", { readyFailure: true });
+    render(
+      h.view(
+        "alpha",
+        true,
+        <nav aria-label="Pages">
+          <button type="button">Workflows</button>
+        </nav>,
+      ),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Channels couldn’t open.",
+    );
+    expect(screen.getByRole("navigation", { name: "Pages" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Workflows" })).toBeVisible();
+  } finally {
+    error.mockRestore();
+  }
+});
 
 it("opens Inbox and Bestie in the ready community", () => {
   const h = fixture();

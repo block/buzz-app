@@ -77,17 +77,21 @@ type Props = {
   target: OpenTarget;
   sessionsEnabled: boolean;
   agentsEnabled: boolean;
+  children?: ReactNode;
 };
 export function ChannelSidebar(props: Props) {
   const connection = useRelayConnection(props.relay);
   const navigation = (
-    <SidebarNavigation
-      agentsEnabled={props.agentsEnabled}
-      navigator={props.navigator}
-      scope={connection.scope ?? "disconnected"}
-      target={props.target}
-      viewer={connection.viewer}
-    />
+    <>
+      {props.children}
+      <SidebarNavigation
+        agentsEnabled={props.agentsEnabled}
+        navigator={props.navigator}
+        scope={connection.scope ?? "disconnected"}
+        target={props.target}
+        viewer={connection.viewer}
+      />
+    </>
   );
   return (
     <SidebarBoundary
@@ -253,6 +257,7 @@ function ReadySidebar({
   target,
   sessionsEnabled,
   agentsEnabled,
+  children,
   queries,
   cached,
   connectionError,
@@ -976,6 +981,7 @@ function ReadySidebar({
               </div>
             )}
             <SidebarUnread listRef={sidebar.list}>
+              {children}
               <SidebarNavigation
                 agentsEnabled={agentsEnabled}
                 navigator={navigator}

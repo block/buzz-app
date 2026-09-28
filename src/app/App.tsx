@@ -87,7 +87,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
     <ToastProvider>
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
-          sidebar={() => (
+          sidebar={(pageNavigation) => (
             <ChannelSidebar
               relay={services.relay}
               navigator={services.navigation}
@@ -99,7 +99,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
               agentsEnabled={route.pages.some(
                 (page) => page.key === "buzz.agents/agents",
               )}
-            />
+            >
+              <div className="shell-page-navigation-slot">{pageNavigation}</div>
+            </ChannelSidebar>
           )}
           navigationControls={
             <NavigationControls navigation={services.navigation} />

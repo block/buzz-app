@@ -264,6 +264,7 @@ export function EmojiPicker({
       disabled={disabled}
       aria-label="Emoji controls"
       className={styles.emojiPicker}
+      data-external-trigger={externalTrigger ? "" : undefined}
       onKeyDownCapture={(event) => {
         // Mart stops search key events before they bubble out of its shadow root.
         if (event.key === "Escape" && open) {

@@ -8,6 +8,7 @@ import {
   render,
   screen,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { PresenceStatus } from "../../features/presence/presence";
@@ -67,10 +68,20 @@ it("badges a single agent only while live presence is known", () => {
   }
 });
 
-it("presents compatibility identities as npubs, not hex", () => {
+it("opens identities in a popover and returns focus on Escape", async () => {
+  const user = userEvent.setup();
   const pubkey = "ab".repeat(32);
   render(<AgentCard name="Agent" identities={[{ pubkey, name: "Agent" }]} />);
-  fireEvent.click(screen.getByRole("button", { name: "Agent:1 identity" }));
+  const trigger = screen.getByRole("button", { name: "Agent: 1 identity" });
+  expect(screen.queryByText(npubEncode(pubkey))).toBeNull();
+  const card = screen.getByRole("article");
+  await user.click(trigger);
+  const popup = await screen.findByRole("dialog", {
+    name: "Agent identities",
+  });
+  expect(card).not.toContainElement(popup);
   expect(screen.getByText(npubEncode(pubkey))).toBeVisible();
   expect(document.body.textContent).not.toContain(pubkey);
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
 });

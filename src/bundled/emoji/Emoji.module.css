@@ -13,6 +13,10 @@
   margin: 0;
   min-width: 0;
 }
+/* A portaled reaction picker must not add a flex item beside its trigger. */
+.emojiPicker[data-external-trigger] {
+  display: contents;
+}
 .emojiContent {
   display: flex;
   flex-direction: column;

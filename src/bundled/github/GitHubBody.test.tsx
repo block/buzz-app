@@ -294,6 +294,34 @@ it("preserves HTML link labels while rejecting unsafe destinations and attribute
   expect(container.querySelector("[onclick]")).toBeNull();
 });
 
+it("keeps inline HTML anchor labels linked within surrounding prose", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      body={'See <a href="https://example.com/docs">the docs</a> now.'}
+    />,
+  );
+  expect(container).toHaveTextContent("See the docs now.");
+  expect(screen.getAllByRole("link")).toHaveLength(1);
+  expect(screen.getByRole("link", { name: "the docs" })).toHaveAttribute(
+    "href",
+    "https://example.com/docs",
+  );
+});
+
+it("separates adjacent HTML table header and data cells", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      body={
+        "<table><tr><th>Before</th><th>After</th></tr><tr><td>old</td><td>new</td></tr></table>"
+      }
+    />,
+  );
+  expect(container).toHaveTextContent("Before After");
+  expect(container).toHaveTextContent("old new");
+});
+
 it("preserves surrounding prose and formatted labels after an inline video loads", () => {
   const { container } = render(
     <GitHubBody

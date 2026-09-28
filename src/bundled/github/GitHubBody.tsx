@@ -87,6 +87,9 @@ function htmlContent(html: string): PhrasingContent[] {
       return [{ type: "link", url: destination, children: label }, ...children];
     }
     if (["br", "hr"].includes(node.localName)) return [{ type: "break" }];
+    // Adjacent table cells need a separator; rows already break below.
+    if (["td", "th"].includes(node.localName))
+      return [...children, { type: "text", value: " " }];
     if (
       [
         "details",
@@ -110,19 +113,59 @@ function htmlContent(html: string): PhrasingContent[] {
   return [...inertHtml(html).childNodes].flatMap((node) => convert(node, 0));
 }
 
+// A lone opening anchor tag yields its destination; anything else does not.
+function anchorHref(html: string): string | null {
+  if (!/^<a(\s[^<>]*)?>$/i.test(html.trim())) return null;
+  return inertHtml(html).querySelector("a")?.getAttribute("href") ?? null;
+}
+
 function githubHtml() {
   return (tree: Root) => {
     const visit = (parent: { type: string; children: RootContent[] }) => {
-      parent.children = parent.children.flatMap((node): RootContent[] => {
-        if (node.type === "html") {
-          const content = htmlContent(node.value);
-          return ["root", "blockquote", "listItem"].includes(parent.type)
-            ? [{ type: "paragraph", children: content }]
-            : content;
+      const block = ["root", "blockquote", "listItem"].includes(parent.type);
+      const result: RootContent[] = [];
+      for (let index = 0; index < parent.children.length; index++) {
+        const node = parent.children[index];
+        if (!node) continue;
+        if (node.type !== "html") {
+          if ("children" in node) visit(node);
+          result.push(node);
+          continue;
         }
-        if ("children" in node) visit(node);
-        return [node];
-      });
+        // micromark splits an inline HTML anchor into opening-tag, label and
+        // closing-tag siblings; rejoin the pair so the label stays linked.
+        const href = anchorHref(node.value);
+        const closing =
+          href === null
+            ? -1
+            : parent.children.findIndex(
+                (sibling, at) =>
+                  at > index &&
+                  sibling.type === "html" &&
+                  /^<\/a\s*>$/i.test(sibling.value.trim()),
+              );
+        let content: PhrasingContent[];
+        if (href !== null && closing !== -1) {
+          const label = {
+            type: "paragraph",
+            children: parent.children.slice(index + 1, closing),
+          };
+          visit(label);
+          content = [
+            {
+              type: "link",
+              url: href,
+              children: label.children as PhrasingContent[],
+            },
+          ];
+          index = closing;
+        } else {
+          content = htmlContent(node.value);
+        }
+        if (block) result.push({ type: "paragraph", children: content });
+        else result.push(...content);
+      }
+      parent.children = result;
     };
     visit(tree);
   };

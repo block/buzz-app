@@ -127,6 +127,54 @@ it("retains rejected edits and preserves them through an explicit authority relo
     `${channel.description} draft`,
   );
 });
+it("reloads authoritative privacy after a conflict and saves retained text edits", async () => {
+  const h = harness();
+  const user = userEvent.setup();
+  h.save.mockRejectedValueOnce(new Error("Channel details changed"));
+  render(<ChannelDetailsEditor capability={h.capability} channel={channel} />);
+  await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "My renamed channel" },
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "Description" }), {
+    target: { value: "My retained description" },
+  });
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Channel details changed",
+  );
+  const privateBase = {
+    ...base,
+    version: "v2",
+    visibility: "private" as const,
+  };
+  h.load.mockResolvedValue(privateBase);
+  await user.click(screen.getByRole("button", { name: "Reload details" }));
+  expect(
+    await screen.findByText(
+      "Private · This channel cannot be made public here.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+    "My renamed channel",
+  );
+  expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
+    "My retained description",
+  );
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(h.save).toHaveBeenLastCalledWith(
+    privateBase,
+    {
+      ...base,
+      name: "My renamed channel",
+      description: "My retained description",
+      visibility: "private",
+    },
+    expect.any(AbortSignal),
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
 it("unknown outcomes survive remount and checking never invokes Save", async () => {
   const h = harness();
   const user = userEvent.setup();

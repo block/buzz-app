@@ -162,6 +162,25 @@ it("stale edit base and private-to-public requests fail before signing", async (
   ).rejects.toThrow("cannot be made public");
   expect(h.sign).not.toHaveBeenCalled();
 });
+it("saves retained edits after reloading a channel made private by another editor", async () => {
+  const h = harness();
+  const base = await h.owner.capability.load(id);
+  h.set([
+    h.metadata("other edit", "Other description", "private"),
+    ...h.events().slice(1),
+  ]);
+  await expect(
+    h.owner.capability.save(base, { ...draft, visibility: "public" }),
+  ).rejects.toThrow("Reload details");
+  expect(h.sign).not.toHaveBeenCalled();
+  const reloaded = await h.owner.capability.load(id);
+  await h.owner.capability.save(reloaded, {
+    ...draft,
+    visibility: reloaded.visibility,
+  });
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+});
 it.each(["dm", "session", "archived"])("does not edit %s", async (type) => {
   const h = harness();
   const tags = [

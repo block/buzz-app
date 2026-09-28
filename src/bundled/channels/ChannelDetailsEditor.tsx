@@ -78,10 +78,14 @@ export function ChannelDetailsEditor({
   const nameCountId = useId();
   const descriptionCountId = useId();
   const patch = useCallback(
-    (next: Partial<typeof state>) =>
+    (
+      next:
+        | Partial<typeof state>
+        | ((old: typeof state) => Partial<typeof state>),
+    ) =>
       setState((old) =>
         old.capability === capability && old.id === id
-          ? { ...old, ...next }
+          ? { ...old, ...(typeof next === "function" ? next(old) : next) }
           : old,
       ),
     [capability, id],
@@ -91,7 +95,16 @@ export function ChannelDetailsEditor({
       patch({ loading: true, error: "" });
       try {
         const base = await capability.load(id, signal);
-        if (!signal.aborted) patch({ base });
+        if (!signal.aborted)
+          patch((old) => ({
+            base,
+            // Privacy is authoritative; keep text edits, not an impossible
+            // public draft after another editor made the channel private.
+            draft:
+              old.draft && base.visibility === "private"
+                ? { ...old.draft, visibility: "private" }
+                : old.draft,
+          }));
       } catch (error) {
         if (!signal.aborted)
           patch({

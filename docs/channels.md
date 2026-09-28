@@ -387,7 +387,8 @@ The version check detects observed conflicts but is not a relay-side compare-and
 concurrent writers can still race after the last read.
 
 A definitive rejection keeps the editable draft. **Reload details** rechecks the
-base without discarding those edits; inspect them before saving again. A lost
+base without discarding text edits; if the channel has become private, the draft
+adopts that enforced visibility. Inspect the retained edits before saving again. A lost
 publication response or failed/mismatched readback locks the submitted draft and
 offers **Check save status**, which only reads and never republishes. Uncertain
 intent survives panel close/reopen and cache clear within the same session; no

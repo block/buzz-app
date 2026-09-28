@@ -43,7 +43,7 @@
   );
 }
 .availability[data-status="online"] {
-  --availability-color: var(--status-online);
+  --availability-color: var(--status-availability-online);
 }
 .availability[data-status="away"] {
   --availability-color: var(--status-away);

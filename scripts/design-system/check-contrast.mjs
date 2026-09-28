@@ -46,21 +46,6 @@ const EXCEPTIONS = new Map([
   ],
 ]);
 
-// Deliberate presence palette choice. Bind to the mode, role, surface and
-// resolved colors so this cannot excuse a future palette/surface regression.
-// These remain contrast failures accepted by design, not WCAG compliance.
-const BOUNDARY_EXCEPTIONS = new Map(
-  [
-    "light: --status-away on --surface-base (#ffba18 on #f5f5f6)",
-    "light: --status-away on --surface-panel (#ffba18 on #ffffff)",
-    "light: --status-away on --surface-inset (#ffba18 on #f5f5f6)",
-    "light: --status-away on --surface-popover (#ffba18 on #ffffff)",
-  ].map((pair) => [
-    pair,
-    "Approved Amber 10 presence palette; below 3:1. See docs/presence.md#your-status.",
-  ]),
-);
-
 /** Roles measured at the meta target rather than the body target. */
 const META_ROLES = new Set(["--text-tertiary", "--text-metadata"]);
 
@@ -166,7 +151,10 @@ const BOUNDARY_ROLES = [
   "--border-danger",
   "--border-warning",
   "--status-online",
-  "--status-away",
+  // Avatar cores are inset inside a same-status outline. The outline, not
+  // the core, touches the surrounding surface (WCAG 1.4.11 graphic boundary).
+  "--status-avatar-online-border",
+  "--status-avatar-away-border",
   "--status-offline",
 ];
 
@@ -268,7 +256,17 @@ for (const [mode, map] of Object.entries(modes)) {
   for (const [role, fill] of PAIRS) check(role, fill);
   for (const [text, tint] of TINT_PAIRS) check(text, tint);
   for (const role of BOUNDARY_ROLES) {
-    for (const surface of BOUNDARY_SURFACES) {
+    const surfaces = role.startsWith("--status-avatar-")
+      ? [
+          ...BOUNDARY_SURFACES,
+          "--affordance-selected",
+          "--affordance-panel-hover",
+          "--affordance-subtle-hover",
+          "--affordance-floating-hover",
+          "--neutral-4",
+        ]
+      : BOUNDARY_SURFACES;
+    for (const surface of surfaces) {
       const borderColor = resolve(map, role);
       const surfaceColor = resolve(map, surface);
       const ratio =
@@ -276,14 +274,6 @@ for (const [mode, map] of Object.entries(modes)) {
           ? wcagRatio(borderColor, surfaceColor)
           : null;
       if (ratio === null || ratio < 3) {
-        const key = `${mode}: ${role} on ${surface} (${borderColor} on ${surfaceColor})`;
-        if (ratio !== null && BOUNDARY_EXCEPTIONS.has(key)) {
-          claimedExceptions.add(key);
-          console.log(
-            `  (design exception) ${key} — ${ratio.toFixed(3)}:1, needs 3:1. ${BOUNDARY_EXCEPTIONS.get(key)}`,
-          );
-          continue;
-        }
         boundaryFailures.push(
           `${mode}: ${role} on ${surface} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
         );
@@ -345,7 +335,7 @@ for (const [role, why] of EXCEPTIONS) {
   console.log(`  (exception) ${role} — ${why.split(";")[0]}`);
 }
 
-const stale = [...EXCEPTIONS.keys(), ...BOUNDARY_EXCEPTIONS.keys()].filter(
+const stale = [...EXCEPTIONS.keys()].filter(
   (key) => key.includes(" on ") && !claimedExceptions.has(key),
 );
 if (stale.length > 0) {

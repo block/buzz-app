@@ -84,7 +84,8 @@
     text-underline-offset: var(--space-1);
   }
 
-  /* Only pointer devices get hover; keyboard focus remains the host's signal. */
+  /* Avatar controls keep the backdrop visible through their artwork cutouts.
+     Only pointer devices get hover; keyboard focus remains the host's signal. */
   @media (hover: hover) and (pointer: fine) {
     .buzz-button[data-variant="prominent"]:hover:not([data-disabled]) {
       background: var(--affordance-prominent-hover);
@@ -94,7 +95,11 @@
         [data-variant="outline"],
         [data-variant="ghost"],
         [data-variant="inverted"]
-      ):hover:not([data-disabled], [data-icon-variant="chrome"]) {
+      ):hover:not(
+        [data-disabled],
+        [data-icon-variant="chrome"],
+        [data-icon-variant="avatar"]
+      ) {
       background: var(--affordance-subtle-hover);
     }
     .buzz-button[data-variant="destructive"]:hover:not([data-disabled]) {
@@ -115,7 +120,10 @@
     [data-variant="outline"],
     [data-variant="ghost"],
     [data-variant="inverted"]
-  ):is(:active, [aria-expanded="true"]):not([data-disabled]) {
+  ):is(:active, [aria-expanded="true"]):not(
+    [data-disabled],
+    [data-icon-variant="avatar"]
+  ) {
     background: var(--affordance-subtle-pressed);
   }
   .buzz-button[data-variant="destructive"]:is(
@@ -349,16 +357,33 @@
     aspect-ratio: 1;
     transform: translate(-50%, -50%);
     border-radius: 50%;
-    background: var(--status-online);
+    --avatar-status-fill: var(--status-avatar-online);
+    background: var(--status-avatar-online-border);
     pointer-events: none;
   }
 
+  /* A same-hue outline carries the status boundary while preserving the
+     requested step-10 center. Inheriting the mask also outlines squircles. */
+  .buzz-avatar-status-dot::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: inherit;
+    mask: inherit;
+    background: var(--avatar-status-fill);
+  }
+
   .buzz-avatar-status[data-status="away"] .buzz-avatar-status-dot {
-    background: var(--status-away);
+    --avatar-status-fill: var(--status-away);
+    background: var(--status-avatar-away-border);
   }
 
   .buzz-avatar-status[data-status="offline"] .buzz-avatar-status-dot {
     background: var(--status-offline);
+  }
+
+  .buzz-avatar-status[data-status="offline"] .buzz-avatar-status-dot::after {
+    content: none;
   }
 
   /* A panel is the default opaque reading surface over the atmospheric

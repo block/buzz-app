@@ -52,40 +52,7 @@ describe("semantic contrast contract", () => {
     const result = check(tokens);
     expect(result.status, result.output).toBe(0);
     expect(result.output).toContain("except documented design exceptions");
-    expect(result.output).toContain(
-      "(design exception) light: --status-away on --surface-panel (#ffba18 on #ffffff) — 1.709:1, needs 3:1",
-    );
     expect(result.output).not.toContain("exceptions no longer needed");
-  });
-
-  it.each([
-    [
-      "foreground",
-      "--status-away: var(--amber-10);",
-      "--status-away: #ffba19;",
-    ],
-    [
-      "surface",
-      "--surface-panel: var(--neutral-1);",
-      "--surface-panel: #fffffe;",
-    ],
-  ])("does not extend the Away exception to a changed %s", (_, from, to) => {
-    expect(tokens).toContain(from);
-    const result = check(tokens.replace(from, to));
-    expect(result.status, result.output).toBe(1);
-    expect(result.output).toContain(
-      "light: --status-away on --surface-panel —",
-    );
-  });
-
-  it("does not extend the light Away exception to dark mode", () => {
-    const result = check(`${tokens}\n.dark {
-      --status-away: #ffba18;
-      --surface-panel: #ffffff;
-    }`);
-    expect(result.status, result.output).toBe(1);
-    expect(result.output).toContain("dark: --status-away on --surface-panel —");
-    expect(result.output).not.toContain("(design exception) dark:");
   });
 
   it.each(["danger", "warning"])(
@@ -110,7 +77,8 @@ describe("semantic contrast contract", () => {
 
   it.each([
     ["online", "green"],
-    ["away", "amber"],
+    ["avatar-online-border", "green"],
+    ["avatar-away-border", "amber"],
     ["offline", "neutral"],
   ])("checks %s status on supported surfaces in both modes", (role, hue) => {
     const result = check(
@@ -127,6 +95,25 @@ describe("semantic contrast contract", () => {
       `dark: --status-${role} on --surface-popover`,
     );
   });
+
+  it.each([
+    ["online", "green"],
+    ["away", "amber"],
+  ])(
+    "rejects a %s outline that disappears on hover or selection",
+    (role, hue) => {
+      const result = check(
+        tokens.replaceAll(
+          `--status-avatar-${role}-border: var(--${hue}-11);`,
+          `--status-avatar-${role}-border: var(--${hue}-10);`,
+        ),
+      );
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain(
+        `light: --status-avatar-${role}-border on --affordance-selected`,
+      );
+    },
+  );
 
   it.each(["warning", "success", "accent"])(
     "checks %s text against its semantic fill, not only the palette",

@@ -23,8 +23,9 @@ status, including reselecting the checked status, saves a manual override;
 explicit Online, Away, and Offline choices persist
 through idle and input. Automatic is not a menu choice.
 
-Online label text and avatar dots use Green 10. Away dots and label backgrounds
-use Amber 10; Away label text uses the mode-aware Amber 12 `text-warning` role.
+Online label text and avatar centers use Green 10. Away avatar centers and label backgrounds
+use Amber 10; the avatar badges have Green 11 / Amber 11 outlines against surrounding surfaces.
+Away label text uses the mode-aware Amber 12 `text-warning` role.
 Label backgrounds mix their status color at 12%, 18% on hover, and 24% while
 pressed/open. Online and neutral Offline mix over `surface-inset` for a darker
 fill; Away keeps its translucent fill over the menu. Against the actual white
@@ -38,24 +39,20 @@ light menu and #333333 dark menu, label contrast is:
 
 These are WCAG contrast ratios. Away and Offline pass AA's 4.5:1 small-text
 target in both modes. Online passes in dark mode but still fails in light mode,
-where darkening its fill reduces contrast with Green 10 text. The light-mode
-Amber 10 dot also misses the 3:1 non-text boundary target: 1.568:1 on
-`surface-base`/`surface-inset` and 1.709:1 on `surface-panel`/`surface-popover`.
+where darkening its fill reduces contrast with Green 10 text. The avatar
+outlines meet the 3:1 non-text boundary target against supported surfaces.
 
 The design guide also requires APCA Lc60 for text. Online misses that target in
 both themes: approximately Lc40–48 in light mode and Lc44–47 in dark mode across
 the same states. Its dark-mode WCAG pass does not establish APCA compliance.
 
-These are deliberate design exceptions, approved to preserve the Green 10 / Amber
-10 palette and Medium (500) availability capsule shown in the
-[review snapshots](https://github.com/block/buzz-app/pull/323). The contrast guard
-reports the four Away boundary exceptions, limited to these exact light-mode
-roles, surfaces and resolved colors; any color or surface change requires
-reassessment. The Online capsule's composited fills are outside that static
-token-pair guard, so its measured text exception is recorded here. Passing the
-guard does not mean this treatment meets contrast targets. Other roles and
-thresholds remain unchanged. Presence still has accessible status text, and the
-dropdown uses standard text colors; that does not remedy the visual shortfall.
+The Online label is a deliberate design exception, approved to preserve the Green 10
+palette and Medium (500) availability capsule shown in the
+[review snapshots](https://github.com/block/buzz-app/pull/323). Its composited fills
+are outside the static token-pair guard, so its measured text exception is recorded
+here. Passing the guard does not mean the Online label meets contrast targets.
+Presence still has accessible status text, and the dropdown uses standard text
+colors; that does not remedy the visual shortfall.
 
 The one app activity owner stores `auto | online | away | offline` per viewer in
 `buzz-presence.v1:<pubkey>`. Same-origin windows observe storage changes; all

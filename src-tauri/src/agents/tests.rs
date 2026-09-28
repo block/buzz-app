@@ -36,6 +36,7 @@ impl AgentHost {
                 )
             }))),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(tokio::sync::Mutex::new(())),
         )
     }
 }
@@ -65,6 +66,7 @@ pub(crate) fn fixture_with_models(
     )));
     let app = mock_builder()
         .manage(host.clone())
+        .manage(crate::harness_setup::HarnessSetup::default())
         .manage(model_host)
         .invoke_handler(crate::commands())
         .build(crate::app_context())
@@ -124,6 +126,16 @@ fn production_acl_allows_delete_to_reach_native_credentials() {
     assert_eq!(stored["agents"][0]["enabled"], false);
 }
 #[test]
+fn harnesses_classify_cli_and_adapter_separately() {
+    assert_eq!(pi_status(false, false, false), "cli-needed");
+    assert_eq!(pi_status(false, true, true), "cli-needed");
+    assert_eq!(pi_status(true, false, false), "cli-needed");
+    assert_eq!(pi_status(true, true, false), "cli-needed");
+    assert_eq!(pi_status(true, false, true), "adapter-needed");
+    assert_eq!(pi_status(true, true, true), "ready");
+}
+
+#[test]
 fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     let (dir, _host, _app, view) = fixture();
     let id = seed(dir.path());
@@ -134,14 +146,39 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         before["harnessOptions"][0],
         json!({
             "command":"buzz-agent", "label":"Buzz Agent",
-            "available":true, "defaultArgs":[],
+            "available":true, "status":"ready", "defaultArgs":[],
             "providers":[{"value":"databricks_v2", "label":"Databricks v2"}]
         })
     );
+    assert_eq!(before["harnessOptions"].as_array().unwrap().len(), 3);
     assert_eq!(before["harnessOptions"][2]["label"], "Pi");
+    assert_eq!(
+        before["harnessOptions"][2]["available"],
+        before["harnessOptions"][2]["status"] == "ready"
+    );
     assert_eq!(before["harnessOptions"][2]["defaultArgs"], json!([]));
+    assert_eq!(
+        before["harnessOptions"][2]["status"],
+        pi_status(
+            buzz_agent_controller::installed("pi").is_some(),
+            buzz_agent_controller::installed("buzz-pi-acp").is_some(),
+            buzz_agent_controller::installed("node").is_some(),
+        )
+    );
     assert_eq!(before["harnessOptions"][1]["label"], "Goose");
+    assert_eq!(
+        before["harnessOptions"][1]["installSupported"],
+        cfg!(any(target_os = "macos", target_os = "linux"))
+    );
     assert_eq!(before["harnessOptions"][1]["defaultArgs"], json!(["acp"]));
+    assert_eq!(
+        before["harnessOptions"][1]["status"],
+        if installed_goose().is_some() {
+            "ready"
+        } else {
+            "cli-needed"
+        }
+    );
     assert_eq!(
         before["harnessOptions"][1]["available"],
         installed_goose().is_some()
@@ -302,7 +339,7 @@ fn queued_restore_skips_agent_stopped_after_launch() {
     .unwrap();
     assert_eq!(stopped["agents"][0]["startOnAppLaunch"], true);
     let restored =
-        tauri::async_runtime::block_on(start(host.clone(), id, Action::Start, true, None));
+        tauri::async_runtime::block_on(start(host.clone(), id, Action::Start, true, None, false));
     assert_eq!(
         restored.err().as_deref(),
         Some("Agent disabled before restore")
@@ -470,6 +507,50 @@ mod overlap {
     }
 
     #[tokio::test]
+    async fn queued_start_preparation_cannot_overtake_a_later_stop() {
+        let (dir, host, _app, _view) = fixture();
+        let id = seed_pair(dir.path())[0].clone();
+        let credential = credential(&id);
+        let gate = Gate::install(&host, dir.path(), &[&credential]);
+        let admission = host.2.clone().lock_owned().await;
+        let mut starting = std::pin::pin!(start(
+            host.clone(),
+            id.clone(),
+            Action::Start,
+            false,
+            None,
+            false
+        ));
+        assert_pending(starting.as_mut()).await;
+        let target = id.clone();
+        let mut stopping =
+            std::pin::pin!(run(host.clone(), move |h| h.action(&target, Action::Stop)));
+        assert_pending(stopping.as_mut()).await;
+        drop(admission);
+        let release = async {
+            assert_eq!(gate.entered().await, credential);
+            let stopped = stopping.await;
+            // Always release the credential wait before asserting the result.
+            gate.release[&credential].send(()).unwrap();
+            assert!(
+                !stopped
+                    .unwrap()
+                    .data
+                    .agents
+                    .iter()
+                    .find(|a| a.id == id)
+                    .unwrap()
+                    .enabled
+            );
+        };
+        let (started, ()) = tokio::join!(starting, release);
+        assert_eq!(
+            started.err().as_deref(),
+            Some("Start cancelled by a newer action")
+        );
+    }
+
+    #[tokio::test]
     async fn overlapping_restore_honors_intervening_stop_and_start_then_fresh_host_resets() {
         let (dir, host, _app, view) = fixture();
         let ids = seed_pair(dir.path());
@@ -538,6 +619,90 @@ mod overlap {
             assert_eq!(agent(&after, id)["startOnAppLaunch"], true);
         }
         fresh.shutdown().unwrap();
+    }
+
+    // A genuinely eligible agent: its Start failed on the missing Goose CLI.
+    // Stop during the download must win over the install's late restart.
+    #[test]
+    fn goose_install_restart_does_not_reenable_an_agent_stopped_during_download() {
+        const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+        const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        struct Stored;
+        impl Credentials for Stored {
+            fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+                panic!("not a deletion")
+            }
+            fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
+                panic!("not an import")
+            }
+            fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
+                panic!("not a write")
+            }
+            fn read(&self, _: &str, pubkey: &str) -> Result<Option<Secret>, String> {
+                Secret::parse(KEY, pubkey).map(Some)
+            }
+        }
+        let (dir, host, _app, view) = fixture();
+        let id = seed(dir.path());
+        let path = dir.path().join("store/agents.json");
+        let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let id = id.replacen(&"ab".repeat(32), PUB, 1);
+        saved["agents"][0]["id"] = json!(id);
+        saved["agents"][0]["pubkey"] = json!(PUB);
+        saved["agents"][0]["credentialId"] = json!(id);
+        saved["agents"][0]["harness"]["command"] = json!(dir.path().join("missing/goose"));
+        saved["agents"][0]["harness"]["args"] = json!(["acp"]);
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let credentials: Arc<dyn Credentials> = Arc::new(Stored);
+        host.with(|h| {
+            h.controller = Controller::new(
+                Store::open(dir.path().join("replacement"))?,
+                credentials.clone(),
+                Err("placeholder".into()),
+                dir.path().join("ownership"),
+            );
+            h.controller = Controller::new(
+                Store::open(dir.path().join("store"))?,
+                credentials.clone(),
+                Ok(synthetic_bundle(&dir.path().join("tools"))),
+                dir.path().join("ownership"),
+            );
+            h.credentials = credentials;
+            h.legacy_check = || Ok(());
+            Ok(())
+        })
+        .unwrap();
+        let started = tauri::async_runtime::block_on(start(
+            host.clone(),
+            id.clone(),
+            Action::Start,
+            false,
+            None,
+            false,
+        ))
+        .unwrap();
+        assert_eq!(
+            started.data.agents[0].error.as_deref(),
+            Some("Required runtime executable is missing")
+        );
+        assert_eq!(
+            tauri::async_runtime::block_on(host.waiting_for_goose()).unwrap(),
+            vec![id.clone()]
+        );
+        invoke(
+            &view,
+            "agent_control_action",
+            json!({"id":id,"action":"stop"}),
+        )
+        .unwrap();
+        assert!(tauri::async_runtime::block_on(host.waiting_for_goose())
+            .unwrap()
+            .is_empty());
+        let result =
+            tauri::async_runtime::block_on(start(host, id, Action::Restart, false, None, true));
+        assert_eq!(result.err().as_deref(), Some(NOT_WAITING_FOR_GOOSE));
+        let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved["agents"][0]["enabled"], false);
     }
 }
 
@@ -620,15 +785,9 @@ fn malformed_store_does_not_prevent_native_host_construction() {
 }
 
 #[test]
-fn native_contention_fails_fast_and_quit_preserves_enabled_intent() {
+fn native_quit_preserves_enabled_intent() {
     let (dir, host, _app, view) = fixture();
     seed(dir.path());
-    let lock = host.0.lock().unwrap();
-    assert_eq!(
-        invoke(&view, "agent_control_snapshot", json!({})).unwrap_err(),
-        "Another native agent operation is in progress"
-    );
-    drop(lock);
     assert!(invoke(&view, "agent_control_snapshot", json!({})).is_ok());
     host.shutdown().unwrap();
     let disk: Value =
@@ -751,7 +910,7 @@ async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() 
                 owner.restore().await;
                 Err("restore completed".into())
             } else {
-                start(owner, agent_id, Action::Start, false, None).await
+                start(owner, agent_id, Action::Start, false, None, false).await
             }
         });
         tokio::task::spawn_blocking({
@@ -769,7 +928,7 @@ async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() 
         if action == "quit" {
             host.shutdown().unwrap();
         } else if action == "disconnect" {
-            host.disconnect("https://workspace.example").unwrap();
+            host.disconnect("https://workspace.example").await.unwrap();
         } else {
             invoke(
                 &view,
@@ -1071,4 +1230,121 @@ fn log_ipc_requires_fresh_exact_owner_proof_and_consumes_challenge() {
         .unwrap(),
         ""
     );
+}
+
+async fn assert_pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+    std::future::poll_fn(|cx| {
+        assert!(future.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn native_admission_waits_in_order_without_replaying_operations() {
+    let (_dir, host, _app, _view) = fixture();
+    let gate = host.2.clone().lock_owned().await;
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let first_calls = calls.clone();
+    let mut first = std::pin::pin!(run(host.clone(), move |h| {
+        first_calls.lock().unwrap().push("snapshot");
+        h.snapshot()
+    }));
+    assert_pending(first.as_mut()).await;
+    let second_calls = calls.clone();
+    let mut second = std::pin::pin!(run(host.clone(), move |_| {
+        second_calls.lock().unwrap().push("command");
+        Err::<(), _>("Synthetic uncertain write".into())
+    }));
+    assert_pending(second.as_mut()).await;
+    assert!(calls.lock().unwrap().is_empty());
+    drop(gate);
+    let (snapshot, command) = tokio::join!(first, second);
+    assert!(snapshot.is_ok());
+    assert_eq!(command.unwrap_err(), "Synthetic uncertain write");
+    assert_eq!(*calls.lock().unwrap(), ["snapshot", "command"]);
+}
+
+#[tokio::test]
+async fn queued_native_operation_observes_shutdown_before_mutation() {
+    let (_dir, host, _app, _view) = fixture();
+    let gate = host.2.clone().lock_owned().await;
+    let mut pending = std::pin::pin!(run(host.clone(), |_| {
+        panic!("a queued write must not run after shutdown")
+    }));
+    assert_pending(pending.as_mut()).await;
+    host.shutdown().unwrap();
+    drop(gate);
+    let result: Result<(), String> = pending.await;
+    assert_eq!(result.unwrap_err(), "Agent host is shutting down");
+}
+
+#[test]
+fn poisoned_native_state_is_not_reported_as_transient_contention() {
+    let (_dir, host, _app, _view) = fixture();
+    let owner = host.clone();
+    assert!(std::thread::spawn(move || {
+        let _guard = owner.0.lock().unwrap();
+        panic!("synthetic native failure");
+    })
+    .join()
+    .is_err());
+    let error = host.with(|_| Ok(())).unwrap_err();
+    assert!(error.contains("restart the app"));
+    assert!(!error.contains("operation is in progress"));
+}
+
+#[tokio::test]
+async fn native_create_waits_for_a_snapshot_and_keeps_its_prepared_identity() {
+    use tauri::Manager;
+    let (_dir, host, app, _view) = fixture();
+    let (entered, acquired) = tokio::sync::oneshot::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    let snapshot = tokio::spawn(run(host.clone(), move |h| {
+        entered.send(()).unwrap();
+        wait.recv().unwrap();
+        h.snapshot()
+    }));
+    acquired.await.unwrap();
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let mut creating = std::pin::pin!(agent_control_create_prepare(
+        app.state(),
+        request_id.clone(),
+        "wss://relay.example".into(),
+        "ab".repeat(32),
+    ));
+    assert_pending(creating.as_mut()).await;
+    release.send(()).unwrap();
+    let prepared = creating.await.unwrap();
+    assert!(snapshot.await.unwrap().is_ok());
+    let retried = agent_control_create_prepare(
+        app.state(),
+        request_id,
+        "wss://relay.example".into(),
+        "ab".repeat(32),
+    )
+    .await
+    .unwrap();
+    assert_eq!(prepared, retried);
+}
+
+#[tokio::test]
+async fn dropped_caller_does_not_release_a_running_native_operation() {
+    let (_dir, host, _app, _view) = fixture();
+    let (entered, acquired) = tokio::sync::oneshot::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    let worker = tokio::spawn(run(host.clone(), move |_| {
+        entered.send(()).unwrap();
+        wait.recv().unwrap();
+        Ok(())
+    }));
+    acquired.await.unwrap();
+    worker.abort();
+    assert!(worker.await.unwrap_err().is_cancelled());
+    // The caller has definitively dropped; the worker is still explicitly gated.
+    assert!(host.2.try_lock().is_err());
+    let mut next = std::pin::pin!(run(host.clone(), |h| h.snapshot()));
+    assert_pending(next.as_mut()).await;
+    release.send(()).unwrap();
+    assert!(next.await.is_ok());
 }

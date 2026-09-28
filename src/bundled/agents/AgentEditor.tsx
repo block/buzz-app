@@ -1,3 +1,4 @@
+import { npubEncode } from "nostr-tools/nip19";
 import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { avatarPictureError } from "../../features/profiles/avatar-upload";
@@ -30,8 +31,10 @@ export function AgentEditor({
   state,
   avatar,
   onClose,
+  onOpenHarnesses,
 }: {
   agent: AgentView;
+  onOpenHarnesses?: (() => void) | undefined;
   displayName?: string;
   control: AgentControl;
   state: AgentControlState;
@@ -183,6 +186,8 @@ export function AgentEditor({
                 disabled={state.busy}
                 environmentKeys={agent.harness.environmentKeys}
                 onChange={change}
+                onOpenHarnesses={onOpenHarnesses}
+                discardEdits={dirty}
               />
               <div className="-mx-2">
                 <Accordion
@@ -249,10 +254,10 @@ export function AgentEditor({
                           <dl className="space-y-4">
                             <div className="space-y-1">
                               <dt className="text-body-sm text-subtle">
-                                Public key
+                                Public key (npub)
                               </dt>
                               <dd className="break-all text-mono select-all">
-                                {agent.pubkey}
+                                {npubEncode(agent.pubkey)}
                               </dd>
                             </div>
                             <div className="space-y-1">

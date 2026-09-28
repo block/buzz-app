@@ -104,6 +104,14 @@ export function AgentSettingsFields({
     ? undefined
     : inherited?.model ||
       (buzzAgent && databricks ? state.data?.agentDefaults?.model : undefined);
+  // Agent defaults env merges into every agent unless its own key is set.
+  const inheritedKey = (key: string) =>
+    !!state.data?.defaultSettings?.environmentKeys.includes(key) &&
+    !overridden(key);
+  const inheritedWorkspace = {
+    host: inheritedKey("DATABRICKS_HOST"),
+    filter: inheritedKey("DATABRICKS_MODEL_FILTER"),
+  };
   const apiKey = gooseProvider ? gooseApiKey(gooseProvider) : undefined;
   const savedKey = !!apiKey && environmentKeys.includes(apiKey.env);
   // Saved keys are write-only; only a key typed for this provider can be shown.
@@ -230,6 +238,7 @@ export function AgentSettingsFields({
             control={control}
             defaults={state.data?.databricksDefaults}
             defaultModel={defaultModel}
+            inheritedWorkspace={inheritedWorkspace}
             draft={draft}
             onChange={change}
           />

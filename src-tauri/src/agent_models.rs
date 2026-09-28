@@ -210,18 +210,20 @@ fn resolve(
     if request.host.len() > 4096 || request.filter.len() > 4096 {
         return Err("Connection settings are too long".into());
     }
+    // A blank request defers to native context, which includes write-only
+    // Agent defaults the UI cannot see. A non-blank value must still agree.
     let host = origin(context.host.as_deref().unwrap_or(&request.host))?;
-    if context.host.is_some() && origin(&request.host)? != host {
+    if context.host.is_some() && !request.host.is_empty() && origin(&request.host)? != host {
         return Err("Workspace conflicts with the saved/draft DATABRICKS_HOST override; use that workspace or edit the override".into());
     }
-    if context
-        .filter
-        .as_ref()
-        .is_some_and(|v| v != &request.filter)
-    {
-        return Err("Filter conflicts with the saved/draft DATABRICKS_MODEL_FILTER override; edit the override or match it explicitly".into());
-    }
-    let filter = DatabricksModelFilter::parse(Some(&request.filter))
+    let filter = match &context.filter {
+        Some(native) if request.filter.is_empty() => native,
+        Some(native) if native != &request.filter => {
+            return Err("Filter conflicts with the saved/draft DATABRICKS_MODEL_FILTER override; edit the override or match it explicitly".into());
+        }
+        _ => &request.filter,
+    };
+    let filter = DatabricksModelFilter::parse(Some(filter))
         .map_err(|_| "Invalid model filter".to_owned())?;
     Ok((host, filter))
 }

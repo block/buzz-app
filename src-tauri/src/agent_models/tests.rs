@@ -257,6 +257,60 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     .is_err());
 }
 #[test]
+fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
+    let fake = Arc::new(Fake::default());
+    let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let host = ModelHost::new(Ok(dir.join("store")));
+        ModelHost {
+            state: host.state,
+            factory: Arc::new(fake.clone()),
+        }
+    });
+    let id = seed(dir.path());
+    invoke(
+        &view,
+        "agent_control_save_defaults",
+        json!({"edit":{"harness":"buzz-agent","provider":"databricks_v2","model":"","effort":"",
+            "environment":{"DATABRICKS_HOST":"https://inherited.example.com",
+                "DATABRICKS_MODEL_FILTER":"endpoint-*"}}}),
+    )
+    .unwrap();
+    let call = |req: Value| {
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":req}),
+        )
+    };
+    // The UI cannot see write-only defaults, so it sends blanks and native
+    // supplies the inherited workspace and filter.
+    let mut req = request(dir.path(), &id, "refresh");
+    req["host"] = json!("");
+    req["edit"]["harness"]["provider"] = json!("");
+    req["edit"]["harness"]
+        .as_object_mut()
+        .unwrap()
+        .remove("databricks");
+    let result = call(req.clone()).unwrap();
+    assert_eq!(
+        result["models"],
+        json!([{"id":"endpoint-two","name":"Endpoint Two"}])
+    );
+    assert_eq!(
+        fake.opened.lock().unwrap().last().unwrap().0,
+        "https://inherited.example.com"
+    );
+    // An explicit, different workspace still conflicts instead of silently
+    // browsing a workspace the launch would not use.
+    req["host"] = json!("https://other.example.com");
+    assert!(call(req.clone()).is_err());
+    req["host"] = json!("");
+    req["filter"] = json!("other-*");
+    assert!(call(req).is_err());
+}
+
+#[test]
 fn native_discovery_preserves_absolute_harness_and_saved_or_draft_provider_overrides() {
     let fake = Arc::new(Fake::default());
     let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {

@@ -707,3 +707,49 @@ it("Pi clears discovered providers when catalog context changes or the picker un
     control.dispose();
   }
 });
+
+it("browses an inherited Agent defaults workspace without repeating it in the form", async () => {
+  const f = controlFixture();
+  const run = vi.fn(async () => ({
+    host: "",
+    models: [{ id: "endpoint-two", name: "Endpoint Two" }],
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(f.host);
+  const user = userEvent.setup();
+  const draft = {
+    ...agentDraft(f.agent),
+    command: "buzz-agent",
+    provider: "databricks_v2",
+    model: "",
+  };
+  delete draft.databricks;
+  render(
+    <AgentModelPicker
+      draft={draft}
+      control={control}
+      // A compiled floor that differs from the hidden inherited values.
+      defaults={{ host: "https://compiled.example.com", filter: "compiled-*" }}
+      inheritedWorkspace={{ host: true, filter: true }}
+      onChange={() => {}}
+    />,
+  );
+  try {
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ host: "", filter: "", action: "connect" }),
+      ),
+    );
+    expect(screen.queryByText(/Set your Databricks workspace/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    expect(
+      screen.getByLabelText("Databricks workspace (HTTPS origin)"),
+    ).toHaveAttribute("placeholder", "Use agent defaults");
+  } finally {
+    control.dispose();
+  }
+});

@@ -493,6 +493,23 @@ it("lets an explicit focus restoration in the mount commit win", () => {
   }
 });
 
+it("does not take focus from an open dialog when the conversation mounts late", () => {
+  const dialog = document.createElement("div");
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  const search = document.createElement("input");
+  dialog.append(search);
+  document.body.append(dialog);
+  try {
+    search.focus();
+    const h = mount({ autoFocus: true });
+    expect(search).toHaveFocus();
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    dialog.remove();
+  }
+});
+
 it("leaves focus alone unless an enabled composer opts into mount focus", () => {
   const h = mount();
   expect(h.input()).not.toHaveFocus();

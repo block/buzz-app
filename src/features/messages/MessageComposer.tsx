@@ -226,7 +226,11 @@ function Composer({
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
   const focusOnMount = useRef(
-    autoFocus && !disabled && typeof document !== "undefined"
+    autoFocus &&
+      !disabled &&
+      typeof document !== "undefined" &&
+      // A conversation that loads under an open dialog must not take its focus.
+      !document.activeElement?.closest('[aria-modal="true"]')
       ? document.activeElement
       : undefined,
   );

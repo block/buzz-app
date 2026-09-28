@@ -350,6 +350,7 @@
   display: block;
   font-family: var(--font-emoji);
   line-height: 1;
+  scale: 0.85;
 }
 
 .speedMenu,

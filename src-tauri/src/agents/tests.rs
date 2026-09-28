@@ -168,6 +168,16 @@ fn save_restart_failures_are_reported_separately_from_benign_skips() {
         restart_outcome(&id, snapshot(true, Running, None)),
         RestartOutcome::Restarted
     );
+    // A denied credential prompt returns a snapshot with the old process
+    // still running the previous settings: nothing was restarted.
+    let mut stale = snapshot(true, Running, Some("Keychain access was denied"));
+    if let Ok(stale) = &mut stale {
+        stale.data.agents[0].restart_diff = vec![buzz_agent_controller::RestartDiffEntry {
+            field: "model".into(),
+            change: buzz_agent_controller::RestartChange::Added,
+        }];
+    }
+    assert_eq!(restart_outcome(&id, stale), RestartOutcome::Failed);
     // The settings were saved, but the new launch failed: warn, don't hide it.
     assert_eq!(
         restart_outcome(&id, snapshot(true, Failed, Some("Invalid launch"))),

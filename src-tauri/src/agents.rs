@@ -637,7 +637,11 @@ fn restart_outcome(id: &str, result: Result<Snapshot, String>) -> RestartOutcome
         }
         Err(_) => RestartOutcome::Failed,
         Ok(snapshot) => match snapshot.data.agents.iter().find(|agent| agent.id == id) {
-            Some(agent) if is_running(agent) => RestartOutcome::Restarted,
+            // A denied credential prompt or failed stop leaves the old process
+            // running; only a launch of the saved settings counts as a restart.
+            Some(agent) if is_running(agent) && agent.restart_diff.is_empty() => {
+                RestartOutcome::Restarted
+            }
             // Stop disabled it while the restart was in flight.
             Some(agent) if !agent.enabled => RestartOutcome::Skipped,
             _ => RestartOutcome::Failed,

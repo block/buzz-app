@@ -182,6 +182,10 @@ const report = {
   exactReplyId: exactReply.id,
 };
 let incoming = (_events: readonly RelayEvent[]) => {};
+let established = (_channels: string) => {};
+let holdRepair: (() => void) | undefined;
+let repairGate = false;
+let failRepair = false;
 const rejected = new Set<string>();
 let releaseOlderPage: (() => void) | undefined;
 let holdOlderPage = false;
@@ -198,6 +202,7 @@ const owner = createRelaySession({
   },
   subscribe(callbacks) {
     incoming = callbacks.receive;
+    established = callbacks.established;
     return { update() {}, retry() {}, dispose() {} };
   },
   async query(filters) {
@@ -216,8 +221,20 @@ const owner = createRelaySession({
               profile(viewer, { name: "Fixture Reader" }),
               profile(agent, { name: "Agent Fixture" }),
             ].filter((event) => filter.authors?.includes(event.pubkey));
-          if (filter.ids)
+          if (filter.ids) {
+            if (repairGate && filter.ids.includes(roots[0].id)) {
+              await new Promise<void>((resolve) => {
+                holdRepair = resolve;
+              });
+              repairGate = false;
+              holdRepair = undefined;
+              if (failRepair) {
+                failRepair = false;
+                throw new Error("Retained range repair failed");
+              }
+            }
             return events.filter((event) => filter.ids?.includes(event.id));
+          }
           if (filter["#e"] && filter.kinds?.includes(7))
             return events.filter(
               (event) =>
@@ -350,6 +367,14 @@ Object.assign(window, {
     },
     releaseOlderPage() {
       releaseOlderPage?.();
+    },
+    holdReconnectRepair() {
+      repairGate = true;
+      failRepair = true;
+      established(channelOne);
+    },
+    releaseReconnectRepair() {
+      holdRepair?.();
     },
     async activate() {
       await plugins.retry();

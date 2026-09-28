@@ -473,14 +473,15 @@ Click a message's reply count to open its root and replies in the right column.
 Up to three overlapping participant avatars appear beside the count, with `+N`
 for additional summary participants; missing/unavailable pictures use initials.
 They reuse the channel's existing shared profile/media path, not extra per-row reads.
-On a supporting relay, the panel opens at the newest 50 replies and loads older
-pages when you scroll upward; there is no Load more replies button. It validates
+On a supporting relay, the panel opens at the newest 10 replies and loads older
+pages of 50 when you scroll upward; there is no Load more replies button. It validates
 signed NIP-CW thread bounds on every page. A prior scroll gesture wins over initial
 bottom placement. New replies arrive through the existing session and the panel
 follows near the bottom, preserving reading position above it. Sending a reply is
 explicit navigation intent and reveals the new local row.
 
-**Bounded history:** both modes retain at most ten pages of 50. A limit notice is
+**Bounded history:** strict mode retains at most ten pages (10 initial replies
+plus nine pages of 50); legacy mode retains at most ten pages of 50. A limit notice is
 not a completeness claim. An older relay returning verified replies without thread
 bounds on the initial probe triggers a clean legacy restart: automatic oldest-first
 traversal, whose bottom may not be the newest reply in a long thread. An empty

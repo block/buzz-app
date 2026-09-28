@@ -4,6 +4,53 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
 
+test("reconnect repair failure keeps retry reachable at the newest replies", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`,
+    );
+    const history = page.getByRole("region", { name: "Thread messages" });
+    const replies = history.locator("ol [data-message-id]");
+    await expect(replies).toHaveCount(10);
+    await expect
+      .poll(() =>
+        history.evaluate(
+          (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+        ),
+      )
+      .toBeLessThan(2);
+    await page.evaluate(() => window.messagesFixture.holdReconnectRepair());
+    // The held root read is the actual session reconnect repair, not scrollback.
+    await expect(history.getByText("Loading thread…")).toBeVisible();
+    await expect(history.getByText("Loading older replies…")).toHaveCount(0);
+    await page.evaluate(() => window.messagesFixture.releaseReconnectRepair());
+    const error = history.getByRole("alert");
+    const retry = history.getByRole("button", { name: "Retry thread" });
+    await expect(error).toContainText("Retained range repair failed");
+    await expect(retry).toBeInViewport();
+    await expect(replies).toHaveCount(10);
+    await retry.click();
+    await expect(error).toHaveCount(0);
+    await expect(replies).toHaveCount(10);
+  } finally {
+    await page
+      .evaluate(() => window.messagesFixture.releaseReconnectRepair())
+      .catch(() => {});
+    await server.close();
+  }
+});
+
 // Browser boundary: actual layout/scroll anchoring and user demand over the real
 // StrictMode session and ThreadPanel. Protocol permutations stay in owner tests.
 test("older-page cue stays between root and replies while the request is held", async ({

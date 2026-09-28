@@ -41,6 +41,8 @@ export type ThreadSnapshot = Readonly<{
   limited: boolean;
   /** Older pages are demand-loaded; forward is the legacy bounded walk. */
   direction?: "older" | "forward";
+  /** The in-flight or failed read, distinct from the traversal direction. */
+  readKind?: "older" | "refresh" | undefined;
   /** Exact navigation target, folded independently of bounded thread traversal. */
   target?: ChannelMessage | undefined;
   targetStatus?: "loading" | "ready" | "unavailable" | "error" | undefined;
@@ -288,6 +290,7 @@ export function createThreadView({
       error: canAccess()
         ? "Thread read interrupted. Refresh to continue."
         : "This channel is no longer available.",
+      readKind: undefined,
     });
   }
   async function run(replace: boolean) {
@@ -312,7 +315,11 @@ export function createThreadView({
     // Repair retains already-verified presentation; only a new/unavailable
     // selection waits for its initial fold. Never unmount a reader on reconnect.
     if (exact && replace && targetStatus !== "ready") targetStatus = "loading";
-    publishStatus({ status: "loading", error: undefined });
+    publishStatus({
+      status: "loading",
+      error: undefined,
+      readKind: replace ? "refresh" : "older",
+    });
     try {
       if (exact && replace) {
         const response = await reader.read(
@@ -562,6 +569,7 @@ export function createThreadView({
       publish({
         status: "ready",
         error: undefined,
+        readKind: undefined,
         direction: mode === "older" ? "older" : "forward",
         canLoadMore: more && pages < MAX_PAGES,
         limited: more && pages >= MAX_PAGES,

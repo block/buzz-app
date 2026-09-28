@@ -878,6 +878,7 @@ function ThreadMessages({
         ) : null}
         <ol>
           {snapshot.direction === "older" &&
+            snapshot.readKind === "older" &&
             snapshot.root &&
             (snapshot.status === "loading" || snapshot.error) && (
               <li className={styles.threadHistoryPageStatus}>
@@ -895,7 +896,8 @@ function ThreadMessages({
             )}
           {renderReplies(undefined)}
         </ol>
-        {(snapshot.status === "loading" && snapshot.direction !== "older") ||
+        {(snapshot.status === "loading" &&
+          (snapshot.direction !== "older" || snapshot.readKind !== "older")) ||
         (snapshot.direction !== "older" &&
           snapshot.status === "ready" &&
           snapshot.canLoadMore) ? (
@@ -905,14 +907,14 @@ function ThreadMessages({
           <p role="status">Selected message unavailable.</p>
         )}
         {snapshot.error &&
-          (snapshot.direction !== "older" || !snapshot.root) && (
+          (snapshot.readKind !== "older" || !snapshot.root) && (
             <p role="alert">{snapshot.error}</p>
           )}
         {snapshot.limited && !snapshot.error && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
         {((snapshot.error &&
-          (snapshot.direction !== "older" || !snapshot.root)) ||
+          (snapshot.readKind !== "older" || !snapshot.root)) ||
           snapshot.targetStatus === "unavailable") && (
           <div className={styles.threadHistoryControls}>
             <Button type="button" onClick={() => void view.refresh()}>

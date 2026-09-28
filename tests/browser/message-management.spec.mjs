@@ -281,3 +281,90 @@ test("saving an attachment caption preserves its original metadata through the b
   );
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
+
+// Native tab order and competing portalled modal handlers need a real browser.
+test("media comment deletion keeps keyboard focus in its confirmation", async ({
+  page,
+  app,
+}) => {
+  await page.route("https://fixture.test/media/review.png", (route) => {
+    return route.fulfill({
+      contentType: "image/png",
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y79d4sAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
+  });
+  await open(page, app);
+  const url = "https://fixture.test/media/review.png";
+  const root = app.append(
+    "primary",
+    "alpha",
+    `Review image\n\n${url}`,
+    true,
+    true,
+    undefined,
+    undefined,
+    [["imeta", `url ${url}`, "m image/png"]],
+  );
+  const comment = app.append(
+    "primary",
+    "alpha",
+    "My review comment",
+    true,
+    true,
+    root.id,
+  );
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${root.id}"]`,
+  );
+  const opener = row.getByRole("link", { name: "Open image attachment" });
+  await opener.focus();
+  await opener.press("Enter");
+  const viewer = page.getByRole("dialog", { name: "Image viewer" });
+  await expect(viewer).toBeVisible();
+  const commentRow = viewer.locator(`[data-message-id="${comment.id}"]`);
+  const trigger = commentRow.getByRole("button", {
+    name: "More message actions",
+  });
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Delete message?",
+  });
+  for (const cancelWith of ["Escape", "Cancel"]) {
+    await commentRow.hover();
+    await trigger.click();
+    await page
+      .getByRole("menuitem", { name: "Delete message", exact: true })
+      .click();
+    const cancel = confirmation.getByRole("button", {
+      name: "Cancel",
+      exact: true,
+    });
+    const remove = confirmation.getByRole("button", {
+      name: "Delete",
+      exact: true,
+    });
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(remove).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(remove).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(cancel).toBeFocused();
+    if (cancelWith === "Escape") await page.keyboard.press("Escape");
+    else await cancel.click();
+    await expect(confirmation).toHaveCount(0);
+    await expect(viewer).toBeVisible();
+    await expect(trigger).toBeFocused();
+    await expect(commentRow).toBeVisible();
+  }
+  // The viewer resumes keyboard ownership after confirmation dismissal.
+  await page.keyboard.press("Escape");
+  await expect(viewer).toHaveCount(0);
+  await expect(
+    row.getByRole("link", { name: "Open image attachment" }),
+  ).toBeFocused();
+});

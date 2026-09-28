@@ -159,3 +159,23 @@ fn environment_patch_is_write_only_and_validated() {
     reserved.environment = BTreeMap::from([("BUZZ_PRIVATE_KEY".into(), Some("x".into()))]);
     assert!(saved.apply(reserved).is_err());
 }
+
+#[test]
+fn an_invalid_pi_default_pair_is_refused_before_it_is_saved() {
+    // Buzz Agent defaults with a provider, then a harness-only switch to Pi:
+    // the card clears model/effort but keeps the provider.
+    let mut saved = defaults("buzz-agent");
+    let before = saved.clone();
+    let mut switch = edit("pi", "", "");
+    switch.provider = "global-provider".into();
+    let error = saved.apply(switch).unwrap_err();
+    assert!(error.contains("Choose a Pi model"), "{error}");
+    assert!(saved == before);
+    // Clearing the provider, or choosing a model with it, is accepted.
+    let mut cleared = edit("pi", "", "");
+    cleared.provider.clear();
+    saved.apply(cleared).unwrap();
+    let mut chosen = edit("pi", "pi-model", "");
+    chosen.provider = "global-provider".into();
+    saved.apply(chosen).unwrap();
+}

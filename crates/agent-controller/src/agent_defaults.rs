@@ -90,6 +90,11 @@ impl AgentDefaults {
             environment,
         };
         next.validate()?;
+        // Pi rejects a provider without a model only after Restart has stopped
+        // the old process, so refuse that pair before it is saved or applied.
+        if next.harness == "pi" {
+            crate::pi::validate_selection(&next.provider, &next.model)?;
+        }
         *self = next;
         Ok(())
     }

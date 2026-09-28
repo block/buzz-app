@@ -274,6 +274,31 @@ fn create_draft_model_browsing_inherits_native_provider_and_environment() {
 }
 
 #[test]
+fn an_invalid_pi_defaults_switch_is_refused_before_persisting_or_restarting() {
+    let (dir, _host, _app, view) = fixture();
+    seed(dir.path());
+    let save = |edit: Value| invoke(&view, "agent_control_save_defaults", json!({"edit":edit}));
+    save(
+        json!({"harness":"buzz-agent","provider":"anthropic","model":"m","effort":"",
+        "environment":{}}),
+    )
+    .unwrap();
+    let before = std::fs::read(dir.path().join("store/defaults.json")).unwrap();
+    // Harness-only switch: the card clears model/effort but keeps the provider.
+    let error = save(
+        json!({"harness":"pi","provider":"anthropic","model":"","effort":"",
+        "environment":{}}),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("Choose a Pi model"), "{error}");
+    // Nothing was committed, so no effective change can trigger a Restart.
+    assert_eq!(
+        std::fs::read(dir.path().join("store/defaults.json")).unwrap(),
+        before
+    );
+}
+
+#[test]
 fn saving_defaults_never_starts_or_enables_stopped_agents() {
     let (dir, host, _app, view) = fixture();
     let id = seed(dir.path());

@@ -63,6 +63,52 @@ fn first_create_round_trips_and_a_second_writer_cannot_replace_it() {
 }
 
 #[test]
+fn add_holds_the_lock_through_the_fresh_read_and_write() {
+    struct Probed<'a> {
+        root: &'a Path,
+        memory: Memory,
+    }
+    impl Probed<'_> {
+        fn assert_competing_add_is_busy(&self) {
+            // Re-enter at the backend boundary: deterministic contention without
+            // threads, sleeps, or accessing the real OS credential store.
+            let competitor = Memory::default();
+            assert_eq!(
+                add_entry(&competitor, self.root, SERVICE, ACCOUNT, b"competitor"),
+                Err(Error::Busy)
+            );
+            assert_eq!(*competitor.writes.lock().unwrap(), 0);
+        }
+    }
+    impl Backend for Probed<'_> {
+        fn read(&self) -> Result<Zeroizing<Vec<u8>>> {
+            self.assert_competing_add_is_busy();
+            self.memory.read()
+        }
+        fn write(&self, value: &str) -> Result<()> {
+            self.assert_competing_add_is_busy();
+            self.memory.write(value)
+        }
+        fn delete(&self) -> Result<()> {
+            panic!("add must never delete");
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let store = Probed {
+        root: root.path(),
+        memory: Memory::default(),
+    };
+    add_entry(&store, root.path(), SERVICE, ACCOUNT, b"first").unwrap();
+    assert_eq!(store.memory.read().unwrap().as_slice(), b"first");
+    assert_eq!(*store.memory.writes.lock().unwrap(), 1);
+    assert_eq!(
+        add_entry(&store.memory, root.path(), SERVICE, ACCOUNT, b"second"),
+        Err(Error::Occupied)
+    );
+}
+
+#[test]
 fn read_failures_never_allow_an_upsert_or_cleanup() {
     for error in [
         Error::Denied,

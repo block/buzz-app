@@ -129,21 +129,22 @@ export function AgentsPage({
         )}
       </div>
     );
+  const pageCompanion =
+    profile || companion ? (
+      <>
+        {companion && <div hidden={profile !== undefined}>{companion}</div>}
+        {profile && (
+          <PanelCard
+            panel={profile.panel}
+            target={profile.target}
+            close={() => setProfile(undefined)}
+          />
+        )}
+      </>
+    ) : undefined;
   return (
     <div className="h-full min-h-0">
-      <PanelFrame
-        companion={
-          profile ? (
-            <PanelCard
-              panel={profile.panel}
-              target={profile.target}
-              close={() => setProfile(undefined)}
-            />
-          ) : (
-            companion
-          )
-        }
-      >
+      <PanelFrame companion={pageCompanion}>
         <FullPageSurface aria-label="Agents">
           <div className="flex h-full min-h-0 flex-col">
             <PanelHeader title="Agents" />

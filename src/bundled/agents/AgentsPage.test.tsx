@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
 // @vitest-environment jsdom
@@ -214,6 +214,62 @@ it("keeps the shell companion in the page-owned companion slot", async () => {
   expect(
     await screen.findByRole("complementary", { name: "Shell companion" }),
   ).toBeVisible();
+});
+
+it("keeps the shell companion mounted while the profile is open", async () => {
+  let mounts = 0;
+  const ShellCompanion = () => {
+    useEffect(() => {
+      mounts += 1;
+    }, []);
+    return <aside aria-label="Shell companion">Shell companion</aside>;
+  };
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: () => <p>Existing profile panel</p>,
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  setup("ready", undefined, undefined, undefined, panels, <ShellCompanion />);
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+
+  expect(
+    screen.getByRole("complementary", { name: "Shell companion" }),
+  ).toBeVisible();
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+
+  expect(
+    await screen.findByRole("complementary", { name: "Profile" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("complementary", {
+      name: "Shell companion",
+      hidden: true,
+    }),
+  ).not.toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Close Profile panel" }));
+  expect(
+    screen.getByRole("complementary", { name: "Shell companion" }),
+  ).toBeVisible();
+  expect(mounts).toBe(1);
 });
 
 it("omits View profile when the profile panel is unavailable", async () => {

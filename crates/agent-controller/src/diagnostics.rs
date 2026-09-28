@@ -103,6 +103,25 @@ fn push(messages: &Mutex<VecDeque<&'static str>>, message: &'static str) {
 }
 fn record(messages: &Mutex<VecDeque<&'static str>>, line: &[u8]) {
     let line = String::from_utf8_lossy(line);
+    // ACP can embed the provider JSON in a Debug-escaped RPC error. The
+    // provider body may also span multiple lines. Inspect only the code field;
+    // never expose the accompanying message, request content, or credentials.
+    let provider_line = line.replace("\\\"", "\"");
+    if provider_line.split("\"code\"").skip(1).any(|suffix| {
+        suffix
+            .trim_start()
+            .strip_prefix(':')
+            .and_then(|value| {
+                serde_json::Deserializer::from_str(value.trim_start())
+                    .into_iter::<String>()
+                    .next()
+                    .and_then(std::result::Result::ok)
+            })
+            .is_some_and(|code| code == "credit_balance_exhausted")
+    }) {
+        push(messages, "No OpenAI API credits remaining. Add credits in OpenAI billing, then send a new message.");
+        return;
+    }
     for (marker, message) in [
         ("connected to relay at", "Listener connected to relay."),
         (
@@ -160,6 +179,44 @@ fn record(messages: &Mutex<VecDeque<&'static str>>, line: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn credit_exhaustion_from_child_stderr_is_actionable_and_redacted() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", r#"printf '%s\n' 'ERROR pool::prompt: session_prompt error: LLM error: exhausted retries: 429: {' '"error": {' '"message": "synthetic-secret-and-private-prompt",' '"code": "credit_balance_exhausted"' '}}' >&2"#]);
+        let mut diagnostics = Diagnostics::capture(&mut command).unwrap();
+        let mut child = command.spawn().unwrap();
+        drop(command);
+        assert!(child.wait().unwrap().success());
+        // EOF is the completion barrier; no timing-dependent negative assertion.
+        diagnostics.reader.take().unwrap().join().unwrap();
+        assert_eq!(diagnostics.snapshot(), [
+            "Listener reported an error (raw details withheld).",
+            "No OpenAI API credits remaining. Add credits in OpenAI billing, then send a new message."
+        ]);
+    }
+
+    #[test]
+    fn credit_code_is_distinct_from_rate_limits_and_message_text() {
+        let messages = Mutex::new(VecDeque::new());
+        record(
+            &messages,
+            br#"ERROR 429: {"error":{"code":"rate_limit_exceeded"}}"#,
+        );
+        record(
+            &messages,
+            br#"ERROR {"error":{"message":"credit_balance_exhausted", "code":"other"}}"#,
+        );
+        record(
+            &messages,
+            br#"ERROR {"error":{"code":"credit_balance_exhausted_extra"}}"#,
+        );
+        assert_eq!(
+            *messages.lock().unwrap(),
+            ["Listener reported an error (raw details withheld)."]
+        );
+        record(&messages, br#"ERROR RPC error: {\"error\":{\"code\":\"credit_balance_exhausted\",\"message\":\"synthetic-secret\"}}"#);
+        assert_eq!(messages.lock().unwrap().back().copied(), Some("No OpenAI API credits remaining. Add credits in OpenAI billing, then send a new message."));
+    }
     #[test]
     fn captures_real_child_output_without_exposing_payloads() {
         let mut command = Command::new("/bin/sh");

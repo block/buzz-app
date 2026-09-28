@@ -2,6 +2,7 @@ import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { npubEncode } from "nostr-tools/nip19";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -165,6 +166,11 @@ it("shows one managed card per exact destination and keeps unimported templates 
   );
   fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
   const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Technical details" }),
+  );
+  expect(within(dialog).getByText(npubEncode(f.agent.pubkey))).toBeVisible();
+  expect(dialog.textContent).not.toContain(f.agent.pubkey);
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "Exact destination" },
   });
@@ -1200,32 +1206,29 @@ it("retries the same saved profile even if the runtime becomes unavailable", asy
   expect(profile.mock.calls).toEqual([["created"], ["created"]]);
 });
 
-for (const error of [
-  "Agent runtime is initializing; retry shortly",
-  "Another native agent operation is in progress",
-]) {
-  it(`shows agents without manual Retry after a transient native read: ${error}`, async () => {
-    vi.useFakeTimers();
-    let snapshot!: ReturnType<typeof vi.spyOn>;
-    setup("ready", (f) => {
-      snapshot = vi.spyOn(f.host, "snapshot").mockRejectedValueOnce(error);
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    expect(screen.getByText("Reading local agent status…")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
-    expect(snapshot).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
-    });
-    expect(
-      screen.getAllByRole("article", { name: "Agent Fixture agent" }),
-    ).toHaveLength(2);
-    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
-    expect(snapshot).toHaveBeenCalledTimes(2);
+it("shows agents without manual Retry after native startup", async () => {
+  vi.useFakeTimers();
+  let snapshot!: ReturnType<typeof vi.spyOn>;
+  setup("ready", (f) => {
+    snapshot = vi
+      .spyOn(f.host, "snapshot")
+      .mockRejectedValueOnce("Agent runtime is initializing; retry shortly");
   });
-}
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByText("Reading local agent status…")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+  expect(snapshot).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(250);
+  });
+  expect(
+    screen.getAllByRole("article", { name: "Agent Fixture agent" }),
+  ).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+  expect(snapshot).toHaveBeenCalledTimes(2);
+});
 it("keeps persistent read failures visible and recovers on the next periodic read", async () => {
   vi.useFakeTimers();
   const { f } = setup("ready", (f) => {

@@ -22,6 +22,8 @@ export async function openPage(page, name) {
       await expect(dialog).not.toBeVisible({ timeout: 1000 });
       return;
     } catch (error) {
+      // Navigation can finish while Playwright is still waiting for a replaced option.
+      if (!(await dialog.isVisible())) return;
       if (attempt === 2) throw error;
     }
   }

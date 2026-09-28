@@ -352,12 +352,23 @@ navigation to a hidden DM remains supported.
 
 Channel Settings shows the signed name, description and explicit visibility for
 ordinary channels; missing visibility stays **Not available**, not implicitly
-Public. **Edit details** opens one inline Name/Description/Visibility draft.
-Selecting Private does not publish. **Save** submits all fields together;
-**Cancel** discards the draft and returns focus to Edit details. The panel retains
-its existing Close/Escape focus return, conversation and collapsed Diagnostics.
-Names accept 1–120 code points and descriptions up to 1,000. Empty descriptions
-clear the value; reserved session metadata cannot be entered as ordinary prose.
+Public. **Edit details** opens the shared Dialog with one Name/Description/Visibility
+draft. Selecting Private does not publish. **Save changes** submits all fields
+together and is enabled only for valid, changed values. **Cancel**, Close and
+Escape discard unsaved edits and return focus to Edit details without closing
+Settings. Pending saves and status checks block dialog dismissal; an uncertain
+save may be closed and reopened through **Review pending changes** for check-only
+recovery, never a blind resend. The panel retains its own Close/Escape focus
+return, conversation and collapsed Diagnostics.
+Names accept 1–120 code points and descriptions up to 1,000. Typing and paste
+are capped at those limits without splitting Unicode code points; a middle edit
+keeps the existing suffix and accepts only the inserted text that fits. Character
+counts appear at the trailing end of the label row only within the last 10% of
+each limit (`108/120` or `900/1,000`). Visible counters are numeric; the connected
+accessible description retains the full character-count meaning.
+Empty descriptions clear the value. The internal `Buzz session (` marker is
+rejected with a specific explanation only when present, not as part of length
+feedback. Command validation still rejects oversized input independently of the UI.
 
 Editing requires fresh relay-authored metadata (`39000`), administrators (`39001`)
 and membership (`39002`) for the exact channel, plus current session participation.

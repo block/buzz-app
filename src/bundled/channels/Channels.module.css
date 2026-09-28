@@ -863,13 +863,14 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.detailsEditor,
-.detailsEditor form {
+.detailsEditor {
   display: grid;
   gap: var(--space-4);
 }
-.detailsActions {
+
+.detailsLabel {
   display: flex;
-  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
   gap: var(--space-3);
 }

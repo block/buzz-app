@@ -33,27 +33,37 @@ export function channelVisibility(
     : undefined;
 }
 
+/** Shared field feedback; the command validator remains the write boundary. */
+export function detailsDraftErrors(draft: ChannelDetailsDraft) {
+  return {
+    name:
+      !draft ||
+      typeof draft.name !== "string" ||
+      !draft.name.trim() ||
+      draft.name !== draft.name.trim().replace(/^#+/, "").trim() ||
+      [...draft.name].length > 120
+        ? "Enter a channel name of 1–120 characters without a leading #."
+        : undefined,
+    description:
+      !draft ||
+      typeof draft.description !== "string" ||
+      [...draft.description].length > 1000
+        ? "Use a description of at most 1,000 characters."
+        : draft.description.includes("Buzz session (")
+          ? 'Remove "Buzz session (" from the description; that text is used by Buzz for work sessions.'
+          : undefined,
+    visibility:
+      !draft ||
+      (draft.visibility !== "public" && draft.visibility !== "private")
+        ? "Channel visibility could not be verified."
+        : undefined,
+  };
+}
+
 export function validateDetailsDraft(draft: ChannelDetailsDraft): void {
-  if (
-    !draft ||
-    typeof draft.name !== "string" ||
-    !draft.name.trim() ||
-    draft.name !== draft.name.trim().replace(/^#+/, "").trim() ||
-    [...draft.name].length > 120
-  )
-    throw new Error(
-      "Enter a channel name of 1–120 characters without a leading #.",
-    );
-  if (
-    typeof draft.description !== "string" ||
-    [...draft.description].length > 1000 ||
-    draft.description.includes("Buzz session (")
-  )
-    throw new Error(
-      "Use a description of at most 1,000 characters without reserved session metadata.",
-    );
-  if (draft.visibility !== "public" && draft.visibility !== "private")
-    throw new Error("Channel visibility could not be verified.");
+  const errors = detailsDraftErrors(draft);
+  const error = errors.name ?? errors.description ?? errors.visibility;
+  if (error) throw new Error(error);
 }
 
 export function detailsSettings(

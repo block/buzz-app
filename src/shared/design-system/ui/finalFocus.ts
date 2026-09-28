@@ -1,5 +1,11 @@
 import type { Menu } from "@base-ui/react/menu";
-import { useCallback, useRef, type ComponentProps, type Ref } from "react";
+import {
+  useCallback,
+  useRef,
+  type ComponentProps,
+  type Ref,
+  type RefCallback,
+} from "react";
 
 /** Menu, Popover and Dialog popups share this Base UI prop. */
 type FinalFocus = ComponentProps<typeof Menu.Popup>["finalFocus"];
@@ -22,9 +28,9 @@ type CloseType = Parameters<
 export function useFinalFocusUnlessMoved(
   finalFocus: FinalFocus,
   ref: Ref<HTMLDivElement> | undefined,
-) {
+): { ref: RefCallback<HTMLDivElement>; finalFocus: FinalFocus } {
   const popup = useRef<HTMLDivElement | null>(null);
-  const setPopup = useCallback(
+  const setPopup = useCallback<RefCallback<HTMLDivElement>>(
     (element: HTMLDivElement | null) => {
       if (element) popup.current = element;
       if (typeof ref === "function") return ref(element);

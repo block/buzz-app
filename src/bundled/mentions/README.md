@@ -15,7 +15,9 @@ message fold implement the tags. This directory owns the spec and the
 
 This is an extraction of the behavior in
 [buzz-app #257](https://github.com/block/buzz-app/pull/257) and
-[buzz-app #258](https://github.com/block/buzz-app/pull/258). It adds no event
+[buzz-app #258](https://github.com/block/buzz-app/pull/258), with the archive
+rule from [#256](https://github.com/block/buzz-app/pull/256) and the prose rule
+from [#303](https://github.com/block/buzz-app/pull/303). It adds no event
 kind. It uses `p` tags and the two-field `mention` tag that other Buzz clients
 already write. Labels come from the
 [contextual identity names](../identity-naming/README.md) contract.
@@ -58,7 +60,8 @@ set is:
 DMs and sessions MUST NOT add directory people. A session that invites agents
 uses its own agent list instead of item 3. Archived or read-only channels have
 no choices. Clients MUST exclude invalid keys and identities known to be
-archived. Unknown archive state does not exclude a key.
+archived, except the viewer's own key: a user always sees themself. Unknown
+archive state does not exclude a key.
 
 Labels MUST be resolved against the whole choice set, not only the rows that
 match the search. Directory people with no cached profile still take part, so
@@ -73,7 +76,10 @@ back only 160 characters from the caret. A caret outside the text gives no query
 
 A query with a space is shown only while it is still the start of a known name
 (case-insensitive). A query that is a complete known name plus a trailing space
-ends completion, so the user can keep typing prose.
+ends completion, so the user can keep typing prose. A query that fails this rule
+is prose: the client MUST close the inline chooser and MUST NOT start a
+directory search for it. An `@` inside a mention that the user already selected
+does not open a query.
 
 ## 3. Matching (normative)
 
@@ -104,15 +110,23 @@ Remove choices that do not match. Sort the rest by the first rule that differs:
 2. Lower match.
 3. Lower best alias tier (the **base match**). This lets `Fizz` rank above
    `Fast Fizz` when both labels match at the same tier.
-4. If both are agents: agents that the viewer owns first.
-5. If both are agents and their normalized names are equal:
+4. Agents that the viewer owns before all other choices, people included.
+5. Block label, by UTF-16 code unit order of normalized labels. Agents with the
+   same values for rules 1 to 4 and the same normalized name form one **block**.
+   A block's label is the lowest normalized label among its agents. A person, or
+   an agent with a name of its own, is a block by itself.
+6. On an equal block label: a person before an agent block. Two agent blocks
+   are ordered by normalized name, and two people by key.
+7. Inside a block:
    1. more recent explicit choice in this channel first;
    2. managed agents first;
    3. presence: online, then away, then unknown.
-6. Normalized label, by UTF-16 code unit order.
-7. Key.
+8. Normalized label, by UTF-16 code unit order.
+9. Key.
 
-Ownership and recency never override membership or match. Recency is the
+Every rule is a key of one choice, so the order is the same for any input order.
+A person or another name never sorts between two agents of one block. Ownership
+and recency never override membership or match. Recency is the
 client's memory of explicit selections in this channel. The desktop keeps it in
 memory for 100 channels and 100 keys each.
 
@@ -143,7 +157,10 @@ These rules keep a row from moving under the user's pointer or keyboard.
 - A client SHOULD wait for a short typing pause (desktop: 200 ms) before a
   directory search. While a search runs, it SHOULD keep matching people from the
   last finished search. It MAY cache finished searches for the session. It MUST
-  NOT cache failures.
+  NOT cache failures or searches that find no one. A new opening of the chooser
+  searches again for such a query.
+- After a complete search for a word query finds no one, a client MAY skip the
+  directory search for longer queries that start with it.
 
 ## 7. Sending to people outside the channel
 

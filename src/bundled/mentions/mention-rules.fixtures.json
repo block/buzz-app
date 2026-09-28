@@ -260,6 +260,109 @@
       ]
     },
     {
+      "name": "owned_agent_before_people_and_other_agents",
+      "query": "",
+      "choices": [
+        {
+          "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "name": "Mary",
+          "member": true
+        },
+        {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "Alpha",
+          "member": true,
+          "agent": true
+        },
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Zed",
+          "member": true,
+          "agent": true,
+          "owned": true
+        }
+      ],
+      "expected": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      ]
+    },
+    {
+      "name": "same_name_agents_stay_one_block_at_its_first_label",
+      "query": "",
+      "choices": [
+        {
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "name": "Honey · b",
+          "member": true
+        },
+        {
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "name": "Honey Bee",
+          "label": "Honey · c",
+          "member": true,
+          "agent": true
+        },
+        {
+          "pubkey": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "name": "Honey",
+          "label": "Honey · aa",
+          "member": true,
+          "agent": true
+        },
+        {
+          "pubkey": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "name": "Honey",
+          "label": "Wes’s Honey",
+          "member": true,
+          "agent": true,
+          "managed": true
+        },
+        {
+          "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "name": "Honey",
+          "label": "Honey · zz",
+          "member": true,
+          "agent": true
+        }
+      ],
+      "history": {
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": 2
+      },
+      "presence": {
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff": "online"
+      },
+      "expected": [
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222"
+      ]
+    },
+    {
+      "name": "person_before_agent_block_on_equal_label",
+      "query": "",
+      "choices": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Sam",
+          "member": true,
+          "agent": true
+        },
+        {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "Sam",
+          "member": true
+        }
+      ],
+      "expected": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    {
       "name": "ownership_does_not_override_membership",
       "query": "riz",
       "choices": [

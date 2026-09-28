@@ -61,7 +61,11 @@ fn refuse_linked_prefix(prefix: &Path) -> Result<(), String> {
         prefix.join("bin"),
         prefix.join("lib"),
         prefix.join("lib/node_modules"),
+        prefix.join("lib/node_modules/@earendil-works"),
+        prefix.join("lib/node_modules/@earendil-works/pi-coding-agent"),
+        prefix.join("lib/node_modules/buzz-pi-acp"),
         prefix.join("cache"),
+        prefix.join("etc"),
     ] {
         match std::fs::symlink_metadata(&path) {
             Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
@@ -421,8 +425,21 @@ mod tests {
         assert!(refuse_linked_prefix(&prefix).is_err());
         std::fs::remove_file(&prefix).unwrap();
         std::fs::create_dir_all(&prefix).unwrap();
-        std::os::unix::fs::symlink(&other, prefix.join("lib")).unwrap();
-        assert!(refuse_linked_prefix(&prefix).is_err());
+        for destination in [
+            "lib",
+            "lib/node_modules",
+            "lib/node_modules/@earendil-works",
+            "lib/node_modules/@earendil-works/pi-coding-agent",
+            "lib/node_modules/buzz-pi-acp",
+            "etc",
+        ] {
+            let path = prefix.join(destination);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&other, &path).unwrap();
+            assert!(refuse_linked_prefix(&prefix).is_err(), "{destination}");
+            std::fs::remove_file(path).unwrap();
+        }
+        assert!(refuse_linked_prefix(&prefix).is_ok());
     }
     #[test]
     fn npm_installs_only_the_two_approved_packages_into_the_app_owned_prefix() {

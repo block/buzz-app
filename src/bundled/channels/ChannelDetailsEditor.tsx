@@ -22,21 +22,21 @@ import { Select } from "../../shared/design-system/ui/Select";
 import styles from "./Channels.module.css";
 
 /** Unlike native maxLength, count Unicode code points without splitting emoji.
- * Trim only the inserted text, preserving the existing suffix on middle edits. */
+ * Trim only inserted growth, preserving existing text even above the UI limit. */
 function boundedInput(
   input: HTMLInputElement | HTMLTextAreaElement,
+  previous: string,
   limit: number,
 ): string {
-  const excess = [...input.value].length - limit;
+  const ceiling = Math.max(limit, [...previous].length);
+  const excess = [...input.value].length - ceiling;
   if (excess <= 0) return input.value;
   // The caret follows the inserted text. Remove overflow there, not from the
   // end of the field, so typing/pasting in the middle cannot eat existing text.
   const caret = input.selectionStart ?? input.value.length;
   const before = [...input.value.slice(0, caret)];
   const prefix = before.slice(0, Math.max(0, before.length - excess)).join("");
-  const value = [...(prefix + input.value.slice(caret))]
-    .slice(0, limit)
-    .join("");
+  const value = prefix + input.value.slice(caret);
   input.value = value;
   input.setSelectionRange(prefix.length, prefix.length);
   return value;
@@ -321,7 +321,11 @@ export function ChannelDetailsEditor({
                     patch({
                       draft: {
                         ...draft,
-                        name: boundedInput(event.currentTarget, 120),
+                        name: boundedInput(
+                          event.currentTarget,
+                          draft.name,
+                          120,
+                        ),
                       },
                     })
                   }
@@ -359,7 +363,11 @@ export function ChannelDetailsEditor({
                     patch({
                       draft: {
                         ...draft,
-                        description: boundedInput(event.currentTarget, 1000),
+                        description: boundedInput(
+                          event.currentTarget,
+                          draft.description,
+                          1000,
+                        ),
                       },
                     })
                   }

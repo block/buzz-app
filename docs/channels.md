@@ -362,7 +362,9 @@ recovery, never a blind resend. The panel retains its own Close/Escape focus
 return, conversation and collapsed Diagnostics.
 Names accept 1–120 code points and descriptions up to 1,000. Typing and paste
 are capped at those limits without splitting Unicode code points; a middle edit
-keeps the existing suffix and accepts only the inserted text that fits. Character
+keeps the existing suffix and accepts only the inserted text that fits. Existing
+over-limit relay values are preserved: edits may reduce or replace text without
+growing the excess, and Save stays invalid until both fields meet the limits. Character
 counts appear at the trailing end of the label row only within the last 10% of
 each limit (`108/120` or `900/1,000`). Visible counters are numeric; the connected
 accessible description retains the full character-count meaning.

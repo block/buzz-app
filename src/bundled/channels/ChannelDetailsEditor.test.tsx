@@ -559,3 +559,57 @@ it.each([
     expect(input).not.toHaveAttribute("aria-invalid", "true");
   },
 );
+
+it.each([
+  { field: "Name", key: "name", limit: 120 },
+  { field: "Description", key: "description", limit: 1000 },
+] as const)(
+  "preserves existing over-limit $field text during reductions and replacements",
+  async ({ field, key, limit }) => {
+    const h = harness();
+    const user = userEvent.setup();
+    const original = `AB${"😀".repeat(limit + 1)}YZ`;
+    h.load.mockResolvedValue({ ...base, [key]: original });
+    render(
+      <ChannelDetailsEditor capability={h.capability} channel={channel} />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Edit details" }),
+    );
+    const input = screen.getByRole("textbox", { name: field }) as
+      | HTMLInputElement
+      | HTMLTextAreaElement;
+    const save = screen.getByRole("button", { name: "Save changes" });
+    expect(input).toHaveValue(original);
+    expect(save).toBeDisabled();
+    await user.click(input);
+    input.setSelectionRange(original.length, original.length);
+    await user.keyboard("{Backspace}");
+    const reduced = original.slice(0, -1);
+    expect(input).toHaveValue(reduced);
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(save).toBeDisabled();
+    input.setSelectionRange(1, 1);
+    await user.keyboard("{Delete}");
+    const middleDeleted = `A${reduced.slice(2)}`;
+    expect(input).toHaveValue(middleDeleted);
+    input.setSelectionRange(1, 5);
+    await user.paste("x");
+    const replaced = `Ax${middleDeleted.slice(5)}`;
+    expect(input).toHaveValue(replaced);
+    expect(save).toBeDisabled();
+    input.setSelectionRange(1, 1);
+    await user.paste("no growth");
+    expect(input).toHaveValue(replaced);
+    input.setSelectionRange(1, 2);
+    await user.paste("xyz");
+    expect(input).toHaveValue(replaced);
+    input.setSelectionRange(2, 6);
+    await user.keyboard("{Backspace}");
+    expect(input).toHaveValue(`Ax${replaced.slice(6)}`);
+    expect([...input.value]).toHaveLength(limit);
+    expect(save).toBeEnabled();
+    await user.paste("cannot grow now either");
+    expect(input).toHaveValue(`Ax${replaced.slice(6)}`);
+  },
+);

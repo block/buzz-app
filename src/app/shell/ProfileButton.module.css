@@ -7,7 +7,6 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--surface-panel);
 }
 
 /* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector targets the shared Avatar element. */

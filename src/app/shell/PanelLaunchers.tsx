@@ -41,7 +41,7 @@ function LauncherIcon({ src }: { src: string }) {
     <img
       src={src}
       alt=""
-      className="size-4 object-contain"
+      className="object-contain"
       onError={() => setFailed(true)}
     />
   );

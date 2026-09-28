@@ -192,6 +192,74 @@ test("section disclosure toggles content and honors reduced motion", async ({
   ).toBe(28);
 });
 
+// Browser layout verifies the header contract, including inline icon sizing.
+test("top bar keeps 28px controls, 16px icons and an 18px Bestie image", async ({
+  page,
+  app,
+}, info) => {
+  await open(page, app);
+  const header = page.locator(".shell-header");
+  await expect(header).toBeVisible();
+  expect((await header.boundingBox()).height).toBe(48);
+  const controls = header.locator(".buzz-button[data-icon-variant]");
+  expect(await controls.count()).toBeGreaterThanOrEqual(5);
+  for (const control of await controls.all()) {
+    const box = await control.boundingBox();
+    expect([box.width, box.height]).toEqual([28, 28]);
+  }
+  const icons = header.locator(
+    '.buzz-button[data-icon-variant] svg, .buzz-button[data-icon-variant="chrome"] img:not([src="/bestie.png"])',
+  );
+  expect(await icons.count()).toBeGreaterThanOrEqual(4);
+  for (const icon of await icons.all()) {
+    const box = await icon.boundingBox();
+    expect([box.width, box.height]).toEqual([16, 16]);
+  }
+  const bestie = await header.locator('img[src="/bestie.png"]').boundingBox();
+  expect([bestie.width, bestie.height]).toEqual([18, 18]);
+  await page.screenshot({ path: info.outputPath("top-bar.png") });
+});
+
+// Real responsive layout owns the Settings overlay and the desktop sidebar.
+test("Settings retains the sidebar toggle across desktop and narrow layouts", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
+  await page.getByRole("button", { name: "Your profile" }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  const sidebar = page.getByRole("complementary", {
+    name: "Channel sidebar",
+    exact: true,
+  });
+  const toggle = page.locator("[data-shell-sidebar-toggle]");
+  await expect(toggle).toHaveCount(1);
+  await expect(toggle).toHaveAccessibleName("Show Channel sidebar");
+  await expect(sidebar).not.toBeVisible();
+  await toggle.click();
+  await expect(sidebar).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const box = await toggle.boundingBox();
+  expect([box.width, box.height]).toEqual([28, 28]);
+  await toggle.click();
+  await expect(sidebar).not.toBeVisible();
+
+  await page.setViewportSize({ width: 600, height: 950 });
+  await expect(toggle).toHaveAccessibleName("Show navigation");
+  await toggle.click();
+  await expect(sidebar).toBeVisible();
+  await expect(toggle).toHaveAccessibleName("Hide navigation");
+  await sidebar.getByRole("button", { name: "Inbox", exact: true }).focus();
+  await page.keyboard.press("Escape");
+  await expect(sidebar).not.toBeVisible();
+  await expect(toggle).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await expect(toggle).toHaveAccessibleName("Show Channel sidebar");
+  await toggle.click();
+  await expect(sidebar).toBeVisible();
+});
+
 // The shell owns sidebar visibility while the mounted sidebar owns route and width state.
 test("shell toggle restores the shared sidebar for Channels and Agents", async ({
   page,
@@ -204,8 +272,19 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     name: "Channel sidebar",
     exact: true,
   });
+  const handle = page.getByRole("separator", {
+    name: "Resize channel sidebar",
+  });
   const sidebarNode = await sidebar.elementHandle();
   const expandedWidth = (await sidebar.boundingBox()).width;
+  const gutterWidth = await handle.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return (
+      element.getBoundingClientRect().width +
+      Number.parseFloat(style.marginLeft) +
+      Number.parseFloat(style.marginRight)
+    );
+  });
   const track = await shellNavigation.evaluate((node) => {
     const style = getComputedStyle(node);
     return {
@@ -214,23 +293,51 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
       duration: style.transitionDuration,
     };
   });
-  expect(track.width).toBe(expandedWidth);
+  expect(track.width).toBe(expandedWidth + gutterWidth);
   expect(track.property).toContain("width");
-  expect(track.property).toContain("margin-right");
   expect(parseFloat(track.duration)).toBeGreaterThan(0);
   const openGap = await page.evaluate(() => {
-    const nav = document.querySelector("#shell-navigation");
+    const sidebar = document.querySelector(".shell-sidebar");
     const main = document.querySelector("#main-content");
-    if (!(nav instanceof HTMLElement) || !(main instanceof HTMLElement))
+    if (!(sidebar instanceof HTMLElement) || !(main instanceof HTMLElement))
       throw new Error("Missing shell panels");
-    return {
-      actual:
-        main.getBoundingClientRect().left - nav.getBoundingClientRect().right,
-      token: Number.parseFloat(getComputedStyle(nav).marginRight),
-    };
+    return (
+      main.getBoundingClientRect().left - sidebar.getBoundingClientRect().right
+    );
   });
-  expect(openGap.actual).toBe(openGap.token);
-  expect(openGap.actual).toBeGreaterThan(0);
+  expect(openGap).toBe(gutterWidth);
+  // Seek a paused real transition so runner speed cannot hide an immediate jump.
+  for (const label of ["Hide Channel sidebar", "Show Channel sidebar"]) {
+    const samples = await page.evaluate(async (label) => {
+      const nav = document.querySelector("#shell-navigation");
+      const button = document.querySelector(`button[aria-label="${label}"]`);
+      const started = new Promise((resolve) => {
+        nav.addEventListener("transitionrun", resolve, { once: true });
+      });
+      button.click();
+      await started;
+      const animation = nav
+        .getAnimations()
+        .find((animation) => animation.transitionProperty === "max-width");
+      if (!animation) throw new Error("Missing sidebar transition");
+      animation.pause();
+      try {
+        const duration = animation.effect.getTiming().duration;
+        return [0, 0.25, 0.5, 0.75, 1].map((progress) => {
+          animation.currentTime = duration * progress;
+          return nav.getBoundingClientRect().width;
+        });
+      } finally {
+        animation.finish();
+        await animation.finished;
+      }
+    }, label);
+    const width = expandedWidth + gutterWidth;
+    expect(samples.some((sample) => sample > 0 && sample < width)).toBe(true);
+    expect(samples[0]).toBe(label.startsWith("Hide") ? width : 0);
+    expect(samples.at(-1)).toBe(label.startsWith("Hide") ? 0 : width);
+  }
+
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect
     .poll(() =>
@@ -247,7 +354,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     .poll(() =>
       shellNavigation.evaluate((node) => node.getBoundingClientRect().width),
     )
-    .toBe(expandedWidth);
+    .toBe(expandedWidth + gutterWidth);
 
   await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
   await expect(shellNavigation).toHaveAttribute("aria-hidden", "true");
@@ -276,7 +383,11 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
   expect(await sidebarNode.evaluate((element) => element.isConnected)).toBe(
     true,
   );
-  expect((await sidebar.boundingBox()).width).toBe(expandedWidth);
+  await expect
+    .poll(() =>
+      sidebar.evaluate((element) => element.getBoundingClientRect().width),
+    )
+    .toBe(expandedWidth);
 
   await sidebar.getByRole("button", { name: "Agents", exact: true }).click();
   await expect(
@@ -294,7 +405,11 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
   expect(await sidebarNode.evaluate((element) => element.isConnected)).toBe(
     true,
   );
-  expect((await sidebar.boundingBox()).width).toBe(expandedWidth);
+  await expect
+    .poll(() =>
+      sidebar.evaluate((element) => element.getBoundingClientRect().width),
+    )
+    .toBe(expandedWidth);
   await expect(
     sidebar.getByRole("button", { name: "Agents", exact: true }),
   ).toHaveAttribute("aria-current", "page");

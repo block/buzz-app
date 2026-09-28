@@ -223,24 +223,19 @@
     display: flex;
     min-width: 0;
     flex: none;
-    width: var(--shell-navigation-width, 260px);
-    margin-right: var(--space-panel-gap);
-    overflow: clip;
-    transition:
-      width var(--duration-settle) cubic-bezier(0.22, 1, 0.36, 1),
-      margin-right var(--duration-settle) cubic-bezier(0.22, 1, 0.36, 1);
+    width: max-content;
+    max-width: max(132px, calc(100% - 336px));
+    overflow: visible;
+    clip-path: inset(0 0 0 0);
+    transition: max-width var(--duration-settle) ease-in-out;
   }
   .shell-navigation[data-sidebar-collapsible][aria-hidden="true"] {
-    width: 0;
-    margin-right: 0;
+    max-width: 0;
   }
   @media (prefers-reduced-motion: reduce) {
     .shell-navigation[data-sidebar-collapsible] {
       transition: none;
     }
-  }
-  .shell-navigation-toggle {
-    display: none;
   }
   .shell-body {
     @apply relative flex min-h-0 min-w-0 flex-1 pl-0 pr-2 pb-2 sm:pl-0 sm:pr-4 sm:pb-4;
@@ -260,24 +255,33 @@
   }
   .shell-navigation[data-sidebar-collapsible] > .shell-sidebar {
     flex: none;
-    max-width: none;
+    max-width: calc(100% - var(--space-panel-gap));
   }
   .shell-actions {
     @apply flex items-center justify-end;
     gap: var(--space-2);
   }
-  .shell-header .buzz-button[data-icon-variant="chrome"] {
+  .shell-header .buzz-button[data-icon-variant] {
     width: 28px;
     height: 28px;
+  }
+  .shell-header .buzz-button[data-shell-sidebar-toggle] {
     background: var(--surface-panel);
     box-shadow: none;
   }
-  .shell-header .buzz-button[data-icon-variant="chrome"] svg {
+  .shell-header .buzz-button[data-icon-variant] svg,
+  .shell-header .buzz-button[data-icon-variant="chrome"] img {
     width: 16px;
     height: 16px;
   }
   .shell-header
-    .buzz-button[data-icon-variant="chrome"]:hover:not([data-disabled]) {
+    .buzz-button[data-icon-variant="chrome"]
+    img[src="/bestie.png"] {
+    width: 18px;
+    height: 18px;
+  }
+  .shell-header
+    .buzz-button[data-shell-sidebar-toggle]:hover:not([data-disabled]) {
     background: var(--affordance-subtle-hover);
   }
   @media (max-width: 700px) {
@@ -297,9 +301,6 @@
     }
     .shell-sidebar-default {
       margin-right: var(--space-1);
-    }
-    .shell-navigation-toggle {
-      display: inline-flex;
     }
     .shell-body-settings .shell-navigation {
       display: none;

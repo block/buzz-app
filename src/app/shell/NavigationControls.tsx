@@ -20,13 +20,7 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
         title="Go back"
         disabled={!state.canGoBack}
         onClick={navigation.back}
-        icon={
-          <ArrowLeftIcon
-            size={20}
-            style={{ width: "var(--space-5)", height: "var(--space-5)" }}
-            aria-hidden="true"
-          />
-        }
+        icon={<ArrowLeftIcon size={16} aria-hidden="true" />}
       />
       <IconButton
         type="button"
@@ -36,13 +30,7 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
         title="Go forward"
         disabled={!state.canGoForward}
         onClick={navigation.forward}
-        icon={
-          <ArrowRightIcon
-            size={20}
-            style={{ width: "var(--space-5)", height: "var(--space-5)" }}
-            aria-hidden="true"
-          />
-        }
+        icon={<ArrowRightIcon size={16} aria-hidden="true" />}
       />
     </nav>
   );

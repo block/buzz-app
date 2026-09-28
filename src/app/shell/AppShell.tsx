@@ -1,11 +1,5 @@
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SidebarIcon } from "../../shared/design-system/icons";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -57,26 +51,29 @@ export function AppShell({
   const fillsWorkspace = workspace || selected === "settings";
   const channelsNavigation =
     selected === "buzz.channels/channels" || selected === "buzz.agents/agents";
+  const [narrow, setNarrow] = useState(
+    () => window.matchMedia("(max-width: 650px)").matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 650px)");
+    const update = () => setNarrow(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  const settingsOverlay = selected === "settings" && narrow;
+  const collapsibleSidebar = channelsNavigation || selected === "settings";
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const sidebarNavigation = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    if (!channelsNavigation || !sidebarNavigation.current) return;
-    const navigation = sidebarNavigation.current;
-    const sidebar = navigation.querySelector<HTMLElement>(".shell-sidebar");
-    if (!sidebar) return;
-    const updateWidth = () => {
-      navigation.style.setProperty(
-        "--shell-navigation-width",
-        `${sidebar.getBoundingClientRect().width}px`,
-      );
-    };
-    updateWidth();
-    const observer = new ResizeObserver(updateWidth);
-    observer.observe(sidebar);
-    return () => observer.disconnect();
-  }, [channelsNavigation]);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
+  const visibleSidebar = settingsOverlay ? navigationOpen : sidebarOpen;
+  const toggleLabel = settingsOverlay
+    ? navigationOpen
+      ? "Hide navigation"
+      : "Show navigation"
+    : sidebarOpen
+      ? "Hide Channel sidebar"
+      : "Show Channel sidebar";
   useEffect(() => {
     if (selected !== "settings") setNavigationOpen(false);
   }, [selected]);
@@ -129,38 +126,25 @@ export function AppShell({
           data-tauri-drag-region={macDesktop ? undefined : true}
           {...titleBarDragProps}
         >
-          {channelsNavigation && (
+          {collapsibleSidebar && (
             <IconButton
+              ref={navigationToggle}
+              data-shell-sidebar-toggle=""
               type="button"
               variant="chrome"
               shape="round"
-              aria-label={
-                sidebarOpen ? "Hide Channel sidebar" : "Show Channel sidebar"
-              }
-              aria-expanded={sidebarOpen}
+              aria-label={toggleLabel}
+              aria-expanded={visibleSidebar}
               aria-controls="shell-navigation"
-              title={
-                sidebarOpen ? "Hide Channel sidebar" : "Show Channel sidebar"
-              }
-              onClick={() => setSidebarOpen((open) => !open)}
+              title={toggleLabel}
+              onClick={() => {
+                if (settingsOverlay) setNavigationOpen((open) => !open);
+                else setSidebarOpen((open) => !open);
+              }}
               icon={<SidebarIcon aria-hidden="true" size={16} />}
             />
           )}
           {navigationControls}
-          {selected === "settings" && (
-            <span className="shell-navigation-toggle">
-              <IconButton
-                ref={navigationToggle}
-                aria-label={
-                  navigationOpen ? "Hide navigation" : "Show navigation"
-                }
-                aria-expanded={navigationOpen}
-                aria-controls="shell-navigation"
-                onClick={() => setNavigationOpen((open) => !open)}
-                icon={<SidebarIcon aria-hidden="true" size={20} />}
-              />
-            </span>
-          )}
         </div>
         <div
           className="shell-actions"
@@ -189,12 +173,13 @@ export function AppShell({
         >
           <div
             id="shell-navigation"
-            ref={sidebarNavigation}
             className="shell-navigation"
-            data-sidebar-collapsible={channelsNavigation || undefined}
-            data-sidebar-open={sidebarOpen || undefined}
-            aria-hidden={channelsNavigation && !sidebarOpen}
-            inert={channelsNavigation && !sidebarOpen}
+            data-sidebar-collapsible={
+              (collapsibleSidebar && !settingsOverlay) || undefined
+            }
+            data-sidebar-open={visibleSidebar || undefined}
+            aria-hidden={collapsibleSidebar && !visibleSidebar}
+            inert={collapsibleSidebar && !visibleSidebar}
             data-expanded={navigationOpen}
             onKeyDown={(event) => {
               if (

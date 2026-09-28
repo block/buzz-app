@@ -11,11 +11,11 @@ import "../../src/shared/styles/globals.css";
 
 declare global {
   interface Window {
-    nativeFixtureInvoke(command: string, payload: unknown): Promise<unknown>;
+    mockedNativeIpcInvoke(command: string, payload: unknown): Promise<unknown>;
   }
 }
 // The test owns the IPC endpoint across reloads. No Keychain or live relay access.
-mockIPC((command, payload) => window.nativeFixtureInvoke(command, payload));
+mockIPC((command, payload) => window.mockedNativeIpcInvoke(command, payload));
 const ctx = new Context();
 const identity = createIdentity();
 const communities = createCommunities(
@@ -66,6 +66,10 @@ function Fixture() {
   const [joining, setJoining] = useState(false);
   return (
     <main className="p-8">
+      <h1>Mocked native IPC recovery fixture</h1>
+      <p>
+        Browser regression fixture; no native host, Keychain, or live relay.
+      </p>
       <button
         type="button"
         disabled={client.status !== "ready"}

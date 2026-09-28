@@ -11,7 +11,7 @@ import {
 
 // Browser boundary: real page reload, localStorage admission and IndexedDB outbox
 // persistence through the packaged adapter. Failure matrices live in Vitest.
-test("native admission and uncertain delivery survive page reload without the broker", async ({
+test("mocked native IPC admission and uncertain delivery survive page reload without the broker", async ({
   page,
 }) => {
   const server = await createServer({
@@ -41,58 +41,62 @@ test("native admission and uncertain delivery survive page reload without the br
       throw new Error("No development broker");
     };
   });
-  await page.exposeFunction("nativeFixtureInvoke", async (command, payload) => {
-    if (command === "identity_restore") return viewer;
-    if (command === "relay_sign") {
-      expect(Object.keys(payload.event).sort()).toEqual([
-        "content",
-        "created_at",
-        "kind",
-        "tags",
-      ]);
-      expect(payload.community).toBe(community);
-      return finalizeEvent(payload.event, key);
-    }
-    expect(command).toBe("relay_http");
-    expect(payload.community).toBe(community);
-    const body = payload.body ? JSON.parse(payload.body) : undefined;
-    calls.push(payload.path);
-    const response = (body, status = 200) => ({
-      status,
-      headers: {},
-      body: JSON.stringify(body),
-    });
-    if (payload.path === "/")
-      return response({ self: viewer, name: "Fixture community" });
-    if (payload.path === "/api/join-policy") return response({ policy: null });
-    if (payload.path === "/api/invites/claim") {
-      admitted = true;
-      throw new Error("Claim receipt lost");
-    }
-    if (payload.path === "/query") {
-      if (!admitted) return response({ error: "not admitted" }, 403);
-      return response(
-        body.some((filter) => filter.kinds?.includes(0)) && profile
-          ? [profile]
-          : [],
-      );
-    }
-    if (payload.path === "/events") {
-      expect(verifyEvent(body)).toBe(true);
-      expect(body.pubkey).toBe(viewer);
-      if (body.kind === 0) profile = body;
-      else {
-        messages.push(body);
-        if (messages.length === 1) throw new Error("Message receipt lost");
+  await page.exposeFunction(
+    "mockedNativeIpcInvoke",
+    async (command, payload) => {
+      if (command === "identity_restore") return viewer;
+      if (command === "relay_sign") {
+        expect(Object.keys(payload.event).sort()).toEqual([
+          "content",
+          "created_at",
+          "kind",
+          "tags",
+        ]);
+        expect(payload.community).toBe(community);
+        return finalizeEvent(payload.event, key);
       }
-      return response({ accepted: true, event_id: body.id });
-    }
-    throw new Error(`Unexpected request ${payload.path}`);
-  });
+      expect(command).toBe("relay_http");
+      expect(payload.community).toBe(community);
+      const body = payload.body ? JSON.parse(payload.body) : undefined;
+      calls.push(payload.path);
+      const response = (body, status = 200) => ({
+        status,
+        headers: {},
+        body: JSON.stringify(body),
+      });
+      if (payload.path === "/")
+        return response({ self: viewer, name: "Fixture community" });
+      if (payload.path === "/api/join-policy")
+        return response({ policy: null });
+      if (payload.path === "/api/invites/claim") {
+        admitted = true;
+        throw new Error("Claim receipt lost");
+      }
+      if (payload.path === "/query") {
+        if (!admitted) return response({ error: "not admitted" }, 403);
+        return response(
+          body.some((filter) => filter.kinds?.includes(0)) && profile
+            ? [profile]
+            : [],
+        );
+      }
+      if (payload.path === "/events") {
+        expect(verifyEvent(body)).toBe(true);
+        expect(body.pubkey).toBe(viewer);
+        if (body.kind === 0) profile = body;
+        else {
+          messages.push(body);
+          if (messages.length === 1) throw new Error("Message receipt lost");
+        }
+        return response({ accepted: true, event_id: body.id });
+      }
+      throw new Error(`Unexpected request ${payload.path}`);
+    },
+  );
   try {
     await server.listen();
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/native-relay.html`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mocked-native-ipc.html`,
     );
     await page.getByRole("button", { name: "Add a community" }).click();
     await page.getByLabel("Relay URL").fill(community);
@@ -161,7 +165,7 @@ test("native admission and uncertain delivery survive page reload without the br
     );
     expect(errors).toEqual([]);
     await page.screenshot({
-      path: test.info().outputPath("native-recovery.png"),
+      path: test.info().outputPath("mocked-native-ipc-recovery.png"),
     });
   } finally {
     await server.close();

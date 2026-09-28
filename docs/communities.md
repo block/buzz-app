@@ -204,13 +204,25 @@ native composition, failure/retry and development precedence. Rust tests cover
 actual IPC signing, exact-byte HTTP authentication and redirect rejection without
 touching Keychain.
 
-One browser case is added, with none removed: `tests/browser/native-relay.spec.mjs`
+One browser case is added, with none removed: `tests/browser/mocked-native-ipc.spec.mjs`
 proves page reload and real localStorage/IndexedDB recovery in Chromium and WebKit.
 It preserves one identity across an uncertain claim, joins, loses a message
 receipt, reloads, then explicitly retries the identical signed message. The IPC
-endpoint is a test fixture; it does not establish Keychain consent, a full native
+endpoint is mocked by Playwright; it does not establish Keychain consent, a full native
 process restart, production TLS, deployed relay interoperability or notarized
 release acceptance.
+
+The paired `tests/fixtures/mocked-native-ipc.html` and `.tsx` files mount the real
+community dialog, identity/community services and JavaScript native transport
+adapter. Playwright supplies the identity, signing and HTTP responses and stubs
+WebSocket; browser storage and reload are real. The page requires the test's IPC
+endpoint, so it is not a standalone manual diagnostic.
+
+This regression fixture originated in `78d986c0`, independently of the recording
+toolkit added in `f68926da` and removed in `0a9ff77f`. It remains automated test
+coverage, not a native-app recording. Any retained local recordings from that
+removed toolkit used a simulated host; their source revision must be established
+from capture metadata, not the gallery's hard-coded revision label.
 
 Regression evidence: restoring the original unfiltered signing payload makes
 both browser engines fail at message delivery (`failed` instead of `unknown`),
@@ -220,7 +232,7 @@ four-field projection passes the journey.
 Run it with:
 
 ```sh
-bin/pnpm test:browser tests/browser/native-relay.spec.mjs --project chromium --project webkit --no-deps
+bin/pnpm test:browser tests/browser/mocked-native-ipc.spec.mjs --project chromium --project webkit --no-deps
 ```
 
 Open `/tests/fixtures/communities.html` for a browser-only fixture of the actual dialog.

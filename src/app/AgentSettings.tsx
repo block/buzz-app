@@ -10,6 +10,7 @@ import { IconButton } from "../shared/design-system/ui/IconButton";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
+import { AgentDefaultsCard } from "./AgentDefaultsCard";
 import styles from "./AgentSettings.module.css";
 
 const acpHint =
@@ -228,6 +229,7 @@ export function AgentSettings({
           </>
         )}
       </section>
+      <AgentDefaultsCard control={control} state={state} />
       <div className="mt-6">
         <SwitchPreferenceRow
           label="Remember mentioned agents"

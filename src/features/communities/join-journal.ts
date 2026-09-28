@@ -1,4 +1,4 @@
-import { communityDestination } from "./destination";
+import { communityDestination, isCommunityAlias } from "./destination";
 import type { PersonalProfile } from "./service";
 
 export type PendingJoin = {
@@ -19,7 +19,6 @@ export function createJoinJournal(viewer: string) {
           !entry ||
           typeof entry.id !== "string" ||
           typeof entry.community !== "string" ||
-          communityDestination(entry.community).id !== entry.community ||
           (entry.profile !== undefined &&
             (!entry.profile ||
               typeof entry.profile.name !== "string" ||
@@ -28,6 +27,12 @@ export function createJoinJournal(viewer: string) {
                 typeof entry.profile.about !== "string")))
         )
           throw new Error();
+        try {
+          entry.community = communityDestination(entry.community).url;
+        } catch (reason) {
+          // Retain legacy aliases until their deployment mapping is restored.
+          if (!isCommunityAlias(entry.community)) throw reason;
+        }
       }
       return entries;
     } catch {
@@ -46,15 +51,22 @@ export function createJoinJournal(viewer: string) {
     }
   }
   return {
-    latest: () => read().at(-1),
-    get: (community: string) =>
-      read().find((entry) => entry.community === community),
+    latest: () =>
+      read()
+        .filter((entry) => !isCommunityAlias(entry.community))
+        .at(-1),
+    get(community: string) {
+      const origin = communityDestination(community).url;
+      return read()
+        .filter((entry) => entry.community === origin)
+        .at(-1);
+    },
     begin(community: string, profile?: PersonalProfile): PendingJoin {
       const entries = read();
-      community = communityDestination(community).id;
+      community = communityDestination(community).url;
       const draft =
         profile ??
-        entries.find((item) => item.community === community)?.profile;
+        entries.filter((item) => item.community === community).at(-1)?.profile;
       const entry = {
         id: crypto.randomUUID(),
         community,

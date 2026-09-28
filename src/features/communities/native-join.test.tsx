@@ -26,6 +26,7 @@ let admitted: boolean;
 let profile: RelayEvent | undefined;
 let claim: () => Promise<void>;
 let publish: () => Promise<void>;
+let readProfile: () => Promise<void>;
 const journal = () => createJoinJournal(viewer.pubkey);
 beforeEach(() => {
   localStorage.clear();
@@ -34,6 +35,7 @@ beforeEach(() => {
   calls.length = 0;
   claim = async () => {};
   publish = async () => {};
+  readProfile = async () => {};
   vi.stubEnv("VITE_BUZZ_LIVE", "0");
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   vi.stubGlobal(
@@ -92,6 +94,14 @@ beforeEach(() => {
         return response({ status: "joined" });
       case "/query":
         if (!admitted) return response({ error: "membership required" }, 403);
+        if (
+          body.some((filter: { kinds?: number[] }) => filter.kinds?.includes(0))
+        ) {
+          expect(body).toContainEqual(
+            expect.objectContaining({ consistency: "strong" }),
+          );
+          await readProfile();
+        }
         return response(
           body.some((filter: { kinds?: number[] }) =>
             filter.kinds?.includes(0),
@@ -101,9 +111,14 @@ beforeEach(() => {
         );
       case "/events":
         expect(journal().get(community)?.profile).toBeDefined();
-        profile = body;
+        if (
+          !profile ||
+          body.created_at > profile.created_at ||
+          (body.created_at === profile.created_at && body.id < profile.id)
+        )
+          profile = body;
         await publish();
-        return response({ accepted: true, event_id: profile?.id });
+        return response({ accepted: true, event_id: body.id });
       default:
         throw new Error(`Unexpected path ${request.path}`);
     }
@@ -264,6 +279,198 @@ it("retains submitted profile progress through publication and local membership-
   expect(calls.filter((call) => call.path === "/events")).toHaveLength(1);
   expect(calls.some((call) => call.path === "/api/invites/claim")).toBe(false);
 });
+
+it.each(["superseded", "missing"])(
+  "retains the draft across restart when an acknowledged profile is %s, then completes on verified retry",
+  async (result) => {
+    admitted = true;
+    const future = Math.floor(Date.now() / 1000) + 60;
+    profile = signed(viewer, {
+      kind: 0,
+      created_at: future,
+      tags: [],
+      content: JSON.stringify({
+        name: "Existing",
+        about: "Before",
+        custom: "Preserved",
+      }),
+    });
+    const draft = {
+      name: "Requested",
+      picture: "https://images.test/avatar.png",
+      about: "After",
+    };
+    journal().begin(community, draft);
+    if (result === "missing")
+      publish = async () => {
+        profile = undefined;
+      };
+    const user = userEvent.setup();
+    const first = await open();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Publish profile & open" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your profile change is not current",
+    );
+    expect(first.close).not.toHaveBeenCalled();
+    expect(first.communities.snapshot().memberships).toEqual([]);
+    expect(first.communities.snapshot().profile.name).toBe("");
+    expect(journal().get(community)?.profile).toEqual(draft);
+    expect(calls.filter((call) => call.path === "/events")).toHaveLength(1);
+    if (result === "superseded")
+      expect(JSON.parse(profile?.content ?? "null").name).toBe("Existing");
+    await first.stop();
+
+    publish = async () => {};
+    vi.spyOn(Date, "now").mockReturnValue((future + 1) * 1000);
+    const second = await open();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByLabelText("Display name")).toHaveValue(
+      draft.name,
+    );
+    expect(screen.getByLabelText("Profile description (optional)")).toHaveValue(
+      draft.about,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Publish profile & open" }),
+    );
+    await waitFor(() => expect(second.close).toHaveBeenCalledOnce());
+    expect(second.communities.snapshot().selected).toBe(community);
+    expect(journal().latest()).toBeUndefined();
+    expect(JSON.parse(profile?.content ?? "null")).toMatchObject(draft);
+    if (result === "superseded")
+      expect(JSON.parse(profile?.content ?? "null").custom).toBe("Preserved");
+    expect(calls.filter((call) => call.path === "/events")).toHaveLength(2);
+    expect(calls.some((call) => call.path === "/api/invites/claim")).toBe(
+      false,
+    );
+  },
+);
+
+it.each(["before", "after"])(
+  "retains the submitted draft when profile reads fail %s publication and recovers without duplicate writes",
+  async (when) => {
+    admitted = true;
+    const draft = {
+      name: "  Durable draft  ",
+      picture: "",
+      about: "  Keep this  ",
+    };
+    journal().begin(community, draft);
+    const user = userEvent.setup();
+    const first = await open();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByLabelText("Display name");
+    const failRead = async () => {
+      throw new Error("Profile read unavailable");
+    };
+    if (when === "before") readProfile = failRead;
+    else
+      publish = async () => {
+        readProfile = failRead;
+      };
+    await user.click(
+      screen.getByRole("button", { name: "Publish profile & open" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Profile read unavailable",
+    );
+    expect(first.close).not.toHaveBeenCalled();
+    expect(first.communities.snapshot().memberships).toEqual([]);
+    expect(journal().get(community)?.profile).toEqual(draft);
+    expect(calls.filter((call) => call.path === "/events")).toHaveLength(
+      when === "before" ? 0 : 1,
+    );
+    await first.stop();
+
+    readProfile = async () => {};
+    publish = async () => {};
+    const second = await open();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByLabelText("Display name")).toHaveValue(
+      draft.name,
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Publish profile & open",
+      }),
+    );
+    await waitFor(() => expect(second.close).toHaveBeenCalledOnce());
+    expect(journal().latest()).toBeUndefined();
+    expect(calls.filter((call) => call.path === "/events")).toHaveLength(1);
+    expect(calls.some((call) => call.path === "/api/invites/claim")).toBe(
+      false,
+    );
+  },
+);
+
+it("verifies the normalized published fields before completing setup", async () => {
+  admitted = true;
+  journal().begin(community, {
+    name: "  Name  ",
+    picture: "",
+    about: "  About  ",
+  });
+  const user = userEvent.setup();
+  const app = await open();
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Publish profile & open" }),
+  );
+  await waitFor(() => expect(app.close).toHaveBeenCalledOnce());
+  expect(app.communities.snapshot().profile).toEqual({
+    name: "Name",
+    picture: "",
+    about: "About",
+  });
+  expect(journal().latest()).toBeUndefined();
+});
+
+it.each(["current", "unmounted", "replaced"])(
+  "waits for profile verification and only completes the current transaction (%s)",
+  async (state) => {
+    admitted = true;
+    journal().begin(community, { name: "Submitted", picture: "" });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const confirm = vi.fn(() => gate);
+    publish = async () => {
+      readProfile = confirm;
+    };
+    const user = userEvent.setup();
+    const app = await open();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Publish profile & open" }),
+    );
+    try {
+      await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+      expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
+      expect(app.communities.snapshot().memberships).toEqual([]);
+      expect(journal().get(community)?.profile?.name).toBe("Submitted");
+      if (state === "unmounted") await app.stop();
+      if (state === "replaced")
+        journal().begin(community, { name: "New draft", picture: "" });
+      await act(async () => release());
+      if (state === "current") {
+        await waitFor(() => expect(app.close).toHaveBeenCalledOnce());
+        expect(journal().latest()).toBeUndefined();
+      } else {
+        expect(app.close).not.toHaveBeenCalled();
+        expect(app.communities.snapshot().memberships).toEqual([]);
+        expect(journal().get(community)?.profile?.name).toBe(
+          state === "replaced" ? "New draft" : "Submitted",
+        );
+      }
+    } finally {
+      release();
+    }
+  },
+);
 
 it("does not dispatch admission when its recovery record cannot be persisted", async () => {
   const user = userEvent.setup();

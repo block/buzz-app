@@ -35,9 +35,10 @@ membership locally without publishing. New setup shows the relay's join policy,
 optional invite code, then a profile prefilled from the local default. Invite
 admission uses the relay's policy receipt and signed claim endpoints. Profile
 publication uses a signed kind:0 event and requires a matching accepted receipt
-before the client saves the completed membership. Rejected setup retains input
-and does not replace the currently selected community. An admitted invite is a
-remote side effect and is not undone if later profile setup fails or is cancelled.
+and current profile readback before the client saves the completed membership.
+Rejected setup retains input and does not replace the currently selected community.
+An admitted invite is a remote side effect and is not undone if later profile
+setup fails or is cancelled.
 
 Profile editing preserves existing fields that this editor does not expose.
 After a confirmed Settings save, the profile also becomes the device-local
@@ -107,8 +108,13 @@ not become a deployment or enrollment command.
 
 The native dialog journals an unfinished join before policy/claim dispatch and a
 submitted profile before publication. Records are partitioned by public viewer
-and canonical community ID. They contain only a transaction ID, destination and
-optional profile draft, never invite codes, policy receipts or private keys.
+and canonical HTTPS origin, independent of configured aliases. Existing alias
+records normalize to origins when their mapping is available and are persisted
+on the next journal write. Unresolved legacy aliases are retained independently:
+they do not block other joins or recovery, and become available again after
+restoring their original mapping. Records contain only a transaction ID,
+destination and optional profile draft, never invite codes, policy receipts or
+private keys.
 Storage failure blocks the remote operation. Completing a native join requires
 successful local membership persistence before clearing its recovery record.
 
@@ -118,7 +124,10 @@ strong consistency. Successful access resumes profile setup even if the profile
 does not exist yet; it never requires reusing an expired invite after admission.
 Network failure retains the record for retry. Confirmed access denial returns to
 the policy/invite step, where the user can supply a valid code and current consent.
-Profile readback avoids repeating a publication whose receipt was lost. Late
+Profile readback avoids repeating a publication whose receipt was lost. An accepted
+publication also requires a fresh matching profile read before saving membership
+and clearing the journal. Failed reads, missing profiles and superseded writes
+retain the submitted draft for explicit retry, including after restart. Late
 completions cannot advance an unmounted dialog or a replaced transaction.
 
 Saved memberships are restored through the existing session owner. Uncertain
@@ -185,8 +194,10 @@ selected-only restore, retry registration and equivalent-URL selection. Existing
 late responses, delivery and revocation.
 
 `native-join.test.tsx` mounts the real dialog, community service and native adapter
-with fixture IPC to cover claim/profile response loss, persistence failure,
-interrupted setup, alias recovery and selected-only restart. `native-api.test.ts`
+with fixture IPC to cover claim/profile response loss, acknowledged but superseded
+or missing profiles, read and persistence failures, interrupted setup, alias
+recovery and selected-only restart. `join-journal.test.ts` covers alias addition,
+removal and unresolved legacy records across restarts. `native-api.test.ts`
 and `relay/native.test.ts` cover routing, verification, live auth, capacity,
 receipt correlation and expired-event readback. `app/services.test.ts` exercises
 native composition, failure/retry and development precedence. Rust tests cover

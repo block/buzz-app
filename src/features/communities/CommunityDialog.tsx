@@ -196,8 +196,25 @@ export function CommunityDialog({
           const transaction = journal?.begin(id, profile);
           const found = journal ? await inspectProfile(id) : original;
           if (!current(transaction)) return;
-          if (!found?.exists || !profilesEqual(profile, found.profile))
-            await publishProfile(id, profile, found?.existing ?? {});
+          const next =
+            found?.exists && profilesEqual(profile, found.profile)
+              ? profile
+              : {
+                  ...profile,
+                  name: profile.name.trim(),
+                  about: profile.about?.trim() ?? "",
+                };
+          if (!found?.exists || !profilesEqual(next, found.profile)) {
+            await publishProfile(id, next, found?.existing ?? {});
+            if (!current(transaction)) return;
+            // An accepted replaceable event may already be superseded.
+            const confirmed = await inspectProfile(id);
+            if (!current(transaction)) return;
+            if (!confirmed.exists || !profilesEqual(confirmed.profile, next))
+              throw new Error(
+                "Your profile change is not current. Your edits are retained; try again.",
+              );
+          }
           if (!current(transaction)) return;
           communities.joined(
             {
@@ -210,7 +227,7 @@ export function CommunityDialog({
                 ? { icon: info.icon }
                 : {}),
             },
-            profileDefault(profile, communities.snapshot().profile, id),
+            profileDefault(next, communities.snapshot().profile, id),
           );
           if (transaction) journal?.finish(transaction);
           onJoined?.(id);

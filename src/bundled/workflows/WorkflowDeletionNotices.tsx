@@ -76,22 +76,31 @@ export function WorkflowDeletionNotices({
         )
         .map((operation) => {
           const snapshot = snapshots[operation.workflow.channelId];
+          const definition = snapshot?.data.items.find(
+            (row) =>
+              row.id === operation.workflow.id &&
+              row.owner === operation.workflow.owner,
+          );
+          if (operation.outcome === "pending") {
+            if (definition) return null;
+            return (
+              <ToastNotice
+                key={operation.eventId}
+                title="Deleting workflow…"
+                description="Waiting for deletion confirmation."
+                tone="info"
+              />
+            );
+          }
           if (
             !snapshot ||
             snapshot.status === "idle" ||
             snapshot.status === "unavailable" ||
-            operation.outcome === "pending" ||
             confirmedDeletion(operation, snapshot)
           )
             return null;
           const rejected = operation.outcome === "rejected";
-          const name = readWorkflowDocumentFields(
-            snapshot.data.items.find(
-              (row) =>
-                row.id === operation.workflow.id &&
-                row.owner === operation.workflow.owner,
-            )?.yaml ?? "",
-          ).name;
+          const name = readWorkflowDocumentFields(definition?.yaml ?? "").name;
           return (
             <ToastNotice
               key={operation.eventId}

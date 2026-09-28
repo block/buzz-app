@@ -46,10 +46,12 @@ function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
     channels: [{ id: fixtureChannel, name: "Fixture channel" }],
   };
   const session = {
-    workflows: {
-      ...fixture.capability,
-      availability: { ...fixture.capability.availability, save },
-    },
+    workflows: save
+      ? fixture.capability
+      : {
+          ...fixture.capability,
+          availability: { ...fixture.capability.availability, save: false },
+        },
     channels: {
       list: () => list,
       ensureList: () => {},
@@ -444,28 +446,58 @@ it("confirms on the grid without mounting detail, cancels safely, and removes on
   expect(fixture.calls.delete).toBe(1);
   expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull();
   expect(screen.getByText("Deleting…")).toBeVisible();
-  expect(
-    screen.getByRole("button", { name: "Open Message helper" }),
-  ).toBeDisabled();
-  await user.click(
-    screen.getByRole("button", { name: "Actions for Message helper" }),
-  );
-  expect(
-    await screen.findByRole("menuitem", { name: "Delete workflow" }),
-  ).toHaveAttribute("aria-disabled", "true");
-  await user.keyboard("{Escape}");
   await act(async () => {
     fixture.definitions.update({
       status: "ready",
       data: { items: [], partial: false },
     });
+  });
+  expect(screen.getByText("Deleting workflow…")).toBeVisible();
+  expect(screen.queryByText("Deleting…")).toBeNull();
+  expect(screen.queryByRole("button", { name: /delete/i })).toBeNull();
+  expect(screen.queryByRole("button", { name: /dismiss/i })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Open Message helper" }),
+  ).toBeNull();
+  await act(async () => {
     fixture.finish("succeeded");
   });
+  expect(screen.queryByText("Deleting workflow…")).toBeNull();
   expect(
     screen.queryByRole("button", { name: "Open Message helper" }),
   ).toBeNull();
   expect(screen.queryByText(/Couldn't confirm deletion/)).toBeNull();
   expect(fixture.calls.delete).toBe(1);
+});
+
+it("recovers on the grid when detail deletion is refused by an unresolved save", async () => {
+  const fixture = mount();
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("switch", {
+      name: "Enabled in configuration: Message helper",
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: "Turn on" }));
+  await act(async () => {
+    fixture.finish("succeeded");
+    fixture.definitions.update({
+      status: "ready",
+      data: { items: [fixtureDefinition], partial: false },
+    });
+  });
+  await confirmDeletion("detail");
+  expect(fixture.calls.delete).toBe(0);
+  expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull();
+  expect(await screen.findByText("Couldn't start deletion")).toBeVisible();
+  expect(
+    screen.getByText(
+      "Another workflow change is still being confirmed. Refresh and try again.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Open Message helper" }),
+  ).toBeEnabled();
 });
 
 it.each(["grid", "detail"] as const)(

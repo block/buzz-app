@@ -123,12 +123,14 @@ export function WorkflowCommunity({
       capability.operations.snapshot(),
       definition,
     );
-    if (
-      locked ||
-      definition.owner !== viewer ||
-      !capability.availability.delete
-    )
+    if (locked) {
+      setDeleteError(
+        "Another workflow change is still being confirmed. Refresh and try again.",
+      );
+      openChannel("");
       return;
+    }
+    if (definition.owner !== viewer || !capability.availability.delete) return;
     deleting.current = true;
     try {
       capability.delete(definition);

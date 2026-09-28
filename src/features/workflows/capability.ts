@@ -277,7 +277,7 @@ export function createWorkflows({
           subscribers.delete(listener);
         };
       },
-      refresh({ ifStale = false } = {}) {
+      refresh({ ifStale = false } = {}): Promise<void> {
         if (closed || disposed || !available) return Promise.resolve();
         if (!accessible()) {
           clear();

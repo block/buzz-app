@@ -575,7 +575,6 @@ function WorkflowCard({
             <div className="workflow-card-identity">
               <strong className="text-standard">#{channel.name}</strong>
               <span>{name}</span>
-              {readonly && <span>Read-only</span>}
               {deletion && (
                 <span role="status">
                   {deletion.outcome === "pending"

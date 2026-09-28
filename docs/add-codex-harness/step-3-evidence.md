@@ -1,11 +1,61 @@
 # Step 3 checkpoint — 2026-09-24
 
-Base commit: `13d81047df1607099fe831d88085513b53b42972`; evidence below applies
-to the local step-3 changes on `pazar/add-codex-agent-harness`.
+## Current assessment
+
+**Step 3 is complete and accepted.** On September 24, Phil confirmed that the
+remaining GUI checks completed and passed. This records operator-reported
+acceptance of the GUI override-context check, alongside the automated evidence
+below. The default desktop context has also created and run Codex agents.
+A real screenshot showed multiple published replies; a later live turn reached
+Codex execution but failed to publish because the adapter disabled network access.
+Neither observation proves reliable single-reply behavior after the latest fix.
+
+The attended GUI check covers the explicit `CODEX_HOME`/configuration context
+shared by discovery and launch. Isolated resolver/protocol tests also cover
+overrides. Browser/API-key login
+fallback, applied model/effort evidence, and reliable live replies are tracked in
+later steps rather than being silently added to step 3's readiness scope.
+
+Snapshot: startup/lifecycle changes were committed and pushed in `36f00aa` to
+draft PR #178. The all-Codex full-access default and this status update follow
+that commit. The dated sections below preserve earlier evidence;
+statements about checks not yet run apply to their checkpoint, not this summary.
 
 Phil selected **@agentclientprotocol/codex-acp 1.3.0** as the adapter baseline.
-The original Buzz installation remains read-only. No package, ordinary account,
-Codex configuration, identity, relay agent, or runtime pin was changed.
+The original Buzz checkout and shared installed packages remain unchanged.
+
+### Latest reply failure and approved default
+
+The later Codex-test-3 turn attempted to send its reply with the Buzz CLI, but its
+sandbox denied DNS/network access. Adapter 1.3.0 supplies a workspace-write policy
+with `networkAccess: false` on every turn, overriding the network-enabled
+`CODEX_CONFIG` supplied by Buzz. Its supported `agent-full-access` mode permits
+network access and access to files outside the workspace.
+
+Phil approved full access for Codex-test-3, then requested it as the default for
+all Codex agents. The shared context now supplies
+`INITIAL_AGENT_MODE=agent-full-access` unless a saved per-agent override exists.
+Non-Codex harnesses are unchanged. An isolated adapter session acknowledged this
+mode; controller tests verify default/override propagation through discovery and
+runtime. A fresh live reply after restarting with this change remains unverified.
+
+### Latest validation scope
+
+- After the full-access default: 48 controller tests passed (3 opt-in tests
+  ignored), controller Clippy and the native app build passed.
+- Before that default: 57 native library tests passed (2 ignored), 15 focused
+  Codex tests passed, and 96 focused frontend tests passed. The pre-push frontend
+  run passed 221 tests across 14 files, plus TypeScript and design checks.
+- The deployed listener lifecycle check passed after resource builds settled.
+  Overlapping builds reproduced an integrity mismatch; generation-wide atomic
+  staging remains unresolved.
+- Full browser journeys, login fallbacks, applied-setting/fallback reporting,
+  signed packages and other-platform acceptance remain deferred.
+
+## Initial checkpoint
+
+Base commit: `13d81047df1607099fe831d88085513b53b42972`; the following isolated
+checks preceded the attended desktop debugging and fixes summarized above.
 
 ## Real isolated compatibility boundary
 
@@ -53,7 +103,7 @@ malformed versions, saved patch preservation/removal/CAS, native creation, disti
 login failures, output bounds, timeout cleanup, and existing cancellation and
 model/effort behavior. Synthetic credential strings do not enter returned errors.
 
-## Remaining acceptance
+## Remaining acceptance at the initial checkpoint
 
 Step 3 is **not fully accepted** until GUI-launched detection and the real desktop
 context are verified. Also deferred: attended normal-login reuse, real reply,

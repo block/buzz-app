@@ -97,6 +97,10 @@ impl Context {
                 effective.insert(name.to_owned(), value);
             }
         }
+        // Adapter 1.3.0's default mode disables network access on each turn,
+        // overriding CODEX_CONFIG. Managed Codex agents need to publish replies.
+        // Explicit per-agent modes still take precedence over this default.
+        effective.insert("INITIAL_AGENT_MODE".into(), "agent-full-access".into());
         effective.extend(environment.clone());
         Ok(Self {
             adapter,
@@ -354,6 +358,27 @@ mod tests {
         );
         assert_eq!(probe.get_current_dir(), Some(dir.path()));
         assert!(!probe.get_envs().any(|(key, _)| key == "OPENAI_API_KEY"));
+        for mode in [None, Some("agent"), Some("read-only")] {
+            if let Some(mode) = mode {
+                env.insert("INITIAL_AGENT_MODE".into(), mode.into());
+            } else {
+                env.remove("INITIAL_AGENT_MODE");
+            }
+            let context = Context::new(&harness, &env, dir.path().to_str().unwrap()).unwrap();
+            for command in [
+                context.cli_command().unwrap(),
+                context.command(&context.adapter).unwrap(),
+            ] {
+                let configured = command
+                    .get_envs()
+                    .find(|(key, _)| *key == "INITIAL_AGENT_MODE")
+                    .and_then(|(_, value)| value);
+                assert_eq!(
+                    configured,
+                    Some(std::ffi::OsStr::new(mode.unwrap_or("agent-full-access")))
+                );
+            }
+        }
         env.insert("CODEX_PATH".into(), "relative/custom-codex".into());
         assert!(Context::new(&harness, &env, dir.path().to_str().unwrap()).is_err());
     }

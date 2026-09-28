@@ -1,12 +1,14 @@
 # Add the Codex agent harness
 
-Status: Steps 1 and 2 are implemented; Codex is now selectable with shared
-launch/discovery context, a separate login-status probe, adapter-advertised model
-choices, model-dependent effort, and native creation validation. The approved
-trust boundary accepts ACP-advertised choices without claiming fresh remote
-account entitlement. Live account, rendered desktop and inference acceptance
-remain outstanding; steps 0 and 3–7 are not declared fully accepted.
-Written 2026-09-23 for branch `pazar/add-codex-agent-harness`.
+Status (September 24): Steps 1 and 2 are implemented. **Step 3 is complete and accepted.**
+Phil confirmed the remaining GUI checks passed on September 24.
+The native desktop has created and run Codex agents using the installed adapter
+and existing account. This does not close the whole integration: the latest
+reply fix still needs a fresh live check, and authentication fallbacks,
+applied-setting evidence, and broader desktop/platform acceptance remain open.
+The approved catalog trust boundary accepts ACP-advertised choices without
+claiming fresh remote account entitlement.
+Written 2026-09-23 for branch `pazar/add-codex-agent-harness`; updated 2026-09-24.
 
 See the [ACP boundary comparison](acp-boundary-comparison.md) for the subsequent
 non-reply investigation and current diagnostic gaps.
@@ -31,6 +33,41 @@ stdout/stderr per probe. Explicit `Not logged in`, configuration failure, unknow
 failure, timeout and oversized output remain distinct; child output never crosses
 the native boundary. Existing Refresh and manual executable editing are recovery.
 See [step 3 evidence](step-3-evidence.md) for checked behavior and remaining gaps.
+
+## Current progress and remaining verification — September 24
+
+The earlier dated checkpoints below are historical. This summary and
+[step 3 evidence](step-3-evidence.md) describe the current state.
+
+- [x] Resolve the managed adapter and Node, use its bundled CLI by default, and
+  share the effective context between discovery and launch. Tested baseline:
+  adapter **1.3.0**, bundled Codex CLI **0.147.0**; explicit `CODEX_PATH` remains supported.
+- [x] Bound and sanitize readiness checks; distinguish missing/unsupported tools,
+  invalid configuration, unknown results, and explicit logout. Recovery uses
+  manual installation/absolute executable selection and Refresh.
+- [x] Exercise real native creation and account-backed execution. The attended
+  session produced replies, then exposed duplicate listeners and a later network
+  failure; this is evidence of execution, not final reliable-reply acceptance.
+- [x] Repair macOS staged-executable startup, add orphan-listener recovery on
+  Start, and keep other agents' Start buttons usable with serialized explicit starts.
+- [x] Diagnose adapter 1.3.0 overriding network access on each turn. With Phil's
+  approval, default all Codex agents to `agent-full-access`; explicit per-agent
+  modes win. This enables network and file access outside the workspace.
+- [x] Close step 3 acceptance with the attended GUI checks, including the
+  explicit `CODEX_HOME`/configuration context shared by discovery and launch.
+  Phil confirmed the GUI checks completed and passed on September 24; this is
+  operator-reported acceptance alongside the recorded automated evidence.
+- [ ] Restart with the latest native build, mention once, and confirm exactly one
+  published reply after the full-access default change. This belongs to the
+  execution/live acceptance work in steps 6 and 9, not availability detection.
+
+The startup/lifecycle fixes are in draft PR #178 at `36f00aa`. The full-access
+default and this documentation update follow that checkpoint. Existing
+agents need a restart to receive the default; Save alone does not apply it.
+Browser login fallback (step 4), actual model/effort and fallback reporting
+(step 6), final create/edit/browser acceptance, and packaging/platform checks are
+not declared complete. Concurrent resource builds and agent Start can still
+produce an integrity mismatch; whole-generation atomic staging remains open.
 
 ## Follow-up fixes — September 23
 
@@ -383,12 +420,16 @@ pending request. Locally confirm an existing Databricks agent still replies.
 
 ### Step 3 — Resolve Codex execution context and readiness
 
-- [ ] Add Codex metadata and resolve CLI, adapter, version, and required interpreter.
+**Complete and accepted on September 24.** Phil confirmed the remaining GUI
+checks passed. This closes step 3; later execution, authentication-fallback, and
+packaging/platform work retain their separate acceptance criteria.
+
+- [x] Add Codex metadata and resolve CLI, adapter, version, and required interpreter.
 - [x] Build one native effective-context resolver for draft/saved discovery and
   launch. Merge saved write-only patches natively with revision checks.
-- [ ] Preserve normal HOME/CODEX_HOME semantics without inheriting unrelated
+- [x] Preserve normal HOME/CODEX_HOME semantics without inheriting unrelated
   provider secrets. Honor configured context consistently, including GUI startup.
-- [ ] Add bounded, sanitized availability/auth checks and explicit retry/setup.
+- [x] Add bounded, sanitized availability/auth checks and explicit retry/setup.
   Implement the installation recovery selected in step 0.
 
 **Code:** proposed `crates/agent-controller/src/harnesses/` Codex/context modules,

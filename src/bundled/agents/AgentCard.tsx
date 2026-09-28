@@ -28,6 +28,7 @@ export function AgentCard({
   session,
   editable = [],
   onEdit,
+  onViewProfile,
   onDuplicate,
   onDelete,
   children,
@@ -41,6 +42,7 @@ export function AgentCard({
   session?: RelaySession;
   editable?: AgentView[];
   onEdit?: ((agent: AgentView, avatar?: string) => void) | undefined;
+  onViewProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
   onDuplicate?: ((agent: AgentView) => void) | undefined;
   onDelete?: ((agent: AgentView) => void) | undefined;
 }) {
@@ -60,7 +62,7 @@ export function AgentCard({
       aria-label={`Agent ${name}`}
       className="relative flex min-w-0 flex-col gap-4 rounded-2xl border border-primary p-4"
     >
-      {onEdit && (
+      {(onEdit || onViewProfile) && (
         <div className="absolute right-2 top-2">
           <MenuRoot>
             <MenuTrigger
@@ -74,74 +76,87 @@ export function AgentCard({
               }
             />
             <MenuPopup align="end" size="wide">
-              {editable.length ? (
-                editable.map((agent) => (
-                  <Fragment key={agent.id}>
-                    <MenuItem
-                      onClick={() => {
-                        // The menu item unmounts; return from the dialog to the card.
-                        trigger.current?.focus();
-                        onEdit(agent, picture);
-                      }}
-                    >
-                      {editable.length === 1 ? (
-                        "Edit"
-                      ) : (
-                        <ChoiceRow
-                          label={`Edit ${identityLabel(agent)}`}
-                          description={
-                            <>
-                              <span className="block break-all text-body-sm text-secondary">
-                                {agent.relayUrl}
-                              </span>
-                              <span className="block break-all text-mono-sm text-secondary">
-                                {agent.pubkey}
-                              </span>
-                            </>
-                          }
-                        />
-                      )}
-                    </MenuItem>
-                    {onDuplicate && (
+              {onViewProfile && (
+                <MenuItem
+                  onClick={() => {
+                    const button = trigger.current;
+                    if (button) onViewProfile(button);
+                  }}
+                >
+                  View profile
+                </MenuItem>
+              )}
+              {onViewProfile && onEdit && <MenuSeparator />}
+              {onEdit ? (
+                editable.length ? (
+                  editable.map((agent) => (
+                    <Fragment key={agent.id}>
                       <MenuItem
                         onClick={() => {
+                          // The menu item unmounts; return from the dialog to the card.
                           trigger.current?.focus();
-                          onDuplicate(agent);
+                          onEdit(agent, picture);
                         }}
                       >
-                        {editable.length === 1
-                          ? "Duplicate"
-                          : `Duplicate ${identityLabel(agent)}`}
+                        {editable.length === 1 ? (
+                          "Edit"
+                        ) : (
+                          <ChoiceRow
+                            label={`Edit ${identityLabel(agent)}`}
+                            description={
+                              <>
+                                <span className="block break-all text-body-sm text-secondary">
+                                  {agent.relayUrl}
+                                </span>
+                                <span className="block break-all text-mono-sm text-secondary">
+                                  {agent.pubkey}
+                                </span>
+                              </>
+                            }
+                          />
+                        )}
                       </MenuItem>
-                    )}
-                    {onDelete && (
-                      <>
-                        <MenuSeparator />
+                      {onDuplicate && (
                         <MenuItem
-                          tone="danger"
                           onClick={() => {
                             trigger.current?.focus();
-                            onDelete(agent);
+                            onDuplicate(agent);
                           }}
                         >
                           {editable.length === 1
-                            ? "Delete"
-                            : `Delete ${identityLabel(agent)}`}
+                            ? "Duplicate"
+                            : `Duplicate ${identityLabel(agent)}`}
                         </MenuItem>
-                      </>
-                    )}
-                  </Fragment>
-                ))
-              ) : (
-                <>
-                  <MenuItem disabled>Edit</MenuItem>
-                  <MenuNote>
-                    {identities.length
-                      ? "Import this identity to edit in Foundation."
-                      : "No linked identity to edit."}
-                  </MenuNote>
-                </>
-              )}
+                      )}
+                      {onDelete && (
+                        <>
+                          <MenuSeparator />
+                          <MenuItem
+                            tone="danger"
+                            onClick={() => {
+                              trigger.current?.focus();
+                              onDelete(agent);
+                            }}
+                          >
+                            {editable.length === 1
+                              ? "Delete"
+                              : `Delete ${identityLabel(agent)}`}
+                          </MenuItem>
+                        </>
+                      )}
+                    </Fragment>
+                  ))
+                ) : (
+                  <>
+                    <MenuItem disabled>Edit</MenuItem>
+                    <MenuNote>
+                      {identities.length
+                        ? "Import this identity to edit in Foundation."
+                        : "No linked identity to edit."}
+                    </MenuNote>
+                  </>
+                )
+              ) : null}
             </MenuPopup>
           </MenuRoot>
         </div>

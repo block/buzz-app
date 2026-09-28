@@ -277,13 +277,13 @@ function ManagedAgents({
               onEdit={edit}
               onDuplicate={duplicate}
               onDelete={control.delete ? remove : undefined}
+              onViewProfile={resolveProfile(agent.pubkey)}
             >
               <ManagedAgentActions
                 agent={agent}
                 state={state}
                 control={control}
                 imported={agent.id === importedId}
-                onViewProfile={resolveProfile(agent.pubkey)}
               />
             </AgentCard>
           );

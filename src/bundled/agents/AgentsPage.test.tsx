@@ -178,10 +178,13 @@ it("opens the selected managed agent in the existing profile panel", async () =>
   });
   if (!card) throw Error("Missing managed card");
 
-  const profileButton = within(card).getByRole("button", {
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  const profileItem = await screen.findByRole("menuitem", {
     name: "View profile",
   });
-  fireEvent.click(profileButton);
+  fireEvent.click(profileItem);
 
   expect(
     await screen.findByRole("complementary", { name: "Profile" }),
@@ -190,7 +193,11 @@ it("opens the selected managed agent in the existing profile panel", async () =>
   expect(profileTargetSeen).toBe(profileTarget(f.agent.pubkey));
   fireEvent.click(screen.getByRole("button", { name: "Close Profile panel" }));
   expect(screen.queryByRole("complementary", { name: "Profile" })).toBeNull();
-  await waitFor(() => expect(profileButton).toHaveFocus());
+  await waitFor(() =>
+    expect(
+      within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+    ).toHaveFocus(),
+  );
 });
 
 it("keeps the shell companion in the page-owned companion slot", async () => {
@@ -218,6 +225,14 @@ it("omits View profile when the profile panel is unavailable", async () => {
       within(card).queryByRole("button", { name: "View profile" }),
     ),
   ).toBe(false);
+  const [card] = cards;
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(
+    within(card).getByRole("button", {
+      name: "Actions for Fixture agent",
+    }),
+  );
+  expect(screen.queryByRole("menuitem", { name: "View profile" })).toBeNull();
 });
 
 it("shows one managed card per exact destination and keeps unimported templates out of My agents", async () => {

@@ -79,7 +79,8 @@
   container: message-row / inline-size;
   display: flex;
   gap: var(--space-3);
-  padding: var(--space-2) 0;
+  /* Match continuation bottom padding so regrouping preserves reading anchors. */
+  padding: calc(var(--space-3) + var(--space-half)) 0 var(--space-half);
 }
 .message[data-layout="thread"],
 .message[data-layout="continuation"] {

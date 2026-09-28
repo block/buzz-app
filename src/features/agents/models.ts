@@ -5,10 +5,12 @@ export type AiConfiguration =
   | { mode: "default" }
   | { mode: "advanced"; effort: EffortSelection };
 export type EffortSelection =
+  | { kind: "default" }
   | { kind: "value"; value: string }
   | { kind: "unsupported" };
 /** Live discovery evidence, never a static harness setup capability. */
 export type EffortOptions =
+  | { status: "default" }
   | { status: "unknown" }
   | { status: "unsupported" }
   | { status: "supported"; options: { value: string; name: string }[] };
@@ -35,7 +37,8 @@ export interface ModelRequest {
   edit?: AgentEdit | undefined;
   integration?:
     | { kind: "databricks"; settings: { host: string; filter: string } }
-    | { kind: "codex" };
+    | { kind: "codex" }
+    | { kind: "openai"; settings: { apiKey?: string } };
   /** Legacy external-harness requests use blank host/filter fields. */
   host?: string;
   filter?: string;
@@ -45,7 +48,10 @@ export interface ModelRequest {
   inheritWorkspace?: boolean;
 }
 export interface ModelCatalog {
-  integration?: { kind: "databricks"; host: string } | { kind: "codex" };
+  integration?:
+    | { kind: "databricks"; host: string }
+    | { kind: "codex" }
+    | { kind: "openai" };
   /** Present for legacy external-harness catalog responses. */
   host?: string;
   models: {
@@ -56,7 +62,7 @@ export interface ModelCatalog {
   }[];
   /** Absent means unknown, including when connected to an older native host. */
   discovery?: {
-    source: "databricksCatalog" | "codexAcp";
+    source: "databricksCatalog" | "codexAcp" | "openaiCatalog";
     authentication: "authenticated" | "unknown";
     /** Omission from an older host is unverified, not proof of a remote fetch. */
     catalog?: "adapter" | "remote" | "cached" | "fallback" | "unknown";
@@ -77,9 +83,12 @@ export function isVerifiedCatalog(catalog: ModelCatalog | null): boolean {
       ? catalog.discovery.source === "codexAcp" &&
         (catalog.discovery.catalog === "adapter" ||
           catalog.discovery.catalog === "cached")
-      : catalog.integration?.kind === "databricks" &&
-        catalog.discovery.source === "databricksCatalog" &&
-        catalog.discovery.catalog === "remote")
+      : catalog.integration?.kind === "openai"
+        ? catalog.discovery.source === "openaiCatalog" &&
+          catalog.discovery.catalog === "remote"
+        : catalog.integration?.kind === "databricks" &&
+          catalog.discovery.source === "databricksCatalog" &&
+          catalog.discovery.catalog === "remote")
   );
 }
 export interface ModelHost {
@@ -120,7 +129,8 @@ export function createAgentModels(
   let disposed = false;
   return {
     cached(request) {
-      if (!cacheable(request)) return undefined;
+      if (request.integration.kind !== "codex" || !cacheable(request))
+        return undefined;
       const key = cacheKey(request);
       const entry = cache.get(key);
       if (entry && Date.now() >= entry.expires) {

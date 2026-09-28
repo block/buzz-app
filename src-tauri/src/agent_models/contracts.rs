@@ -13,6 +13,8 @@ pub(super) struct Discovery {
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub(super) enum EffortOptions {
+    // Deliberate omission of an override; not a model-capability assertion.
+    Default,
     // This describes the integration's exposed control, not model reasoning ability.
     Unsupported,
     Unknown,

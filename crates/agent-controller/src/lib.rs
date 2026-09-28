@@ -9,6 +9,7 @@ mod create;
 mod credentials;
 #[cfg(unix)]
 mod diagnostics;
+pub mod openai;
 #[cfg(not(unix))]
 mod diagnostics {
     pub(crate) struct Diagnostics;

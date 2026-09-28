@@ -10,6 +10,28 @@ The approved catalog trust boundary accepts ACP-advertised choices without
 claiming fresh remote account entitlement.
 Written 2026-09-23 for branch `pazar/add-codex-agent-harness`; updated 2026-09-24.
 
+## Current implementation scope — September 25
+
+Phil narrowed the next implementation to **Buzz Agent → Provider: Open AI →
+API-key setup directly in Buzz**. See the [focused scope](buzz-openai-api-key.md)
+for the user flow, ownership, acceptance, and exclusions. Codex continues to reuse
+its existing login; its browser-sign-in fallback is deferred from this slice.
+API-key entry is a provider setup flow for Buzz Agent, not Codex authentication.
+Goose integration is also outside this slice.
+
+This slice implements masked submission, authenticated model listing, and atomic
+agent environment settings with `OPENAI_COMPAT_API_KEY`, matching Buzz's existing
+storage approach. The attended setup passed model listing and created an agent;
+inference returned `credit_balance_exhausted`. A successful live reply remains
+pending. See the focused checkpoint for current validation and platform limits.
+
+Salman's merged [PR #214](https://github.com/block/buzz-app/pull/214), inspected at
+`5c98864cad158ecd72640bc610541bc546d096bc`, adds Goose's OpenAI provider choice and
+reuses externally configured Goose credentials. Its model discovery is limited to
+Databricks v2; it does not implement in-app OpenAI key entry or OpenAI model lookup,
+and its Buzz Agent catalog still lists only Databricks v2. Reuse applicable
+provider controls when integrating that work; do not duplicate Goose setup here.
+
 See the [ACP boundary comparison](acp-boundary-comparison.md) for the subsequent
 non-reply investigation and current diagnostic gaps.
 
@@ -64,7 +86,7 @@ The earlier dated checkpoints below are historical. This summary and
 The startup/lifecycle fixes are in draft PR #178 at `36f00aa`. The full-access
 default and this documentation update follow that checkpoint. Existing
 agents need a restart to receive the default; Save alone does not apply it.
-Browser login fallback (step 4), actual model/effort and fallback reporting
+Browser login fallback (step 4), Buzz Agent Open AI setup, actual model/effort and fallback reporting
 (step 6), final create/edit/browser acceptance, and packaging/platform checks are
 not declared complete. Concurrent resource builds and agent Start can still
 produce an integrity mismatch; whole-generation atomic staging remains open.
@@ -152,8 +174,9 @@ native app to use the updated discovery response.
 Users can select Codex when creating or editing an agent, reuse their existing
 Codex installation and authentication, choose runtime defaults or an explicit
 model, configure supported reasoning effort, and run the agent through Buzz ACP.
-Browser sign-in and API-key entry are recovery/setup paths when authentication
-is missing, not a mandatory new login ceremony.
+Browser sign-in is a Codex recovery path when authentication is missing, not a
+mandatory new login ceremony. API-key entry belongs to Buzz Agent's Open AI
+provider setup, as scoped above.
 
 All edits belong in **buzz-app on the current feature branch**. The original
 `block/buzz` checkout is reference-only. Do not edit its source,
@@ -343,7 +366,7 @@ coverage or compress code to fit a budget.
 ### Step 0 — Verify the adapter and close implementation decisions
 
 - [ ] Inspect/test an exact supported `codex-acp` version with the pinned Buzz ACP.
-- [ ] Verify CLI login reuse, browser/API-key fallback, effective `CODEX_HOME`,
+- [ ] Verify CLI login reuse, browser fallback, effective `CODEX_HOME`,
   project configuration, session creation, model switching, and effort options
   after switching. Record versions and redacted results, not credential contents.
 - [x] Choose the smallest full-capability discovery mechanism inside buzz-app.
@@ -449,26 +472,25 @@ real installation. Unsupported platforms produce actionable unavailability.
 ### Step 4 — Reuse login and implement explicit authentication fallbacks
 
 - [ ] Check existing login before offering a login ceremony.
-- [ ] Add browser sign-in and masked API-key submission through verified native
-  mechanisms. Pass keys via protected input such as stdin, never shell arguments,
-  persisted agent settings, diagnostics, snapshots, or model-cache keys.
+- [ ] Add explicit browser sign-in through verified native mechanisms. API-key
+  entry belongs to the separate Buzz Agent Open AI provider setup, not this step.
 - [ ] Recheck login after completion. Authentication action completion alone is
-  not readiness. Clear entered key state when finished/closed.
+  not readiness.
 - [ ] Keep refresh headless; cancel child processes and retire stale results.
   Explain shared credential impact; do not add implicit global logout.
 
 **Code:** proposed native Codex auth module, `control-native.ts`, typed operation
 contracts, and command registration. UI wiring follows in step 7.
 
-**Acceptance:** already-authenticated users proceed without browser/API-key entry;
-both fallback paths can recover a logged-out context. Cancellation never claims
+**Acceptance:** already-authenticated users proceed without a browser ceremony;
+explicit browser sign-in can recover a logged-out context. Cancellation never claims
 rollback of credentials already written. Secrets stay out of saved agent JSON
 and returned diagnostics. No unconfirmed login success is shown as ready.
 
 **Testing:** production command path with fake login processes for success,
 rejection, timeout, cancel, invalid config, and late success. Inspect synthetic-key
-fixtures for leakage. Exercise browser and API-key login in separate temporary
-Codex contexts without logging out the normal account; no live secrets in tests.
+fixtures for leakage. Exercise browser login in a separate temporary
+Codex context without logging out the normal account; no live secrets in tests.
 
 ### Step 5 — Discover models and model-dependent configuration
 
@@ -528,10 +550,10 @@ model/effort before claiming live acceptance; model self-description is not proo
 ### Step 7 — Enable shared Codex setup/create/edit controls
 
 - [ ] Expose Codex only when the complete native integration is wired.
-- [ ] For Buzz Agent and any other provider-tagged harness, render Provider with
+- [ ] For Buzz Agent, render Provider with
   an **Open AI** option. Selecting it reveals a masked Open AI API Key input;
   submitting the key loads the user's models and model metadata for selection.
-- [ ] Render installed/login state, setup recovery, browser/API-key fallback,
+- [ ] Render installed/login state, setup recovery, Codex browser fallback,
   model picker, Default/Advanced modes, and supported effort controls.
 - [ ] Block Advanced creation until current-context authentication, model and
   effort handling validate. Show separate actionable errors. Enforce the gate
@@ -630,7 +652,7 @@ an edge case.
 | Return to defaults | Clear overrides, save/restart | No retained legacy/model/effort override; runtime configuration wins |
 | Durability | Quit/relaunch the app | Saved configuration retained; enabled/start behavior matches the existing contract |
 | Browser fallback | Use a temporary logged-out CODEX_HOME and explicitly sign in | Verified login, discovered models, successful reply; normal account untouched |
-| API-key fallback | Use another temporary context and enter a key through the form | Verified auth and successful reply; no key in agent JSON, snapshots, logs, or fixture artifacts |
+| Buzz Agent Open AI setup | Choose Buzz Agent and Open AI, submit a key, select a model, save/create and start | Authenticated catalog and successful reply; key saved in environment settings, excluded from returned snapshots and diagnostics |
 | Recovery | Missing adapter or failed discovery in an isolated fixture/context | Actionable repair/retry; draft/defaults preserved; no misleading ready state |
 | Existing harness | Create/edit/start a Databricks agent | Existing connection, model selection and reply still work |
 
@@ -673,7 +695,8 @@ paid inference is part of unattended CI.
 - [ ] PR 2 native Codex integration verified, including process cleanup and secrets.
 - [ ] PR 3 complete create/edit/setup UI enabled and browser acceptance complete.
 - [ ] Existing Codex login and runtime defaults verified locally.
-- [ ] Browser and API-key fallback journeys verified in isolated contexts.
+- [ ] Codex browser fallback verified in an isolated context.
+- [ ] Buzz Agent Open AI key setup and execution verified through the focused scope.
 - [ ] Actual selected model/effort verified after restart; fallback reporting verified.
 - [ ] Databricks regression journey complete.
 - [ ] Documentation and final validation evidence current with the checked code.

@@ -96,6 +96,7 @@ fn advanced_creation_validates_before_identity_and_binds_the_submitted_draft() {
         let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
+            openai_endpoint: host.openai_endpoint,
             factory: Arc::new(fake.clone()),
         }
     });
@@ -173,6 +174,7 @@ fn existing_agent_can_discover_before_completing_advanced_selection() {
         let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
+            openai_endpoint: host.openai_endpoint,
             factory: Arc::new(fake.clone()),
         }
     });
@@ -200,6 +202,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
         let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
+            openai_endpoint: host.openai_endpoint,
             factory: Arc::new(fake.clone()),
         }
     });
@@ -453,6 +456,7 @@ fn native_discovery_preserves_absolute_harness_and_saved_or_draft_provider_overr
         let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
+            openai_endpoint: host.openai_endpoint,
             factory: Arc::new(fake.clone()),
         }
     });
@@ -665,6 +669,7 @@ fn real_ipc_refuses_linked_helper_namespace_before_opening_connection() {
         let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
+            openai_endpoint: host.openai_endpoint,
             factory: Arc::new(fake.clone()),
         }
     });
@@ -720,6 +725,7 @@ fn invalid_integration_variants_never_reach_auth_and_ticket_can_be_cancelled() {
         let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
+            openai_endpoint: host.openai_endpoint,
             factory: Arc::new(fake.clone()),
         }
     });

@@ -379,6 +379,8 @@ test("narrow link panels begin after the rendered sidebar", async ({
 readingTest(
   "panel resizing preserves bottom follow and the visible reading anchor",
   async ({ page, app }) => {
+    // Real time still flows. runFor moves past Virtua's scroll timer on demand.
+    await page.clock.install();
     await open(page, app);
     await settle(page);
     await link(page, app, "https://github.com/block/buzz/pull/4");
@@ -405,13 +407,13 @@ readingTest(
     // Late layout-only reflow must not need another message or viewport resize.
     // Let Virtua's 150ms imperative-scroll scheduler expire first. Change actual
     // row layout, not scroll methods/metrics or the production observer callback.
-    await page.waitForTimeout(250);
+    await page.clock.runFor(250);
     const lateLayout = await page.addStyleTag({
       content: `[data-message-id="${received.id}"] p { padding-bottom: 120px; }`,
     });
     await settle(page);
     await expectBottom();
-    await page.waitForTimeout(250);
+    await page.clock.runFor(250);
     await lateLayout.evaluate((element) => element.remove());
     await settle(page);
     await expectBottom();
@@ -448,7 +450,7 @@ readingTest(
     await expectAnchor(page, saved);
     // Reflow can arrive after Virtua's 150ms imperative-scroll scheduler ends.
     // Keep the selected reading anchor, not the partially clipped row above it.
-    await page.waitForTimeout(250);
+    await page.clock.runFor(250);
     const preceding = await history.evaluate((element, id) => {
       const rows = [...element.querySelectorAll("[data-message-id]")];
       const index = rows.findIndex((row) => row.dataset.messageId === id);

@@ -19,8 +19,18 @@ test("automatic history starts before the top in a production broker session", a
   ).toHaveCount(0);
   await history(page).hover();
   for (let i = 0; i < 100 && !app.pending.length; i++) {
+    // Wheel one step at a time: wait until the timeline scrolled and painted.
+    await history(page).evaluate((element) => {
+      window.historyScrolled = new Promise((resolve) =>
+        element.addEventListener(
+          "scroll",
+          () => requestAnimationFrame(() => resolve()),
+          { once: true },
+        ),
+      );
+    });
     await page.mouse.wheel(0, -450);
-    await page.waitForTimeout(40);
+    await page.evaluate(() => window.historyScrolled);
     if (
       await history(page)
         .getByRole("button", { name: "Loading older…", exact: true })

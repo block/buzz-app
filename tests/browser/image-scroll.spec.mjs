@@ -244,6 +244,26 @@ async function holdDecodes(page, holdVisibility = false) {
         });
       };
       const observers = [];
+      // Count preview observer deliveries so a test can wait for the app's first
+      // visibility result before asserting that nothing was painted.
+      let observations = 0;
+      if (!holdVisibility) {
+        const RealObserver = window.IntersectionObserver;
+        window.IntersectionObserver = class extends RealObserver {
+          constructor(callback, options) {
+            super((entries, observer) => {
+              // Only the blurhash preview canvas, not unrelated observers.
+              if (
+                entries.some(
+                  ({ target }) => target instanceof HTMLCanvasElement,
+                )
+              )
+                observations++;
+              return callback(entries, observer);
+            }, options);
+          }
+        };
+      }
       if (holdVisibility) {
         window.IntersectionObserver = class {
           constructor(callback) {
@@ -258,6 +278,7 @@ async function holdDecodes(page, holdVisibility = false) {
       }
       window.imageTest = {
         paints,
+        observations: () => observations,
         waiting: (name) => pending.has(`https://image.test/${name}.svg`),
         release(name) {
           const key = `https://image.test/${name}.svg`;
@@ -320,7 +341,10 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/attachment-image.html`,
     );
     // Mounted but offscreen (as in a long thread) must not spend pixel work.
-    await page.waitForTimeout(150);
+    // The app's observer has reported the preview as not visible.
+    await expect
+      .poll(() => page.evaluate(() => window.imageTest.observations()))
+      .toBeGreaterThan(0);
     expect(await page.evaluate(() => window.imageTest.paints)).toEqual([]);
     await page.getByRole("button", { name: "Reveal", exact: true }).click();
     await expect

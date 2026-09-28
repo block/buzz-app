@@ -46,6 +46,9 @@ test("thread buttons show observed unread independently, clear only after readin
   page,
   app,
 }, testInfo) => {
+  // Real time still flows. The test pauses the clock only to prove that
+  // composer focus earns no reading dwell.
+  await page.clock.install();
   await open(page, app);
   const roots = app.histories
     .get("primary/alpha")
@@ -209,10 +212,13 @@ test("thread buttons show observed unread independently, clear only after readin
     name: "Reply to thread",
     exact: true,
   });
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await replyComposer.focus();
-  await page.waitForTimeout(1000);
+  // Run past the 750 ms reading dwell (use-reading.ts).
+  await page.clock.runFor(1000);
   await expect(replyComposer).toBeFocused();
   await expect(first).toHaveAccessibleName(/Observed unread replies/); // Click/composer focus is not reading.
+  await page.clock.resume();
   await history.focus();
   // Finish a real read of a visible sibling before checking the hidden child.
   // Loaded history is not read evidence: collapsed descendants stay unread.
@@ -246,8 +252,18 @@ test("thread buttons show observed unread independently, clear only after readin
   await panel
     .getByRole("button", { name: "Close thread", exact: true })
     .click();
-  app.reply(roots[0].id, true);
-  await page.waitForTimeout(1000);
+  const own = app.reply(roots[0].id, true);
+  // The unread model reports "unknown" until it holds the event. Once it
+  // holds the reply, the reply must not count as unread.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          window.fixtureRelay.snapshot().session.unread.attention("alpha", id),
+        own.id,
+      ),
+    )
+    .toMatchObject({ status: "ineligible", unread: false });
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   app.reply(roots[0].id);
   await expect(first).toHaveAccessibleName(/Observed unread replies/);

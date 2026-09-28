@@ -36,6 +36,10 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
     await expect(
       page.getByRole("region", { name: "Agents", exact: true }),
     ).not.toBeInViewport();
+    // The browser's native lazy loading (loading="lazy") decides when to
+    // request the image. It has no event that says it chose not to load, so
+    // this negative check can only wait.
+    // biome-ignore lint/plugin: no observable barrier for native lazy loading
     await page.waitForTimeout(300);
     expect(requests).toHaveLength(0);
     await page.evaluate(() =>

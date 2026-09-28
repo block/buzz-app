@@ -1,0 +1,7 @@
+language js
+
+// Tests wait for an observable condition or control the clock; they do not
+// sleep. See AGENTS.md "Deterministic tests".
+`$page.waitForTimeout($ms)` where {
+  register_diagnostic(span=$ms, message="Wait for an observable condition, or use page.clock when elapsed time is the behavior under test. Do not sleep.", severity="error")
+}

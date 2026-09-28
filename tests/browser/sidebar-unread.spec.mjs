@@ -256,13 +256,17 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect.poll(() => inView(page, "dm-090")).toBe(true);
   await expect(cue(page, "below")).toHaveCount(0);
   expect(await list(page).boundingBox()).toEqual(size); // Overlay never resizes the list.
-  await page.waitForTimeout(1000);
-  const warmed = heads(app)
-    .slice(before)
-    .map(({ filter }) => filter["#h"][0]);
-  // Background roster warmth reads each channel once, serially. Scroll and cue
-  // interactions never add a repeated read on top of it.
-  expect(new Set(warmed).size).toBe(warmed.length);
+  // Each row the cues focused is prepared by exactly one head read. Scroll and
+  // cue interactions never add a repeated read. Wait for both reads, so the
+  // check does not pass before the reads arrive.
+  await expect
+    .poll(() =>
+      heads(app)
+        .slice(before)
+        .map(({ filter }) => filter["#h"][0])
+        .sort(),
+    )
+    .toEqual(["dm-030", "dm-090"]);
   expect(app.report.readPublications).toEqual([]);
   expect(
     await page.evaluate(

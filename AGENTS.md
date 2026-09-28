@@ -138,6 +138,9 @@ Tests must control the ordering they assert, not depend on runner speed.
   immediate snapshots of asynchronous effects. Negative assertions need a
   completion barrier proving the work that could violate them has finished.
   Scope selectors to the semantic content being tested, not unrelated UI.
+  Lint rejects `page.waitForTimeout` (`tests/browser/fixed-sleeps.grit`). Use
+  `// biome-ignore lint/plugin: <reason>` only when no observable barrier
+  exists, and say why in the comment.
 - When elapsed time is the behavior under test (expiry, debounce, retry), use a
   controlled clock and assert before/after the boundary. Keep real clocks for
   performance measurements; preserve their documented isolation and budgets.

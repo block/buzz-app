@@ -353,6 +353,11 @@
   scale: 0.85;
 }
 
+.raisedHandsEmoji {
+  /* The celebration rays leave the visible hands below the glyph's center. */
+  translate: 0 calc(-1 * var(--space-half));
+}
+
 .speedMenu,
 .reactions > fieldset {
   margin: 0;

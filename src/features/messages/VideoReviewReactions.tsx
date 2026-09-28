@@ -60,7 +60,10 @@ export function VideoReviewReactions({
             aria-label={`React ${emoji} at current frame`}
             onClick={() => select(emoji)}
           >
-            <span className={styles.reactionEmoji} aria-hidden="true">
+            <span
+              className={`${styles.reactionEmoji}${emoji === "🙌" ? ` ${styles.raisedHandsEmoji}` : ""}`}
+              aria-hidden="true"
+            >
               {emoji}
             </span>
           </button>

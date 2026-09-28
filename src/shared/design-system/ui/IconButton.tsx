@@ -6,6 +6,7 @@ type IconButtonVariant =
   | "solid"
   | "tint"
   | "chrome"
+  | "avatar"
   | "media";
 type IconButtonSize =
   | NonNullable<ButtonProps["size"]>
@@ -38,7 +39,10 @@ export function IconButton({
       variant={
         variant === "solid"
           ? "prominent"
-          : variant === "tint" || variant === "chrome" || variant === "media"
+          : variant === "tint" ||
+              variant === "chrome" ||
+              variant === "avatar" ||
+              variant === "media"
             ? "ghost"
             : variant
       }

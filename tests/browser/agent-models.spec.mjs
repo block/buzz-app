@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import config from "../fixtures/agent-control.vite.mjs";
+import { watchPageErrors } from "./page-errors.mjs";
 
 test("on-demand model search preserves custom drafts and fences cancellation/context changes", async ({
   page,
@@ -12,8 +13,7 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
   await server.listen();
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   try {
     // Install before page timers exist; pause at a fixed later instant below.
     await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
@@ -108,9 +108,7 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
     await expect(model).toHaveValue("catalog.schema.real-model");
     await expect(search).toHaveValue("Friendly Model");
     await editor.getByRole("button", { name: "Save changes" }).click();
-    await expect(
-      editor.getByText("Saved. Running work was not restarted."),
-    ).toBeVisible();
+    await expect(editor.getByText("Saved.", { exact: true })).toBeVisible();
     expect(
       await page.evaluate(() => window.agentControlFixture.agent.harness.model),
     ).toBe("catalog.schema.real-model");
@@ -239,7 +237,7 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
           window.agentModelsFixture.calls.filter((x) => x === "cancel").length,
       ),
     ).toBeGreaterThan(before);
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }

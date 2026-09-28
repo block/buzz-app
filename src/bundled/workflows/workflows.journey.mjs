@@ -263,8 +263,18 @@ test("existing workflow enablement stays in the header overflow", async ({
       exact: true,
     });
     await expect(enable).not.toBeChecked();
+    const readRuns = page.getByRole("menuitem", {
+      name: "Read runs",
+      exact: true,
+    });
+    // Opening the popup does not finish its initial keyboard-focus handoff.
+    await expect(readRuns).toBeFocused();
     await page.keyboard.press("Home");
+    await expect(readRuns).toBeFocused();
     await page.keyboard.press("ArrowDown");
+    await expect(
+      page.getByRole("menuitem", { name: "Run now", exact: true }),
+    ).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(enable).toBeFocused();
     await page.keyboard.press("Space");

@@ -108,22 +108,33 @@ it("turns a missing receipt after ambiguous dispatch into acceptance_unknown", a
   } satisfies Partial<ApiFailure>);
 });
 
-it("terminates a fresh trustworthy structured pre-admission rejection", async () => {
+it.each([
+  "missing_mapping",
+  "invalid_request",
+  "confirmation_mismatch",
+  "not_owner",
+  "must_archive",
+  "protected_target",
+  "deletion_conflict",
+  "unsupported_acknowledgement_version",
+  "relay_unavailable",
+  "unauthorized",
+])("terminates a fresh trustworthy structured %s rejection", async (code) => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
       Response.json(
         {
-          error: { code: "must_archive" },
-          correlation_id: "corr-must-archive",
+          error: { code },
+          correlation_id: `corr-${code}`,
         },
         { status: 409 },
       ),
     ),
   );
   await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
-    code: "must_archive",
-    correlationId: "corr-must-archive",
+    code,
+    correlationId: `corr-${code}`,
   } satisfies Partial<ApiFailure>);
   expect(fetch).toHaveBeenCalledTimes(1);
 });
@@ -134,7 +145,16 @@ it.each([
     () => Response.json({ error: "upstream failed" }, { status: 502 }),
   ],
   ["malformed response", () => new Response("{", { status: 502 })],
-  ["network response loss", () => Promise.reject(new TypeError("EOF"))],
+  [
+    "unknown structured rejection",
+    () =>
+      Response.json({ error: { code: "future_rejection" } }, { status: 409 }),
+  ],
+  [
+    "timeout",
+    () => Promise.reject(new DOMException("timed out", "TimeoutError")),
+  ],
+  ["network EOF", () => Promise.reject(new TypeError("EOF"))],
 ])("keeps a fresh %s ambiguous", async (_label, firstResponse) => {
   vi.stubGlobal(
     "fetch",

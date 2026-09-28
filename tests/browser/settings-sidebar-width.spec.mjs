@@ -54,6 +54,18 @@ test("narrow Settings drawer matches the clamped channel sidebar", async ({
     .getByRole("separator", { name: "Resize channel sidebar" })
     .press("End");
   await page.setViewportSize({ width: 600, height: 950 });
+  await expect(
+    page.getByRole("complementary", { name: "Channel sidebar" }),
+  ).not.toBeVisible();
+  const conversation = page.getByRole("article", {
+    name: "Conversation",
+    exact: true,
+  });
+  const contentWidth = (await conversation.boundingBox()).width;
+  await page
+    .getByRole("button", { name: "Show navigation", exact: true })
+    .click();
+  expect((await conversation.boundingBox()).width).toBe(contentWidth);
   const channels = page.getByRole("complementary", {
     name: "Channel sidebar",
     exact: true,
@@ -74,6 +86,9 @@ test("narrow Settings drawer matches the clamped channel sidebar", async ({
     .poll(async () => (await settings.boundingBox())?.width)
     .toBe(220);
   await settings.getByRole("button", { name: "Back", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Show navigation", exact: true })
+    .click();
   await expect
     .poll(async () => (await channels.boundingBox())?.width)
     .toBe(220);

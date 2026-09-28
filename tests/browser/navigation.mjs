@@ -35,3 +35,21 @@ export async function openPage(page, name) {
   await choice.click();
   await expect(dialog).not.toBeVisible();
 }
+
+export async function selectSettingsSection(page, name) {
+  const show = page.getByRole("button", {
+    name: "Show navigation",
+    exact: true,
+  });
+  if (await show.isVisible()) await show.click();
+  await page
+    .getByRole("complementary", { name: "Settings sidebar", exact: true })
+    .getByRole("button", { name, exact: true })
+    .click();
+  const hide = page.getByRole("button", {
+    name: "Hide navigation",
+    exact: true,
+  });
+  if (await hide.isVisible()) await hide.click();
+  await expect(page.getByRole("region", { name, exact: true })).toBeVisible();
+}

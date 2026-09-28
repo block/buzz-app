@@ -247,19 +247,19 @@
     .shell-navigation-toggle {
       display: inline-flex;
     }
-    .shell-body-settings .shell-navigation {
+    .shell-navigation {
       display: none;
     }
-    .shell-body-settings .shell-navigation[data-expanded="true"] {
+    .shell-navigation[data-expanded="true"] {
       @apply absolute inset-y-0 left-2 z-20 flex pb-2;
       max-width: calc(100% - 16px);
     }
-    .shell-body-settings .shell-navigation .shell-sidebar,
-    .shell-body-settings .shell-navigation .shell-sidebar-default {
+    .shell-navigation .shell-sidebar,
+    .shell-navigation .shell-sidebar-default {
       max-width: 220px;
       margin-right: 0;
     }
-    .shell-body-settings .shell-navigation > hr {
+    .shell-navigation > hr {
       display: none;
     }
   }

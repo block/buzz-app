@@ -76,13 +76,19 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
           return {
             left: rowRect.left - panelRect.left,
             right: panelRect.right - rowRect.right,
+            gutter: (() => {
+              const scroll = element.closest(
+                '[aria-label="Subscribed channels"]',
+              );
+              return scroll.offsetWidth - scroll.clientWidth;
+            })(),
           };
         }),
       ),
     );
     for (const row of geometry) {
       expect(row.left).toBe(13);
-      expect(row.right).toBe(row.left);
+      expect(row.right).toBe(row.left + row.gutter);
     }
   };
   await assertDestinationFillParity();

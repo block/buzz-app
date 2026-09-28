@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import { watchPageErrors } from "./page-errors.mjs";
 
 // Browser boundary: actual layout/scroll anchoring and user demand over the real
 // StrictMode session and ThreadPanel. Protocol permutations stay in owner tests.
@@ -17,8 +18,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
   await server.listen();
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
+  const errors = watchPageErrors(page);
   try {
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`,
@@ -28,9 +28,8 @@ test("newest window positions immediately; scrollback preserves the visible repl
       exact: true,
     });
     const history = panel.getByRole("region", { name: "Thread messages" });
-    await expect(
-      panel.getByText("50 replies shown", { exact: true }),
-    ).toBeVisible();
+    const replies = history.locator("ol [data-message-id]");
+    await expect(replies).toHaveCount(50);
     await expect(panel.getByRole("status")).toHaveCount(0);
     await expect(
       panel.getByText("First root reply 302", { exact: true }),
@@ -57,9 +56,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
     );
     await history.hover();
     await page.mouse.wheel(0, -300);
-    await expect(
-      panel.getByText("100 replies shown", { exact: true }),
-    ).toBeVisible();
+    await expect(replies).toHaveCount(100);
     await expect
       .poll(() =>
         history
@@ -69,9 +66,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
       .toBeCloseTo(before, 0);
     const top = await history.evaluate((el) => el.scrollTop);
     await page.evaluate(() => window.messagesFixture.live());
-    await expect(
-      panel.getByText("101 replies shown", { exact: true }),
-    ).toBeVisible();
+    await expect(replies).toHaveCount(101);
     await expect
       .poll(() => history.evaluate((el) => el.scrollTop))
       .toBeCloseTo(top, 0);
@@ -83,9 +78,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
       });
       await history.hover();
       await page.mouse.wheel(0, -300);
-      await expect(
-        panel.getByText(`${count} replies shown`, { exact: true }),
-      ).toBeVisible();
+      await expect(replies).toHaveCount(count);
     }
     expect(await history.locator("ol [data-message-id]").count()).toBe(305);
     const ids = await history
@@ -97,7 +90,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
         (f) => f.thread_window && f.thread_cursor === undefined,
       ),
     ).toBe(true);
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }

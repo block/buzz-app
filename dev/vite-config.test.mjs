@@ -70,6 +70,23 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
                 );
               }
             }
+            // OG build alias is presence-only, including empty/false/0. An explicit
+            // development setting overrides it. Exercise the real dotenv + Vite boundary.
+            delete process.env.BUZZ_DEV_OPEN_RELAY;
+            for (const alias of ['', '0', 'false', '1']) {
+              writeFileSync('.env.local', 'BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY=' + alias);
+              for (const command of ['serve', 'build']) {
+                for (const override of [undefined, '0', '1']) {
+                  if (override === undefined) delete process.env.BUZZ_DEV_OPEN_RELAY;
+                  else process.env.BUZZ_DEV_OPEN_RELAY = override;
+                  const result = await loadConfigFromFile(
+                    { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+                  );
+                  assert.equal(result.config.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'],
+                    JSON.stringify(command === 'serve' && override !== '0' ? 'https://relay.example.com' : ''));
+                }
+              }
+            }
             // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
             process.env.BUZZ_DEV_OPEN_RELAY = '1';
             process.env.BUZZ_RELAY_URL = '';

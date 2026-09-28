@@ -75,6 +75,7 @@ async function setup() {
   const rows = () =>
     sidebarSections(owner.session.channels.list().channels, {
       starred: ["a"],
+      muted: [],
       sections: [],
       assignments: {},
     }).flatMap((section) => section.rows.map((channel) => channel.id));

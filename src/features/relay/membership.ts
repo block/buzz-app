@@ -40,7 +40,12 @@ export function membershipChange(
 export function rowProfileIds(row: ChannelMessage): readonly string[] {
   return row.membership
     ? [row.membership.actor, row.membership.target]
-    : [row.authorId, ...row.mentions, ...row.participants];
+    : [
+        row.authorId,
+        ...row.mentions,
+        ...(row.mentionReferences ?? []),
+        ...row.participants,
+      ];
 }
 
 /** Activity never replaces the latest conversational sidebar preview. */

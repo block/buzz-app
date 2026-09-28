@@ -4,8 +4,10 @@ import type { RelayReader } from "./reader.ts";
 export const SIDEBAR_COORDINATES = [
   "channel-sections",
   "channel-stars",
+  "channel-mutes",
+  "channel-sort",
 ] as const;
-export type SidebarPreferences = Readonly<{
+export type SidebarGroups = Readonly<{
   sections: readonly Readonly<{
     id: string;
     name: string;
@@ -13,13 +15,44 @@ export type SidebarPreferences = Readonly<{
     order: number;
   }>[];
   assignments: Readonly<Record<string, string>>;
-  starred: readonly string[];
 }>;
+export type SidebarSortMode = "alpha" | "recent";
+export type SidebarSortMutator = (
+  group: string,
+  mode: SidebarSortMode,
+  sectionIds: readonly string[],
+  signal: AbortSignal,
+) => Promise<Readonly<Record<string, SidebarSortMode>>>;
+export type SidebarMuteMutator = (
+  intent: Readonly<{ channelId: string; muted: boolean }>,
+  signal: AbortSignal,
+) => Promise<readonly string[]>;
+export type SidebarPreferences = SidebarGroups &
+  Readonly<{
+    starred: readonly string[];
+    muted: readonly string[];
+    sort?: Readonly<Record<string, SidebarSortMode>>;
+    /** Presentation source only; never serialized into legacy preferences. */
+    groupSource?: "personal";
+  }>;
+export type SidebarAssignmentIntent = Readonly<{
+  channelId: string;
+  sectionId?: string;
+  createSection?: Readonly<{ id: string; name: string }>;
+}>;
+export type SidebarAssignmentMutator = (
+  intent: SidebarAssignmentIntent,
+  signal: AbortSignal,
+  source?: "personal",
+) => Promise<SidebarGroups>;
+export type SidebarStarMutator = (
+  intent: Readonly<{ channelId: string; starred: boolean }>,
+  signal: AbortSignal,
+) => Promise<readonly string[]>;
 export type SidebarDecoder = (
   events: readonly RelayEvent[],
   signal: AbortSignal,
 ) => Promise<SidebarPreferences>;
-
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Invalid sidebar preferences");
@@ -34,15 +67,21 @@ function text(value: unknown, max = 256): string {
 export function projectSidebarPreferences(
   sections: unknown,
   stars: unknown,
+  mutes?: unknown,
+  sort?: unknown,
+  sortSectionIds?: readonly string[],
 ): SidebarPreferences {
   const result: {
     sections: { id: string; name: string; icon?: string; order: number }[];
     assignments: Record<string, string>;
     starred: string[];
+    sort?: Record<string, SidebarSortMode>;
+    muted: string[];
   } = {
     sections: [],
     assignments: {},
     starred: [],
+    muted: [],
   };
   if (sections !== undefined) {
     const data = object(sections);
@@ -97,6 +136,50 @@ export function projectSidebarPreferences(
       )
         throw new Error("Invalid sidebar star");
       if (entry.starred) result.starred.push(id);
+    }
+  }
+  if (sort !== undefined) {
+    const data = object(sort);
+    if (data.version !== 1) throw new Error("Unsupported sidebar sort");
+    const entries = Object.entries(object(data.groups));
+    if (entries.length > 104) throw new Error("Sidebar sort budget exceeded");
+    const fixed = new Set(["starred", "channels", "forums", "dms"]);
+    const liveSections = new Set(
+      (sortSectionIds ?? []).map((id) => `section:${id}`),
+    );
+    result.sort = Object.fromEntries(
+      entries
+        .filter(
+          (entry): entry is [string, SidebarSortMode] =>
+            entry[1] === "alpha" || entry[1] === "recent",
+        )
+        .map(([key, mode]) => [text(key, 264), mode] as const)
+        .filter(
+          ([key]) =>
+            fixed.has(key) ||
+            liveSections.has(key) ||
+            (sortSectionIds === undefined &&
+              key.startsWith("section:") &&
+              key.length > 8),
+        ),
+    );
+  }
+  if (mutes !== undefined) {
+    const data = object(mutes);
+    if (data.version !== 1) throw new Error("Unsupported channel mutes");
+    const entries = Object.entries(object(data.channels));
+    if (entries.length > 500) throw new Error("Channel mute budget exceeded");
+    for (const [id, raw] of entries) {
+      text(id);
+      const entry = object(raw);
+      if (
+        typeof entry.muted !== "boolean" ||
+        typeof entry.updatedAt !== "number" ||
+        !Number.isFinite(entry.updatedAt) ||
+        entry.updatedAt < 0
+      )
+        throw new Error("Invalid channel mute");
+      if (entry.muted) result.muted.push(id);
     }
   }
   return result;

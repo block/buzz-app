@@ -1,4 +1,4 @@
-/* DESIGN PASS PENDING: provisional capture composition; Input owns its appearance. */
+/* Match the row actions through the shared Input small size. */
 .listening {
   width: var(--size-navigator);
   max-width: 100%;

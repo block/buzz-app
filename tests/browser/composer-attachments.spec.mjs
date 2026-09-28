@@ -42,6 +42,28 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
     await expect(
       form.getByRole("button", { name: "Attach files", exact: true }),
     ).toBeEnabled();
+    // Rejected selections must announce via the host toast, not stretch the form.
+    await form.getByRole("textbox").evaluate((input) => {
+      const file = new File(["oversized"], "large.pdf", {
+        type: "application/pdf",
+      });
+      Object.defineProperty(file, "size", { value: 501 * 1024 * 1024 });
+      const data = new DataTransfer();
+      data.items.add(file);
+      input.dispatchEvent(
+        new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: data,
+        }),
+      );
+    });
+    const notices = page.getByRole("region", { name: "App notifications" });
+    await expect(
+      notices.getByText("Could not attach file", { exact: true }),
+    ).toBeVisible();
+    await expect(form.getByRole("alert")).toHaveCount(0);
+    await notices.getByRole("button", { name: "Dismiss notification" }).click();
     await form.getByLabel("Choose attachments").setInputFiles({
       name: "picked.txt",
       mimeType: "text/plain",
@@ -49,6 +71,13 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
     });
     await expect(form.getByText(/Ready$/)).toHaveCount(1);
     await expect(form.locator("video")).toHaveCount(0);
+    const remove = form.getByRole("button", {
+      name: "Remove picked.txt",
+      exact: true,
+    });
+    await expect(remove).toHaveCSS("width", "20px");
+    await expect(remove).toHaveCSS("height", "20px");
+    await expect(remove.locator("svg").last()).toHaveCSS("width", "12px");
     const transfer = await page.evaluateHandle(() => {
       const data = new DataTransfer();
       data.items.add(
@@ -80,6 +109,22 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
       );
     });
     await expect(form.getByText(/Ready$/)).toHaveCount(3);
+    // Real layout proves attachment cards stay in one horizontal lane.
+    const cards = form
+      .getByRole("region", { name: "Attachments", exact: true })
+      .getByRole("listitem");
+    const boxes = await cards.evaluateAll((items) =>
+      items.map((item) => {
+        const rect = item.getBoundingClientRect();
+        return { top: rect.top, left: rect.left };
+      }),
+    );
+    expect(boxes.every((box) => box.top === boxes[0].top)).toBe(true);
+    expect(boxes[1].left).toBeGreaterThan(boxes[0].left);
+    await form.screenshot({
+      path: test.info().outputPath("compact-attachments.png"),
+    });
+
     await form.getByRole("button", { name: "Remove dropped.txt" }).click();
     await expect(form.getByText(/Ready$/)).toHaveCount(2);
     await form.getByRole("textbox").press("Enter");

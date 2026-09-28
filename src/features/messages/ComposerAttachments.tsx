@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { FileTextIcon, XIcon } from "../../shared/design-system/icons";
+import {
+  ArrowsClockwiseIcon,
+  CircleNotchIcon,
+  FileTextIcon,
+  WarningCircleIcon,
+  XIcon,
+} from "../../shared/design-system/icons";
 import type { DraftAttachment } from "./attachment-draft";
 import styles from "./ComposerAttachments.module.css";
+import { useAttachmentPoof } from "./AttachmentPoof";
 
 export function ComposerAttachments({
   items,
@@ -19,26 +26,30 @@ export function ComposerAttachments({
   remove(id: string): void;
   retry(id: string): void;
 }) {
-  if (!items.length) return null;
+  const poof = useAttachmentPoof(items.length > 0);
   return (
-    <section aria-label="Attachments" className={styles.attachments}>
-      <ul className={styles.list}>
-        {items.map((item) => (
-          <AttachmentItem
-            media={media}
-            key={item.id}
-            item={item}
-            disabled={disabled}
-            remove={remove}
-            retry={retry}
-          />
-        ))}
-      </ul>
-      <p className={styles.hint}>
-        Files stay in this tab’s draft when you switch conversations. Reloading
-        discards unsent files.
-      </p>
-    </section>
+    <>
+      {poof.overlay}
+      {items.length > 0 && (
+        <section aria-label="Attachments" className={styles.attachments}>
+          <ul className={styles.list}>
+            {items.map((item) => (
+              <AttachmentItem
+                media={media}
+                key={item.id}
+                item={item}
+                disabled={disabled}
+                remove={(id, origin) => {
+                  remove(id);
+                  poof.emit(origin);
+                }}
+                retry={retry}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+    </>
   );
 }
 function AttachmentItem({
@@ -51,7 +62,7 @@ function AttachmentItem({
   media(url: string): string | undefined;
   item: DraftAttachment;
   disabled: boolean;
-  remove(id: string): void;
+  remove(id: string, origin: DOMRect): void;
   retry(id: string): void;
 }) {
   const [source, setSource] = useState<string>();
@@ -93,48 +104,55 @@ function AttachmentItem({
     error: "Upload failed",
   }[item.status];
   return (
-    <li className={styles.item}>
+    <li
+      className={styles.item}
+      data-media={source && !failed && item.status !== "error" ? "" : undefined}
+    >
       {source && !failed ? (
-        <button
-          ref={trigger}
-          className={styles.preview}
-          type="button"
-          aria-label={`Preview ${item.file.name}`}
-          onClick={() => setOpen(true)}
-        >
-          {image ? (
-            <img
-              key={source}
-              src={source}
-              alt=""
-              onError={() => setFailed(true)}
-            />
-          ) : (
-            <video
-              key={source}
-              src={source}
-              muted
-              playsInline
-              preload="metadata"
-              onError={() => setFailed(true)}
-              onLoadedMetadata={(event) => {
-                event.currentTarget.currentTime = Math.min(
-                  0.1,
-                  event.currentTarget.duration || 0.1,
-                );
-              }}
-            />
-          )}
-        </button>
+        <Tooltip content={`${item.file.name} · ${size} · ${status}`}>
+          <button
+            ref={trigger}
+            className={styles.preview}
+            type="button"
+            aria-label={`Preview ${item.file.name}`}
+            onClick={() => setOpen(true)}
+          >
+            {image ? (
+              <img
+                key={source}
+                src={source}
+                alt=""
+                onError={() => setFailed(true)}
+              />
+            ) : (
+              <video
+                key={source}
+                src={source}
+                muted
+                playsInline
+                preload="metadata"
+                onError={() => setFailed(true)}
+                onLoadedMetadata={(event) => {
+                  event.currentTarget.currentTime = Math.min(
+                    0.1,
+                    event.currentTarget.duration || 0.1,
+                  );
+                }}
+              />
+            )}
+          </button>
+        </Tooltip>
       ) : (
         <span className={styles.fileIcon}>
           <FileTextIcon size={24} />
         </span>
       )}
       <div className={styles.details}>
-        <span className={styles.name} title={item.file.name}>
-          {item.file.name}
-        </span>
+        <Tooltip content={`${item.file.name} · ${size} · ${type || "File"}`}>
+          <span className={styles.name} tabIndex={source && !failed ? -1 : 0}>
+            {item.file.name}
+          </span>
+        </Tooltip>
         <span
           className={styles.hint}
           role="status"
@@ -144,33 +162,58 @@ function AttachmentItem({
           <span className="sr-only">{item.file.name}: </span>
           {size} · {status}
         </span>
-        {failed && <span className={styles.hint}>Preview unavailable</span>}
-        {item.error && (
-          <span className={styles.error} role="alert">
-            {item.error}
+        {failed && <span className="sr-only">Preview unavailable</span>}
+      </div>
+      <div className={styles.actions}>
+        {(item.error || failed) && (
+          <span className={styles.error}>
+            <IconButton
+              size="xs"
+              aria-label={`Attachment issue: ${item.file.name}`}
+              title={item.error || "Preview unavailable"}
+              icon={<WarningCircleIcon size={16} />}
+            />
+            {item.error && (
+              <span role="alert" className="sr-only">
+                {item.error}
+              </span>
+            )}
           </span>
         )}
         {item.status === "error" && (
-          <Button
-            size="sm"
+          <IconButton
+            size="xs"
             variant="ghost"
-            type="button"
             disabled={disabled}
+            aria-label={`Retry ${item.file.name}`}
+            title="Retry upload"
             onClick={() => retry(item.id)}
-          >
-            Retry
-          </Button>
+            icon={<ArrowsClockwiseIcon size={16} />}
+          />
         )}
+        <IconButton
+          size="xs"
+          variant="primary"
+          type="button"
+          disabled={disabled}
+          aria-label={`Remove ${item.file.name}`}
+          title="Remove attachment"
+          onClick={(event) =>
+            remove(item.id, event.currentTarget.getBoundingClientRect())
+          }
+          data-uploading={
+            !["ready", "error"].includes(item.status) || undefined
+          }
+          icon={
+            <span className={styles.removeIcon}>
+              {!["ready", "error"].includes(item.status) && (
+                <CircleNotchIcon className={styles.spinner} size={16} />
+              )}
+              <XIcon className={styles.removeX} size={16} />
+            </span>
+          }
+        />
       </div>
-      <IconButton
-        size="sm"
-        type="button"
-        disabled={disabled}
-        aria-label={`Remove ${item.file.name}`}
-        title="Remove attachment"
-        onClick={() => remove(item.id)}
-        icon={<XIcon size={16} />}
-      />
       <Dialog
         open={open}
         onOpenChange={setOpen}

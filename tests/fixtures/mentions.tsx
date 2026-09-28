@@ -1,5 +1,7 @@
 import "../../src/shared/styles/globals.css";
-import { MessageSettings } from "../../src/app/MessageSettings";
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
+import { AgentSettings } from "../../src/app/AgentSettings";
+import { createAgentControl } from "../../src/features/agents/control";
 import { StrictMode, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
@@ -10,12 +12,15 @@ import { bundledPlugins } from "../../src/bundled";
 import { bindNames } from "../../src/features/identity-names/service";
 import { createAgentDirectory } from "../../src/features/identity-names/testing";
 import { createRelaySession } from "../../src/features/relay/session";
+import { relayOrigin } from "../../src/features/communities/destination";
+import { registerBrokerCommunity } from "../../src/features/relay/transport";
 import {
   keypair,
   metadata,
   roster,
   profile,
   message,
+  signed,
 } from "../../src/features/relay/testing";
 import { matchesEvent } from "../../src/features/relay/projection";
 import type { RelayEvent } from "../../src/features/relay/events";
@@ -23,7 +28,9 @@ import type { RelayEvent } from "../../src/features/relay/events";
 const viewer = keypair(),
   relay = keypair(),
   first = keypair(),
-  second = keypair();
+  second = keypair(),
+  outsider = keypair();
+const browserControl = createAgentControl(null);
 let members = [viewer.pubkey, first.pubkey, second.pubkey];
 let time = 1700000000;
 const publications: RelayEvent[] = [];
@@ -33,9 +40,23 @@ let libraryReads = 0;
 const reads: (readonly number[])[] = [];
 let pendingReads = 0;
 let libraryIncludesFirst = false;
+const admission = new URLSearchParams(location.search).has(
+  "nonmember-admission",
+);
 const naming = new URLSearchParams(location.search).has("identity-names");
 let colliding = false;
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
+const testControls = new URLSearchParams(location.search).has("test-controls");
+const stream = new URLSearchParams(location.search).has("stream");
+const searches: string[] = [];
+const heldSearches: string[] = [];
+let searchGate: Promise<void> | undefined;
+let releaseSearch = () => {};
+// Optional visual preview: real GIF search, with messages still local to this fixture.
+const gifRelay = new URLSearchParams(location.search).get("gif-community");
+const gifCommunity = gifRelay ? relayOrigin(gifRelay) : undefined;
+if (gifCommunity)
+  await registerBrokerCommunity(gifCommunity, AbortSignal.timeout(12000));
 const profileGate = delayed
   ? new Promise<void>((resolve) => {
       releaseProfiles = resolve;
@@ -83,9 +104,38 @@ const owner = createRelaySession(
       try {
         if (filters.some((filter) => filter.kinds?.includes(0)))
           await profileGate;
+        const search = filters.find((filter) => filter.search)?.search;
+        if (search !== undefined) {
+          searches.push(search);
+          if (searchGate) {
+            heldSearches.push(search);
+            await searchGate;
+            heldSearches.splice(heldSearches.indexOf(search), 1);
+          }
+        }
         const events = [
           roster(relay, "c", members, time),
-          metadata(relay, "c", "General"),
+          admission
+            ? signed(relay, {
+                kind: 39000,
+                content: JSON.stringify({
+                  name: "General",
+                  channel_type: "stream",
+                }),
+                created_at: time,
+                tags: [
+                  ["d", "c"],
+                  ["name", "General"],
+                  ["t", "stream"],
+                ],
+              })
+            : metadata(
+                relay,
+                "c",
+                "General",
+                undefined,
+                stream ? [["t", "stream"]] : [],
+              ),
           roster(relay, "other", [viewer.pubkey], time),
           metadata(relay, "other", "Other"),
           profile(viewer, { name: "Viewer" }),
@@ -98,10 +148,22 @@ const owner = createRelaySession(
             is_agent: true,
             picture: "https://avatars.test/app-icon.png",
           }),
+          ...(admission ? [profile(outsider, { name: "Outside Person" })] : []),
           ...publications,
         ];
         return events.filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
+          filters.some((filter) => {
+            const { search, search_mode: _mode, ...ordinary } = filter;
+            // Name-prefix directory search, like the relay's prefix mode.
+            return (
+              matchesEvent(event, ordinary) &&
+              (search === undefined ||
+                (event.kind === 0 &&
+                  String(JSON.parse(event.content).name ?? "")
+                    .toLowerCase()
+                    .startsWith(search.toLowerCase())))
+            );
+          }),
         );
       } finally {
         pendingReads--;
@@ -183,6 +245,7 @@ Object.assign(window, {
       await owner.session.agentLibrary.refresh();
     },
     qualifier: (key: string) => names?.lookup(key)?.qualifier,
+    outsider: outsider.pubkey,
     first: first.pubkey,
     second: second.pubkey,
     publications,
@@ -199,6 +262,17 @@ Object.assign(window, {
     releaseProfiles: () => releaseProfiles(),
     libraryReads: () => libraryReads,
     reads: () => ({ kinds: reads, pending: pendingReads }),
+    searches: () => [...searches],
+    heldSearches: () => [...heldSearches],
+    holdSearches() {
+      searchGate = new Promise((resolve) => {
+        releaseSearch = resolve;
+      });
+    },
+    releaseSearches() {
+      searchGate = undefined;
+      releaseSearch();
+    },
     setLibraryAgent(included: boolean) {
       libraryIncludesFirst = included;
       return owner.session.agentLibrary.refresh();
@@ -210,36 +284,59 @@ Object.assign(window, {
   },
 });
 function Fixture() {
+  useKeyboardFocusVisibility();
   const [thread, setThread] = useState(false);
   const [disabled, setDisabled] = useState(false);
   return (
-    <main style={{ maxWidth: 700, padding: 40, marginTop: 380 }}>
-      <button type="button" onClick={() => setThread(!thread)}>
-        Toggle thread
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          members = [viewer.pubkey, second.pubkey];
-          time++;
-          owner.session.channels.refreshList?.();
-        }}
-      >
-        Remove first Honey
-      </button>
-      <button type="button" onClick={() => setDisabled(!disabled)}>
-        Toggle disabled
-      </button>
-      <conversation.ui.Composer
-        disabled={disabled}
-        session={namedSession}
-        scope="mentions-fixture"
-        channelId="c"
-        channelName="General"
-        {...(thread ? { threadRootId: "a".repeat(64) } : {})}
-      />
+    <main
+      style={
+        testControls
+          ? { maxWidth: 700, padding: 40, marginTop: 380 }
+          : {
+              minHeight: "100dvh",
+              width: "100%",
+              display: "grid",
+              placeItems: "center",
+              padding: 24,
+            }
+      }
+    >
+      {testControls && (
+        <>
+          <button type="button" onClick={() => setThread(!thread)}>
+            Toggle thread
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              members = [viewer.pubkey, second.pubkey];
+              time++;
+              owner.session.channels.refreshList?.();
+            }}
+          >
+            Remove first Honey
+          </button>
+          <button type="button" onClick={() => setDisabled(!disabled)}>
+            Toggle disabled
+          </button>
+        </>
+      )}
+      <div style={{ width: "100%", maxWidth: 720 }}>
+        <conversation.ui.Composer
+          disabled={disabled}
+          session={namedSession}
+          scope={
+            gifCommunity
+              ? `${gifCommunity}:${viewer.pubkey}`
+              : "mentions-fixture"
+          }
+          channelId="c"
+          channelName="General"
+          {...(thread ? { threadRootId: "a".repeat(64) } : {})}
+        />
+      </div>
       {new URLSearchParams(location.search).has("settings") && (
-        <MessageSettings />
+        <AgentSettings control={browserControl} />
       )}
     </main>
   );

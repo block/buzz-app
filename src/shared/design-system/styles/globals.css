@@ -18,11 +18,13 @@
 @import "dockview-react/dist/styles/dockview.css" layer(vendor);
 @import "tailwindcss" source(none);
 @import "./tokens.css";
+@import "./scrollbars.css" layer(base);
 @import "./materials.css";
 @import "./typography.css";
 @import "./typography-base.css";
 @import "./components.css";
 @import "./forms.css";
+@import "./content-header.css";
 @import "./overlays.css";
 @import "./chips.css";
 @import "./bento.css";

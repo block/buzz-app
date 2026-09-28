@@ -75,6 +75,70 @@ it("distinguishes explicit rejection from invalid or missing delivery receipts",
     transport.writer.publish(event, new AbortController().signal),
   ).rejects.toBeInstanceOf(PublishRejected);
 });
+it.each([
+  [
+    "rate-limited: quota exceeded; retry in 17s",
+    false,
+    "rate-limited: quota exceeded; retry in 17s",
+  ],
+  [
+    "rate-limited: shared admission unavailable",
+    false,
+    "rate-limited: shared admission unavailable",
+  ],
+  [
+    "rate-limited: quota exceeded; retry in 17s\nprivate",
+    false,
+    "rate-limited: unrecognized reason",
+  ],
+  [
+    "rate-limited: quota exceeded; retry in 100000s",
+    false,
+    "rate-limited: unrecognized reason",
+  ],
+  [
+    "rate-limited: private response",
+    false,
+    "rate-limited: unrecognized reason",
+  ],
+  ["private response", false, "Relay request failed (503)"],
+  [
+    "rate-limited: quota exceeded; retry in 17s",
+    undefined,
+    "Relay delivery could not be confirmed (503)",
+  ],
+  [
+    "rate-limited: shared admission unavailable",
+    true,
+    "Relay delivery could not be confirmed (503)",
+  ],
+])(
+  "keeps publication quota reporting bounded and separate from delivery evidence: %s, sent=%s",
+  async (error, sent, message) => {
+    const event = signed(key, { kind: 9000, content: "", tags: [["h", "c"]] });
+    const fetcher = vi.fn(async (url: string) =>
+      url.endsWith("/session")
+        ? Response.json({
+            viewer: key.pubkey,
+            relayAuthor: "relay",
+            writeKinds: [9000],
+          })
+        : Response.json({ error, sent }, { status: 503 }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const transport = await connectBrokerTransport();
+    assert.exists(transport.writer);
+    const result = await transport.writer
+      .publish(event, new AbortController().signal)
+      .catch((reason: unknown) => reason);
+    expect(result).toBeInstanceOf(Error);
+    expect(result instanceof PublishRejected).toBe(sent === false);
+    expect(result).toHaveProperty("message", message);
+    expect(
+      fetcher.mock.calls.filter(([url]) => url.endsWith("/publish")),
+    ).toHaveLength(1);
+  },
+);
 it("the broker advertises and supplies writes through the same connection", async () => {
   const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
   const fetcher = vi.fn(async (url: string) => {
@@ -91,6 +155,7 @@ it("the broker advertises and supplies writes through the same connection", asyn
   vi.stubGlobal("fetch", fetcher);
   const transport = await connectBrokerTransport();
   expect(transport.scope).toBe("https://relay.test");
+  expect(transport.relayHttpUrl).toBe("https://relay.test");
   expect(transport.writer?.kinds).toEqual([9]);
   assert.exists(transport.writer);
   const signedEvent = await transport.writer.sign(
@@ -103,6 +168,44 @@ it("the broker advertises and supplies writes through the same connection", asyn
     "/api/relay/sign",
     "/api/relay/publish",
   ]);
+});
+
+it("exposes the relay HTTP base for display, preferring the broker's explicit value", async () => {
+  const session = (extra: Record<string, unknown>) => async () =>
+    Response.json({ viewer: key.pubkey, relayAuthor: "relay", ...extra });
+  vi.stubGlobal("fetch", session({ relayUrl: "wss://relay.test" }));
+  expect((await connectBrokerTransport()).relayHttpUrl).toBe(
+    "https://relay.test",
+  );
+  vi.stubGlobal(
+    "fetch",
+    session({
+      relayUrl: "wss://relay.test",
+      relayHttpUrl: "https://hooks.relay.test/",
+    }),
+  );
+  expect((await connectBrokerTransport()).relayHttpUrl).toBe(
+    "https://hooks.relay.test",
+  );
+  // Paths, credentials and non-HTTP schemes never become a hook base.
+  for (const relayHttpUrl of [
+    "https://relay.test/path",
+    "https://user@relay.test",
+    "ftp://relay.test",
+    42,
+  ]) {
+    vi.stubGlobal("fetch", session({ relayHttpUrl }));
+    expect((await connectBrokerTransport()).relayHttpUrl).toBeUndefined();
+  }
+  const direct = await connectSignedTransport(
+    {
+      getPublicKey: async () => key.pubkey,
+      signEvent: async (template) => signed(key, template),
+    },
+    "https://relay.test",
+    "relay",
+  );
+  expect(direct.relayHttpUrl).toBe("https://relay.test");
 });
 
 it("requests relay thumbnails only for small media", async () => {
@@ -339,5 +442,49 @@ it.each(["busy", '{"status":"busy"}', "{custom-status", '{"status":42}'])(
     await expect(read()).rejects.toThrow();
     events = [customEvent, { ...onlineEvent, sig: "0".repeat(128) }];
     await expect(read()).rejects.toThrow();
+  },
+);
+
+it.each(["relay", "https://relay.test"])(
+  "binds agent-log proof to broker session origin for community %s",
+  async (community) => {
+    const fetcher = vi.fn(async (url: string) =>
+      Response.json(
+        url.endsWith("/session")
+          ? {
+              viewer: key.pubkey,
+              relayAuthor: key.pubkey,
+              relayUrl: "https://relay.test",
+              agentLogProof: true,
+            }
+          : { signature: "a".repeat(128) },
+      ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const transport = await connectBrokerTransport("", undefined, community);
+    assert.exists(transport.authorizeAgentLog);
+    const target = {
+      id: "fixture-id",
+      pubkey: key.pubkey,
+      relayUrl: "wss://relay.test",
+    };
+    expect(await transport.authorizeAgentLog(target, "nonce")).toBe(
+      "a".repeat(128),
+    );
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/relay/${encodeURIComponent(community)}/agent-log-proof`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ ...target, nonce: "nonce" }),
+      }),
+    );
+    const before = fetcher.mock.calls.length;
+    await expect(
+      transport.authorizeAgentLog(
+        { ...target, relayUrl: "wss://different.test" },
+        "nonce",
+      ),
+    ).rejects.toThrow("Log authorization unavailable");
+    expect(fetcher).toHaveBeenCalledTimes(before);
   },
 );

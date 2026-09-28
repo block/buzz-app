@@ -1,17 +1,4 @@
-mod build_config;
 fn main() {
-    println!("cargo:rerun-if-env-changed=BUZZ_BUILD_AGENT_ENV");
-    println!("cargo:rerun-if-changed=build_config.rs");
-    let raw = std::env::var("BUZZ_BUILD_AGENT_ENV").unwrap_or_default();
-    let (host, filter) =
-        build_config::parse(&raw).expect("Invalid private agent build configuration");
-    // Write even when unset: a same-target public rebuild must clear prior defaults.
-    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
-    std::fs::write(
-        output.join("agent_defaults.rs"),
-        format!("pub const HOST: &str = {host:?};\npub const FILTER: &str = {filter:?};\n"),
-    )
-    .expect("Could not write native connection defaults");
     let mut attributes = tauri_build::Attributes::new();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
@@ -29,6 +16,10 @@ fn main() {
     }
     tauri_build::try_build(
         attributes.app_manifest(tauri_build::AppManifest::new().commands(&[
+            "identity_restore",
+            "identity_import",
+            "identity_create",
+            "identity_export",
             "plugin_import_folder",
             "plugin_import_git",
             "plugin_import_install",
@@ -38,11 +29,18 @@ fn main() {
             "plugin_reload",
             "plugin_module",
             "plugin_recover",
+            "plugin_host_run_command",
+            "plugin_host_request",
             "agent_control_create_prepare",
             "agent_control_create_commit",
             "agent_control_creation_profile",
             "agent_control_snapshot",
+            "agent_control_log_challenge",
+            "agent_control_read_log",
+            "goose_install",
             "agent_control_save",
+            "agent_control_start_on_app_launch",
+            "agent_control_delete",
             "agent_control_action",
             "agent_control_import_preview",
             "agent_control_import_commit",

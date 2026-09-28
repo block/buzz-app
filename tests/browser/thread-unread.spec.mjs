@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -76,7 +77,7 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(activity).toBeVisible();
   await expect(alpha.getByText("Alpha", { exact: true })).toHaveCSS(
     "font-weight",
-    "500",
+    "600",
   );
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
@@ -213,6 +214,30 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(replyComposer).toBeFocused();
   await expect(first).toHaveAccessibleName(/Observed unread replies/); // Click/composer focus is not reading.
   await history.focus();
+  // Finish a real read of a visible sibling before checking the hidden child.
+  // Loaded history is not read evidence: collapsed descendants stay unread.
+  const directId = await panel
+    .locator("[data-message-id]")
+    .filter({ hasText: "Unread reply 0" })
+    .getAttribute("data-message-id");
+  await expect
+    .poll(
+      () =>
+        app.report.readPublications.some(({ blob }) =>
+          Object.hasOwn(blob.contexts, `msg:${directId}`),
+        ),
+      { timeout: 12000 },
+    )
+    .toBe(true);
+  await expect(
+    panel.getByText("Broadcast descendant", { exact: true }),
+  ).toHaveCount(0);
+  await expect(first).toHaveAccessibleName(/Observed unread replies/);
+  await panel.getByRole("button", { name: /^View 1 reply/ }).click();
+  await expect(
+    panel.getByText("Broadcast descendant", { exact: true }),
+  ).toBeInViewport();
+  await history.focus();
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(broadcast).toHaveAccessibleName("View thread: 23 replies");
   await expect(dot(first)).toHaveCount(0);
@@ -235,10 +260,7 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
   const beforeReload = app.report.queries.length;
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
   // Restoring a joined conversation waits for initial membership discovery;

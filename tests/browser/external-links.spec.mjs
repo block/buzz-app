@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { end, settle } from "./timeline.mjs";
 
@@ -10,10 +11,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const link = (page, url) => page.locator(`a[href=${JSON.stringify(url)}]`);
 
 async function openMessages(page) {
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages" })
-    .click();
+  await openPage(page, "Messages");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();

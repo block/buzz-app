@@ -13,27 +13,35 @@ export function PanelLaunchers({
   selected: RegisteredPanel | undefined;
   launch(panel: RegisteredPanel, trigger: HTMLButtonElement): void;
 }) {
-  return <>
-    {panels.filter((panel) => panel.launcher).map((panel) => (
-      <IconButton
-        type="button"
-        key={`${panel.key}:${panel.revision}`}
-        variant="chrome"
-        shape="round"
-        aria-label={panel.title}
-        title={panel.title}
-        aria-expanded={panel === selected}
-        onClick={(event) => launch(panel, event.currentTarget)}
-        icon={
-          <LauncherIcon
-            key={panel.launcher?.icon}
-            src={panel.launcher?.icon ?? ""}
+  return (
+    <>
+      {panels
+        .filter((panel) => panel.launcher)
+        .map((panel) => (
+          <IconButton
+            type="button"
+            key={`${panel.key}:${panel.revision}`}
+            variant="chrome"
+            shape="round"
+            aria-label={panel.title}
+            title={panel.title}
+            aria-expanded={panel === selected}
+            onClick={(event) => launch(panel, event.currentTarget)}
+            icon={
+              <LauncherIcon
+                key={panel.launcher?.icon}
+                src={panel.launcher?.icon ?? ""}
+              />
+            }
           />
-        }
+        ))}
+      <ComputeWidgetLauncher
+        enabled={panels.some(
+          (panel) => panel.pluginId === "buzz.community-compute",
+        )}
       />
-    ))}
-    <ComputeWidgetLauncher enabled={panels.some((panel) => panel.pluginId === "buzz.community-compute")} />
-  </>;
+    </>
+  );
 }
 function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);

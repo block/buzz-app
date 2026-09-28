@@ -57,3 +57,30 @@ export function formatDurationSeconds(totalSeconds: number): string {
 
   return parts.join(" ");
 }
+
+function verboseUnit(value: number, unit: string): string {
+  return `${value} ${unit}${value === 1 ? "" : "s"}`;
+}
+
+/** Format whole seconds with fully spelled-out units for summary UI. */
+export function formatDurationSecondsVerbose(totalSeconds: number): string {
+  if (!Number.isSafeInteger(totalSeconds) || totalSeconds < 0) return "";
+  if (totalSeconds === 0) return "0 seconds";
+
+  const weeks = Math.floor(totalSeconds / SECONDS_PER_WEEK);
+  const days = Math.floor((totalSeconds % SECONDS_PER_WEEK) / SECONDS_PER_DAY);
+  const hours = Math.floor((totalSeconds % SECONDS_PER_DAY) / SECONDS_PER_HOUR);
+  const minutes = Math.floor(
+    (totalSeconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE,
+  );
+  const seconds = totalSeconds % SECONDS_PER_MINUTE;
+  const parts: string[] = [];
+
+  if (weeks > 0) parts.push(verboseUnit(weeks, "week"));
+  if (days > 0) parts.push(verboseUnit(days, "day"));
+  if (hours > 0) parts.push(verboseUnit(hours, "hour"));
+  if (minutes > 0) parts.push(verboseUnit(minutes, "minute"));
+  if (seconds > 0) parts.push(verboseUnit(seconds, "second"));
+
+  return parts.join(" ");
+}

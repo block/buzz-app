@@ -1,3 +1,4 @@
+import { isWorkflowDefinitionBatch } from "../workflows/queries";
 import { yieldToHost } from "./yield";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import type { ReadFilter, RelayEvent } from "./events";
@@ -185,7 +186,10 @@ export function createRelayReader(
       );
     let key: string;
     try {
-      if (!filters.length || filters.length > 4)
+      if (
+        !filters.length ||
+        (filters.length > 4 && !isWorkflowDefinitionBatch(filters))
+      )
         throw new Error("A read needs 1–4 filters");
       // Object property and set order do not change NIP-01 filter semantics.
       key = JSON.stringify(

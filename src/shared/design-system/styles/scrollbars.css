@@ -1,3 +1,9 @@
+/* Also loaded into vendor shadow roots so every scrolling surface agrees. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
 /* Opt-in native scrollbar treatment, also injected into Emoji Mart. */
 .buzz-thin-scrollbar {
   scrollbar-width: thin;

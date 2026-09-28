@@ -1,21 +1,31 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { AgentControl } from "../../features/agents/control";
-import { sameCommunityAgents } from "../../features/agents/choices";
+import type { OpenResult } from "../../features/navigation/controller";
+import { exactProfileAgent } from "../../features/profiles/instance-target";
 import { agentProcessLabel } from "../agents/agent-edit";
+import { AgentEditor } from "../agents/AgentEditor";
+import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Profiles.module.css";
 
-/** Read-only native evidence for this exact key in the active community. Anything
- * else renders nothing, leaving the ordinary public profile. Errors, runtime
- * availability and status recovery belong to ProfileAgentActions. */
+/** Native status and saved-settings summary for this exact key in the active
+ * community. The verified owner can open the existing editor in place when the
+ * native identity is unambiguous; the caller supplies ownership evidence. */
 export function ProfileAgentRuntime({
   control,
+  onOpenHarnesses,
   scope,
   pubkey,
+  instanceId,
+  owned = false,
 }: {
   control: AgentControl;
+  onOpenHarnesses?: (() => Promise<OpenResult>) | undefined;
   scope: string;
   pubkey: string;
+  instanceId?: string | undefined;
+  owned?: boolean;
 }) {
+  const [editing, setEditing] = useState(false);
   const state = useSyncExternalStore(
     control.subscribe,
     control.snapshot,
@@ -25,10 +35,11 @@ export function ProfileAgentRuntime({
     void control.refresh();
   }, [control]);
   const data = state.data;
+  const uniqueAgent = data
+    ? exactProfileAgent(data.agents, scope, pubkey)
+    : undefined;
   const agent = data
-    ? sameCommunityAgents(data.agents, scope).find(
-        (candidate) => candidate.pubkey === pubkey,
-      )
+    ? exactProfileAgent(data.agents, scope, pubkey, instanceId)
     : undefined;
   if (!data || !agent) return null;
   const drift =
@@ -64,11 +75,16 @@ export function ProfileAgentRuntime({
           </dl>
         </>
       )}
-      {agent.systemPrompt && (
-        <details>
-          <summary>Instructions</summary>
-          <p className={styles.about}>{agent.systemPrompt}</p>
-        </details>
+      {owned && uniqueAgent?.id === agent.id && state.status === "ready" && (
+        <Button
+          size="compact"
+          variant="subtle"
+          aria-haspopup="dialog"
+          disabled={state.busy}
+          onClick={() => setEditing(true)}
+        >
+          Agent instructions
+        </Button>
       )}
       {!!agent.diagnostics.length && (
         <details>
@@ -77,6 +93,23 @@ export function ProfileAgentRuntime({
             {agent.diagnostics.join("\n")}
           </pre>
         </details>
+      )}
+      {editing && owned && uniqueAgent?.id === agent.id && (
+        <AgentEditor
+          agent={agent}
+          control={control}
+          state={state}
+          onClose={() => setEditing(false)}
+          onOpenHarnesses={
+            onOpenHarnesses
+              ? () => {
+                  void onOpenHarnesses().then((result) => {
+                    if (result.status === "opened") setEditing(false);
+                  });
+                }
+              : undefined
+          }
+        />
       )}
     </section>
   );

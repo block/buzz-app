@@ -16,6 +16,8 @@ import { Avatar as ChoiceAvatar } from "../../shared/design-system/ui/Avatar";
 import type { RelaySession } from "../relay/session";
 import { Avatar } from "../../shared/Avatar";
 import { avatarSource } from "../../shared/avatar-source";
+import { usePresenceStatus } from "../presence/react";
+import type { PresenceStatus } from "../presence/presence";
 import styles from "./Sessions.module.css";
 
 export function agentAdmission(
@@ -32,6 +34,82 @@ export function agentAdmission(
   return parentMembers !== undefined && !parentMembers.includes(pubkey)
     ? ("session-and-channel" as const)
     : ("session" as const);
+}
+
+function AgentStatusAvatar({
+  name,
+  src,
+  presence,
+}: {
+  name: string;
+  src: string | undefined;
+  presence: PresenceStatus;
+}) {
+  return (
+    <Avatar
+      name={name}
+      src={src}
+      className={styles.agentAvatar ?? ""}
+      shape="squircle"
+      statusBadge={presence === "unknown" ? undefined : presence}
+    />
+  );
+}
+
+function AgentChoiceOption({
+  session,
+  agent,
+  src,
+  admission,
+}: {
+  session: RelaySession;
+  agent: { pubkey: string; name: string };
+  src: string | undefined;
+  admission: ReturnType<typeof agentAdmission>;
+}) {
+  const presence = usePresenceStatus(session.presence, agent.pubkey);
+  const admissionLabel =
+    admission === "channel"
+      ? " — adds to channel"
+      : admission === "session-and-channel"
+        ? " — adds to session and channel"
+        : admission === "session"
+          ? " — adds to session"
+          : "";
+  return (
+    <MenuRadioItem
+      value={agent.pubkey}
+      closeOnClick
+      aria-label={
+        presence === "unknown"
+          ? undefined
+          : `${agent.name}, ${presence}${admissionLabel}`
+      }
+    >
+      <ChoiceRow
+        leading={
+          <ChoiceAvatar
+            alt=""
+            fallback={agent.name}
+            src={src}
+            size="small"
+            shape="squircle"
+            statusBadge={presence === "unknown" ? undefined : presence}
+          />
+        }
+        label={agent.name}
+        description={
+          admission === "channel"
+            ? "Adds to channel"
+            : admission === "session-and-channel"
+              ? "Adds to session and channel"
+              : admission === "session"
+                ? "Adds to session"
+                : undefined
+        }
+      />
+    </MenuRadioItem>
+  );
 }
 
 export function AgentChoice({
@@ -66,6 +144,10 @@ export function AgentChoice({
     name: resolveName(agent.pubkey, agent.name, candidates),
   }));
   const selected = identities.find((agent) => agent.pubkey === value);
+  const selectedPresence = usePresenceStatus(
+    session.presence,
+    selected?.pubkey,
+  );
   function picture(avatar?: string) {
     const source = avatarSource(avatar);
     return source?.startsWith("data:")
@@ -79,6 +161,8 @@ export function AgentChoice({
     : value
       ? "Change selected agent"
       : "Choose an agent";
+  const accessibleLabel =
+    selectedPresence === "unknown" ? label : `${label}, ${selectedPresence}`;
   return (
     <MenuRoot>
       <span className={styles.agentTrigger}>
@@ -86,11 +170,10 @@ export function AgentChoice({
           render={
             <Button variant="outline" size="sm" style={{ maxWidth: "100%" }}>
               {selected ? (
-                <Avatar
+                <AgentStatusAvatar
                   name={selected.name}
                   src={picture(selected.avatar)}
-                  className={styles.agentAvatar ?? ""}
-                  shape="squircle"
+                  presence={selectedPresence}
                 />
               ) : (
                 <RobotIcon size={20} aria-hidden="true" />
@@ -101,7 +184,7 @@ export function AgentChoice({
               <CaretUpIcon size={12} aria-hidden="true" />
             </Button>
           }
-          aria-label={label}
+          aria-label={accessibleLabel}
           title={label}
           disabled={disabled}
         />
@@ -135,33 +218,13 @@ export function AgentChoice({
               parentMembers,
             );
             return (
-              <MenuRadioItem
+              <AgentChoiceOption
                 key={agent.pubkey}
-                value={agent.pubkey}
-                closeOnClick
-              >
-                <ChoiceRow
-                  leading={
-                    <ChoiceAvatar
-                      alt=""
-                      fallback={agent.name}
-                      src={picture(agent.avatar)}
-                      size="small"
-                      shape="squircle"
-                    />
-                  }
-                  label={agent.name}
-                  description={
-                    admission === "channel"
-                      ? "Adds to channel"
-                      : admission === "session-and-channel"
-                        ? "Adds to session and channel"
-                        : admission === "session"
-                          ? "Adds to session"
-                          : undefined
-                  }
-                />
-              </MenuRadioItem>
+                session={session}
+                agent={agent}
+                src={picture(agent.avatar)}
+                admission={admission}
+              />
             );
           })}
         </MenuRadioGroup>

@@ -11,6 +11,8 @@ import { createAgentChoices } from "../../src/features/agents/choices";
 import * as links from "../../src/bundled/links";
 import channelStyles from "../../src/bundled/channels/Channels.module.css";
 import { readView, writeView } from "../../src/shared/view-state";
+import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/inter/wght-italic.css";
 import "../../src/shared/styles/globals.css";
 
 // Real MessageRow + plugin lifecycle, with no relay, identity or writes.

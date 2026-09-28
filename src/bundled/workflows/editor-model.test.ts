@@ -12,6 +12,11 @@ test("advanced fields stay raw; opening does not transform source", () => {
   expect(yamlToFormState(`${fixtureYaml}future: retain-me\n`).ok).toBe(false);
   expect(
     yamlToFormState(fixtureYaml.replace("message_posted", "webhook")).ok,
+  ).toBe(true);
+  expect(
+    yamlToFormState(
+      fixtureYaml.replace("on: message_posted", "on: webhook\n  secret: x"),
+    ).ok,
   ).toBe(false);
   expect(
     yamlToFormState(fixtureYaml.replace("    text:", "    if: true\n    text:"))
@@ -88,4 +93,23 @@ test("invalid timeout values block draft submission", () => {
       fixtureYaml.replace("    text:", "    timeout_secs: 300\n    text:"),
     ),
   ).toBeNull();
+});
+
+test("webhook URL templates are delegated to relay validation; empty URLs are blocked", () => {
+  const yaml = (url: string) => `name: Template
+enabled: false
+trigger: {on: webhook}
+steps:
+  - id: request
+    action: call_webhook
+    url: ${url}
+`;
+  for (const url of [
+    '"{{trigger_text}}"',
+    '"https://{{host}}/hook"',
+    '"https://example.com/hook"',
+  ])
+    expect(draftError(yaml(url))).toBeNull();
+  for (const url of ['""', '"   "', "null", "1"])
+    expect(draftError(yaml(url))).toMatch(/webhook URL or template/);
 });

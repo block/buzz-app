@@ -1,10 +1,17 @@
+import { MessageTimestamp } from "./MessageTimestamp";
+import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ReplySummary } from "./ReplySummary";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { usePresenceStatus } from "../presence/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
+  useId,
   useRef,
+  useState,
+  useEffect,
   useCallback,
   useSyncExternalStore,
   type ReactNode,
@@ -31,6 +38,10 @@ import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import { MessageActionBar } from "./MessageActionBar";
+import { FlagIcon } from "../../shared/design-system/icons";
+import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
 
 const emptySubscribe = () => () => {};
@@ -54,12 +65,16 @@ export type MessageRowProps = {
   onOpenLink(url: string): boolean;
   day: boolean;
   retry: ((id: string) => void) | undefined;
+  /** Pins this row in a virtualized list; returns the release. */
+  keepMounted?: ((messageId: string) => () => void) | undefined;
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
-  onReply?: (() => void) | undefined;
+  onReply?: ((messageId: string) => void) | undefined;
   quickControls?: ReactNode;
+  branchControl?: ReactNode;
   overflowItems?: ReactNode;
+  layout?: "timeline" | "thread" | "continuation";
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
@@ -84,11 +99,14 @@ export const MessageRow = memo(function MessageRow({
   canOpenLink,
   day,
   retry,
+  keepMounted,
   onOpenThread,
   onReply,
   quickControls,
+  branchControl,
   overflowItems,
   participantProfiles,
+  layout = "timeline",
   mediaMode = "inline",
   mediaSeekTo,
   mediaSeekRequest,
@@ -108,6 +126,9 @@ export const MessageRow = memo(function MessageRow({
     session?.channels.subscribeList ?? emptySubscribe,
     session?.channels.list ?? emptyChannelList,
     session?.channels.list ?? emptyChannelList,
+  );
+  const cached = channelList.channels.some(
+    (channel) => channel.id === row.channelId && channel.cached,
   );
   const unreadLabel =
     threadUnread?.manual === "local-only"
@@ -130,6 +151,8 @@ export const MessageRow = memo(function MessageRow({
     row.agentEnvelope || agentPubkeys?.has(row.authorId)
       ? "squircle"
       : "circle";
+  const presence = usePresenceStatus(session?.presence, row.authorId);
+  const presenceId = useId();
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
@@ -148,6 +171,28 @@ export const MessageRow = memo(function MessageRow({
       ?.readOnly
   );
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  const [reporting, setReporting] = useState<"open" | "sent">();
+  const reportActive = reporting !== undefined;
+  // The dialog, pending submit and notice live in this row; eviction loses them.
+  useEffect(() => {
+    const release = reportActive ? keepMounted?.(row.id) : undefined;
+    // Dialog focus restoration runs in a microtask after unmount; releasing a
+    // task later lets restored focus keep the row mounted instead.
+    return release && (() => void setTimeout(release));
+  }, [reportActive, keepMounted, row.id]);
+  const report =
+    !row.membership &&
+    (!row.delivery || ["accepted", "seen"].includes(row.delivery))
+      ? session?.messages.report
+      : undefined;
+  const reportItem = report && (
+    <MenuItem onClick={() => setReporting("open")}>
+      <MenuIcon>
+        <FlagIcon />
+      </MenuIcon>
+      Report message
+    </MenuItem>
+  );
   const body = row.diff ? (
     <div>
       <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
@@ -197,42 +242,63 @@ export const MessageRow = memo(function MessageRow({
           </span>
         </div>
       )}
-      <div className={styles.message}>
-        {clickable ? (
+      <div className={styles.message} data-layout={layout}>
+        {layout === "continuation" ? (
+          <span className={styles.messageGutter}>
+            <MessageTimestamp createdAt={row.createdAt} compact />
+          </span>
+        ) : clickable ? (
           <IconButton
-            size="default"
+            size={layout === "timeline" ? "default" : "sm"}
             shape="round"
             aria-label={`View ${name} profile`}
+            aria-describedby={presence === "unknown" ? undefined : presenceId}
             onClick={(event) => {
               event.currentTarget.focus();
               onOpenLink(target);
             }}
             icon={
-              <Avatar
-                src={picture}
-                alt=""
-                fallback={name}
-                size="fill"
-                shape={avatarShape}
-              />
+              <>
+                <Avatar
+                  src={picture}
+                  alt=""
+                  fallback={name}
+                  size="fill"
+                  shape={avatarShape}
+                  statusBadge={presence === "unknown" ? undefined : presence}
+                />
+                {presence !== "unknown" && (
+                  <span className="sr-only" id={presenceId}>
+                    Presence: {presence}
+                  </span>
+                )}
+              </>
             }
           />
         ) : (
           <Avatar
             src={picture}
-            alt=""
+            alt={
+              presence === "unknown"
+                ? ""
+                : avatarShape === "squircle"
+                  ? "Agent"
+                  : `${name} avatar`
+            }
             fallback={name}
-            size="large"
+            size={layout === "timeline" ? "large" : "default"}
             shape={avatarShape}
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         )}
         <div className={styles.messageBody}>
           {!row.membership && (
             <MessageActionBar
+              branchControl={branchControl}
               menuTriggerRef={menuTrigger}
               messageId={row.id}
               onReply={
-                onReply ??
+                (onReply ? () => onReply(row.id) : undefined) ??
                 (onOpenThread
                   ? () =>
                       onOpenThread(
@@ -275,17 +341,50 @@ export const MessageRow = memo(function MessageRow({
                   />
                 ) : undefined)
               }
-              overflowItems={overflowItems}
+              overflowItems={
+                overflowItems || reportItem ? (
+                  <>
+                    {overflowItems}
+                    {reportItem}
+                  </>
+                ) : undefined
+              }
             />
           )}
-          <div className={styles.byline}>
-            <strong>{name}</strong>
-            <time dateTime={new Date(row.createdAt * 1000).toISOString()}>
-              {new Date(row.createdAt * 1000).toLocaleTimeString(undefined, {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </time>
+          {report && reporting === "open" && (
+            <ReportMessageDialog
+              report={(type, note) => report(row.id, type, note)}
+              close={(submitted) =>
+                setReporting(submitted ? "sent" : undefined)
+              }
+              finalFocus={menuTrigger}
+            />
+          )}
+          {reporting === "sent" && (
+            <ToastNotice
+              tone="success"
+              timeout={5000}
+              title="Report submitted to community moderators"
+              onDismiss={() => setReporting(undefined)}
+            />
+          )}
+          <div
+            className={layout === "continuation" ? "sr-only" : styles.byline}
+          >
+            <span className={styles.author}>
+              <strong>{name}</strong>
+              {session && (
+                <UserStatusDisplay
+                  session={session}
+                  userId={row.authorId}
+                  compact
+                  focusable={false}
+                />
+              )}
+            </span>
+            {layout !== "continuation" && (
+              <MessageTimestamp createdAt={row.createdAt} />
+            )}
           </div>
           {timeReply && onMediaTime && (
             <span className={styles.mediaTimeLink}>
@@ -337,13 +436,14 @@ export const MessageRow = memo(function MessageRow({
                 />
               );
             }
-            if (attachment.kind === "image" && source)
+            if (attachment.kind === "image")
               return (
                 <AttachmentImage
                   key={url}
                   attachment={{ ...attachment, url }}
                   url={url}
                   source={source}
+                  cached={cached}
                   onOpenLink={onOpenLink}
                   {...(onOpenMediaReview
                     ? {
@@ -378,24 +478,22 @@ export const MessageRow = memo(function MessageRow({
             );
           })}
           {session && scope && extensions ? (
-            <div className={styles.reactions}>
-              <MessageReactions
-                onFocusedRemoval={() => menuTrigger.current?.focus()}
-                row={row}
-                session={session}
-                scope={scope}
-                tools={extensions.tools}
-                inline={extensions.inline}
-                disabled={
-                  !canReact ||
-                  (!!row.delivery &&
-                    !["accepted", "seen"].includes(row.delivery))
-                }
-              />
-            </div>
+            <MessageReactions
+              onFocusedRemoval={() => menuTrigger.current?.focus()}
+              row={row}
+              session={session}
+              scope={scope}
+              tools={extensions.tools}
+              inline={extensions.inline}
+              profiles={directory.profiles}
+              disabled={
+                !canReact ||
+                (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
+              }
+            />
           ) : (
             row.reactions.length > 0 && (
-              <div className={styles.reactions}>
+              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
                 {row.reactions.map((reaction) => (
                   <span
                     key={JSON.stringify([
@@ -429,7 +527,12 @@ export const MessageRow = memo(function MessageRow({
             <Button
               variant="ghost"
               size="sm"
-              style={{ paddingInlineStart: "var(--space-1)" }}
+              data-thread-summary=""
+              data-first-participant-shape={
+                agentPubkeys?.has(row.participants[0] ?? "")
+                  ? "squircle"
+                  : "circle"
+              }
               type="button"
               aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
               onClick={(event) => {
@@ -437,53 +540,15 @@ export const MessageRow = memo(function MessageRow({
                 onOpenThread(row.id, row.threadRootId ?? row.id);
               }}
             >
-              {row.participants.length > 0 && (
-                <span className={styles.threadAvatars} aria-hidden="true">
-                  {row.participants.slice(0, 3).map((id) => {
-                    const participant = participantProfiles?.get(id);
-                    const name = resolveName(
-                      id,
-                      participant?.name ?? id.slice(0, 10),
-                    );
-                    const picture = participant?.picture
-                      ? media(participant.picture, "small")
-                      : undefined;
-                    return (
-                      <span
-                        key={id}
-                        className={styles.threadAvatar}
-                        data-avatar-shape={
-                          agentPubkeys?.has(id) ? "squircle" : "circle"
-                        }
-                        title={name}
-                      >
-                        <Avatar
-                          src={picture}
-                          alt=""
-                          fallback={name}
-                          size="fill"
-                          shape={agentPubkeys?.has(id) ? "squircle" : "circle"}
-                        />
-                      </span>
-                    );
-                  })}
-                  {row.participants.length > 3 && (
-                    <span className={styles.threadAvatarCount}>
-                      +{row.participants.length - 3}
-                    </span>
-                  )}
-                </span>
-              )}
-              <span>
-                {row.replyCount} {row.replyCount === 1 ? "reply" : "replies"}
-              </span>
-              {unreadLabel && (
-                <span
-                  className={styles.threadUnread}
-                  aria-hidden="true"
-                  title={unreadLabel}
-                />
-              )}
+              <ReplySummary
+                count={row.replyCount}
+                participants={row.participants}
+                profiles={participantProfiles}
+                agentPubkeys={agentPubkeys}
+                resolveName={resolveName}
+                media={media}
+                unreadLabel={unreadLabel}
+              />
             </Button>
           )}
         </div>

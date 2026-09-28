@@ -39,7 +39,8 @@ export function policyRelay({
   // Fixture targets distinguish the two explicit production globals from channels.
   const routeOf = (filter) =>
     filter["#h"]?.[0] ??
-    (filter.kinds.length === 1 && filter.kinds[0] === 0
+    (filter.kinds.length === 3 &&
+    [0, 10100, 30177].every((kind) => filter.kinds.includes(kind))
       ? "profiles"
       : filter.kinds.includes(44100)
         ? "membership"
@@ -100,6 +101,16 @@ export function policyRelay({
     requests,
     rejected,
     expectedHttpErrors: () => rejected.length > 0,
+    /** The broker pauses its API lane for the advertised delay when it reads
+     * the refusal, before the fixture stamps `relayed` on response finish.
+     * Browser-side cooldowns need the page clock; see the retry specs. */
+    brokerCooldownOver(index = 0) {
+      const rejection = rejected[index];
+      return (
+        rejection?.relayed !== undefined &&
+        performance.now() >= rejection.relayed + rejection.retryAfterMs
+      );
+    },
     emptyRoster() {
       emptyRoster = true;
     },
@@ -194,11 +205,60 @@ export function policyRelay({
             ),
           );
         }
+        if (
+          filters.length <= 128 &&
+          filters.every(
+            (filter) =>
+              filter.limit === 1 &&
+              filter["#h"]?.length === 1 &&
+              [9, 40002, 40008, 45001, 45003].every((kind) =>
+                filter.kinds?.includes(kind),
+              ),
+          )
+        ) {
+          for (const filter of filters)
+            report.queries.push({
+              community: communityOf(url),
+              filter,
+              at: performance.now(),
+            });
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
+        if (
+          filters.length === 3 &&
+          filters.every(
+            (filter) =>
+              filter.kinds?.length === 1 &&
+              [39000, 39001, 39002].includes(filter.kinds[0]),
+          )
+        ) {
+          expect(filters.map((filter) => filter.kinds[0])).toEqual([
+            39000, 39001, 39002,
+          ]);
+          expect(new Set(filters.map((filter) => filter["#d"]?.[0])).size).toBe(
+            1,
+          );
+          for (const filter of filters) {
+            expect(filter.limit).toBe(1);
+            report.queries.push({
+              community: communityOf(url),
+              filter,
+              at: performance.now(),
+            });
+          }
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
         if (filters.length !== 1) {
-          // The read-only sidebar projection reads the two exact coordinates.
-          expect(filters).toHaveLength(2);
+          // Sidebar preferences read only these four exact own-author coordinates.
+          expect(filters).toHaveLength(4);
           expect(filters.map((filter) => filter["#d"]?.[0]).sort()).toEqual([
+            "channel-mutes",
             "channel-sections",
+            "channel-sort",
             "channel-stars",
           ]);
           for (const filter of filters) {
@@ -282,7 +342,7 @@ export function policyRelay({
           quotas.delete(quota);
           rejected.push({
             channel,
-            until: performance.now() + (seconds + 1) * 1000,
+            retryAfterMs: (seconds + 1) * 1000,
           });
           return Response.json(
             { error: `rate-limited: quota exceeded; retry in ${seconds}s` },

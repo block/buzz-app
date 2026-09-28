@@ -18,6 +18,7 @@ import {
 } from "./message-content";
 
 import { channelRowKind, membershipChange } from "./membership";
+import { compareMessages, eventMs } from "./message-order";
 const HEX64 = /^[0-9a-f]{64}$/;
 
 function isLegacyVoiceNote(mime: string | undefined, name: string | undefined) {
@@ -158,11 +159,15 @@ function parseSummary(
     const body = objectBody(event.content);
     if (!body) return { replyCount: 0, participants: Object.freeze([]) };
     const replyCount =
-      typeof body.reply_count === "number" &&
-      Number.isInteger(body.reply_count) &&
-      body.reply_count >= 0
-        ? body.reply_count
-        : 0;
+      typeof body.descendant_count === "number" &&
+      Number.isInteger(body.descendant_count) &&
+      body.descendant_count >= 0
+        ? body.descendant_count
+        : typeof body.reply_count === "number" &&
+            Number.isInteger(body.reply_count) &&
+            body.reply_count >= 0
+          ? body.reply_count
+          : 0;
     const participants = Array.isArray(body.participants)
       ? body.participants.filter(
           (value): value is string =>
@@ -232,6 +237,7 @@ export function foldMessages(
             channelId,
             authorId: event.pubkey,
             createdAt: event.created_at,
+            createdAtMs: eventMs(event),
             content: "",
             membership,
             mentions: Object.freeze([]),
@@ -276,8 +282,10 @@ export function foldMessages(
         id: event.id,
         channelId,
         threadRootId: threadReference(event)?.rootId,
+        replyParentId: threadReference(event)?.parentId,
         authorId: event.pubkey,
         createdAt: event.created_at,
+        createdAtMs: eventMs(event),
         content: projected.content,
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
@@ -301,6 +309,18 @@ export function foldMessages(
         projected.content !== content.trimEnd()
           ? { attachmentContentRemoved: true as const }
           : {}),
+        mentionReferences: Object.freeze([
+          ...new Set(
+            event.tags.flatMap((tag) =>
+              tag.length === 2 &&
+              tag[0] === "mention" &&
+              tag[1] &&
+              HEX64.test(tag[1])
+                ? [tag[1]]
+                : [],
+            ),
+          ),
+        ]),
         mentions: Object.freeze([
           ...new Set(
             event.tags.flatMap(([name, value]) =>
@@ -318,25 +338,29 @@ export function foldMessages(
           edits[0]?.tags.some(([name]) => name === "emoji") ? edits[0] : event,
         ),
         reactions: groupReactions(
-          aux.filter((item) => item.kind === 7 && !deleted(item)),
+          aux.filter((item) => item.kind === 7),
+          deleted,
         ),
         ...parseSummary(summaries.get(event.id)),
       }),
     );
   }
-  return rows.sort(
-    (a, b) => a.createdAt - b.createdAt || b.id.localeCompare(a.id),
-  );
+  return rows.sort(compareMessages);
 }
 
 /** Count people, but retain event IDs for author-only removal and duplicate cleanup. */
-export function groupReactions(events: readonly EventData[]) {
+export function groupReactions(
+  events: readonly EventData[],
+  deleted: (event: EventData) => boolean = () => false,
+) {
   const groups = new Map<
     string,
     {
       content: string;
       emoji?: CustomEmoji;
       events: { id: string; authorId: string }[];
+      firstAt: number;
+      firstId: string;
     }
   >();
   for (const event of events) {
@@ -349,19 +373,34 @@ export function groupReactions(events: readonly EventData[]) {
       content,
       ...(emoji ? { emoji } : {}),
       events: [],
+      firstAt: event.created_at,
+      firstId: event.id,
     };
-    if (!group.events.some((entry) => entry.id === event.id))
+    if (
+      event.created_at < group.firstAt ||
+      (event.created_at === group.firstAt && event.id < group.firstId)
+    ) {
+      group.firstAt = event.created_at;
+      group.firstId = event.id;
+    }
+    if (!deleted(event) && !group.events.some((entry) => entry.id === event.id))
       group.events.push(
         Object.freeze({ id: event.id, authorId: event.pubkey }),
       );
     groups.set(key, group);
   }
   return Object.freeze(
-    [...groups.values()].map((group) =>
-      Object.freeze({
-        ...group,
-        events: Object.freeze(group.events),
-      }),
-    ),
+    [...groups.values()]
+      .filter((group) => group.events.length > 0)
+      .sort(
+        (a, b) => a.firstAt - b.firstAt || a.firstId.localeCompare(b.firstId),
+      )
+      .map(({ content, emoji, events }) =>
+        Object.freeze({
+          content,
+          ...(emoji ? { emoji } : {}),
+          events: Object.freeze(events),
+        }),
+      ),
   );
 }

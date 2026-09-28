@@ -21,24 +21,29 @@ const pendingSnapshot: EventViewSnapshot = Object.freeze({
   events: [],
 });
 
-/** "Managed by" from verifiable relay evidence only: a verified NIP-OA owner on
- * the agent's winning signed kind 0. Mounted for an agent hint, which decides
- * visibility but never who owns the key. Renders nothing without a verified owner. */
-export function ProfileAgentIdentity({
-  session,
-  pubkey,
-  viewer,
-  context,
-}: {
-  session: RelaySession;
-  pubkey: string;
-  viewer: string | undefined;
-  context: PanelProps["context"];
-}) {
+/** Verified NIP-OA owner of the winning signed kind 0, or none. Agent hints
+ * decide whether to mount this view; they never establish ownership.
+ * Private admission must inspect readiness as well as signed-head ownership.
+ * Public identity attribution may still display its retained signed evidence. */
+export function useAgentOwnerEvidence(
+  session: RelaySession,
+  pubkey: string | undefined,
+  attempt = 0,
+): {
+  status: "loading" | "ready" | "error" | "unavailable";
+  owner: string | undefined;
+  failed: boolean;
+  settled: boolean;
+} {
   // A session-owned view: live events, reconnect refresh and purge, no polling.
-  // Capacity or a closed session leaves no view; reopening the profile retries.
+  // Capacity or a closed session leaves no view; profile recovery retries.
   const [view, setView] = useState<ProfileView | null>();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt retries view admission.
   useEffect(() => {
+    if (!pubkey) {
+      setView(null);
+      return;
+    }
     let owned: ProfileView;
     try {
       owned = session.observe([{ kinds: [0], authors: [pubkey], limit: 1 }]);
@@ -48,7 +53,7 @@ export function ProfileAgentIdentity({
     }
     setView(owned);
     return owned.dispose;
-  }, [session, pubkey]);
+  }, [session, pubkey, attempt]);
   const events = useSyncExternalStore(
     view?.subscribe ?? noSubscribe,
     view?.snapshot ?? pendingView,
@@ -61,10 +66,10 @@ export function ProfileAgentIdentity({
   // Without a live view nothing can signal an auth-only change, so show nothing.
   const directoryHead = useSyncExternalStore(
     session.profiles.subscribe,
-    () => session.profiles.event?.(pubkey),
-    () => session.profiles.event?.(pubkey),
+    () => (pubkey ? session.profiles.event?.(pubkey) : undefined),
+    () => (pubkey ? session.profiles.event?.(pubkey) : undefined),
   );
-  const head = view ? directoryHead : undefined;
+  const head = view && pubkey ? directoryHead : undefined;
   const latest = events.events
     .filter(
       (event) =>
@@ -87,11 +92,70 @@ export function ProfileAgentIdentity({
   useEffect(() => {
     if (events.status === "idle") void view?.refresh();
   }, [view, events.status]);
-  const owner =
-    verified && latest && verified.id === latest.id
-      ? verified.owner
-      : undefined;
-  if (!owner) return null;
+  const settled = !!(verified && latest && verified.id === latest.id);
+  const owner = settled ? verified?.owner : undefined;
+  // Only an already admitted result from this observation may survive a
+  // background read. New heads, purges and failed reads must establish it anew.
+  const [admitted, setAdmitted] = useState<{
+    view: ProfileView;
+    id: string;
+  }>();
+  useEffect(() => {
+    setAdmitted((previous) => {
+      if (
+        events.status === "ready" &&
+        view &&
+        latest &&
+        latest.id === verified?.id
+      ) {
+        return previous?.view === view && previous.id === latest.id
+          ? previous
+          : { view, id: latest.id };
+      }
+      return events.status === "loading" &&
+        previous?.view === view &&
+        previous?.id === latest?.id
+        ? previous
+        : undefined;
+    });
+  }, [events.status, view, latest, verified]);
+  const refreshingAdmittedHead =
+    !!admitted &&
+    events.status === "loading" &&
+    admitted?.view === view &&
+    admitted?.id === latest?.id;
+  const status =
+    view === null
+      ? "unavailable"
+      : events.status === "error"
+        ? "error"
+        : !view ||
+            (events.status !== "ready" && !refreshingAdmittedHead) ||
+            (latest && verified?.id !== latest.id)
+          ? "loading"
+          : "ready";
+  return {
+    status,
+    owner,
+    failed: !!pubkey && (view === null || events.status === "error"),
+    // An absent event is conclusive only after its read completed. Failure or
+    // exhausted capacity must not unlock unverified legacy fallback.
+    settled:
+      !pubkey || settled || (!!view && !latest && events.status === "ready"),
+  };
+}
+
+export function ProfileAgentIdentity({
+  session,
+  owner,
+  viewer,
+  context,
+}: {
+  session: RelaySession;
+  owner: string;
+  viewer: string | undefined;
+  context: PanelProps["context"];
+}) {
   return (
     <section aria-label="Agent identity" className={styles.agentIdentity}>
       <h3 className="text-body">Managed by</h3>

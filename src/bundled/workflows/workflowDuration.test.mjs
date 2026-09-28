@@ -3,6 +3,7 @@ import { test } from "vitest";
 
 import {
   formatDurationSeconds,
+  formatDurationSecondsVerbose,
   parseDurationSeconds,
 } from "./workflowDuration.ts";
 
@@ -31,4 +32,20 @@ test("formatDurationSeconds produces compact labels with significant units", () 
   assert.equal(formatDurationSeconds(7_323), "2h 2m 3s");
   assert.equal(formatDurationSeconds(172_800), "2d");
   assert.equal(formatDurationSeconds(1_483_506), "2w 3d 4h 5m 6s");
+});
+
+test("formatDurationSecondsVerbose spells out units and pluralizes them", () => {
+  assert.equal(formatDurationSecondsVerbose(0), "0 seconds");
+  assert.equal(formatDurationSecondsVerbose(1), "1 second");
+  assert.equal(formatDurationSecondsVerbose(900), "15 minutes");
+  assert.equal(formatDurationSecondsVerbose(3_600), "1 hour");
+  assert.equal(
+    formatDurationSecondsVerbose(3_662),
+    "1 hour 1 minute 2 seconds",
+  );
+  assert.equal(
+    formatDurationSecondsVerbose(1_483_506),
+    "2 weeks 3 days 4 hours 5 minutes 6 seconds",
+  );
+  assert.equal(formatDurationSecondsVerbose(-1), "");
 });

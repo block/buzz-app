@@ -75,6 +75,7 @@ function setup() {
       ensure: async () => {},
     },
     channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
     media: () => undefined,
   } as unknown as RelaySession;
   function request(id: string) {
@@ -200,6 +201,13 @@ it("keeps a verified exact target readable if unrelated thread context fails", a
   // Let reveal run before teardown; rendering text alone can outrun its frame.
   await waitFor(() =>
     expect(selected.closest("[data-message-id]")).toHaveFocus(),
+  );
+  await waitFor(() =>
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({
+      block: "start",
+      inline: "nearest",
+      behavior: "instant",
+    }),
   );
   expect(navigation.complete).not.toHaveBeenCalled();
   await userEvent

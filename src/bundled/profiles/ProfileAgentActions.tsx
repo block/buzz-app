@@ -6,7 +6,7 @@ import {
   type AgentAction,
   type AgentControl,
 } from "../../features/agents/control";
-import { sameCommunityAgents } from "../../features/agents/choices";
+import { exactProfileAgent } from "../../features/profiles/instance-target";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -16,10 +16,12 @@ export function ProfileAgentActions({
   control,
   relay,
   pubkey,
+  instanceId,
 }: {
   control: AgentControl;
   relay: RelayData;
   pubkey: string;
+  instanceId?: string | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const state = useAgentControl(control);
@@ -38,12 +40,12 @@ export function ProfileAgentActions({
     restoreStartFocus.current = false;
   });
   if (connection.status !== "ready" || !connection.scope) return null;
-  const matches = sameCommunityAgents(
+  const agent = exactProfileAgent(
     state.data?.agents ?? [],
     connection.scope,
-  ).filter((agent) => agent.pubkey === pubkey);
-  // A native ID is actionable only when the identity/destination is unambiguous.
-  const agent = matches.length === 1 ? matches[0] : undefined;
+    pubkey,
+    instanceId,
+  );
   if (!agent && (state.status !== "error" || state.data)) return null;
   const startBlock = agent ? agentLaunchBlock(state, agent) : null;
   const act = (action: AgentAction) => {

@@ -1,3 +1,4 @@
+import { WORKFLOW_CHANNEL_BATCH, WORKFLOW_DEFINITION_LIMIT } from "./queries";
 import type { EventData } from "../relay/events";
 import type { RelayReader } from "../relay/reader";
 import type { Outbox, LocalEvents } from "../relay/outbox";
@@ -8,9 +9,11 @@ import type {
   WorkflowReference,
   WorkflowView,
   WorkflowDefinition,
+  WorkflowDefinitions,
 } from "./types";
 import {
   definition,
+  hookUrl,
   isWorkflowOperation,
   parseRuns,
   record,
@@ -27,6 +30,7 @@ export function createWorkflows({
   outbox,
   local,
   host,
+  relayHttpUrl,
   canAccess,
   notify = (listener: () => void) => listener(),
 }: {
@@ -35,6 +39,8 @@ export function createWorkflows({
   outbox: Outbox | undefined;
   local: LocalEvents | undefined;
   host: WorkflowHost | undefined;
+  /** Relay HTTP base for display only; hook URLs are never fetched from here. */
+  relayHttpUrl?: string | undefined;
   canAccess(channel: string): boolean;
   notify?: (listener: () => void) => void;
 }) {
@@ -52,6 +58,9 @@ export function createWorkflows({
     error?: string;
   };
   const results = new Map<string, Result>();
+  // One-time webhook secrets, keyed by save event ID, live here and nowhere
+  // else: not in results, operations, the journal or any error text.
+  const secrets = new Map<string, string>();
   const receiptInterest = new Set<string>();
   const availability = Object.freeze({
     definitions: !!reader,
@@ -102,6 +111,7 @@ export function createWorkflows({
                   outcome,
                   ...(result?.runId ? { runId: result.runId } : {}),
                   ...(error !== undefined ? { error } : {}),
+                  ...(secrets.has(item.event.id) ? { secretHeld: true } : {}),
                 }),
               ];
             })
@@ -109,6 +119,7 @@ export function createWorkflows({
         );
     const active = new Set(operations.map((op) => op.eventId));
     for (const id of results.keys()) if (!active.has(id)) results.delete(id);
+    for (const id of secrets.keys()) if (!active.has(id)) secrets.delete(id);
     for (const listener of listeners) notify(listener);
   }
   const stop = local?.subscribe(rebuild);
@@ -121,13 +132,21 @@ export function createWorkflows({
       );
   }
   function view<T>(
-    channelId: string,
+    channelId: string | readonly string[],
     available: boolean,
     empty: T,
     load: (signal: AbortSignal) => Promise<T>,
     accept?: (data: T) => void,
   ): WorkflowView<T> {
-    if (!UUID.test(channelId)) throw new Error("Invalid workflow channel");
+    const channelIds =
+      typeof channelId === "string" ? [channelId] : [...new Set(channelId)];
+    if (
+      !channelIds.length ||
+      channelIds.length > WORKFLOW_CHANNEL_BATCH ||
+      channelIds.some((id) => !UUID.test(id))
+    )
+      throw new Error("Invalid workflow channels");
+    const accessible = () => channelIds.every(canAccess);
     if (views.size >= 16)
       throw new Error("Too many workflow views; close another detail first");
     let disposed = false;
@@ -136,8 +155,7 @@ export function createWorkflows({
     const subscribers = new Set<() => void>();
     type Snapshot = ReturnType<WorkflowView<T>["snapshot"]>;
     let snapshot: Snapshot = Object.freeze({
-      status:
-        available && !closed && canAccess(channelId) ? "idle" : "unavailable",
+      status: available && !closed && accessible() ? "idle" : "unavailable",
       data: empty,
     });
     const emit = () => {
@@ -149,7 +167,7 @@ export function createWorkflows({
       pending = undefined;
       snapshot = Object.freeze({
         status:
-          available && !closed && !disposed && canAccess(channelId)
+          available && !closed && !disposed && accessible()
             ? "idle"
             : "unavailable",
         data: empty,
@@ -161,8 +179,9 @@ export function createWorkflows({
         controller?.abort();
         controller = undefined;
         pending = undefined;
-        if (snapshot.status === "idle" || snapshot.status === "unavailable")
-          return;
+        // Even an idle invalidation observer must distinguish interruption
+        // (retain copied data) from clear/access loss (purge it).
+        if (snapshot.status === "unavailable") return;
         snapshot = Object.freeze({
           status: "error",
           data: snapshot.data,
@@ -190,7 +209,7 @@ export function createWorkflows({
       },
       refresh() {
         if (closed || disposed || !available) return Promise.resolve();
-        if (!canAccess(channelId)) {
+        if (!accessible()) {
           clear();
           emit();
           return Promise.resolve();
@@ -206,7 +225,7 @@ export function createWorkflows({
         pending = Promise.resolve()
           .then(() => {
             signal.throwIfAborted();
-            if (!canAccess(channelId))
+            if (!accessible())
               throw new Error("Workflow channel access unavailable");
             return load(signal);
           })
@@ -216,7 +235,7 @@ export function createWorkflows({
               disposed ||
               controller !== owned ||
               signal.aborted ||
-              !canAccess(channelId)
+              !accessible()
             )
               return;
             snapshot = Object.freeze({ status: "ready", data });
@@ -294,7 +313,9 @@ export function createWorkflows({
   const capability = Object.freeze<WorkflowCapability>({
     availability,
     definitions(channelId) {
-      return view(
+      const channelIds =
+        typeof channelId === "string" ? [channelId] : [...new Set(channelId)];
+      return view<WorkflowDefinitions>(
         channelId,
         !!reader,
         Object.freeze({
@@ -304,15 +325,24 @@ export function createWorkflows({
         async (signal) => {
           if (!reader) throw new Error("Workflow definitions unavailable");
           const events = await reader.read(
-            [{ kinds: [30620], "#h": [channelId], limit: 100 }],
+            channelIds.map((id) => ({
+              kinds: [30620],
+              "#h": [id],
+              limit: WORKFLOW_DEFINITION_LIMIT,
+            })),
             { signal, fresh: true },
           );
           const coordinates = new Map<string, WorkflowDefinition>();
+          const counts = new Map<string, number>();
+          const seen = new Set<string>();
           for (const event of events) {
+            if (seen.has(event.id)) continue;
+            seen.add(event.id);
             const row = definition(event);
-            if (row.channelId !== channelId)
+            if (!channelIds.includes(row.channelId))
               throw new Error("Mismatched workflow channel");
-            const key = `${row.owner}:${row.id}`;
+            counts.set(row.channelId, (counts.get(row.channelId) ?? 0) + 1);
+            const key = `${row.channelId}:${row.owner}:${row.id}`;
             const old = coordinates.get(key);
             if (
               !old ||
@@ -321,9 +351,15 @@ export function createWorkflows({
             )
               coordinates.set(key, row);
           }
+          const partialChannelIds = Object.freeze(
+            channelIds.filter(
+              (id) => (counts.get(id) ?? 0) >= WORKFLOW_DEFINITION_LIMIT,
+            ),
+          );
           return Object.freeze({
             items: Object.freeze([...coordinates.values()]),
-            partial: events.length >= 100,
+            partial: partialChannelIds.length > 0,
+            partialChannelIds,
           });
         },
         ({ items }) => {
@@ -344,7 +380,8 @@ export function createWorkflows({
             )
               continue;
             results.set(op.eventId, { outcome: "succeeded" });
-            receiptInterest.delete(op.eventId);
+            // Exact readback proves the configuration, not delivery of the
+            // one-time webhook secret. The pending receipt still owns that.
             changed = true;
           }
           if (changed) rebuild();
@@ -382,6 +419,16 @@ export function createWorkflows({
     trigger(workflow) {
       return send(46020, workflow);
     },
+    takeWebhookSecret(eventId) {
+      const secret = secrets.get(eventId);
+      if (secret === undefined) return undefined;
+      secrets.delete(eventId);
+      rebuild();
+      return secret;
+    },
+    webhookUrl(workflowId) {
+      return relayHttpUrl ? hookUrl(relayHttpUrl, workflowId) : undefined;
+    },
     operations: Object.freeze<WorkflowCapability["operations"]>({
       snapshot: () => operations,
       subscribe(listener) {
@@ -415,7 +462,8 @@ export function createWorkflows({
     receipt(event: EventData, message: string | undefined) {
       if (closed || !receiptInterest.delete(event.id)) return;
       if (message === undefined) {
-        results.delete(event.id);
+        if (results.get(event.id)?.outcome !== "succeeded")
+          results.delete(event.id);
         rebuild();
         return;
       }
@@ -434,11 +482,20 @@ export function createWorkflows({
             (event.kind === 46020
               ? value.workflow_id === undefined ||
                 value.workflow_id === reference.id
-              : value.workflow_id === reference.id) &&
-            value.webhook_secret === undefined
+              : value.workflow_id === reference.id)
           ) {
-            if (event.kind === 30620) result = { outcome: "succeeded" };
-            else if (
+            const secret = value.webhook_secret;
+            // Only a save receives a secret, and only when the workflow first
+            // gains a webhook trigger. Hold it for one UI take; never store it
+            // on the result.
+            if (event.kind === 30620) {
+              if (secret === undefined || typeof secret === "string") {
+                result = { outcome: "succeeded" };
+                if (typeof secret === "string") secrets.set(event.id, secret);
+              }
+            } else if (secret !== undefined) {
+              /* Unexpected secret on a run or deletion: stay unknown. */
+            } else if (
               event.kind === 46020 &&
               typeof value.run_id === "string" &&
               UUID.test(value.run_id)
@@ -451,7 +508,12 @@ export function createWorkflows({
       } catch {
         /* Do not leak receipt text into errors/journal. */
       }
-      results.set(event.id, result);
+      // An unavailable/malformed receipt cannot undo verified exact readback.
+      if (
+        result.outcome === "succeeded" ||
+        results.get(event.id)?.outcome !== "succeeded"
+      )
+        results.set(event.id, result);
       rebuild();
     },
     interrupt() {
@@ -461,6 +523,7 @@ export function createWorkflows({
     },
     clear() {
       results.clear();
+      secrets.clear();
       receiptInterest.clear();
       for (const owned of views) owned.clear();
       rebuild();
@@ -472,6 +535,7 @@ export function createWorkflows({
       closed = true;
       for (const owned of [...views]) owned.dispose();
       results.clear();
+      secrets.clear();
       receiptInterest.clear();
       stop?.();
       rebuild();

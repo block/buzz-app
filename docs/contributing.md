@@ -100,7 +100,11 @@ need their own validation.
 - To open the default relay's community on a fresh dev port, set
   `BUZZ_DEV_OPEN_RELAY=1` alongside `BUZZ_RELAY_URL` in `.env.local` and restart
   the server. Only `1` enables it; a viewer's existing saved choice on that port,
-  including Personal space, wins. Production builds ignore the variable.
+  including Personal space, wins. Production builds ignore the variable. The OG
+  `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` name is a **presence-only dev alias**:
+  even empty, `0` or `false` enables it when `BUZZ_DEV_OPEN_RELAY` is absent.
+  Explicit `BUZZ_DEV_OPEN_RELAY=0` opts out. Neither input provides packaged relay
+  connectivity. See [configuration parity](configuration.md).
 - `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
   eventually start local Docker services including the Buzz relay backend.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe
@@ -316,7 +320,7 @@ the complete suite still runs with `pnpm test` / `just scan`:
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
-- **Browser journeys:** four runners (Chromium and WebKit, two file-level shards
+- **Browser journeys:** six runners (Chromium and WebKit, three file-level shards
   per engine), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. Each runner builds the native
   plugin-manager fixture in a separately logged setup step before starting

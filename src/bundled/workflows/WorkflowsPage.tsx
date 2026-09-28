@@ -1,12 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import type { WorkflowDefinition } from "../../features/workflows/types";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import {
+  ArrowLeftIcon,
+  ArrowsClockwiseIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { WorkflowEditor } from "./WorkflowEditor";
+import { DEFAULT_FORM_STATE, formStateToYaml } from "./workflowFormTypes";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Select } from "../../shared/design-system/ui/Select";
+import { WorkflowChannelPicker } from "./WorkflowChannelPicker";
 import { WorkflowChannel } from "./WorkflowChannel";
-import { ConfirmAction } from "./ConfirmAction";
+import { WorkflowWebhookSecrets } from "./WorkflowWebhookSecrets";
+import { WorkflowLanding } from "./WorkflowLanding";
 import "./workflows.css";
 
 export function WorkflowsPage({ relay }: { relay: RelayData }) {
@@ -14,11 +24,6 @@ export function WorkflowsPage({ relay }: { relay: RelayData }) {
   return (
     <Panel aria-label="Workflows">
       <div className="workflows-page text-body">
-        <h1 className="text-title">Workflows</h1>
-        <p className="text-secondary">
-          Saved automation configurations for this community. The relay runs
-          workflows, even when this page is closed.
-        </p>
         {connection.status === "ready" ? (
           <WorkflowCommunity
             key={`${connection.scope}:${connection.generation}`}
@@ -26,19 +31,31 @@ export function WorkflowsPage({ relay }: { relay: RelayData }) {
             viewer={connection.viewer ?? ""}
           />
         ) : (
-          <div>
-            <p>
-              {connection.status === "connecting"
-                ? "Connecting to your community…"
-                : "Connect to a community to browse workflows."}
-            </p>
-            {connection.status === "error" && (
-              <>
-                <p role="alert">{connection.error}</p>
-                <Button onClick={() => relay.retry()}>Retry connection</Button>
-              </>
-            )}
-          </div>
+          <>
+            <header className="workflow-page-header">
+              <div>
+                <h1 className="text-title">Workflows</h1>
+                <p className="text-secondary">
+                  Automations that keep your community moving.
+                </p>
+              </div>
+            </header>
+            <div className="workflow-page-state">
+              <p>
+                {connection.status === "connecting"
+                  ? "Connecting to your community…"
+                  : "Connect to a community to browse workflows."}
+              </p>
+              {connection.status === "error" && (
+                <>
+                  <p role="alert">{connection.error}</p>
+                  <Button onClick={() => relay.retry()}>
+                    Retry connection
+                  </Button>
+                </>
+              )}
+            </div>
+          </>
         )}
       </div>
     </Panel>
@@ -54,18 +71,73 @@ export function WorkflowCommunity({
   const capability = session.workflows;
   const channels = useChannelList(session.channels);
   const [selected, setSelected] = useState("");
-  const [draftAtRisk, setDraftAtRisk] = useState(false);
-  const [pendingChannel, setPendingChannel] = useState<string | null>(null);
+  const [selectedDefinition, setSelectedDefinition] = useState<
+    WorkflowDefinition | "new" | undefined
+  >();
+  const [initialAction, setInitialAction] = useState<
+    "run" | "delete" | undefined
+  >();
+  const [refreshRequest, setRefreshRequest] = useState(0);
+  const [saveReadback, setSaveReadback] =
+    useState<Pick<WorkflowDefinition, "channelId" | "revision">>();
+  const [createOpen, setCreateOpen] = useState(false);
   const channel = channels.channels.find((item) => item.id === selected);
-  if (!capability)
+  useEffect(() => {
+    if (
+      !selected ||
+      channel ||
+      channels.status !== "ready" ||
+      channels.coverage === "partial"
+    )
+      return;
+    setSelected("");
+    setSelectedDefinition(undefined);
+  }, [channel, channels.coverage, channels.status, selected]);
+  if (!capability) {
     return (
-      <p role="status">Workflow operations are unavailable from this host.</p>
+      <>
+        <WorkflowPageHeader />
+        <p role="status">Workflow operations are unavailable from this host.</p>
+      </>
     );
+  }
+
+  const openChannel = (
+    next: string,
+    definition?: WorkflowDefinition | "new",
+    action?: "run" | "delete",
+  ) => {
+    setInitialAction(action);
+    setSelectedDefinition(definition);
+    setSelected(next);
+  };
+  const changeChannel = (next: string) => {
+    if (next === selected) return;
+    openChannel(next);
+  };
+  const beginCreate = () => setCreateOpen(true);
+
   return (
     <>
+      <WorkflowPageHeader
+        action={
+          channel && selectedDefinition === undefined ? (
+            <Button onClick={() => changeChannel("")} variant="ghost">
+              <ArrowLeftIcon size={16} aria-hidden="true" />
+              All workflows
+            </Button>
+          ) : (
+            <IconButton
+              aria-label="Refresh workflows"
+              icon={<ArrowsClockwiseIcon size={18} aria-hidden="true" />}
+              onClick={() => setRefreshRequest((request) => request + 1)}
+            />
+          )
+        }
+      />
       {channels.status === "loading" && <p role="status">Reading channels…</p>}
       {channels.status === "error" && (
-        <div>
+        <div className="workflow-page-state">
           <p role="alert" className="text-danger">
             {channels.error ?? "Channels could not be read."}
           </p>
@@ -74,61 +146,105 @@ export function WorkflowCommunity({
           </Button>
         </div>
       )}
-      {channels.channels.length > 0 && (
-        <Select
-          label="Channel"
-          value={channel?.id ?? ""}
-          groups={[
-            {
-              label: "Community channels",
-              options: [
-                { value: "", label: "Choose a channel" },
-                ...channels.channels.map((item) => ({
-                  value: item.id,
-                  label: item.name,
-                })),
-              ],
-            },
-          ]}
-          onValueChange={(next) => {
-            if (next === selected) return;
-            if (draftAtRisk) setPendingChannel(next);
-            else setSelected(next);
-          }}
-        />
+      {channels.channels.length > 0 && selectedDefinition === undefined && (
+        <div className="workflow-page-filter">
+          <Select
+            label="Channel"
+            value={channel?.id ?? ""}
+            groups={[
+              {
+                label: "Community channels",
+                options: [
+                  { value: "", label: "All workflows" },
+                  ...channels.channels.map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                  })),
+                ],
+              },
+            ]}
+            onValueChange={changeChannel}
+          />
+        </div>
       )}
       {channels.status === "ready" && !channels.channels.length && (
-        <p>No channels are available in this community.</p>
+        <div className="workflow-page-state">
+          <p>No channels are available in this community.</p>
+        </div>
       )}
       {channels.coverage === "partial" && (
         <p className="text-secondary">The channel list is partial.</p>
       )}
-      {pendingChannel !== null && (
-        <ConfirmAction
-          title="Change channel?"
-          description="Unsaved draft changes will be discarded. Submitted operations remain with their original channel; switching does not cancel or repeat them."
-          action="Change channel"
-          onCancel={() => setPendingChannel(null)}
-          onConfirm={() => {
-            setSelected(pendingChannel);
-            setPendingChannel(null);
-          }}
-        />
-      )}
+      {(!channel || selectedDefinition !== undefined) &&
+        channels.channels.length > 0 && (
+          <WorkflowLanding
+            capability={capability}
+            channels={channels.channels}
+            onCreate={beginCreate}
+            onOpen={(definition, nextChannel, action) =>
+              openChannel(nextChannel.id, definition, action)
+            }
+            refreshRequest={refreshRequest}
+            saveReadback={saveReadback}
+            viewer={viewer}
+          />
+        )}
       {channel ? (
         <WorkflowChannel
-          key={channel.id}
+          key={`${channel.id}:${
+            typeof selectedDefinition === "object"
+              ? selectedDefinition.revision
+              : (selectedDefinition ?? "browse")
+          }`}
           capability={capability}
           channelId={channel.id}
           channelName={channel.name}
+          initialSelection={selectedDefinition}
+          initialAction={initialAction}
+          onSaveReadback={setSaveReadback}
           viewer={viewer}
-          onDraftRiskChange={setDraftAtRisk}
+          {...(selectedDefinition === undefined
+            ? {}
+            : { onClose: () => openChannel("") })}
         />
-      ) : (
-        channels.channels.length > 0 && (
-          <p>Choose a channel to read its saved configurations.</p>
-        )
+      ) : null}
+      <WorkflowWebhookSecrets capability={capability} />
+      {createOpen && (
+        <WorkflowEditor
+          create
+          chooseChannel
+          yaml={formStateToYaml({
+            ...DEFAULT_FORM_STATE,
+            name: "Untitled workflow",
+          })}
+          onChange={() => {}}
+          onSave={() => {}}
+          onCancel={() => setCreateOpen(false)}
+          scope={
+            <WorkflowChannelPicker
+              channels={channels.channels}
+              onSelect={(id) => {
+                setCreateOpen(false);
+                openChannel(id, "new");
+              }}
+            />
+          }
+        />
       )}
     </>
+  );
+}
+
+function WorkflowPageHeader({ action }: { action?: ReactNode }) {
+  return (
+    <header className="workflow-page-header">
+      <div>
+        <h1 className="text-title">Workflows</h1>
+        <p className="text-secondary">
+          Automations that keep your community moving.
+        </p>
+      </div>
+      {action && <div className="workflow-page-action">{action}</div>}
+    </header>
   );
 }

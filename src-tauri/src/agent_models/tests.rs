@@ -87,7 +87,7 @@ impl Connection for Arc<Fake> {
 }
 fn request(dir: &std::path::Path, id: &str, action: &str) -> Value {
     json!({"id":id,"expectedRevision":1,"host":"https://workspace.example.com","filter":"", "action":action,
-    "edit":{"name":"Sample","systemPrompt":"Original","workspace":dir.to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"custom-unchanged","provider":"databricks_v2"},"environment":{}}})
+    "edit":{"name":"Sample","systemPrompt":"Original","workspace":dir.to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"custom-unchanged","provider":"databricks_v2","databricks":{"host":"https://workspace.example.com","filter":""}},"environment":{}}})
 }
 
 #[test]
@@ -166,6 +166,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     assert!(!result.to_string().contains("DO_NOT_PROJECT"));
     let mut filtered = req.clone();
     filtered["filter"] = json!("endpoint-*");
+    filtered["edit"]["harness"]["databricks"]["filter"] = filtered["filter"].clone();
     let filtered_result = call(filtered).unwrap();
     assert_eq!(
         filtered_result["models"],
@@ -198,6 +199,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     fake.failure.store(0, Ordering::SeqCst);
     let mut other = req.clone();
     other["host"] = json!("https://other.example.com");
+    other["edit"]["harness"]["databricks"]["host"] = other["host"].clone();
     call(other).unwrap();
     assert_eq!(fake.opened.lock().unwrap().last().unwrap().1, first_cache);
     let count = fake.opened.lock().unwrap().len();
@@ -426,26 +428,6 @@ fn workspace_policy_and_cache_are_canonical_and_separate() {
         a.cache("https://example.com").unwrap(),
         b.cache("https://example.com").unwrap()
     );
-}
-#[path = "../../build_config.rs"]
-mod build_config;
-#[test]
-fn private_build_allowlist_excludes_secrets_and_does_not_rewrite_model() {
-    assert_eq!(
-        build_config::parse("").unwrap(),
-        (String::new(), String::new())
-    );
-    assert_eq!(build_config::parse("DATABRICKS_HOST=https://example.com\nDATABRICKS_MODEL=unused\nDATABRICKS_MODEL_FILTER=foo*").unwrap(),("https://example.com".into(),"foo*".into()));
-    for raw in [
-        "DATABRICKS_TOKEN=NEVER_PRINT",
-        "OTHER=NEVER_PRINT",
-        "DATABRICKS_HOST=x\nDATABRICKS_HOST=y",
-        "malformed",
-    ] {
-        assert!(!build_config::parse(raw)
-            .unwrap_err()
-            .contains("NEVER_PRINT"));
-    }
 }
 
 #[cfg(unix)]

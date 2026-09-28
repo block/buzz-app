@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 const parent = "11111111-1111-4111-8111-111111111111";
@@ -13,21 +14,21 @@ test("global search opens a child session without changing collapsed sidebar lev
   app,
 }) => {
   await page.goto(app.origin);
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const parentRow = page.locator(`button[data-channel-id="${parent}"]`);
   const child = sidebar.locator('button[data-channel-id="alpha"]');
-  const section = sidebar.locator("details").filter({ has: parentRow });
+  const section = sidebar
+    .locator("[data-sidebar-section]")
+    .filter({ has: parentRow });
+  const disclosure = section.locator("details");
   await expect(child).toBeVisible();
   await sidebar
     .getByRole("button", { name: `Collapse sessions in ${parent}` })
     .click();
   await expect(child).toBeHidden();
   await section.locator("summary").click();
-  await expect(section).not.toHaveAttribute("open");
+  await expect(disclosure).not.toHaveAttribute("open");
 
   await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
@@ -53,15 +54,9 @@ test("global search opens a child session without changing collapsed sidebar lev
   ).toBeVisible();
 
   // Remount so accidental onToggle persistence cannot be hidden by local state.
-  await page
-    .getByRole("button", { name: "Projects", exact: true })
-    .first()
-    .click();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
-  await expect(section).not.toHaveAttribute("open");
+  await openPage(page, "Projects");
+  await openPage(page, "Messages");
+  await expect(disclosure).not.toHaveAttribute("open");
   await section.locator("summary").focus();
   await page.keyboard.press("Enter");
   await expect(
@@ -69,5 +64,5 @@ test("global search opens a child session without changing collapsed sidebar lev
   ).toBeVisible();
   await expect(child).toBeHidden();
   await page.keyboard.press("Space");
-  await expect(section).not.toHaveAttribute("open");
+  await expect(disclosure).not.toHaveAttribute("open");
 });

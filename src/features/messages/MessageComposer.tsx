@@ -1,3 +1,16 @@
+import { animate, useReducedMotion } from "motion/react";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { SelectedMentionContext } from "./selected-mention-context";
+import { DraftMentionRoster } from "./draft-mention-roster";
+import {
+  archivedMention,
+  mentionCandidates,
+  rememberMention,
+} from "./mention-candidates";
+import {
+  readComposerSnapshot,
+  composerMarkdownContext,
+} from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { npubEncode } from "nostr-tools/nip19";
 import type { ChannelMessage } from "../relay/contracts";
@@ -5,7 +18,7 @@ import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { enrollMentionedAgents } from "../agents/mention-enrollment";
+import { useNonmemberMentions } from "./useNonmemberMentions";
 import { knownAgentPubkeys } from "../agents/known";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberAgentsPreference } from "./mention-preferences";
@@ -21,7 +34,9 @@ import {
 import { ComposerAttachments } from "./ComposerAttachments";
 import { useAttachmentDraft } from "./attachment-draft";
 import {
+  useContext,
   useEffect,
+  useCallback,
   useId,
   useLayoutEffect,
   useRef,
@@ -85,8 +100,12 @@ export type MessageComposerProps = {
   onOpenLink?: ((target: string) => boolean) | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  replyParentId?: string | undefined;
+  replyContext?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
+  /** Focus once when this conversation mounts, not when overlays close. */
+  autoFocus?: boolean;
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
@@ -129,8 +148,11 @@ function Composer({
   onOpenLink,
   canOpenLink,
   threadRootId,
+  replyParentId,
+  replyContext,
   mediaTimeSeconds,
   clearMediaTime,
+  autoFocus = false,
   focusRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
@@ -153,7 +175,11 @@ function Composer({
   const readOnly =
     !submission &&
     !!session.channels?.get &&
-    !list.channels.some((channel) => channel.id === channelId);
+    !list.channels.some(
+      (channel) => channel.id === channelId && !channel.readOnly,
+    );
+  const cached = !!list.channels.find((channel) => channel.id === channelId)
+    ?.cached;
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
@@ -161,6 +187,8 @@ function Composer({
   useLayoutEffect(() => {
     if (disabled) sendAttempt.current?.abort();
   }, [disabled]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
+  useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
   const inputId = useId();
   const draftKey =
     submission?.draftKey ??
@@ -182,6 +210,7 @@ function Composer({
   const parentChannelId = list.channels.find(
     (item) => item.id === channelId,
   )?.parentChannelId;
+  const mentionRoster = useContext(DraftMentionRoster);
   const agentChoices = inviteAgents || !!sessionConversation;
   const [value, updateDraft] = useState(() =>
     mentionDraft(
@@ -193,6 +222,30 @@ function Composer({
   const valueRef = useRef(value);
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const focusOnMount = useRef(
+    autoFocus && !disabled && typeof document !== "undefined"
+      ? document.activeElement
+      : undefined,
+  );
+  useEffect(() => {
+    // A navigation/dialog owner may restore focus during this commit. Let that
+    // explicit handoff win over the conversation's default initial focus.
+    const previous = focusOnMount.current;
+    if (
+      previous &&
+      (previous === document.activeElement ||
+        (!previous.isConnected && document.activeElement === document.body))
+    ) {
+      const editor = input.current;
+      if (!editor) return;
+      const end = editor.value.length;
+      editor.setSelectionRange(end, end);
+      editor.focus();
+    }
+  }, []);
+  const nonmembers = useNonmemberMentions(session, channelId, () =>
+    input.current?.focus(),
+  );
   useEffect(() => {
     if (focusRequest) input.current?.focus();
   }, [focusRequest]);
@@ -211,6 +264,7 @@ function Composer({
     return true;
   };
   const [error, setError] = useState<string>();
+  const [attachmentError, setAttachmentError] = useState<string>();
   const focusRestoredDraft = useRef(false);
   const beforeEdit = useRef<
     { value: MentionDraft; restore(): void } | undefined
@@ -268,11 +322,11 @@ function Composer({
   function attachFiles(files: readonly File[]) {
     if (editingDisabled || !files.length) return;
     if (editing.target) {
-      setError("Finish editing before attaching new files.");
+      setAttachmentError("Finish editing before attaching new files.");
       return;
     }
     if (!canAttach) {
-      setError(
+      setAttachmentError(
         submission
           ? "Create this conversation before attaching files."
           : "Uploads are unavailable on this connection.",
@@ -281,9 +335,9 @@ function Composer({
     }
     try {
       attachments.store.add(files);
-      setError(undefined);
+      setAttachmentError(undefined);
     } catch (reason) {
-      setError(
+      setAttachmentError(
         reason instanceof Error ? reason.message : "Could not attach files.",
       );
     }
@@ -345,6 +399,17 @@ function Composer({
       text = `nostr:${npubEncode(recipient.pubkey)} `;
       recipient = undefined;
     }
+    if (
+      recipient &&
+      !mentionCandidates(session, channelId, agentChoices, mentionRoster, [
+        recipient,
+      ]).some((c) => c.recipient.pubkey === recipient.pubkey)
+    ) {
+      setError(
+        "This recipient is no longer available. Remove it or refresh choices.",
+      );
+      return false;
+    }
     if (recipient && valueRef.current.recipients.length >= 32) {
       setError("Choose at most 32 recipients");
       return false;
@@ -354,6 +419,7 @@ function Composer({
       setError("Message is too long to insert text");
       return false;
     }
+    if (recipient) rememberMention(session, channelId, recipient.pubkey);
     setError(undefined);
     return true;
   }
@@ -372,12 +438,23 @@ function Composer({
     edit: CompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
+    key?: string,
   ) {
     if (
       !completion.valid(observation) ||
       valueRef.current.text !== observation.text
     )
       return false;
+    if (key === " ") {
+      const doc = readComposerSnapshot(valueRef.current.document);
+      if (
+        doc &&
+        composerMarkdownContext(doc).protected.some(
+          (r) => query.start < r.end && query.end > r.start,
+        )
+      )
+        return false;
+    }
     if ("mention" in edit && edit.mention)
       return insert(`@${edit.mention.name} `, edit.mention, query);
     return (
@@ -453,10 +530,15 @@ function Composer({
     const captured = valueRef.current;
     const capturedAttachments = attachments.store.snapshot();
     try {
+      if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
+        throw new Error(
+          "A selected recipient is archived. Remove it before sending.",
+        );
       if (submission) {
         submission.submit(captured);
         return;
       }
+      let references: readonly string[] = [];
       let recipients = captured.recipients.length
         ? captured.recipients.map((item) => item.pubkey)
         : selectedAgent
@@ -467,28 +549,32 @@ function Composer({
         setAdmitting(true);
         recipients = await prepareRecipients(recipients);
       } else if (recipients.length) {
-        const members = session.channels
+        const channel = session.channels
           .list()
-          .channels.find((item) => item.id === channelId)?.members;
-        const missing = recipients.filter((key) => !members?.includes(key));
-        // Removed people/legacy members go straight to session validation,
-        // without entering the asynchronous enrollment lock or making writes.
-        const managed = session.agentChoices.snapshot().identities;
+          .channels.find((item) => item.id === channelId);
         if (
-          missing.length &&
-          missing.every((key) =>
-            managed.some((agent) => agent.managed && agent.pubkey === key),
-          )
+          (channel?.channelType === "stream" ||
+            channel?.channelType === "forum") &&
+          channel.members
         ) {
-          setSending(true);
-          setError(undefined);
-          await enrollMentionedAgents(
-            session,
-            scope,
-            channelId,
-            recipients,
-            attempt.signal,
+          const missing = captured.recipients.filter(
+            (person) => !channel.members?.includes(person.pubkey),
           );
+          if (missing.length) {
+            setSending(true);
+            setError(undefined);
+            const decision = await nonmembers.prepare(
+              missing,
+              attempt.signal,
+              () =>
+                valueRef.current === captured &&
+                attachments.store.snapshot() === capturedAttachments &&
+                permitted.current,
+            );
+            if (decision === null) return;
+            references = decision;
+            recipients = recipients.filter((key) => !references.includes(key));
+          }
         }
       }
       attempt.signal.throwIfAborted();
@@ -511,8 +597,19 @@ function Composer({
             content,
             recipients,
             uploaded,
+            ...(replyParentId || references.length ? [replyParentId] : []),
+            ...(references.length ? [references] : []),
           )
-        : session.messages.send(channelId, content, recipients, uploaded);
+        : references.length
+          ? session.messages.send(
+              channelId,
+              content,
+              recipients,
+              uploaded,
+              undefined,
+              references,
+            )
+          : session.messages.send(channelId, content, recipients, uploaded);
       attachments.store.clear();
       onSend?.(id);
       completion.invalidate();
@@ -523,7 +620,16 @@ function Composer({
       );
       const next = followupDraft(
         rememberAgentsPreference()
-          ? captured.recipients.filter((item) => agents.has(item.pubkey))
+          ? captured.recipients.filter(
+              (item) =>
+                agents.has(item.pubkey) &&
+                mentionCandidates(
+                  session,
+                  channelId,
+                  agentChoices,
+                  mentionRoster,
+                ).some((c) => c.recipient.pubkey === item.pubkey),
+            )
           : [],
       );
       const changed = saveDraft(next);
@@ -599,7 +705,7 @@ function Composer({
       )}
     </>
   );
-  if (!outbox?.supports(9))
+  if (!outbox?.supports(9) && !cached)
     return (
       <>
         {accessories}
@@ -614,8 +720,9 @@ function Composer({
       </>
     );
   return (
-    <>
+    <SelectedMentionContext.Provider value={value.recipients}>
       {accessories}
+      {nonmembers.dialog}
       <form
         ref={form}
         className={styles.composer}
@@ -692,117 +799,127 @@ function Composer({
             threadRootId={threadRootId}
             inviteAgents={agentChoices && !editing.target}
             replace={replaceCompletion}
+            resolved={value}
           />
         )}
-        {sending && <p role="status">Adding agent to this channel…</p>}
         {dragging && <p role="status">Drop files to attach</p>}
-        <ComposerAttachments
-          media={session.media}
-          items={attachments.items}
-          disabled={editingDisabled}
-          remove={attachments.store.remove}
-          retry={attachments.store.retry}
-        />
-        <div className={styles.composerInput}>
-          <RichComposerInput
-            inviteAgents={agentChoices}
-            ref={input}
-            id={inputId}
-            disabled={editingDisabled}
-            value={draft}
-            draft={value}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            extensions={extensions}
-            emoji={emojiCatalog.entries}
-            onDraftChange={(next) => {
-              saveDraft(next);
-              completion.observe(true);
-            }}
-            onFormatsChange={setActiveFormats}
-            onEditLink={setLinkEdit}
-            data-single-emoji={largeEmojiDraft || undefined}
-            maxLength={16000}
-            aria-label={label}
-            placeholder={placeholder ?? label}
-            onFocus={() => completion.observe(true)}
-            onBlur={() => {
-              completion.invalidate();
-            }}
-            onSelect={() => {
-              completion.observe();
-            }}
-            onCompositionStart={() => {
-              completion.composing.current = true;
-              completion.invalidate();
-            }}
-            onCompositionEnd={() => {
-              completion.composing.current = false;
-              completion.observe(true);
-            }}
-            onKeyDown={(event) => {
-              if (
-                event.nativeEvent.isComposing ||
-                event.nativeEvent.keyCode === 229 ||
-                completion.composing.current
-              )
-                return;
-              if (
-                event.shiftKey &&
-                ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
-              ) {
-                completion.invalidate();
-                return;
-              }
-              if (completion.keys.current?.(event)) return;
-              if (
-                event.key === "ArrowUp" &&
-                !event.shiftKey &&
-                !event.altKey &&
-                !event.ctrlKey &&
-                !event.metaKey &&
-                !event.repeat &&
-                !event.defaultPrevented &&
-                !editingDisabled &&
-                !editDisabled &&
-                !submission &&
-                !editing.target &&
-                event.currentTarget.value === "" &&
-                !valueRef.current.recipients.length &&
-                !attachments.items.length
-              ) {
-                const target = lastEditableMessage(session, editableRows());
-                if (target) {
-                  event.preventDefault();
-                  completion.invalidate();
-                  beforeEdit.current = {
-                    value: valueRef.current,
-                    restore: event.currentTarget.checkpoint(),
-                  };
-                  const next = mentionDraft(editing.start(target));
-                  valueRef.current = next;
-                  updateDraft(next);
-                  event.currentTarget.reset(next);
-                  setLinkEdit(null);
-                  caret.current = next.text.length;
-                  setError(undefined);
-                }
-                return;
-              }
-              if (
-                event.key === "Enter" &&
-                !event.shiftKey &&
-                !event.altKey &&
-                !event.ctrlKey &&
-                !event.metaKey
-              ) {
-                event.preventDefault();
-                if (!event.repeat || !editing.target) send();
-              }
-            }}
+        {attachmentError && (
+          <ToastNotice
+            title="Could not attach file"
+            description={attachmentError}
+            onDismiss={() => setAttachmentError(undefined)}
           />
+        )}
+        <div className={styles.composerContent}>
+          <ComposerAttachments
+            media={session.media}
+            items={attachments.items}
+            disabled={editingDisabled}
+            remove={attachments.store.remove}
+            retry={attachments.store.retry}
+          />
+          <div className={styles.composerInput}>
+            <RichComposerInput
+              inviteAgents={agentChoices}
+              ref={input}
+              id={inputId}
+              disabled={editingDisabled}
+              value={draft}
+              draft={value}
+              session={session}
+              scope={scope}
+              channelId={channelId}
+              extensions={extensions}
+              emoji={emojiCatalog.entries}
+              onDraftChange={(next) => {
+                saveDraft(next);
+                completion.observe(true);
+              }}
+              onFormatsChange={setActiveFormats}
+              onEditLink={setLinkEdit}
+              data-single-emoji={largeEmojiDraft || undefined}
+              maxLength={16000}
+              aria-label={label}
+              placeholder={placeholder ?? label}
+              onFocus={() => completion.observe(true)}
+              onBlur={() => {
+                completion.invalidate();
+              }}
+              onSelect={() => {
+                completion.observe();
+              }}
+              onCompositionStart={() => {
+                completion.composing.current = true;
+                completion.invalidate();
+              }}
+              onCompositionEnd={() => {
+                completion.composing.current = false;
+                completion.observe(true);
+              }}
+              onKeyDown={(event) => {
+                if (
+                  event.nativeEvent.isComposing ||
+                  event.nativeEvent.keyCode === 229 ||
+                  completion.composing.current
+                )
+                  return;
+                if (
+                  event.shiftKey &&
+                  ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+                ) {
+                  completion.invalidate();
+                  return;
+                }
+                if (completion.keys.current?.(event)) return;
+                if (
+                  event.key === "ArrowUp" &&
+                  !event.shiftKey &&
+                  !event.altKey &&
+                  !event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.repeat &&
+                  !event.defaultPrevented &&
+                  !editingDisabled &&
+                  !editDisabled &&
+                  !submission &&
+                  !editing.target &&
+                  event.currentTarget.value === "" &&
+                  !valueRef.current.recipients.length &&
+                  !attachments.items.length
+                ) {
+                  const target = lastEditableMessage(session, editableRows());
+                  if (target) {
+                    event.preventDefault();
+                    completion.invalidate();
+                    beforeEdit.current = {
+                      value: valueRef.current,
+                      restore: event.currentTarget.checkpoint(),
+                    };
+                    const next = mentionDraft(editing.start(target));
+                    valueRef.current = next;
+                    updateDraft(next);
+                    event.currentTarget.reset(next);
+                    setLinkEdit(null);
+                    caret.current = next.text.length;
+                    setError(undefined);
+                  }
+                  return;
+                }
+                if (
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !event.altKey &&
+                  !event.ctrlKey &&
+                  !event.metaKey
+                ) {
+                  event.preventDefault();
+                  if (!event.repeat || !editing.target) send();
+                }
+              }}
+            />
+          </div>
         </div>
+        {!editing.target && replyContext}
         {!editing.target &&
           threadRootId &&
           mediaTimeSeconds !== undefined &&
@@ -856,13 +973,11 @@ function Composer({
                   onChange={selectAgent}
                   disabled={editingDisabled}
                 />
-              ) : (
-                <span className={styles.composerHint}>
-                  Shift + Enter for a new line
-                </span>
-              )))}
+              ) : null))}
           <IconButton
-            variant="tint"
+            variant={
+              draft.trim() || attachments.items.length ? "primary" : "ghost"
+            }
             size="toolbar"
             shape="round"
             type="submit"
@@ -923,7 +1038,7 @@ function Composer({
           close={() => setLinkEdit(null)}
         />
       )}
-    </>
+    </SelectedMentionContext.Provider>
   );
 }
 
@@ -939,6 +1054,24 @@ function RecipientAvatars({
   disabled: boolean;
   remove(pubkey: string): void;
 }) {
+  const reduceMotion = useReducedMotion();
+  const enter = useCallback(
+    (node: HTMLButtonElement | null) => {
+      if (
+        !node ||
+        document.documentElement.hasAttribute("data-keyboard-navigation") ||
+        reduceMotion
+      )
+        return;
+      const animation = animate(
+        node,
+        { transform: ["scale(0.9)", "scale(1)"] },
+        { type: "spring", duration: 0.24, bounce: 0.15 },
+      );
+      return () => animation.stop();
+    },
+    [reduceMotion],
+  );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -960,7 +1093,11 @@ function RecipientAvatars({
             key={recipient.pubkey}
             type="button"
             size="toolbar"
+            ref={enter}
             data-mention-recipient=""
+            data-avatar-shape={
+              agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
+            }
             title={`Remove explicit mention of ${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
             aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
             disabled={disabled}

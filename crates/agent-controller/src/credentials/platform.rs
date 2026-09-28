@@ -7,6 +7,7 @@ pub(super) struct OsKeychain;
 #[cfg(all(target_os = "macos", not(test)))]
 mod macos {
     use super::*;
+    use security_framework::item::{ItemClass, ItemSearchOptions};
     use security_framework::os::macos::{keychain::SecKeychain, passwords::find_generic_password};
 
     fn error(error: security_framework::base::Error) -> Failure {
@@ -33,6 +34,16 @@ mod macos {
                 .add_generic_password(service, account, value)
                 .map_err(error)
         }
+        fn delete(&self, service: &str, account: &str) -> Result<(), Failure> {
+            let keychain = SecKeychain::default().map_err(error)?;
+            ItemSearchOptions::new()
+                .class(ItemClass::generic_password())
+                .keychains(&[keychain])
+                .service(service)
+                .account(account)
+                .delete()
+                .map_err(error)
+        }
     }
 }
 
@@ -56,6 +67,9 @@ impl Keychain for OsKeychain {
         Err(Failure::Unavailable)
     }
     fn add(&self, _: &str, _: &str, _: &[u8]) -> Result<(), Failure> {
+        Err(Failure::Unavailable)
+    }
+    fn delete(&self, _: &str, _: &str) -> Result<(), Failure> {
         Err(Failure::Unavailable)
     }
 }

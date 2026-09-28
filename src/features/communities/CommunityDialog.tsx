@@ -1,3 +1,4 @@
+import { profileDefault } from "./profile-default";
 import { useEffect, useRef, useState } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -12,10 +13,19 @@ import {
   type CommunityInfo,
 } from "./api";
 import type { Communities, PersonalProfile } from "./service";
-import { canSaveProfile, ProfileFields } from "./ProfileFields";
+import { canSaveProfile, ProfileFields, profilesEqual } from "./ProfileFields";
 import { communityDestination, relayOrigin } from "./destination";
 import { registerBrokerCommunity } from "../relay/transport";
 import styles from "./Communities.module.css";
+
+// Exact relay claim refusal codes, forwarded unchanged by the broker.
+const CLAIM_REFUSALS = {
+  invite_expired:
+    "This invite has expired. Ask a community admin for a new one.",
+  invite_exhausted:
+    "This invite has no uses left. Ask a community admin for a new one.",
+  invite_invalid: "This invite code is not valid for this community.",
+};
 
 export function CommunityDialog({
   communities,
@@ -29,6 +39,8 @@ export function CommunityDialog({
   onJoined?: (id: string) => void;
 }) {
   const client = communities.snapshot();
+  const unavailable =
+    client.status !== "ready" || (mode === "join" && !client.relayAvailable);
   const [url, setUrl] = useState("");
   const [destination, setDestination] =
     useState<ReturnType<typeof communityDestination>>();
@@ -43,6 +55,7 @@ export function CommunityDialog({
   const [code, setCode] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [adult, setAdult] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const mounted = useRef(true);
@@ -69,6 +82,7 @@ export function CommunityDialog({
     (!policy?.age_attestation_required || adult) &&
     (!(policy?.terms_markdown || policy?.privacy_markdown) || agreed);
   async function submit() {
+    if (uploading || unavailable) return;
     if (step === "destination") {
       await work(async () => {
         const next = communityDestination(relayOrigin(url));
@@ -103,7 +117,14 @@ export function CommunityDialog({
             id,
             "claim",
             { code: code.trim(), policy_receipt: receipt },
-          );
+          ).catch((reason: unknown) => {
+            const known =
+              reason instanceof Error &&
+              Object.hasOwn(CLAIM_REFUSALS, reason.message)
+                ? CLAIM_REFUSALS[reason.message as keyof typeof CLAIM_REFUSALS]
+                : undefined;
+            throw known ? new Error(known) : reason;
+          });
           if (!["joined", "already_member"].includes(claim.status))
             throw new Error("Membership was not confirmed");
         }
@@ -120,11 +141,7 @@ export function CommunityDialog({
           communities.saveProfile({ ...profile, name: profile.name.trim() });
         else {
           if (!destination) throw new Error("Choose a community first");
-          if (
-            !original?.exists ||
-            profile.name !== original.profile.name ||
-            profile.picture !== original.profile.picture
-          )
+          if (!original?.exists || !profilesEqual(profile, original.profile))
             await publishProfile(id, profile, original?.existing ?? {});
           communities.joined(
             {
@@ -137,7 +154,7 @@ export function CommunityDialog({
                 ? { icon: info.icon }
                 : {}),
             },
-            profile,
+            profileDefault(profile, communities.snapshot().profile, id),
           );
           onJoined?.(id);
         }
@@ -145,6 +162,11 @@ export function CommunityDialog({
       });
     }
   }
+  // Keeping an existing community profile publishes nothing, so it needs no edit validation.
+  const keepsProfile =
+    mode === "join" &&
+    !!original?.exists &&
+    profilesEqual(profile, original.profile);
   return (
     <Dialog
       open
@@ -170,11 +192,13 @@ export function CommunityDialog({
         {mode === "join" && step !== "destination" && destination && (
           <p className={styles.note}>Relay: {destination.url}</p>
         )}
-        {client.status !== "ready" ? (
+        {unavailable ? (
           <p>
             {client.status === "loading"
               ? "Opening your local identity…"
-              : "Live identity access is unavailable. For development, set BUZZ_DEV_VIEWER to your Buzz public key in .env.local, then restart just web or just desktop. See README.md for requirements."}
+              : client.status === "ready"
+                ? "Your identity is ready, but connecting to communities is not available in this build yet. You can manage your local profile and identity in Settings."
+                : "Live identity access is unavailable. For development, set BUZZ_DEV_VIEWER to your Buzz public key in .env.local, then restart just web or just desktop. See README.md for requirements."}
           </p>
         ) : (
           <>
@@ -284,6 +308,8 @@ export function CommunityDialog({
                       : "Start with your local profile, or choose how you appear in this community."}
                 </p>
                 <ProfileFields
+                  community={mode === "profile" ? undefined : id}
+                  onBusyChange={setUploading}
                   profile={profile}
                   onChange={setProfile}
                   disabled={busy}
@@ -298,7 +324,7 @@ export function CommunityDialog({
             <footer className="buzz-dialog-actions justify-between">
               <Button
                 type="button"
-                disabled={busy}
+                disabled={busy || uploading}
                 onClick={() => {
                   if (step === "destination" || mode === "profile") close();
                   else {
@@ -316,8 +342,12 @@ export function CommunityDialog({
                 type="submit"
                 disabled={
                   busy ||
+                  uploading ||
                   (step === "access" && !allowed) ||
-                  (step === "profile" && !canSaveProfile(profile))
+                  (step === "profile" &&
+                    (keepsProfile
+                      ? !profile.name.trim()
+                      : !canSaveProfile(profile)))
                 }
               >
                 {busy
@@ -325,9 +355,7 @@ export function CommunityDialog({
                   : step === "profile"
                     ? mode === "profile"
                       ? "Save profile"
-                      : original?.exists &&
-                          profile.name === original.profile.name &&
-                          profile.picture === original.profile.picture
+                      : keepsProfile
                         ? "Open community"
                         : "Publish profile & open"
                     : "Continue"}

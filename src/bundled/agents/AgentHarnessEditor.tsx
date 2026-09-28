@@ -1,3 +1,4 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -9,14 +10,20 @@ import { isGoose, type AgentDraft } from "./agent-edit";
 export function AgentHarnessEditor({
   draft,
   options,
+  defaultProvider,
   piProviders = [],
   onChange,
+  onOpenHarnesses,
+  discardEdits = false,
   disabled = false,
 }: {
   draft: AgentDraft;
+  onOpenHarnesses?: (() => void) | undefined;
+  discardEdits?: boolean;
   piProviders?: string[];
   options: NonNullable<ControlSnapshot["harnessOptions"]>;
   disabled?: boolean;
+  defaultProvider?: string | undefined;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const executable = draft.command.replaceAll("\\", "/").split("/").at(-1);
@@ -30,6 +37,12 @@ export function AgentHarnessEditor({
         )
       : undefined);
   const external = harness?.label === "Goose" || harness?.label === "Pi";
+  const missingGoose = options.some(
+    (option) => isGoose(option.command) && option.available === false,
+  );
+  const missingPi = options.some(
+    (option) => option.label === "Pi" && option.available === false,
+  );
   return (
     <div className="space-y-4">
       <ConfigChoice
@@ -61,20 +74,32 @@ export function AgentHarnessEditor({
           });
         }}
       />
-      {options.some(
-        (option) => isGoose(option.command) && option.available === false,
-      ) && (
+      {missingGoose && (
         <p className="text-body-sm text-secondary">
           Install the Goose CLI to use it as a harness.
         </p>
       )}
-      {options.some(
-        (option) => option.label === "Pi" && option.available === false,
-      ) && (
+      {missingPi && (
         <p className="text-body-sm text-secondary">
-          Install Pi, buzz-pi-acp and Node.js, then reopen the desktop app to
-          use Pi.
+          Pi needs its CLI, Node.js and buzz-pi-acp before you can select it.
         </p>
+      )}
+      {(missingGoose || missingPi) && onOpenHarnesses && (
+        <div className="space-y-1">
+          <Button
+            type="button"
+            variant="link"
+            disabled={disabled}
+            onClick={onOpenHarnesses}
+          >
+            Open Harnesses in Settings
+          </Button>
+          {discardEdits && (
+            <p className="m-0 text-body-sm text-secondary">
+              Opening Settings discards unsaved edits.
+            </p>
+          )}
+        </div>
       )}
       <ConfigChoice
         disabled={disabled}
@@ -84,7 +109,13 @@ export function AgentHarnessEditor({
         inputLabel="Custom provider"
         value={draft.provider}
         options={[
-          { value: "", label: "Not set" },
+          {
+            value: "",
+            label:
+              draft.command === "buzz-agent" && defaultProvider
+                ? `Build default (${defaultProvider})`
+                : "Not set",
+          },
           ...(harness?.providers ?? []),
           ...(harness?.label === "Pi"
             ? piProviders

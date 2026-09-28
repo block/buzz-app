@@ -1,0 +1,104 @@
+@reference "../../shared/styles/globals.css";
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  @apply text-body-sm;
+  color: var(--text-subtle);
+}
+.text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tooltipContent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.emoji {
+  width: var(--user-status-emoji-size, 20px);
+  height: var(--user-status-emoji-size, 20px);
+  flex: 0 0 var(--user-status-emoji-size, 20px);
+  object-fit: contain;
+  vertical-align: middle;
+}
+.emojiFallback {
+  white-space: nowrap;
+  font-size: var(--user-status-emoji-size, 20px);
+  line-height: 1;
+  transform: translateY(var(--user-status-emoji-offset, 0px));
+}
+.emojiFallback[data-custom] {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fields {
+  display: grid;
+  gap: var(--space-5);
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  margin: 0;
+}
+.section {
+  display: grid;
+  gap: var(--space-2);
+}
+.expiration {
+  display: grid;
+  gap: var(--space-2);
+}
+.expirationFields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr);
+  gap: var(--space-2);
+}
+.calendarPositioner {
+  z-index: var(--layer-popover);
+}
+.calendarPopup {
+  @apply floating-surface;
+}
+.timeOptions {
+  max-height: min(18rem, calc(var(--available-height) - var(--space-4)));
+  overflow-y: auto;
+}
+.choices {
+  display: grid;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: var(--space-2);
+}
+.error {
+  color: var(--text-danger);
+  @apply text-body-sm;
+  margin: var(--space-3) 0 0;
+}
+.section > :is(button, [data-buzz-ui]) {
+  width: 100%;
+}
+.choices > * {
+  width: 100%;
+  justify-content: start;
+}
+.choiceContent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.status[data-compact] {
+  max-width: 6rem;
+  flex-shrink: 0;
+}

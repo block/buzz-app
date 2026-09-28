@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { createMemberAdditions } from "../channel-members/operations";
+import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
@@ -34,7 +36,7 @@ import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage, Profile } from "../relay/contracts";
-import { readView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
@@ -377,6 +379,130 @@ function mount(
   };
 }
 
+it("shows a local draft in the cached composer without completion, typing or transport reads", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const query = vi.fn(async () => []);
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      query,
+      media: () => undefined,
+    },
+    {
+      cachedOnly: true,
+      prepared: true,
+      persistence: {
+        readStartup: async () => ({
+          discovery: {
+            savedAt: Date.now(),
+            relayAuthor: relay.pubkey,
+            events: [
+              roster(relay, "channel", [viewer.pubkey]),
+              metadata(relay, "channel", "General"),
+            ],
+          },
+        }),
+        read: async () => [],
+        write: async () => {},
+        remove: async () => {},
+        retain: async () => {},
+        clear: async () => {},
+        close() {},
+      },
+    },
+  );
+  await owner.restore();
+  writeView("cached-composer", "draft:channel", "!Saved draft");
+  const typing = vi.fn(owner.session.typing.subscribe);
+  const h = mount({
+    session: {
+      ...owner.session,
+      typing: { ...owner.session.typing, subscribe: typing },
+    },
+    scope: "cached-composer",
+  });
+  try {
+    expect(h.input()).toHaveValue("!Saved draft");
+    expect(h.input()).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.queryByText(/does not support sending/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.focus(h.input());
+    fireEvent(document, new Event("selectionchange"));
+    h.submit();
+    await act(async () => {}); // Flush mounted effects before the negative assertions.
+    expect(h.completionRequests).toEqual([]);
+    expect(typing).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    expect(h.input()).toHaveValue("!Saved draft");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    h.unmount();
+    owner.dispose();
+  }
+});
+
+it("autofocuses each selected conversation once without stealing focus on updates", () => {
+  const h = mount({ autoFocus: true });
+  expect(h.input()).toHaveFocus();
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    other.focus();
+    h.retarget({ channelName: "Renamed", autoFocus: false });
+    h.retarget({ autoFocus: true });
+    expect(other).toHaveFocus();
+    h.retarget({ channelId: "another-channel" });
+    expect(h.input()).toHaveFocus();
+    h.retarget({ channelId: "keyboard-navigation" });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    other.remove();
+  }
+});
+
+it("lets an explicit focus restoration in the mount commit win", () => {
+  const h = mount();
+  h.unmount();
+  const target = document.createElement("button");
+  document.body.append(target);
+  function RestoreFocus() {
+    useLayoutEffect(() => target.focus(), []);
+    return null;
+  }
+  try {
+    render(
+      <>
+        <MessageComposer
+          session={h.session}
+          scope="scope"
+          channelId="channel"
+          channelName="General"
+          autoFocus
+        />
+        <RestoreFocus />
+      </>,
+    );
+    expect(target).toHaveFocus();
+  } finally {
+    target.remove();
+  }
+});
+
+it("leaves focus alone unless an enabled composer opts into mount focus", () => {
+  const h = mount();
+  expect(h.input()).not.toHaveFocus();
+  h.retarget({
+    channelId: "disabled-channel",
+    disabled: true,
+    autoFocus: true,
+  });
+  expect(h.input()).not.toHaveFocus();
+});
+
 it("keeps unpublished completions invisible but lets Escape revoke pending work", () => {
   const h = mount();
   const input = h.input();
@@ -708,6 +834,7 @@ it.each([undefined, "root"])(
     await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
     h.unmount();
     h = mount(options);
+    expect(h.input()).toHaveValue("Please help @Honey @Honey ");
     expect(
       within(h.input()).getAllByRole("img", {
         name: /^Person Honey, public key ending/,
@@ -987,6 +1114,9 @@ it.each([0, 7])(
 it("replacing an inline mention with ordinary prose removes notification intent", async () => {
   const h = mount();
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  expect(
+    screen.getByRole("region", { name: "Explicit mentions" }),
+  ).toBeVisible();
   h.fill("no recipient now");
   h.submit();
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
@@ -1141,8 +1271,9 @@ for (const threadRootId of [undefined, "f".repeat(64)])
       members: ["d".repeat(64)],
     };
     const listeners = new Set<() => void>();
-    // A Sessions parent invitation is a different operation, even for the same recipient.
+    // An acknowledged old invitation does not replace this explicit addition.
     const invitation: OutgoingEvent = {
+      acknowledged: true,
       delivery: "failed",
       event: {
         id: "c".repeat(64),
@@ -1165,7 +1296,7 @@ for (const threadRootId of [undefined, "f".repeat(64)])
             ...input,
             pubkey: "d".repeat(64),
             id: "e".repeat(64),
-            created_at: 1,
+            created_at: Math.floor(Date.now() / 1000),
           },
           delivery: "sending",
         },
@@ -1175,15 +1306,22 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     const list = { status: "ready", channels: [channel] };
     Object.assign(h.session, {
       channels: { list: () => list, subscribeList: () => () => {} },
-      read: vi.fn(async () => {
-        if (operations[0]?.delivery === "accepted")
-          channel.members = [...channel.members, first.pubkey];
-        return [];
-      }),
+      viewer: "d".repeat(64),
+      archives: { state: () => "not-archived" },
+      workSessions: {
+        refreshMembership: vi.fn(async () => {
+          if (operations[0]?.delivery === "accepted")
+            channel.members = [...channel.members, first.pubkey];
+          return channel;
+        }),
+      },
       outbox: {
         supports: () => true,
         send: add,
         retry,
+        ready: async () => {},
+        recover: async () => {},
+        acknowledge: async () => {},
         snapshot: () => operations,
         subscribe: (fn: () => void) => {
           listeners.add(fn);
@@ -1191,20 +1329,40 @@ for (const threadRootId of [undefined, "f".repeat(64)])
         },
       },
     });
+    Object.assign(h.session, {
+      memberAdditions: createMemberAdditions(
+        new AbortController().signal,
+        (channelId, key, intent) =>
+          addChannelMember(
+            h.session,
+            channelId,
+            key,
+            new AbortController().signal,
+            intent,
+          ),
+        vi.fn(),
+      ),
+    });
     try {
       fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
       expect(add).not.toHaveBeenCalled();
       fireEvent.submit(screen.getByRole("form"));
       await act(async () => {});
-      expect(add).toHaveBeenCalledWith({
-        kind: 9000,
-        content: "",
-        tags: [
-          ["h", "channel"],
-          ["p", first.pubkey],
-          ["role", "bot"],
-        ],
-      });
+      expect(add).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+      await act(async () => {});
+      expect(add).toHaveBeenCalledWith(
+        {
+          kind: 9000,
+          content: "",
+          tags: [
+            ["h", "channel"],
+            ["p", first.pubkey],
+            ["role", "bot"],
+          ],
+        },
+        { key: `member-add:channel:${first.pubkey}`, value: "1" },
+      );
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(h.messages.reply).not.toHaveBeenCalled();
       await act(async () => {
@@ -1266,19 +1424,49 @@ it.each([false, true])(
       : [];
     Object.assign(h.session, {
       channels: { list: () => list, subscribeList: () => () => {} },
-      read: async () => [],
-      outbox: { supports: () => true, send: add, snapshot: () => operations },
+      viewer: "d".repeat(64),
+      archives: { state: () => "not-archived" },
+      workSessions: { refreshMembership: async () => list.channels[0] },
+      outbox: {
+        supports: () => true,
+        send: add,
+        snapshot: () => operations,
+        ready: async () => {},
+        recover: async () => {},
+        acknowledge: async () => {},
+      },
+    });
+    Object.assign(h.session, {
+      memberAdditions: createMemberAdditions(
+        new AbortController().signal,
+        (channelId, key, intent) =>
+          addChannelMember(
+            h.session,
+            channelId,
+            key,
+            new AbortController().signal,
+            intent,
+          ),
+        vi.fn(),
+      ),
     });
     try {
       fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
       fireEvent.submit(screen.getByRole("form"));
       await act(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+      await act(async () => {});
       expect(screen.getByRole("alert")).toHaveTextContent(
-        expired ? "Open Outbox" : "Cannot add agent",
+        expired ? "addition expired" : "Cannot add agent",
       );
-      expect(h.input().value).toBe("@Honey ");
+      expect(
+        (screen.getByRole("textbox", { hidden: true }) as HTMLInputElement)
+          .value,
+      ).toBe("@Honey ");
       expect(h.messages.send).not.toHaveBeenCalled();
       if (expired) expect(add).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      await act(async () => {});
       expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
     } finally {
       control.dispose();
@@ -1887,6 +2075,24 @@ it.each([false, true])(
   },
 );
 
+it("retargets within a thread without losing its draft and sends the selected parent", () => {
+  const h = mount({ threadRootId: "root" });
+  h.fill("keep this draft");
+  const input = h.input();
+  h.retarget({ threadRootId: "root", replyParentId: "parent" });
+  expect(h.input()).toBe(input);
+  expect(h.input()).toHaveValue("keep this draft");
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(h.messages.reply).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "root",
+    "keep this draft",
+    [],
+    [],
+    "parent",
+  );
+});
+
 it("toggles the whole draft spoiler with a collapsed caret and preserves selection/history", () => {
   const h = mount();
   h.fill("secret");
@@ -2371,4 +2577,213 @@ it("uses the full channel choice set for one selected chip and follows membershi
   );
   h.unmount();
   names.dispose();
+});
+
+for (const channelType of ["stream", "forum"] as const)
+  it.each([undefined, "f".repeat(64)])(
+    `keeps mixed nonmember mentions as references after Send anyway in ${channelType}, root=%s`,
+    async (threadRootId) => {
+      const h = mount(threadRootId ? { threadRootId } : {});
+      const add = vi.fn();
+      const list = {
+        status: "ready",
+        channels: [
+          {
+            id: "channel",
+            channelType,
+            members: ["d".repeat(64), second.pubkey],
+          },
+        ],
+      };
+      Object.assign(h.session, {
+        channels: { list: () => list, subscribeList: () => () => {} },
+        memberAdditions: { add },
+        outbox: { ...h.session.outbox, supports: (kind: number) => kind === 9 },
+      });
+      act(() => {
+        h.commands().insertMention(first);
+        h.commands().insertMention(second);
+      });
+      fireEvent.submit(screen.getByRole("form"));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      // block/buzz parity: without permission, Invite is absent, not disabled.
+      expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        "Honey is not in this channel. You cannot add people to this channel. You can still send without inviting them.",
+      );
+      expect(add).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+      await act(async () => {});
+      const send = threadRootId ? h.messages.reply : h.messages.send;
+      expect(send).toHaveBeenCalledOnce();
+      expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([
+        second.pubkey,
+      ]);
+      expect(send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+      expect(add).not.toHaveBeenCalled();
+    },
+  );
+
+it.each(["close", "escape"])(
+  "%s preserves the captured draft and returns focus without adding or sending",
+  async (action) => {
+    const h = mount();
+    const add = vi.fn();
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+    });
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    const input = h.input();
+    fireEvent.submit(screen.getByRole("form"));
+    // block/buzz parity: one send action, one invite action, and no Cancel.
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
+    );
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Do nothing" })).toHaveFocus(),
+    );
+    if (action === "close")
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    else await userEvent.setup().keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(input).toHaveValue("@Honey ");
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(add).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["retry", "unmount", "retarget", "disabled"])(
+  "waits for confirmed addition and handles %s without duplicate sends",
+  async (outcome) => {
+    const h = mount();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    const add = vi.fn(async () => {
+      await gate;
+    });
+    if (outcome === "retry")
+      add.mockRejectedValueOnce(new Error("Membership not confirmed"));
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+    });
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    fireEvent.submit(screen.getByRole("form"));
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    try {
+      if (outcome === "retry") {
+        await screen.findByRole("alert");
+        expect(h.messages.send).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+      }
+      expect(screen.getByRole("button", { name: "Do nothing" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Inviting…" })).toBeDisabled();
+      if (outcome === "unmount") h.unmount();
+      else if (outcome === "retarget") h.retarget({ channelId: "other" });
+      else if (outcome === "disabled") h.retarget({ disabled: true });
+    } finally {
+      await act(async () => release());
+    }
+    expect(add).toHaveBeenCalledTimes(outcome === "retry" ? 2 : 1);
+    expect(h.messages.send).toHaveBeenCalledTimes(outcome === "retry" ? 1 : 0);
+  },
+);
+
+it("disabled completion keeps the highlighted key and consumes Enter without sending", async () => {
+  const h = mount();
+  h.input().focus();
+  h.fill("!Honey");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No completion request");
+  act(() => {
+    publish({
+      items: [
+        { id: first.pubkey, label: "First Honey", edit: { mention: first } },
+        { id: second.pubkey, label: "Second Honey", edit: { mention: second } },
+      ],
+    });
+  });
+  fireEvent.keyDown(h.input(), { key: "ArrowDown" });
+  act(() => {
+    publish({
+      items: [
+        { id: first.pubkey, label: "First Honey", edit: { mention: first } },
+        {
+          id: second.pubkey,
+          label: "Second Honey",
+          edit: { mention: second },
+          disabled: "Archived",
+        },
+      ],
+    });
+  });
+  expect(screen.getByRole("option", { name: "Second Honey" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("option", { name: "Second Honey" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(h.input()).toHaveValue("!Honey");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("rejects a known archived recipient at send entry without clearing the draft", () => {
+  const h = mount();
+  let archived = false;
+  const snapshot = { status: "ready" as const, archived: [] as string[] };
+  h.retarget({
+    session: {
+      ...h.session,
+      archives: {
+        snapshot: () => snapshot,
+        subscribe: () => () => {},
+        state: () => (archived ? "archived" : "not-archived"),
+        ensure: async () => {},
+        refresh: async () => {},
+        writable: false,
+        consent: vi.fn(),
+        request: vi.fn(),
+      },
+    },
+  });
+  act(() => {
+    expect(h.commands().insertMention(first)).toBe(true);
+  });
+  archived = true;
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue(`@${first.name} `);
+  expect(
+    screen.getByText(
+      "A selected recipient is archived. Remove it before sending.",
+    ),
+  ).toBeVisible();
 });

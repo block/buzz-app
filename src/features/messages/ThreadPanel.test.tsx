@@ -1,3 +1,5 @@
+import { ReplyBranch } from "./ReplyBranch";
+import { ReplySummary } from "./ReplySummary";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
@@ -15,7 +17,7 @@ import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import { createAgentLibrary } from "../agents/library";
 import { MessageRow } from "./MessageRow";
 import { MessageMarkdown } from "./MessageMarkdown";
-import { MediaAttachment } from "./MediaAttachment";
+import { AttachmentImage } from "./AttachmentImage";
 import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 import type { PageNavigation } from "../navigation/service";
@@ -45,6 +47,7 @@ vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   memo: (fn: unknown) => fn,
   useCallback: (fn: unknown) => fn,
+  useId: () => "thread-panel-test-id",
   useRef(initial: unknown) {
     const index = hooks.ref++;
     hooks.refs[index] ??= { current: initial };
@@ -107,6 +110,13 @@ function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
   return [
     node,
     ...elements(node.props.children as ReactNode),
+    ...(node.type === ReplyBranch
+      ? elements(
+          typeof node.props.message === "function"
+            ? node.props.message(null)
+            : (node.props.message as ReactNode),
+        )
+      : []),
     ...(node.type === PanelHeader
       ? elements(node.props.actions as ReactNode)
       : []),
@@ -181,7 +191,12 @@ function setup(
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry: vi.fn() },
     // Geometry fixtures are read-only; reading behavior has its own boundary tests.
-    unread: { sync: () => ({ capability: "unsupported" }) },
+    unread: {
+      sync: () => ({ capability: "unsupported" }),
+      snapshot: () => undefined,
+      subscribe: () => () => {},
+      attention: () => ({ unread: false }),
+    },
     media: () => undefined,
   } as unknown as RelaySession;
   const close = vi.fn();
@@ -392,7 +407,7 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
     retry: undefined,
   });
   const attachments = elements(tree).filter(
-    (element) => element.type === MediaAttachment,
+    (element) => element.type === AttachmentImage,
   );
   expect(attachments).toHaveLength(1);
   expect(attachments[0]?.props.attachment).toEqual({
@@ -492,6 +507,7 @@ function messagesHarness(
   hooks.states = [];
   let scrollTop = 0;
   const element = {
+    querySelectorAll: () => [],
     clientHeight: 600,
     scrollHeight: 4000,
     get scrollTop() {
@@ -867,7 +883,14 @@ it("shows bounded participant avatars on the real reply control, through the med
     retry: undefined,
     onOpenThread: () => {},
   });
-  const control = button(tree, "View thread: 2 replies");
+  const trigger = button(tree, "View thread: 2 replies");
+  const summary = elements(trigger).find(
+    (element) => element.type === ReplySummary,
+  );
+  if (!summary) throw new Error("Missing reply summary");
+  if (!isValidElement<Parameters<typeof ReplySummary>[0]>(summary))
+    throw new Error("Invalid reply summary");
+  const control = ReplySummary(summary.props);
   const avatars = elements(control).filter((e) => e.type === Avatar);
   expect(avatars.map((avatar) => avatar.props)).toEqual([
     {

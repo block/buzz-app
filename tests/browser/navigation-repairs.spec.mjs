@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -47,7 +48,7 @@ test("Retry navigation reconnects the failed target session", async ({
     return route.continue();
   });
   await page.goto(app.origin);
-  await button(page, "Messages").first().click();
+  await openPage(page, "Messages");
   await expect(
     page.getByRole("heading", { name: "This destination couldn’t open" }),
   ).toBeVisible();
@@ -63,7 +64,7 @@ test("Skip to content focuses main without adding a visit or dropping Back", asy
   app,
 }) => {
   await open(page, app);
-  await button(page, "Projects").first().click();
+  await openPage(page, "Projects");
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeFocused();
@@ -126,7 +127,7 @@ test("malformed navigation addresses fail explicitly on cold and warm entry", as
     exact: true,
   });
   await expect(failed).toBeVisible({ timeout: 1500 });
-  await button(page, "Projects").first().click();
+  await openPage(page, "Projects");
   await expect(failed).toBeHidden();
   await button(page, "Agents").first().click();
   await page.evaluate(() => {

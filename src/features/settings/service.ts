@@ -9,7 +9,7 @@ export type SettingsCard = {
   id: string;
   title: string;
   component: ComponentType<{ active(): boolean }>;
-  /** Show this card as its own Settings destination under a labelled group instead of Messages. */
+  /** Show this card under a labelled account-level group instead of the selected community. */
   group?: string;
 };
 export type SettingsCards = {

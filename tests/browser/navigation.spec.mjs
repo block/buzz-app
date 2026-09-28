@@ -9,6 +9,39 @@ const composer = (page, name) =>
 const entry = (page) =>
   page.evaluate(() => history.state.buzzNavigationV1.entry);
 
+test("a retired contributed Settings destination fails promptly on Back", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await button(page, "Your profile").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  const sections = page.getByRole("navigation", { name: "Settings sections" });
+  await sections.getByRole("button", { name: "Plugins", exact: true }).click();
+  const templatesEnabled = page.getByRole("switch", {
+    name: "Enable Templates & teams",
+    exact: true,
+  });
+  if (!(await templatesEnabled.isChecked())) await templatesEnabled.click();
+  const templates = sections.getByRole("button", {
+    name: "Templates & teams",
+    exact: true,
+  });
+  await expect(templates).toBeVisible();
+  await templates.click();
+  await expect(templates).toHaveAttribute("aria-current", "page");
+  await sections.getByRole("button", { name: "Plugins", exact: true }).click();
+  await templatesEnabled.click();
+  await expect(templates).toHaveCount(0);
+  await button(page, "Go back").click();
+  await expect(
+    page.getByRole("alert").getByRole("heading", {
+      name: "This destination couldn’t open",
+      exact: true,
+    }),
+  ).toBeVisible({ timeout: 3000 });
+});
+
 test("channel visits, toolbar, browser traversal and Settings sections share one history", async ({
   page,
   app,

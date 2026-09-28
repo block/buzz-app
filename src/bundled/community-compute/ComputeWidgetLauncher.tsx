@@ -8,7 +8,11 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { computeLauncherIcon } from "../../shared/design-system/icons/svg";
 
 /** The bundled Compute launcher opens a native window, not a companion panel. */
-export function ComputeWidgetLauncher({ enabled = true }: { enabled?: boolean }) {
+export function ComputeWidgetLauncher({
+  enabled = true,
+}: {
+  enabled?: boolean;
+}) {
   const [providerApp, setProviderApp] = useState(false);
   useEffect(() => {
     const host = observeNativeSharing();
@@ -58,7 +62,13 @@ export function ComputeWidgetLauncher({ enabled = true }: { enabled?: boolean })
         disabled={pending}
         variant="chrome"
         shape="round"
-        icon={<img src={computeLauncherIcon} alt="" className="size-4 object-contain" />}
+        icon={
+          <img
+            src={computeLauncherIcon}
+            alt=""
+            className="size-4 object-contain"
+          />
+        }
         onClick={async () => {
           setPending(true);
           setError("");

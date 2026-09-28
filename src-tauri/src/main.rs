@@ -9,5 +9,7 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some(buzz_community_compute::worker::WORKER_ARG) {
         buzz_community_compute::worker::entry();
     }
+    #[cfg(unix)]
+    buzz_agent_controller::dispatch_agent_supervisor();
     buzz_foundation_lib::run();
 }

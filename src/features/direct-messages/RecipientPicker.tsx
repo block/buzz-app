@@ -42,12 +42,53 @@ export function RecipientPicker({
   );
   const removal = useChipRemoval();
   const atLimit = selected.length >= 8;
-  const candidates = directory.people.filter(
+  const existing = new Set<string>();
+  const interacted = new Set<string>();
+  const shared = new Set<string>();
+  for (const channel of session.channels.list().channels) {
+    for (const pubkey of channel.members ?? []) shared.add(pubkey);
+    if (channel.channelType !== "dm") continue;
+    for (const pubkey of channel.participants ?? []) interacted.add(pubkey);
+    if (channel.participants?.length === 1) {
+      const pubkey = channel.participants[0];
+      if (pubkey) existing.add(pubkey);
+    }
+  }
+  const relationshipRank = (person: Recipient) =>
+    !query.trim()
+      ? 0
+      : existing.has(person.pubkey)
+        ? 0
+        : interacted.has(person.pubkey)
+          ? 1
+          : controlled.has(person.pubkey)
+            ? 2
+            : shared.has(person.pubkey)
+              ? 3
+              : 4;
+  const eligible = directory.people.filter(
     (person) =>
       person.pubkey !== session.viewer &&
       (!person.isAgent || controlled.has(person.pubkey)) &&
       !selected.some((item) => item.pubkey === person.pubkey),
   );
+  const ordered = useRef<{ query: string; pubkeys: string[] }>({
+    query,
+    pubkeys: [],
+  });
+  if (ordered.current.query !== query) ordered.current = { query, pubkeys: [] };
+  const knownOrder = new Set(ordered.current.pubkeys);
+  ordered.current.pubkeys.push(
+    ...eligible
+      .filter((person) => !knownOrder.has(person.pubkey))
+      .sort((left, right) => relationshipRank(left) - relationshipRank(right))
+      .map((person) => person.pubkey),
+  );
+  const byPubkey = new Map(eligible.map((person) => [person.pubkey, person]));
+  const candidates = ordered.current.pubkeys.flatMap((pubkey) => {
+    const person = byPubkey.get(pubkey);
+    return person ? [person] : [];
+  });
   // Remember eligible namesakes while search text and selection change.
   const known = useRef(new Map<string, Recipient>());
   for (const person of [...candidates, ...selected])
@@ -67,9 +108,9 @@ export function RecipientPicker({
   const discriminator = (person: Recipient) => identities.get(person.pubkey);
   const label = (person: Recipient) =>
     [person.name, discriminator(person)].filter(Boolean).join(" ");
-  const active =
-    candidates.find((person) => person.pubkey === highlight.pubkey) ??
-    candidates[0];
+  const active = candidates.find(
+    (person) => person.pubkey === highlight.pubkey,
+  );
   const loadingRows = useRef(10);
   useEffect(() => {
     if (!directory.loading && !directory.error)

@@ -17,7 +17,9 @@ const channelActivity = (page) =>
   });
 const agentEntry = (page, agent) =>
   channelActivity(page).getByRole("button", {
-    name: new RegExp(`^View activity for .+ ${agent.slice(0, 12)}$`),
+    name: new RegExp(
+      `^View activity for .+ ${agent.slice(0, 12)}(?:, Presence: (?:online|away|offline))?$`,
+    ),
   });
 const activityPanel = (page) =>
   page.getByRole("region", { name: "Agent activity", exact: true });
@@ -31,48 +33,107 @@ const activity = (kind, channelId, turnId, payload) => ({
   ...(payload === undefined ? {} : { payload }),
 });
 
+test("mention picker demands the relay's protected archive snapshot", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page
+    .getByRole("button", { name: "Mention a member", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Mention a member or agent" }),
+  ).toBeVisible();
+  await expect
+    .poll(
+      () =>
+        app.report.queries.filter(({ filter }) => filter.kinds?.includes(13535))
+          .length,
+    )
+    .toBeGreaterThan(0);
+  expect(
+    app.report.queries
+      .filter(({ filter }) => filter.kinds?.includes(13535))
+      .every(
+        ({ filter }) =>
+          filter.authors?.length === 1 &&
+          filter.limit === 1 &&
+          Object.keys(filter).length === 3,
+      ),
+  ).toBe(true);
+});
+
 // The composer entry is the only channel launcher. Profile activity remains the
 // durable fallback after fresh working evidence disappears (covered below).
 test("channel activity consumes telemetry, isolates mixed batches, selects agents, and resets on disable", async ({
   page,
   app,
 }) => {
-  await open(page, app);
-  await expect(
-    page.getByRole("button", { name: "Agent Activity", exact: true }),
-  ).toHaveCount(0);
-  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  // Hold the byline's first read before broker admission. Add telemetry demand
+  // while it is pending, so a fast runner cannot coalesce both into one read.
+  const firstSnapshot = Promise.withResolvers();
+  let firstAuthors;
+  await page.route("**/presence-snapshot", async (route) => {
+    if (!firstAuthors) {
+      firstAuthors = route.request().postDataJSON()[0].authors;
+      await firstSnapshot.promise;
+    }
+    await route.fallback();
+  });
   const firstKey = generateSecretKey();
   const secondKey = generateSecretKey();
   const first = getPublicKey(firstKey);
   const second = getPublicKey(secondKey);
-  const unsafe = app.observer(
-    activity("turn_liveness", "alpha", "one", {
-      text: '<img src=x onerror="window.telemetryExecuted=true">',
-    }),
-    firstKey,
-  );
-  app.observer(activity("turn_liveness", "alpha", "two"), secondKey);
-  app.observer(
-    {
-      kind: "batch",
-      timestamp: new Date().toISOString(),
-      channelId: "alpha",
-      payload: {
-        events: [
-          activity("acp_read", "alpha", "one", "wanted child"),
-          activity("acp_write", "beta", "other-channel", "other channel"),
-        ],
-      },
-    },
-    firstKey,
-  );
-
   const region = channelActivity(page);
-  await expect(region).toBeVisible();
   const firstEntry = agentEntry(page, first);
   const secondEntry = agentEntry(page, second);
-  await expect(firstEntry).toBeVisible();
+  let unsafe;
+  try {
+    await open(page, app);
+    await expect.poll(() => firstAuthors).toBeDefined();
+    await expect(
+      page.getByRole("button", { name: "Agent Activity", exact: true }),
+    ).toHaveCount(0);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    unsafe = app.observer(
+      activity("turn_liveness", "alpha", "one", {
+        text: '<img src=x onerror="window.telemetryExecuted=true">',
+      }),
+      firstKey,
+    );
+    app.observer(activity("turn_liveness", "alpha", "two"), secondKey);
+    app.observer(
+      {
+        kind: "batch",
+        timestamp: new Date().toISOString(),
+        channelId: "alpha",
+        payload: {
+          events: [
+            activity("acp_read", "alpha", "one", "wanted child"),
+            activity("acp_write", "beta", "other-channel", "other channel"),
+          ],
+        },
+      },
+      firstKey,
+    );
+
+    await expect(region).toBeVisible();
+    await expect(firstEntry).toBeVisible();
+    expect(firstAuthors).not.toContain(first);
+    expect(firstAuthors).not.toContain(second);
+    await expect(firstEntry).not.toHaveAccessibleName(/, Presence:/);
+  } finally {
+    firstSnapshot.resolve();
+  }
+  await expect(firstEntry).toHaveAccessibleName(/, Presence: online$/);
+  // A busy skip followed by a successful retry must not masquerade as recovery.
+  expect(
+    app.report.brokerRequests.filter(({ url }) =>
+      url.endsWith("/presence-snapshot"),
+    ),
+  ).toHaveLength(app.report.presenceSnapshots.length);
   await expect(firstEntry).toContainText("working");
   await expect(secondEntry).toBeVisible();
   await expect(region).toHaveCSS("border-top-width", "0px");
@@ -179,10 +240,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     .poll(() => app.relay.hasRoute("primary", "observer"))
     .toBe(false);
   expect(app.relay.sockets).toHaveLength(sockets);
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(region).toHaveCount(0);
 
@@ -192,10 +250,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await toggle.click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(agentEntry(page, first)).toBeVisible();
   await expect(agentEntry(page, second)).toHaveCount(0);
@@ -335,7 +390,8 @@ for (const mode of ["light", "dark"]) {
   });
 }
 
-test("profile activity opens the exact agent and originating channel before its first frame", async ({
+const it = test.extend({ readState: true });
+it("profile activity opens the exact agent and originating channel before its first frame", async ({
   page,
   app,
 }, testInfo) => {
@@ -373,6 +429,21 @@ test("profile activity opens the exact agent and originating channel before its 
   const avatar = page
     .locator(`[data-message-id="${message.id}"]`)
     .getByRole("button", { name: /profile/ });
+  await avatar.waitFor();
+  // Reading the live message can outlast the normal publication debounce while
+  // the profile is open. Exercise that boundary instead of racing teardown.
+  await page
+    .getByRole("region", { name: "Channel message history", exact: true })
+    .focus();
+  await expect
+    .poll(() =>
+      app.report.readPublications.some(
+        ({ community, blob }) =>
+          community === "primary" &&
+          blob.contexts[`msg:${message.id}`] === message.created_at,
+      ),
+    )
+    .toBe(true);
   await avatar.click();
   const profile = page.getByRole("complementary", {
     name: "Profile",
@@ -544,10 +615,7 @@ test("profile activity opens the exact agent and originating channel before its 
   await page
     .getByRole("switch", { name: "Enable Agent Activity", exact: true })
     .click();
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await page.locator('[data-channel-id="alpha"]').click();
   await avatar.click();
   await expect(profile).toBeVisible();
@@ -680,9 +748,9 @@ test.describe("thread activity", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     sendTyping(root.id);
     await expect(entry).toBeVisible();
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBe(390);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+      .toBe(390);
     const narrowEntry = await entry.boundingBox(),
       narrowForm = await form.boundingBox();
     expect(narrowEntry.y + narrowEntry.height).toBeLessThanOrEqual(
@@ -713,6 +781,10 @@ test.describe("thread activity", () => {
       .click();
     sendTyping();
     await expect(marker).toBeVisible();
+    const workingBox = await marker.boundingBox();
+    expect(workingBox).toEqual(
+      expect.objectContaining({ width: 6, height: 6 }),
+    );
     await expect(channelActivity(page)).toBeVisible();
     const channelBox = await channelActivity(page)
       .getByRole("button")

@@ -15,9 +15,6 @@ use std::{
 };
 use tauri_plugin_opener::OpenerExt;
 
-mod defaults {
-    include!(concat!(env!("OUT_DIR"), "/agent_defaults.rs"));
-}
 const CANCELLED: &str = "Connection request cancelled or expired";
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,9 +23,10 @@ pub(crate) struct Defaults {
     filter: String,
 }
 pub(crate) fn defaults() -> Defaults {
+    let defaults = buzz_agent_controller::build_defaults();
     Defaults {
-        host: defaults::HOST.into(),
-        filter: defaults::FILTER.into(),
+        host: defaults.host,
+        filter: defaults.filter,
     }
 }
 #[derive(Deserialize)]

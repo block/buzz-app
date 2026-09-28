@@ -57,6 +57,13 @@ Avatar `shape="circle"` or `shape="squircle"`; the shape carries identity meanin
 not density or emphasis. The caller supplies identity type from domain data,
 never a name or picture heuristic. `size="fill"` fills the owning layout’s
 available space. Shape clips the artwork, never the interactive focus target.
+Circular and squircle avatars can add `statusBadge="online" | "away" | "offline"`. The dot
+uses a semantic green, yellow, or grey role with light and dark values. Its inset
+cutout and dot scale with the existing avatar size; the dot is separate from the
+clipped artwork, and avatars without a badge retain their full shape. The agent
+cutout and badge follow the squircle contour; agent badges use live presence and leave
+unknown status unbadged. All three statuses use solid fills: green for Online,
+yellow for Away, and grey for Offline, with semantic light and dark values.
 
 ## Public identity text
 
@@ -170,6 +177,10 @@ only when a rectangular control shape is explicitly needed. Disabled ghost icons
 remain unfilled; their muted foreground communicates unavailability without
 adding a container to an otherwise empty toolbar.
 
+Composer picker surfaces use the 24px `--radius-panel` role and the shared
+popup motion below. Filtering does not stagger results. Search fields follow
+the shared form treatment below.
+
 Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
@@ -264,11 +275,19 @@ show these contracts and their compositions.
 
 ## Compositions
 
+Composer pickers reuse PopoverPopup and anchor above the whole composer with a
+4px gap, preserving the shared popup behavior and material.
+
 Dialog composes a Base UI modal with a shared title, optional description, body,
 close button and actions. Pending operations set preventClose so Escape and the
 close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
+Editors can supply `headerActions` beside Close and `leadingActions` before the
+trailing footer actions. `onEscape` may return true to consume Escape for an
+inline layer (such as an inspector) before dismissing the dialog. Nested modal
+layers still use Dialog so Base UI owns their focus trap and dismissal order;
+`placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.
 Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.
@@ -306,6 +325,10 @@ without reporting user dismissal. Gate notices from hidden Settings sections
 explicitly; portals do not inherit a hidden ancestor. Keep form errors and
 blocked-page recovery inline.
 
+Use `useToastNotification` for completed-action feedback that must outlive its
+source row (such as copying profile metadata); the host stack owns its finite
+expiry. Keep source-owned recovery on ToastNotice.
+
 Use a finite timeout for transient feedback. Recovery defaults to no expiry and
 no dismissal unless the source supplies onDismiss; preserve all recovery actions.
 The bounded, scrollable stack keeps older actions available without covering the
@@ -314,7 +337,8 @@ remain above the stack. Content updates do not restart expiry; timeout changes d
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead. NavigationItem
-forwards normal button events, refs and data attributes so unread observation,
+offers an `option` variant for picker rows with even 8px padding and immediate
+hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
 
 ## Menu row corners
@@ -410,6 +434,11 @@ The values documented above define this system, including the 12px xsmall role.
 - **Every dark value in this system is authored rather than observed.** The design exploration it came from is light-only. Treat anything that looks wrong in dark as a finding.
 
 ## Density and rhythm
+
+- **Scrollbars share one native treatment.** Use `scrollbar-width: thin` and
+  `scrollbar-color: var(--scrollbar-thumb) transparent`. The thumb is gray in
+  both modes. Load the shared scrollbar recipe into vendor shadow roots too;
+  let the browser own scrolling and scrollbar visibility.
 
 - **Dense data renders as rows with dividers, edge to edge.** Wrapping every list item in its own card is the most common way a functional surface becomes a marketing page.
 - **Content that separates itself needs no divider, and no container.** A divider is for uniform rows where the eye needs a line to track along. When each entry already carries a visible difference — a colour swatch, a type specimen, an avatar — the content is the separator, and adding a rule or a card on top is redundant structure. Space alone is enough.
@@ -519,7 +548,8 @@ it is the rule a generated theme is measured against.
   Apple ship theirs; raising them would draw the box the fill already implies.
   Error and warning boundary roles must reach 3:1 against surface-base,
   surface-panel, surface-inset and surface-popover in both themes. The contrast
-  guard checks these role mappings separately from text and decorative dividers.
+  guard checks these role mappings and status dots separately from text and
+  decorative dividers.
 
 ## Writing
 
@@ -534,7 +564,7 @@ it is the rule a generated theme is measured against.
 - **Contrast comes from the paired token, not from judgement.** Where a background is not neutral, its text is named for it.
 - **Keyboard, pointer, and shortcut paths must not diverge.** When adding an input handler, enumerate the ways a person can reach it and check the ones that are not the mouse.
 - **Focus rings are for keyboard navigation, not pointer navigation.** Gate every authored focus treatment with `html[data-keyboard-navigation]` and `:focus-visible`; the app-root input-modality owner supplies that attribute. Mouse, pen, and touch focus stays quiet, including programmatic focus during a drag. Keyboard focus remains clearly visible on the control itself.
-- **Colour is never the only carrier of meaning.** Pair it with text, shape, or position.
+- **Colour is never the only carrier of meaning by default.** Pair it with text, shape, or position. The solid avatar status badges in [Identity shapes](#identity-shapes) are an intentional product exception; preserve their solid fills and expose known status through the owning accessible label or description.
 
 ## Responsiveness
 

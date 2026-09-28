@@ -1,3 +1,6 @@
+import { getLogger } from "../developer/logging.ts";
+import { logSocketFrame, relayLabel } from "../developer/traffic.ts";
+
 import {
   createSocketPublications,
   SocketRequestError,
@@ -140,7 +143,8 @@ type Route = {
   deadline?: ReturnType<typeof setTimeout>;
 };
 const CHANNEL_KINDS = [
-  9, 40002, 40008, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002, 39005, 20002,
+  9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
+  39005, 20002,
 ];
 /** One authenticated socket, independently established channel routes and two explicit globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
@@ -152,6 +156,8 @@ export function subscribeRelayTraffic(
   socketFactory: (url: string) => WebSocket = (url) => new WebSocket(url),
   admission: LiveAdmission = createLiveAdmission(),
 ): LiveSubscription {
+  const log = getLogger("relay-ws");
+  const peer = relayLabel(url);
   let closed = false;
   let socket: WebSocket | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -198,7 +204,11 @@ export function subscribeRelayTraffic(
     );
   };
   const send = (value: unknown) => {
-    if (!closed && socket?.readyState === 1) socket.send(JSON.stringify(value));
+    if (!closed && socket?.readyState === 1) {
+      const raw = JSON.stringify(value);
+      socket.send(raw);
+      logSocketFrame(peer, "→", raw, value);
+    }
   };
   const requests = createSocketPublications(() => queueMicrotask(pump));
   function remove(route: Route) {
@@ -345,7 +355,7 @@ export function subscribeRelayTraffic(
       const scope = route.channelId
         ? { kinds: CHANNEL_KINDS, "#h": [route.channelId] }
         : route.id === "profiles"
-          ? { kinds: [0] }
+          ? { kinds: [0, 10100, 30177] }
           : route.id === "observer"
             ? { kinds: [OBSERVER_KIND], "#p": [viewer] }
             : { kinds: [44100, 44101], "#p": [viewer] };
@@ -372,6 +382,12 @@ export function subscribeRelayTraffic(
         ...(route.id === "profiles"
           ? [
               {
+                kinds: [30315],
+                "#d": ["general"],
+                since: route.since,
+                limit: LIVE_REPLAY_LIMIT,
+              },
+              {
                 kinds: [30030],
                 "#d": [EMOJI_SET],
                 since: route.since,
@@ -392,6 +408,7 @@ export function subscribeRelayTraffic(
     for (const route of routes.values()) clearTimeout(route.deadline);
     wires.clear();
     requests.clear();
+    if (socket) log.info(`${peer} disconnect`);
     socket?.close();
     socket = undefined;
   }
@@ -406,6 +423,7 @@ export function subscribeRelayTraffic(
     const valid = () => !closed && current === generation;
     const reconnect = (reason: string) => {
       if (!valid()) return;
+      log.warn(`${peer} ${reason}`);
       clearSocket();
       connection = "retrying";
       connectionError = reason;
@@ -422,6 +440,7 @@ export function subscribeRelayTraffic(
     };
     const terminal = (reason: string) => {
       if (!valid()) return;
+      log.error(`${peer} ${reason}`);
       clearSocket();
       connection = "error";
       connectionError = reason;
@@ -429,6 +448,7 @@ export function subscribeRelayTraffic(
     };
     let ws: WebSocket;
     try {
+      log.info(`${peer} connecting`);
       ws = socketFactory(url);
       socket = ws;
     } catch {
@@ -441,19 +461,23 @@ export function subscribeRelayTraffic(
       () => reconnect("Live authentication timed out"),
       10000,
     );
+    ws.onopen = () => {
+      if (valid()) log.info(`${peer} connected`);
+    };
     ws.onmessage = async (event) => {
-      if (
-        !valid() ||
-        typeof event.data !== "string" ||
-        event.data.length > 1024 * 1024
-      )
+      if (!valid()) return;
+      if (typeof event.data !== "string" || event.data.length > 1024 * 1024) {
+        logSocketFrame(peer, "←", event.data);
         return;
+      }
       let data: unknown;
       try {
         data = JSON.parse(event.data);
       } catch {
+        logSocketFrame(peer, "←", event.data);
         return;
       }
+      logSocketFrame(peer, "←", event.data, data);
       if (!Array.isArray(data)) return;
       if (
         data[0] === "AUTH" &&

@@ -5,6 +5,7 @@ export function ConfirmAction({
   title,
   description,
   action,
+  cancel = "Keep editing",
   onConfirm,
   onCancel,
   pending = false,
@@ -13,6 +14,7 @@ export function ConfirmAction({
   title: string;
   description: string;
   action: string;
+  cancel?: string;
   onConfirm: () => void;
   onCancel: () => void;
   pending?: boolean;
@@ -27,7 +29,7 @@ export function ConfirmAction({
       actions={
         <>
           <Button disabled={pending} onClick={onCancel}>
-            Keep editing
+            {cancel}
           </Button>
           <Button variant="prominent" disabled={pending} onClick={onConfirm}>
             {action}

@@ -199,3 +199,108 @@ test("qualified names preserve keyboard selection and completed-name dismissal",
   expect(plain.content).toBe("@Honey");
   expect(plain.tags.filter(([tag]) => tag === "p")).toEqual([]);
 });
+
+test("completed, dismissed and refuted mention searches stay closed while fresh triggers search", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/mentions.html?stream");
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  const options = page.getByRole("option");
+  const listbox = page.getByRole("listbox");
+  const chips = input.locator(".inline-chip");
+  const searches = () => page.evaluate(() => window.mentionFixture.searches());
+  const held = () => page.evaluate(() => window.mentionFixture.heldSearches());
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.list().status))
+    .toBe("ready");
+  async function freshSearch(before) {
+    await input.press("End");
+    await input.pressSequentially(" @Hon");
+    await expect(options).toHaveCount(2);
+    // The fresh trigger gets "Hon" directory evidence after the typing pause:
+    // a new read, or the session's settled page for the same query.
+    await expect
+      .poll(async () => {
+        const all = await searches();
+        return (
+          all.slice(before.length).at(-1) ??
+          all.findLast((search) => search === "Hon")
+        );
+      })
+      .toBe("Hon");
+    const added = (await searches()).slice(before.length);
+    expect(added.filter((search) => !"Hon".startsWith(search))).toEqual([]);
+    await input.press("Escape");
+    await expect(listbox).toHaveCount(0);
+  }
+
+  await input.fill("@Hon");
+  await expect(options).toHaveCount(2);
+  await input.press("Tab");
+  await expect(chips).toHaveCount(1);
+  await expect(input).toHaveJSProperty("value", "@Honey ");
+  let before = await searches();
+  await input.pressSequentially("asdfkjdsfkl");
+  await expect(input).toHaveJSProperty("value", "@Honey asdfkjdsfkl");
+  for (let i = 0; i < "asdfkjdsfkl".length + 1; i++)
+    await input.press("ArrowLeft");
+  await expect(input).toHaveJSProperty("selectionStart", "@Honey".length);
+  await expect(listbox).toHaveCount(0);
+  await freshSearch(before);
+  expect(await searches()).not.toContainEqual(expect.stringContaining("asdf"));
+
+  await input.fill("");
+  await page.evaluate(() => window.mentionFixture.holdSearches());
+  try {
+    await input.pressSequentially("@Ho");
+    await expect(options).toHaveCount(2);
+    await expect.poll(held).toContain("Ho");
+    await input.press("Tab");
+    await expect(chips).toHaveCount(1);
+    await input.pressSequentially("later");
+  } finally {
+    await page.evaluate(() => window.mentionFixture.releaseSearches());
+  }
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.mentionFixture.reads())).pending,
+    )
+    .toBe(0);
+  await expect(listbox).toHaveCount(0);
+
+  await input.fill("");
+  await page.evaluate(() => window.mentionFixture.holdSearches());
+  try {
+    // An uncached query, so a directory read is in flight when dismissed.
+    await input.pressSequentially("@Hone");
+    await expect(options).toHaveCount(2);
+    await expect.poll(held).toContain("Hone");
+    await input.press("Escape");
+    await expect(listbox).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => window.mentionFixture.releaseSearches());
+  }
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.mentionFixture.reads())).pending,
+    )
+    .toBe(0);
+  await expect(listbox).toHaveCount(0);
+
+  await input.fill("@Zed");
+  await expect.poll(searches).toContain("Zed");
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.mentionFixture.reads())).pending,
+    )
+    .toBe(0);
+  before = await searches();
+  await input.pressSequentially(" is typing prose");
+  await expect(input).toHaveJSProperty("value", "@Zed is typing prose");
+  await expect(listbox).toHaveCount(0);
+  await freshSearch(before);
+  expect(await searches()).not.toContainEqual(expect.stringContaining("Zed "));
+});

@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test as base, expect } from "@playwright/test";
 import { preview } from "vite";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
@@ -268,18 +269,20 @@ const test = base.extend({
     }
   },
 });
-async function open(page, app) {
-  await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
-  const header = page.locator("summary", { hasText: "DMs" });
-  await header.hover();
-  await header
+async function startNewMessage(page) {
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  const messages = sidebar.locator('[data-sidebar-section="dms"] summary');
+  await messages.hover();
+  await sidebar
     .getByRole("button", { name: "New message", exact: true })
     .click();
-  await expect(header.locator("..")).toHaveAttribute("open", "");
+  await expect(messages.locator("..")).toHaveAttribute("open", "");
+}
+
+async function open(page, app) {
+  await page.goto(app.origin);
+  await openPage(page, "Projects");
+  await startNewMessage(page);
 }
 
 test("empty compose, keyboard selection, pagination, removal effects, retry, then confirmed normal timeline", async ({
@@ -393,19 +396,9 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
       (filter) => filter.kinds?.includes(0) && filter.page && !filter.search,
     ).length;
   const beforeReopen = directoryReads();
-  await page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
-  await page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
-  const dmHeader = page.locator("summary", { hasText: "DMs" });
-  await dmHeader.hover();
-  await dmHeader
-    .getByRole("button", { name: "New message", exact: true })
-    .click();
+  await openPage(page, "Projects");
+  await openPage(page, "Messages");
+  await startNewMessage(page);
   await expect(page.getByRole("option")).toHaveCount(34);
   expect(await page.getByRole("option").allTextContents()).toEqual(
     loadedPeople,
@@ -479,6 +472,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   });
   expect(app.reads.filter((filter) => filter.search).length).toBe(searchReads);
   app.showPeople();
+  await input.press("ArrowDown");
   await input.press("Enter");
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("");
@@ -489,14 +483,62 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await page.screenshot({
     path: info.outputPath("new-message-recipients.png"),
   });
-  await page.getByRole("button", { name: "Remove Person 03" }).click();
-  await expect.poll(() => page.evaluate(() => window.removalSounds)).toBe(1);
-  await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(1);
-  await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(0);
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await input.press("Backspace");
-  await expect.poll(() => page.evaluate(() => window.removalSounds)).toBe(2);
-  await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(0);
+  // Record the short-lived effect before input. The browser can complete its
+  // entire animation while Playwright is waiting for the audio assertion.
+  const removal = await page.evaluateHandle(() => {
+    const selector = 'img[src$="poof1@3x.png"]';
+    const events = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const [nodes, type] of [
+          [record.addedNodes, "added"],
+          [record.removedNodes, "removed"],
+        ]) {
+          for (const node of nodes) {
+            const image = node.querySelector?.(selector);
+            if (image)
+              events.push({
+                type,
+                display:
+                  type === "added" ? getComputedStyle(image).display : null,
+              });
+          }
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return { events, disconnect: () => observer.disconnect() };
+  });
+  try {
+    await page.getByRole("button", { name: "Remove Person 03" }).click();
+    await expect.poll(() => page.evaluate(() => window.removalSounds)).toBe(1);
+    // Deliberately inspect creation only after cleanup: slow automation must not
+    // miss coverage of either lifecycle boundary.
+    await expect
+      .poll(() =>
+        removal.evaluate(({ events }) => events.map(({ type }) => type)),
+      )
+      .toEqual(["added", "removed"]);
+    expect(await removal.evaluate(({ events }) => events[0].display)).not.toBe(
+      "none",
+    );
+    await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(0);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await input.press("Backspace");
+    await expect.poll(() => page.evaluate(() => window.removalSounds)).toBe(2);
+    await expect
+      .poll(() =>
+        removal.evaluate(({ events }) => events.map(({ type }) => type)),
+      )
+      .toEqual(["added", "removed", "added", "removed"]);
+    expect(await removal.evaluate(({ events }) => events[2].display)).toBe(
+      "none",
+    );
+    await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(0);
+  } finally {
+    await removal.evaluate((observer) => observer.disconnect());
+    await removal.dispose();
+  }
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
   const composer = page.getByRole("textbox", {
     name: "Message Avery Chen",
@@ -513,7 +555,11 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect(mentions.getByRole("button")).toHaveCount(1);
   await averyMention.click();
   await expect(composer).toHaveText("@Avery Chen ");
-  await composer.fill("");
+  // Clear the rich token through the editor's keyboard selection command, not
+  // fill()'s synthetic DOM range, before exercising the completion path.
+  await composer.press("ControlOrMeta+a");
+  await composer.press("Backspace");
+  await expect(composer).toHaveText("");
   await composer.pressSequentially("@Av");
   const suggestions = page.getByRole("listbox", {
     name: "Mention suggestions",
@@ -574,8 +620,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect(message).toBeVisible();
   await expect(sidebarDm).toHaveAttribute("aria-current", "page");
   // Resolving an existing DM keeps its row visible while the next send is held.
-  await page.getByText("DMs", { exact: true }).hover();
-  await page.getByRole("button", { name: "New message", exact: true }).click();
+  await startNewMessage(page);
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
   // Composing is a separate route, not the previously selected conversation.
   await expect(sidebarDm).toBeVisible();
@@ -605,10 +650,7 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
 }) => {
   app.seedChannel("22222222-2222-4222-8222-222222222222", "Hello from Avery");
   await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await openPage(page, "Messages");
   const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
   const general = sidebar.locator(
     '[data-channel-id="22222222-2222-4222-8222-222222222222"]',
@@ -638,16 +680,21 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   expect(app.commands).toHaveLength(1);
   expect(app.commands[0].kind).toBe(41010);
   // A locally hidden DM reappears when the profile opens it again.
-  await sidebarDm.hover();
-  await sidebar
-    .getByRole("button", { name: "Remove Avery Chen from DMs" })
+  await sidebarDm.click({ button: "right" });
+  await page
+    .getByRole("menu", { name: "Actions for Avery Chen" })
+    .getByRole("menuitem", { name: "Remove from Messages", exact: true })
     .click();
+  await expect(sidebarDm).toHaveCount(0);
+  await page.reload();
   await expect(sidebarDm).toHaveCount(0);
   await openProfileMessage();
   await expect(sidebarDm).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Message #Avery Chen" }),
   ).toBeVisible();
+  await page.reload();
+  await expect(sidebarDm).toBeVisible();
   expect(app.commands).toHaveLength(2);
   expect(app.errors).toEqual([]);
 });

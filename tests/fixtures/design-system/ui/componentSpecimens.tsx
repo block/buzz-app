@@ -1,8 +1,21 @@
+import { Calendar } from "../../../../src/shared/design-system/ui/Calendar";
+import { FieldButton } from "../../../../src/shared/design-system/ui/FieldButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+} from "../../../../src/shared/design-system/ui/Menu";
 import {
   MenuSpecimen,
   PopoverSpecimen,
   ChoiceRowSpecimen,
 } from "./MenuSpecimens";
+import {
+  Header,
+  InlineHeader,
+} from "../../../../src/shared/design-system/ui/Header";
 import {
   InputExamples,
   TextareaExamples,
@@ -36,6 +49,7 @@ import {
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
+import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
 
 import { Avatar } from "../../../../src/shared/design-system/ui/Avatar";
@@ -53,6 +67,7 @@ import { FullPageSurface } from "../../../../src/shared/design-system/ui/FullPag
 import { PreviewCard } from "../../../../src/shared/design-system/ui/PreviewCard";
 import type { ChipAddress } from "../../../../src/shared/design-system/chips/address";
 import { chipFaces } from "../../../../src/shared/design-system/chips/faceResolver";
+import { ComposerSpecimen } from "./ComposerSpecimen";
 
 const DESTINATIONS = [
   { value: "home", label: "Home" },
@@ -61,6 +76,31 @@ const DESTINATIONS = [
 ] as const;
 
 type Destination = (typeof DESTINATIONS)[number]["value"];
+
+function CalendarSpecimen() {
+  const [date, setDate] = useState(new Date());
+  return <Calendar mode="single" required selected={date} onSelect={setDate} />;
+}
+
+function FieldButtonSpecimen() {
+  const [duration, setDuration] = useState("Today");
+  return (
+    <MenuRoot>
+      <MenuTrigger render={<FieldButton aria-label="Duration" />}>
+        {duration}
+      </MenuTrigger>
+      <MenuPopup>
+        <MenuRadioGroup value={duration} onValueChange={setDuration}>
+          {["Today", "This week", "Custom"].map((item) => (
+            <MenuRadioItem key={item} value={item}>
+              {item}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuPopup>
+    </MenuRoot>
+  );
+}
 
 function SpecimenFrame({
   children,
@@ -157,8 +197,66 @@ function AvatarSpecimen() {
           </Specimen>
         </div>
       </SpecimenGroup>
+      <SpecimenGroup label="Status badge and rounded cutout">
+        <div className="component-specimen-row">
+          {(["small", "default", "large"] as const).map((size) => (
+            <Specimen key={size} prop={`${size} · online`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Morgan Martin"
+                fallback="Morgan"
+                size={size}
+                statusBadge="online"
+              />
+            </Specimen>
+          ))}
+          {(["away", "offline"] as const).map((status) => (
+            <Specimen key={status} prop={`large · ${status}`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Morgan Martin"
+                fallback="Morgan"
+                size="large"
+                statusBadge={status}
+              />
+            </Specimen>
+          ))}
+          <Specimen prop="large · no badge">
+            <Avatar
+              src={avatarUrl}
+              alt="Morgan Martin"
+              fallback="Morgan"
+              size="large"
+            />
+          </Specimen>
+        </div>
+      </SpecimenGroup>
       <SpecimenGroup label="Agent shape (proposed)">
         <div className="component-specimen-row">
+          {(["small", "default", "large"] as const).map((size) => (
+            <Specimen key={size} prop={`squircle · ${size} · online`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Agent artwork"
+                fallback="Agent"
+                shape="squircle"
+                size={size}
+                statusBadge="online"
+              />
+            </Specimen>
+          ))}
+          {(["away", "offline"] as const).map((status) => (
+            <Specimen key={status} prop={`squircle · large · ${status}`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Agent artwork"
+                fallback="Agent"
+                shape="squircle"
+                size="large"
+                statusBadge={status}
+              />
+            </Specimen>
+          ))}
           <Specimen prop='shape="squircle"'>
             <Avatar
               src={avatarUrl}
@@ -172,6 +270,7 @@ function AvatarSpecimen() {
           </Specimen>
         </div>
       </SpecimenGroup>
+      <LiveAvatarStatusSpecimen />
       {/* No `src`, so the fallback initial shows. Same three sizes, because a
           fallback has to hold the ramp as well as an image does. */}
       <SpecimenGroup label="Fallback, with no src">
@@ -201,7 +300,6 @@ function AvatarSpecimen() {
           <IconButton
             aria-label="View Morgan profile"
             size="large"
-            shape="round"
             icon={
               <Avatar src={avatarUrl} alt="" fallback="Morgan" size="fill" />
             }
@@ -209,7 +307,6 @@ function AvatarSpecimen() {
           <IconButton
             aria-label="View Alex profile"
             size="large"
-            shape="round"
             icon={<Avatar alt="" fallback="Alex" size="fill" />}
           />
         </div>
@@ -225,6 +322,34 @@ function AvatarSpecimen() {
         </div>
       </SpecimenGroup>
     </div>
+  );
+}
+
+function LiveAvatarStatusSpecimen() {
+  const [status, setStatus] = useState<
+    "online" | "away" | "offline" | undefined
+  >();
+  return (
+    <SpecimenGroup label="Status transitions">
+      <div className="component-specimen-row">
+        <Avatar
+          src={avatarUrl}
+          alt="Live agent artwork"
+          fallback="Agent"
+          shape="squircle"
+          size="large"
+          statusBadge={status}
+        />
+        {(["online", "away", "offline"] as const).map((next) => (
+          <Button key={next} size="compact" onClick={() => setStatus(next)}>
+            Set {next}
+          </Button>
+        ))}
+        <Button size="compact" onClick={() => setStatus(undefined)}>
+          Clear status
+        </Button>
+      </div>
+    </SpecimenGroup>
   );
 }
 function FullPageSurfaceSpecimen() {
@@ -491,6 +616,21 @@ function NavigationItemSpecimen() {
           />
         </div>
       </SpecimenGroup>
+      <SpecimenGroup label="Picker option — even padding and immediate hover feedback">
+        <div className="component-navigation-section-demo">
+          <NavigationItem
+            variant="option"
+            label="Alex"
+            icon={<Avatar fallback="Alex" alt="" size="default" />}
+          />
+          <NavigationItem
+            variant="option"
+            label="Unavailable"
+            disabled
+            icon={<Avatar fallback="Unavailable" alt="" size="default" />}
+          />
+        </div>
+      </SpecimenGroup>
       <SpecimenGroup label="Inset — one level of nesting under a row">
         <div className="component-navigation-section-demo">
           <NavigationItem
@@ -697,6 +837,16 @@ function SwitchSpecimen() {
   const [busyChecked, setBusyChecked] = useState(true);
   return (
     <div className="component-specimen-stack">
+      <div className="divide-y divide-line">
+        <PreferenceRow
+          label="Desktop alerts"
+          description="Show notifications for new activity."
+          checked={checked}
+          onCheckedChange={setChecked}
+        />
+        <PreferenceRow label="Sound" checked />
+        <PreferenceRow label="Unavailable preference" disabled />
+      </div>
       <Switch
         checked={checked}
         onCheckedChange={setChecked}
@@ -841,6 +991,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       </Field>
     </SpecimenFrame>
   ),
+  calendar: CalendarSpecimen,
+  "field-button": FieldButtonSpecimen,
   input: InputExamples,
   textarea: TextareaExamples,
   "radio-group": RadioGroupSpecimen,
@@ -868,6 +1020,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   select: SelectExamples,
   combobox: ComboboxExamples,
   switch: SwitchSpecimen,
+  "preference-row": SwitchSpecimen,
   accordion: () => (
     <>
       <Accordion
@@ -922,8 +1075,19 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       />
     </>
   ),
+  header: () => (
+    <div>
+      <Header
+        title="Profile"
+        eyebrow="Account"
+        subtitle="Your local default for new communities."
+      />
+      <InlineHeader title="Preferences" subtitle="Choose what works for you." />
+    </div>
+  ),
   "panel-header": PanelHeaderSpecimen,
   "search-field": SearchExamples,
+  composer: ComposerSpecimen,
   "navigation-section": NavigationSectionSpecimen,
   "navigation-item": NavigationItemSpecimen,
 };

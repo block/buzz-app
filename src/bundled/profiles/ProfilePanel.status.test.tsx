@@ -7,7 +7,7 @@ import type { RelayData } from "../../features/relay/service";
 import { keypair, signed, type Key } from "../../features/relay/testing";
 import { profileTarget } from "../../features/profiles/target";
 import { ProfilePanel } from "./ProfilePanel";
-import styles from "./Profiles.module.css";
+import styles from "../../features/user-status/Status.module.css";
 
 afterEach(cleanup);
 const viewer = keypair();
@@ -133,9 +133,8 @@ it("ignores a late status after switching profiles", async () => {
     const view = render(f.panel(first));
     await waitFor(() => expect(f.reads).toHaveLength(1));
     view.rerender(f.panel(second));
+    await act(async () => release());
     expect(await screen.findByText("Current")).toBeTruthy();
-    release();
-    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.queryByText("Stale")).toBeNull();
   } finally {
     f.owner.dispose();

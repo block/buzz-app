@@ -77,6 +77,8 @@ export interface UnreadCapability {
     target: ReadTarget,
     messageId: string,
   ): Promise<ReadMutationResult>;
+  /** Explicit channel prefix through retained verified evidence, including replies. */
+  markChannelRead(channelId: string): Promise<ReadMutationResult>;
   markUnreadLocal(target: ReadTarget): Promise<ReadMutationResult>;
   readonly syncedManualUnread: false;
 }
@@ -141,6 +143,7 @@ export function createUnread({
   let closed = false,
     epoch = 0;
   let requested = false;
+  let repairAgain = false;
   let freshness: UnreadSnapshot["freshness"] = "unknown";
   let error: string | undefined;
   let refresh: Promise<void> | undefined;
@@ -163,7 +166,10 @@ export function createUnread({
     channels
       .list()
       .channels.some(
-        (channel) => channel.id === id && channel.members?.includes(viewer),
+        (channel) =>
+          channel.id === id &&
+          !channel.cached &&
+          channel.members?.includes(viewer),
       );
   const keyFor = (target: ReadTarget) =>
     `${target.channelId}:${targetKey(target)}`;
@@ -584,42 +590,65 @@ export function createUnread({
   }
   // Names/previews do not affect unread. Read membership once, without a
   // roster scan for every channel, and retain only the invalidation inputs.
-  const types = () =>
+  const types = (list: ReturnType<ChannelQueries["list"]>) =>
     new Map(
-      channels
-        .list()
-        .channels.filter((channel) => channel.members?.includes(viewer))
+      list.channels
+        .filter(
+          (channel) => !channel.cached && channel.members?.includes(viewer),
+        )
         .map((channel) => [channel.id, channel.channelType]),
     );
-  let channelTypes = types();
+  const cachedIds = (list: ReturnType<ChannelQueries["list"]>) =>
+    new Set(
+      list.channels
+        .filter((channel) => channel.cached)
+        .map((channel) => channel.id),
+    );
+  const initialList = channels.list();
+  let cachedChannels = cachedIds(initialList);
+  let channelTypes = types(initialList);
   let accessKey = [...channelTypes.keys()].sort().join(",");
   const stopChannels = channels.subscribeList(() => {
-    const nextTypes = types();
+    const list = channels.list();
+    const nextTypes = types(list);
     const next = [...nextTypes.keys()].sort().join(",");
     const changed = new Set(
       [...nextTypes].flatMap(([id, type]) =>
         channelTypes.get(id) !== type ? [id] : [],
       ),
     );
+    const confirmed = [...nextTypes.keys()].some((id) =>
+      cachedChannels.has(id),
+    );
+    cachedChannels = cachedIds(list);
     channelTypes = nextTypes;
     if (next === accessKey) {
       if (changed.size) publish(changed);
     } else {
       accessKey = next;
       purge();
+      // An initial observation made against a display-only roster still owes
+      // evidence when membership becomes fresh, including during an active repair.
+      if (requested && confirmed) {
+        repairAgain = true;
+        if (!refresh) void repair();
+      }
     }
   });
   async function repair(priority: Priority = "foreground") {
     requested = true;
     if (closed) return;
     if (refresh) return refresh;
+    repairAgain = false;
     const generation = epoch;
     refresh = (async () => {
       await reads.ensure();
       if (closed || generation !== epoch) return;
       const ids = channels
         .list()
-        .channels.filter((channel) => channel.members?.includes(viewer))
+        .channels.filter(
+          (channel) => !channel.cached && channel.members?.includes(viewer),
+        )
         .map((channel) => channel.id);
       if (!ids.length) return;
       try {
@@ -658,6 +687,7 @@ export function createUnread({
       }
     })().finally(() => {
       refresh = undefined;
+      if (!closed && repairAgain) void repair();
     });
     return refresh;
   }
@@ -835,6 +865,32 @@ export function createUnread({
         true,
       );
     },
+    async markChannelRead(channelId) {
+      if (closed || !allowed(channelId))
+        throw new Error("Read target unavailable");
+      indexEvidence();
+      const rows = byChannel.get(channelId) ?? [];
+      // Snapshot the cut at invocation, not after a queued storage write. Do not
+      // substitute wall time or a preview timestamp for verified domain evidence.
+      const latest = rows.reduce<RelayEvent | undefined>(
+        (head, { event }) =>
+          !head || event.created_at > head.created_at ? event : head,
+        undefined,
+      );
+      const keys = new Set([channelId]);
+      for (const { event, rootId } of rows) {
+        keys.add(`msg:${event.id}`);
+        if (rootId) keys.add(`thread:${rootId}`);
+        // A retained top-level message establishes its thread's channel even
+        // when that thread's replies are outside our bounded evidence window.
+        if (!threadReference(event)) keys.add(`thread:${event.id}`);
+      }
+      const generation = epoch;
+      const valid = () => !closed && generation === epoch && allowed(channelId);
+      return latest
+        ? reads.read(channelId, latest.created_at, valid, true, [...keys])
+        : reads.clearLocalUnread(channelId, [channelId], valid);
+    },
     async markUnreadLocal(target) {
       const key = targetKey(target);
       const generation = epoch;
@@ -879,6 +935,7 @@ export function createUnread({
     },
     clear() {
       epoch++;
+      repairAgain = false;
       indexed = false;
       events.clear();
       known.clear();

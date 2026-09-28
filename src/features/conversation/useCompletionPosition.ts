@@ -6,6 +6,15 @@ import { useLayoutEffect, useRef, type RefObject } from "react";
 export function useCompletionPosition(
   input: RefObject<ComposerInputElement | null>,
   widthRatio = 1,
+  {
+    preferAbove = false,
+    gap = 8,
+    maxWidth = Infinity,
+  }: {
+    preferAbove?: boolean;
+    gap?: number;
+    maxWidth?: number;
+  } = {},
 ) {
   const popup = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
@@ -22,17 +31,18 @@ export function useCompletionPosition(
       const y = viewport?.offsetTop ?? 0;
       const width = viewport?.width ?? window.innerWidth;
       const height = viewport?.height ?? window.innerHeight;
-      const gap = 8;
       const clamp = (value: number) =>
         Math.max(y + gap, Math.min(value, y + height - gap));
       const top = clamp(rect.top - gap);
       const bottom = clamp(rect.bottom + gap);
       const above = Math.max(0, top - y - gap);
       const below = Math.max(0, y + height - bottom - gap);
-      const up = above >= below;
+      const up = preferAbove
+        ? above >= Math.min(menu.scrollHeight, 160) || above >= below
+        : above >= below;
       const size = Math.max(
         0,
-        Math.min(rect.width * widthRatio, width - gap * 2),
+        Math.min(rect.width * widthRatio, width - gap * 2, maxWidth),
       );
       Object.assign(menu.style, {
         left: `${Math.max(x + gap, Math.min(rect.left, x + width - size - gap))}px`,

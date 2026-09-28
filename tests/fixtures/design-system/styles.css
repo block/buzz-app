@@ -273,6 +273,32 @@
     width: min(100%, var(--size-navigator));
   }
 
+  .composer-specimen-frame {
+    width: 100%;
+    justify-content: center;
+    background: var(--bg-app);
+  }
+
+  .composer-specimen-frame > .buzz-composer {
+    max-width: 44rem;
+  }
+
+  .composer-specimen-context-label,
+  .composer-specimen-recovery {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .composer-specimen-recovery {
+    justify-content: space-between;
+  }
+
+  .composer-specimen-narrow {
+    width: min(100%, 22rem);
+  }
+
   .component-navigation-section-demo {
     padding: var(--space-2);
     border-radius: var(--radius-control);

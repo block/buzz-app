@@ -1,3 +1,4 @@
+import { openPage, pageChoices } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -52,7 +53,7 @@ test("real Settings keys respect dialogs and modifiers, focus main, and preserve
     page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("main")).toBeFocused();
-  await button(page, "Messages").first().click();
+  await openPage(page, "Messages");
   await expect(composer).toHaveJSProperty("value", "Keep my draft");
 });
 
@@ -123,7 +124,7 @@ test("zoom keys resize real message/composer text, not window or spacing, and pe
   expect(await page.evaluate(() => window.visualViewport.scale)).toBe(1);
   await page.reload();
   await scale(page, 1.1);
-  await button(page, "Messages").first().click();
+  await openPage(page, "Messages");
   await expect(composer).toHaveJSProperty("value", "Unsent zoom draft");
   await composer.focus();
   for (let i = 0; i < 15; i++) await page.keyboard.press(`${modifier}+=`);
@@ -142,8 +143,41 @@ test("zoom keys resize real message/composer text, not window or spacing, and pe
   await expect(page.getByRole("status", { name: "Text size" })).toHaveText(
     "80%",
   );
-  await button(page, "Reset text size").click();
+  await button(page, "Reset text size").focus();
+  await page.keyboard.press("Enter");
   await scale(page, 1);
+  await expect(button(page, "Increase text size")).toBeFocused();
+  // At 200%, the handoff target is disabled until the reset commit finishes.
+  for (const reset of ["keyboard", "external", "external-unfocused"]) {
+    for (let i = 0; i < 10; i++)
+      await button(page, "Increase text size").click();
+    await scale(page, 2);
+    await expect(button(page, "Increase text size")).toBeDisabled();
+    const light = page.getByRole("radio", { name: "Light", exact: true });
+    await (reset === "external-unfocused"
+      ? light
+      : button(page, "Reset text size")
+    ).focus();
+    if (reset === "keyboard") await page.keyboard.press("Enter");
+    else
+      await page.evaluate(() => {
+        localStorage.setItem("buzz-font-scale.v1", "1");
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: "buzz-font-scale.v1",
+            newValue: "1",
+            storageArea: localStorage,
+          }),
+        );
+      });
+    await scale(page, 1);
+    await expect(button(page, "Reset text size")).toHaveCount(0);
+    await expect(
+      reset === "external-unfocused"
+        ? light
+        : button(page, "Increase text size"),
+    ).toBeFocused();
+  }
 });
 
 test("independent plugin consumes injected shortcuts; disable/re-enable and editor guards work", async ({
@@ -152,8 +186,8 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
 }) => {
   await page.goto(app.origin);
   const modifier = await mod(page);
-  await button(page, "Shortcut counter").first().click();
-  const count = page.getByRole("status");
+  await openPage(page, "Shortcut counter");
+  const count = page.getByRole("main").getByRole("status");
   await expect(count).toHaveText("Shortcut count: 0");
   await page.keyboard.press(`${modifier}+Shift+k`);
   await expect(count).toHaveText("Shortcut count: 1");
@@ -179,9 +213,11 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
   await button(page, "Search Buzz").click();
   await page.keyboard.press(`${modifier}+Shift+k`);
   // Base UI hides the background from assistive technology while modal.
-  await expect(page.getByRole("status", { includeHidden: true })).toHaveText(
-    "Shortcut count: 1",
-  );
+  await expect(
+    page
+      .getByRole("main", { includeHidden: true })
+      .getByRole("status", { includeHidden: true }),
+  ).toHaveText("Shortcut count: 1");
   await page.keyboard.press("Escape");
   // Dismissal and focus restoration finish asynchronously. The host correctly
   // suppresses Settings while a closing modal still owns the keyboard.
@@ -193,10 +229,20 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
   await button(page, "Plugins").click();
   const toggle = page.getByRole("switch", { name: "Enable Shortcut counter" });
   await toggle.click();
-  await expect(button(page, "Shortcut counter")).toHaveCount(0);
+  const choices = await pageChoices(page);
+  await expect(
+    choices.getByRole("option", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  await expect(
+    choices.getByRole("option", { name: "Shortcut counter", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),
+  ).toHaveCount(0);
   await page.keyboard.press(`${modifier}+Shift+k`);
   await toggle.click();
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   await expect(count).toHaveText("Shortcut count: 0");
   await page.keyboard.press(`${modifier}+Shift+k`);
   await expect(count).toHaveText("Shortcut count: 1");
@@ -208,7 +254,7 @@ test("a shadow-root modal blocks Settings and plugin bindings but allows text zo
 }) => {
   await page.goto(app.origin);
   const modifier = await mod(page);
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   await page.evaluate(() => {
     const host = document.createElement("div");
     host.id = "shadow-modal";
@@ -234,7 +280,9 @@ test("a shadow-root modal blocks Settings and plugin bindings but allows text zo
     }),
   ).toHaveCount(0);
   await page.keyboard.press(`${modifier}+Shift+k`);
-  await expect(page.getByRole("status")).toHaveText("Shortcut count: 0");
+  await expect(page.getByRole("main").getByRole("status")).toHaveText(
+    "Shortcut count: 0",
+  );
   await page.keyboard.press(`${modifier}+=`);
   await scale(page, 1.1);
   await page.keyboard.press(`${modifier}+0`);
@@ -243,7 +291,9 @@ test("a shadow-root modal blocks Settings and plugin bindings but allows text zo
   await page.evaluate(() => document.getElementById("shadow-modal").remove());
   await page.getByRole("main").focus();
   await page.keyboard.press(`${modifier}+Shift+k`);
-  await expect(page.getByRole("status")).toHaveText("Shortcut count: 1");
+  await expect(page.getByRole("main").getByRole("status")).toHaveText(
+    "Shortcut count: 1",
+  );
 });
 
 test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflicts, persists and resets", async ({
@@ -255,8 +305,8 @@ test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflic
   const spokenModifiers =
     modifier === "Meta" ? "Shift Command" : "Control Shift";
   const title = "Increment shortcut counter";
-  await button(page, "Shortcut counter").first().click();
-  const count = page.getByRole("status");
+  await openPage(page, "Shortcut counter");
+  const count = page.getByRole("main").getByRole("status");
   await expect(count).toHaveText("Shortcut count: 0");
   await page.keyboard.press(`${modifier}+Shift+k`);
   await expect(count).toHaveText("Shortcut count: 1");
@@ -296,13 +346,13 @@ test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflic
   ).toBeAttached();
   await expect(button(row, `Reset shortcut for ${title}`)).toBeVisible();
   await expect(button(row, `Change shortcut for ${title}`)).toBeFocused();
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   await expect(count).toHaveText("Shortcut count: 1");
   await page.keyboard.press(`${modifier}+Shift+k`);
   await page.keyboard.press(`${modifier}+Shift+u`);
   await expect(count).toHaveText("Shortcut count: 2");
   await page.reload();
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   await expect(count).toHaveText("Shortcut count: 0");
   await page.keyboard.press(`${modifier}+Shift+u`);
   await expect(count).toHaveText("Shortcut count: 1");
@@ -313,7 +363,7 @@ test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflic
   await expect(
     page.getByRole("button", { name: "Reset all shortcuts", exact: true }),
   ).toBeDisabled();
-  await button(page, "Shortcut counter").first().click();
+  await openPage(page, "Shortcut counter");
   await page.keyboard.press(`${modifier}+Shift+u`);
   await page.keyboard.press(`${modifier}+Shift+k`);
   await expect(count).toHaveText("Shortcut count: 2");

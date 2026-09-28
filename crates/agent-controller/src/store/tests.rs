@@ -6,6 +6,7 @@ pub(crate) fn fixture() -> Agent {
     let pubkey = "ab".repeat(32);
     let relay_url = "wss://relay.example".to_owned();
     Agent {
+        picture: None,
         id: agent_id(&pubkey, &relay_url),
         pubkey,
         relay_url,
@@ -22,6 +23,7 @@ pub(crate) fn fixture() -> Agent {
         environment: BTreeMap::from([("TEST_TOKEN".into(), "secret-env-value".into())]),
         revision: 1,
         enabled: false,
+        start_on_app_launch: None,
         credential_id: "test-credential".into(),
         auth_tag: Some("private-attestation".into()),
         imported: json!({"futureSetting": {"opaque": "preserve-me"}}),
@@ -30,11 +32,111 @@ pub(crate) fn fixture() -> Agent {
 }
 fn edit() -> AgentEdit {
     AgentEdit {
+        picture: None,
         name: "Edited Brain".into(),
         system_prompt: "New prompt".into(),
         workspace: "/tmp".into(),
         harness: fixture().harness,
         environment: BTreeMap::new(),
+    }
+}
+#[test]
+fn snapshot_withholds_model_and_provider_environment_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let agent = |key: &str, command: &str, provider: &str, env: &[(&str, &str)]| {
+        let mut agent = fixture();
+        agent.pubkey = key.repeat(32);
+        agent.id = agent_id(&agent.pubkey, &agent.relay_url);
+        agent.harness.command = command.into();
+        agent.harness.model.clear();
+        agent.harness.provider = provider.into();
+        agent.environment = env
+            .iter()
+            .map(|(k, v)| ((*k).into(), (*v).into()))
+            .collect();
+        agent
+    };
+    store
+        .insert(vec![
+            agent(
+                "a1",
+                "buzz-agent",
+                "",
+                &[
+                    ("BUZZ_AGENT_MODEL", "synthetic-buzz-model"),
+                    ("BUZZ_AGENT_PROVIDER", "synthetic-buzz-provider"),
+                ],
+            ),
+            agent(
+                "b2",
+                "goose",
+                "",
+                &[
+                    ("GOOSE_MODEL", "synthetic-goose-model"),
+                    ("GOOSE_PROVIDER", "synthetic-goose-provider"),
+                ],
+            ),
+            // A blank model on a Databricks provider falls back to this key.
+            agent(
+                "c3",
+                "buzz-agent",
+                "databricks",
+                &[("DATABRICKS_MODEL", "synthetic-databricks-model")],
+            ),
+            // An empty override is still an override.
+            agent("d4", "buzz-agent", "", &[("BUZZ_AGENT_PROVIDER", "")]),
+            // A hidden provider decides a blank model before the Databricks fallback.
+            agent(
+                "e5",
+                "buzz-agent",
+                "databricks",
+                &[
+                    ("BUZZ_AGENT_PROVIDER", "synthetic-combined-provider"),
+                    ("DATABRICKS_MODEL", "synthetic-combined-model"),
+                ],
+            ),
+        ])
+        .unwrap();
+    let snapshot = store.snapshot().unwrap();
+    let wire = serde_json::to_string(&snapshot).unwrap();
+    for value in [
+        "synthetic-buzz-model",
+        "synthetic-buzz-provider",
+        "synthetic-goose-model",
+        "synthetic-goose-provider",
+        "synthetic-databricks-model",
+        "synthetic-combined-provider",
+        "synthetic-combined-model",
+    ] {
+        assert!(!wire.contains(value), "projected {value}");
+    }
+    for (key, model, provider) in [
+        ("a1", Some("BUZZ_AGENT_MODEL"), Some("BUZZ_AGENT_PROVIDER")),
+        ("b2", Some("GOOSE_MODEL"), Some("GOOSE_PROVIDER")),
+        ("c3", Some("DATABRICKS_MODEL"), None),
+        (
+            "d4",
+            Some("BUZZ_AGENT_PROVIDER"),
+            Some("BUZZ_AGENT_PROVIDER"),
+        ),
+        (
+            "e5",
+            Some("BUZZ_AGENT_PROVIDER"),
+            Some("BUZZ_AGENT_PROVIDER"),
+        ),
+    ] {
+        let view = snapshot
+            .agents
+            .iter()
+            .find(|a| a.pubkey.starts_with(key))
+            .unwrap();
+        assert_eq!(
+            (view.launch_model_env, view.launch_provider_env),
+            (model, provider)
+        );
+        assert!(view.launch_model.is_none(), "{key} model value");
+        assert_eq!(view.launch_provider.is_none(), provider.is_some(), "{key}");
     }
 }
 #[test]
@@ -82,6 +184,26 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
             0o600
         );
     }
+}
+#[test]
+fn remove_requires_current_revision_and_persists_absence() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let agent = fixture();
+    store.insert(vec![agent.clone()]).unwrap();
+    store.enabled(&agent.id, false).unwrap();
+    assert!(dir.path().join("agents.previous.json").exists());
+    assert!(store.remove(&agent.id, agent.revision + 1).is_err());
+    assert_eq!(store.agents().unwrap().len(), 1);
+    store.remove(&agent.id, agent.revision).unwrap();
+    assert!(store.agents().unwrap().is_empty());
+    assert!(!dir.path().join("agents.previous.json").exists());
+    drop(store);
+    assert!(Store::open(dir.path().to_owned())
+        .unwrap()
+        .agents()
+        .unwrap()
+        .is_empty());
 }
 #[test]
 fn environment_patch_preserves_deletes_and_rejects_host_overrides_without_writing() {
@@ -145,6 +267,24 @@ fn durable_enablement_is_not_a_config_revision() {
     assert_eq!(store.agents().unwrap()[0].revision, 1);
 }
 #[test]
+fn launch_preference_persists_without_a_config_revision_and_overrides_enablement() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    assert!(!store.agents().unwrap()[0].starts_on_launch());
+    store.enabled(&a.id, true).unwrap();
+    assert!(store.agents().unwrap()[0].starts_on_launch());
+    store.start_on_app_launch(&a.id, false).unwrap();
+    assert!(store.start_on_app_launch("missing", true).is_err());
+    drop(store);
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    let saved = &store.agents().unwrap()[0];
+    assert_eq!(saved.start_on_app_launch, Some(false));
+    assert!(saved.enabled && !saved.starts_on_launch());
+    assert_eq!(saved.revision, 1);
+}
+#[test]
 fn identity_and_transport_validation_rejects_duplicates_and_argument_loss() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = Store::open(dir.path().to_owned()).unwrap();
@@ -187,4 +327,68 @@ fn closing_store_releases_lock_even_with_inherited_file_description() {
     assert!(Store::open(dir.path().to_owned()).is_err());
     drop(reopened);
     Store::open(dir.path().to_owned()).unwrap();
+}
+
+#[test]
+fn avatar_save_preserve_clear_pending_cas_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut update = edit();
+    update.picture = Some("https://images.example/brain.png".into());
+    store.save(&a.id, 1, update).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap().agents[0].picture.as_deref(),
+        Some("https://images.example/brain.png")
+    );
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    drop(store);
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    store.save(&a.id, 2, edit()).unwrap(); // Omitted picture preserves the managed override.
+    assert_eq!(
+        store.agents().unwrap()[0].picture.as_deref(),
+        Some("https://images.example/brain.png")
+    );
+    assert!(store.profile_published(&a.id, 2).is_err());
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    store.profile_published(&a.id, 3).unwrap();
+    assert!(!store.snapshot().unwrap().agents[0].profile_pending);
+    let mut update = edit();
+    update.picture = Some("https://images.example/brain.png".into());
+    store.save(&a.id, 3, update).unwrap();
+    assert!(!store.snapshot().unwrap().agents[0].profile_pending); // Unchanged does not republish.
+    let mut update = edit();
+    update.picture = Some(String::new());
+    store.save(&a.id, 4, update).unwrap();
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    drop(store);
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(store.agents().unwrap()[0].picture.as_deref(), Some(""));
+    assert_eq!(store.agents().unwrap()[0].imported, a.imported);
+}
+
+#[test]
+fn invalid_avatar_and_stale_save_leave_persistent_bytes_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    let before = fs::read(store.path()).unwrap();
+    for value in [
+        "http://images.example/a.png",
+        "data:image/png;base64,AA==",
+        "https://user:secret@images.example/a.png",
+        "not a URL",
+    ] {
+        let mut update = edit();
+        update.picture = Some(value.into());
+        assert!(store.save(&a.id, 1, update).is_err());
+        assert_eq!(fs::read(store.path()).unwrap(), before);
+    }
+    let mut update = edit();
+    update.picture = Some("https://images.example/new.png".into());
+    assert!(store.save(&a.id, 0, update).is_err());
+    assert_eq!(fs::read(store.path()).unwrap(), before);
 }

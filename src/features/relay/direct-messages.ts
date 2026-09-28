@@ -29,7 +29,9 @@ export function createDirectMessages(
         throw new Error("Invalid people search.");
       // Both browse and search profiles can carry large metadata. Keep pages
       // small; the second browse page overlaps the preview and is deduplicated.
-      const browsing = !query.trim();
+      const value = query.trim();
+      const browsing = !value;
+      const exactKey = /^[0-9a-f]{64}$/.test(value);
       const limit = browsing && page === 1 ? 15 : 30;
       const relayPage = browsing && page > 1 ? page - 1 : page;
       const events = await directoryReader.read(
@@ -38,9 +40,11 @@ export function createDirectMessages(
             kinds: [0],
             limit,
             page: relayPage,
-            ...(query.trim()
-              ? { search: query.trim(), search_mode: "prefix" as const }
-              : {}),
+            ...(exactKey
+              ? { authors: [value] }
+              : value
+                ? { search: value, search_mode: "prefix" as const }
+                : {}),
           },
         ],
         { signal: active, priority: page === 1 ? "foreground" : "background" },

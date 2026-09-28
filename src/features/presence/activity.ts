@@ -1,6 +1,8 @@
-export type PresencePreference = "auto" | "away" | "offline";
+export type PresencePreference = "auto" | "online" | "away" | "offline";
 const preference = (value: unknown): PresencePreference =>
-  value === "away" || value === "offline" ? value : "auto";
+  value === "online" || value === "away" || value === "offline"
+    ? value
+    : "auto";
 
 /** One app input/preference source shared by retained community publishers. */
 export function createPresenceActivity() {

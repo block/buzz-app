@@ -7,10 +7,18 @@ import type {
   AgentControl,
   AgentControlState,
 } from "../../features/agents/control";
-import { isGoose, type AgentDraft } from "./agent-edit";
+import { gooseApiKey, isGoose, type AgentDraft } from "./agent-edit";
 import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
 import { AgentModelPicker } from "./AgentModelPicker";
+
+function effectiveGooseProvider(draft: AgentDraft, savedKeys: string[]) {
+  const override = draft.environment.GOOSE_PROVIDER;
+  if (typeof override === "string") return override;
+  if (override === undefined && savedKeys.includes("GOOSE_PROVIDER"))
+    return null;
+  return draft.provider;
+}
 
 /** Create and Edit share the same settings and native model discovery. */
 export function AgentSettingsFields({
@@ -22,8 +30,12 @@ export function AgentSettingsFields({
   disabled,
   environmentKeys = [],
   onChange,
+  onOpenHarnesses,
+  discardEdits = false,
 }: {
   id?: string | undefined;
+  onOpenHarnesses?: (() => void) | undefined;
+  discardEdits?: boolean;
   savedRevision?: number | undefined;
   draft: AgentDraft;
   control: AgentControl;
@@ -35,12 +47,44 @@ export function AgentSettingsFields({
   const [piProviders, setPiProviders] = useState<string[]>([]);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
-  const providerOverride = draft.environment.GOOSE_PROVIDER;
-  const provider = providerOverride ?? draft.provider;
-  const gooseCanBrowse =
-    provider === "databricks_v2" ||
-    (providerOverride === undefined &&
-      environmentKeys.includes("GOOSE_PROVIDER"));
+  const buzzProvider =
+    draft.environment.BUZZ_AGENT_PROVIDER ??
+    (draft.provider || state.data?.agentDefaults?.provider);
+  // Saved environment values are write-only. Do not promise a build default
+  // when an untouched override could select a different provider or model.
+  const modelDefaultKnown =
+    (draft.environment.BUZZ_AGENT_PROVIDER !== undefined ||
+      !environmentKeys.includes("BUZZ_AGENT_PROVIDER")) &&
+    ["BUZZ_AGENT_MODEL", "DATABRICKS_MODEL"].every(
+      (key) =>
+        draft.environment[key] === null ||
+        (draft.environment[key] === undefined &&
+          !environmentKeys.includes(key)),
+    );
+  const databricks = ["databricks_v2", "databricks-v2", "databricks"].includes(
+    buzzProvider ?? "",
+  );
+  const gooseProvider = goose
+    ? effectiveGooseProvider(draft, environmentKeys)
+    : null;
+  const apiKey = gooseProvider ? gooseApiKey(gooseProvider) : undefined;
+  const savedKey = !!apiKey && environmentKeys.includes(apiKey.env);
+  const change = (patch: Partial<AgentDraft>) => {
+    const next = { ...draft, ...patch };
+    const nextProvider = isGoose(next.command)
+      ? effectiveGooseProvider(next, environmentKeys)
+      : null;
+    if (gooseProvider !== nextProvider && gooseProvider) {
+      const key = gooseApiKey(gooseProvider)?.env;
+      const environment = { ...(patch.environment ?? draft.environment) };
+      if (key && typeof environment[key] === "string") {
+        delete environment[key];
+        onChange({ ...patch, environment });
+        return;
+      }
+    }
+    onChange(patch);
+  };
   return (
     <div className="min-w-0">
       <div className="min-w-0 space-y-section-gap">
@@ -69,37 +113,69 @@ export function AgentSettingsFields({
             disabled={disabled}
             draft={draft}
             options={state.data?.harnessOptions ?? []}
+            defaultProvider={
+              goose ? undefined : state.data?.agentDefaults?.provider
+            }
             piProviders={piProviders}
-            onChange={onChange}
+            onChange={change}
+            onOpenHarnesses={onOpenHarnesses}
+            discardEdits={discardEdits}
           />
-          {goose && !gooseCanBrowse ? (
+          {goose && gooseProvider === null && (
+            <p role="status" className="text-body-sm text-secondary">
+              This agent has a saved GOOSE_PROVIDER override whose value is
+              hidden. Replace or remove it under Advanced → Environment to enter
+              the matching API key here.
+            </p>
+          )}
+          {apiKey && (
             <div className="space-y-2">
-              <Field label="Model">
+              <Field label={`${apiKey.label} API key`}>
                 <Input
-                  disabled={disabled}
-                  value={draft.model}
-                  placeholder="Enter a model ID for this provider"
+                  type="password"
+                  autoComplete="new-password"
                   spellCheck={false}
-                  onChange={(event) => onChange({ model: event.target.value })}
+                  disabled={disabled}
+                  value={draft.environment[apiKey.env] ?? ""}
+                  placeholder={
+                    draft.environment[apiKey.env] === null
+                      ? "Will remove on save"
+                      : savedKey
+                        ? "Saved key unchanged"
+                        : "Paste API key or use existing Goose credentials"
+                  }
+                  onChange={(event) => {
+                    const environment = { ...draft.environment };
+                    if (event.target.value)
+                      environment[apiKey.env] = event.target.value;
+                    else delete environment[apiKey.env];
+                    change({ environment });
+                  }}
                 />
               </Field>
               <p className="text-body-sm text-secondary">
-                Existing Goose credentials are reused. If this provider is not
-                configured yet, run goose configure before starting the agent.
+                {apiKey.env} is used for this agent and model lookup. Leave
+                blank to keep a saved key, if present, or use Goose credentials.
+                Saved keys are stored in this device’s local agent settings
+                files.
               </p>
             </div>
-          ) : (
-            <AgentModelPicker
-              onPiProviders={setPiProviders}
-              disabled={disabled}
-              id={id}
-              savedRevision={savedRevision}
-              control={control}
-              defaults={state.data?.databricksDefaults}
-              draft={draft}
-              onChange={onChange}
-            />
           )}
+          <AgentModelPicker
+            onPiProviders={setPiProviders}
+            disabled={disabled}
+            id={id}
+            savedRevision={savedRevision}
+            control={control}
+            defaults={state.data?.databricksDefaults}
+            defaultModel={
+              !goose && databricks && modelDefaultKnown
+                ? state.data?.agentDefaults?.model
+                : undefined
+            }
+            draft={draft}
+            onChange={change}
+          />
           {pi && (
             <p className="text-body-sm text-secondary">
               Browse loads available models and providers from your local Pi
@@ -109,6 +185,12 @@ export function AgentSettingsFields({
           )}
         </fieldset>
       </div>
+      {state.data?.agentDefaults?.ownerOnly && (
+        <p className="text-body-sm text-secondary">
+          This build allows instructions only from the owner and verified
+          same-owner agents.
+        </p>
+      )}
       <div className="-mx-2">
         <Accordion
           variant="form"
@@ -143,7 +225,7 @@ export function AgentSettingsFields({
                     keys={environmentKeys}
                     patch={draft.environment}
                     disabled={disabled}
-                    onChange={(environment) => onChange({ environment })}
+                    onChange={(environment) => change({ environment })}
                   />
                   <p className="text-body-sm text-secondary">
                     {pi

@@ -10,7 +10,10 @@ export type WorkflowDraftIssue = {
 } & (
   | { field?: undefined }
   | { field: "name" }
-  | { field: "text" | "duration" | "timeout"; stepIndex: number }
+  | {
+      field: "text" | "duration" | "timeout" | "url" | "headers";
+      stepIndex: number;
+    }
 );
 
 /** Draft shape validation is not relay authorization or a promise of execution. */
@@ -75,6 +78,27 @@ export function draftIssue(yaml: string): WorkflowDraftIssue | null {
           stepIndex,
           message: "Each Send Message step needs message text.",
         };
+      if (step.action === "call_webhook") {
+        // The relay expands template expressions before validating the destination.
+        if (typeof step.url !== "string" || !step.url.trim()) {
+          return {
+            field: "url",
+            stepIndex,
+            message:
+              "Enter a webhook URL or template. The relay checks destination safety and permission.",
+          };
+        }
+        if (
+          step.headers &&
+          Object.keys(step.headers).some((name) => !name.trim())
+        ) {
+          return {
+            field: "headers",
+            stepIndex,
+            message: "Give every header a name or remove its row.",
+          };
+        }
+      }
       if (
         step.action === "delay" &&
         (typeof step.duration !== "string" || !step.duration.trim())
@@ -94,16 +118,6 @@ export function draftIssue(yaml: string): WorkflowDraftIssue | null {
 /** Existing callers only need the save-blocking message. */
 export function draftError(yaml: string): string | null {
   return draftIssue(yaml)?.message ?? null;
-}
-
-/** No secret display exists in this slice: do not offer webhook-trigger writes. */
-export function hasWebhookTrigger(yaml: string): boolean {
-  try {
-    const data = parseDocument(yaml).toJS();
-    return data?.trigger?.on === "webhook";
-  } catch {
-    return false;
-  }
 }
 
 export function formWithStep(

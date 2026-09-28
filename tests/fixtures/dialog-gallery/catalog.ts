@@ -29,6 +29,13 @@ export const confirmations = {
       "Dismissal only clears this notice and its editor lock. It does not undo, cancel or repeat a command, and it does not prove an unknown command failed. Review the saved configuration before saving again; a new run request may run the workflow again. Your unsaved draft is kept.",
     action: "Dismiss notice and continue",
   },
+  secret: {
+    title: "Continue without this secret?",
+    description:
+      "This private webhook secret cannot be recovered. Copy and store it before continuing, or explicitly leave it behind.",
+    action: "Continue",
+    cancel: "Go back",
+  },
 };
 
 export const dialogs = [
@@ -112,6 +119,24 @@ export const dialogs = [
     source: "src/bundled/workflows/WorkflowOperations.tsx",
     frame: "ConfirmAction → AlertDialog",
     note: "Longest confirmation copy. The inspector also exposes its pending and error states.",
+  },
+  {
+    id: "secret",
+    name: "Continue without a webhook secret",
+    group: "Workflow confirmations",
+    path: "Webhook secret → Continue before revealing or copying",
+    source: "src/bundled/workflows/WorkflowWebhookSecretDialog.tsx",
+    frame: "ConfirmAction → AlertDialog",
+    note: "Cancel reads Go back rather than Keep editing; confirming discards the only copy of the secret.",
+  },
+  {
+    id: "webhook",
+    name: "Webhook secret",
+    group: "Workflow dialogs",
+    path: "Workflows → save a workflow that first gains a webhook trigger",
+    source: "src/bundled/workflows/WorkflowWebhookSecretDialog.tsx",
+    frame: "Dialog",
+    note: "Shown once after the save receipt: hook URL, masked secret, reveal and copy. Leaving before revealing or copying opens the confirmation. Select the no-address variant in the inspector.",
   },
   {
     id: "attachment",

@@ -83,7 +83,7 @@ describe("message fold", () => {
       rootOnly,
     ]);
     const expectedTen = [b, same]
-      .sort((x, y) => y.id.localeCompare(x.id))
+      .sort((x, y) => x.id.localeCompare(y.id))
       .map((event) => event.id);
     expect(rows.map((row) => row.id)).toEqual([
       ...expectedTen,
@@ -95,6 +95,12 @@ describe("message fold", () => {
     expect(rows.find((row) => row.id === broadcast.id)?.threadRootId).toBe(
       a.id,
     );
+    expect(rows.find((row) => row.id === broadcast.id)?.replyParentId).toBe(
+      a.id,
+    );
+    expect(
+      rows.find((row) => row.id === rootOnly.id)?.replyParentId,
+    ).toBeUndefined();
     expect(rows.find((row) => row.id === a.id)?.threadRootId).toBeUndefined();
     expect(
       rows.find((row) => row.id === rootOnly.id)?.threadRootId,
@@ -195,11 +201,34 @@ describe("message fold", () => {
       }),
     ]);
     expect(rows.map((row) => [row.replyCount, row.participants])).toEqual([
-      [4, [bob.pubkey]],
+      [7, [bob.pubkey]],
       [0, []],
       [0, []],
     ]);
   });
+  it.each([
+    [0, 0],
+    [3, 3],
+    [undefined, 1],
+    [null, 1],
+    [-1, 1],
+    [1.5, 1],
+    ["3", 1],
+  ])(
+    "projects descendant count %s with a validated direct-count fallback",
+    (total, expected) => {
+      const root = message(alice, channel, "root", 10);
+      const rows = foldMessages(channel, relay.pubkey, [
+        root,
+        summary(relay, channel, root.id, {
+          reply_count: 1,
+          descendant_count: total,
+          participants: [],
+        }),
+      ]);
+      expect(rows[0]?.replyCount).toBe(expected);
+    },
+  );
   it("does not exhaust the call stack while projecting deeply nested untrusted Markdown", () => {
     const nested = message(
       alice,
@@ -1079,4 +1108,16 @@ it("retains latest raw edit source through attachment projection and row sharing
       foldMessages(channel, relay.pubkey, [original, first, second]),
     ),
   ).toBe(next);
+});
+
+it("keeps signed reference identities separate from addressed recipients", () => {
+  const event = message(alice, channel, "@Bob", 10, [
+    ["mention", bob.pubkey],
+    ["mention", bob.pubkey],
+    ["mention", relay.pubkey, "agent-address"],
+    ["mention", "invalid"],
+  ]);
+  const [row] = foldMessages(channel, relay.pubkey, [event]);
+  expect(row?.mentions).toEqual([]);
+  expect(row?.mentionReferences).toEqual([bob.pubkey]);
 });

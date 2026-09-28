@@ -124,7 +124,22 @@ export function PageSearch({
         motion="none"
         closeLabel="Close search"
         initialFocus={input}
-        finalFocus={returnFocus}
+        finalFocus={() =>
+          returnFocus.current?.id === "main-content"
+            ? false
+            : returnFocus.current
+        }
+        onOpenChangeComplete={(open) => {
+          // Base UI otherwise chooses main's first tabbable child. Preserve a
+          // destination's own focus target if it already presented one.
+          const main = returnFocus.current;
+          if (
+            !open &&
+            main?.id === "main-content" &&
+            !main.contains(document.activeElement)
+          )
+            main.focus({ preventScroll: true });
+        }}
       >
         {open &&
           (services ? (

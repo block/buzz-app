@@ -144,7 +144,11 @@ for (const reading of [false, true]) {
       await expect(trigger).toHaveCSS("pointer-events", "auto");
       await trigger.click();
       await expect.poll(() => requested).toBe(true);
-      await expect(region.locator("[data-message-id]")).toHaveCount(51);
+      // One of the 50 loaded replies is a collapsed descendant.
+      await expect(region.locator("[data-message-id]")).toHaveCount(50);
+      await expect(
+        region.getByText("Broadcast descendant", { exact: true }),
+      ).toHaveCount(0);
       await expect(
         region.getByText("Loading thread…", { exact: true }),
       ).toBeVisible();
@@ -164,7 +168,7 @@ for (const reading of [false, true]) {
         position = await region.evaluate((node) => node.scrollTop);
       }
       release();
-      await expect(region.locator("[data-message-id]")).toHaveCount(124);
+      await expect(region.locator("[data-message-id]")).toHaveCount(123);
       await expect(
         region.getByText("Loading thread…", { exact: true }),
       ).toHaveCount(0);
@@ -201,6 +205,12 @@ for (const reading of [false, true]) {
           region.locator(`[data-message-id="${live.id}"]`),
         ).toBeInViewport();
       }
+      // Expansion changes visibility, not the loaded-history count.
+      await region.getByRole("button", { name: /^View 1 reply/ }).click();
+      await expect(
+        region.getByText("Broadcast descendant", { exact: true }),
+      ).toBeInViewport();
+      await expect(region.locator("[data-message-id]")).toHaveCount(125);
     } finally {
       release();
       await page.unroute(routePattern);

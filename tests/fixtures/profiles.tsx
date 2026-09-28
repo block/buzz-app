@@ -1,4 +1,6 @@
 import { controlFixture } from "../../src/features/agents/control-testing";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 // Real ChannelsPage, thread reader, shared directory, panel registry and plugin lifecycle.
 // Only the transport is synthetic. No dev broker, saved identity or live relay.
 import { StrictMode, useLayoutEffect, useState } from "react";
@@ -39,7 +41,15 @@ const viewer = keypair(),
   mic = keypair(),
   pinky = keypair(),
   missing = keypair();
+const instanceProbe = new URLSearchParams(location.search).has(
+  "agent-instances",
+);
+const fixtureOrigin = instanceProbe
+  ? "https://buzz.block.builderlab.xyz"
+  : "https://relay.example.test";
+const archivedProbe = new URLSearchParams(location.search).has("archived");
 const actionsProbe = new URLSearchParams(location.search).has("agent-actions");
+const logProbe = new URLSearchParams(location.search).has("harness-log");
 const root = message(viewer, "one", "Hello @Mic", 10, [["p", mic.pubkey]]);
 const unknown = message(missing, "one", "Unknown author", 11);
 const reply = message(viewer, "one", "Thread @Pinky", 12, [
@@ -57,20 +67,58 @@ const report = {
   memoryReads: [] as string[],
 };
 let failMissing = true;
-const data = [
+let data = [
   profile(viewer, { name: "Viewer", about: "Human profile", picture }),
   profile(mic, { name: "Mic", about: "Mic biography" }),
-  profile(pinky, {
-    name: "Pinky",
-    about: "Agent profile",
-    is_agent: true,
-    picture: pinkyPicture,
+  signed(pinky, {
+    kind: 0,
+    content: JSON.stringify({
+      name: "Pinky",
+      nip05: "pinky@example.test",
+      about: "Agent profile",
+      is_agent: true,
+      picture: pinkyPicture,
+    }),
+    tags: [],
   }),
 ];
+async function attestAgentProfile() {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${pinky.pubkey}:`),
+  );
+  const ownerSignature = bytesToHex(
+    schnorr.sign(new Uint8Array(digest), viewer.secret),
+  );
+  const micDigest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${mic.pubkey}:`),
+  );
+  const micSignature = bytesToHex(
+    schnorr.sign(new Uint8Array(micDigest), viewer.secret),
+  );
+  data = data.map((head) =>
+    head.pubkey === mic.pubkey && logProbe
+      ? signed(mic, {
+          kind: 0,
+          content: head.content,
+          tags: [["auth", viewer.pubkey, "", micSignature]],
+        })
+      : head.pubkey === pinky.pubkey
+        ? signed(pinky, {
+            kind: 0,
+            content: head.content,
+            tags: [["auth", viewer.pubkey, "", ownerSignature]],
+          })
+        : head,
+  );
+}
 function session() {
   return createRelaySession({
     viewer: viewer.pubkey,
+    ...(logProbe ? { authorizeAgentLog: async () => "fixture-proof" } : {}),
     relayAuthor: authority.pubkey,
+    archiveAuthority: authority.pubkey,
     subscribe(callbacks) {
       callbacks.state({ status: "connected", routes: [] });
       return { update() {}, retry() {}, dispose() {} };
@@ -101,6 +149,14 @@ function session() {
     },
     async query(filters) {
       return filters.flatMap((filter) => {
+        if (filter.kinds?.includes(13535))
+          return [
+            signed(authority, {
+              kind: 13535,
+              content: "",
+              tags: [["-"], ...(archivedProbe ? [["p", pinky.pubkey]] : [])],
+            }),
+          ];
         if (filter.kinds?.includes(39002))
           return [
             roster(authority, "one", [viewer.pubkey, mic.pubkey, pinky.pubkey]),
@@ -125,6 +181,20 @@ function session() {
                 ["name", "Two"],
                 ["t", "stream"],
               ],
+            }),
+          ];
+        if (
+          filter.kinds?.includes(10100) &&
+          filter.authors?.includes(pinky.pubkey)
+        )
+          return [
+            signed(pinky, {
+              kind: 10100,
+              content: JSON.stringify({
+                agent_type: "codex-acp",
+                capabilities: ["code", "review"],
+              }),
+              tags: [],
             }),
           ];
         if (filter.kinds?.includes(30315))
@@ -184,7 +254,7 @@ let owner = session();
 let snapshot: RelaySnapshot = {
   status: "ready",
   generation: 1,
-  scope: `https://relay.example.test:${viewer.pubkey}`,
+  scope: `${fixtureOrigin}:${viewer.pubkey}`,
   viewer: viewer.pubkey,
   session: owner.session,
 };
@@ -206,6 +276,18 @@ context.provide("relay", relay);
 const navigationHost = provideNavigation(context, undefined);
 const native = controlFixture();
 native.agent.pubkey = mic.pubkey;
+if (logProbe)
+  native.host.readLog = async ({ id, pubkey, relayUrl, authorize }) => {
+    if (
+      id !== native.agent.id ||
+      pubkey !== mic.pubkey ||
+      relayUrl !== native.agent.relayUrl ||
+      (await authorize({ id, pubkey, relayUrl }, "fixture-nonce")) !==
+        "fixture-proof"
+    )
+      throw new Error("Unauthorized fixture log");
+    return "fixture harness output\n";
+  };
 native.agent.status = "stopped";
 native.agent.enabled = false;
 let releaseLaunch: (() => void) | undefined;
@@ -219,7 +301,23 @@ native.host.action = async (id, command) => {
     });
   return action(id, command);
 };
-const agentControl = createAgentControl(actionsProbe ? native.host : null);
+if (instanceProbe) {
+  Object.assign(native.agent, {
+    pubkey: pinky.pubkey,
+    relayUrl: "wss://buzz.block.builderlab.xyz/",
+    name: "First instance",
+    workspace: "/fixture/first",
+  });
+  native.data.agents.push({
+    ...structuredClone(native.agent),
+    id: "second",
+    name: "Second instance",
+    workspace: "/fixture/second",
+  });
+}
+const agentControl = createAgentControl(
+  actionsProbe || instanceProbe || logProbe ? native.host : null,
+);
 context.provide("agentControl", agentControl);
 context.effect(() => () => agentControl.dispose());
 const contexts: PanelContext[] = [];
@@ -260,6 +358,12 @@ const providers = new TemplateProvidersService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    async deleteSecond() {
+      native.data.agents = native.data.agents.filter(
+        (agent) => agent.id !== "second",
+      );
+      await agentControl.refresh();
+    },
     commands: () => [...commands],
     launchPending: () => !!releaseLaunch,
     finishLaunch: () => {
@@ -331,6 +435,7 @@ function Fixture() {
     </>
   );
 }
+await attestAgentProfile();
 const element = document.getElementById("root");
 if (!element) throw new Error("Missing root");
 createRoot(element).render(

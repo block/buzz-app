@@ -1,7 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
 
 const open = async (page) => {
-  await page.goto("/tests/fixtures/mentions.html");
+  await page.goto("/tests/fixtures/mentions.html?test-controls");
   return page.getByRole("textbox", { name: "Message #General" });
 };
 const expectAvatarShape = async (target, shape) => {
@@ -113,6 +113,22 @@ for (const mode of ["light", "dark"]) {
       });
       const options = popup.getByRole("option");
       await expect(options.nth(1)).toBeVisible();
+      if (kind === "mention") {
+        await expect(popup).toHaveCSS("border-radius", "24px");
+        await expect(popup).toHaveCSS("padding", "12px");
+        await expect(popup).toHaveCSS("width", "380px");
+        await expect(options.first()).toHaveCSS("padding", "8px");
+        const composer = page.getByRole("form", {
+          name: "Send a message to General",
+        });
+        await expect
+          .poll(async () => {
+            const anchor = await composer.boundingBox();
+            const menu = await popup.boundingBox();
+            return anchor.y - menu.y - menu.height;
+          })
+          .toBe(4);
+      }
       await expect(options.first()).toHaveAttribute("aria-selected", "true");
       await input.press("ArrowDown");
       const selected = options.nth(1);
@@ -122,7 +138,7 @@ for (const mode of ["light", "dark"]) {
       await expect(selected).toBeInViewport({ ratio: 1 });
       await expect(selected).toHaveCSS(
         "background-color",
-        mode === "dark" ? "rgb(64, 64, 64)" : "rgb(232, 232, 232)",
+        mode === "dark" ? "rgb(64, 64, 64)" : "rgb(239, 239, 240)",
       );
       const surface = await popup.evaluate(
         (element) => getComputedStyle(element).backgroundColor,
@@ -572,7 +588,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   await expect(selectedParty).not.toHaveAttribute("aria-selected", "true");
   await expect(hoveredParty).toHaveCSS(
     "background-color",
-    "rgb(232, 232, 232)",
+    "rgb(239, 239, 240)",
   );
   const partyList = page.getByRole("listbox", {
     name: "Emoji suggestions",

@@ -42,15 +42,30 @@ it("refuses argument values unsupported by the current ACP transport", () => {
   }
 });
 
-it("persists connection edits, preserves saved blanks, and clones private-build defaults", () => {
+it("does not persist build suggestions on untouched save; explicit blanks stay explicit", () => {
   const agent = controlFixture().agent;
-  const defaults = { host: "https://workspace.example", filter: "llm" };
-  const draft = agentDraft(agent, defaults);
-  expect(agentEdit(draft).harness.databricks).toEqual(defaults);
-  if (!draft.databricks) throw new Error("Missing connection draft");
-  draft.databricks.host = "https://other.example";
-  expect(defaults.host).toBe("https://workspace.example");
+  const draft = agentDraft(agent);
+  expect(agentEdit(draft).harness.databricks).toBeUndefined();
+  draft.databricks = { host: "https://other.example", filter: "llm" };
+  expect(agentEdit(draft).harness.databricks).toEqual(draft.databricks);
   agent.harness.databricks = { host: "", filter: "" };
-  const saved = agentDraft(agent, defaults);
+  const saved = agentDraft(agent);
   expect(agentEdit(saved).harness.databricks).toEqual({ host: "", filter: "" });
+  if (!saved.databricks) throw new Error("Missing saved settings");
+  saved.databricks.host = "https://edited.example";
+  expect(agent.harness.databricks.host).toBe("");
+});
+
+it("avatar edits preserve an omitted picture, retain managed artwork, and serialize explicit removal", () => {
+  const agent = controlFixture().agent;
+  expect(
+    JSON.parse(JSON.stringify(agentEdit(agentDraft(agent)))),
+  ).not.toHaveProperty("picture");
+  agent.picture = "https://images.example/a.png";
+  const draft = agentDraft(agent);
+  expect(agentEdit(draft)).not.toHaveProperty("picture"); // An unchanged field is omitted, even with saved artwork.
+  expect(
+    agentEdit({ ...draft, picture: "https://images.example/new.png" }).picture,
+  ).toBe("https://images.example/new.png");
+  expect(agentEdit({ ...draft, picture: "" }).picture).toBe("");
 });

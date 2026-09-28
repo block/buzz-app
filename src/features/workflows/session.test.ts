@@ -115,6 +115,40 @@ it("authoritative revocation clears all saved and structured data before callbac
   await runRead;
   expect(history.snapshot().status).toBe("unavailable");
 });
+it("revoking one channel purges a loaded batch before observers and fences its late refresh", async () => {
+  const h = setup();
+  const other = "33333333-3333-4333-8333-333333333333";
+  h.emit([
+    roster(relay, channelId, [viewer.pubkey], 1),
+    roster(relay, other, [viewer.pubkey], 1),
+  ]);
+  const view = h.session.workflows.definitions([channelId, other]);
+  const first = view.refresh();
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  h.next().respond([definition]);
+  await first;
+  expect(view.snapshot().data.items).toHaveLength(1);
+  const second = view.refresh();
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const late = h.next();
+  const checked = vi.fn(() => {
+    expect(view.snapshot()).toMatchObject({
+      status: "unavailable",
+      data: { items: [] },
+    });
+  });
+  view.subscribe(checked);
+  h.session.channels.subscribeList(checked);
+  h.emit([roster(relay, other, [], 2)]);
+  expect(checked).toHaveBeenCalled();
+  expect(late.signal?.aborted).toBe(true);
+  late.respond([definition]);
+  await second;
+  expect(view.snapshot().data.items).toEqual([]);
+  await view.refresh();
+  expect(h.pending).toHaveLength(0);
+});
+
 it("regrant cannot resurrect stale history; clear-cache and dispose cancel interest", async () => {
   const h = setup();
   h.emit([roster(relay, channelId, [viewer.pubkey], 1)]);
@@ -390,6 +424,84 @@ it.each(["reconnect", "revoke", "dispose"])(
     } else {
       await flush();
       expect(owner.session.workflows.operations.snapshot()).toEqual([]);
+    }
+  },
+);
+
+it.each(["secret", "missing", "malformed", "mismatched", "failure", "revoked"])(
+  "exact readback preserves configuration success and the later %s receipt contract",
+  async (result) => {
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let incoming!: (events: readonly RelayEvent[]) => void;
+    let settle!: (value: string) => void;
+    let reject!: (error: Error) => void;
+    const publish = vi.fn((_event: RelayEvent) => {
+      const receipt = new Promise<string>((resolve, fail) => {
+        settle = resolve;
+        reject = fail;
+      });
+      return result === "missing" ? receipt.then(() => {}) : receipt;
+    });
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        writer: {
+          kinds: [30620],
+          sign: async (template: Parameters<typeof signed>[1]) =>
+            signed(viewer, template),
+          publish,
+        },
+        workflows: { runs: async () => ({ runs: [], next: null }) },
+        subscribe(callbacks) {
+          incoming = callbacks.receive;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { outboxStorage: { load: async () => [], save: async () => {} } },
+    );
+    owners.push(owner);
+    incoming([roster(relay, channelId, [viewer.pubkey], 1)]);
+    const workflows = owner.session.workflows;
+    const operation = workflows.save({
+      channelId,
+      yaml: "name: Hook\nenabled: false\ntrigger: { on: webhook }\nsteps: [{ id: wait, action: delay, duration: 1s }]\n",
+    });
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+    try {
+      const published = publish.mock.calls[0]?.[0];
+      if (!published) throw new Error("Missing signed publication");
+      expect(workflows.operations.snapshot()[0]?.outcome).toBe("pending");
+      const view = workflows.definitions(channelId);
+      const loading = view.refresh();
+      await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+      wire.next().respond([published]);
+      await loading;
+      expect(workflows.operations.snapshot()[0]?.outcome).toBe("succeeded");
+      const workflowId = published.tags.find(([key]) => key === "d")?.[1];
+      if (result === "revoked") incoming([roster(relay, channelId, [], 2)]);
+      if (result === "failure") reject(new Error("Receipt unavailable"));
+      else
+        settle(
+          result === "malformed"
+            ? "response:{"
+            : `response:${JSON.stringify({
+                workflow_id: result === "mismatched" ? id : workflowId,
+                webhook_secret: "DISPOSABLE-SECRET",
+              })}`,
+        );
+      await flush();
+      if (result === "revoked")
+        expect(workflows.operations.snapshot()).toEqual([]);
+      else
+        expect(workflows.operations.snapshot()[0]?.outcome).toBe("succeeded");
+      expect(workflows.takeWebhookSecret(operation)).toBe(
+        result === "secret" ? "DISPOSABLE-SECRET" : undefined,
+      );
+      expect(workflows.takeWebhookSecret(operation)).toBeUndefined();
+      expect(publish).toHaveBeenCalledTimes(1);
+      view.dispose();
+    } finally {
+      settle("");
     }
   },
 );

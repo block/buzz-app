@@ -124,3 +124,32 @@ it("changing the default harness clears model and effort and saves write-only en
   expect(within(card).queryByText("SAVED_TOKEN")).toBeNull();
   expect(card).not.toHaveTextContent("secret-value");
 });
+
+it("keeps the uncertain-write explanation when Stop overtakes a committed save", async () => {
+  const user = userEvent.setup();
+  const { fixture, control } = setup();
+  await control.refresh();
+  const commit = fixture.host.saveDefaults;
+  if (!commit) throw Error("Missing fixture");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // Native commits the defaults, then waits on a restart credential prompt.
+  fixture.host.saveDefaults = async (edit) => {
+    const saved = await commit(edit);
+    await gate;
+    return saved;
+  };
+  const card = await screen.findByRole("region", { name: "Agent defaults" });
+  await user.clear(within(card).getByLabelText("Default model"));
+  await user.type(within(card).getByLabelText("Default model"), "committed");
+  await user.click(within(card).getByRole("button", { name: "Save defaults" }));
+  await control.action(fixture.agent.id, "stop");
+  release();
+  const alert = await within(card).findByRole("alert");
+  expect(alert).toHaveTextContent("Could not confirm the operation");
+  expect(alert).toHaveTextContent("Check current status and saved settings");
+  expect(alert).not.toHaveTextContent("weren’t saved");
+  expect(fixture.data.defaultSettings?.model).toBe("committed");
+});

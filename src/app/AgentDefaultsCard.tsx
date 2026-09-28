@@ -56,7 +56,9 @@ export function AgentDefaultsCard({
         setNewValue("");
         setNotice(savedMessage(snapshot.restarted, snapshot.restartFailures));
       },
-      () => setError("Agent defaults weren’t saved. Try again."),
+      // The controller's sanitized reason: a save may already have committed
+      // (e.g. Stop overtook its restart), so never claim nothing was saved.
+      (problem: Error) => setError(problem.message),
     );
   };
   return (

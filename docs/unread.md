@@ -29,8 +29,8 @@ reading intent before calling `observe`: this is a trusted in-process API, not
 proof that a human read text. The engine resolves signed message identity,
 timestamps, ancestry, deletion and current access; arbitrary timestamps are not
 accepted. Cancelled leases cannot survive disposal, revocation/regrant, or a newer
-manual-unread action. Restored channel heads pass integrity (rehash plus saved
-signature proof; see the channels local-first launch section) and access checks,
+manual-unread action. Restored channel heads pass integrity (rehash; see the
+channels local-first launch section) and access checks,
 and supply evidence before their rows become observable.
 
 Reusable `ChannelTimeline` and `ThreadPanel` own the standard observation policy:

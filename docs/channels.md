@@ -405,14 +405,10 @@ names are display data, not a confirmed preference mutation base. No cache means
 the ordinary cold connection flow; unavailable/corrupt storage never grants access.
 
 Every relay event is signature-checked when it arrives; only verified events are
-saved. Each saved head and startup record carries a proof, a SHA-256 over its
-events' `id` and `sig`. Restore rehashes each event against its `id` and checks
-the proof instead of re-running signature checks. Together these catch local
-corruption of any signed field or of the signature. Records without a matching
-proof (including ones from older builds) are fully signature-verified, and a
-failure discards the record. The proof is not a secret. The threat model trusts
-the origin-private IndexedDB that only this app writes: anything able to forge a
-record there can already run code as the app.
+saved. Restore rehashes each event against its `id` instead of re-running
+signature checks, so a change to any signed field discards the record. The
+threat model trusts the origin-private IndexedDB that only this app writes:
+anything able to forge a record there can already run code as the app.
 
 A cached roster can display previously downloaded, integrity-checked history for up to
 24 hours. It cannot authorize head/history reads, unread evidence, typing or

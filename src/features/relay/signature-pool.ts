@@ -2,7 +2,7 @@ import type { Event } from "nostr-tools";
 
 /** Background Schnorr checks for bulk relay reads. Workers only answer
  * valid/invalid for copies the caller already owns; they never supply event data. */
-type Reply = { id: number; ok: boolean[]; ms: number };
+type Reply = { id: number; ok: boolean; ms: number };
 type Slot = { worker: Worker; jobs: Map<number, (reply?: Reply) => void> };
 
 const CHUNK = 64;
@@ -52,20 +52,15 @@ function run(slots: Slot[], events: readonly Event[]) {
   const id = ++sequence;
   return new Promise<Reply | undefined>((resolve) => {
     slot.jobs.set(id, resolve);
-    try {
-      slot.worker.postMessage({ id, events });
-    } catch {
-      slot.jobs.delete(id);
-      resolve(undefined);
-    }
+    slot.worker.postMessage({ id, events });
   });
 }
 
-/** Per-event validity plus summed worker time, or undefined when the caller
- * must check inline (no Worker support, or the workers failed). */
+/** Whether every signature is valid, plus summed worker time, or undefined when
+ * the caller must check inline (no Worker support, or the workers failed). */
 export async function checkSignatures(
   events: readonly Event[],
-): Promise<{ ok: boolean[]; ms: number } | undefined> {
+): Promise<{ ok: boolean; ms: number } | undefined> {
   if (typeof Worker === "undefined") return undefined;
   slots ??= start();
   const pool = slots;
@@ -76,7 +71,7 @@ export async function checkSignatures(
   const replies = await Promise.all(chunks);
   if (replies.some((reply) => !reply)) return undefined;
   return {
-    ok: replies.flatMap((reply) => reply?.ok ?? []),
+    ok: replies.every((reply) => reply?.ok),
     ms: replies.reduce((total, reply) => total + (reply?.ms ?? 0), 0),
   };
 }

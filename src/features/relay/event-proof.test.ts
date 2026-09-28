@@ -1,13 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getEventHash, verifyEvent, verifiedSymbol } from "nostr-tools";
-import {
-  createEventVerifier,
-  eventDto,
-  savedProof,
-  savedReader,
-} from "./events";
+import { createEventVerifier, eventDto, savedEvent } from "./events";
 import { connectBrokerTransport, connectSignedTransport } from "./transport";
-import { changedSig, keypair, signed } from "./testing";
+import { keypair, signed } from "./testing";
 import { ByteLru } from "./budget";
 
 // Count the actual dependency verifier; never replace its cryptographic result.
@@ -187,9 +182,7 @@ it.each(["broker", "signed"])(
   },
 );
 
-it("restores proven saved events without a signature check but rejects edits to signed fields or the signature", () => {
-  const records = [wire()];
-  const savedEvent = savedReader(records, savedProof(records));
+it("restores saved events without a signature check but rejects edited signed fields", () => {
   const restored = savedEvent(wire());
   expect(restored).toEqual(event);
   expect(restored[verifiedSymbol]).toBe(true);
@@ -204,16 +197,6 @@ it("restores proven saved events without a signature check but rejects edits to 
     { sig: "not hex" },
   ])
     expect(() => savedEvent({ ...wire(), ...patch })).toThrow(/malformed/);
-  // A changed but well-formed signature still hashes to the same id, so only
-  // the proof catches it: the record falls back to full verification.
-  const flipped = [changedSig(wire())];
-  expect(getEventHash(flipped[0] as never)).toBe(event.id);
-  const check = savedReader(flipped, savedProof(records));
-  expect(() => check(flipped[0])).toThrow(/malformed/);
-  expect(verifyEvent).toHaveBeenCalledTimes(1);
-  // Records from older builds carry no proof and are fully verified.
-  expect(savedReader(records, undefined)(wire())).toEqual(event);
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
 });
 
 describe("background signature checks", () => {
@@ -234,7 +217,7 @@ describe("background signature checks", () => {
             : this.onmessage?.({
                 data: {
                   id: copy.id,
-                  ok: copy.events.map((item) =>
+                  ok: copy.events.every((item) =>
                     actual.verifyEvent(item as never),
                   ),
                   ms: 1,

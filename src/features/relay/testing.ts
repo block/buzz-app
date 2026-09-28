@@ -19,14 +19,6 @@ export function signed(
 ): RelayEvent {
   return finalizeEvent({ created_at: 1_700_000_000, ...template }, key.secret);
 }
-/** The same event with a still-valid-hex signature that no longer verifies. Its
- * id is unchanged because the event hash excludes `sig`. */
-export function changedSig<T extends { sig: string }>(event: T): T {
-  return {
-    ...event,
-    sig: (event.sig[0] === "0" ? "1" : "0") + event.sig.slice(1),
-  };
-}
 export function message(
   key: Key,
   channelId: string,

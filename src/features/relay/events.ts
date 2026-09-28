@@ -5,8 +5,6 @@ import {
   type Event,
   type VerifiedEvent,
 } from "nostr-tools";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { clientMetrics } from "../developer/client-metrics.ts";
 import { ByteLru } from "./budget.ts";
 import { checkSignatures } from "./signature-pool.ts";
@@ -85,7 +83,7 @@ export function createEventVerifier() {
     cancelled();
     if (worker) {
       clientMetrics.cpu("verify.worker", worker.ms, fresh.length);
-      if (worker.ok.some((ok) => !ok)) throw invalidEvent();
+      if (!worker.ok) throw invalidEvent();
       for (const event of fresh) remember(event);
     } else {
       // No worker (tests, or it failed to load): check inline between yields.
@@ -107,29 +105,11 @@ export function createEventVerifier() {
 }
 export type EventVerifier = ReturnType<typeof createEventVerifier>;
 
-/** Written with a saved record: binds each verified event's id to its signature. */
-export function savedProof(events: readonly unknown[]): string {
-  const pairs = events.map((value) => {
-    const { id, sig } = (value ?? {}) as { id?: unknown; sig?: unknown };
-    return typeof id === "string" && typeof sig === "string" ? id + sig : "";
-  });
-  return bytesToHex(sha256(utf8ToBytes(pairs.join(":"))));
-}
-
-/** Disk restore of events this app saved only after verifying them. With a
- * matching `savedProof`, rehashing (content → id) plus the proof (id → sig)
- * catches corruption of any signed field or the signature, and the Schnorr check
- * is skipped. Records without a matching proof are fully verified instead. The
- * proof is not a secret: the store is origin-private IndexedDB that only this app
- * writes, so anything able to forge a record there can already run as the app. */
-export function savedReader(
-  events: readonly unknown[],
-  proof: unknown,
-): (value: unknown) => RelayEvent {
-  return proof === savedProof(events) ? savedEvent : eventDto;
-}
-
-function savedEvent(value: unknown): RelayEvent {
+/** Disk restore of events this app saved only after verifying them. Rehashing
+ * catches corruption and any edit to signed fields; the Schnorr check is skipped.
+ * The store is origin-private IndexedDB that only this app writes, so anything
+ * able to forge a record there can already run code as the app. */
+export function savedEvent(value: unknown): RelayEvent {
   return checkedEvent(
     value,
     (event): event is VerifiedEvent => getEventHash(event) === event.id,

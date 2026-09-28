@@ -175,6 +175,15 @@ test.describe("community administration permissions", () => {
       const sections = page.getByRole("navigation", {
         name: "Settings sections",
       });
+      await expect
+        .poll(
+          () =>
+            app.report.queries.filter(({ filter }) =>
+              filter.kinds?.includes(13534),
+            ).length,
+          { message: "wait for verified membership authorization" },
+        )
+        .toBe(1);
       await expect(sections).not.toContainText("Administration");
       await expect(
         sections.getByRole("button", { name: "Membership", exact: true }),

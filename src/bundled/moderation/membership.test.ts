@@ -16,7 +16,8 @@ const roster = (role: "owner" | "admin" | "member") => ({
 
 function setup(role: "owner" | "admin" | "member") {
   const listeners = new Set<() => void>();
-  const read = vi.fn(async () => [roster(role)]);
+  let currentRole = role;
+  const read = vi.fn(async () => [roster(currentRole)]);
   const ensureProfiles = vi.fn(async () => {});
   const value = {
     status: "ready",
@@ -40,7 +41,14 @@ function setup(role: "owner" | "admin" | "member") {
       return () => listeners.delete(listener);
     },
   } as unknown as RelayData);
-  return { membership, read, ensureProfiles };
+  return {
+    membership,
+    read,
+    ensureProfiles,
+    role(next: "owner" | "admin" | "member") {
+      currentRole = next;
+    },
+  };
 }
 
 for (const [role, allowed] of [
@@ -70,3 +78,31 @@ for (const [role, allowed] of [
     membership.dispose();
     vi.unstubAllGlobals();
   });
+
+it("refreshes verified authorization after demand is released and reacquired", async () => {
+  const { membership, read, role } = setup("member");
+  const ready = () =>
+    new Promise<void>((resolve) => {
+      const stop = membership.subscribe(() => {
+        if (!membership.snapshot().refreshing) {
+          stop();
+          resolve();
+        }
+      });
+    });
+
+  let changed = ready();
+  const firstRelease = membership.ensure();
+  await changed;
+  expect(canManageMembership(membership.snapshot())).toBe(false);
+  firstRelease();
+
+  role("admin");
+  changed = ready();
+  const secondRelease = membership.ensure();
+  await changed;
+  expect(canManageMembership(membership.snapshot())).toBe(true);
+  expect(read).toHaveBeenCalledTimes(2);
+  secondRelease();
+  membership.dispose();
+});

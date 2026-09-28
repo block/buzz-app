@@ -46,14 +46,16 @@ export function createCommunityMembership(relay: RelayData) {
     }
     return connection;
   };
-  const load = async (fresh: boolean) => {
+  const load = async (fresh: boolean, reacquired = false) => {
     const connection = current();
     if (
       disposed ||
       connection.status !== "ready" ||
       !connection.scope ||
       !connection.viewer ||
-      (!fresh && (value.status === "loading" || value.status === "ready"))
+      (!fresh &&
+        (value.status === "loading" ||
+          (value.status === "ready" && !reacquired)))
     )
       return;
     controller?.abort();
@@ -126,8 +128,9 @@ export function createCommunityMembership(relay: RelayData) {
       return () => listeners.delete(listener);
     },
     ensure() {
+      const reacquired = demands === 0;
       demands++;
-      void load(false);
+      void load(false, reacquired);
       let released = false;
       return () => {
         if (released) return;

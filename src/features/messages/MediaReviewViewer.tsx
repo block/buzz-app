@@ -207,7 +207,6 @@ function ReviewShell({
   const source = session.media(attachment.url);
   const backdrop = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLElement>(null);
-  const closeButton = useRef<HTMLButtonElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const [commentsChoice, setCommentsOpen] = useState<boolean>();
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
@@ -279,12 +278,7 @@ function ReviewShell({
     else element.addEventListener("loadedmetadata", apply, { once: true });
     return () => element.removeEventListener("loadedmetadata", apply);
   }, [attachment.url, attachment.kind, initialTime, selectionRequest]);
-  useModalBoundary(
-    backdrop,
-    attachment.kind === "image" ? frame : closeButton,
-    close,
-    restoreFocus,
-  );
+  useModalBoundary(backdrop, frame, close, restoreFocus);
   const seek = (seconds: number) => {
     if (!video.current) return;
     const duration = video.current.duration;
@@ -333,7 +327,9 @@ function ReviewShell({
             event.ctrlKey ||
             event.metaKey ||
             event.shiftKey ||
-            (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+            (event.key !== "ArrowLeft" &&
+              event.key !== "ArrowRight" &&
+              event.key !== " ")
           )
             return;
           const target = event.target;
@@ -345,6 +341,21 @@ function ReviewShell({
             )
           )
             return;
+          if (event.key === " ") {
+            // Space still activates a deliberately focused control normally.
+            if (
+              target.closest(
+                'button, a[href], [role="button"], [role="checkbox"], [role="switch"]',
+              )
+            )
+              return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.repeat) return;
+            if (video.current.paused) void video.current.play().catch(() => {});
+            else video.current.pause();
+            return;
+          }
           event.preventDefault();
           event.stopPropagation();
           seekVideoBy(video.current, event.key === "ArrowRight" ? 10 : -10);
@@ -380,7 +391,6 @@ function ReviewShell({
             size="compact"
             variant="subtle"
             shape="control"
-            ref={closeButton}
             type="button"
             aria-label="Close fullscreen viewer"
             data-review-dismiss=""

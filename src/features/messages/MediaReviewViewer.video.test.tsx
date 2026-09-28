@@ -289,3 +289,59 @@ it("leaves editing, native sliders, speed menus, and modified arrow keys alone",
   ).toBe(true);
   expect(video.currentTime).toBe(25);
 });
+
+it("focuses the viewer on open and toggles playback once per Space press without an overlay", async () => {
+  const { close } = setupReview();
+  await screen.findByRole("slider", { name: "Video timeline" });
+  const dialog = screen.getByRole("dialog", { name: "Video review" });
+  expect(dialog).toHaveFocus();
+  const video = document.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  let paused = true;
+  Object.defineProperty(video, "paused", {
+    configurable: true,
+    get: () => paused,
+  });
+  const play = vi.spyOn(video, "play").mockImplementation(async () => {
+    paused = false;
+    fireEvent.play(video);
+  });
+  const pause = vi.spyOn(video, "pause").mockImplementation(() => {
+    paused = true;
+    fireEvent.pause(video);
+  });
+  expect(fireEvent.keyDown(dialog, { key: " " })).toBe(false);
+  expect(play).toHaveBeenCalledOnce();
+  expect(
+    screen.getByRole("button", { name: "Pause video" }),
+  ).toBeInTheDocument();
+  expect(fireEvent.keyDown(dialog, { key: " ", repeat: true })).toBe(false);
+  expect(pause).not.toHaveBeenCalled();
+  fireEvent.keyUp(dialog, { key: " " });
+  fireEvent.keyDown(dialog, { key: " " });
+  expect(pause).toHaveBeenCalledOnce();
+  expect(
+    screen.getByRole("button", { name: "Play video" }),
+  ).toBeInTheDocument();
+  expect(close).not.toHaveBeenCalled();
+  expect(document.querySelector("[data-video-feedback]")).toBeNull();
+});
+
+it("preserves Space in the composer and on focused controls", async () => {
+  setupReview(7, true);
+  await screen.findByRole("slider", { name: "Video timeline" });
+  const video = document.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  const play = vi.spyOn(video, "play");
+  const pause = vi.spyOn(video, "pause");
+  for (const target of [
+    screen.getByRole("textbox", { name: "Reply to thread" }),
+    screen.getByRole("button", { name: "Close fullscreen viewer" }),
+    screen.getByRole("button", { name: "Play video" }),
+    screen.getByRole("slider", { name: "Video volume" }),
+  ]) {
+    expect(fireEvent.keyDown(target, { key: " " })).toBe(true);
+  }
+  expect(play).not.toHaveBeenCalled();
+  expect(pause).not.toHaveBeenCalled();
+});

@@ -21,6 +21,9 @@ pub(crate) struct Snapshot {
     harness_options: Vec<HarnessOption>,
     databricks_defaults: crate::agent_models::Defaults,
     agent_defaults: buzz_agent_controller::BuildDefaults,
+    /// Running agents restarted by this save; absent on other responses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restarted: Option<usize>,
 }
 impl Snapshot {
     fn from(data: ControlSnapshot, import_available: bool, workspace: &std::path::Path) -> Self {
@@ -33,6 +36,7 @@ impl Snapshot {
             harness_options: harness_options(),
             databricks_defaults: crate::agent_models::defaults(),
             agent_defaults: buzz_agent_controller::build_defaults(),
+            restarted: None,
         }
     }
 }
@@ -555,11 +559,73 @@ pub(crate) async fn agent_control_save(
     expected_revision: u64,
     edit: AgentEdit,
 ) -> Result<Snapshot, String> {
-    run(state.inner().clone(), move |host| {
-        host.controller.save(&id, expected_revision, edit)?;
-        host.snapshot()
+    save_and_restart(state.inner().clone(), move |host| {
+        host.controller.save(&id, expected_revision, edit).map(drop)
     })
     .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_save_defaults(
+    state: tauri::State<'_, AgentHost>,
+    edit: buzz_agent_controller::AgentDefaultsEdit,
+) -> Result<Snapshot, String> {
+    save_and_restart(state.inner().clone(), move |host| {
+        host.controller.save_defaults(edit).map(drop)
+    })
+    .await
+}
+/// Save, then restart only agents that were running before and after it and whose
+/// effective settings changed. Stopped or disabled agents are never started.
+async fn save_and_restart(
+    owner: AgentHost,
+    save: impl FnOnce(&mut Host) -> Result<(), String> + Send + 'static,
+) -> Result<Snapshot, String> {
+    let changed = run(owner.clone(), move |host| {
+        let before = host.controller.running_settings()?;
+        save(host)?;
+        let after = host.controller.running_settings()?;
+        Ok(changed_running(before, after))
+    })
+    .await?;
+    let mut restarted = 0;
+    for id in changed {
+        // Re-checked under the lock: a Stop since the save must win.
+        let result = start_guarded(
+            owner.clone(),
+            id.clone(),
+            Action::Restart,
+            false,
+            None,
+            Some((is_running, "Agent stopped before its restart")),
+        )
+        .await;
+        if result.is_ok_and(|snapshot| {
+            snapshot
+                .data
+                .agents
+                .iter()
+                .any(|agent| agent.id == id && is_running(agent))
+        }) {
+            restarted += 1;
+        }
+    }
+    let mut snapshot = run(owner, |host| host.snapshot()).await?;
+    snapshot.restarted = Some(restarted);
+    Ok(snapshot)
+}
+/// Agents live both before and after a save whose effective settings differ.
+fn changed_running(
+    before: BTreeMap<String, serde_json::Value>,
+    after: BTreeMap<String, serde_json::Value>,
+) -> Vec<String> {
+    after
+        .into_iter()
+        .filter(|(id, settings)| before.get(id).is_some_and(|old| old != settings))
+        .map(|(id, _)| id)
+        .collect()
+}
+fn is_running(agent: &buzz_agent_controller::AgentView) -> bool {
+    agent.status == buzz_agent_controller::ProcessStatus::Running
 }
 #[tauri::command]
 pub(crate) async fn agent_control_start_on_app_launch(
@@ -608,23 +674,39 @@ pub(crate) async fn start(
     replay_floor: Option<u64>,
     from_goose_install: bool,
 ) -> Result<Snapshot, String> {
+    let guard = from_goose_install.then_some((
+        crate::harness_setup::waiting_for_goose as fn(&_) -> bool,
+        NOT_WAITING_FOR_GOOSE,
+    ));
+    start_guarded(owner, id, action, restore, replay_floor, guard).await
+}
+type StartGuard = (fn(&buzz_agent_controller::AgentView) -> bool, &'static str);
+async fn start_guarded(
+    owner: AgentHost,
+    id: String,
+    action: Action,
+    restore: bool,
+    replay_floor: Option<u64>,
+    guard: Option<StartGuard>,
+) -> Result<Snapshot, String> {
     let target = id.clone();
     let prepared = run(owner.clone(), move |host| {
         let id = target;
         if restore && (host.acted.contains(&id) || !host.controller.launch_ids()?.contains(&id)) {
             return Err("Agent disabled before restore".into());
         }
-        // Re-check while holding the controller, not just at install start:
-        // Stop or Edit may have changed this agent while the download ran.
-        if from_goose_install
-            && !host
+        // Re-check while holding the controller, not just when the caller
+        // chose this agent: Stop or Edit may have changed it since.
+        if let Some((eligible, refusal)) = guard {
+            if !host
                 .controller
                 .snapshot()?
                 .agents
                 .iter()
-                .any(|agent| agent.id == id && crate::harness_setup::waiting_for_goose(agent))
-        {
-            return Err(NOT_WAITING_FOR_GOOSE.into());
+                .any(|agent| agent.id == id && eligible(agent))
+            {
+                return Err(refusal.into());
+            }
         }
         host.starts.remove(&id);
         if !restore {

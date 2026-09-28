@@ -136,6 +136,77 @@ fn harnesses_classify_cli_and_adapter_separately() {
 }
 
 #[test]
+fn restart_on_save_selects_only_live_agents_with_changed_effective_settings() {
+    let before = BTreeMap::from([
+        ("changed".to_owned(), json!({"model":"a"})),
+        ("same".to_owned(), json!({"model":"a"})),
+        ("stopped-after".to_owned(), json!({"model":"a"})),
+    ]);
+    let after = BTreeMap::from([
+        ("changed".to_owned(), json!({"model":"b"})),
+        ("same".to_owned(), json!({"model":"a"})),
+        // Started during the save: not an effect of this save.
+        ("started-after".to_owned(), json!({"model":"b"})),
+    ]);
+    assert_eq!(changed_running(before, after), ["changed"]);
+}
+
+#[test]
+fn saving_defaults_never_starts_or_enables_stopped_agents() {
+    let (dir, host, _app, view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    saved["agents"][0]["enabled"] = json!(false);
+    saved["agents"][0]["harness"]["model"] = json!("");
+    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let result = invoke(
+        &view,
+        "agent_control_save_defaults",
+        json!({"edit":{"harness":"buzz-agent","provider":"","model":"new-default","effort":"high",
+            "environment":{"GLOBAL_TOKEN":"DO_NOT_PROJECT"}}}),
+    )
+    .unwrap();
+    assert_eq!(result["restarted"], 0);
+    assert_eq!(result["defaultSettings"]["model"], "new-default");
+    assert_eq!(
+        result["defaultSettings"]["environmentKeys"],
+        json!(["GLOBAL_TOKEN"])
+    );
+    assert!(!result.to_string().contains("DO_NOT_PROJECT"));
+    assert_eq!(result["agents"][0]["status"], "stopped");
+    assert_eq!(result["agents"][0]["launchModel"], "new-default");
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["agents"][0]["enabled"], false);
+    assert_eq!(saved["agents"][0]["harness"]["model"], "");
+    // The guard refuses a restart for an agent that is not live.
+    let refused = tauri::async_runtime::block_on(start_guarded(
+        host,
+        id,
+        Action::Restart,
+        false,
+        None,
+        Some((is_running, "Agent stopped before its restart")),
+    ));
+    assert_eq!(
+        refused.err().as_deref(),
+        Some("Agent stopped before its restart")
+    );
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["agents"][0]["enabled"], false);
+    // Native defaults file is owner-only.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(dir.path().join("store/defaults.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
+#[test]
 fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     let (dir, _host, _app, view) = fixture();
     let id = seed(dir.path());

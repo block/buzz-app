@@ -126,7 +126,9 @@ it("only hints the compiled model when the current provider and overrides can us
         JSON.stringify(entry),
       ).toHaveAttribute(
         "placeholder",
-        entry.hint ? "Build default: build-model" : "Choose or enter a model",
+        entry.hint
+          ? "Use agent defaults (build-model)"
+          : "Choose or enter a model",
       );
     }
     expect(onChange).not.toHaveBeenCalled();

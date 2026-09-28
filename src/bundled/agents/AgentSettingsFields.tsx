@@ -10,7 +10,12 @@ import type {
   AgentControl,
   AgentControlState,
 } from "../../features/agents/control";
-import { gooseApiKey, isGoose, type AgentDraft } from "./agent-edit";
+import {
+  gooseApiKey,
+  harnessKind,
+  isGoose,
+  type AgentDraft,
+} from "./agent-edit";
 import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
 import { AgentModelPicker } from "./AgentModelPicker";
@@ -71,6 +76,21 @@ export function AgentSettingsFields({
   const gooseProvider = goose
     ? effectiveGooseProvider(draft, environmentKeys)
     : null;
+  // Blank fields inherit Agent defaults for the same harness, then the build
+  // floor (Buzz Agent only). Hidden environment overrides are not guessed.
+  const inherited =
+    state.data?.defaultSettings?.harness === harnessKind(draft.command)
+      ? state.data?.defaultSettings
+      : undefined;
+  const buzzAgent = draft.command === "buzz-agent";
+  const defaultProvider =
+    inherited?.provider ||
+    (buzzAgent ? state.data?.agentDefaults?.provider : undefined);
+  const defaultModel =
+    inherited?.model ||
+    (buzzAgent && databricks && modelDefaultKnown
+      ? state.data?.agentDefaults?.model
+      : undefined);
   const apiKey = gooseProvider ? gooseApiKey(gooseProvider) : undefined;
   const savedKey = !!apiKey && environmentKeys.includes(apiKey.env);
   // Saved keys are write-only; only a key typed for this provider can be shown.
@@ -123,9 +143,7 @@ export function AgentSettingsFields({
             disabled={disabled}
             draft={draft}
             options={state.data?.harnessOptions ?? []}
-            defaultProvider={
-              goose ? undefined : state.data?.agentDefaults?.provider
-            }
+            defaultProvider={defaultProvider}
             piProviders={piProviders}
             onChange={change}
             onOpenHarnesses={onOpenHarnesses}
@@ -198,11 +216,7 @@ export function AgentSettingsFields({
             savedRevision={savedRevision}
             control={control}
             defaults={state.data?.databricksDefaults}
-            defaultModel={
-              !goose && databricks && modelDefaultKnown
-                ? state.data?.agentDefaults?.model
-                : undefined
-            }
+            defaultModel={defaultModel}
             draft={draft}
             onChange={change}
           />
@@ -210,7 +224,7 @@ export function AgentSettingsFields({
             <p className="text-body-sm text-secondary">
               Browse loads available models and providers from your local Pi
               configuration, including extensions. Configure sign-in in Pi
-              first. Save keeps changes for the next Start or Restart.
+              first. Save restarts a running agent to apply changes.
             </p>
           )}
         </fieldset>

@@ -266,8 +266,8 @@ export function AgentModelPicker({
                   void run("connect");
               }}
               placeholder={
-                draft.command === "buzz-agent" && defaultModel
-                  ? `Build default: ${defaultModel}`
+                defaultModel
+                  ? `Use agent defaults (${defaultModel})`
                   : "Choose or enter a model"
               }
               onBlur={commitQuery}

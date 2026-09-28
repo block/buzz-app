@@ -36,7 +36,7 @@ pub enum RestartChange {
     Removed,
 }
 
-/// Saved settings that a start applies. Identity and relay are immutable, and
+/// Effective settings (after agent defaults) that a start applies. Identity and relay are immutable, and
 /// the imported response policy is not editable, so neither can drift.
 pub(crate) fn spawn_config(agent: &Agent) -> Value {
     let databricks = agent.harness.databricks.as_ref();
@@ -51,6 +51,7 @@ pub(crate) fn spawn_config(agent: &Agent) -> Value {
         "databricks_host": databricks.map(|s| &s.host),
         "databricks_filter": databricks.map(|s| &s.filter),
         "env": agent.environment,
+        "effort": crate::agent_defaults::effort(agent),
     })
 }
 

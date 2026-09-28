@@ -107,6 +107,7 @@ test("manage a channel message and its thread", async ({ page, app }) => {
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
     await confirmation.getByRole("button", { name: "Cancel" }).click();
     await expect(row).toBeVisible();
+    await expect(trigger).toBeFocused();
   }
   await trigger.click();
   await page
@@ -163,6 +164,18 @@ test("deleting a thread reply returns focus to the surviving thread composer", a
   await expect(replyRow).toHaveCount(0);
   await expect(
     thread.getByRole("textbox", { name: "Reply to thread" }),
+  ).toBeFocused();
+  const rootRow = thread.locator(`[data-message-id="${root.id}"]`);
+  await rootRow.hover();
+  await rootRow.getByRole("button", { name: "More message actions" }).click();
+  await page
+    .getByRole("menuitem", { name: "Delete message", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(channelRow).toHaveCount(0);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeFocused();
 });
 

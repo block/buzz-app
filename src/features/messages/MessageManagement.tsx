@@ -8,7 +8,7 @@ import {
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
-import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { MenuItem, MenuSeparator } from "../../shared/design-system/ui/Menu";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
@@ -43,7 +43,7 @@ export function useMessageDeletion() {
   const editor = useMessageEditScope();
   return management
     ? (row: ChannelMessage, done?: () => void) =>
-        management.remove(row, done, () => editor?.input.current ?? null)
+        management.remove(row, done, () => editor?.focusTarget() ?? null)
     : undefined;
 }
 
@@ -104,9 +104,11 @@ export function MessageManagement({
 export function MessageManagementItems({
   row,
   session,
+  separated = false,
 }: {
   row: ChannelMessage;
   session: RelaySession;
+  separated?: boolean;
 }) {
   const management = useContext(Management);
   const editor = useMessageEditScope();
@@ -133,11 +135,14 @@ export function MessageManagementItems({
       item.event.tags.some(([name, id]) => name === "e" && id === row.id),
   );
   const own = row.authorId === session.viewer && !member.archived;
+  const canEdit = own && editor && lastEditableMessage(session, [row]);
+  const canDelete = own && session.outbox?.supports(5);
   const act = (action: () => void) =>
     afterClose ? afterClose(action) : action();
   return (
     <>
-      {own && editor && lastEditableMessage(session, [row]) && (
+      {separated && (canEdit || canDelete) && <MenuSeparator />}
+      {canEdit && (
         <MenuItem
           disabled={
             busy ||
@@ -154,7 +159,7 @@ export function MessageManagementItems({
           Edit message
         </MenuItem>
       )}
-      {own && session.outbox?.supports(5) && (
+      {canDelete && (
         <MenuItem
           disabled={
             busy ||
@@ -171,7 +176,7 @@ export function MessageManagementItems({
               management.remove(
                 row,
                 undefined,
-                () => editor?.input.current ?? null,
+                () => editor?.focusTarget() ?? null,
               ),
             )
           }

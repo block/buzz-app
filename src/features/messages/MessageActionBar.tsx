@@ -19,7 +19,6 @@ import {
   MenuPopup,
   MenuItem,
   MenuIcon,
-  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import styles from "./Messages.module.css";
@@ -170,12 +169,7 @@ export function MessageActionBar({
                 </MenuIcon>
                 Copy link
               </MenuItem>
-              {overflowItems && (
-                <>
-                  <MenuSeparator />
-                  {overflowItems}
-                </>
-              )}
+              {overflowItems}
             </AfterMenuClose.Provider>
           </MenuPopup>
         </MenuRoot>

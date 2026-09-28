@@ -382,7 +382,7 @@ it("rejects an empty edit of a message with original attachments without deletin
   fill("");
   submit();
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Keep attachment links unchanged. To delete this message and its attachments, use Delete message.",
+    "Keep attachment links unchanged. To remove this message, use Delete message.",
   );
   expect(
     screen.queryByRole("alertdialog", { name: "Delete message?" }),

@@ -554,7 +554,7 @@ function Composer({
       if (!valueRef.current.text.trim()) {
         if (editing.target.attachments.length) {
           setError(
-            "Keep attachment links unchanged. To delete this message and its attachments, use Delete message.",
+            "Keep attachment links unchanged. To remove this message, use Delete message.",
           );
           return;
         }

@@ -374,6 +374,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "link",
       "tint",
       "chrome",
+      "avatar",
       "shape: round (default) | control",
       "size: xs (20px, 12px icon) | sm (32px) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
@@ -478,6 +479,19 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     owner: "desktop-new Messages",
     source: "shared/design-system/ui/Tabs.tsx",
     baseUi: [BASE_UI_PARTS.tabs],
+    composes: [],
+  },
+  {
+    slug: "header",
+    name: "Header",
+    purpose:
+      "Content title with optional subtitle, eyebrow, icon and actions; compact InlineHeader for groups.",
+    behavior: "Semantic heading with caller-selected level",
+    variants: ["header", "inline"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Header.tsx",
+    baseUi: [],
     composes: [],
   },
   {

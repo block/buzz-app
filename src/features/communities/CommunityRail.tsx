@@ -32,7 +32,7 @@ export function CommunityRail({
     .map((membership) => membership.id)
     .join("\n");
   useEffect(() => {
-    if (client.status !== "ready") return;
+    if (client.status !== "ready" || !client.relayAvailable) return;
     const controller = new AbortController();
     // Icon discovery is optional. Reserve browser connections for foreground work
     // even when saved relays hold their NIP-11 responses indefinitely.
@@ -56,7 +56,7 @@ export function CommunityRail({
     );
     void Promise.all(workers);
     return () => controller.abort();
-  }, [client.status, membershipIds]);
+  }, [client.status, client.relayAvailable, membershipIds]);
   const select = (id: string | null) => {
     if (onSelect) onSelect(id);
     else communities.select(id);

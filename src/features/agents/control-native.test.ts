@@ -11,6 +11,21 @@ it("all command names and camelCase payloads match the native contract", async (
   const host = nativeAgentControlHost();
   if (!host) throw new Error("Missing fixture host");
   await host.snapshot();
+  vi.mocked(invoke).mockImplementation(async (name) =>
+    name === "agent_control_log_challenge" ? "nonce-fixture" : ("" as never),
+  );
+  const authorize = vi.fn(async () => "signature-fixture");
+  await host.readLog?.({
+    id: "exact-id",
+    pubkey: "a".repeat(64),
+    relayUrl: "wss://relay.example",
+    authorize,
+  });
+  expect(authorize).toHaveBeenCalledWith(
+    { id: "exact-id", pubkey: "a".repeat(64), relayUrl: "wss://relay.example" },
+    "nonce-fixture",
+  );
+  await host.installGoose?.();
   const edit = {
     name: "Agent",
     systemPrompt: "Prompt",
@@ -26,6 +41,25 @@ it("all command names and camelCase payloads match the native contract", async (
   await host.commitImport("exact-preview", ["exact-id"]);
   expect(vi.mocked(invoke).mock.calls).toEqual([
     ["agent_control_snapshot"],
+    [
+      "agent_control_log_challenge",
+      {
+        id: "exact-id",
+        pubkey: "a".repeat(64),
+        relayUrl: "wss://relay.example",
+      },
+    ],
+    [
+      "agent_control_read_log",
+      {
+        id: "exact-id",
+        pubkey: "a".repeat(64),
+        relayUrl: "wss://relay.example",
+        nonce: "nonce-fixture",
+        signature: "signature-fixture",
+      },
+    ],
+    ["goose_install"],
     ["agent_control_save", { id: "exact-id", expectedRevision: 3, edit }],
     ["agent_control_delete", { id: "exact-id", expectedRevision: 3 }],
     ["agent_control_action", { id: "exact-id", action: "stop" }],
@@ -83,4 +117,32 @@ it("mention replay floor is transient IPC input on the existing Start command", 
     action: "start",
     replayFloor: 1234567890,
   });
+});
+
+it("does not retry failed authorization or native log errors", async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(invoke).mockReset();
+  vi.mocked(invoke).mockRejectedValueOnce("Owner authorization is unavailable");
+  const authorize = vi.fn(async () => "signature-fixture");
+  const host = nativeAgentControlHost();
+  if (!host?.readLog) throw new Error("Missing fixture host");
+  const target = {
+    id: "exact-id",
+    pubkey: "a".repeat(64),
+    relayUrl: "wss://relay.example",
+    authorize,
+  };
+  await expect(host.readLog(target)).rejects.toBe(
+    "Owner authorization is unavailable",
+  );
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(authorize).not.toHaveBeenCalled();
+
+  vi.mocked(invoke).mockReset();
+  vi.mocked(invoke)
+    .mockResolvedValueOnce("nonce-fixture" as never)
+    .mockRejectedValueOnce("Log authorization expired");
+  await expect(host.readLog(target)).rejects.toBe("Log authorization expired");
+  expect(invoke).toHaveBeenCalledTimes(2);
+  expect(authorize).toHaveBeenCalledTimes(1);
 });

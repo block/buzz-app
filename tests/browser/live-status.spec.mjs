@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 test.use({
   productionBroker: true,
@@ -28,10 +29,7 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     });
   });
 
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
@@ -95,10 +93,7 @@ for (const target of ["alpha", "profiles"]) {
         localStorage.setItem("buzz-appearance.v1", "dark"),
       );
     await page.goto(app.origin);
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Messages");
     await expect(
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();

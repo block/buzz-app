@@ -39,7 +39,7 @@ test("shared human and agent avatar upload, scoped save, publication retry and n
   ).toHaveAttribute("data-loaded", "true");
   await page.screenshot({ path: test.info().outputPath("human-avatar.png") });
   await page.getByRole("button", { name: "Done", exact: true }).click();
-  await page.getByRole("button", { name: "Save profile", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.getByText("Profile updated", { exact: true }).waitFor();
   const human = await page.evaluate(() => ({
     saved: JSON.parse(
@@ -97,7 +97,6 @@ test("shared human and agent avatar upload, scoped save, publication retry and n
     )
     .toBe(true);
   await page.evaluate(() => window.agentControlFixture.failProfile(false));
-  await page.getByRole("button", { name: "Retry status", exact: true }).click();
   await page
     .getByRole("button", { name: "Retry profile publication", exact: true })
     .click();

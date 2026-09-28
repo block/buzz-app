@@ -139,21 +139,27 @@ backend exists.
 one optional composition provider. With zero or multiple active providers, no
 optional controls are selected. This host-matched preview is not a workflow API:
 The sidebar owns creation form/draft data and final dispatch; the session owns signing,
-membership, Canvas writes, exact receipts and partial-setup recovery. Settings and
+membership, Canvas writes, exact receipts and setup completion notices. Settings and
 provider components must check `active()` before accepting delayed work or starting
 new writes; this lifecycle fence is not a sandbox or a replacement for access checks.
 
-Disabling preserves saved group default references but does not apply them to new
-intent. Accepted drafts remain visibly summarized, with an explicit Clear action;
+Normal Create selects a saved template without a customization disclosure or raw
+setup dump. Templates & teams settings retain lineup/Canvas editing. Disabling
+preserves saved group default references but does not apply them to new intent.
+Accepted drafts get a compact summary and Clear action only when the provider is
+unavailable or fails;
 re-enable does not overwrite edits or automatically apply an unresolved old default.
-Frozen setup stays visible/resumable without any template/agent catalog. Disabling
-is not cancellation of already accepted writes. Group-only and Canvas-only setup
+Accepted setup runs independently of the template/agent catalogs after admission.
+Failures preserve frozen setup receipts and Outbox delivery evidence; dismissing a
+completion notice only hides that notice. There is no template Resume, automatic
+resend or startup continuation. Disabling is not cancellation of already accepted
+writes. Group-only and Canvas-only setup
 require no agent-library readiness; real agent selections still receive fresh host
 validation. Template-specific library demand belongs to mounted plugin controls;
 shared group/catalog storage remains session-owned.
 
 Colocated regressions cover app registration, exact-contribution revocation,
-accepted-draft retention and session/outbox recovery. They are not live cross-window
+accepted-draft retention, completion notices and preserved delivery evidence. They are not live cross-window
 or packaged/native acceptance; validation results and remaining gates belong in the
 pull request. Updating the native bundled catalog requires a desktop rebuild/restart;
 frontend hot reload alone cannot add the entry.
@@ -201,7 +207,8 @@ not cross-version capability negotiation.
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
 it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
-side panel, with add/check/uncheck, one optional assignee per item, automatic
+side panel, grouping items as To do, Doing and Done, with add, a per-item Doing
+toggle, check/uncheck, one optional assignee per item, automatic
 saving after each action, and explicit Refresh. It uses shared controls and theme
 tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
 
@@ -211,12 +218,18 @@ The source of truth is ordinary Markdown in one root level-two `Todos` section:
 ## Todos
 
 - [ ] Review the plan
+- [/] Build the preview
 - [x] Share the preview
 ```
 
+`[/]` marks Doing, the common Markdown convention for an in-progress task;
+ordinary Markdown renders it as plain text. Canvases without it keep their
+existing meaning: `[ ]` is To do and `[x]`/`[X]` is Done.
+
 Only top-level unordered checkbox items in that section are shown. Nested lists,
-quotes and fenced examples are not tasks in this view. Checkbox edits change one
-source byte; additions insert below the heading without rewriting other content.
+quotes and fenced examples are not tasks in this view. Doing and checkbox edits
+change one source byte; additions insert below the heading without rewriting other
+content.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
 the convenience UI, not the saved list: Channel settings → Canvas remains editable.
 
@@ -402,6 +415,15 @@ requests or subscriptions. The returned promise rejects after 10 seconds if clea
 has not finished; it does not claim that arbitrary plugin code has stopped. Plugin
 replacement still waits for the predecessor's actual cleanup, even after a timeout.
 React owns only subscriptions and presentation state.
+
+Catalog polling observes external `buzzodz` writes once per second. Its ten-second
+watchdog bounds the caller's wait, not native lock acquisition: one pending catalog
+read retains ownership until it actually settles. Retry cannot launch a replacement
+while that read is pending. Recovery remains available, but is a separate management
+operation and still needs the native registry lock. A timed-out management operation
+keeps controls busy until actual settlement; late results are not applied. A fresh
+poll reconciles the eventual stored state. Disposal stops polling/publication, not
+an already-running native operation.
 
 Relay consumers use `session.channels` for channel views,
 `session.profiles` for shared identities, and `session.read` for

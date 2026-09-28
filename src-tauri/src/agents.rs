@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Snapshot {
     #[serde(flatten)]
-    data: ControlSnapshot,
+    pub(crate) data: ControlSnapshot,
     import_available: bool,
     create_available: bool,
     avatar_editing_available: bool,
@@ -36,14 +36,17 @@ impl Snapshot {
         }
     }
 }
-// Editing suggestions only. Goose availability means an executable was found,
-// not that its provider credentials or ACP session are ready.
+// Editing suggestions and executable presence only. Availability does not
+// establish provider credentials or an ACP session.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HarnessOption {
     command: String,
     label: &'static str,
     available: bool,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    install_supported: Option<bool>,
     default_args: &'static [&'static str],
     providers: &'static [ProviderOption],
 }
@@ -113,17 +116,31 @@ const GOOSE_PROVIDERS: &[ProviderOption] = &[
     },
 ];
 
+fn pi_status(cli: bool, adapter: bool, node: bool) -> &'static str {
+    if !cli || !node {
+        "cli-needed"
+    } else if !adapter {
+        "adapter-needed"
+    } else {
+        "ready"
+    }
+}
+
 fn harness_options() -> Vec<HarnessOption> {
     let goose = installed_goose();
     let pi = buzz_agent_controller::installed("buzz-pi-acp");
-    let pi_available = pi.is_some()
-        && buzz_agent_controller::installed("pi").is_some()
-        && buzz_agent_controller::installed("node").is_some();
+    let pi_status = pi_status(
+        buzz_agent_controller::installed("pi").is_some(),
+        pi.is_some(),
+        buzz_agent_controller::installed("node").is_some(),
+    );
     vec![
         HarnessOption {
             command: "buzz-agent".into(),
             label: "Buzz Agent",
             available: true,
+            status: "ready",
+            install_supported: None,
             default_args: &[],
             providers: &[ProviderOption {
                 value: "databricks_v2",
@@ -137,6 +154,12 @@ fn harness_options() -> Vec<HarnessOption> {
             ),
             label: "Goose",
             available: goose.is_some(),
+            status: if goose.is_some() {
+                "ready"
+            } else {
+                "cli-needed"
+            },
+            install_supported: Some(cfg!(any(target_os = "macos", target_os = "linux"))),
             default_args: &["acp"],
             providers: GOOSE_PROVIDERS,
         },
@@ -146,7 +169,9 @@ fn harness_options() -> Vec<HarnessOption> {
                 |p| p.to_string_lossy().into_owned(),
             ),
             label: "Pi",
-            available: pi_available,
+            available: pi_status == "ready",
+            status: pi_status,
+            install_supported: None,
             default_args: &[],
             providers: &[
                 ProviderOption {
@@ -178,6 +203,14 @@ fn installed_goose() -> Option<PathBuf> {
     buzz_agent_controller::installed("goose")
 }
 
+struct LogChallenge {
+    id: String,
+    pubkey: String,
+    relay_url: String,
+    nonce: String,
+    issued: std::time::Instant,
+}
+
 struct Host {
     controller: Controller,
     imports: Imports,
@@ -190,6 +223,7 @@ struct Host {
     /// Agents with an explicit Start/Stop since open; queued restore skips them.
     acted: BTreeSet<String>,
     profiles: BTreeMap<String, Arc<tokio::sync::Mutex<()>>>,
+    log_challenges: BTreeMap<String, LogChallenge>,
     creating: Option<(String, Arc<NewAgent>)>,
     legacy_check: fn() -> Result<(), String>,
 }
@@ -219,6 +253,7 @@ impl Host {
             next_start: 0,
             acted: BTreeSet::new(),
             profiles: BTreeMap::new(),
+            log_challenges: BTreeMap::new(),
             creating: None,
             legacy_check: refuse_legacy,
         })
@@ -245,6 +280,55 @@ impl Host {
         self.closed = true; // Fence queued commands before shutdown starts.
         self.controller.shutdown()
     }
+    fn log_challenge(
+        &mut self,
+        id: String,
+        pubkey: String,
+        relay_url: String,
+    ) -> Result<String, String> {
+        self.controller.log_target(&id, &pubkey, &relay_url)?;
+        let nonce = uuid::Uuid::new_v4().to_string();
+        self.log_challenges
+            .retain(|_, pending| pending.issued.elapsed() <= std::time::Duration::from_secs(20));
+        if self.log_challenges.len() >= 4 {
+            return Err("Too many pending log authorizations".into());
+        }
+        self.log_challenges.insert(
+            nonce.clone(),
+            LogChallenge {
+                id,
+                pubkey,
+                relay_url,
+                nonce: nonce.clone(),
+                issued: std::time::Instant::now(),
+            },
+        );
+        Ok(nonce)
+    }
+    fn read_log(
+        &mut self,
+        id: &str,
+        pubkey: &str,
+        relay_url: &str,
+        nonce: &str,
+        signature: &str,
+    ) -> Result<String, String> {
+        // Consume before comparison or I/O; even a failed proof cannot be replayed.
+        let challenge = self
+            .log_challenges
+            .remove(nonce)
+            .ok_or("Log authorization expired")?;
+        if challenge.issued.elapsed() > std::time::Duration::from_secs(20)
+            || challenge.id != id
+            || challenge.pubkey != pubkey
+            || challenge.relay_url != relay_url
+            || challenge.nonce != nonce
+        {
+            return Err("Log authorization expired".into());
+        }
+        self.controller
+            .read_log(id, pubkey, relay_url, nonce, signature)
+    }
 }
 
 type ProfilePublication = (
@@ -254,7 +338,11 @@ type ProfilePublication = (
 );
 
 #[derive(Clone)]
-pub(crate) struct AgentHost(Arc<Mutex<Result<Host, String>>>, Arc<AtomicBool>);
+pub(crate) struct AgentHost(
+    Arc<Mutex<Result<Host, String>>>,
+    Arc<AtomicBool>,
+    Arc<tokio::sync::Mutex<()>>,
+);
 impl AgentHost {
     pub(crate) fn initialize(
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
@@ -264,7 +352,8 @@ impl AgentHost {
             "Agent runtime is initializing; retry shortly".into(),
         )));
         let closed = Arc::new(AtomicBool::new(false));
-        let owner = Self(state.clone(), closed.clone());
+        let admission = Arc::new(tokio::sync::Mutex::new(()));
+        let owner = Self(state.clone(), closed.clone(), admission.clone());
         tauri::async_runtime::spawn(async move {
             let opened = tauri::async_runtime::spawn_blocking(move || {
                 let bundle = resources.and_then(RuntimeBundle::new);
@@ -286,27 +375,28 @@ impl AgentHost {
             if let Ok(mut state) = state.lock() {
                 *state = opened;
             }
-            Self(state, closed).restore().await;
+            Self(state, closed, admission).restore().await;
         });
         owner
     }
+    // Synchronous admission belongs on a blocking worker; external waits release it.
     fn with<T>(&self, operation: impl FnOnce(&mut Host) -> Result<T, String>) -> Result<T, String> {
         if self.1.load(Ordering::SeqCst) {
             return Err("Agent host is shutting down".into());
         }
-        let mut state = self
-            .0
-            .try_lock()
-            .map_err(|_| "Another native agent operation is in progress")?;
+        let mut state = self.0.lock().map_err(|_| {
+            "Native agent state is unavailable after an operation failed; restart the app"
+        })?;
         let host = state.as_mut().map_err(|message| message.clone())?;
-        if host.closed {
+        if self.1.load(Ordering::SeqCst) || host.closed {
             return Err("Agent host is shutting down".into());
         }
         operation(host)
     }
-    fn begin_profile(&self, id: &str) -> Result<ProfilePublication, String> {
-        self.with(|host| {
-            let profile = host.controller.creation_profile(id)?;
+    async fn begin_profile(&self, id: &str) -> Result<ProfilePublication, String> {
+        let id = id.to_owned();
+        run(self.clone(), move |host| {
+            let profile = host.controller.creation_profile(&id)?;
             let guard = host
                 .profiles
                 .entry(id.to_owned())
@@ -318,21 +408,36 @@ impl AgentHost {
                 })?;
             Ok((guard, profile, host.credentials.clone()))
         })
+        .await
     }
     pub(crate) async fn restore(&self) {
-        let ids = self
-            .with(|host| host.controller.launch_ids())
+        let ids = run(self.clone(), |host| host.controller.launch_ids())
+            .await
             .unwrap_or_default();
         for id in ids {
-            let _ = start(self.clone(), id, Action::Start, true, None).await;
+            let _ = start(self.clone(), id, Action::Start, true, None, false).await;
         }
     }
-    pub(crate) fn ensure_open(&self) -> Result<(), String> {
-        self.with(|_| Ok(()))
+    pub(crate) async fn ensure_open(&self) -> Result<(), String> {
+        run(self.clone(), |_| Ok(())).await
     }
-    pub(crate) fn disconnect(&self, workspace: &str) -> Result<(), String> {
+    #[cfg(any(target_os = "macos", target_os = "linux", test))]
+    pub(crate) async fn waiting_for_goose(&self) -> Result<Vec<String>, String> {
+        run(self.clone(), move |host| {
+            Ok(host
+                .controller
+                .snapshot()?
+                .agents
+                .iter()
+                .filter(|agent| crate::harness_setup::waiting_for_goose(agent))
+                .map(|agent| agent.id.clone())
+                .collect())
+        })
+        .await
+    }
+    pub(crate) async fn disconnect(&self, workspace: &str) -> Result<(), String> {
         let workspace = buzz_agent_controller::connection::origin(workspace)?;
-        self.with(|host| {
+        run(self.clone(), move |host| {
             host.controller.disconnect(&workspace)?;
             // A successful Disconnect also retires pre-existing credential waits.
             // Otherwise their late completion could start against the removed cache.
@@ -340,42 +445,49 @@ impl AgentHost {
                 .retain(|_, (_, pending)| pending.as_deref() != Some(&workspace));
             Ok(())
         })
+        .await
     }
-    pub(crate) fn model_context(
+    pub(crate) async fn model_context(
         &self,
         id: Option<&str>,
         revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::ModelContext, String> {
-        self.with(|host| match (id, revision) {
+        let id = id.map(str::to_owned);
+        run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.model_context(id, revision, edit),
             (None, None) => Controller::draft_model_context(edit),
             _ => Err("Invalid agent model context".into()),
         })
+        .await
     }
-    pub(crate) fn goose_model_context(
+    pub(crate) async fn goose_model_context(
         &self,
         id: Option<&str>,
         revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::GooseModelContext, String> {
-        self.with(|host| match (id, revision) {
+        let id = id.map(str::to_owned);
+        run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.goose_model_context(id, revision, edit),
             (None, None) => Controller::draft_goose_model_context(edit),
             _ => Err("Invalid agent model context".into()),
         })
+        .await
     }
-    pub(crate) fn pi_model_context(
+    pub(crate) async fn pi_model_context(
         &self,
         id: Option<&str>,
         revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::pi::PiContext, String> {
-        self.with(|host| match (id, revision) {
+        let id = id.map(str::to_owned);
+        run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.pi_model_context(id, revision, edit),
             (None, None) => Controller::draft_pi_model_context(edit),
             _ => Err("Invalid agent model context".into()),
         })
+        .await
     }
     pub(crate) fn shutdown(&self) -> Result<(), String> {
         self.1.store(true, Ordering::SeqCst);
@@ -393,9 +505,42 @@ async fn run<T: Send + 'static>(
     state: AgentHost,
     operation: impl FnOnce(&mut Host) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || state.with(operation))
-        .await
-        .map_err(|_| "Native agent operation failed; refresh status before retrying")?
+    // FIFO admission keeps a queued Start preparation ahead of a later recovery
+    // Stop. The worker owns admission through completion, even if its caller drops.
+    // Credential/network waits happen between runs, so Stop can still fence them.
+    let admission = state.2.clone().lock_owned().await;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
+        state.with(operation)
+    })
+    .await
+    .map_err(|_| "Native agent operation failed; refresh status before retrying")?
+}
+#[tauri::command]
+pub(crate) async fn agent_control_log_challenge(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    pubkey: String,
+    relay_url: String,
+) -> Result<String, String> {
+    run(state.inner().clone(), move |host| {
+        host.log_challenge(id, pubkey, relay_url)
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_read_log(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    pubkey: String,
+    relay_url: String,
+    nonce: String,
+    signature: String,
+) -> Result<String, String> {
+    run(state.inner().clone(), move |host| {
+        host.read_log(&id, &pubkey, &relay_url, &nonce, &signature)
+    })
+    .await
 }
 #[tauri::command]
 pub(crate) async fn agent_control_snapshot(
@@ -452,18 +597,34 @@ pub(crate) async fn agent_control_action(
     if matches!(action, Action::Stop) {
         return run(owner, move |host| host.action(&id, action)).await;
     }
-    start(owner, id, action, false, replay_floor).await
+    start(owner, id, action, false, replay_floor, false).await
 }
-async fn start(
+pub(crate) const NOT_WAITING_FOR_GOOSE: &str = "Agent no longer waiting for Goose";
+pub(crate) async fn start(
     owner: AgentHost,
     id: String,
     action: Action,
     restore: bool,
     replay_floor: Option<u64>,
+    from_goose_install: bool,
 ) -> Result<Snapshot, String> {
-    let prepared = owner.with(|host| {
+    let target = id.clone();
+    let prepared = run(owner.clone(), move |host| {
+        let id = target;
         if restore && (host.acted.contains(&id) || !host.controller.launch_ids()?.contains(&id)) {
             return Err("Agent disabled before restore".into());
+        }
+        // Re-check while holding the controller, not just at install start:
+        // Stop or Edit may have changed this agent while the download ran.
+        if from_goose_install
+            && !host
+                .controller
+                .snapshot()?
+                .agents
+                .iter()
+                .any(|agent| agent.id == id && crate::harness_setup::waiting_for_goose(agent))
+        {
+            return Err(NOT_WAITING_FOR_GOOSE.into());
         }
         host.starts.remove(&id);
         if !restore {
@@ -487,7 +648,8 @@ async fn start(
         let ticket = host.next_start;
         host.starts.insert(id.clone(), (ticket, request.3.clone()));
         Ok((request, ticket, host.credentials.clone()))
-    })?;
+    })
+    .await?;
     let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
@@ -542,22 +704,24 @@ pub(crate) async fn agent_control_import_commit(
     ids: Vec<String>,
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
-    let (prepared, credentials) = owner.with(|host| {
+    let (prepared, credentials) = run(owner.clone(), move |host| {
         let prepared = host
             .controller
             .prepare_import(&mut host.imports, &token, &ids)?;
         // Consume the preview so concurrent IPC cannot import it twice.
         host.imports.discard();
         Ok((prepared, host.credentials.clone()))
-    })?;
+    })
+    .await?;
     let imported =
         tauri::async_runtime::spawn_blocking(move || prepared.acquire(credentials.as_ref()))
             .await
             .map_err(|_| "Native import credential operation failed")??;
-    owner.with(|host| {
+    run(owner, move |host| {
         host.controller.commit_import(imported)?;
         host.snapshot()
     })
+    .await
 }
 
 #[tauri::command]
@@ -593,26 +757,34 @@ pub(crate) async fn agent_control_create_commit(
     auth: String,
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
-    let (prepared, credentials) = owner.with(|host| {
+    let (prepared, credentials, request_id, edit, auth) = run(owner.clone(), move |host| {
         let (_, prepared) = host
             .creating
             .as_ref()
             .filter(|(id, _)| id == &request_id)
             .ok_or("Create request expired; reopen Add agent")?;
         prepared.validate(edit.clone(), &auth)?;
-        Ok((prepared.clone(), host.credentials.clone()))
-    })?;
+        Ok((
+            prepared.clone(),
+            host.credentials.clone(),
+            request_id,
+            edit,
+            auth,
+        ))
+    })
+    .await?;
     let saved = prepared.clone();
     tauri::async_runtime::spawn_blocking(move || saved.save_key(credentials.as_ref()))
         .await
         .map_err(|_| "Native credential operation failed")??;
-    owner.with(|host| {
+    run(owner, move |host| {
         if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
             return Err("Create request was replaced".into());
         }
         host.controller.create(&prepared, edit, &auth)?;
         host.snapshot()
     })
+    .await
 }
 #[tauri::command]
 pub(crate) async fn agent_control_creation_profile(
@@ -625,7 +797,7 @@ pub(crate) async fn agent_control_creation_profile(
 async fn publish_profile(owner: AgentHost, id: String) -> Result<Snapshot, String> {
     // Native ownership survives renderer reloads. Refuse overlapping publication,
     // while allowing settings Save to advance the revision and retain pending.
-    let (publication, profile, credentials) = owner.begin_profile(&id)?;
+    let (publication, profile, credentials) = owner.begin_profile(&id).await?;
     let (profile, key) = tauri::async_runtime::spawn_blocking(move || {
         credentials
             .read(&profile.credential_id, &profile.pubkey)
@@ -634,7 +806,7 @@ async fn publish_profile(owner: AgentHost, id: String) -> Result<Snapshot, Strin
     .await
     .map_err(|_| "Native credential operation failed")??;
     let key = key.ok_or("Agent key unavailable")?;
-    owner.ensure_open()?;
+    owner.ensure_open().await?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(20))
@@ -651,20 +823,25 @@ async fn publish_acquired(
     client: &reqwest::Client,
     _publication: tokio::sync::OwnedMutexGuard<()>,
 ) -> Result<Snapshot, String> {
-    profile_http::publish(client, profile, key, || {
-        owner.with(|host| {
-            let current = host.controller.creation_profile(id)?;
-            if current.revision != profile.revision {
+    let target = id.to_owned();
+    let revision = profile.revision;
+    profile_http::publish(client, profile, key, || async {
+        run(owner.clone(), move |host| {
+            let current = host.controller.creation_profile(&target)?;
+            if current.revision != revision {
                 return Err("Saved profile changed; retry publication".into());
             }
             Ok(())
         })
+        .await
     })
     .await?;
-    owner.with(|host| {
-        host.controller.profile_published(id, profile.revision)?;
+    let id = id.to_owned();
+    run(owner.clone(), move |host| {
+        host.controller.profile_published(&id, revision)?;
         host.snapshot()
     })
+    .await
 }
 
 mod profile_http;

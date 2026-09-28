@@ -14,7 +14,11 @@ import { useIdentityNames } from "../../features/identity-names/react";
 import { Select } from "../../shared/design-system/ui/Select";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 import type { ChannelPanelContext } from "../../features/panels/service";
-import { XIcon, ListChecksIcon } from "../../shared/design-system/icons/index";
+import {
+  XIcon,
+  ListChecksIcon,
+  PlayIcon,
+} from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -23,7 +27,13 @@ import { Input } from "../../shared/design-system/ui/Input";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
-import { addTodo, assignTodo, readTodos, toggleTodo } from "./model";
+import {
+  addTodo,
+  assignTodo,
+  readTodos,
+  setStatus,
+  type Status,
+} from "./model";
 import styles from "./Todos.module.css";
 
 export type TodoPeople = {
@@ -41,6 +51,11 @@ type Draft = {
   input: string;
 };
 const empty: Draft = { content: "", original: "", base: null, input: "" };
+const statuses: [Status, string][] = [
+  ["todo", "To do"],
+  ["doing", "Doing"],
+  ["done", "Done"],
+];
 function readDraft(scope: string, key: string): Draft | undefined {
   const value = readView<Partial<Draft> | null>(scope, key, null);
   return value &&
@@ -227,7 +242,7 @@ export function TodosPanel({
     !loaded || busy === "load" || !canvas.available || !!parseError || conflict;
   const disabled = inputDisabled || busy === "save";
   const items = parsed?.items ?? [];
-  const remaining = items.filter((item) => !item.checked).length;
+  const remaining = items.filter((item) => item.status !== "done").length;
   const peopleKey = [
     ...new Set([
       ...(members ?? []),
@@ -396,45 +411,70 @@ export function TodosPanel({
                     </p>
                   </div>
                 ) : null}
-                {[false, true].map((checked) => {
-                  const group = items.filter(
-                    (item) => item.checked === checked,
-                  );
+                {statuses.map(([status, title]) => {
+                  const group = items.filter((item) => item.status === status);
                   return (
                     group.length > 0 && (
                       <section
-                        key={String(checked)}
+                        key={status}
                         className={styles.group}
-                        aria-label={checked ? "Completed" : "To do"}
+                        aria-label={title}
                       >
                         <h3 className="text-label-sm text-secondary">
-                          {checked ? "Completed" : "To do"} · {group.length}
+                          {title} · {group.length}
                         </h3>
                         <ul className={styles.list}>
                           {group.map((item) => (
                             <li key={item.offset} className={styles.row}>
                               <Checkbox
                                 id={`${prefix}-${item.offset}`}
-                                checked={item.checked}
+                                checked={item.status === "done"}
+                                indeterminate={item.status === "doing"}
                                 disabled={disabled}
                                 onCheckedChange={(value) => {
                                   focusAfterToggle.current = `${prefix}-${item.offset}`;
                                   change(() =>
-                                    toggleTodo(
+                                    setStatus(
                                       draft.content,
                                       item.offset,
-                                      value,
+                                      value ? "done" : "todo",
                                     ),
                                   );
                                 }}
                                 label={
                                   <span
-                                    className={`${styles.label} text-body-sm ${item.checked ? "text-secondary" : ""}`}
-                                    data-completed={item.checked || undefined}
+                                    className={`${styles.label} text-body-sm ${item.status === "done" ? "text-secondary" : ""}`}
+                                    data-completed={
+                                      item.status === "done" || undefined
+                                    }
                                   >
                                     {item.label}
                                   </span>
                                 }
+                              />
+                              <IconButton
+                                id={`${prefix}-${item.offset}-doing`}
+                                size="sm"
+                                variant={
+                                  item.status === "doing" ? "tint" : "ghost"
+                                }
+                                icon={<PlayIcon size={16} aria-hidden="true" />}
+                                aria-label={`Doing: ${item.label}`}
+                                title="Doing"
+                                aria-pressed={item.status === "doing"}
+                                disabled={disabled}
+                                onClick={() => {
+                                  focusAfterToggle.current = `${prefix}-${item.offset}-doing`;
+                                  change(() =>
+                                    setStatus(
+                                      draft.content,
+                                      item.offset,
+                                      item.status === "doing"
+                                        ? "todo"
+                                        : "doing",
+                                    ),
+                                  );
+                                }}
                               />
                               <fieldset
                                 id={`${prefix}-${item.offset}-assignee`}

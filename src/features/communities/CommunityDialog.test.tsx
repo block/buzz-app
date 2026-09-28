@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { CommunityDialog } from "./CommunityDialog";
-import type { Communities } from "./service";
+import { Context } from "@deepseek-ai/cordis";
+import { createCommunities, type Communities } from "./service";
 
 const api = vi.hoisted(() => ({
   inspectProfile: vi.fn<typeof import("./api").inspectProfile>(),
@@ -43,6 +50,7 @@ it("publishes a description-only edit to an existing community profile", async (
   const communities = {
     snapshot: () => ({
       status: "ready",
+      relayAvailable: true,
       profile: { name: "Local", picture: "" },
     }),
     joined: vi.fn(),
@@ -87,6 +95,7 @@ it("opens with an unchanged over-limit profile and blocks publishing it", async 
   const communities = {
     snapshot: () => ({
       status: "ready",
+      relayAvailable: true,
       profile: { name: "Local", picture: "" },
     }),
     joined: vi.fn(),
@@ -126,7 +135,11 @@ it("names exact relay claim refusals and keeps other failures generic", async ()
     }),
   );
   const communities = {
-    snapshot: () => ({ status: "ready", profile: { name: "", picture: "" } }),
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "", picture: "" },
+    }),
   } as unknown as Communities;
   render(
     <CommunityDialog communities={communities} mode="join" close={() => {}} />,
@@ -180,7 +193,11 @@ it.each([
       }),
     );
     const communities = {
-      snapshot: () => ({ status: "ready", profile: { name: "", picture: "" } }),
+      snapshot: () => ({
+        status: "ready",
+        relayAvailable: true,
+        profile: { name: "", picture: "" },
+      }),
       joined: vi.fn(),
     } as unknown as Communities;
     render(
@@ -220,7 +237,11 @@ it("explains an inherited invalid avatar when editing at join and recovers on re
     }),
   );
   const communities = {
-    snapshot: () => ({ status: "ready", profile: { name: "", picture: "" } }),
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "", picture: "" },
+    }),
     joined: vi.fn(),
   } as unknown as Communities;
   render(
@@ -253,4 +274,57 @@ it("explains an inherited invalid avatar when editing at join and recovers on re
     },
     { name: "Fixture", picture },
   );
+});
+
+it("keeps join unavailable after native identity hydration, but still saves a local profile", async () => {
+  const ctx = new Context();
+  vi.stubGlobal("fetch", vi.fn());
+  const communities = createCommunities(
+    ctx,
+    false,
+    undefined,
+    "",
+    undefined,
+    Promise.resolve("d".repeat(64)),
+  );
+  try {
+    await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+    const view = render(
+      <CommunityDialog
+        communities={communities}
+        mode="join"
+        close={() => {}}
+      />,
+    );
+    expect(
+      screen.getByText(/connecting to communities is not available/),
+    ).toBeVisible();
+    expect(screen.queryByLabelText("Relay URL")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    const form = screen.getByRole("dialog").querySelector("form");
+    if (!form) throw new Error("Join dialog form is missing");
+    fireEvent.submit(form);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(api.inspectProfile).not.toHaveBeenCalled();
+    view.unmount();
+    const close = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <CommunityDialog
+        communities={communities}
+        mode="profile"
+        close={close}
+      />,
+    );
+    await user.type(screen.getByLabelText("Display name"), "Local only");
+    await user.click(screen.getByRole("button", { name: "Save profile" }));
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(communities.snapshot().profile.name).toBe("Local only");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(api.publishProfile).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    await ctx.fiber.dispose();
+    localStorage.clear();
+  }
 });

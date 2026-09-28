@@ -57,6 +57,9 @@ Avatar `shape="circle"` or `shape="squircle"`; the shape carries identity meanin
 not density or emphasis. The caller supplies identity type from domain data,
 never a name or picture heuristic. `size="fill"` fills the owning layout’s
 available space. Shape clips the artwork, never the interactive focus target.
+Avatar-only controls use `IconButton variant="avatar"` so the surrounding backdrop
+shows through their cutouts at rest, hover, press, and while a menu is open. The
+button retains its unmasked keyboard focus ring.
 Circular and squircle avatars can add `statusBadge="online" | "away" | "offline"`. The dot
 uses a semantic green, yellow, or grey role with light and dark values. Its inset
 cutout and dot scale with the existing avatar size; the dot is separate from the
@@ -64,6 +67,12 @@ clipped artwork, and avatars without a badge retain their full shape. The agent
 cutout and badge follow the squircle contour; agent badges use live presence and leave
 unknown status unbadged. All three statuses use solid fills: green for Online,
 yellow for Away, and grey for Offline, with semantic light and dark values.
+Online and Away retain step-10 centers inside a 1px inset, same-hue step-11
+outline. The outline supplies the 3:1 non-text boundary on panel, popup,
+selected and hover surfaces; measure that rendered boundary, not the inset
+center against a surface it does not touch. Offline stays unoutlined. The
+badge footprint and Bézier artwork cutout are unchanged. This establishes
+boundary contrast, not a blanket WCAG conformance claim for presence.
 
 ## Public identity text
 
@@ -550,6 +559,36 @@ it is the rule a generated theme is measured against.
   surface-panel, surface-inset and surface-popover in both themes. The contrast
   guard checks these role mappings and status dots separately from text and
   decorative dividers.
+
+### Link contrast
+
+Inline links and mentions use Blue 11 text with Blue 3 hover in both modes.
+This is an explicitly approved visual tradeoff: the brighter link color is
+preferred to Blue 12, and Blue 3 makes the hover fill more visible than Blue 2,
+even where these choices fall below the ordinary contrast target.
+It is not a claim of WCAG AA conformance on every supported surface.
+
+The contrast guard accepts only these eight exact mode/role/color pairings:
+
+| Mode | Surface role | Text / surface | APCA Lc | WCAG ratio |
+| --- | --- | --- | ---: | ---: |
+| Light | affordance-selected | #0d74ce / #e8e8e8 | 58.831 | 3.889 |
+| Light | neutral-4 | #0d74ce / #dadada | 50.774 | 3.409 |
+| Dark | surface-panel | #70b8ff / #1a1a1a | 59.953 | 8.279 |
+| Dark | surface-popover | #70b8ff / #333333 | 55.433 | 6.010 |
+| Dark | affordance-subtle | #70b8ff / #333333 | 55.433 | 6.010 |
+| Dark | affordance-selected | #70b8ff / #333333 | 55.433 | 6.010 |
+| Dark | neutral-4 | #70b8ff / #232323 | 58.707 | 7.476 |
+| Dark | affordance-link-hover | #70b8ff / #0d2847 | 57.791 | 7.076 |
+
+Each accepted shortfall is printed with its measurements. Changed colors and
+other roles/surfaces remain subject to the normal APCA target; unused exceptions
+are reported for removal. The target stays Lc 60. Blue 3 hover in light mode
+(#0d74ce on #e6f4fe) clears APCA at Lc 64.614 but falls below WCAG 4.5:1
+at 4.252:1; this is also an accepted visual tradeoff.
+Light base/inset/subtle surfaces clear APCA but remain below WCAG
+4.5:1 at 4.374:1. Focus appearance and link-identification cues are separate
+contracts; this color choice does not change them.
 
 ## Writing
 

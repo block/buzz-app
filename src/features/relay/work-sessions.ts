@@ -37,13 +37,19 @@ export function createWorkSessions(
     id: string,
     active?: () => boolean,
     addition = false,
+    retry = true,
   ) {
     const check = () => {
       if (active?.() === false)
         throw new DOMException("Channel addition cancelled", "AbortError");
     };
     check();
-    const source = writer(addition);
+    // Recipe and Canvas saves share delivery, not channel-creation authority.
+    if (signal.aborted || !outbox)
+      throw new Error(
+        "The community connection cannot confirm this operation.",
+      );
+    const source = addition ? writer(true) : outbox;
     const journal = receipts ?? source;
     const existing = journal.snapshot().find((item) => item.event.id === id);
     if (!existing) {
@@ -93,6 +99,13 @@ export function createWorkSessions(
         }
       }
       check();
+      if (!retry) {
+        const events = await reader.read([{ ids: [id], limit: 1 }], { signal });
+        if (events.some((event) => event.id === id)) return;
+        throw new Error(
+          existing.error ?? "The operation could not be confirmed.",
+        );
+      }
       if (active) source.retry(id, active);
       else source.retry(id);
     }
@@ -387,6 +400,7 @@ export function createWorkSessions(
       visibility: "open" | "private",
       description?: string,
       ttlSeconds?: number,
+      active?: () => boolean,
     ) {
       writer();
       identifier(id);
@@ -405,18 +419,22 @@ export function createWorkSessions(
           ttlSeconds > 2_147_483_647)
       )
         throw new Error("Choose a valid temporary channel duration.");
-      return writer().send({
-        kind: 9007,
-        content: "",
-        tags: [
-          ["h", id],
-          ["name", name],
-          ["visibility", visibility],
-          ["channel_type", "stream"],
-          ...(about ? [["about", about]] : []),
-          ...(ttlSeconds ? [["ttl", String(ttlSeconds)]] : []),
-        ],
-      });
+      return writer().send(
+        {
+          kind: 9007,
+          content: "",
+          tags: [
+            ["h", id],
+            ["name", name],
+            ["visibility", visibility],
+            ["channel_type", "stream"],
+            ...(about ? [["about", about]] : []),
+            ...(ttlSeconds ? [["ttl", String(ttlSeconds)]] : []),
+          ],
+        },
+        undefined,
+        active,
+      );
     },
     create(id: string, title: string, parentId?: string) {
       writer();

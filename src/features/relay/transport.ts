@@ -3,6 +3,7 @@ import {
   type MemoryReader,
   type MemoryListing,
 } from "../agents/memory";
+import { publicationRefusal } from "../developer/traffic";
 import { brokerUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
 import type { KitRecord } from "../channel-templates/model";
@@ -19,9 +20,11 @@ import {
 import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
+  type SidebarAssignmentMutator,
+  type SidebarStarMutator,
   type SidebarSortMutator,
-  type SidebarMuteMutator,
   type SidebarDecoder,
+  type SidebarMuteMutator,
   type SidebarPreferences,
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
@@ -65,6 +68,11 @@ export interface RelayWriter {
 export interface ReadTransport {
   readonly projectGit?: ProjectGit;
   readonly readAgentMemories?: MemoryReader;
+  /** Session-scoped owner proof, not an arbitrary signing capability. */
+  readonly authorizeAgentLog?: (
+    target: { id: string; pubkey: string; relayUrl: string },
+    nonce: string,
+  ) => Promise<string>;
   readonly uploadAttachment?: AttachmentUpload;
   /** Host-owned idempotent DM opening. The session verifies membership before use. */
   readonly openDirectMessage?: (
@@ -101,6 +109,9 @@ export interface ReadTransport {
     "online" | "away" | "offline" | "unknown"
   > | null>;
   readonly writeSidebarMute?: SidebarMuteMutator;
+  /** Host-only, relay-scoped mutation of one existing sidebar group assignment. */
+  readonly writeSidebarAssignment?: SidebarAssignmentMutator;
+  readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -289,8 +300,11 @@ export async function connectBrokerTransport(
     channelActivity?: boolean;
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
+    sidebarPreferenceWrites?: boolean;
+    sidebarStarWrites?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
+    agentLogProof?: boolean;
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
@@ -451,6 +465,37 @@ export async function connectBrokerTransport(
               signal,
             }),
           ),
+        }
+      : {}),
+    ...(session.agentLogProof === true && community
+      ? {
+          authorizeAgentLog: async (
+            target: { id: string; pubkey: string; relayUrl: string },
+            nonce: string,
+          ) => {
+            if (
+              !session.relayUrl ||
+              relayOrigin(target.relayUrl) !== relayOrigin(session.relayUrl)
+            )
+              throw new Error("Log authorization unavailable");
+            const response = await fetch(`${endpoint}/agent-log-proof`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...target, nonce }),
+            });
+            if (!response.ok) throw new Error("Log authorization unavailable");
+            const value: unknown = await response.json();
+            if (
+              !value ||
+              typeof value !== "object" ||
+              !("signature" in value) ||
+              typeof value.signature !== "string" ||
+              !/^[0-9a-f]{128}$/.test(value.signature)
+            )
+              throw new Error("Log authorization unavailable");
+            return value.signature;
+          },
         }
       : {}),
     ...(session.agentMemories === true && community
@@ -685,6 +730,53 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.identityArchives === true
       ? { identityArchive: routeWriter("identity-archive") }
+      : {}),
+    ...(session.sidebarPreferenceWrites
+      ? {
+          async writeSidebarAssignment(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-assignment`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok) {
+              const failure = await readApiFailure(result);
+              throw new Error(failure.error);
+            }
+            const value = (await result.json()) as SidebarPreferences;
+            const groups = projectSidebarPreferences(
+              {
+                version: 1,
+                sections: value.sections,
+                assignments: value.assignments,
+              },
+              undefined,
+            );
+            return {
+              sections: groups.sections,
+              assignments: groups.assignments,
+            };
+          },
+        }
+      : {}),
+    ...(session.sidebarStarWrites
+      ? {
+          async writeSidebarStar(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-star`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok)
+              throw new Error((await readApiFailure(result)).error);
+            return projectSidebarPreferences(undefined, await result.json())
+              .starred;
+          },
+        }
       : {}),
     ...(session.writeKinds
       ? {
@@ -952,9 +1044,18 @@ async function acceptPublish(response: Response, id: string) {
       throw new PublishRejected(
         `Relay rejected the message (${response.status})`,
       );
-    // A broker that never reached the relay reports `sent: false`; that message
-    // was not delivered and is safe to mark failed and retry.
-    const body = await readApiFailure(response);
+    // Only proven non-delivery is safe to mark failed. Socket quota reasons are
+    // display-only: keep them distinct from HTTP API quota/cooldown ownership.
+    const body = await readApiFailure(response, (value) => {
+      if (!value || typeof value !== "object") return;
+      const failure = value as { sent?: unknown; error?: unknown };
+      if (
+        failure.sent === false &&
+        typeof failure.error === "string" &&
+        failure.error.startsWith("rate-limited:")
+      )
+        return publicationRefusal(failure.error);
+    });
     if (body.sent === false || body.quota === "api")
       throw new PublishRejected(body.error);
     throw new Error(

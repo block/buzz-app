@@ -1,23 +1,41 @@
 import { describe, expect, it } from "vitest";
 import { profileTarget } from "../../features/profiles/target";
-import { addTodo, assignTodo, readTodos, toggleTodo } from "./model";
+import { addTodo, assignTodo, readTodos, setStatus } from "./model";
 
 describe("Canvas todo source edits", () => {
   it("changes only the selected checkbox byte, including duplicate labels and CRLF", () => {
     const content =
       "# Notes\r\nuntouched  \r\n\r\n## Todos\r\n\r\n- [ ] Same\r\n- [X] Same\r\n\r\n## Keep\r\n- [ ] Not a todo\r\n";
     const { items } = readTodos(content);
-    expect(items.map((i) => [i.label, i.checked])).toEqual([
-      ["Same", false],
-      ["Same", true],
+    expect(items.map((i) => [i.label, i.status])).toEqual([
+      ["Same", "todo"],
+      ["Same", "done"],
     ]);
     const item = items[1];
     if (!item) throw new Error("Expected second todo");
-    const changed = toggleTodo(content, item.offset, false);
+    const changed = setStatus(content, item.offset, "todo");
     expect(changed).toBe(content.replace("[X]", "[ ]"));
-    expect(toggleTodo(changed, item.offset, true)).toBe(
+    expect(setStatus(changed, item.offset, "done")).toBe(
       content.replace("[X]", "[x]"),
     );
+  });
+  it("reads and writes Doing as `[/]` without changing any other byte", () => {
+    const content = "## Todos\n\n- [ ] Plan\n* [/] Build · note\n- [x] Ship\n";
+    const { items } = readTodos(content);
+    expect(items.map((i) => [i.label, i.status])).toEqual([
+      ["Plan", "todo"],
+      ["Build · note", "doing"],
+      ["Ship", "done"],
+    ]);
+    const [plan, build] = items;
+    if (!plan || !build) throw new Error("Expected fixture todos");
+    const doing = setStatus(content, plan.offset, "doing");
+    expect(doing).toBe(content.replace("- [ ] Plan", "- [/] Plan"));
+    expect(setStatus(doing, plan.offset, "todo")).toBe(content);
+    expect(setStatus(content, build.offset, "done")).toBe(
+      content.replace("* [/]", "* [x]"),
+    );
+    expect(readTodos("## Todos\n- [-] Other\n- [//] Mark\n").items).toEqual([]);
   });
   it("recognizes actual Markdown structure, not examples or nested task lists", () => {
     const content =
@@ -57,7 +75,7 @@ describe("Canvas todo source edits", () => {
     expect(() => readTodos("## Todos\n\n## Todos\n")).toThrow(/more than one/);
     expect(() => addTodo("", "a\n## Escape")).toThrow(/single line/);
     expect(() => addTodo("", "   ")).toThrow(/single line/);
-    expect(() => toggleTodo("## Todos\n- [ ] Hi", 0, true)).toThrow(/changed/);
+    expect(() => setStatus("## Todos\n- [ ] Hi", 0, "done")).toThrow(/changed/);
     expect(() => addTodo("```unterminated\n", "Oops")).toThrow(/safely/);
     expect(() => addTodo("<!-- open comment\n", "Oops")).toThrow(/safely/);
   });
@@ -82,8 +100,8 @@ it("assigns, replaces and clears only the suffix; keeps CRLF, prose, nested line
     ),
   );
   expect(readTodos(assigned).items[0]?.assignee).toMatchObject(alex);
-  expect(toggleTodo(assigned, item.offset, false)).toBe(
-    assigned.replace("[X]", "[ ]"),
+  expect(setStatus(assigned, item.offset, "doing")).toBe(
+    assigned.replace("[X]", "[/]"),
   );
   const changed = assignTodo(assigned, item.offset, sam);
   expect(changed).toBe(

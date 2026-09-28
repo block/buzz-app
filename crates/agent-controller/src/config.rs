@@ -53,6 +53,7 @@ pub struct AgentView {
     /// Redacted saved-versus-running differences while the process is alive.
     pub restart_diff: Vec<crate::restart::RestartDiffEntry>,
     pub deployed_remote: bool,
+    pub needs_team_import: bool,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -162,7 +163,16 @@ impl Agent {
             launch_provider_env: launch.provider_env,
             restart_diff: Vec::new(),
             deployed_remote: self.deployed_remote(),
+            needs_team_import: self.needs_team_import(),
         }
+    }
+    pub fn needs_team_import(&self) -> bool {
+        let record = &self.imported["record"];
+        ["team_id", "persona_team_dir"].iter().any(|field| {
+            record[field]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        }) && self.imported.get("teamInstructions").is_none()
     }
     pub fn starts_on_launch(&self) -> bool {
         self.start_on_app_launch.unwrap_or(self.enabled)

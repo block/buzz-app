@@ -89,11 +89,14 @@ publishing, media and live traffic, uses that session's destination path. A send
 started in A continues in A even after B becomes selected. Connection generations
 still fence obsolete work within a session; they are not persistent storage keys.
 Channel-head persistence now includes community origin as well as viewer, rather
-than relying solely on the relay signing key. Identity keys never enter browser
-JavaScript; local preferences contain the public viewer ID only.
+than relying solely on the relay signing key. In development broker mode signing keys never enter browser
+JavaScript; local preferences contain the public viewer ID only. The app-owned
+[native identity UI](identity.md) has deliberate import/reveal/copy interactions,
+not a plugin key service.
 
 This is the development integration, not a native identity/join implementation.
-Packaged builds do not include the broker. Account import, community
+Packaged builds do not include the broker. Native macOS [identity import/create](identity.md)
+is available as a separate first slice, without packaged relay transport. Community
 creation/removal and background connection eviction are not implemented. Native
 agent enrollment has its own [local control contract](agent-control.md). Avatar
 uploads reuse the development media host; packaged human-profile publication is
@@ -143,8 +146,9 @@ This establishes **trusted-app-origin intent, not a human gesture**; same-origin
 plugins and local processes remain trusted, not sandboxed. User-directed HTTPS
 networking may reach internal/private destinations. This is not a public-only
 network policy or DNS-rebinding defense; TLS verification remains enabled.
-No CSP widening, private key exposure to JavaScript, or native identity adapter
-is included.
+This broker integration does not expose private keys to JavaScript or widen CSP.
+The separate [native identity adapter](identity.md) deliberately exports keys for
+backup; same-origin plugin JavaScript is trusted and can invoke that IPC too.
 
 ## Verification
 

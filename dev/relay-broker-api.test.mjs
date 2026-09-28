@@ -1,8 +1,12 @@
+import { createConsola } from "consola";
+import { logSocketFrame } from "../src/features/developer/traffic.ts";
+import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
-import { createServer } from "node:http";
+import { createServer, get } from "node:http";
 import { createHash, createHmac } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import { ReadableStream } from "node:stream/web";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
@@ -29,7 +33,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 // Real browser HTTP -> production broker. Ephemeral key; upstream I/O is entirely local.
-async function harness(respond, capabilities = {}) {
+async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   const key = new Uint8Array(32);
   key[31] = 7;
   const viewer = getPublicKey(key);
@@ -46,7 +50,7 @@ async function harness(respond, capabilities = {}) {
     handler?.(req, res);
   });
   const plugin = relayBrokerPlugin({
-    relayUrl: fixtureRelayUrl,
+    relayUrl,
     communityAliases: fixtureAliases,
     identity: () => key,
     socketFactory: socket.factory,
@@ -127,6 +131,104 @@ const success = (call) =>
       ? { accepted: true, event_id: call.body.id }
       : [],
   );
+
+test("production transport obtains scoped broker harness log proofs for aliases and canonical origins", async () => {
+  const h = await harness(success);
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const viewer = getPublicKey(key);
+  const pubkey = "ab".repeat(32);
+  const relayUrl = "wss://primary.example";
+  const id = `${pubkey}-${createHash("sha256").update(relayUrl).digest("hex")}`;
+  const nonce = "12345678-1234-1234-1234-123456789abc";
+  const target = { id, pubkey, relayUrl };
+  try {
+    for (const community of ["primary", fixtureRelayUrl]) {
+      const transport = await connectBrokerTransport(
+        h.base,
+        undefined,
+        community,
+      );
+      expect(transport.authorizeAgentLog).toBeTypeOf("function");
+      const signature = await transport.authorizeAgentLog(target, nonce);
+      const digest = createHash("sha256")
+        .update(`buzz-app:harness-log:v1:${id}:${pubkey}:${relayUrl}:${nonce}`)
+        .digest();
+      expect(
+        schnorr.verify(
+          Buffer.from(signature, "hex"),
+          digest,
+          Buffer.from(viewer, "hex"),
+        ),
+      ).toBe(true);
+      await expect(
+        transport.authorizeAgentLog(
+          { ...target, relayUrl: "wss://secondary.example" },
+          nonce,
+        ),
+      ).rejects.toThrow("Log authorization unavailable");
+    }
+    const other = await connectBrokerTransport(h.base, undefined, "secondary");
+    await expect(other.authorizeAgentLog(target, nonce)).rejects.toThrow(
+      "Log authorization unavailable",
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+test("harness log proof signs only exact scoped community and agent inputs", async () => {
+  const h = await harness(success);
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const viewer = getPublicKey(key);
+  const pubkey = "ab".repeat(32);
+  const relayUrl = "wss://primary.example";
+  const id = `${pubkey}-${createHash("sha256").update(relayUrl).digest("hex")}`;
+  const nonce = "12345678-1234-1234-1234-123456789abc";
+  const target = { id, pubkey, relayUrl, nonce };
+  try {
+    const registered = await h.post("register", { url: fixtureRelayUrl });
+    expect(registered.status).toBe(200);
+    const route = "primary/agent-log-proof";
+    expect((await h.post("agent-log-proof", target)).status).toBe(400);
+    for (const invalid of [
+      { ...target, id: `${"f".repeat(64)}-${id.slice(65)}` },
+      { ...target, pubkey: viewer },
+      { ...target, relayUrl: "wss://secondary.example" },
+      { ...target, relayUrl: "file:///private" },
+      { ...target, nonce: "invalid" },
+      { ...target, extra: true },
+    ])
+      expect((await h.post(route, invalid)).status).toBe(400);
+    const result = await h.post(route, target);
+    expect(result.status).toBe(200);
+    const { signature } = await result.json();
+    const digest = createHash("sha256")
+      .update(`buzz-app:harness-log:v1:${id}:${pubkey}:${relayUrl}:${nonce}`)
+      .digest();
+    expect(
+      schnorr.verify(
+        Buffer.from(signature, "hex"),
+        digest,
+        Buffer.from(viewer, "hex"),
+      ),
+    ).toBe(true);
+    expect(
+      schnorr.verify(
+        Buffer.from(signature, "hex"),
+        createHash("sha256")
+          .update(
+            `buzz-app:harness-log:v1:${id}:${pubkey}:wss://secondary.example:${nonce}`,
+          )
+          .digest(),
+        Buffer.from(viewer, "hex"),
+      ),
+    ).toBe(false);
+  } finally {
+    await h.close();
+  }
+});
 
 test("saved icon discovery survives join-policy failure without changing join discovery", async () => {
   const icon = "https://images.example/icon@2x.png";
@@ -2276,14 +2378,17 @@ test("feedback media tags pass broker signing only for tenant-local bounded desc
 
 test("private feedback crosses the real broker and session without a readback or shared view", async () => {
   const h = await harness(success);
-  let live;
   let owner;
   try {
     const transport = await connectBrokerTransport(h.base);
-    live = await openBrokerSocket(transport);
     owner = createRelaySession(transport, {
       outboxStorage: { load: () => [], save() {} },
     });
+    // The session owns its own stream; waiting on a separate subscription does
+    // not establish that the publication owner's live ID has been admitted.
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().status).toBe("connected"),
+    );
     const outbox = owner.session.outbox;
     expect(outbox).toBeDefined();
     await outbox.ready();
@@ -2312,7 +2417,158 @@ test("private feedback crosses the real broker and session without a readback or
     ).toEqual([]);
   } finally {
     owner?.dispose();
-    live?.dispose();
+    await h.close();
+  }
+});
+
+test("broker HTTP summaries respect live levels and trace excludes private filters", async () => {
+  const logger = getLogger("relay-broker");
+  const reporters = [...logger.options.reporters];
+  const lines = [];
+  logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+  const h = await harness(success);
+  try {
+    setLogLevel("trace");
+    expect(
+      (
+        await h.post("query", [
+          {
+            kinds: [0],
+            limit: 1,
+            authors: ["a".repeat(64)],
+            search: "private search",
+          },
+        ])
+      ).status,
+    ).toBe(200);
+    expect(lines.some((line) => line.includes("POST /relay/query → 200"))).toBe(
+      true,
+    );
+    expect(lines.some((line) => line.includes('"authors":1'))).toBe(true);
+    expect(lines.join(" ")).not.toContain("private search");
+    expect(lines.join(" ")).not.toContain("a".repeat(64));
+    lines.length = 0;
+    setLogLevel("info");
+    expect((await h.post("query", filters)).status).toBe(200);
+    expect(lines).toHaveLength(0);
+  } finally {
+    await h.close();
+    logger.setReporters(reporters);
+    setLogLevel("info");
+  }
+});
+
+test.each([
+  [
+    new DOMException("private timeout detail", "TimeoutError"),
+    "TimeoutError",
+    500,
+  ],
+  [new SyntaxError("private response body"), "SyntaxError", 500],
+  [
+    new TypeError("private URL", { cause: { code: "ECONNREFUSED" } }),
+    "TypeError (ECONNREFUSED)",
+    502,
+  ],
+  [
+    Object.assign(new Error("private message"), {
+      name: "private name",
+      code: "private code",
+    }),
+    "Error",
+    500,
+  ],
+])(
+  "broker failure logs preserve safe categories/codes, not private exception text (%#)",
+  async (error, summary, status) => {
+    const logger = getLogger("relay-broker");
+    const reporters = [...logger.options.reporters];
+    const lines = [];
+    logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+    setLogLevel("info");
+    const h = await harness(() => {
+      throw error;
+    });
+    try {
+      expect((await h.post("query", filters)).status).toBe(status);
+      expect(lines).toContain(`Request failed: POST /relay/query: ${summary}`);
+      expect(lines.join(" ")).not.toContain("private");
+    } finally {
+      await h.close();
+      logger.setReporters(reporters);
+      setLogLevel("info");
+    }
+  },
+);
+
+test("Trace metadata uses the real Node reporter without fabricated stacks", async () => {
+  const logger = getLogger("relay-broker");
+  const socket = getLogger("relay-ws");
+  const originals = [logger, socket].map((log) => ({
+    log,
+    reporters: [...log.options.reporters],
+    stdout: log.options.stdout,
+    stderr: log.options.stderr,
+  }));
+  const lines = [];
+  const output = {
+    write: (line) => {
+      lines.push(String(line));
+      return true;
+    },
+  };
+  const fancy = createConsola({ fancy: true, stdout: output, stderr: output });
+  for (const { log } of originals) {
+    log.setReporters(fancy.options.reporters);
+    log.options.stdout = output;
+    log.options.stderr = output;
+  }
+  const h = await harness(success);
+  try {
+    lines.length = 0; // Exclude the harness startup lifecycle message.
+    setLogLevel("trace");
+    expect((await h.post("query", filters)).status).toBe(200);
+    logSocketFrame("relay.test", "→", "[]", ["REQ", "live-1", { kinds: [9] }]);
+    expect(lines.join("")).toContain("filters");
+    expect(lines.join("")).toContain("query");
+    expect(lines.join("")).not.toMatch(/\n\s+at |FancyReporter|formatLogObj/);
+    expect(lines).toHaveLength(4); // HTTP summary + metadata, frame summary + metadata.
+    expect(lines.every((line) => line.trim().split("\n").length === 1)).toBe(
+      true,
+    );
+  } finally {
+    await h.close();
+    for (const { log, reporters, stdout, stderr } of originals) {
+      log.setReporters(reporters);
+      log.options.stdout = stdout;
+      log.options.stderr = stderr;
+    }
+    setLogLevel("info");
+  }
+});
+
+test("server-wide stats work without a default community and do not start upstream I/O", async () => {
+  const h = await harness(success, {}, "");
+  try {
+    // Use node:http: Undici diagnostics also count the test client's own socket.
+    const result = await new Promise((resolve, reject) => {
+      get(`${h.base}/api/relay/stats`, (response) => {
+        let raw = "";
+        response.on("data", (chunk) => {
+          raw += chunk;
+        });
+        response.on("end", () => resolve({ status: response.statusCode, raw }));
+      }).on("error", reject);
+    });
+    expect(result.status).toBe(200);
+    expect(JSON.parse(result.raw)).toEqual({
+      queries: 0,
+      errors: 0,
+      media: 0,
+      connects: 0,
+    });
+    expect(h.calls).toEqual([]);
+  } finally {
     await h.close();
   }
 });

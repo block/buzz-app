@@ -21,7 +21,7 @@ const imagePath = fileURLToPath(
 const details = {
   title: "Render PR descriptions with inline media",
   state: "open",
-  body: `## Before\n\nThe description was **plain text**.\n\n${before}\n\n## After\n\nReview **formatted sections** and recordings in place.\n\n${after}\n\n### Checklist\n\n- [x] Preserve document order\n- [x] Keep original attachment links\n\n### Attachments\n\n- Video\n- Image\n\n1. Review\n2. Compare\n\n| Media | Result |\n| --- | --- |\n| Recordings | Inline players |\n\n![Example attachment](${picture})`,
+  body: `## Before\n\nThe description was **plain text**.\n\n${before}\n\n## After\n\nReview **formatted sections** and recordings in place.\n\n${after}\n\n### Checklist\n\n- [x] Preserve document order\n- [x] Keep original attachment links\n\n### Attachments\n\n- Video\n- Image\n\n1. Review\n2. Compare\n\n| Media | Result |\n| --- | --- |\n| Recordings | Inline players |\n\n<details><summary>Supporting evidence</summary><p>Captured after the change.</p><img src="${picture}" alt="Example attachment"><p><a href="https://github.com/user-attachments/files/99/source.zip">Source archive</a></p></details>`,
   body_html: `<video src="https://private-user-images.githubusercontent.com/1888043/659873452-81e77cff-0e61-4694-9a88-add0c1f997e4.mp4?jwt=expired"></video><video src="${after}"></video>`,
 };
 
@@ -195,6 +195,15 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
   await expect
     .poll(() => image.evaluate((element) => element.naturalWidth))
     .toBeGreaterThan(0);
+  await expect(panel).toContainText("Supporting evidence");
+  await expect(panel).toContainText("Captured after the change.");
+  await expect(
+    panel.getByRole("link", { name: "Source archive" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/user-attachments/files/99/source.zip",
+  );
+  await page.screenshot({ path: testInfo.outputPath("html-evidence.png") });
   await panel.getByRole("button", { name: "Open image fullscreen" }).click();
   await expect(
     page

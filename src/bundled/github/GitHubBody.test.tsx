@@ -142,6 +142,88 @@ it("keeps original links when media fails before loading", () => {
   }
 });
 
+it("preserves HTML-only summaries, prose and file links", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      body={
+        '<details><summary>Supporting evidence</summary><p>Read the logs &amp; notes.</p><a href="../files/report.zip">Download report</a></details>'
+      }
+    />,
+  );
+  expect(container).toHaveTextContent(
+    "Supporting evidence Read the logs & notes. Download report",
+  );
+  expect(screen.getByRole("link", { name: "Download report" })).toHaveAttribute(
+    "href",
+    "https://github.com/block/buzz-app/files/report.zip",
+  );
+  expect(container.querySelector("details, summary")).toBeNull();
+});
+
+it("keeps mixed HTML text, images and attachment links in order after loading and failure", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      body={`<div><p>Before the screenshot.</p><img src="${image}" alt="HTML screenshot" onerror="alert(1)"><p>After the screenshot.</p><a href="https://github.com/user-attachments/files/99/source.zip">Source archive</a></div>`}
+    />,
+  );
+  const screenshot = screen.getByAltText("HTML screenshot");
+  expect(screenshot).toHaveAttribute("src", image);
+  expect(screenshot).not.toHaveAttribute("onerror");
+  expect(container).toHaveTextContent(
+    "Before the screenshot. HTML screenshot After the screenshot. Source archive",
+  );
+  fireEvent.load(screenshot);
+  expect(screen.queryByRole("link", { name: "HTML screenshot" })).toBeNull();
+  fireEvent.error(screenshot);
+  expect(screen.getByRole("link", { name: "HTML screenshot" })).toHaveAttribute(
+    "href",
+    image,
+  );
+  expect(container).toHaveTextContent("Before the screenshot.");
+  expect(container).toHaveTextContent("After the screenshot.");
+  expect(screen.getByRole("link", { name: "Source archive" })).toHaveAttribute(
+    "href",
+    "https://github.com/user-attachments/files/99/source.zip",
+  );
+});
+
+it.each([
+  `<video src="${before}">Recording fallback</video>`,
+  `<video><source src="${before}">Recording fallback</video>`,
+  `<audio src="${before}">Recording fallback</audio>`,
+])(
+  "retains raw media destinations without requiring API metadata: %s",
+  (body) => {
+    const { container } = render(<GitHubBody url={url} body={body} />);
+    expect(screen.getByRole("link", { name: before })).toHaveAttribute(
+      "href",
+      before,
+    );
+    expect(container).toHaveTextContent("Recording fallback");
+  },
+);
+
+it("preserves HTML link labels while rejecting unsafe destinations and attributes", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      body={
+        '<div onclick="alert(1)"><a href="javascript:alert(1)">Unsafe action</a><a href="data:text/html,bad">Unsafe data</a><a href="https://user:password@example.com/file">Credential URL</a><a href="https://example.com/report.zip" onclick="alert(1)">Safe file</a></div>'
+      }
+    />,
+  );
+  for (const label of ["Unsafe action", "Unsafe data", "Credential URL"])
+    expect(container).toHaveTextContent(label);
+  expect(screen.getAllByRole("link")).toHaveLength(1);
+  expect(screen.getByRole("link", { name: "Safe file" })).toHaveAttribute(
+    "href",
+    "https://example.com/report.zip",
+  );
+  expect(container.querySelector("[onclick]")).toBeNull();
+});
+
 it("preserves surrounding prose and formatted labels after an inline video loads", () => {
   const { container } = render(
     <GitHubBody
@@ -226,6 +308,40 @@ it.each([`![Linked image](${image})`, `**![Linked image](${image})**`])(
     expect(container.querySelector("a a")).toBeNull();
   },
 );
+
+it("preserves linked HTML images and media fallback destinations without nested links", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      body={`<div><a href="https://example.com/review"><img src="${image}" alt="Linked HTML image"></a><a href="https://example.com/recording"><video src="${before}">Recording</video></a></div>`}
+    />,
+  );
+  expect(screen.getByAltText("Linked HTML image")).toHaveAttribute(
+    "src",
+    image,
+  );
+  for (const destination of [
+    "https://example.com/review",
+    "https://example.com/recording",
+    before,
+  ])
+    expect(screen.getByRole("link", { name: destination })).toHaveAttribute(
+      "href",
+      destination,
+    );
+  expect(container.querySelector("a a, a img")).toBeNull();
+});
+
+it("preserves deeply nested HTML as literal text beyond the parsing budget", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      body={`${"<div>".repeat(MAX_MARKDOWN_DEPTH + 2)}Deep evidence<img src="${image}">${"</div>".repeat(MAX_MARKDOWN_DEPTH + 2)}`}
+    />,
+  );
+  expect(container).toHaveTextContent(`Deep evidence<img src="${image}">`);
+  expect(container.querySelector("img")).toBeNull();
+});
 
 it.each([
   "x".repeat(MAX_MARKDOWN_LENGTH + 1),

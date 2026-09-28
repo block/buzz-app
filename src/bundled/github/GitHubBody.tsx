@@ -1,11 +1,12 @@
 import { Children, memo, useMemo, useState, type ReactNode } from "react";
 import Markdown, { type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Root, RootContent } from "mdast";
+import type { PhrasingContent, Root, RootContent } from "mdast";
 import { MediaAttachment } from "../../features/messages/MediaAttachment";
 import { AudioAttachment } from "../../features/messages/AudioAttachment";
 import {
   MAX_MARKDOWN_LENGTH,
+  MAX_MARKDOWN_DEPTH,
   scanMarkdown,
 } from "../../features/relay/message-content";
 import {
@@ -25,23 +26,80 @@ function containsImage(node: NonNullable<ExtraProps["node"]>): boolean {
   );
 }
 
-// Only image attributes become Markdown nodes; arbitrary HTML stays inert.
-function githubImages() {
+// Extract content into Markdown nodes; HTML elements and attributes stay inert.
+function htmlContent(html: string): PhrasingContent[] {
+  const convert = (node: ChildNode, depth: number): PhrasingContent[] => {
+    if (node.nodeType === Node.TEXT_NODE)
+      return [{ type: "text", value: node.textContent ?? "" }];
+    if (!(node instanceof Element)) return [];
+    if (depth > MAX_MARKDOWN_DEPTH)
+      return [{ type: "text", value: node.outerHTML }];
+    if (node.localName === "img")
+      return [
+        {
+          type: "image",
+          url: node.getAttribute("src") ?? "",
+          alt: node.getAttribute("alt") ?? "",
+        },
+      ];
+
+    const children = [...node.childNodes].flatMap((child) =>
+      convert(child, depth + 1),
+    );
+    const destination = node.getAttribute(
+      node.localName === "a" ? "href" : "src",
+    );
+    if (
+      destination &&
+      ["a", "video", "audio", "source"].includes(node.localName)
+    ) {
+      const label = [{ type: "text" as const, value: destination }];
+      if (
+        node.localName === "a" &&
+        !children.some((child) => child.type === "link")
+      )
+        return [
+          {
+            type: "link",
+            url: destination,
+            children: children.length ? children : label,
+          },
+        ];
+      return [{ type: "link", url: destination, children: label }, ...children];
+    }
+    if (["br", "hr"].includes(node.localName)) return [{ type: "break" }];
+    if (
+      [
+        "details",
+        "summary",
+        "div",
+        "p",
+        "blockquote",
+        "li",
+        "tr",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+      ].includes(node.localName)
+    )
+      return [{ type: "break" }, ...children, { type: "break" }];
+    return children;
+  };
+  return [...inertHtml(html).childNodes].flatMap((node) => convert(node, 0));
+}
+
+function githubHtml() {
   return (tree: Root) => {
     const visit = (parent: { type: string; children: RootContent[] }) => {
       parent.children = parent.children.flatMap((node): RootContent[] => {
         if (node.type === "html") {
-          const images = [...inertHtml(node.value).querySelectorAll("img")].map(
-            (image) => ({
-              type: "image" as const,
-              url: image.getAttribute("src") ?? "",
-              alt: image.getAttribute("alt") ?? "",
-            }),
-          );
-          if (!images.length) return [];
+          const content = htmlContent(node.value);
           return ["root", "blockquote", "listItem"].includes(parent.type)
-            ? [{ type: "paragraph", children: images }]
-            : images;
+            ? [{ type: "paragraph", children: content }]
+            : content;
         }
         if ("children" in node) visit(node);
         return [node];
@@ -131,7 +189,7 @@ export const GitHubBody = memo(function GitHubBody({
   return (
     <div className={styles.body}>
       <Markdown
-        remarkPlugins={[remarkGfm, githubImages]}
+        remarkPlugins={[remarkGfm, githubHtml]}
         urlTransform={(value) => bodyUrl(value, url) ?? ""}
         components={{
           // Players are block elements, including when embedded in prose.

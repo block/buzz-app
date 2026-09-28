@@ -4,6 +4,7 @@ import {
   groupAgentLibrary,
   type AgentLibrary,
 } from "./library";
+import { combineInventory } from "./inventory";
 import { createRelaySession } from "../relay/session";
 import { keypair, metadata, roster } from "../relay/testing";
 const library: AgentLibrary = {
@@ -59,7 +60,7 @@ it("lazy fresh reads replace, fail visibly, retry, and fence late results", asyn
   owner.dispose();
   expect(owner.queries.snapshot().identities).toEqual([]);
 });
-it("actual session wires the host library and clears/disposes it without relay directory reads", async () => {
+it("actual session retains host library alongside relay reads and clears/disposes both", async () => {
   const read = vi.fn().mockResolvedValue(library);
   const query = vi.fn().mockResolvedValue([]);
   const owner = createRelaySession({
@@ -71,7 +72,7 @@ it("actual session wires the host library and clears/disposes it without relay d
   });
   await owner.session.agentLibrary.refresh();
   expect(read).toHaveBeenCalledOnce();
-  expect(query).not.toHaveBeenCalled();
+  expect(query).toHaveBeenCalledOnce();
   expect(owner.session.agentLibrary.snapshot().definitions).toHaveLength(2);
   await owner.clearCache();
   expect(owner.session.agentLibrary.snapshot().definitions).toEqual([]);
@@ -137,7 +138,8 @@ it.each([false, true])(
       live.receive([roster(relay, "channel", [], 1_700_000_001)]);
       expect(owner.session.channels.list().channels).toHaveLength(0);
       expect(owner.session.agentLibrary.snapshot().identities).toEqual(
-        library.identities,
+        combineInventory(library, { definitions: [], identities: [] })
+          .identities,
       );
       live.state({ status: "retrying", routes: [] });
       expect(owner.session.agentLibrary.snapshot().status).toBe("idle");

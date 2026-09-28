@@ -33,6 +33,7 @@ function deferred<T = void>() {
 function communities(): Communities {
   const state = {
     status: "ready" as const,
+    relayAvailable: true,
     viewer,
     profile: { name: "Buzz User", picture: "" },
     memberships: [],
@@ -564,4 +565,79 @@ it("preserves input focus on implicit submit and external profile updates", asyn
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
   expect(description).toHaveFocus();
+});
+
+it("keeps identity backup available despite a failed community profile and clears on leaving Profile", async () => {
+  vi.spyOn(communityApi, "inspectProfile").mockRejectedValue(
+    new Error("Offline"),
+  );
+  const exportKey = vi.fn().mockResolvedValue("nsec-public-test-fixture");
+  const identity = {
+    exportKey,
+  } as unknown as import("../features/identity/service").Identity;
+  const service = communities();
+  const community = { id: "primary", name: "Offline community" };
+  const user = userEvent.setup();
+  const view = render(
+    <ProfileSettings
+      communities={service}
+      community={community}
+      identity={identity}
+      active
+    />,
+    { wrapper: ToastProvider },
+  );
+  await screen.findByText(
+    /Your profile in Offline community couldn’t be loaded/,
+  );
+  expect(exportKey).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Reveal private key" }));
+  expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
+    "nsec-public-test-fixture",
+  );
+  view.rerender(
+    <ProfileSettings
+      communities={service}
+      community={community}
+      identity={identity}
+      active={false}
+    />,
+  );
+  expect(screen.queryByLabelText("Private key (nsec)")).toBeNull();
+  view.rerender(
+    <ProfileSettings
+      communities={service}
+      community={community}
+      identity={identity}
+      active
+    />,
+  );
+  expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
+    "••••••••••••••••",
+  );
+  expect(exportKey).toHaveBeenCalledTimes(1);
+});
+
+it("keeps identity details available without requesting a community profile when transport is absent", async () => {
+  const service = communities();
+  service.snapshot().relayAvailable = false;
+  const inspect = vi.spyOn(communityApi, "inspectProfile");
+  render(
+    <ProfileSettings
+      communities={service}
+      community={{ id: "https://saved.example", name: "Saved" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  expect(
+    screen.getByText("Community profiles are not available in this build yet."),
+  ).toBeVisible();
+  expect(screen.getByLabelText("Nostr address (npub)")).toHaveValue(
+    npubEncode(viewer),
+  );
+  expect(
+    screen.getByText(/same identity across all communities/),
+  ).toBeVisible();
+  expect(inspect).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
 });

@@ -16,6 +16,10 @@ fn main() {
     }
     tauri_build::try_build(
         attributes.app_manifest(tauri_build::AppManifest::new().commands(&[
+            "identity_restore",
+            "identity_import",
+            "identity_create",
+            "identity_export",
             "plugin_import_folder",
             "plugin_import_git",
             "plugin_import_install",

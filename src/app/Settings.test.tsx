@@ -100,6 +100,11 @@ it("keeps grouped cards available without a selected community", () => {
   );
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
   expect(nav).toHaveTextContent("Communities");
+  fireEvent.click(screen.getByRole("button", { name: "Profile" }));
+  expect(screen.getByRole("button", { name: "Profile" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   expect(
     screen.getByRole("button", { name: "Hosted communities" }),
   ).toBeVisible();

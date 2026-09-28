@@ -44,7 +44,7 @@ export function createReactionPicker() {
           aria-expanded={open && !disabled}
           aria-controls={open && !disabled ? id : undefined}
           disabled={disabled}
-          icon={<SmileyStickerIcon size={18} aria-hidden="true" />}
+          icon={<SmileyStickerIcon size={16} aria-hidden="true" />}
           onClick={() => {
             if (open) {
               close();

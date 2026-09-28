@@ -412,15 +412,17 @@ it("fold preserves historical message/edit mappings and per-reaction URLs withou
       content: "edited :party:",
       tags: [["e", original.id], ...tags],
     });
-  const reactions = ["https://one.test/p", "https://two.test/p"].map((url) =>
-    signed(member, {
-      kind: 7,
-      content: ":party:",
-      tags: [
-        ["e", original.id],
-        ["emoji", "party", url],
-      ],
-    }),
+  const reactions = ["https://one.test/p", "https://two.test/p"].map(
+    (url, index) =>
+      signed(member, {
+        kind: 7,
+        content: ":party:",
+        created_at: 3 + index,
+        tags: [
+          ["e", original.id],
+          ["emoji", "party", url],
+        ],
+      }),
   );
   const deletedReaction = signed(viewer, {
     kind: 7,

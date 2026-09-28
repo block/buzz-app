@@ -185,6 +185,17 @@ it("uses each real session's viewer for human and owned-agent collisions", async
   });
   try {
     for (const { wire, session } of sessions) {
+      // Naming also retains the owner inventory. Complete that startup read
+      // before driving the independent public-profile request.
+      await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+      const inventory = wire.next();
+      expect(inventory.filters).toEqual([
+        { authors: [wire.transport.viewer], kinds: [30175, 30177], limit: 200 },
+      ]);
+      inventory.respond([]);
+      await vi.waitFor(() =>
+        expect(session.agentLibrary.snapshot().status).toBe("ready"),
+      );
       const loading = session.profiles.ensure(
         events.map((event) => event.pubkey),
       );

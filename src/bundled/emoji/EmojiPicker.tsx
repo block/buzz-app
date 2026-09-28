@@ -284,7 +284,7 @@ export function EmojiPicker({
         <PopoverTrigger disabled={disabled} render={button} />
       )}
       <PopoverPopup
-        side={reaction ? "bottom" : "top"}
+        side={reaction && !externalTrigger ? "bottom" : "top"}
         anchor={
           reaction
             ? externalTrigger?.ref

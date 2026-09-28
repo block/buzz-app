@@ -60,6 +60,10 @@ fn native_command_permissions_allow_only_main_webview() {
         .unwrap();
 
     let application_commands = [
+        "identity_restore",
+        "identity_import",
+        "identity_create",
+        "identity_export",
         "plugin_import_folder",
         "plugin_import_git",
         "plugin_import_install",

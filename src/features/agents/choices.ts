@@ -98,6 +98,7 @@ export function createAgentChoices({
         local?.status === "loading",
       complete:
         legacy.status === "ready" &&
+        !legacy.error &&
         (!local || local.status === "ready" || local.status === "unavailable"),
       definitions: legacy.status === "ready" ? legacy.definitions : [],
       identities: [...choices.values()],

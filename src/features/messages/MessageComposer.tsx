@@ -1,5 +1,16 @@
 import { animate, useReducedMotion } from "motion/react";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { SelectedMentionContext } from "./selected-mention-context";
+import { DraftMentionRoster } from "./draft-mention-roster";
+import {
+  archivedMention,
+  mentionCandidates,
+  rememberMention,
+} from "./mention-candidates";
+import {
+  readComposerSnapshot,
+  composerMarkdownContext,
+} from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { npubEncode } from "nostr-tools/nip19";
 import type { ChannelMessage } from "../relay/contracts";
@@ -23,6 +34,7 @@ import {
 import { ComposerAttachments } from "./ComposerAttachments";
 import { useAttachmentDraft } from "./attachment-draft";
 import {
+  useContext,
   useEffect,
   useCallback,
   useId,
@@ -163,7 +175,11 @@ function Composer({
   const readOnly =
     !submission &&
     !!session.channels?.get &&
-    !list.channels.some((channel) => channel.id === channelId);
+    !list.channels.some(
+      (channel) => channel.id === channelId && !channel.readOnly,
+    );
+  const cached = !!list.channels.find((channel) => channel.id === channelId)
+    ?.cached;
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
@@ -194,6 +210,7 @@ function Composer({
   const parentChannelId = list.channels.find(
     (item) => item.id === channelId,
   )?.parentChannelId;
+  const mentionRoster = useContext(DraftMentionRoster);
   const agentChoices = inviteAgents || !!sessionConversation;
   const [value, updateDraft] = useState(() =>
     mentionDraft(
@@ -382,6 +399,17 @@ function Composer({
       text = `nostr:${npubEncode(recipient.pubkey)} `;
       recipient = undefined;
     }
+    if (
+      recipient &&
+      !mentionCandidates(session, channelId, agentChoices, mentionRoster, [
+        recipient,
+      ]).some((c) => c.recipient.pubkey === recipient.pubkey)
+    ) {
+      setError(
+        "This recipient is no longer available. Remove it or refresh choices.",
+      );
+      return false;
+    }
     if (recipient && valueRef.current.recipients.length >= 32) {
       setError("Choose at most 32 recipients");
       return false;
@@ -391,6 +419,7 @@ function Composer({
       setError("Message is too long to insert text");
       return false;
     }
+    if (recipient) rememberMention(session, channelId, recipient.pubkey);
     setError(undefined);
     return true;
   }
@@ -409,12 +438,23 @@ function Composer({
     edit: CompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
+    key?: string,
   ) {
     if (
       !completion.valid(observation) ||
       valueRef.current.text !== observation.text
     )
       return false;
+    if (key === " ") {
+      const doc = readComposerSnapshot(valueRef.current.document);
+      if (
+        doc &&
+        composerMarkdownContext(doc).protected.some(
+          (r) => query.start < r.end && query.end > r.start,
+        )
+      )
+        return false;
+    }
     if ("mention" in edit && edit.mention)
       return insert(`@${edit.mention.name} `, edit.mention, query);
     return (
@@ -490,6 +530,10 @@ function Composer({
     const captured = valueRef.current;
     const capturedAttachments = attachments.store.snapshot();
     try {
+      if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
+        throw new Error(
+          "A selected recipient is archived. Remove it before sending.",
+        );
       if (submission) {
         submission.submit(captured);
         return;
@@ -576,7 +620,16 @@ function Composer({
       );
       const next = followupDraft(
         rememberAgentsPreference()
-          ? captured.recipients.filter((item) => agents.has(item.pubkey))
+          ? captured.recipients.filter(
+              (item) =>
+                agents.has(item.pubkey) &&
+                mentionCandidates(
+                  session,
+                  channelId,
+                  agentChoices,
+                  mentionRoster,
+                ).some((c) => c.recipient.pubkey === item.pubkey),
+            )
           : [],
       );
       const changed = saveDraft(next);
@@ -652,7 +705,7 @@ function Composer({
       )}
     </>
   );
-  if (!outbox?.supports(9))
+  if (!outbox?.supports(9) && !cached)
     return (
       <>
         {accessories}
@@ -667,7 +720,7 @@ function Composer({
       </>
     );
   return (
-    <>
+    <SelectedMentionContext.Provider value={value.recipients}>
       {accessories}
       {nonmembers.dialog}
       <form
@@ -985,7 +1038,7 @@ function Composer({
           close={() => setLinkEdit(null)}
         />
       )}
-    </>
+    </SelectedMentionContext.Provider>
   );
 }
 

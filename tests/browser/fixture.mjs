@@ -53,6 +53,7 @@ export const test = base.extend({
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
+  channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
@@ -89,6 +90,7 @@ export const test = base.extend({
       tallMessages,
       membershipActivity,
       historyCounts,
+      channelIds: channels,
       pluginFixtures,
       developmentReact,
       compiledApp,
@@ -766,6 +768,14 @@ export const test = base.extend({
         expect(filter.authors.length).toBeLessThanOrEqual(100);
         return [];
       }
+      if (filter.kinds?.includes(30175) || filter.kinds?.includes(30177)) {
+        expect(filter).toEqual({
+          authors: [viewer],
+          kinds: [30175, 30177],
+          limit: 200,
+        });
+        return [];
+      }
       if (filter.kinds?.includes(30030)) {
         expect(filter).toEqual({
           kinds: [30030],
@@ -1379,6 +1389,16 @@ export const test = base.extend({
                       url: req.url,
                       at: performance.now(),
                     });
+                  // The broker has paused its lane by the time a relayed quota
+                  // refusal finishes; this bounds that pause in fixture time.
+                  if (/^\/api\/relay\/[^/]+\/query$/.test(req.url ?? ""))
+                    res.once("finish", () => {
+                      if (res.statusCode !== 429) return;
+                      const rejection = relay.rejected.find(
+                        (item) => item.relayed === undefined,
+                      );
+                      if (rejection) rejection.relayed = performance.now();
+                    });
                   if (req.url?.endsWith("/stream"))
                     res.once("close", () => {
                       retiredStreams.add(res.getHeader("x-buzz-live-id"));
@@ -1487,6 +1507,29 @@ export const test = base.extend({
           : undefined,
         pending,
         histories,
+        // Signed device-cache input for the startup scale journey; same modeled
+        // wire responses as a real roster/head read, without visiting every row.
+        startupCache() {
+          return {
+            discovery: [
+              ...answer("primary", { kinds: [39002] }),
+              ...answer("primary", { kinds: [39000] }),
+            ],
+            heads: rosterIds.map((channelId) => ({
+              channelId,
+              savedAt: Date.now(),
+              profiles: [],
+              events: answer("primary", {
+                kinds: [9, 40002, 40008],
+                "#h": [channelId],
+                limit: 20,
+                top_level: true,
+                include_aux: true,
+                include_summaries: true,
+              }),
+            })),
+          };
+        },
         presenceThread,
         exact,
         searchTarget,
@@ -1688,7 +1731,7 @@ export const test = base.extend({
         observerFailures.splice(match, 1);
         return true;
       };
-      // Sidebar recovery journeys inject specific failed host requests. Match
+      // Recovery journeys inject specific failed host requests. Match
       // each exact URL once, not every 502 or every console error in the test.
       const sidebarFailures = [
         ...(report.sidebarSortFailures ?? []),
@@ -1697,6 +1740,7 @@ export const test = base.extend({
         ...(report.sidebarStarFailures ?? []),
         ...(report.sidebarAssignmentFailures ?? []),
         ...(report.sidebarPreferenceFailures ?? []),
+        ...(report.startupFailures ?? []),
       ];
       const injectedSidebarFailure = (message, index) => {
         if (

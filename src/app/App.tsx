@@ -1,4 +1,5 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
+import { IdentitySetup } from "../features/identity/IdentitySetup";
 import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -21,10 +22,29 @@ import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 
 export function App({ services }: { services: AppServices }) {
+  return services.identity ? (
+    <IdentitySetup identity={services.identity}>
+      <ConnectedApp services={services} />
+    </IdentitySetup>
+  ) : (
+    <ConnectedApp services={services} />
+  );
+}
+
+function ConnectedApp({ services }: { services: AppServices }) {
   const { plugins } = services;
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
   const route = useAppNavigation(services);
   const launcher = usePanelLauncher(services.panels, startup === "ready");
+  const client = useSyncExternalStore(
+    services.communities.subscribe,
+    services.communities.snapshot,
+  );
+  const connection = useSyncExternalStore(
+    services.relay.subscribe,
+    services.relay.snapshot,
+  );
+  const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
   const select = route.select;
   useEffect(
@@ -56,6 +76,13 @@ export function App({ services }: { services: AppServices }) {
     />
   );
   const pageOwnsCompanion = !!route.page?.companion;
+  // Keep the parser launch surface through local bootstrap, not network refresh.
+  if (!settings && restoring)
+    return (
+      <div className="buzz-launch" role="status" aria-label="Opening Buzz">
+        <img src="/buzz-mark.svg" alt="Buzz" width="72" height="72" />
+      </div>
+    );
   return (
     <ToastProvider>
       <ChannelNavigationProvider relay={services.relay}>
@@ -129,6 +156,7 @@ export function App({ services }: { services: AppServices }) {
               plugins={plugins}
               cards={services.settingsCards}
               communities={services.communities}
+              identity={services.identity}
               appearance={services.appearance}
               shortcuts={services.shortcuts}
               shortcutBindings={services.shortcutBindings}

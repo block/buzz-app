@@ -47,6 +47,7 @@ function setup(
 ) {
   let state: ClientSnapshot = {
     status: "ready",
+    relayAvailable: true,
     viewer: "a".repeat(64),
     selected,
     memberships: [

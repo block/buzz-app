@@ -29,6 +29,11 @@ import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createDirectMessages } from "./direct-messages";
 import { createWorkSessions } from "./work-sessions";
+import { inventoryReader } from "../agents/inventory";
+import {
+  isOwnerInventoryFilter,
+  readRelayLibrary,
+} from "../agents/relay-library";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
 import {
@@ -214,7 +219,7 @@ export function createRelaySession(
     transport?.viewer ?? "",
     (id) =>
       !closed &&
-      canAccess(id) &&
+      channels.canParticipate(id) &&
       channels.queries.list().channels.some((channel) => channel.id === id),
     notify,
   );
@@ -301,7 +306,9 @@ export function createRelaySession(
   function retainedEvent(id: string) {
     return retainedThreadEvent(id) ?? retainedChannelEvent(id);
   }
-  function visibility(events: readonly EventData[] = []) {
+  const canReadRemote = (id: string) =>
+    !options.cachedOnly && canAccess(id) && !channels.queries.get?.(id)?.cached;
+  function visibility(events: readonly EventData[] = [], remote = false) {
     const evidence = new Map(
       [...rawLocal().map((item) => item.event), ...events].map((event) => [
         event.id,
@@ -309,7 +316,7 @@ export function createRelaySession(
       ]),
     );
     return eventVisibility(
-      canAccess,
+      remote ? canReadRemote : canAccess,
       // Retained view targets survive shared-cache eviction. They are evidence,
       // not an access grant: eventVisibility still checks every referenced target.
       (id) =>
@@ -336,9 +343,15 @@ export function createRelaySession(
       cancelUploads();
       lifecycle.cancel();
       typing.clear();
-      // Filters cannot tell us ownership of broad/ID/reference reads. Infrequent
-      // authoritative access loss cancels them all, not merely explicit #h reads.
-      requests.invalidate();
+      // Saved owner inventory does not depend on channel access. Preserve only
+      // that narrow read; broad, mixed, ID and channel reads must still retire.
+      requests.invalidate(
+        (filters) =>
+          !filters.length ||
+          filters.some(
+            (filter) => !isOwnerInventoryFilter(filter, transport?.viewer),
+          ),
+      );
       const visible = visibility();
       const revoked = recent
         .entries()
@@ -381,6 +394,16 @@ export function createRelaySession(
     settings?: ReadOptions,
     channelTraffic = true,
   ) {
+    if (
+      options.cachedOnly ||
+      filters.some((filter) =>
+        filter["#h"]?.some((id) => channels.queries.get?.(id)?.cached),
+      )
+    )
+      throw new ReadError(
+        "unavailable",
+        "Reconnect to refresh conversation access.",
+      );
     const epoch = accessEpoch;
     let events: readonly RelayEvent[];
     try {
@@ -475,7 +498,7 @@ export function createRelaySession(
           event.kind !== 20002 &&
           event.kind !== PRODUCT_FEEDBACK_KIND,
       )
-      .filter(visibility(events));
+      .filter(visibility(events, true));
     const epoch = accessEpoch;
     typing.accept(visible);
     if (closed || epoch !== accessEpoch) return [];
@@ -551,7 +574,14 @@ export function createRelaySession(
     () => !closed && !revoking && !cacheClearing && memoryConnected,
     notify,
   );
-  const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
+  const agentLibrary = createAgentLibrary(
+    transport
+      ? inventoryReader(transport.readAgentLibrary, (signal) =>
+          readRelayLibrary(requests.reader, transport.viewer, signal),
+        )
+      : undefined,
+    notify,
+  );
   const agentChoices = createAgentChoices({
     scope: `${transport?.scope ?? transport?.relayAuthor}:${transport?.viewer}`,
     library: agentLibrary.queries,
@@ -619,11 +649,11 @@ export function createRelaySession(
     return events;
   });
   const lifecycle = createChannelLifecycle({
-    reader: transport ? requests.reader : undefined,
+    reader: transport && !options.cachedOnly ? requests.reader : undefined,
     writer: transport?.channelLifecycle,
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
-    canAccess: (id) => !closed && canAccess(id),
+    canAccess: (id) => !closed && channels.canParticipate(id),
     acceptDiscovery: (events) => channels.acceptDiscovery(events),
     removed: (id) =>
       channels.denyChannel(id, new Error("Channel is no longer available")),
@@ -771,7 +801,7 @@ export function createRelaySession(
       .channels.find((item) => item.id === channelId);
     if (
       closed ||
-      !canAccess(channelId) ||
+      !channels.canParticipate(channelId) ||
       !channel?.members ||
       channel.archived ||
       (transport?.subscribe && liveSnapshot.status !== "connected")
@@ -1052,6 +1082,7 @@ export function createRelaySession(
             )
         : undefined;
     })(),
+    options.persistence,
   );
   let groupHead: string | undefined;
   const stopSidebarGroups = channelKit.capability.subscribe(() => {
@@ -1328,15 +1359,36 @@ export function createRelaySession(
       lifetime.signal,
       {
         async read(filters, settings) {
-          const epoch = accessEpoch;
           const cleared = cacheClearEpoch;
-          // Browsing still uses verified, scheduled reads, but must not evict
-          // conversation profiles by admitting the whole directory into shared views.
-          const events = await requests.reader.read(filters, settings);
-          settings?.signal?.throwIfAborted();
-          if (closed || epoch !== accessEpoch || cleared !== cacheClearEpoch)
-            throw new DOMException("Stale directory read", "AbortError");
-          return events;
+          const generation = liveGeneration;
+          // Directory reads bypass shared profile admission. Retry one access
+          // invalidation here, where caller/cache/connection lifetimes are known.
+          for (let attempt = 0; ; attempt++) {
+            const epoch = accessEpoch;
+            try {
+              const events = await requests.reader.read(filters, settings);
+              settings?.signal?.throwIfAborted();
+              if (
+                closed ||
+                epoch !== accessEpoch ||
+                cleared !== cacheClearEpoch ||
+                generation !== liveGeneration
+              )
+                throw new DOMException("Stale directory read", "AbortError");
+              return events;
+            } catch (error) {
+              if (
+                attempt > 0 ||
+                readErrorKind(error) !== "cancelled" ||
+                closed ||
+                settings?.signal?.aborted ||
+                epoch === accessEpoch ||
+                cleared !== cacheClearEpoch ||
+                generation !== liveGeneration
+              )
+                throw error;
+            }
+          }
         },
       },
     ),
@@ -1436,6 +1488,11 @@ export function createRelaySession(
         reader: options?.exact
           ? {
               async read(filters, settings) {
+                if (!canReadRemote(channelId))
+                  throw new ReadError(
+                    "unavailable",
+                    "Reconnect to refresh conversation access.",
+                  );
                 const epoch = accessEpoch;
                 let events: readonly RelayEvent[];
                 try {
@@ -1449,7 +1506,11 @@ export function createRelaySession(
                     channels.denyChannel(channelId, error);
                   throw error;
                 }
-                if (closed || epoch !== accessEpoch)
+                if (
+                  closed ||
+                  epoch !== accessEpoch ||
+                  !canReadRemote(channelId)
+                )
                   throw new DOMException("Stale thread target", "AbortError");
                 settings?.signal?.throwIfAborted();
                 // A capped raw target/overlay read cannot establish a safe fold.
@@ -1683,8 +1744,16 @@ export function createRelaySession(
     if (closed) return;
     const ids = [
       ...new Set([
-        ...channels.queries.list().channels.map((channel) => channel.id),
-        ...channels.demandedChannels().filter((id) => channels.canAccess(id)),
+        ...channels.queries
+          .list()
+          .channels.filter((channel) => !channel.cached)
+          .map((channel) => channel.id),
+        ...channels
+          .demandedChannels()
+          .filter(
+            (id) =>
+              channels.canAccess(id) && !channels.queries.get?.(id)?.cached,
+          ),
       ]),
     ];
     const wanted = new Set(ids);
@@ -2020,7 +2089,10 @@ export function createRelaySession(
     }
     const roster = channels.queries.list();
     if (roster.status !== "ready") return;
-    const ids = roster.channels.map((channel) => channel.id).sort();
+    const ids = roster.channels
+      .filter((channel) => !channel.cached)
+      .map((channel) => channel.id)
+      .sort();
     const key = ids.join("\0");
     if (key === activityRosterKey) return;
     activityRosterKey = key;
@@ -2040,6 +2112,9 @@ export function createRelaySession(
 
   return {
     session,
+    async restore() {
+      await Promise.all([channels.restore(), sidebarPreferences.ready]);
+    },
     async clearCache() {
       // Keep memory admission closed through asynchronous and overlapping purges.
       cacheClearing++;

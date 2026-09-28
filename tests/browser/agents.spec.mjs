@@ -204,7 +204,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .click();
     await expect(agents.getByRole("article")).toHaveCount(2);
     expect(await page.evaluate(() => window.agentFixture.reads())).toBe(
-      reads + 2,
+      reads + 3,
     );
     await page
       .getByRole("button", { name: "Toggle hold", exact: true })

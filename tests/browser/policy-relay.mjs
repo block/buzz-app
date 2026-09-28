@@ -101,6 +101,16 @@ export function policyRelay({
     requests,
     rejected,
     expectedHttpErrors: () => rejected.length > 0,
+    /** The broker pauses its API lane for the advertised delay when it reads
+     * the refusal, before the fixture stamps `relayed` on response finish.
+     * Browser-side cooldowns need the page clock; see the retry specs. */
+    brokerCooldownOver(index = 0) {
+      const rejection = rejected[index];
+      return (
+        rejection?.relayed !== undefined &&
+        performance.now() >= rejection.relayed + rejection.retryAfterMs
+      );
+    },
     emptyRoster() {
       emptyRoster = true;
     },
@@ -332,7 +342,7 @@ export function policyRelay({
           quotas.delete(quota);
           rejected.push({
             channel,
-            until: performance.now() + (seconds + 1) * 1000,
+            retryAfterMs: (seconds + 1) * 1000,
           });
           return Response.json(
             { error: `rate-limited: quota exceeded; retry in ${seconds}s` },

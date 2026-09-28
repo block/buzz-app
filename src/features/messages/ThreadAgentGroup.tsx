@@ -25,26 +25,32 @@ export function ThreadAgentGroup({
   profiles,
   reveal,
   children,
-  onCollapse,
+  coordination,
+  onHideCoordination,
 }: {
   block: ThreadAgentBlock;
   session: RelaySession;
   profiles: ReadonlyMap<string, Profile>;
   reveal?: AbortSignal | undefined;
   children: ReactNode;
-  onCollapse?(): void;
+  coordination?: ReactNode;
+  /** Explicitly hiding either disclosure revokes the current exact-row reveal. */
+  onHideCoordination?(): void;
 }) {
   const authors = useMemo(
     () => new Set(block.rows.map((row) => row.authorId)),
     [block.rows],
   );
   const [expanded, expand] = useState(false);
+  // Opening progress is not permission to expose the coordination transcript.
+  const [transcriptOpen, openTranscript] = useState(false);
   const revealed = useRef<AbortSignal | undefined>(undefined);
   const name = useIdentityNames(session.names);
   useLayoutEffect(() => {
     if (reveal && !reveal.aborted && revealed.current !== reveal) {
       revealed.current = reveal;
       expand(true);
+      openTranscript(true);
     }
   }, [reveal]);
   const delivery = block.request?.message.delivery;
@@ -68,7 +74,10 @@ export function ThreadAgentGroup({
         value={expanded ? ["replies"] : []}
         onValueChange={(value) => {
           const open = value.includes("replies");
-          if (!open) onCollapse?.();
+          if (!open) {
+            openTranscript(false);
+            onHideCoordination?.();
+          }
           expand(open);
         }}
         items={[
@@ -114,6 +123,31 @@ export function ThreadAgentGroup({
             // claim typing replacement during the shared accordion's exit animation.
             content: expanded ? (
               <CoordinationAuthors.Provider value={authors}>
+                {block.rows.length > 0 && (
+                  <Accordion
+                    variant="activity"
+                    value={transcriptOpen ? ["coordination"] : []}
+                    onValueChange={(value) => {
+                      const open = value.includes("coordination");
+                      openTranscript(open);
+                      if (!open) onHideCoordination?.();
+                    }}
+                    items={[
+                      {
+                        value: "coordination",
+                        title: (
+                          <span className="text-body-sm">
+                            {transcriptOpen
+                              ? "Hide coordination messages"
+                              : `View ${block.rows.length} coordination ${block.rows.length === 1 ? "message" : "messages"}`}
+                          </span>
+                        ),
+                        // Hidden coordination must not earn read dwell, even during exit.
+                        content: transcriptOpen ? coordination : null,
+                      },
+                    ]}
+                  />
+                )}
                 {children}
               </CoordinationAuthors.Provider>
             ) : null,

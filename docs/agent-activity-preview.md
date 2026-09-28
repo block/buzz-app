@@ -13,9 +13,11 @@ This preview is for trying Activity, not replacing an everyday installation.
 - Multiple agents with exact identities, including namesakes.
 - Human-facing messages visible; explicitly tagged coordination grouped and
   initially collapsed. Human follow-ups stay outside, and the composer remains usable.
-- One group keeps its manual expansion choice as traffic arrives. Exact message
-  navigation can reveal a hidden target. Closing/reopening an ordinary thread
-  starts the group collapsed.
+- Opening Activity exposes progress, not the coordination transcript. Inside the
+  same group, **View N coordination messages** explicitly reveals the transcript.
+  Incoming messages stay unmounted until that control is opened. Exact-message
+  navigation can reveal its target; collapsing the outer group resets transcript
+  expansion. Human-facing answers remain outside both disclosures.
 - Inline response Activity, expandable tools/messages, and the profile Activity tab.
   Profile human request text is expanded by default; agent communications are not.
 - Side-panel opening by dragging or the Activity context menu, without losing the thread.

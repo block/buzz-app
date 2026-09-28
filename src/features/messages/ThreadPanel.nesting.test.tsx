@@ -375,6 +375,10 @@ it("keeps human-facing descendants visible through coordination ancestry and pre
   });
   expect(screen.queryByText("coord")).toBeNull();
   fireEvent.click(trigger);
+  expect(screen.queryByText("coord")).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "View 1 coordination message" }),
+  );
   expect(screen.getByText("coord")).toBeVisible();
   fireEvent.click(trigger);
   const response = {
@@ -536,6 +540,10 @@ it("keeps one collapsed coordination group and preserves request intent through 
   expect(group).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByText("coord-a")).toBeNull();
   fireEvent.click(group);
+  expect(screen.queryByText("coord-a")).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "View 1 coordination message" }),
+  );
   expect(screen.getByText("coord-a")).toBeVisible();
   expect(screen.getByText(`Pending details ${keys[0]}`)).toBeVisible();
   expect(screen.getByText(`Pending details ${keys[1]}`)).toBeVisible();

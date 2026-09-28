@@ -1595,6 +1595,15 @@ test.describe("local agent request", () => {
       agentKey,
     );
     app.relay.publish("primary", coordination);
+    const coordinationToggle = thread.getByRole("button", {
+      name: "View 1 coordination message",
+      exact: true,
+    });
+    await expect(coordinationToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(
+      thread.locator(`[data-message-id="${coordination.id}"]`),
+    ).toHaveCount(0);
+    await coordinationToggle.click();
     await expect(
       thread.locator(`[data-message-id="${coordination.id}"]`),
     ).toBeVisible();

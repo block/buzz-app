@@ -582,6 +582,11 @@ function ThreadMessages({
             block={block}
             session={session}
             profiles={profiles}
+            coordination={
+              <ol>
+                {block.rows.map((row) => renderReply(row, parent, depth))}
+              </ol>
+            }
             reveal={
               !rootTarget &&
               collapsedReveal.current !== navigation?.signal &&
@@ -593,7 +598,7 @@ function ThreadMessages({
                 ? navigation?.signal
                 : undefined
             }
-            onCollapse={() => {
+            onHideCoordination={() => {
               if (
                 block.rows.some(
                   (row) =>
@@ -604,7 +609,6 @@ function ThreadMessages({
                 collapsedReveal.current = navigation?.signal;
             }}
           >
-            <ol>{block.rows.map((row) => renderReply(row, parent, depth))}</ol>
             {block.request
               ? renderActivity(block.request)
               : !parent && block.tail

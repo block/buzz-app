@@ -278,6 +278,10 @@ it("collapses explicit coordination from cached profiles before choices load and
     expect(group).toBe(initialGroup);
     expect(screen.queryByText("Agent answer")).toBeNull();
     fireEvent.click(group);
+    expect(screen.queryByText("Agent answer")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View 1 coordination message" }),
+    );
     expect(screen.getByText("Agent answer")).toBeInTheDocument();
     fireEvent.click(group);
     expect(

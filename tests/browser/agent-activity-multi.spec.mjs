@@ -285,6 +285,17 @@ test("three recipients work independently through coordination, replies and a no
     1,
   );
   app.relay.publish("primary", coordination);
+  const transcriptToggle = thread.getByRole("button", {
+    name: "View 1 coordination message",
+    exact: true,
+  });
+  await expect(transcriptToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    thread.locator(`[data-message-id="${coordination.id}"]`),
+  ).toHaveCount(0);
+  await expect(tail.locator("p.text-label-sm")).toHaveCount(3);
+  // Opening pending Activity did not consent to the future transcript.
+  await transcriptToggle.click();
   await expect(
     thread.locator(`[data-message-id="${coordination.id}"]`),
   ).toBeVisible();
@@ -478,6 +489,12 @@ test("three recipients work independently through coordination, replies and a no
   expect((await frontiers())[`msg:${later.id}`]).toBeUndefined();
   await lastTrigger.focus();
   await lastTrigger.press("Enter");
+  await expect(lastGroup.locator("[data-message-id]")).toHaveCount(0);
+  await page.clock.runFor(800);
+  expect((await frontiers())[`msg:${later.id}`]).toBeUndefined();
+  await lastGroup
+    .getByRole("button", { name: "View 1 coordination message", exact: true })
+    .click();
   await expect(
     lastGroup.locator(`[data-message-id="${later.id}"]`),
   ).toBeVisible();
@@ -541,6 +558,18 @@ test("three recipients work independently through coordination, replies and a no
       exact: true,
     }),
   ).toHaveAttribute("aria-expanded", "false");
+  // Hiding the transcript cancels only this reveal intent; reopening an exact
+  // link is a fresh navigation and must still reach its target.
+  await groups
+    .last()
+    .getByRole("button", { name: "Hide coordination messages", exact: true })
+    .click();
+  await expect(thread.locator(`[data-message-id="${later.id}"]`)).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Close thread", exact: true }).click();
+  await linkRow.getByRole("link", { name: "Alpha", exact: true }).click();
+  await expect(thread.locator(`[data-message-id="${later.id}"]`)).toBeFocused();
   // A late human-facing descendant escapes coordination collapse while retaining
   // explicit ancestry and the exact Reply target. This is real DOM/focus behavior.
   const nestedAnswer = finalizeEvent(

@@ -750,6 +750,11 @@ it("browses an inherited Agent defaults workspace without repeating it in the fo
       ),
     );
     expect(screen.queryByText(/Set your Databricks workspace/)).toBeNull();
+    // Browse opens the model list once the catalog renders; its popup makes
+    // the rest of the form inert, so close it before opening Advanced.
+    await screen.findByRole("option", { name: /Endpoint Two/ });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
     await user.click(screen.getByRole("button", { name: "Model" }));
     expect(
       screen.getByLabelText("Databricks workspace (HTTPS origin)"),

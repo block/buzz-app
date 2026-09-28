@@ -59,7 +59,6 @@ export function MessageManagement({
   children: ReactNode;
 }) {
   const [selection, setSelection] = useState<Deletion>();
-  const [error, setError] = useState<string>();
   const operations = useSyncExternalStore(
     session.outbox?.subscribe ?? noop,
     session.outbox?.snapshot ?? empty,
@@ -85,36 +84,67 @@ export function MessageManagement({
       !!session.viewer &&
       channel.members?.includes(session.viewer),
   )?.id;
+  const [notice, setNotice] = useState<{
+    visit: {
+      session: RelaySession;
+      channelId: string | undefined;
+      visitChannelId: string | undefined;
+    };
+    error?: string | undefined;
+  }>(() => ({ visit: { session, channelId, visitChannelId } }));
+  const { visit } = notice;
+  const currentVisit =
+    visit.session === session &&
+    visit.channelId === channelId &&
+    visit.visitChannelId === visitChannelId;
+  if (!currentVisit)
+    setNotice({
+      visit: { session, channelId, visitChannelId },
+      error: undefined,
+    });
+  // Captured reporters cannot overwrite errors from a later visit, even to
+  // the same channel. Reset during render so stale alerts never reach children.
+  const report = (error: string | undefined) =>
+    setNotice((current) =>
+      current.visit === visit ? { ...current, error } : current,
+    );
   useEffect(() => {
+    const { session, visitChannelId } = visit;
     let active = true;
     if (visitChannelId)
       void session.unread.enterChannel(visitChannelId).catch((cause) => {
         if (active)
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : "Could not restore unread state.",
+          setNotice((current) =>
+            current.visit === visit
+              ? {
+                  ...current,
+                  error:
+                    cause instanceof Error
+                      ? cause.message
+                      : "Could not restore unread state.",
+                }
+              : current,
           );
       });
     return () => {
       active = false;
       if (visitChannelId) session.unread.leaveChannel(visitChannelId);
     };
-  }, [session, visitChannelId]);
+  }, [visit]);
   return (
     <Management.Provider
       value={{
         session,
         channelId,
         operations,
-        report: setError,
+        report,
         remove(row, done, focus) {
           setSelection({ row, done, focus });
         },
       }}
     >
       <MessageEditScope>{children}</MessageEditScope>
-      {error && <p role="alert">{error}</p>}
+      {currentVisit && notice.error && <p role="alert">{notice.error}</p>}
       {selection && available && (
         <DeleteMessageDialog
           key={selection.row.id}

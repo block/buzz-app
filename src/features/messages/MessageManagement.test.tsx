@@ -595,3 +595,148 @@ it("waits for confirmed membership before entering a restored channel visit", as
   mounted.unmount();
   expect(leaveChannel).toHaveBeenCalledExactlyOnceWith("room");
 });
+
+async function heldUnreadAction(action: "read" | "unread") {
+  const h = await fixture(action === "unread", true);
+  cleanup();
+  const result = deferred<void>();
+  const mutation = vi.fn(async () => {
+    await result.promise;
+    return {
+      operationId: "held-read-action",
+      durability: "saved" as const,
+      sync: "local-only" as const,
+    };
+  });
+  const session = {
+    ...h.owner.session,
+    unread: {
+      ...h.owner.session.unread,
+      ...(action === "read"
+        ? { markMessageRead: mutation }
+        : { markMessageUnread: mutation }),
+    },
+  };
+  const row = session.channels.window("room").rows[0];
+  assert.exists(row);
+  const surface = (channelId = "room", current = session) => (
+    <MessageManagement session={current} channelId={channelId}>
+      <MenuRoot>
+        <MenuTrigger>Read actions</MenuTrigger>
+        <MenuPopup>
+          <MessageManagementItems row={row} session={current} />
+        </MenuPopup>
+      </MenuRoot>
+    </MessageManagement>
+  );
+  const mounted = render(surface());
+  fireEvent.click(screen.getByRole("button", { name: "Read actions" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: `Mark ${action}` }),
+  );
+  expect(mutation).toHaveBeenCalledExactlyOnceWith("room", row.id);
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  return { result, mutation, mounted, surface, session };
+}
+
+it.each(["read", "unread"] as const)(
+  "does not show a delayed Mark %s failure in another channel or a later visit",
+  async (action) => {
+    const h = await heldUnreadAction(action);
+    try {
+      h.mounted.rerender(h.surface("other"));
+      await act(async () => h.result.reject(new Error("Old visit failed")));
+      expect(screen.queryByRole("alert")).toBeNull();
+      h.mounted.rerender(h.surface());
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      await act(async () => h.result.resolve());
+    }
+  },
+);
+
+it.each(["revisit", "session"] as const)(
+  "ignores an old action after %s even when the channel ID matches",
+  async (transition) => {
+    const h = await heldUnreadAction("unread");
+    try {
+      if (transition === "revisit") {
+        h.mounted.rerender(h.surface("other"));
+        h.mounted.rerender(h.surface());
+      } else {
+        h.mounted.rerender(h.surface("room", { ...h.session }));
+      }
+      await act(async () => h.result.reject(new Error("Old visit failed")));
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      await act(async () => h.result.resolve());
+    }
+  },
+);
+
+it("retains same-visit errors after the menu closes, but removes them on navigation", async () => {
+  const h = await heldUnreadAction("unread");
+  try {
+    await act(async () => h.result.reject(new Error("Save failed")));
+    expect(screen.getByRole("alert")).toHaveTextContent("Save failed");
+    expect(screen.queryByRole("menu")).toBeNull();
+    h.mounted.rerender(h.surface("other"));
+    expect(screen.queryByRole("alert")).toBeNull();
+    h.mounted.rerender(h.surface());
+    expect(screen.queryByRole("alert")).toBeNull();
+  } finally {
+    await act(async () => h.result.resolve());
+  }
+});
+
+it("keeps a new visit's failure when an older visit finishes later", async () => {
+  const h = await heldUnreadAction("unread");
+  try {
+    h.mounted.rerender(h.surface("other"));
+    h.mounted.rerender(h.surface());
+    h.mutation.mockRejectedValueOnce(new Error("Current visit failed"));
+    fireEvent.click(screen.getByRole("button", { name: "Read actions" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Mark unread" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Current visit failed",
+    );
+    await act(async () => h.result.reject(new Error("Old visit failed")));
+    expect(screen.getByRole("alert")).toHaveTextContent("Current visit failed");
+  } finally {
+    await act(async () => h.result.resolve());
+  }
+});
+
+it("scopes channel-entry failures to their visit and clears displayed failures on retarget", async () => {
+  const h = await fixture();
+  cleanup();
+  const result = deferred<void>();
+  const enterChannel = vi.fn(() => result.promise);
+  const session = {
+    ...h.owner.session,
+    unread: { ...h.owner.session.unread, enterChannel },
+  };
+  const surface = (channelId: string) => (
+    <MessageManagement session={session} channelId={channelId}>
+      Conversation
+    </MessageManagement>
+  );
+  const mounted = render(surface("room"));
+  expect(enterChannel).toHaveBeenCalledOnce();
+  try {
+    mounted.rerender(surface("other"));
+    await act(async () => result.reject(new Error("Old entry failed")));
+    expect(screen.queryByRole("alert")).toBeNull();
+    enterChannel.mockRejectedValueOnce(new Error("Current entry failed"));
+    mounted.rerender(surface("room"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Current entry failed",
+    );
+    mounted.rerender(surface("other"));
+    expect(screen.queryByRole("alert")).toBeNull();
+  } finally {
+    await act(async () => result.resolve());
+  }
+});

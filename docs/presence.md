@@ -48,7 +48,7 @@ the same states. Its dark-mode WCAG pass does not establish APCA compliance.
 
 These are deliberate design exceptions, approved to preserve the Green 10 / Amber
 10 palette and Medium (500) availability capsule shown in the
-[review snapshots](screenshots/presence-labels/README.md). The contrast guard
+[review snapshots](https://github.com/block/buzz-app/pull/323). The contrast guard
 reports the four Away boundary exceptions, limited to these exact light-mode
 roles, surfaces and resolved colors; any color or surface change requires
 reassessment. The Online capsule's composited fills are outside that static

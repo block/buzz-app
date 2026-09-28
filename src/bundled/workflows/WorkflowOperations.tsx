@@ -84,7 +84,7 @@ export function WorkflowOperations({
               <p className="text-danger">{operation.error}</p>
             )}
             <div className="workflow-toolbar">
-              {operation.action === "save" &&
+              {(operation.action === "save" || operation.action === "delete") &&
                 (operation.outcome === "unknown" ||
                   operation.outcome === "succeeded") && (
                   <>

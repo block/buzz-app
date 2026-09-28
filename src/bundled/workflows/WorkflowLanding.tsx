@@ -682,12 +682,12 @@ export function WorkflowLanding({
   const operationRefreshKey = operations
     .filter(
       (operation) =>
-        operation.action === "save" &&
+        (operation.action === "save" || operation.action === "delete") &&
         (operation.outcome === "unknown" || operation.outcome === "succeeded"),
     )
     .map(
       (operation) =>
-        `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}`,
+        `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}${operation.action === "delete" ? `/${operation.delivery}/${!!operation.error}` : ""}`,
     )
     .join(":");
   const { snapshots, paused } = useLandingDefinitions(

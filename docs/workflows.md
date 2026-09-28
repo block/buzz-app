@@ -67,6 +67,13 @@ readback does not retire a pending one-time-secret receipt, and a missing receip
 does not undo verified configuration success. Unknown
 runs stay unknown: only a returned run ID identifies a requested run.
 
+An empty successful deletion receipt is reconciled only by a fresh read started
+after that receipt: the workflow's owner/channel/UUID must be absent from a
+complete channel result. The editor then closes and the landing refreshes without
+resubmitting the deletion. Missing receipts, partial/failed reads and retained
+definitions keep the editor recoverable through **Check saved configuration**.
+This confirms configuration removal, not cancellation of already running work.
+
 Saving a configured enabled flag does not prove runtime activation or cancellation.
 Legacy deletion can retain a visible definition; accepted delivery is not proof
 of runtime cleanup. These backend limitations are displayed, not repaired here.

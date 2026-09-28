@@ -946,6 +946,85 @@ test("landing keeps a succeeded toggle locked until its exact revision is read b
   ).toBeEnabled();
 });
 
+for (const heldEditor of [false, true]) {
+  test(`empty deletion receipt closes the editor and refreshes the landing (older editor read held=${heldEditor})`, async ({
+    page,
+  }) => {
+    await page.goto(
+      url.replace(
+        "/fixture.html",
+        `/session-fixture.html?writes${heldEditor ? "&hold-editor" : ""}`,
+      ),
+    );
+    const editor = editorControls(page);
+    const { button } = editor;
+    await button("Open Fixture A helper").click();
+    if (heldEditor)
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            window.workflowSessionFixture.definitionReadHeld(),
+          ),
+        )
+        .toBe(true);
+    await editor.action("Delete workflow");
+    await button("Request deletion").click();
+    try {
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.workflowSessionFixture.publications()),
+        )
+        .toBe(1);
+      await expect(
+        page.getByText("Requesting deletion…", { exact: true }),
+      ).toBeVisible();
+      await expect(button("Saving…")).toBeDisabled();
+    } finally {
+      await page.evaluate(() =>
+        window.workflowSessionFixture.settleDelete(true),
+      );
+    }
+    try {
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => window.workflowSessionFixture.operations().at(-1)?.outcome,
+          ),
+        )
+        .toBe("succeeded");
+      if (heldEditor)
+        await expect(
+          page.getByRole("dialog", { name: "Edit workflow" }),
+        ).toBeVisible();
+    } finally {
+      if (heldEditor)
+        await page.evaluate(() =>
+          window.workflowSessionFixture.releaseDefinitionRead(),
+        );
+    }
+    await expect(
+      page.getByRole("dialog", { name: "Edit workflow" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("alertdialog", { name: "Leave this draft?" }),
+    ).toHaveCount(0);
+    await expect(button("Open Fixture A helper")).toHaveCount(0);
+    await expect(
+      page.getByText(
+        "Workflow scan finished. Lists may be limited by the relay.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await button("New workflow").click();
+    await expect(
+      page.getByRole("dialog", { name: "Create workflow" }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => window.workflowSessionFixture.publications()),
+    ).toBe(1);
+  });
+}
+
 test("landing keeps a workflow locked while deletion remains undismissed", async ({
   page,
 }) => {

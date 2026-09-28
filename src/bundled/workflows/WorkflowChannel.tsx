@@ -141,11 +141,38 @@ export function WorkflowChannel({
     if (atRisk) setPendingSelection(next);
     else open(next);
   };
+  const checkDeletion =
+    operation?.action === "delete" &&
+    operation.outcome === "unknown" &&
+    !!operation.error &&
+    (operation.delivery === "accepted" || operation.delivery === "seen");
   useEffect(() => {
-    if (operation?.eventId && operation.outcome === "succeeded") void refresh();
-  }, [operation?.eventId, operation?.outcome, refresh]);
+    if (
+      operation?.eventId &&
+      (operation.outcome === "succeeded" || checkDeletion)
+    )
+      void refresh();
+  }, [operation?.eventId, operation?.outcome, checkDeletion, refresh]);
   useEffect(() => {
     if (!operation || !draft || snapshot?.status !== "ready") return;
+    if (
+      operation.action === "delete" &&
+      operation.outcome === "succeeded" &&
+      !snapshot.data.partial &&
+      !snapshot.data.items.some(
+        (row) =>
+          row.id === operation.workflow.id &&
+          row.owner === operation.workflow.owner &&
+          row.channelId === operation.workflow.channelId,
+      )
+    ) {
+      submission.current = null;
+      setDraft(null);
+      setLocalDraftAtRisk(false);
+      setPendingSelection(null);
+      onClose?.();
+      return;
+    }
     const saved = exactSaveReadback(operation, snapshot.data.items);
     if (saved) {
       submission.current = null;
@@ -162,7 +189,7 @@ export function WorkflowChannel({
         initial: saved.yaml,
       });
     }
-  }, [operation, snapshot, draft, onSaveReadback]);
+  }, [operation, snapshot, draft, onSaveReadback, onClose]);
   // A cleared/unavailable view withdraws the saved private definition from display.
   // Unsaved user-authored drafts never become a second retained definition cache.
   useEffect(() => {

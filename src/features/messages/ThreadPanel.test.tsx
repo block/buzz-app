@@ -357,7 +357,23 @@ it("loads history automatically with error-only retry and no routine history con
   expect(h.view.refresh).toHaveBeenCalledTimes(3);
   expect(h.ensure).toHaveBeenCalledOnce();
 });
- (fix: show older thread loading and shorten initial window)
+it("starts a single older page after scrolling through 80% of loaded history", () => {
+  const h = messagesHarness();
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  const section = h.render();
+  fireEvent.wheel(section, { deltaY: -1 });
+  h.scroll(681); // 20% of the 3,400px scrollable range is 680px.
+  expect(h.view.loadMore).not.toHaveBeenCalled();
+  h.scroll(680);
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  h.scroll(0);
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  h.snapshot.status = "loading";
+  h.render();
+  h.scroll(0);
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+});
 it("positions after successful history loading, then follows live replies without another read", () => {
   const h = messagesHarness();
   h.snapshot.status = "loading";

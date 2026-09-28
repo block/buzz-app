@@ -74,12 +74,26 @@ Inline completion opens on `@` at the start of the text or after whitespace,
 NOT contain `@`, a line break, or a tab. It MAY contain spaces. A client MAY look
 back only 160 characters from the caret. A caret outside the text gives no query.
 
-A query with a space is shown only while it is still the start of a known name
-(case-insensitive). A query that is a complete known name plus a trailing space
-ends completion, so the user can keep typing prose. A query that fails this rule
-is prose: the client MUST close the inline chooser and MUST NOT start a
-directory search for it. An `@` inside a mention that the user already selected
-does not open a query.
+A query with a space is **admitted** only while it is still the start of a
+known name (case-insensitive). A query that is a complete known name plus a
+trailing space is not admitted, so the user can keep typing prose. The known
+names are the aliases and labels of the current choice set, including people
+that the directory search for this query found. This check is the `admission`
+fixture section.
+
+Admission does not decide whether the client searches. A multi-word query can
+name someone the client does not know yet, for example `@Mary J` for a Mary
+Jane outside the channel. The client MUST still run the directory search for
+it (subject to section 6), and it checks admission again with the names that
+search finds. The client MUST close the inline chooser for a query that is not
+admitted only when no directory search for it is pending and the last search
+did not fail. While the search runs, the chooser shows no rows for that query.
+If the search fails, the chooser keeps its error and a way to retry. The
+desktop UI test "a failed multi-word directory search keeps its error and
+retry" in [session-agents.test.tsx](session-agents.test.tsx) covers this case:
+`@Mary J` fails, then Retry finds Mary Jane. The one case where the client MAY
+skip the search is the refuted prefix in section 6. An `@` inside a mention
+that the user already selected does not open a query.
 
 ## 3. Matching (normative)
 
@@ -159,8 +173,12 @@ These rules keep a row from moving under the user's pointer or keyboard.
   last finished search. It MAY cache finished searches for the session. It MUST
   NOT cache failures or searches that find no one. A new opening of the chooser
   searches again for such a query.
-- After a complete search for a word query finds no one, a client MAY skip the
-  directory search for longer queries that start with it.
+- A search refutes its query when it finds no one, reports no more pages, and
+  the query contains a letter or digit. After that, a client MAY skip the
+  directory search for a longer query that starts with the refuted query, and
+  treat it as finding no one. It MUST NOT skip the search for an exact 64-hex
+  key, because that is an author lookup that name prefixes cannot refute. A
+  retry, or any new search, clears the refutation.
 
 ## 7. Sending to people outside the channel
 

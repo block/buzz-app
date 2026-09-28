@@ -919,6 +919,10 @@ it.each([1, 2, 3, 4, 5, 10])(
     );
     expect(html.match(/data-thumbnail="true"/g)).toHaveLength(count);
     expect(html).toContain(`href="https://image.test/${count - 1}.png"`);
+    const text = new DOMParser().parseFromString(html, "text/html").body
+      .textContent;
+    if (count === 1) expect(text).not.toContain("1 image");
+    else expect(text).toContain(`${count} images`);
   },
 );
 
@@ -948,6 +952,10 @@ it("preserves interleaved file order and counts unavailable images but not unsaf
   );
   expect(html).toContain('role="group" aria-label="2 images"');
   expect(html).toContain('role="group" aria-label="1 image"');
+  const text = new DOMParser().parseFromString(html, "text/html").body
+    .textContent;
+  expect(text).toContain("2 images");
+  expect(text).not.toContain("1 image");
   expect(html).toContain("Image unavailable");
   expect(html).not.toContain("javascript:");
   expect(html.indexOf('href="https://image.test/first.png"')).toBeLessThan(

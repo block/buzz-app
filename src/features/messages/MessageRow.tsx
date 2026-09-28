@@ -532,9 +532,9 @@ export const MessageRow = memo(function MessageRow({
                 >
                   {items}
                 </div>
-                <div className={styles.imageCount}>
-                  {group.length} {group.length === 1 ? "image" : "images"}
-                </div>
+                {group.length > 1 && (
+                  <div className={styles.imageCount}>{group.length} images</div>
+                )}
               </div>
             ) : files ? (
               <div className={styles.fileGroup} key={group[0]?.url}>

@@ -168,7 +168,7 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
     canLoadMore: true,
   });
   expect(new Set(h.view.snapshot().replies.map((e) => e.id))).toEqual(
-    new Set(newest.slice(0, 50).map((e) => e.id)),
+    new Set(newest.slice(0, 10).map((e) => e.id)),
   );
   h.traffic.receive([late, latest]);
   while (h.view.snapshot().canLoadMore) await h.view.loadMore();
@@ -178,7 +178,10 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
       .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
       .map((e) => e.id),
   );
-  expect(h.requests.filter(([f]) => f?.thread_window)).toHaveLength(7);
+  const windows = h.requests.filter(([f]) => f?.thread_window);
+  expect(windows).toHaveLength(7);
+  expect(windows.map(([f]) => f?.limit)).toEqual([10, 50, 50, 50, 50, 50, 50]);
+  expect(windows.every(([f]) => f?.include_aux === true)).toBe(true);
   // The relay's window row allowlist rejects legacy diff kind 40008.
   expect(
     h.requests
@@ -200,6 +203,9 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
   expect(repair).toHaveLength(8);
   expect(repair[0]).toEqual([{ ids: [root.id], "#h": [channel], limit: 1 }]);
   expect(repair.slice(1).every(([filter]) => filter?.thread_window)).toBe(true);
+  expect(repair.slice(1).map(([filter]) => filter?.limit)).toEqual([
+    10, 50, 50, 50, 50, 50, 50,
+  ]);
   expect(repair.every((filters) => filters.length === 1)).toBe(true);
   expect(
     h.view.snapshot().replies.find((r) => r.id === oldest.id)?.content,

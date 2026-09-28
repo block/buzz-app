@@ -156,10 +156,12 @@ Other failures, invalid bounds and missing bounds after a strict page never trig
 fallback. Non-UUID channels retain the legacy path. No capability cache persists
 across owners or connections.
 
-Each page requests 50 traversal rows, with at most ten pages per repair/load range.
-The shared panel positions after the first strict page and demand-loads older pages
-on scrollback. Legacy mode still automatically walks its bounded oldest-first range
-and cannot promise the newest tail. Media review retains eager bounded traversal.
+Each strict thread starts with 10 traversal rows plus their auxiliary events; later pages
+request 50 traversal rows, with at most ten pages per repair/load range. Legacy
+mode still requests 50 rows per page. The shared panel positions after the first
+strict page and demand-loads older pages on scrollback. Legacy mode still
+automatically walks its bounded oldest-first range and cannot promise the newest
+tail. Media review retains eager bounded traversal.
 Refresh re-reads the retained page range from the beginning while preserving known
 rows/edits/deletes: omitted events are not retractions. Live channel traffic feeds
 this same view without another subscription. Channel establishment triggers repair

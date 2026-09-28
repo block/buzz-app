@@ -775,13 +775,10 @@ function ThreadMessages({
           loadOlder();
             element.scrollHeight - element.clientHeight - element.scrollTop <
             80;
-<<<<<<< HEAD
           if (jumpingToLatest.current) return;
           follow.current = bottom;
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);
-||||||| parent of ffa8cc43 (feat: open threads with verified newest-first windows)
-=======
           loadOlder();
         }}
         onWheel={(event) => {
@@ -816,12 +813,14 @@ function ThreadMessages({
         }}
         tabIndex={0}
       >
+<<<<<<< HEAD
         {showJumpToLatest && (
           <JumpToLatestButton
             newMessageCount={newMessageCount}
             onClick={jumpToLatest}
           />
         )}
+||||||| parent of 8a6b73ce (fix: show older thread loading and shorten initial window)
         {snapshot.root ? (
           <MessageRow
             extensions={extensions}
@@ -851,18 +850,25 @@ function ThreadMessages({
           <p className={styles.empty}>Original message unavailable.</p>
         ) : null}
         <ol>{renderReplies(undefined)}</ol>
-        {(snapshot.status === "loading" ||
-          (snapshot.direction !== "older" &&
-            snapshot.status === "ready" &&
-            snapshot.canLoadMore)) && <p role="status">Loading thread…</p>}
+        {(snapshot.status === "loading" && snapshot.direction !== "older") ||
+        (snapshot.direction !== "older" &&
+          snapshot.status === "ready" &&
+          snapshot.canLoadMore) ? (
+          <p role="status">Loading thread…</p>
+        ) : null}
         {snapshot.targetStatus === "unavailable" && (
           <p role="status">Selected message unavailable.</p>
         )}
-        {snapshot.error && <p role="alert">{snapshot.error}</p>}
+        {snapshot.error &&
+          (snapshot.direction !== "older" || !snapshot.root) && (
+            <p role="alert">{snapshot.error}</p>
+          )}
         {snapshot.limited && !snapshot.error && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
-        {(snapshot.error || snapshot.targetStatus === "unavailable") && (
+        {((snapshot.error &&
+          (snapshot.direction !== "older" || !snapshot.root)) ||
+          snapshot.targetStatus === "unavailable") && (
           <div className={styles.threadHistoryControls}>
             <Button type="button" onClick={() => void view.refresh()}>
               Retry thread

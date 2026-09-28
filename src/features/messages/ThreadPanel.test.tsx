@@ -357,6 +357,7 @@ it("loads history automatically with error-only retry and no routine history con
   expect(h.view.refresh).toHaveBeenCalledTimes(3);
   expect(h.ensure).toHaveBeenCalledOnce();
 });
+ (fix: show older thread loading and shorten initial window)
 it("positions after successful history loading, then follows live replies without another read", () => {
   const h = messagesHarness();
   h.snapshot.status = "loading";

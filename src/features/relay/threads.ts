@@ -17,6 +17,7 @@ import { shareMessageRows } from "./row-identity";
 
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
 const PAGE_SIZE = 50;
+const INITIAL_WINDOW_SIZE = 10;
 const MAX_PAGES = 10;
 const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -448,6 +449,7 @@ export function createThreadView({
                 {
                   ...filter,
                   kinds: STRICT_WINDOW_KINDS,
+                  limit: nextPages === 0 ? INITIAL_WINDOW_SIZE : PAGE_SIZE,
                   thread_window: true,
                   ...(nextCursor
                     ? { until: nextCursor.created_at, before_id: nextCursor.id }

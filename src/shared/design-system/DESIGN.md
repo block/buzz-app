@@ -302,7 +302,10 @@ close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
 Editors can supply `headerActions` beside Close and `leadingActions` before the
-trailing footer actions. `onEscape` may return true to consume Escape for an
+trailing footer actions. Footer actions wrap as whole controls, never shrinking
+single-line labels. When one action exceeds the available width, the footer
+scrolls horizontally from a safe start edge so both ends remain reachable.
+`onEscape` may return true to consume Escape for an
 inline layer (such as an inspector) before dismissing the dialog. Nested modal
 layers still use Dialog so Base UI owns their focus trap and dismissal order;
 `placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.

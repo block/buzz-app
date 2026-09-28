@@ -4,6 +4,7 @@ import {
   admitDeletion,
   type ApiFailure,
   checkDeletionStatus,
+  clearPendingDeletion,
   DELETION_PENDING_KEY,
   persistPendingDeletion,
   readPendingDeletion,
@@ -82,7 +83,7 @@ it("reconciles a mismatched admission response and validates the entire receipt 
         : Response.json({ ...request, status: "accepted" }, { status: 202 });
     }),
   );
-  await expect(admitDeletion(request)).resolves.toMatchObject({
+  await expect(admitDeletion(request, "fresh")).resolves.toMatchObject({
     request_id: request.request_id,
     community_id: request.community_id,
   });
@@ -102,9 +103,72 @@ it("turns a missing receipt after ambiguous dispatch into acceptance_unknown", a
         Response.json({ error: { code: "not_owner" } }, { status: 404 }),
       ),
   );
-  await expect(admitDeletion(request)).rejects.toMatchObject({
+  await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
     code: "acceptance_unknown",
   } satisfies Partial<ApiFailure>);
+});
+
+it("terminates a fresh trustworthy structured pre-admission rejection", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json(
+        {
+          error: { code: "must_archive" },
+          correlation_id: "corr-must-archive",
+        },
+        { status: 409 },
+      ),
+    ),
+  );
+  await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
+    code: "must_archive",
+    correlationId: "corr-must-archive",
+  } satisfies Partial<ApiFailure>);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  [
+    "broker string error",
+    () => Response.json({ error: "upstream failed" }, { status: 502 }),
+  ],
+  ["malformed response", () => new Response("{", { status: 502 })],
+  ["network response loss", () => Promise.reject(new TypeError("EOF"))],
+])("keeps a fresh %s ambiguous", async (_label, firstResponse) => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockImplementationOnce(firstResponse)
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: { code: "acceptance_unknown" } },
+          { status: 503 },
+        ),
+      ),
+  );
+  await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
+    code: "acceptance_unknown",
+  } satisfies Partial<ApiFailure>);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("keeps the same structured rejection uncertain during recovery", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json(
+        { error: { code: "must_archive" }, correlation_id: "corr-recovery" },
+        { status: 409 },
+      ),
+    ),
+  );
+  await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
+    code: "acceptance_unknown",
+    correlationId: "corr-recovery",
+  } satisfies Partial<ApiFailure>);
+  expect(fetch).toHaveBeenCalledTimes(2);
 });
 
 it("preserves receipt correlation when EOF is followed by relay_unavailable", async () => {
@@ -123,7 +187,7 @@ it("preserves receipt correlation when EOF is followed by relay_unavailable", as
         ),
       ),
   );
-  await expect(admitDeletion(request)).rejects.toMatchObject({
+  await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
     code: "acceptance_unknown",
     correlationId: "corr-receipt-relay",
   } satisfies Partial<ApiFailure>);
@@ -152,7 +216,7 @@ it.each(["relay_unavailable", "not_owner"])(
           ),
         ),
     );
-    await expect(admitDeletion(request)).rejects.toMatchObject({
+    await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
       code: "acceptance_unknown",
       correlationId: `corr-receipt-${code}`,
     } satisfies Partial<ApiFailure>);
@@ -225,6 +289,18 @@ it("refuses to replace a different pending deletion", () => {
   expect(readPendingDeletion()).toEqual(pending);
 });
 
+it("does not clear a different pending envelope", () => {
+  persistPendingDeletion(pending);
+  clearPendingDeletion({
+    ...pending,
+    request: {
+      ...pending.request,
+      request_id: "33333333-3333-4333-8333-333333333333",
+    },
+  });
+  expect(readPendingDeletion()).toEqual(pending);
+});
+
 it("requires the exact pending tuple to be readable after persistence", () => {
   const getItem = vi.spyOn(Storage.prototype, "getItem");
   getItem.mockReturnValueOnce(null).mockReturnValueOnce(null);
@@ -252,7 +328,7 @@ it.each([
         ),
       ),
   );
-  await expect(admitDeletion(request)).rejects.toMatchObject({
+  await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
     code: "acceptance_unknown",
   });
 });

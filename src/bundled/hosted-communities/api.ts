@@ -34,6 +34,7 @@ export type DeletionRequest = {
   request_id: string;
   acknowledgement_version: 1;
 };
+export type DeletionAttempt = "fresh" | "recovery";
 export type PendingDeletion = {
   version: 1;
   owner_pubkey: string;
@@ -329,6 +330,26 @@ function matchesDeletion(reply: Reply, request: DeletionRequest) {
   );
 }
 
+const DEFINITIVE_DELETION_REJECTIONS = new Set([
+  "missing_mapping",
+  "invalid_request",
+  "confirmation_mismatch",
+  "not_owner",
+  "must_archive",
+  "protected_target",
+  "deletion_conflict",
+  "unsupported_acknowledgement_version",
+  "relay_unavailable",
+  "unauthorized",
+]);
+
+export function isDefinitiveDeletionRejection(reason: unknown) {
+  return (
+    reason instanceof ApiFailure &&
+    DEFINITIVE_DELETION_REJECTIONS.has(reason.code)
+  );
+}
+
 /** A possible dispatch terminates only on a tuple-bound acceptance or abort. */
 function deletionResult(
   response: { status: number; value: Reply },
@@ -368,8 +389,11 @@ export async function checkDeletionStatus(request: DeletionRequest) {
   return deletionResult(response, request);
 }
 
-/** Sends one admission; ambiguous browser responses reconcile through the read-only route. */
-export async function admitDeletion(request: DeletionRequest) {
+/** Sends one admission; only a fresh call trusts known pre-admission rejections. */
+export async function admitDeletion(
+  request: DeletionRequest,
+  attempt: DeletionAttempt,
+) {
   let response: { status: number; value: Reply };
   try {
     response = await send<Reply>("delete", request);
@@ -377,6 +401,11 @@ export async function admitDeletion(request: DeletionRequest) {
     // Browser-to-broker response loss is ambiguous; reconcile below.
     return checkDeletionStatus(request);
   }
+  if (
+    attempt === "fresh" &&
+    DEFINITIVE_DELETION_REJECTIONS.has(response.value.error?.code ?? "")
+  )
+    check(response.value, "Could not start deletion.");
   try {
     return deletionResult(response, request);
   } catch (reason) {

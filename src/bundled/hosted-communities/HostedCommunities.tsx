@@ -37,6 +37,7 @@ import {
   clearPendingDeletion,
   getAuth,
   HOST_SUFFIX,
+  isDefinitiveDeletionRejection,
   login,
   makePendingDeletion,
   persistPendingDeletion,
@@ -48,6 +49,7 @@ import {
   VALID_NAME,
   type Account,
   type Community,
+  type DeletionAttempt,
   type Identity,
   type PendingDeletion,
   type Quota,
@@ -234,6 +236,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const settleDeletion = async (
     pending: PendingDeletion,
     at: number,
+    attempt: DeletionAttempt,
     operation: () => Promise<unknown>,
   ) => {
     try {
@@ -243,7 +246,11 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       return true;
     } catch (reason) {
       if (at !== generation.current || !active()) return false;
-      if (reason instanceof ApiFailure && reason.code === "deletion_aborted") {
+      if (
+        reason instanceof ApiFailure &&
+        (reason.code === "deletion_aborted" ||
+          (attempt === "fresh" && isDefinitiveDeletionRejection(reason)))
+      ) {
         clearPendingDeletion(pending);
         setPendingDeletion(null);
       } else setPendingDeletion(pending);
@@ -253,7 +260,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const checkPendingDeletion = (pending: PendingDeletion) =>
     run("receipt", async () => {
       const at = generation.current;
-      await settleDeletion(pending, at, () =>
+      await settleDeletion(pending, at, "recovery", () =>
         checkDeletionStatus(pending.request),
       );
     });
@@ -285,7 +292,9 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       if (currentAuth?.capabilities?.can_delete_buzz_communities !== true)
         throw new Error("Community deletion is no longer available.");
       setAuth(currentAuth);
-      await settleDeletion(pending, at, () => admitDeletion(pending.request));
+      await settleDeletion(pending, at, "recovery", () =>
+        admitDeletion(pending.request, "recovery"),
+      );
     });
   const busy = action !== null;
   // Repeated inside open dialogs, whose modal backdrop hides the page copy.
@@ -823,8 +832,8 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             setDeleteTarget(null);
             void run("delete", async () => {
               const at = generation.current;
-              await settleDeletion(pending, at, () =>
-                admitDeletion(pending.request),
+              await settleDeletion(pending, at, "fresh", () =>
+                admitDeletion(pending.request, "fresh"),
               );
             });
           }}

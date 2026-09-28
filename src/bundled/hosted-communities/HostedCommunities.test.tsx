@@ -933,6 +933,32 @@ it("does not dispatch when the pending envelope cannot be persisted", async () =
   expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
 });
 
+it("clears a fresh must_archive rejection and restores deletion after remount", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = () =>
+    Response.json(
+      {
+        error: { code: "must_archive" },
+        correlation_id: "corr-must-archive",
+      },
+      { status: 409 },
+    );
+  const view = renderCard();
+  await confirmDeletion();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Archive the community before deleting it",
+  );
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+
+  view.unmount();
+  renderCard();
+  expect(await screen.findByRole("button", { name: "Delete" })).toBeEnabled();
+  expect(
+    screen.queryByText("Deletion status is unknown"),
+  ).not.toBeInTheDocument();
+});
+
 it("preserves one UUID across an ambiguous response, manual receipt check, and acceptance", async () => {
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   routes["/api/builderlab/delete"] = () =>
@@ -1064,6 +1090,40 @@ it("manually resubmits the same UUID only after a fresh capable archived-owner l
   ).toBeGreaterThan(2); // Startup and the fresh owner/archive check before retry.
 });
 
+it("keeps the original UUID when recovery receives must_archive", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = () =>
+    new Response("{", {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  routes["/api/builderlab/delete-receipt"] = () =>
+    Response.json({ error: { code: "acceptance_unknown" } }, { status: 503 });
+  renderCard();
+  await confirmDeletion();
+  await screen.findByText("Deletion status is unknown");
+  const original = localStorage.getItem(DELETION_PENDING_KEY);
+  const requestId = JSON.parse(original ?? "").request.request_id;
+
+  const mustArchive = () =>
+    Response.json(
+      { error: { code: "must_archive" }, correlation_id: "corr-recovery" },
+      { status: 409 },
+    );
+  routes["/api/builderlab/delete"] = mustArchive;
+  routes["/api/builderlab/delete-receipt"] = mustArchive;
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry same deletion request" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Deletion status is unknown",
+  );
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
+  const admissions = calls.filter(([url]) => url === "/api/builderlab/delete");
+  expect(admissions).toHaveLength(2);
+  expect(admissions[1]?.[1].request_id).toBe(requestId);
+});
+
 it("terminates pending recovery on a bound aborted receipt", async () => {
   const request = {
     community_id: archived.id,
@@ -1134,7 +1194,7 @@ it("disables deletion for every row when a pending slot exists in another mounte
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   routes["/api/builderlab/delete"] = () =>
     Response.json(
-      { error: { code: "relay_unavailable" }, correlation_id: "corr-slot" },
+      { error: { code: "acceptance_unknown" }, correlation_id: "corr-slot" },
       { status: 503 },
     );
   routes["/api/builderlab/delete-receipt"] = routes["/api/builderlab/delete"];
@@ -1182,7 +1242,7 @@ it.each([
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   routes["/api/builderlab/delete"] = () =>
     Response.json(
-      { error: { code: "relay_unavailable" }, correlation_id: "corr-first" },
+      { error: { code: "acceptance_unknown" }, correlation_id: "corr-first" },
       { status: 503 },
     );
   routes["/api/builderlab/delete-receipt"] = routes["/api/builderlab/delete"];
@@ -1208,7 +1268,7 @@ it("rechecks capability after the fresh owner list resolves", async () => {
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   routes["/api/builderlab/delete"] = () =>
     Response.json(
-      { error: { code: "relay_unavailable" }, correlation_id: "corr-first" },
+      { error: { code: "acceptance_unknown" }, correlation_id: "corr-first" },
       { status: 503 },
     );
   routes["/api/builderlab/delete-receipt"] = routes["/api/builderlab/delete"];
@@ -1276,7 +1336,7 @@ it("keeps an accepted row hidden if a stale list returns after an omission", asy
   ).not.toBeInTheDocument();
 });
 
-it.each(["accepted", "structured error"])(
+it.each(["accepted", "bound abort", "definitive rejection"])(
   "generation-fences a late %s after an A to B to A account sequence",
   async (outcome) => {
     routes["/api/builderlab/list"] = () => ({ communities: [archived] });
@@ -1321,13 +1381,22 @@ it.each(["accepted", "structured error"])(
       admission.release(
         outcome === "accepted"
           ? Response.json(accepted(old.request), { status: 202 })
-          : Response.json(
-              {
-                error: { code: "relay_unavailable" },
-                correlation_id: "corr-late-error",
-              },
-              { status: 503 },
-            ),
+          : outcome === "bound abort"
+            ? Response.json(
+                {
+                  ...old.request,
+                  error: { code: "deletion_aborted" },
+                  correlation_id: "corr-late-abort",
+                },
+                { status: 409 },
+              )
+            : Response.json(
+                {
+                  error: { code: "must_archive" },
+                  correlation_id: "corr-late-rejection",
+                },
+                { status: 409 },
+              ),
       ),
     );
     await act(async () => Promise.resolve());

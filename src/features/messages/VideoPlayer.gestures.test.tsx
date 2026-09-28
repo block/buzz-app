@@ -65,9 +65,15 @@ it("toggles picture playback and leaves the separate play control immediate", ()
   expect(play).not.toHaveBeenCalled();
   act(() => vi.advanceTimersByTime(250));
   expect(play).toHaveBeenCalledOnce();
+  expect(document.querySelector('[data-video-feedback="play"]')).not.toBeNull();
+  act(() => vi.advanceTimersByTime(650));
+  expect(document.querySelector("[data-video-feedback]")).toBeNull();
   fireEvent.click(video);
   act(() => vi.advanceTimersByTime(250));
   expect(pause).toHaveBeenCalledOnce();
+  expect(
+    document.querySelector('[data-video-feedback="pause"]'),
+  ).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Play video" }));
   expect(play).toHaveBeenCalledTimes(2);
 });
@@ -80,10 +86,16 @@ it("double-clicks seek by ten seconds without toggling playback and clamp to dur
   fireEvent.doubleClick(video, { clientX: 150 });
   act(() => vi.advanceTimersByTime(400));
   expect(video.currentTime).toBe(35);
+  expect(
+    document.querySelector('[data-video-feedback="forward"]')?.textContent,
+  ).toBe("10");
   expect(play).not.toHaveBeenCalled();
   expect(pause).not.toHaveBeenCalled();
   fireEvent.doubleClick(video, { clientX: 50 });
   expect(video.currentTime).toBe(25);
+  expect(
+    document.querySelector('[data-video-feedback="backward"]')?.textContent,
+  ).toBe("10");
   video.currentTime = 5;
   fireEvent.doubleClick(video, { clientX: 50 });
   expect(video.currentTime).toBe(0);
@@ -103,11 +115,15 @@ it.each([true, false])(
     expect(video.playbackRate).toBe(1.5);
     act(() => vi.advanceTimersByTime(1));
     expect(video.playbackRate).toBe(2);
+    expect(
+      document.querySelector('[data-video-feedback="speed"]')?.textContent,
+    ).toBe("2×");
     expect(video.paused).toBe(false);
     fireEvent.pointerUp(video);
     fireEvent.click(video);
     act(() => vi.advanceTimersByTime(400));
     expect(video.playbackRate).toBe(1.5);
+    expect(document.querySelector("[data-video-feedback]")).toBeNull();
     expect(video.paused).toBe(paused);
     expect(pause).toHaveBeenCalledTimes(paused ? 1 : 0);
     expect(localStorage.getItem("buzz.video.playback-speed")).toBe("1.5");

@@ -33,6 +33,8 @@
 }
 .controls button,
 .center {
+  appearance: none;
+  -webkit-appearance: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -197,10 +199,7 @@
   border: 0;
   border-radius: 50%;
   background: transparent;
-  transition:
-    opacity 160ms ease-out,
-    background-color 120ms ease-out,
-    scale 100ms ease-out;
+  transition: scale 100ms ease-out;
 }
 .controls[data-inline] {
   inset: auto var(--media-controls-inset) var(--media-controls-inset);
@@ -227,6 +226,16 @@
 .controls[data-inline]::before {
   clip-path: var(--media-corner-clip, none);
 }
+/* Fade the filter itself, never an ancestor: an opacity ancestor becomes a
+   backdrop root and prevents WebKit from sampling the video during the fade. */
+.center::before,
+.center > *,
+.controls[data-inline]::before,
+.controls[data-inline] > * {
+  opacity: var(--preview-control-opacity, 1);
+  transition: opacity 160ms ease-out;
+}
+
 .controls[data-inline] .time {
   font-size: var(--text-caption);
 }
@@ -264,7 +273,7 @@
   [data-video-preview][data-playing]:not(:hover):not(:has(:focus-visible)):not(
       :has([aria-expanded="true"])
     )
-    .center,
+    button.center,
   [data-video-preview]:not([data-started]):not(:hover):not(
       :has(:focus-visible)
     ):not(:has([aria-expanded="true"]))
@@ -273,7 +282,7 @@
       :has([aria-expanded="true"])
     )
     .controls {
-    opacity: 0;
+    --preview-control-opacity: 0;
     pointer-events: none;
   }
 }
@@ -347,8 +356,10 @@
     background: var(--affordance-subtle-hover);
   }
   .center:enabled:hover {
-    background: var(--affordance-subtle-hover);
     scale: 1.05;
+  }
+  .center:enabled:hover::before {
+    background: var(--bg-glass-primary-hover);
   }
 }
 .controls button:enabled:active,
@@ -357,8 +368,10 @@
   scale: 0.94;
 }
 .center:enabled:active {
-  background: var(--affordance-subtle-pressed);
   scale: 0.96;
+}
+.center:enabled:active::before {
+  background: var(--bg-glass-secondary);
 }
 .reactions > fieldset > button:focus-visible {
   outline: 2px solid var(--text-standard);
@@ -368,5 +381,66 @@
   .controls button,
   .reactions > fieldset > button {
     transition: none;
+  }
+}
+
+.gestureFeedback {
+  pointer-events: none;
+  animation: video-feedback-scale 650ms ease-out both;
+}
+.gestureFeedback::before,
+.center.gestureFeedback > * {
+  animation: video-feedback-fade 650ms ease-out both;
+}
+.gestureFeedback[data-video-feedback="forward"] {
+  left: 75%;
+}
+.gestureFeedback[data-video-feedback="backward"] {
+  left: 25%;
+}
+.gestureFeedback[data-video-feedback="speed"] {
+  top: var(--space-4);
+  translate: -50% 0;
+  font-size: var(--text-label);
+  animation: none;
+}
+.gestureFeedback[data-video-feedback="speed"]::before,
+.gestureFeedback[data-video-feedback="speed"] > * {
+  animation: none;
+}
+.seekAmount {
+  position: absolute;
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+}
+@keyframes video-feedback-scale {
+  from {
+    scale: 0.88;
+  }
+  to {
+    scale: 1.08;
+  }
+}
+@keyframes video-feedback-fade {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  12%,
+  70% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .center::before,
+  .center > *,
+  .controls[data-inline]::before,
+  .controls[data-inline] > * {
+    transition: none;
+  }
+  .gestureFeedback,
+  .gestureFeedback::before,
+  .center.gestureFeedback > * {
+    animation: none;
   }
 }

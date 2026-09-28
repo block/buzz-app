@@ -1,10 +1,26 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
+
+type FeedbackKind = "play" | "pause" | "forward" | "backward" | "speed";
 
 /** Picture gestures never intercept the separate playback controls. */
 export function useVideoGestures(
   video: RefObject<HTMLVideoElement | null>,
   source: string,
 ) {
+  const [feedback, setFeedback] = useState<{
+    kind: FeedbackKind;
+    id: number;
+  }>();
+  const feedbackId = useRef(0);
+  const feedbackTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const showFeedback = (kind: FeedbackKind) => {
+    clearTimeout(feedbackTimer.current);
+    setFeedback({ kind, id: ++feedbackId.current });
+    if (kind !== "speed")
+      feedbackTimer.current = setTimeout(() => setFeedback(undefined), 650);
+  };
   const clickTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -27,6 +43,7 @@ export function useVideoGestures(
     held.current = undefined;
     const element = video.current;
     if (!previous || !element) return;
+    setFeedback(undefined);
     element.playbackRate = previous.rate;
     if (previous.paused) element.pause();
   };
@@ -37,7 +54,11 @@ export function useVideoGestures(
   };
   useEffect(() => {
     void source;
-    const stop = () => cancel.current();
+    const stop = () => {
+      cancel.current();
+      clearTimeout(feedbackTimer.current);
+      setFeedback(undefined);
+    };
     const hidden = () => {
       if (document.hidden) stop();
     };
@@ -49,7 +70,7 @@ export function useVideoGestures(
       document.removeEventListener("visibilitychange", hidden);
     };
   }, [source]);
-  return {
+  const handlers = {
     onClick(event: React.MouseEvent<HTMLVideoElement>) {
       if (suppressClick.current) return;
       clearClick();
@@ -61,7 +82,9 @@ export function useVideoGestures(
         const element = video.current;
         if (!element) return;
         previous.committed = true;
-        if (element.paused) void element.play().catch(() => {});
+        const paused = element.paused;
+        showFeedback(paused ? "play" : "pause");
+        if (paused) void element.play().catch(() => {});
         else element.pause();
       }, 250);
     },
@@ -87,6 +110,7 @@ export function useVideoGestures(
         ),
       );
       element.dispatchEvent(new Event("timeupdate"));
+      showFeedback(seconds > 0 ? "forward" : "backward");
     },
     onPointerDown(event: React.PointerEvent<HTMLVideoElement>) {
       if (event.button !== 0 || !event.isPrimary) return;
@@ -103,6 +127,7 @@ export function useVideoGestures(
         const previous = { rate: element.playbackRate, paused: element.paused };
         held.current = previous;
         element.playbackRate = 2;
+        showFeedback("speed");
         void element.play().catch(() => {
           if (held.current === previous) endHold();
         });
@@ -112,4 +137,5 @@ export function useVideoGestures(
     onPointerLeave: endHold,
     onPointerCancel: endHold,
   };
+  return { handlers, feedback };
 }

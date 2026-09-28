@@ -12,6 +12,8 @@ import {
 import {
   PauseIcon,
   PlayIcon,
+  ArrowClockwiseIcon,
+  ArrowCounterClockwiseIcon,
   SpeakerHighIcon,
   SpeakerSlashIcon,
 } from "../../shared/design-system/icons";
@@ -165,15 +167,24 @@ export function VideoControls({
   };
   const playButton = (
     <button
+      data-buzz-ui=""
       type="button"
       className={inline ? styles.center : styles.play}
       aria-label={playing ? "Pause video" : "Play video"}
       onClick={toggle}
     >
       {playing ? (
-        <PauseIcon size={inline ? 24 : 18} weight="fill" />
+        <PauseIcon
+          size={inline ? 24 : 18}
+          weight="fill"
+          color="var(--text-standard)"
+        />
       ) : (
-        <PlayIcon size={inline ? 24 : 18} weight="fill" />
+        <PlayIcon
+          size={inline ? 24 : 18}
+          weight="fill"
+          color="var(--text-standard)"
+        />
       )}
     </button>
   );
@@ -235,6 +246,7 @@ export function VideoControls({
               .filter((marker) => marker.seconds <= duration)
               .map((marker) => (
                 <button
+                  data-buzz-ui=""
                   key={marker.id}
                   type="button"
                   className={styles.marker}
@@ -260,6 +272,7 @@ export function VideoControls({
         </span>
         <div className={styles.speed}>
           <button
+            data-buzz-ui=""
             ref={speedButton}
             type="button"
             aria-label={`Playback speed: ${rate}x`}
@@ -284,6 +297,7 @@ export function VideoControls({
               <span>Speed</span>
               {speeds.map((speed) => (
                 <button
+                  data-buzz-ui=""
                   type="button"
                   key={speed}
                   aria-pressed={rate === speed}
@@ -310,6 +324,7 @@ export function VideoControls({
         </div>
         <div className={styles.volume}>
           <button
+            data-buzz-ui=""
             type="button"
             aria-label={muted || volume === 0 ? "Unmute video" : "Mute video"}
             onClick={() => {
@@ -372,7 +387,7 @@ export function VideoPlayer({
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const idle = useMediaControls(stage, source);
-  const gestures = useVideoGestures(videoRef, source);
+  const { handlers: gestures, feedback } = useVideoGestures(videoRef, source);
   return (
     <div
       ref={stage}
@@ -405,6 +420,31 @@ export function VideoPlayer({
         onTimeUpdate={(event) => onTime(event.currentTarget.currentTime)}
         onError={onError}
       />
+      {feedback && (
+        <div
+          key={feedback.id}
+          className={`${styles.center} ${styles.gestureFeedback}`}
+          data-video-feedback={feedback.kind}
+          aria-hidden="true"
+        >
+          {feedback.kind === "play" ? (
+            <PlayIcon size={24} weight="fill" />
+          ) : feedback.kind === "pause" ? (
+            <PauseIcon size={24} weight="fill" />
+          ) : feedback.kind === "speed" ? (
+            <span>2×</span>
+          ) : (
+            <>
+              {feedback.kind === "forward" ? (
+                <ArrowClockwiseIcon size={36} />
+              ) : (
+                <ArrowCounterClockwiseIcon size={36} />
+              )}
+              <span className={styles.seekAmount}>10</span>
+            </>
+          )}
+        </div>
+      )}
       <VideoControls
         videoRef={videoRef}
         {...(markers ? { markers } : {})}

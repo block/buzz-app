@@ -1,6 +1,16 @@
 import { defineIcon } from "./createDecorativeIcon";
 import { GitHubIssueArtwork } from "./GitHubIssue";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
+import { ArrowClockwiseIcon as PhosphorArrowClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
+export const ArrowClockwiseIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowClockwiseIcon,
+);
+import { ArrowCounterClockwiseIcon as PhosphorArrowCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowCounterClockwise";
+export const ArrowCounterClockwiseIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowCounterClockwiseIcon,
+);
 // Phosphor only. Add individual exports as needed; all native weights remain available.
 import { BrowserIcon as PhosphorBrowserIcon } from "@phosphor-icons/react/dist/csr/Browser";
 export const BrowserIcon = defineIcon("phosphor", PhosphorBrowserIcon);

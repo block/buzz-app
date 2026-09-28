@@ -226,11 +226,16 @@
     width: max-content;
     max-width: max(132px, calc(100% - 336px));
     overflow: visible;
-    clip-path: inset(0 0 0 0);
-    transition: max-width var(--duration-settle) ease-in-out;
+    clip-path: none;
+    /* Release resize help only after expansion; contain content while moving. */
+    transition:
+      max-width var(--duration-settle) ease-in-out,
+      clip-path var(--duration-settle) step-end allow-discrete;
   }
   .shell-navigation[data-sidebar-collapsible][aria-hidden="true"] {
     max-width: 0;
+    clip-path: inset(0);
+    transition-timing-function: ease-in-out, step-start;
   }
   @media (prefers-reduced-motion: reduce) {
     .shell-navigation[data-sidebar-collapsible] {

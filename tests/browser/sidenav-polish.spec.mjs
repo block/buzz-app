@@ -275,6 +275,41 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
   const handle = page.getByRole("separator", {
     name: "Resize channel sidebar",
   });
+  // Pseudo-element help must paint outside the wrapper for pointer and keyboard.
+  for (const activate of [
+    () => handle.hover(),
+    async () => {
+      await page.mouse.move(0, 0);
+      await page.keyboard.press("Tab");
+      await handle.focus();
+    },
+  ]) {
+    await activate();
+    await expect
+      .poll(() =>
+        handle.evaluate((node) => {
+          const help = getComputedStyle(node, "::before");
+          return [help.visibility, help.opacity];
+        }),
+      )
+      .toEqual(["visible", "1"]);
+    const help = await handle.evaluate((node) => {
+      const style = getComputedStyle(node, "::before");
+      const rect = node.getBoundingClientRect();
+      const wrapper = node.closest("#shell-navigation");
+      return {
+        content: style.content,
+        right: rect.left + parseFloat(style.left) + parseFloat(style.width),
+        wrapperRight: wrapper.getBoundingClientRect().right,
+        clip: getComputedStyle(wrapper).clipPath,
+        overflow: getComputedStyle(wrapper).overflow,
+      };
+    });
+    expect(help.content).toContain("Drag to resize");
+    expect(help.right).toBeGreaterThan(help.wrapperRight);
+    expect(help.clip).toBe("none");
+    expect(help.overflow).toBe("visible");
+  }
   const sidebarNode = await sidebar.elementHandle();
   const expandedWidth = (await sidebar.boundingBox()).width;
   const gutterWidth = await handle.evaluate((element) => {
@@ -323,19 +358,40 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
       animation.pause();
       try {
         const duration = animation.effect.getTiming().duration;
-        return [0, 0.25, 0.5, 0.75, 1].map((progress) => {
-          animation.currentTime = duration * progress;
-          return nav.getBoundingClientRect().width;
-        });
+        const clipping = nav
+          .getAnimations()
+          .find((animation) => animation.transitionProperty === "clip-path");
+        if (!clipping) throw new Error("Missing containment transition");
+        clipping.pause();
+        try {
+          return [0, 0.25, 0.5, 0.75, 1].map((progress) => {
+            animation.currentTime = duration * progress;
+            clipping.currentTime = duration * progress;
+            return {
+              width: nav.getBoundingClientRect().width,
+              clip: getComputedStyle(nav).clipPath,
+            };
+          });
+        } finally {
+          clipping.finish();
+          await clipping.finished;
+        }
       } finally {
         animation.finish();
         await animation.finished;
       }
     }, label);
     const width = expandedWidth + gutterWidth;
-    expect(samples.some((sample) => sample > 0 && sample < width)).toBe(true);
-    expect(samples[0]).toBe(label.startsWith("Hide") ? width : 0);
-    expect(samples.at(-1)).toBe(label.startsWith("Hide") ? 0 : width);
+    expect(
+      samples.some((sample) => sample.width > 0 && sample.width < width),
+    ).toBe(true);
+    expect(samples[0].width).toBe(label.startsWith("Hide") ? width : 0);
+    expect(samples.at(-1).width).toBe(label.startsWith("Hide") ? 0 : width);
+    for (const sample of samples.slice(1, -1))
+      expect(sample.clip).toBe("inset(0px)");
+    expect(samples.at(-1).clip).toBe(
+      label.startsWith("Hide") ? "inset(0px)" : "none",
+    );
   }
 
   await page.emulateMedia({ reducedMotion: "reduce" });

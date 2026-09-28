@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import { App } from "./App";
 import { createServices, type AppServices } from "./services";
@@ -32,6 +32,15 @@ vi.mock("../bundled", () => ({
     },
   ],
 }));
+// jsdom has no media queries; responsive geometry is covered in browser tests.
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    media,
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+});
 let services: AppServices | undefined;
 afterEach(async () => {
   activation.release();

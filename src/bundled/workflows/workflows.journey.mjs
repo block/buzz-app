@@ -960,6 +960,10 @@ for (const from of ["grid", "detail"]) {
     const { button } = editor;
     let editorMounted = false;
     if (from === "detail") {
+      await expect(page.getByRole("status")).toHaveText("Workflows loaded.");
+      await page.evaluate(() =>
+        window.workflowSessionFixture.holdNextEditorRead(),
+      );
       await button("Open Fixture A helper").click();
       await expect
         .poll(() =>
@@ -1044,12 +1048,7 @@ for (const from of ["grid", "detail"]) {
       )
       .toBe("succeeded");
     await expect(button("Open Fixture A helper")).toHaveCount(0);
-    await expect(
-      page.getByText(
-        "Workflow scan finished. Lists may be limited by the relay.",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    await expect(page.getByRole("status")).toHaveText("Workflows loaded.");
     await expect(page.getByText(/^Couldn't confirm deletion/)).toHaveCount(0);
     if (from === "grid")
       editorMounted = await page.evaluate(() => {

@@ -35,6 +35,7 @@ let metadataSequence = 0;
 let heldDefinitionRelease: (() => void) | undefined;
 let heldDefinitionReject: (() => void) | undefined;
 let definitionHoldReleased = false;
+let holdEditorRead = false;
 let finishPublish: ((value: string) => void) | undefined;
 let failPublish: ((error: Error) => void) | undefined;
 let lastPublished: RelayEvent | undefined;
@@ -115,6 +116,7 @@ function session(scope: string) {
           if (
             !definitionHoldReleased &&
             ((fixtureParams.has("hold-editor") &&
+              holdEditorRead &&
               !heldDefinitionRelease &&
               filters.length === 1 &&
               filters[0]?.["#h"]?.includes(fixtureChannel)) ||
@@ -234,6 +236,9 @@ Object.assign(window, {
     definitionQueries: () => definitionQueries,
     definitionChannelCount: () => definitionChannels.size,
     definitionReadHeld: () => heldDefinitionRelease !== undefined,
+    holdNextEditorRead: () => {
+      holdEditorRead = true;
+    },
     failDefinitionRead: () => {
       definitionHoldReleased = true;
       heldDefinitionReject?.();

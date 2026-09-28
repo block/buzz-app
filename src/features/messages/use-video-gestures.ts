@@ -2,6 +2,17 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 
 type FeedbackKind = "play" | "pause" | "forward" | "backward" | "speed";
 
+export function seekVideoBy(element: HTMLVideoElement, seconds: number) {
+  element.currentTime = Math.max(
+    0,
+    Math.min(
+      element.currentTime + seconds,
+      Number.isFinite(element.duration) ? element.duration : Infinity,
+    ),
+  );
+  element.dispatchEvent(new Event("timeupdate"));
+}
+
 /** Picture gestures never intercept the separate playback controls. */
 export function useVideoGestures(
   video: RefObject<HTMLVideoElement | null>,
@@ -103,14 +114,7 @@ export function useVideoGestures(
       }
       const bounds = element.getBoundingClientRect();
       const seconds = event.clientX < bounds.left + bounds.width / 2 ? -10 : 10;
-      element.currentTime = Math.max(
-        0,
-        Math.min(
-          element.currentTime + seconds,
-          Number.isFinite(element.duration) ? element.duration : Infinity,
-        ),
-      );
-      element.dispatchEvent(new Event("timeupdate"));
+      seekVideoBy(element, seconds);
       showFeedback(seconds > 0 ? "forward" : "backward");
     },
     onPointerDown(event: React.PointerEvent<HTMLVideoElement>) {

@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
-import { keypair, message } from "../relay/testing";
+import { keypair, message, signed } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -26,7 +26,7 @@ const videoAttachment = {
   kind: "video" as const,
 };
 
-function setupReview(initialTime = 7) {
+function setupReview(initialTime = 7, writable = false) {
   const viewer = keypair();
   const root = message(viewer, "one", "Video", 1, [
     ["imeta", `url ${videoAttachment.url}`, "m video/mp4"],
@@ -35,6 +35,14 @@ function setupReview(initialTime = 7) {
     viewer: viewer.pubkey,
     relayAuthor: keypair().pubkey,
     media: (url) => `media:${url}`,
+    ...(writable
+      ? {
+          writer: {
+            sign: async (template) => signed(viewer, template),
+            publish: async () => {},
+          },
+        }
+      : {}),
     async query(filters) {
       if (filters.some((filter) => filter.ids?.includes(root.id)))
         return [root];
@@ -209,4 +217,75 @@ it("keeps the focus loop out of the collapsing comments panel", async () => {
   toggle.focus();
   fireEvent.keyDown(toggle, { key: "Tab", shiftKey: true });
   expect(screen.getByRole("slider", { name: "Video volume" })).toHaveFocus();
+});
+
+it("seeks ten seconds with arrow keys, updates the timeline, and omits gesture feedback", async () => {
+  setupReview();
+  const timeline = await screen.findByRole("slider", {
+    name: "Video timeline",
+  });
+  const video = document.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  Object.defineProperty(video, "duration", { configurable: true, value: 100 });
+  fireEvent.durationChange(video);
+  const play = vi.spyOn(video, "play");
+  const pause = vi.spyOn(video, "pause");
+  const close = screen.getByRole("button", { name: "Close fullscreen viewer" });
+  video.currentTime = 25;
+  fireEvent.keyDown(close, { key: "ArrowRight" });
+  expect(video.currentTime).toBe(35);
+  expect(timeline).toHaveAttribute("aria-valuetext", "00:35 / 01:40");
+  fireEvent.keyDown(close, { key: "ArrowRight", repeat: true });
+  expect(video.currentTime).toBe(45);
+  fireEvent.keyDown(close, { key: "ArrowLeft" });
+  expect(video.currentTime).toBe(35);
+  expect(document.querySelector("[data-video-feedback]")).toBeNull();
+  expect(play).not.toHaveBeenCalled();
+  expect(pause).not.toHaveBeenCalled();
+  video.currentTime = 95;
+  fireEvent.keyDown(close, { key: "ArrowRight" });
+  expect(video.currentTime).toBe(100);
+  video.currentTime = 5;
+  fireEvent.keyDown(close, { key: "ArrowLeft" });
+  expect(video.currentTime).toBe(0);
+});
+
+it("leaves editing, native sliders, speed menus, and modified arrow keys alone", async () => {
+  setupReview(7, true);
+  const timeline = await screen.findByRole("slider", {
+    name: "Video timeline",
+  });
+  const video = document.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  video.currentTime = 25;
+  const composer = screen.getByRole("textbox", { name: "Reply to thread" });
+  for (const target of [
+    composer,
+    timeline,
+    screen.getByRole("slider", { name: "Video volume" }),
+  ]) {
+    expect(fireEvent.keyDown(target, { key: "ArrowRight" })).toBe(true);
+    expect(video.currentTime).toBe(25);
+  }
+  const close = screen.getByRole("button", { name: "Close fullscreen viewer" });
+  for (const modifier of [
+    "altKey",
+    "ctrlKey",
+    "metaKey",
+    "shiftKey",
+    "isComposing",
+  ]) {
+    expect(
+      fireEvent.keyDown(close, { key: "ArrowRight", [modifier]: true }),
+    ).toBe(true);
+    expect(video.currentTime).toBe(25);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Playback speed: 1x" }));
+  const speedMenu = screen.getByRole("group", { name: "Playback speed" });
+  expect(
+    fireEvent.keyDown(within(speedMenu).getByRole("button", { name: "2x" }), {
+      key: "ArrowLeft",
+    }),
+  ).toBe(true);
+  expect(video.currentTime).toBe(25);
 });

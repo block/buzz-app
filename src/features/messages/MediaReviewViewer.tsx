@@ -1,6 +1,7 @@
 import { useReviewSidebarMotion } from "./use-review-sidebar-motion";
 import { readReviewOrigin, useReviewEntrance } from "./use-review-entrance";
 import { VideoPlayer, videoTime } from "./VideoPlayer";
+import { seekVideoBy } from "./use-video-gestures";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -322,6 +323,32 @@ function ReviewShell({
         role="dialog"
         tabIndex={-1}
         aria-modal="true"
+        onKeyDown={(event) => {
+          if (
+            attachment.kind !== "video" ||
+            !video.current ||
+            event.defaultPrevented ||
+            event.nativeEvent.isComposing ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey ||
+            (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+          )
+            return;
+          const target = event.target;
+          if (
+            !(target instanceof Element) ||
+            !event.currentTarget.contains(target) ||
+            target.closest(
+              'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="slider"], [role="menu"], [role="listbox"], [aria-label="Media comments"], [aria-label="Playback speed"]',
+            )
+          )
+            return;
+          event.preventDefault();
+          event.stopPropagation();
+          seekVideoBy(video.current, event.key === "ArrowRight" ? 10 : -10);
+        }}
         aria-label={
           attachment.kind === "video" ? "Video review" : "Image viewer"
         }

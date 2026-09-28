@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { MessageEditScope } from "./MessageEditScope";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
 import { replyTree } from "./reply-tree";
@@ -51,6 +52,7 @@ export type ThreadPanelProps = {
     messageId: string,
     attachment: ChannelMessage["attachments"][number],
     seconds: number,
+    hasComments?: boolean,
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
@@ -391,25 +393,57 @@ function ThreadMessages({
     seconds: number;
     request: number;
   }>();
-  const handleMediaTime = useCallback((seconds: number) => {
-    setMediaSeek((current) => ({
-      seconds,
-      request: (current?.request ?? 0) + 1,
-    }));
-  }, []);
   const rootId = snapshot.root?.id;
+  const hasMediaComments =
+    (snapshot.root?.replyCount ?? 0) > 0 ||
+    snapshot.replies.length > 0 ||
+    (!!snapshot.target && snapshot.target.id !== rootId);
   const openRootMedia = useCallback(
     (
       _rowId: string,
       attachment: ChannelMessage["attachments"][number],
       seconds: number,
     ) => {
-      if (rootId) onOpenMediaReview?.(_rowId, attachment, seconds);
+      if (rootId)
+        onOpenMediaReview?.(_rowId, attachment, seconds, hasMediaComments);
     },
-    [rootId, onOpenMediaReview],
+    [rootId, onOpenMediaReview, hasMediaComments],
   );
-  const videoAttachment = snapshot.root?.attachments.find(
+  // Without a selected viewer, bare timecodes need one unambiguous video.
+  const videoUrls = new Set(
+    [snapshot.root, snapshot.target, ...snapshot.replies].flatMap(
+      (row) =>
+        row?.attachments
+          .filter((item) => item.kind === "video")
+          .map((item) => item.url) ?? [],
+    ),
+  );
+  const videoOwner =
+    videoUrls.size === 1
+      ? [snapshot.root, snapshot.target, ...snapshot.replies].find((row) =>
+          row?.attachments.some((item) => item.kind === "video"),
+        )
+      : undefined;
+  const videoAttachment = videoOwner?.attachments.find(
     (item) => item.kind === "video",
+  );
+  const canSeekVideo =
+    !!videoAttachment && (videoOwner?.id === rootId || !!onOpenMediaReview);
+  const handleMediaTime = useCallback(
+    (seconds: number) => {
+      if (!videoOwner || !videoAttachment) return;
+      if (videoOwner.id !== rootId) {
+        // A reply's video may be inside a collapsed branch. Open its canonical
+        // viewer instead of seeking an absent preview or an unrelated root.
+        openRootMedia(videoOwner.id, videoAttachment, seconds);
+        return;
+      }
+      setMediaSeek((current) => ({
+        seconds,
+        request: (current?.request ?? 0) + 1,
+      }));
+    },
+    [videoOwner, videoAttachment, rootId, openRootMedia],
   );
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
   // than exposing transport pagination as a conversation control.
@@ -520,7 +554,7 @@ function ThreadMessages({
           day={false}
           layout={continuation ? "continuation" : "thread"}
           retry={session.messages.retry}
-          {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
+          {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
           {...(onOpenMediaReview && rootId
             ? { onOpenMediaReview: openRootMedia }
             : {})}
@@ -585,7 +619,7 @@ function ThreadMessages({
   }
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
   return (
-    <>
+    <MessageEditScope>
       <section
         ref={scroller}
         className={styles.threadHistory}
@@ -645,7 +679,7 @@ function ThreadMessages({
                 ? { onOpenMediaReview: openRootMedia }
                 : {})}
             />
-            {videoAttachment && mediaPlayback && (
+            {videoOwner?.id === rootId && videoAttachment && mediaPlayback && (
               <span className={styles.mediaCommentAction}>
                 <Button
                   size="sm"
@@ -752,6 +786,6 @@ function ThreadMessages({
           }}
         />
       )}
-    </>
+    </MessageEditScope>
   );
 }

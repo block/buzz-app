@@ -92,6 +92,33 @@ export interface ControlSnapshot {
   runtimeMessage?: string | null;
   databricksDefaults?: { host: string; filter: string };
   agentDefaults?: { provider: string; model: string; ownerOnly: boolean };
+  /** Device-wide Agent defaults from Settings; environment keys only. */
+  defaultSettings?: AgentDefaultSettings;
+  /** Running agents restarted by the save that produced this snapshot. */
+  restarted?: number;
+  /** Agents whose automatic restart after that save failed. */
+  restartFailures?: number;
+}
+export interface AgentDefaultSettings {
+  harness: "buzz-agent" | "goose" | "pi";
+  provider: string;
+  model: string;
+  effort: string;
+  environmentKeys: string[];
+}
+export interface AgentDefaultsEdit
+  extends Omit<AgentDefaultSettings, "environmentKeys"> {
+  /** Missing preserves the native value; null removes it; string replaces it. */
+  environment: Record<string, string | null>;
+}
+/** Save feedback once native restarted the affected running agents. */
+export function savedMessage(restarted = 0, failures = 0) {
+  const agents = (n: number) => `${n} agent${n === 1 ? "" : "s"}`;
+  const saved =
+    restarted === 0 ? "Saved." : `Saved. Restarted ${agents(restarted)}.`;
+  return failures === 0
+    ? saved
+    : `${saved} ${agents(failures)} couldn’t restart with the new settings; check Agents.`;
 }
 export interface AgentEdit {
   name: string;
@@ -148,6 +175,7 @@ export interface AgentControlHost {
     edit: AgentEdit,
   ): Promise<ControlSnapshot>;
   delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
+  saveDefaults?(edit: AgentDefaultsEdit): Promise<ControlSnapshot>;
   action(
     id: string,
     action: AgentAction,
@@ -200,6 +228,7 @@ export interface AgentControl {
   refresh(): Promise<void>;
   save: AgentControlHost["save"];
   delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
+  saveDefaults?(edit: AgentDefaultsEdit): Promise<ControlSnapshot>;
   action: AgentControlHost["action"];
   previewImport: AgentControlHost["previewImport"];
   commitImport: AgentControlHost["commitImport"];
@@ -226,6 +255,13 @@ export function agentLaunchBlock(
   if (agent.status === "starting" || agent.status === "stopping")
     return "Waiting for the process transition.";
   return null;
+}
+
+/** The host's sanitized rejection reason, if a control command carried one. */
+export function agentFailureReason(problem: unknown): string {
+  return problem instanceof Error && typeof problem.cause === "string"
+    ? problem.cause
+    : "";
 }
 
 /** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
@@ -284,8 +320,8 @@ export function createAgentControl(
       update({ status: "loading", error: null });
     const pending = Promise.resolve()
       .then(async () => {
-        // Only read-only native startup/contention failures are transient. Keep
-        // the coalesced read loading for up to twenty 250ms waits, not a UI error.
+        // Only read-only native startup is transient. Keep the coalesced read
+        // loading for up to twenty 250ms waits, not a UI error.
         for (let attempt = 0; !disposed && current === generation; attempt++) {
           try {
             return await host.snapshot();
@@ -293,8 +329,7 @@ export function createAgentControl(
             if (disposed || current !== generation) return;
             if (
               attempt === 20 ||
-              (error !== "Agent runtime is initializing; retry shortly" &&
-                error !== "Another native agent operation is in progress")
+              error !== "Agent runtime is initializing; retry shortly"
             )
               throw error;
             await new Promise<void>((resolve) => setTimeout(resolve, 250));
@@ -363,11 +398,15 @@ export function createAgentControl(
       return result;
     } catch (error) {
       // Host rejects with sanitized user-facing strings, never raw child output.
-      const detail = typeof error === "string" ? `${error} ` : "";
-      const message = `${detail}Could not confirm the operation. Check current status and saved settings before retrying; the operation will not be repeated automatically. Your edits are retained.`;
+      const detail =
+        typeof error === "string"
+          ? `${error}${/[.!?]$/.test(error) ? "" : "."}`
+          : "";
+      const message = `${detail ? `${detail} ` : ""}Could not confirm the operation. Check current status and saved settings before retrying; the operation will not be repeated automatically. Your edits are retained.`;
       if (current === generation) update({ status: "error", error: message });
-      // Dialogs own failed-write details after a successful status read.
-      throw new Error(message);
+      // Dialogs own failed-write details after a successful status read; the
+      // cause carries the host reason without its unconfirmed-status guidance.
+      throw new Error(message, detail ? { cause: detail } : undefined);
     } finally {
       // A superseded credential wait still owns its busy lane, but never the
       // newer Stop's result/error. Credential writes may commit; refresh recovers them.
@@ -563,7 +602,32 @@ export function createAgentControl(
     },
     refresh,
     save: (id, revision, edit) =>
-      run((native) => native.save(id, revision, edit), ready),
+      // Save may restart running agents and wait on their OS credential
+      // prompts; like other credential waits, recovery Stop stays available
+      // and a superseded result never replaces the newer Stop's evidence.
+      run(
+        (native) => native.save(id, revision, edit),
+        ready,
+        false,
+        undefined,
+        true,
+      ),
+    ...(host?.saveDefaults
+      ? {
+          saveDefaults: (edit: AgentDefaultsEdit) =>
+            run(
+              (native) => {
+                if (!native.saveDefaults)
+                  throw new Error("Agent defaults are unavailable.");
+                return native.saveDefaults(edit);
+              },
+              ready,
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
     ...(host?.delete
       ? {
           // Resolve the host method per call, like every other command.

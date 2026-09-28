@@ -3,6 +3,38 @@ import { test as sourceTest } from "./source-fixture.mjs";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import { watchPageErrors } from "./page-errors.mjs";
+
+test("native reaction emoji fit inside compact pills", async ({ page }) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html?reactions&wrap`,
+    );
+    for (const emoji of ["👍", "🙌"]) {
+      const pill = page.locator(`button[data-reaction="${emoji}"]`);
+      const glyph = pill.locator("span").first();
+      await expect(pill).toHaveCSS("height", "28px");
+      await expect(glyph).toHaveCSS("min-width", "18px");
+      await expect(glyph).toHaveCSS("height", "18px");
+      await expect(glyph).toHaveCSS("font-size", "14px");
+      await expect(glyph).toHaveCSS("line-height", "18px");
+    }
+    await page.locator('button[data-reaction="👍"]').screenshot({
+      path: test.info().outputPath("native-reaction-emoji.png"),
+    });
+  } finally {
+    await server.close();
+  }
+});
 
 test("reaction plus opens a visible emoji-only picker, restores focus and publishes custom emoji", async ({
   page,
@@ -16,8 +48,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     server: { host: "127.0.0.1", port: 0 },
   });
   try {
-    const errors = [];
-    page.on("pageerror", (error) => errors.push(String(error)));
+    const errors = watchPageErrors(page);
     await page.route("**/emoji-media/**", (route) =>
       route.fulfill({
         contentType: "image/svg+xml",
@@ -56,9 +87,34 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     const neighborBox = await neighbor.boundingBox();
     expect(shortcutBox.width).toBeCloseTo(neighborBox.width, 1);
     expect(shortcutBox.height).toBeCloseTo(neighborBox.height, 1);
+    await shortcut.hover();
+    const glyph = shortcut.locator('[class*="quickReactionGlyph"]');
+    await expect
+      .poll(() =>
+        glyph.evaluate((element) => {
+          const matrix = new DOMMatrix(getComputedStyle(element).transform);
+          return Math.round(Math.hypot(matrix.a, matrix.b) * 1000) / 1000;
+        }),
+      )
+      .toBe(3);
+    const rotation = await glyph.evaluate((element) => {
+      const matrix = new DOMMatrix(getComputedStyle(element).transform);
+      return (Math.atan2(matrix.b, matrix.a) * 180) / Math.PI;
+    });
+    expect(rotation).toBeGreaterThanOrEqual(-10);
+    expect(rotation).toBeLessThanOrEqual(10);
+    expect(await shortcut.boundingBox()).toEqual(shortcutBox);
+    expect(await neighbor.boundingBox()).toEqual(neighborBox);
+
+    const actions = root.getByRole("group", { name: "Message actions" });
+    const actionsBefore = await actions.boundingBox();
+    const plusBefore = await plus.boundingBox();
     await plus.click();
     const search = page.locator('em-emoji-picker input[type="search"]');
     await expect(search).toBeVisible();
+    // Mounting the portaled picker must not introduce another flex gap.
+    await expect.poll(() => actions.boundingBox()).toEqual(actionsBefore);
+    await expect.poll(() => plus.boundingBox()).toEqual(plusBefore);
     await search.hover();
     await search.focus();
     await expect(
@@ -251,7 +307,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     await sole.press("Enter");
     await expect(sole).toHaveCount(0);
     await expect(stableAction).toBeFocused();
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }
@@ -320,5 +376,53 @@ sourceTest(
     await expect(
       page.getByRole("button", { name: "Add reaction", exact: true }),
     ).toHaveCount(0);
+  },
+);
+
+// Browser-only: the documented gallery owns a separate root/iframe, so app-level
+// provider coverage cannot prove that its portaled clipboard feedback is wired.
+sourceTest(
+  "standalone message gallery hosts clipboard success and failure toasts",
+  async ({ page }) => {
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(String(error)));
+    await page.addInitScript(() => {
+      let attempts = 0;
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async () => {
+            if (++attempts === 1) throw new Error("Clipboard unavailable");
+          },
+        },
+      });
+    });
+    await page.goto("/tests/fixtures/message-gallery.html");
+    const row = page.locator("[data-message-id]").first();
+    const notifications = page.getByRole("region", {
+      name: "App notifications",
+    });
+    const copy = async () => {
+      await row.hover();
+      await row
+        .getByRole("button", { name: "More message actions", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "Copy message", exact: true })
+        .click();
+    };
+    await copy();
+    await expect(
+      notifications.getByText(
+        "Couldn’t copy. Try again from the message menu.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await copy();
+    await expect(
+      notifications.getByText("Message copied", { exact: true }),
+    ).toBeVisible();
+    await expect(row).toBeVisible();
+    expect(errors).toEqual([]);
   },
 );

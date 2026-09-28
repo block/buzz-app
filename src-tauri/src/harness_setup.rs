@@ -1,7 +1,7 @@
 //! Device-local Harnesses setup. Never run installers in a webview or accept a command from IPC.
+use crate::agents::AgentHost;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-use crate::agents::InstallRestart;
-use crate::agents::{self, AgentHost};
+use crate::agents::{self, InstallRestart};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use buzz_agent_controller::Action;
 use buzz_agent_controller::ProcessStatus;
@@ -35,7 +35,7 @@ struct InstallProcess {
 }
 #[cfg(not(any(target_os = "macos", target_os = "linux", test)))]
 #[derive(Default)]
-pub(crate) struct HarnessSetup;
+pub(crate) struct HarnessSetup {}
 #[cfg(not(any(target_os = "macos", target_os = "linux", test)))]
 impl HarnessSetup {
     pub(crate) fn shutdown(&self) {}
@@ -117,6 +117,8 @@ fn kill_group(group: u32) {
     unsafe {
         libc::kill(-(group as i32), libc::SIGKILL);
     }
+    #[cfg(not(unix))]
+    let _ = group; // Non-Unix unit tests exercise bookkeeping, not process signalling.
 }
 
 #[derive(Serialize)]
@@ -310,7 +312,7 @@ pub(crate) async fn goose_install<R: tauri::Runtime>(
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = (app, state, agents);
-        return Err("Goose installation is supported only on macOS and Linux".into());
+        Err("Goose installation is supported only on macOS and Linux".into())
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
@@ -318,7 +320,7 @@ pub(crate) async fn goose_install<R: tauri::Runtime>(
         if buzz_agent_controller::installed("goose").is_some() {
             return Err("Goose is already installed; click Check again".into());
         }
-        let waiting = agents.waiting_for_goose()?;
+        let waiting = agents.waiting_for_goose().await?;
         let path = app
             .path()
             .app_data_dir()
@@ -394,7 +396,7 @@ pub(crate) async fn pi_install<R: tauri::Runtime>(
         {
             return Err("Pi is already installed; click Check again".into());
         }
-        let waiting = agents.waiting_for_pi()?;
+        let waiting = agents.waiting_for_pi().await?;
         let path = app_data.join("agent-controller/pi-install.log");
         let mut report = run_install(&path, |log| {
             crate::managed_pi::install(state.inner(), &app_data, log)

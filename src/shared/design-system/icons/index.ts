@@ -1,6 +1,16 @@
 import { defineIcon } from "./createDecorativeIcon";
 import { GitHubIssueArtwork } from "./GitHubIssue";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
+import { ArrowClockwiseIcon as PhosphorArrowClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
+export const ArrowClockwiseIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowClockwiseIcon,
+);
+import { ArrowCounterClockwiseIcon as PhosphorArrowCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowCounterClockwise";
+export const ArrowCounterClockwiseIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowCounterClockwiseIcon,
+);
 // Phosphor only. Add individual exports as needed; all native weights remain available.
 import { BrowserIcon as PhosphorBrowserIcon } from "@phosphor-icons/react/dist/csr/Browser";
 export const BrowserIcon = defineIcon("phosphor", PhosphorBrowserIcon);
@@ -75,6 +85,8 @@ export const EnvelopeOpenIcon = defineIcon(
   "phosphor",
   PhosphorEnvelopeOpenIcon,
 );
+import { EyeIcon as PhosphorEyeIcon } from "@phosphor-icons/react/dist/csr/Eye";
+export const EyeIcon = defineIcon("phosphor", PhosphorEyeIcon);
 import { EyeSlashIcon as PhosphorEyeSlashIcon } from "@phosphor-icons/react/dist/csr/EyeSlash";
 export const EyeSlashIcon = defineIcon("phosphor", PhosphorEyeSlashIcon);
 import { FigmaLogoIcon as PhosphorFigmaLogoIcon } from "@phosphor-icons/react/dist/csr/FigmaLogo";
@@ -312,3 +324,11 @@ export const ArrowsDownUpIcon = defineIcon(
 
 import { InfoIcon as PhosphorInfoIcon } from "@phosphor-icons/react/dist/csr/Info";
 export const InfoIcon = defineIcon("phosphor", PhosphorInfoIcon);
+
+import { SpeakerHighIcon as PhosphorSpeakerHighIcon } from "@phosphor-icons/react/dist/csr/SpeakerHigh";
+export const SpeakerHighIcon = defineIcon("phosphor", PhosphorSpeakerHighIcon);
+import { SpeakerSlashIcon as PhosphorSpeakerSlashIcon } from "@phosphor-icons/react/dist/csr/SpeakerSlash";
+export const SpeakerSlashIcon = defineIcon(
+  "phosphor",
+  PhosphorSpeakerSlashIcon,
+);

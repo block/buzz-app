@@ -8,6 +8,8 @@ export interface ModelRequest {
   filter: string;
   /** "test" is Pi only: one tiny prompt with the draft provider and model. */
   action: "connect" | "refresh" | "disconnect" | "test";
+  /** Blank host/filter come from write-only Agent defaults; native supplies them. */
+  inheritWorkspace?: boolean;
 }
 export interface ModelCatalog {
   host: string;

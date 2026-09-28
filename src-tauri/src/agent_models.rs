@@ -16,24 +16,6 @@ use std::{
 use tauri_plugin_opener::OpenerExt;
 
 const CANCELLED: &str = "Connection request cancelled or expired";
-const HOST_BUSY: &str = "Another native agent operation is in progress";
-
-/// Lookup settings reads share the agent host lock with snapshot refreshes.
-/// Wait for it the way snapshot refresh does (up to twenty 250ms waits) rather
-/// than failing the lookup. The wait runs inside the cancellable lookup task,
-/// before any credential or catalog work.
-async fn read_settings<T>(read: impl Fn() -> Result<T, String>) -> Result<T, String> {
-    let mut waits = 0;
-    loop {
-        match read() {
-            Err(error) if error == HOST_BUSY && waits < 20 => {
-                waits += 1;
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-            result => return result,
-        }
-    }
-}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Defaults {
@@ -56,6 +38,10 @@ pub(crate) struct Request {
     host: String,
     filter: String,
     action: Operation,
+    /// Blank host/filter are inherited from write-only Agent defaults the UI
+    /// cannot see, so native supplies them instead of treating blank as explicit.
+    #[serde(default)]
+    inherit_workspace: bool,
 }
 #[derive(Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -230,18 +216,26 @@ fn resolve(
     if request.host.len() > 4096 || request.filter.len() > 4096 {
         return Err("Connection settings are too long".into());
     }
+    // An explicit agent workspace/filter must never be replaced by an inherited
+    // default, even if a caller sends inheritWorkspace with blank request fields.
+    let can_inherit = request.inherit_workspace
+        && request
+            .edit
+            .as_ref()
+            .is_some_and(|edit| edit.harness.databricks.is_none());
+    let defer = |value: &str| can_inherit && value.is_empty();
     let host = origin(context.host.as_deref().unwrap_or(&request.host))?;
-    if context.host.is_some() && origin(&request.host)? != host {
+    if context.host.is_some() && !defer(&request.host) && origin(&request.host)? != host {
         return Err("Workspace conflicts with the saved/draft DATABRICKS_HOST override; use that workspace or edit the override".into());
     }
-    if context
-        .filter
-        .as_ref()
-        .is_some_and(|v| v != &request.filter)
-    {
-        return Err("Filter conflicts with the saved/draft DATABRICKS_MODEL_FILTER override; edit the override or match it explicitly".into());
-    }
-    let filter = DatabricksModelFilter::parse(Some(&request.filter))
+    let filter = match &context.filter {
+        Some(native) if defer(&request.filter) => native,
+        Some(native) if native != &request.filter => {
+            return Err("Filter conflicts with the saved/draft DATABRICKS_MODEL_FILTER override; edit the override or match it explicitly".into());
+        }
+        _ => &request.filter,
+    };
+    let filter = DatabricksModelFilter::parse(Some(filter))
         .map_err(|_| "Invalid model filter".to_owned())?;
     Ok((host, filter))
 }
@@ -273,19 +267,19 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             == Some("buzz-pi-acp")
     }) {
         let edit = request.edit.clone().unwrap();
+        let prepared = controller
+            .pi_model_context(
+                request.id.as_deref(),
+                request.expected_revision,
+                edit.clone(),
+            )
+            .await;
         return host
             .run(ticket, async move {
                 if request.action == Operation::Disconnect {
                     return Err("Pi credentials are managed by Pi".into());
                 }
-                let context = read_settings(|| {
-                    controller.pi_model_context(
-                        request.id.as_deref(),
-                        request.expected_revision,
-                        edit.clone(),
-                    )
-                })
-                .await?;
+                let context = prepared?;
                 if request.action == Operation::Test {
                     let harness = &edit.harness;
                     crate::pi_models::test(context, &harness.provider, &harness.model).await?;
@@ -336,22 +330,17 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                 })
                 .await;
         }
+        let prepared = match request.edit.clone() {
+            Some(edit) => {
+                controller
+                    .goose_model_context(request.id.as_deref(), request.expected_revision, edit)
+                    .await
+            }
+            None => Err("Agent draft is required for model lookup".to_owned()),
+        };
         return host
             .run(ticket, async move {
-                let context = read_settings(|| {
-                    request
-                        .edit
-                        .clone()
-                        .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
-                        .and_then(|edit| {
-                            controller.goose_model_context(
-                                request.id.as_deref(),
-                                request.expected_revision,
-                                edit,
-                            )
-                        })
-                })
-                .await?;
+                let context = prepared?;
                 let model_overridden = context.model_overridden;
                 let models = crate::goose_models::fetch(context)
                     .await?
@@ -372,57 +361,66 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
     }
     // Disconnect is recovery: changing provider or breaking saved settings must
     // not trap credentials. Its explicit host selects ONLY this app's cache.
-    let action = request.action;
-    let prepare = {
-        let (host, controller) = (host.clone(), controller.clone());
-        move || {
-            if action == Operation::Disconnect {
+    let prepared = if request.action == Operation::Disconnect {
+        // An inherited workspace is sent blank; native resolves it from Agent
+        // defaults without the draft, so recovery survives invalid settings.
+        let named = if request.inherit_workspace && request.host.is_empty() {
+            controller
+                .inherited_workspace()
+                .await
+                .and_then(|workspace| {
+                    workspace.ok_or_else(|| {
+                        "Agent defaults no longer set a Databricks workspace".to_owned()
+                    })
+                })
+        } else {
+            controller.ensure_open().await.map(|_| request.host.clone())
+        };
+        named
+            .and_then(|named| origin(&named))
+            .and_then(|workspace| {
+                host.cache(&workspace)
+                    .map(|cache| (false, workspace, None, cache))
+            })
+    } else {
+        // Short settings read only; never hold the controller across network waits.
+        let context = match request.edit.clone() {
+            Some(edit) => {
                 controller
-                    .ensure_open()
-                    .and_then(|_| origin(&request.host))
-                    .and_then(|workspace| {
-                        host.cache(&workspace)
-                            .map(|cache| (false, workspace, None, cache))
-                    })
-            } else {
-                // Short settings read only; never hold the controller across network waits.
-                request
-                    .edit
-                    .clone()
-                    .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
-                    .and_then(|edit| {
-                        controller.model_context(
-                            request.id.as_deref(),
-                            request.expected_revision,
-                            edit,
-                        )
-                    })
-                    .and_then(|context| {
-                        resolve(&request, &context).map(|(workspace, filter)| {
-                            (context.model_overridden, workspace, filter)
-                        })
-                    })
-                    .and_then(|(overridden, workspace, filter)| {
-                        host.cache(&workspace)
-                            .map(|cache| (overridden, workspace, filter, cache))
-                    })
+                    .model_context(request.id.as_deref(), request.expected_revision, edit)
+                    .await
             }
-        }
+            None => Err("Agent draft is required for model lookup".to_owned()),
+        };
+        context
+            .and_then(|context| {
+                resolve(&request, &context)
+                    .map(|(workspace, filter)| (context.model_overridden, workspace, filter))
+            })
+            .and_then(|(overridden, workspace, filter)| {
+                host.cache(&workspace)
+                    .map(|cache| (overridden, workspace, filter, cache))
+            })
     };
     let factory = state.factory.clone();
+    let hide_inherited_host = request.inherit_workspace && request.host.is_empty();
     host.run(ticket, async move {
-        let (model_overridden, workspace, filter, cache) = read_settings(&prepare).await?;
-        if action == Operation::Disconnect {
-            controller.disconnect(&workspace)?;
+        let (model_overridden, workspace, filter, cache) = prepared?;
+        if request.action == Operation::Disconnect {
+            controller.disconnect(&workspace).await?;
             return Ok(Catalog {
-                host: workspace,
+                host: if hide_inherited_host {
+                    String::new()
+                } else {
+                    workspace
+                },
                 models: vec![],
                 model_overridden,
                 disconnected: true,
             });
         }
         execute(
-            action,
+            request.action,
             workspace,
             filter,
             cache,
@@ -433,6 +431,14 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
         .await
     })
     .await
+    .map(|mut catalog| {
+        // The native connection uses the inherited write-only environment;
+        // the catalog projection must not reveal its workspace URL to the UI.
+        if hide_inherited_host {
+            catalog.host.clear();
+        }
+        catalog
+    })
 }
 
 // Production reuses the immutable engine with its existing auth policy. Tests replace only the

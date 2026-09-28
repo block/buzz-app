@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
+import { watchPageErrors } from "../../browser/page-errors.mjs";
 import { COMPONENTS } from "../../../src/shared/design-system/ui/registry";
 import { PHOSPHOR_ICONS } from "../../../src/shared/design-system/icons/inventory";
 
@@ -85,6 +86,44 @@ test("status badges keep avatar sizes and show a clear cutout in both modes", as
       await expect(dot).toHaveCSS("background-image", "none");
       await expect(dot).toHaveCSS("box-shadow", "none");
     }
+    // The same-status outline is what meets the surrounding surface. Check
+    // the actual CSS paint stack in the browser, including squircle masks.
+    for (const status of ["online", "away", "offline"]) {
+      const dots = page.locator(
+        `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot`,
+      );
+      const centers = await dots.evaluateAll((elements) =>
+        elements.map((element) => {
+          const outer = getComputedStyle(element);
+          const inner = getComputedStyle(element, "::after");
+          return {
+            content: inner.content,
+            inset: inner.inset,
+            color: inner.backgroundColor,
+            mask: inner.maskImage,
+            outerMask: outer.maskImage,
+          };
+        }),
+      );
+      for (const center of centers) {
+        if (status === "offline") {
+          expect(center.content).toBe("none");
+        } else {
+          expect(center.content).toBe('""');
+          expect(center.inset).toBe("1px");
+          expect(center.mask).toBe(center.outerMask);
+          expect(center.color).toBe(
+            status === "online"
+              ? mode === "light"
+                ? "rgb(43, 154, 102)"
+                : "rgb(51, 176, 116)"
+              : mode === "light"
+                ? "rgb(255, 186, 24)"
+                : "rgb(255, 214, 10)",
+          );
+        }
+      }
+    }
     const box = await large.boundingBox();
     if (!box) throw new Error("Large status avatar is not visible");
     const clip = {
@@ -128,6 +167,10 @@ test("status badges keep avatar sizes and show a clear cutout in both modes", as
     expect(difference(paint.gap, paint.background), `${mode} gap`).toBeLessThan(
       12,
     );
+    expect(
+      difference(paint.dot, mode === "light" ? [43, 154, 102] : [51, 176, 116]),
+      `${mode} rendered step-10 center`,
+    ).toBeLessThan(3);
     expect(
       difference(paint.dot, paint.background),
       `${mode} dot`,
@@ -216,7 +259,7 @@ test("built viewer loads every specimen and foundation without app connections",
 }) => {
   const failures: string[] = [];
   const sockets: string[] = [];
-  page.on("pageerror", (e) => failures.push(e.message));
+  const pageErrors = watchPageErrors(page);
   page.on("response", (r) => {
     if (r.status() >= 400) failures.push(`${r.status()} ${r.url()}`);
   });
@@ -291,7 +334,7 @@ test("built viewer loads every specimen and foundation without app connections",
   await expect(
     nav.getByRole("link", { name: /Conversation|Agent work/ }),
   ).toHaveCount(0);
-  expect(failures).toEqual([]);
+  expect([...pageErrors.unexplained(), ...failures]).toEqual([]);
   expect(sockets).toEqual([]);
 });
 
@@ -731,7 +774,7 @@ test("a stale or renamed link explains itself instead of rendering blank", async
   page,
 }) => {
   const failures: string[] = [];
-  page.on("pageerror", (e) => failures.push(e.message));
+  const pageErrors = watchPageErrors(page);
   for (const hash of [
     "#/design/components/renamed-away",
     "#/design/colours",
@@ -749,7 +792,7 @@ test("a stale or renamed link explains itself instead of rendering blank", async
       page.getByRole("heading", { name: "Buzz Design System", exact: true }),
     ).toBeVisible();
   }
-  expect(failures).toEqual([]);
+  expect([...pageErrors.unexplained(), ...failures]).toEqual([]);
 });
 
 test("switch labels activate the control and busy switches preserve focus", async ({
@@ -1455,7 +1498,7 @@ test("built Messages gallery renders isolated product states and follows viewer 
 }) => {
   const failures: string[] = [];
   const sockets: string[] = [];
-  page.on("pageerror", (error) => failures.push(error.message));
+  const pageErrors = watchPageErrors(page);
   page.on("response", (response) => {
     if (response.status() >= 400)
       failures.push(`${response.status()} ${response.url()}`);
@@ -1547,7 +1590,7 @@ test("built Messages gallery renders isolated product states and follows viewer 
   ).toBeVisible();
   await page.reload();
   await expect(gallery.locator(".message-gallery-example")).toHaveCount(33);
-  expect(failures).toEqual([]);
+  expect([...pageErrors.unexplained(), ...failures]).toEqual([]);
   expect(sockets).toEqual([]);
 });
 

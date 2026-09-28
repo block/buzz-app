@@ -25,6 +25,7 @@ export function AgentModelPicker({
   control,
   defaults,
   defaultModel,
+  inheritedWorkspace,
   onPiProviders,
   onChange,
   disabled = false,
@@ -38,14 +39,22 @@ export function AgentModelPicker({
   control: AgentControl;
   defaults: ControlSnapshot["databricksDefaults"];
   defaultModel?: string | undefined;
+  /** Workspace/filter supplied by write-only Agent defaults; values stay native. */
+  inheritedWorkspace?: { host: boolean; filter: boolean };
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const statusId = useId();
   const goose = isGoose(draft.command);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const external = goose || pi;
-  const host = draft.databricks?.host ?? defaults?.host ?? "";
-  const filter = draft.databricks?.filter ?? defaults?.filter ?? "";
+  // An inherited Agent defaults value wins over the compiled floor at launch;
+  // leave it blank here so native resolves the same hidden value.
+  const host =
+    draft.databricks?.host ??
+    (inheritedWorkspace?.host ? "" : (defaults?.host ?? ""));
+  const filter =
+    draft.databricks?.filter ??
+    (inheritedWorkspace?.filter ? "" : (defaults?.filter ?? ""));
   const [catalog, setCatalog] = useState<{
     key: string;
     data: ModelCatalog;
@@ -152,7 +161,7 @@ export function AgentModelPicker({
     testing.current?.abort();
     testing.current = null;
     setTest(null);
-    if (!external && !host.trim()) {
+    if (!external && !host.trim() && !inheritedWorkspace?.host) {
       setStatus(
         "Set your Databricks workspace under Advanced → Model to browse models.",
       );
@@ -181,6 +190,11 @@ export function AgentModelPicker({
           host: external ? "" : host,
           filter: external ? "" : filter,
           action,
+          ...(!external &&
+          ((inheritedWorkspace?.host && !host) ||
+            (inheritedWorkspace?.filter && !filter))
+            ? { inheritWorkspace: true }
+            : {}),
         },
         abort.signal,
       );
@@ -336,8 +350,8 @@ export function AgentModelPicker({
                   void run("connect");
               }}
               placeholder={
-                draft.command === "buzz-agent" && defaultModel
-                  ? `Build default: ${defaultModel}`
+                defaultModel
+                  ? `Use agent defaults (${defaultModel})`
                   : "Choose or enter a model"
               }
               onBlur={commitQuery}
@@ -566,7 +580,11 @@ export function AgentModelPicker({
                         <Input
                           disabled={disabled}
                           value={host}
-                          placeholder="https://workspace.example.com"
+                          placeholder={
+                            inheritedWorkspace?.host
+                              ? "Use agent defaults"
+                              : "https://workspace.example.com"
+                          }
                           spellCheck={false}
                           onChange={(event) =>
                             onChange({
@@ -579,6 +597,11 @@ export function AgentModelPicker({
                         <Input
                           disabled={disabled}
                           value={filter}
+                          placeholder={
+                            inheritedWorkspace?.filter
+                              ? "Use agent defaults"
+                              : undefined
+                          }
                           spellCheck={false}
                           onChange={(event) =>
                             onChange({
@@ -607,8 +630,7 @@ export function AgentModelPicker({
                       <p className="text-body-sm text-secondary">
                         Credentials are shared within Foundation for this
                         workspace, not with old Buzz. Disconnect removes this
-                        app’s cache, not your browser session. Save does not
-                        restart an agent.
+                        app’s cache, not your browser session.
                       </p>
                     </>
                   )}

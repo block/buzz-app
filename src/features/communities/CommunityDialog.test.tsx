@@ -32,11 +32,17 @@ afterEach(() => {
 });
 
 it("publishes a description-only edit to an existing community profile", async () => {
-  api.inspectProfile.mockResolvedValueOnce({
-    exists: true,
-    existing: { name: "Fixture", about: "Before" },
-    profile: { name: "Fixture", picture: "", about: "Before" },
-  });
+  api.inspectProfile
+    .mockResolvedValueOnce({
+      exists: true,
+      existing: { name: "Fixture", about: "Before" },
+      profile: { name: "Fixture", picture: "", about: "Before" },
+    })
+    .mockResolvedValueOnce({
+      exists: true,
+      existing: { name: "Fixture", about: "After" },
+      profile: { name: "Fixture", picture: "", about: "After" },
+    });
   const user = userEvent.setup();
   vi.stubGlobal(
     "fetch",
@@ -58,6 +64,11 @@ it("publishes a description-only edit to an existing community profile", async (
   render(
     <CommunityDialog communities={communities} mode="join" close={() => {}} />,
   );
+  expect(
+    screen.getByRole("dialog", { name: "Add a community" }),
+  ).toHaveAccessibleDescription(
+    "Use your identity across communities. Your profile and conversations stay separate in each one.",
+  );
   await user.type(screen.getByLabelText("Relay URL"), "wss://relay.example");
   await user.click(screen.getByRole("button", { name: "Continue" }));
   const description = await screen.findByLabelText(
@@ -73,6 +84,7 @@ it("publishes a description-only edit to an existing community profile", async (
     { name: "Fixture", picture: "", about: "After" },
     { name: "Fixture", about: "Before" },
   );
+  await waitFor(() => expect(communities.joined).toHaveBeenCalledOnce());
 });
 
 it("opens with an unchanged over-limit profile and blocks publishing it", async () => {
@@ -223,11 +235,21 @@ it.each([
 
 it("explains an inherited invalid avatar when editing at join and recovers on replacement", async () => {
   const picture = "http://images.example/avatar.png";
-  api.inspectProfile.mockResolvedValueOnce({
-    exists: true,
-    existing: { name: "Fixture", picture },
-    profile: { name: "Fixture", picture, about: "" },
-  });
+  api.inspectProfile
+    .mockResolvedValueOnce({
+      exists: true,
+      existing: { name: "Fixture", picture },
+      profile: { name: "Fixture", picture, about: "" },
+    })
+    .mockResolvedValueOnce({
+      exists: true,
+      existing: {},
+      profile: {
+        name: "Fixture changed",
+        picture: "https://images.example/new.png",
+        about: "",
+      },
+    });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
@@ -274,6 +296,7 @@ it("explains an inherited invalid avatar when editing at join and recovers on re
     },
     { name: "Fixture", picture },
   );
+  await waitFor(() => expect(communities.joined).toHaveBeenCalledOnce());
 });
 
 it("keeps join unavailable after native identity hydration, but still saves a local profile", async () => {
@@ -328,3 +351,45 @@ it("keeps join unavailable after native identity hydration, but still saves a lo
     localStorage.clear();
   }
 });
+
+it.each([
+  "",
+  "not-a-relay",
+  "http://relay.example",
+  "wss://relay.example/path",
+])(
+  "shows inline relay validation for %j without contacting a relay",
+  async (value) => {
+    const user = userEvent.setup();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const communities = {
+      snapshot: () => ({
+        status: "ready",
+        relayAvailable: true,
+        profile: { name: "Local", picture: "" },
+      }),
+    } as unknown as Communities;
+    render(
+      <CommunityDialog
+        communities={communities}
+        mode="join"
+        close={() => {}}
+      />,
+    );
+    const input = screen.getByLabelText("Relay URL");
+    if (value) await user.type(input, value);
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Enter a wss:// or https:// relay URL",
+    );
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveAccessibleDescription(
+      /Enter a wss:\/\/ or https:\/\/ relay URL/,
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    await user.clear(input);
+    await user.type(input, "wss://relay.example");
+    expect(screen.queryByRole("alert")).toBeNull();
+  },
+);

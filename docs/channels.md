@@ -12,6 +12,10 @@ The panel reads GitHub's public API on demand. Private or unavailable objects an
 API limits show an explanation with a direct GitHub link. File and branch links
 continue to open normally. No GitHub account connection is configured yet.
 
+Descriptions support GitHub-flavored Markdown with inline images, video, and
+audio. Other files remain links; media that cannot load keeps a fallback link.
+Use **Open on GitHub** for attachments that require repository access.
+
 On desktop, an ordinary click on an unhandled HTTP(S) link with
 `target="_blank"` uses the native Tauri opener to launch the default browser,
 including attachments and **Open on GitHub**. A plugin that handles the click prevents that fallback; disabling
@@ -154,9 +158,20 @@ derive the saved group id separately from `group:<id>` rather than conflating it
 with rendered placement. Right-clicking the separate session disclosure remains
 outside the parent menu trigger, as do child-session rows.
 
-Sidebar create-channel dialogs and partial-setup recovery stay available on other
-pages. Completion is fenced to the originating relay session and navigates to a
-normal conversation destination. New-session intent uses the Channels version-1
+Sidebar create-channel dialogs stay available on other pages. Channel admission
+(creation plus verified viewer membership) is fenced to the originating relay
+session and navigates to a normal conversation destination. Remaining template
+setup continues in that session; failure produces a dismissible notice without
+navigating again. Frozen setup receipts and delivery evidence remain saved, but
+there is no template Resume or automatic startup continuation. An uncertain
+admission keeps the original form locked to its channel identity. **Retry channel**
+checks that creation first; if delivery remains unknown, an explicit click may
+republish only the exact saved Create event, with the same UUID and signature.
+It never continues template writes or retries in the background. Successful recovery opens that channel and reports
+any unfinished setup for manual inspection. Closing/reopening retains the attempt;
+after session replacement, unresolved ordinary creations (including pre-upgrade
+Outbox entries) restore for the same identity-preserving retry. Already-admitted partial
+setups do not occupy a new Create form. New-session intent uses the Channels version-1
 page route `{ kind: "new-session", parentId }`; Channels checks parent access/type
 and Sessions availability. Only parent intent, never draft text, enters history.
 Preparing-DM suppression captures the pre-open roster and exact member set, hiding
@@ -353,6 +368,16 @@ The port retains the prepared-store implementation and its behavior tests:
 - A 60-second head freshness lease; warm revisits reuse heads without new reads.
   Partial discovery never treats an omitted channel as a membership revocation.
   Explicit denial or signed membership removal invalidates private cached views.
+- Viewer membership discovery follows 500-event roster pages using the relay's
+  `(until, before_id)` cursor (timestamp descending, event ID ascending), then
+  fetches names in batches of at most 500 channel IDs. Verified grants become
+  available page by page; successful paged exhaustion confirms scan-start
+  omissions with fresh exact roster reads before reconciling against the roster
+  versions present when the scan began. Failure, cancellation, nonadvancing
+  cursors and the separate 1,024-entry roster/metadata retention caps leave
+  coverage partial. Each scan is bounded to three roster-page reads plus at most
+  eight 128-channel confirmation reads; metadata failure preserves successful
+  membership evidence and earlier name batches.
 - Conventional top-down virtua timeline, prepend anchoring, near-bottom following,
   and three cached geometries keyed by session, channel, content, profiles, and width.
 

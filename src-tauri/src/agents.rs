@@ -21,6 +21,12 @@ pub(crate) struct Snapshot {
     harness_options: Vec<HarnessOption>,
     databricks_defaults: crate::agent_models::Defaults,
     agent_defaults: buzz_agent_controller::BuildDefaults,
+    /// Running agents restarted by this save; absent on other responses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restarted: Option<usize>,
+    /// Agents whose automatic restart after this save failed (not skipped).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restart_failures: Option<usize>,
 }
 impl Snapshot {
     fn from(
@@ -38,6 +44,8 @@ impl Snapshot {
             harness_options: harness_options(app_data),
             databricks_defaults: crate::agent_models::defaults(),
             agent_defaults: buzz_agent_controller::build_defaults(),
+            restarted: None,
+            restart_failures: None,
         }
     }
 }
@@ -370,7 +378,11 @@ type ProfilePublication = (
 );
 
 #[derive(Clone)]
-pub(crate) struct AgentHost(Arc<Mutex<Result<Host, String>>>, Arc<AtomicBool>);
+pub(crate) struct AgentHost(
+    Arc<Mutex<Result<Host, String>>>,
+    Arc<AtomicBool>,
+    Arc<tokio::sync::Mutex<()>>,
+);
 impl AgentHost {
     pub(crate) fn initialize(
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
@@ -380,7 +392,8 @@ impl AgentHost {
             "Agent runtime is initializing; retry shortly".into(),
         )));
         let closed = Arc::new(AtomicBool::new(false));
-        let owner = Self(state.clone(), closed.clone());
+        let admission = Arc::new(tokio::sync::Mutex::new(()));
+        let owner = Self(state.clone(), closed.clone(), admission.clone());
         tauri::async_runtime::spawn(async move {
             let opened = tauri::async_runtime::spawn_blocking(move || {
                 let bundle = resources.and_then(RuntimeBundle::new);
@@ -402,27 +415,28 @@ impl AgentHost {
             if let Ok(mut state) = state.lock() {
                 *state = opened;
             }
-            Self(state, closed).restore().await;
+            Self(state, closed, admission).restore().await;
         });
         owner
     }
+    // Synchronous admission belongs on a blocking worker; external waits release it.
     fn with<T>(&self, operation: impl FnOnce(&mut Host) -> Result<T, String>) -> Result<T, String> {
         if self.1.load(Ordering::SeqCst) {
             return Err("Agent host is shutting down".into());
         }
-        let mut state = self
-            .0
-            .try_lock()
-            .map_err(|_| "Another native agent operation is in progress")?;
+        let mut state = self.0.lock().map_err(|_| {
+            "Native agent state is unavailable after an operation failed; restart the app"
+        })?;
         let host = state.as_mut().map_err(|message| message.clone())?;
-        if host.closed {
+        if self.1.load(Ordering::SeqCst) || host.closed {
             return Err("Agent host is shutting down".into());
         }
         operation(host)
     }
-    fn begin_profile(&self, id: &str) -> Result<ProfilePublication, String> {
-        self.with(|host| {
-            let profile = host.controller.creation_profile(id)?;
+    async fn begin_profile(&self, id: &str) -> Result<ProfilePublication, String> {
+        let id = id.to_owned();
+        run(self.clone(), move |host| {
+            let profile = host.controller.creation_profile(&id)?;
             let guard = host
                 .profiles
                 .entry(id.to_owned())
@@ -434,32 +448,37 @@ impl AgentHost {
                 })?;
             Ok((guard, profile, host.credentials.clone()))
         })
+        .await
     }
     pub(crate) async fn restore(&self) {
-        let ids = self
-            .with(|host| host.controller.launch_ids())
+        let ids = run(self.clone(), |host| host.controller.launch_ids())
+            .await
             .unwrap_or_default();
         for id in ids {
             let _ = start(self.clone(), id, Action::Start, true, None, None).await;
         }
     }
-    pub(crate) fn ensure_open(&self) -> Result<(), String> {
-        self.with(|_| Ok(()))
+    pub(crate) async fn ensure_open(&self) -> Result<(), String> {
+        run(self.clone(), |_| Ok(())).await
     }
-    #[cfg(any(target_os = "macos", target_os = "linux", test))]
-    pub(crate) fn waiting_for_goose(&self) -> Result<Vec<String>, String> {
+    pub(crate) async fn inherited_workspace(&self) -> Result<Option<String>, String> {
+        run(self.clone(), |host| host.controller.inherited_workspace()).await
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(crate) async fn waiting_for_goose(&self) -> Result<Vec<String>, String> {
         self.waiting_for(crate::harness_setup::waiting_for_goose)
+            .await
     }
-    #[cfg(any(target_os = "macos", target_os = "linux", test))]
-    pub(crate) fn waiting_for_pi(&self) -> Result<Vec<String>, String> {
-        self.waiting_for(crate::harness_setup::waiting_for_pi)
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(crate) async fn waiting_for_pi(&self) -> Result<Vec<String>, String> {
+        self.waiting_for(crate::harness_setup::waiting_for_pi).await
     }
-    #[cfg(any(target_os = "macos", target_os = "linux", test))]
-    fn waiting_for(
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn waiting_for(
         &self,
         predicate: fn(&buzz_agent_controller::AgentView) -> bool,
     ) -> Result<Vec<String>, String> {
-        self.with(|host| {
+        run(self.clone(), move |host| {
             Ok(host
                 .controller
                 .snapshot()?
@@ -469,10 +488,11 @@ impl AgentHost {
                 .map(|agent| agent.id.clone())
                 .collect())
         })
+        .await
     }
-    pub(crate) fn disconnect(&self, workspace: &str) -> Result<(), String> {
+    pub(crate) async fn disconnect(&self, workspace: &str) -> Result<(), String> {
         let workspace = buzz_agent_controller::connection::origin(workspace)?;
-        self.with(|host| {
+        run(self.clone(), move |host| {
             host.controller.disconnect(&workspace)?;
             // A successful Disconnect also retires pre-existing credential waits.
             // Otherwise their late completion could start against the removed cache.
@@ -480,42 +500,53 @@ impl AgentHost {
                 .retain(|_, (_, pending)| pending.as_deref() != Some(&workspace));
             Ok(())
         })
+        .await
     }
-    pub(crate) fn model_context(
+    pub(crate) async fn model_context(
         &self,
         id: Option<&str>,
         revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::ModelContext, String> {
-        self.with(|host| match (id, revision) {
+        let id = id.map(str::to_owned);
+        run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.model_context(id, revision, edit),
-            (None, None) => Controller::draft_model_context(edit),
+            (None, None) => Controller::draft_model_context(host.controller.effective_draft(edit)?),
             _ => Err("Invalid agent model context".into()),
         })
+        .await
     }
-    pub(crate) fn goose_model_context(
+    pub(crate) async fn goose_model_context(
         &self,
         id: Option<&str>,
         revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::GooseModelContext, String> {
-        self.with(|host| match (id, revision) {
+        let id = id.map(str::to_owned);
+        run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.goose_model_context(id, revision, edit),
-            (None, None) => Controller::draft_goose_model_context(edit),
+            (None, None) => {
+                Controller::draft_goose_model_context(host.controller.effective_draft(edit)?)
+            }
             _ => Err("Invalid agent model context".into()),
         })
+        .await
     }
-    pub(crate) fn pi_model_context(
+    pub(crate) async fn pi_model_context(
         &self,
         id: Option<&str>,
         revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::pi::PiContext, String> {
-        self.with(|host| match (id, revision) {
+        let id = id.map(str::to_owned);
+        run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.pi_model_context(id, revision, edit),
-            (None, None) => Controller::draft_pi_model_context(edit),
+            (None, None) => {
+                Controller::draft_pi_model_context(host.controller.effective_draft(edit)?)
+            }
             _ => Err("Invalid agent model context".into()),
         })
+        .await
     }
     pub(crate) fn shutdown(&self) -> Result<(), String> {
         self.1.store(true, Ordering::SeqCst);
@@ -533,9 +564,16 @@ async fn run<T: Send + 'static>(
     state: AgentHost,
     operation: impl FnOnce(&mut Host) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || state.with(operation))
-        .await
-        .map_err(|_| "Native agent operation failed; refresh status before retrying")?
+    // FIFO admission keeps a queued Start preparation ahead of a later recovery
+    // Stop. The worker owns admission through completion, even if its caller drops.
+    // Credential/network waits happen between runs, so Stop can still fence them.
+    let admission = state.2.clone().lock_owned().await;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
+        state.with(operation)
+    })
+    .await
+    .map_err(|_| "Native agent operation failed; refresh status before retrying")?
 }
 #[tauri::command]
 pub(crate) async fn agent_control_log_challenge(
@@ -576,11 +614,100 @@ pub(crate) async fn agent_control_save(
     expected_revision: u64,
     edit: AgentEdit,
 ) -> Result<Snapshot, String> {
-    run(state.inner().clone(), move |host| {
-        host.controller.save(&id, expected_revision, edit)?;
-        host.snapshot()
+    save_and_restart(state.inner().clone(), move |host| {
+        host.controller.save(&id, expected_revision, edit).map(drop)
     })
     .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_save_defaults(
+    state: tauri::State<'_, AgentHost>,
+    edit: buzz_agent_controller::AgentDefaultsEdit,
+) -> Result<Snapshot, String> {
+    save_and_restart(state.inner().clone(), move |host| {
+        host.controller.save_defaults(edit).map(drop)
+    })
+    .await
+}
+/// Save, then restart only agents that were running before and after it and whose
+/// effective settings changed. Stopped or disabled agents are never started.
+async fn save_and_restart(
+    owner: AgentHost,
+    save: impl FnOnce(&mut Host) -> Result<(), String> + Send + 'static,
+) -> Result<Snapshot, String> {
+    let changed = run(owner.clone(), move |host| {
+        let before = host.controller.running_settings()?;
+        save(host)?;
+        let after = host.controller.running_settings()?;
+        Ok(changed_running(before, after))
+    })
+    .await?;
+    let (mut restarted, mut failures) = (0, 0);
+    for id in changed {
+        // Re-checked under the lock: Stop wins, and a subsequent user Start
+        // may already have launched the saved settings.
+        let result = start_guarded(
+            owner.clone(),
+            id.clone(),
+            Action::Restart,
+            false,
+            None,
+            Some((needs_save_restart, NO_SAVE_RESTART)),
+        )
+        .await;
+        match restart_outcome(&id, result) {
+            RestartOutcome::Restarted => restarted += 1,
+            RestartOutcome::Skipped => {}
+            RestartOutcome::Failed => failures += 1,
+        }
+    }
+    let mut snapshot = run(owner, |host| host.snapshot()).await?;
+    snapshot.restarted = Some(restarted);
+    snapshot.restart_failures = Some(failures);
+    Ok(snapshot)
+}
+#[derive(Debug, PartialEq)]
+enum RestartOutcome {
+    Restarted,
+    /// No longer needed, or an explicit Stop/newer action won: not a failure.
+    Skipped,
+    Failed,
+}
+const NO_SAVE_RESTART: &str = "Agent no longer needs a save restart";
+fn restart_outcome(id: &str, result: Result<Snapshot, String>) -> RestartOutcome {
+    match result {
+        Err(error) if error == NO_SAVE_RESTART || error == START_CANCELLED => {
+            RestartOutcome::Skipped
+        }
+        Err(_) => RestartOutcome::Failed,
+        Ok(snapshot) => match snapshot.data.agents.iter().find(|agent| agent.id == id) {
+            // A denied credential prompt or failed stop leaves the old process
+            // running; only a launch of the saved settings counts as a restart.
+            Some(agent) if is_running(agent) && agent.restart_diff.is_empty() => {
+                RestartOutcome::Restarted
+            }
+            // Stop disabled it while the restart was in flight.
+            Some(agent) if !agent.enabled => RestartOutcome::Skipped,
+            _ => RestartOutcome::Failed,
+        },
+    }
+}
+/// Agents live both before and after a save whose effective settings differ.
+fn changed_running(
+    before: BTreeMap<String, serde_json::Value>,
+    after: BTreeMap<String, serde_json::Value>,
+) -> Vec<String> {
+    after
+        .into_iter()
+        .filter(|(id, settings)| before.get(id).is_some_and(|old| old != settings))
+        .map(|(id, _)| id)
+        .collect()
+}
+fn is_running(agent: &buzz_agent_controller::AgentView) -> bool {
+    agent.enabled && agent.status == buzz_agent_controller::ProcessStatus::Running
+}
+fn needs_save_restart(agent: &buzz_agent_controller::AgentView) -> bool {
+    is_running(agent) && !agent.restart_diff.is_empty()
 }
 #[tauri::command]
 pub(crate) async fn agent_control_start_on_app_launch(
@@ -635,33 +762,52 @@ pub(crate) async fn start(
     replay_floor: Option<u64>,
     install_restart: Option<InstallRestart>,
 ) -> Result<Snapshot, String> {
-    let prepared = owner.with(|host| {
+    let guard = install_restart.map(|harness| -> StartGuard {
+        match harness {
+            InstallRestart::Goose => (
+                crate::harness_setup::waiting_for_goose,
+                NOT_WAITING_FOR_GOOSE,
+            ),
+            InstallRestart::Pi => (crate::harness_setup::waiting_for_pi, NOT_WAITING_FOR_PI),
+        }
+    });
+    start_guarded(owner, id, action, restore, replay_floor, guard).await
+}
+const START_CANCELLED: &str = "Start cancelled by a newer action";
+type StartGuard = (fn(&buzz_agent_controller::AgentView) -> bool, &'static str);
+fn check_guard(host: &mut Host, id: &str, guard: Option<StartGuard>) -> Result<(), String> {
+    let Some((eligible, refusal)) = guard else {
+        return Ok(());
+    };
+    if host
+        .controller
+        .snapshot()?
+        .agents
+        .iter()
+        .any(|agent| agent.id == id && eligible(agent))
+    {
+        Ok(())
+    } else {
+        Err(refusal.into())
+    }
+}
+async fn start_guarded(
+    owner: AgentHost,
+    id: String,
+    action: Action,
+    restore: bool,
+    replay_floor: Option<u64>,
+    guard: Option<StartGuard>,
+) -> Result<Snapshot, String> {
+    let target = id.clone();
+    let prepared = run(owner.clone(), move |host| {
+        let id = target;
         if restore && (host.acted.contains(&id) || !host.controller.launch_ids()?.contains(&id)) {
             return Err("Agent disabled before restore".into());
         }
-        // Re-check while holding the controller, not just at install start:
-        // Stop or Edit may have changed this agent while the download ran.
-        if let Some(harness) = install_restart {
-            let (predicate, error): (fn(&buzz_agent_controller::AgentView) -> bool, &str) =
-                match harness {
-                    InstallRestart::Goose => (
-                        crate::harness_setup::waiting_for_goose,
-                        NOT_WAITING_FOR_GOOSE,
-                    ),
-                    InstallRestart::Pi => {
-                        (crate::harness_setup::waiting_for_pi, NOT_WAITING_FOR_PI)
-                    }
-                };
-            if !host
-                .controller
-                .snapshot()?
-                .agents
-                .iter()
-                .any(|agent| agent.id == id && predicate(agent))
-            {
-                return Err(error.into());
-            }
-        }
+        // Re-check while holding the controller, not just when the caller
+        // chose this agent: Stop or Edit may have changed it since.
+        check_guard(host, &id, guard)?;
         host.starts.remove(&id);
         if !restore {
             host.acted.insert(id.clone());
@@ -684,7 +830,8 @@ pub(crate) async fn start(
         let ticket = host.next_start;
         host.starts.insert(id.clone(), (ticket, request.3.clone()));
         Ok((request, ticket, host.credentials.clone()))
-    })?;
+    })
+    .await?;
     let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
@@ -696,7 +843,7 @@ pub(crate) async fn start(
             .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()));
     run(owner, move |host| {
         if host.starts.get(&id).map(|(ticket, _)| *ticket) != Some(ticket) {
-            return Err("Start cancelled by a newer action".into());
+            return Err(START_CANCELLED.into());
         }
         host.starts.remove(&id);
         let key = match acquired {
@@ -710,6 +857,9 @@ pub(crate) async fn start(
             host.controller.record_error(&id, error);
             return host.snapshot();
         }
+        // The OS credential prompt can outlast the agent (e.g. its listener
+        // exited); eligibility must still hold right before Restart enables it.
+        check_guard(host, &id, guard)?;
         host.controller
             .action_with_key(&id, action, revision, &key, replay_floor)?;
         host.snapshot()
@@ -739,22 +889,24 @@ pub(crate) async fn agent_control_import_commit(
     ids: Vec<String>,
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
-    let (prepared, credentials) = owner.with(|host| {
+    let (prepared, credentials) = run(owner.clone(), move |host| {
         let prepared = host
             .controller
             .prepare_import(&mut host.imports, &token, &ids)?;
         // Consume the preview so concurrent IPC cannot import it twice.
         host.imports.discard();
         Ok((prepared, host.credentials.clone()))
-    })?;
+    })
+    .await?;
     let imported =
         tauri::async_runtime::spawn_blocking(move || prepared.acquire(credentials.as_ref()))
             .await
             .map_err(|_| "Native import credential operation failed")??;
-    owner.with(|host| {
+    run(owner, move |host| {
         host.controller.commit_import(imported)?;
         host.snapshot()
     })
+    .await
 }
 
 #[tauri::command]
@@ -790,26 +942,34 @@ pub(crate) async fn agent_control_create_commit(
     auth: String,
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
-    let (prepared, credentials) = owner.with(|host| {
+    let (prepared, credentials, request_id, edit, auth) = run(owner.clone(), move |host| {
         let (_, prepared) = host
             .creating
             .as_ref()
             .filter(|(id, _)| id == &request_id)
             .ok_or("Create request expired; reopen Add agent")?;
         prepared.validate(edit.clone(), &auth)?;
-        Ok((prepared.clone(), host.credentials.clone()))
-    })?;
+        Ok((
+            prepared.clone(),
+            host.credentials.clone(),
+            request_id,
+            edit,
+            auth,
+        ))
+    })
+    .await?;
     let saved = prepared.clone();
     tauri::async_runtime::spawn_blocking(move || saved.save_key(credentials.as_ref()))
         .await
         .map_err(|_| "Native credential operation failed")??;
-    owner.with(|host| {
+    run(owner, move |host| {
         if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
             return Err("Create request was replaced".into());
         }
         host.controller.create(&prepared, edit, &auth)?;
         host.snapshot()
     })
+    .await
 }
 #[tauri::command]
 pub(crate) async fn agent_control_creation_profile(
@@ -822,7 +982,7 @@ pub(crate) async fn agent_control_creation_profile(
 async fn publish_profile(owner: AgentHost, id: String) -> Result<Snapshot, String> {
     // Native ownership survives renderer reloads. Refuse overlapping publication,
     // while allowing settings Save to advance the revision and retain pending.
-    let (publication, profile, credentials) = owner.begin_profile(&id)?;
+    let (publication, profile, credentials) = owner.begin_profile(&id).await?;
     let (profile, key) = tauri::async_runtime::spawn_blocking(move || {
         credentials
             .read(&profile.credential_id, &profile.pubkey)
@@ -831,7 +991,7 @@ async fn publish_profile(owner: AgentHost, id: String) -> Result<Snapshot, Strin
     .await
     .map_err(|_| "Native credential operation failed")??;
     let key = key.ok_or("Agent key unavailable")?;
-    owner.ensure_open()?;
+    owner.ensure_open().await?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(20))
@@ -848,20 +1008,25 @@ async fn publish_acquired(
     client: &reqwest::Client,
     _publication: tokio::sync::OwnedMutexGuard<()>,
 ) -> Result<Snapshot, String> {
-    profile_http::publish(client, profile, key, || {
-        owner.with(|host| {
-            let current = host.controller.creation_profile(id)?;
-            if current.revision != profile.revision {
+    let target = id.to_owned();
+    let revision = profile.revision;
+    profile_http::publish(client, profile, key, || async {
+        run(owner.clone(), move |host| {
+            let current = host.controller.creation_profile(&target)?;
+            if current.revision != revision {
                 return Err("Saved profile changed; retry publication".into());
             }
             Ok(())
         })
+        .await
     })
     .await?;
-    owner.with(|host| {
-        host.controller.profile_published(id, profile.revision)?;
+    let id = id.to_owned();
+    run(owner.clone(), move |host| {
+        host.controller.profile_published(&id, revision)?;
         host.snapshot()
     })
+    .await
 }
 
 mod profile_http;

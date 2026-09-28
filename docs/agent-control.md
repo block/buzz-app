@@ -29,12 +29,13 @@ remain available when the old library is disconnected, unavailable or archived.
 
 **Add agent** shares the Edit fields and model browser. In the development desktop,
 Create generates a native key, obtains the captured viewer's owner authorization,
-and saves the agent stopped before publishing its profile. Failed profile publication
-has a Retry action on the same saved card; it never creates another identity.
-During a Create/profile wait, **Close** leaves the native operation running and
-exposes the existing cards' recovery Stop. Closing before creation returns skips
-automatic profile publication; refresh status and retry on the saved card. Late
-completion never closes a subsequently opened dialog.
+saves the agent, starts it, then publishes its profile. A failed Start or profile
+publication retains the saved identity and offers a retry for that step; it never
+creates another identity. A native Start response can confirm a saved agent while
+reporting that its process could not run. During Create, Start, or profile setup,
+**Close** leaves the operation running and exposes the existing cards' recovery
+Stop. Late completion never closes a subsequently opened dialog. If an operation
+cannot be confirmed, refresh status before repeating it.
 Create is blocked with an explanation if this app’s runtime is unavailable;
 existing agents and profile retry remain intact.
 The dev broker and native host must both support this flow. Packaged human
@@ -98,7 +99,8 @@ choices come from the selected harness; model discovery uses the current draft.
 Existing/custom values remain intact when another field changes. Workspace,
 arguments and write-only environment patches remain under **Advanced**;
 Start/Stop/Restart and exact identity are under **Runtime and identity**. Save uses
-native ID/revision; the planned restart-on-save flow is described below. Dirty
+native ID/revision and restarts the agent only if it is running and its effective
+settings changed (see [saving](#global-agent-defaults-and-saving)). Dirty
 drafts resist backdrop/Escape; explicit Cancel/Close discards. Page
 navigation/reload still discards page-local drafts.
 
@@ -166,12 +168,10 @@ and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
 See [configuration parity](configuration.md) for development routing, release
 flag exclusions and the supported deployment boundary.
 
-## Harnesses and planned agent defaults
+## Harnesses and agent defaults
 
-The Harnesses card is available in Settings → Agents. Check again re-detects
-installed CLIs without reopening the desktop app. Save currently leaves running
-agents unchanged; the global defaults below are planned separately.
-Individual-agent configuration stays on the Agents page.
+Individual-agent configuration stays on the Agents page; Settings → Agents owns
+installation guidance and device-wide defaults.
 
 ### Harnesses
 
@@ -206,26 +206,39 @@ the app. The ACP tooltip says:
 
 ### Global agent defaults and saving
 
-Settings → Agents provides a default harness, provider, model, effort and
-environment variables. The default harness is **copied into each new agent** at
-creation; changing it later does not switch existing agents. Provider, model,
-effort and environment defaults are **looked up at each start** only for fields
-an agent leaves blank; per-agent values win. Per-agent effort is not yet an
-editable field. Changing the default harness clears the default model and effort.
+The **Agent defaults** card in Settings → Agents holds a default harness,
+provider, model, effort and environment variables.
 
-These mutable defaults live in a native store under app-data
-`agent-controller/`, not localStorage. Native files use owner-only permissions
-(0600); environment values are write-only and never read back into the UI, as
-with per-agent API keys. This layer sits above
-[`BuildDefaults::resolve()`](../crates/agent-controller/src/defaults.rs): global
-defaults win over the [nonsecret build floor](#nonsecret-build-defaults), which
-stays compiled and is not the editable store.
+- The default harness is **copied into each new agent** at creation (Create
+  falls back to Buzz Agent while the default harness is not installed). Changing
+  it later does not switch existing agents.
+- Provider, model and effort are **looked up at each start** for fields an agent
+  leaves blank, only when the agent uses the default harness; per-agent values
+  win. The editor shows a blank field as “Use agent defaults (…)”. Effort has no
+  per-agent field: an imported agent's `effort_level` stays its override.
+- Environment variables apply to every agent and merge **per key**; the agent's
+  key wins. A saved Databricks workspace/filter also wins over the corresponding
+  global `DATABRICKS_HOST` / `DATABRICKS_MODEL_FILTER` pair. Agents without their
+  own workspace/filter inherit the global pair.
+- Changing the default harness in the card clears the default model and effort;
+  values entered for the new harness before Save are kept.
 
-Saving an agent or defaults restarts **running agents whose effective settings
-changed** through the native supervisor and reports **“Saved. Restarted N
-agents.”** Unchanged and stopped agents are not restarted. Effective settings
-include inherited defaults, so today's `restartDiff` (raw saved configs) is not
-enough on its own. This supersedes the current Save-without-restart rule.
+The store is `defaults.json` under app-data `agent-controller/`, not
+localStorage, written atomically with owner-only permissions (0600).
+Environment values are write-only, like per-agent API keys: only key names are
+returned to the UI. This layer applies before
+[`BuildDefaults::resolve()`](../crates/agent-controller/src/defaults.rs), so a
+global value wins over the [nonsecret build floor](#nonsecret-build-defaults),
+which still fills only Buzz Agent blanks. Goose and Pi receive inherited
+provider/model through their existing selectors. Inherited values are never
+written into saved agents.
+
+Saving an agent or the defaults restarts, through the native supervisor, only
+agents that were **running** before and after the save and whose **effective**
+launch settings changed. Stopped and disabled agents are never started or
+enabled; a Stop that lands before the restart wins. Save reports “Saved.” or
+“Saved. Restarted N agents.” `restartDiff` compares effective settings, so it
+also flags inherited changes.
 
 ## Avatar editing
 
@@ -296,6 +309,12 @@ containment on non-Unix platforms.
   Unmount clears the timer, not enabled intent or processes.
 - Native host owns persistent state, credential custody, process groups, lock and
   duplicate ownership checks, source import validation and sanitized diagnostics.
+  Critical sections wait in arrival order through the host's async admission gate
+  and execute on blocking workers; a status read does not reject a concurrent
+  command as busy. The worker retains admission until it finishes, even if its
+  caller disappears. Credential and network waits release admission so recovery
+  Stop can still invalidate pending launches. Shutdown is checked again after
+  acquiring native state. Failed commands are never automatically replayed.
   It must bound IPC operations and reject with deliberately user-facing strings;
   raw child/OS/parser errors must never cross into these snapshots or rejections.
 
@@ -317,8 +336,11 @@ containment on non-Unix platforms.
 - `running` is **process-alive evidence only**, labeled “Process running · relay
   readiness unverified.” It is not a Listening/Working badge or proof a mention
   can be received. Native wake/readiness acceptance is separate.
-- Save uses `expectedRevision` and updates only editable fields. The planned
-  flow restarts running agents whose effective settings change (see
+  The avatar badge is relay presence, which the harness publishes just after
+  the process starts; the card re-reads it briefly after start/stop (see
+  [presence](presence.md#ownership-and-bounds)).
+- Save uses `expectedRevision` and updates only editable fields, then restarts
+  running agents whose effective settings changed (see
   [Global agent defaults and saving](#global-agent-defaults-and-saving)).
   Saved/running revisions remain distinct. Dirty drafts survive refresh and save
   failure. A newer saved revision blocks overwrite and offers explicit discard;
@@ -334,7 +356,7 @@ containment on non-Unix platforms.
   injected Core snapshot. Buzz Agent offers Databricks v2. Goose appears with an
   absolute executable path when the local CLI is installed, and offers common
   Goose providers plus a custom ID. A missing CLI leaves Goose disabled; the
-  planned **Check again** action re-detects it after installation without an app
+  **Check again** action re-detects it after installation without an app
   restart. Switching into or out of Goose supplies ACP
   arguments and clears the previous provider/model; selecting a Goose provider clears the
   previous model. For Goose, an explicit Browse asks Goose ACP for the selected
@@ -481,7 +503,7 @@ live handover remains a separate step below.
 
 1. While old Buzz still runs, review/import only. Choose the installed/development
    library and destination under **Import options**. Import may prompt for the
-   selected legacy Keychain blob; it creates separate app credentials at service
+   selected legacy secure-storage blob; it creates separate app credentials at service
    `dev.local.buzz.foundation.agents`, account `agent:<key-community>`. The source
    is read-only and imported agents stay stopped. Refused custody is a blocker,
    never a reason to migrate keys implicitly.
@@ -504,7 +526,7 @@ live handover remains a separate step below.
 
 `control.test.ts`, `control-native.test.ts`, `agent-edit.test.ts` cover projection
 races, unavailable browser, exact IPC payloads, uncertain result handling,
-the current save/restart distinction, literal arguments and environment patch
+save/restart feedback, literal arguments and environment patch
 semantics.
 `tests/browser/agent-control.spec.mjs` drives the real editor and capability over
 the isolated fake host in Chromium/WebKit: dirty refresh, save failure, revisions,
@@ -565,9 +587,8 @@ The Advanced model field preserves text literally, including IDs that themselves
 start with the provider name. After Browse, an unlisted ID carries a warning;
 manual IDs remain allowed and an available catalog is not inference validation.
 Clear both fields to keep Pi's own defaults. Choosing a provider requires a model
-before Start; Pi otherwise silently ignores a provider-only flag. Until the
-planned restart-on-save flow ships, use Restart explicitly to apply a saved
-change to a running Pi agent.
+before Start; Pi otherwise silently ignores a provider-only flag. Save restarts a
+running Pi agent whose effective settings changed.
 
 Discovery launches the same locally resolved Pi used by the ACP adapter, in the
 agent's workspace, with the same explicit environment and extension arguments.

@@ -832,3 +832,74 @@ it.each([9, 40002])(
     }
   },
 );
+
+it.each([
+  { replyCount: 0, threadRootId: undefined, expected: false },
+  { replyCount: 2, threadRootId: undefined, expected: true },
+  { replyCount: 0, threadRootId: "parent", expected: true },
+])(
+  "passes known comment state from the chat photo to its viewer: $expected",
+  ({ replyCount, threadRootId, expected }) => {
+    const attachment = {
+      kind: "image" as const,
+      url: "https://fixture.test/photo.png",
+    };
+    const open = vi.fn();
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          attachments: [attachment],
+          replyCount,
+          ...(threadRootId ? { threadRootId } : {}),
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        onOpenMediaReview={open}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("link", { name: "Open image attachment" }),
+      { detail: 1 },
+    );
+    expect(open).toHaveBeenCalledWith(row.id, attachment, 0, expected);
+    cleanup();
+  },
+);
+
+it.each(["sending", "failed"] as const)(
+  "does not leave an orphan menu separator on a %s own message",
+  async (delivery) => {
+    const snapshot = { channels: [], status: "ready" };
+    const session = {
+      viewer: row.authorId,
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      messages: {},
+      unread: { subscribe: () => () => {}, snapshot: () => undefined },
+    } as unknown as RelaySession;
+    renderDom(
+      <MessageRow
+        row={{ ...row, delivery }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "More message actions" }),
+      );
+      await screen.findByRole("menu");
+      expect(screen.getAllByRole("menuitem")).toHaveLength(2);
+      expect(screen.queryByRole("separator")).toBeNull();
+    } finally {
+      cleanup();
+    }
+  },
+);

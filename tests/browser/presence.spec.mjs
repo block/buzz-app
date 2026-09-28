@@ -81,7 +81,9 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
       .poll(() => app.report.presencePublications.length, { timeout: 75000 })
       .toBeGreaterThan(0);
     expect(
-      app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
+      app.relay.requests.some(({ filters }) =>
+        filters.some((filter) => filter.kinds.includes(20001)),
+      ),
     ).toBe(false);
     await profile.screenshot({
       path: test.info().outputPath("presence-profile.png"),
@@ -266,7 +268,9 @@ test.describe("human message bylines show known presence", () => {
       profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
     ).toHaveCount(0);
     expect(
-      app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
+      app.relay.requests.some(({ filters }) =>
+        filters.some((filter) => filter.kinds.includes(20001)),
+      ),
     ).toBe(false);
   });
 });
@@ -289,8 +293,8 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     .toBe(1);
   const owner = (await presenceLocks(page)).held[0];
   const second = await context.newPage();
+  const pageErrors = app.watchPageErrors(second);
   const errors = [];
-  second.on("pageerror", (error) => errors.push(error.message));
   second.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
@@ -336,7 +340,7 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     expect(app.report.presencePublications.at(-1).event.content).toBe(
       "offline",
     );
-    expect(errors).toEqual([]);
+    expect([...pageErrors.unexplained(), ...errors]).toEqual([]);
     app.report.measurements.push({
       publisherLockHandoff: { owner: owner.clientId, successor },
     });
@@ -387,7 +391,7 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
         ([kind, id]) =>
           kind === "EOSE" &&
           app.relay.requests.some(
-            (req) => req.id === id && req.route === "alpha",
+            (req) => req.id === id && req.routes.includes("alpha"),
           ),
       ),
     ).toBe(false);
@@ -419,7 +423,7 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
 
 // Real account controls -> shared activity -> retained session -> production
 // broker -> authenticated socket; real localStorage survives app reconstruction.
-test("profile trigger retains shared hover, press, and open feedback", async ({
+test("profile trigger stays transparent through hover, press, and open menu", async ({
   page,
   app,
 }) => {
@@ -428,21 +432,18 @@ test("profile trigger retains shared hover, press, and open feedback", async ({
     name: "Your profile",
     exact: true,
   });
-  for (const [mode, hover, pressed] of [
-    ["light", "rgba(255, 255, 255, 0.62)", "rgb(218, 218, 218)"],
-    ["dark", "rgba(28, 28, 28, 0.66)", "rgb(89, 89, 89)"],
-  ]) {
+  for (const mode of ["light", "dark"]) {
     await page.evaluate((value) => {
       document.documentElement.dataset.colorMode = value;
     }, mode);
     await trigger.hover();
-    await expect(trigger).toHaveCSS("background-color", hover);
+    await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await page.mouse.down();
-    await expect(trigger).toHaveCSS("background-color", pressed);
+    await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await page.mouse.up();
     await page.mouse.move(1, 1);
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
-    await expect(trigger).toHaveCSS("background-color", pressed);
+    await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await page.keyboard.press("Escape");
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
   }
@@ -483,16 +484,30 @@ test("avatar choices publish through the existing socket and persist across relo
     .toBe(true);
   await expect(badge).toHaveCSS("background-image", "none");
   await expect(badge).toHaveCSS("box-shadow", "none");
+  await expect(badge).toHaveCSS("background-color", "rgb(33, 131, 88)");
   await avatar.screenshot({
     path: test.info().outputPath("avatar-online.png"),
   });
   await avatar.click();
+  await expect(
+    page.getByRole("button", { name: "Availability: Online", exact: true }),
+  ).toHaveCSS("color", "rgb(43, 154, 102)");
   await page.getByRole("button", { name: /^Availability:/ }).click();
   await page.getByRole("menuitemradio", { name: "Away", exact: true }).click();
   await expect(
     avatar.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
   await expect(badge).toHaveCSS("background-color", "rgb(171, 100, 0)");
+  await expect
+    .poll(() =>
+      badge.evaluate(
+        (element) => getComputedStyle(element, "::after").backgroundColor,
+      ),
+    )
+    .toBe("rgb(255, 186, 24)");
+  await expect(
+    page.getByRole("button", { name: "Availability: Away", exact: true }),
+  ).toHaveCSS("color", "rgb(79, 52, 34)");
   await expect(badge).toHaveCSS("background-image", "none");
   await expect(badge).toHaveCSS("box-shadow", "none");
   await avatar.screenshot({ path: test.info().outputPath("avatar-away.png") });
@@ -529,7 +544,7 @@ test("avatar choices publish through the existing socket and persist across relo
   ).toBeChecked();
   const before = published("online");
   await page
-    .getByRole("menuitemradio", { name: "Automatic", exact: true })
+    .getByRole("menuitemradio", { name: "Online", exact: true })
     .click();
   await expect(
     avatar.getByRole("img", { name: "Your status: Online" }),

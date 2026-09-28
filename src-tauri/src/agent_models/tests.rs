@@ -298,6 +298,9 @@ fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
         result["models"],
         json!([{"id":"endpoint-two","name":"Endpoint Two"}])
     );
+    assert_eq!(result["host"], ""); // The write-only inherited URL stays native.
+    assert!(!result.to_string().contains("https://inherited.example.com"));
+    assert!(!result.to_string().contains("endpoint-*"));
     assert_eq!(
         fake.opened.lock().unwrap().last().unwrap().0,
         "https://inherited.example.com"
@@ -313,7 +316,24 @@ fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
     // inherited workspace, as before.
     req["filter"] = json!("");
     req["inheritWorkspace"] = json!(false);
-    assert!(call(req).is_err());
+    assert!(call(req.clone()).is_err());
+
+    // An explicit per-agent workspace cannot be bypassed by a caller that
+    // manually sets inheritWorkspace, even while global env defaults exist.
+    req["edit"]["harness"]["databricks"] = json!({
+        "host":"https://agent.example.com", "filter":"agent-*"
+    });
+    req["inheritWorkspace"] = json!(true);
+    assert!(call(req.clone()).is_err());
+    req["inheritWorkspace"] = json!(false);
+    req["host"] = json!("https://agent.example.com");
+    req["filter"] = json!("agent-*");
+    let result = call(req).unwrap();
+    assert_eq!(result["host"], "https://agent.example.com");
+    assert_eq!(
+        fake.opened.lock().unwrap().last().unwrap().0,
+        "https://agent.example.com"
+    );
 }
 
 #[test]

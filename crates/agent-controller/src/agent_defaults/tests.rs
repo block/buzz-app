@@ -71,6 +71,53 @@ fn selectors_do_not_cross_harnesses_but_environment_does() {
 }
 
 #[test]
+fn saved_databricks_workspace_wins_over_global_environment_and_blank_inherits() {
+    let mut agent = fixture();
+    agent.harness.command = "buzz-agent".into();
+    agent.environment.clear();
+    let mut defaults = defaults("buzz-agent");
+    defaults
+        .environment
+        .insert("DATABRICKS_HOST".into(), "https://global.example".into());
+    defaults
+        .environment
+        .insert("DATABRICKS_MODEL_FILTER".into(), "global-*".into());
+    agent.harness.databricks = Some(crate::connection::DatabricksSettings {
+        host: "https://agent.example".into(),
+        filter: "agent-*".into(),
+    });
+    let own = effective(&agent, &defaults);
+    assert!(!own.environment.contains_key("DATABRICKS_HOST"));
+    assert!(!own.environment.contains_key("DATABRICKS_MODEL_FILTER"));
+    assert_eq!(
+        own.harness.databricks.as_ref().unwrap().host,
+        "https://agent.example"
+    );
+    assert_eq!(own.environment["GLOBAL_ONLY"], "global");
+    // An explicit empty Databricks object also blocks the inherited pair.
+    agent.harness.databricks = Some(Default::default());
+    assert!(!effective(&agent, &defaults)
+        .environment
+        .contains_key("DATABRICKS_HOST"));
+
+    agent.harness.databricks = None;
+    let blank = effective(&agent, &defaults);
+    assert_eq!(
+        blank.environment["DATABRICKS_HOST"],
+        "https://global.example"
+    );
+    assert_eq!(blank.environment["DATABRICKS_MODEL_FILTER"], "global-*");
+    // An agent-owned environment value still wins by key when it has no
+    // explicit workspace object.
+    agent
+        .environment
+        .insert("DATABRICKS_HOST".into(), "https://env.example".into());
+    let mixed = effective(&agent, &defaults);
+    assert_eq!(mixed.environment["DATABRICKS_HOST"], "https://env.example");
+    assert_eq!(mixed.environment["DATABRICKS_MODEL_FILTER"], "global-*");
+}
+
+#[test]
 fn submitted_model_and_effort_are_explicit_across_a_harness_change() {
     let mut saved = defaults("buzz-agent");
     // The card clears both on a harness change; re-entering the same values

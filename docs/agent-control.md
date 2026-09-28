@@ -212,7 +212,9 @@ provider, model, effort and environment variables.
   win. The editor shows a blank field as “Use agent defaults (…)”. Effort has no
   per-agent field: an imported agent's `effort_level` stays its override.
 - Environment variables apply to every agent and merge **per key**; the agent's
-  key wins.
+  key wins. A saved Databricks workspace/filter also wins over the corresponding
+  global `DATABRICKS_HOST` / `DATABRICKS_MODEL_FILTER` pair. Agents without their
+  own workspace/filter inherit the global pair.
 - Changing the default harness in the card clears the default model and effort;
   values entered for the new harness before Save are kept.
 

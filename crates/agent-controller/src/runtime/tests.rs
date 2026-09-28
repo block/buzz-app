@@ -1873,6 +1873,64 @@ fn inherited_default_changes_reach_restart_diff_and_the_next_start() {
 }
 
 #[test]
+#[cfg(unix)]
+fn saved_databricks_workspace_launches_without_inheriting_global_host_or_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let mut a = agent(dir.path());
+    a.harness.provider = "databricks_v2".into();
+    a.harness.databricks = Some(crate::connection::DatabricksSettings {
+        host: "https://agent.example".into(),
+        filter: "agent-*".into(),
+    });
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let edit = |host: &str, filter: &str| crate::AgentDefaultsEdit {
+        harness: "buzz-agent".into(),
+        provider: "databricks_v2".into(),
+        model: String::new(),
+        effort: String::new(),
+        environment: BTreeMap::from([
+            ("DATABRICKS_HOST".into(), Some(host.into())),
+            ("DATABRICKS_MODEL_FILTER".into(), Some(filter.into())),
+        ]),
+    };
+    controller
+        .save_defaults(edit("https://global.example", "global-*"))
+        .unwrap();
+    controller.action(&a.id, Action::Start).unwrap();
+    let env = wait_for_contents(&dir.path().join("runtime-env"), |text| {
+        (text.lines().count() == 6).then(|| text.to_owned())
+    });
+    assert_eq!(env.lines().nth(1), Some("https://agent.example"));
+    assert_eq!(env.lines().nth(2), Some("agent-*"));
+    assert_eq!(
+        controller.running[&a.id].databricks_host.as_deref(),
+        Some("https://agent.example")
+    );
+    let before = controller.running_settings().unwrap();
+    let snapshot = controller
+        .save_defaults(edit("https://next-global.example", "next-global-*"))
+        .unwrap();
+    assert_eq!(controller.running_settings().unwrap(), before);
+    assert!(snapshot.agents[0].restart_diff.is_empty());
+
+    let mut blank = a.clone();
+    blank.harness.databricks = None;
+    let inherited = crate::agent_defaults::effective(&blank, &controller.store.defaults().unwrap());
+    let settings = effective_databricks(&inherited).unwrap().unwrap();
+    assert_eq!(settings.host, "https://next-global.example");
+    assert_eq!(settings.filter, "next-global-*");
+    controller.shutdown().unwrap();
+}
+
+#[test]
 fn restart_comparison_ignores_overridden_selectors_without_exposing_secrets() {
     let dir = tempfile::tempdir().unwrap();
     let mut a = agent(dir.path());

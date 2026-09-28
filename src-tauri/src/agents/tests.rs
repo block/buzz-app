@@ -216,7 +216,8 @@ fn create_draft_model_browsing_inherits_native_provider_and_environment() {
             .save_defaults(
                 serde_json::from_value(json!({
                     "harness":"buzz-agent", "provider":"databricks_v2", "model":"",
-                    "effort":"", "environment":{"DATABRICKS_HOST":"https://models.example"}
+                    "effort":"", "environment":{"DATABRICKS_HOST":"https://models.example",
+                        "DATABRICKS_MODEL_FILTER":"inherited-*"}
                 }))
                 .unwrap(),
             )
@@ -232,6 +233,14 @@ fn create_draft_model_browsing_inherits_native_provider_and_environment() {
         .model_context(None, None, serde_json::from_value(draft.clone()).unwrap())
         .unwrap();
     assert_eq!(context.host.as_deref(), Some("https://models.example"));
+    assert_eq!(context.filter.as_deref(), Some("inherited-*"));
+    let mut own = draft;
+    own["harness"]["databricks"] = json!({"host":"https://own.example", "filter":"own-*"});
+    let context = host
+        .model_context(None, None, serde_json::from_value(own).unwrap())
+        .unwrap();
+    assert_eq!(context.host.as_deref(), Some("https://own.example"));
+    assert_eq!(context.filter.as_deref(), Some("own-*"));
 
     #[cfg(unix)]
     {

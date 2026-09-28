@@ -137,7 +137,14 @@ pub(crate) fn effective_settings(
             harness.model.clone_from(&defaults.model);
         }
     }
+    // A saved Databricks workspace/filter is an agent-owned override, even
+    // when the corresponding environment key was not set on that agent.
+    let own_databricks =
+        harness_kind(&harness.command) == Some("buzz-agent") && harness.databricks.is_some();
     for (key, value) in &defaults.environment {
+        if own_databricks && matches!(key.as_str(), "DATABRICKS_HOST" | "DATABRICKS_MODEL_FILTER") {
+            continue;
+        }
         environment
             .entry(key.clone())
             .or_insert_with(|| value.clone());

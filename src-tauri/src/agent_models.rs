@@ -214,9 +214,14 @@ fn resolve(
     if request.host.len() > 4096 || request.filter.len() > 4096 {
         return Err("Connection settings are too long".into());
     }
-    // Only an inherited blank defers to native context; otherwise explicit
-    // values, including blanks, must agree with a saved/draft override.
-    let defer = |value: &str| request.inherit_workspace && value.is_empty();
+    // An explicit agent workspace/filter must never be replaced by an inherited
+    // default, even if a caller sends inheritWorkspace with blank request fields.
+    let can_inherit = request.inherit_workspace
+        && request
+            .edit
+            .as_ref()
+            .is_some_and(|edit| edit.harness.databricks.is_none());
+    let defer = |value: &str| can_inherit && value.is_empty();
     let host = origin(context.host.as_deref().unwrap_or(&request.host))?;
     if context.host.is_some() && !defer(&request.host) && origin(&request.host)? != host {
         return Err("Workspace conflicts with the saved/draft DATABRICKS_HOST override; use that workspace or edit the override".into());
@@ -365,6 +370,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             })
     };
     let factory = state.factory.clone();
+    let hide_inherited_host = request.inherit_workspace && request.host.is_empty();
     host.run(ticket, async move {
         let (model_overridden, workspace, filter, cache) = prepared?;
         if request.action == Operation::Disconnect {
@@ -388,6 +394,14 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
         .await
     })
     .await
+    .map(|mut catalog| {
+        // The native connection uses the inherited write-only environment;
+        // the catalog projection must not reveal its workspace URL to the UI.
+        if hide_inherited_host {
+            catalog.host.clear();
+        }
+        catalog
+    })
 }
 
 // Production reuses the immutable engine with its existing auth policy. Tests replace only the

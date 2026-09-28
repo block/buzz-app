@@ -56,20 +56,21 @@ export function AgentSettingsFields({
   const [revealed, setRevealed] = useState<string | null>(null);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
+  const globalKeys = state.data?.defaultSettings?.environmentKeys ?? [];
+  // Saved and global environment values are write-only; removing an agent's
+  // key exposes the global key rather than the visible scalar default.
+  const ownOverride = (key: string) =>
+    typeof draft.environment[key] === "string" ||
+    (draft.environment[key] === undefined && environmentKeys.includes(key));
+  const overridden = (key: string) =>
+    ownOverride(key) || globalKeys.includes(key);
   const buzzProvider =
     draft.environment.BUZZ_AGENT_PROVIDER ??
     (draft.provider || state.data?.agentDefaults?.provider);
-  // Saved environment values are write-only. Do not promise a build default
-  // when an untouched override could select a different provider or model.
   const modelDefaultKnown =
-    (draft.environment.BUZZ_AGENT_PROVIDER !== undefined ||
-      !environmentKeys.includes("BUZZ_AGENT_PROVIDER")) &&
-    ["BUZZ_AGENT_MODEL", "DATABRICKS_MODEL"].every(
-      (key) =>
-        draft.environment[key] === null ||
-        (draft.environment[key] === undefined &&
-          !environmentKeys.includes(key)),
-    );
+    (typeof draft.environment.BUZZ_AGENT_PROVIDER === "string" ||
+      !overridden("BUZZ_AGENT_PROVIDER")) &&
+    ["BUZZ_AGENT_MODEL", "DATABRICKS_MODEL"].every((key) => !overridden(key));
   const databricks = ["databricks_v2", "databricks-v2", "databricks"].includes(
     buzzProvider ?? "",
   );
@@ -82,12 +83,8 @@ export function AgentSettingsFields({
     state.data?.defaultSettings?.harness === harnessKind(draft.command)
       ? state.data?.defaultSettings
       : undefined;
-  const buzzAgent = draft.command === "buzz-agent";
-  // A draft or saved (write-only) selector override decides the launch value,
-  // so no inherited hint may be shown for it.
-  const overridden = (key: string) =>
-    typeof draft.environment[key] === "string" ||
-    (draft.environment[key] === undefined && environmentKeys.includes(key));
+  const buzzAgent = harnessKind(draft.command) === "buzz-agent";
+  // An environment selector can override the visible scalar default.
   const [modelKey, providerKey] = buzzAgent
     ? ["BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"]
     : goose
@@ -104,10 +101,12 @@ export function AgentSettingsFields({
     ? undefined
     : inherited?.model ||
       (buzzAgent && databricks ? state.data?.agentDefaults?.model : undefined);
-  // Agent defaults env merges into every agent unless its own key is set.
+  // An explicit Databricks workspace/filter wins over the global env pair.
   const inheritedKey = (key: string) =>
-    !!state.data?.defaultSettings?.environmentKeys.includes(key) &&
-    !overridden(key);
+    buzzAgent &&
+    !draft.databricks &&
+    globalKeys.includes(key) &&
+    !ownOverride(key);
   const inheritedWorkspace = {
     host: inheritedKey("DATABRICKS_HOST"),
     filter: inheritedKey("DATABRICKS_MODEL_FILTER"),

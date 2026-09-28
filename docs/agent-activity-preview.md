@@ -3,7 +3,7 @@
 **Experimental macOS test candidate, not merge-ready or release-validated.**
 Branch: `feature/agent-activity-preview`.
 
-This branch integrates main through `bebb54ec` with the Activity implementation.
+This branch integrates main through `7834fffa` with the Activity implementation.
 Main's identity, packaged communities, harness setup, profiles and close-to-hide
 behavior remain authoritative. Native Activity/history uses that same identity;
 the temporary preview-only account connection has been retired. This preview is

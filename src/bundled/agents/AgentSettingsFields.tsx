@@ -74,8 +74,11 @@ export function AgentSettingsFields({
   const apiKey = gooseProvider ? gooseApiKey(gooseProvider) : undefined;
   const savedKey = !!apiKey && environmentKeys.includes(apiKey.env);
   // Saved keys are write-only; only a key typed for this provider can be shown.
-  const typedKey = !!apiKey && !!draft.environment[apiKey.env];
-  const revealKey = typedKey && revealed === apiKey?.env;
+  const typedKey = apiKey && draft.environment[apiKey.env] ? apiKey.env : null;
+  // Reveal consent covers one typed key. Clear it during render once that key
+  // is removed or the provider changes, so a replacement starts masked.
+  if (revealed !== null && revealed !== typedKey) setRevealed(null);
+  const revealKey = revealed !== null && revealed === typedKey;
   const change = (patch: Partial<AgentDraft>) => {
     const next = { ...draft, ...patch };
     const nextProvider = isGoose(next.command)
@@ -152,9 +155,7 @@ export function AgentSettingsFields({
                         }
                         size="sm"
                         disabled={disabled}
-                        onClick={() =>
-                          setRevealed(revealKey ? null : apiKey.env)
-                        }
+                        onClick={() => setRevealed(revealKey ? null : typedKey)}
                       />
                     ) : undefined
                   }

@@ -83,14 +83,27 @@ export function AgentSettingsFields({
       ? state.data?.defaultSettings
       : undefined;
   const buzzAgent = draft.command === "buzz-agent";
-  const defaultProvider =
-    inherited?.provider ||
-    (buzzAgent ? state.data?.agentDefaults?.provider : undefined);
-  const defaultModel =
-    inherited?.model ||
-    (buzzAgent && databricks && modelDefaultKnown
-      ? state.data?.agentDefaults?.model
-      : undefined);
+  // A draft or saved (write-only) selector override decides the launch value,
+  // so no inherited hint may be shown for it.
+  const overridden = (key: string) =>
+    typeof draft.environment[key] === "string" ||
+    (draft.environment[key] === undefined && environmentKeys.includes(key));
+  const [modelKey, providerKey] = buzzAgent
+    ? ["BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"]
+    : goose
+      ? ["GOOSE_MODEL", "GOOSE_PROVIDER"]
+      : [undefined, undefined];
+  const providerHidden = !!providerKey && overridden(providerKey);
+  const modelHidden =
+    (!!modelKey && overridden(modelKey)) || (buzzAgent && !modelDefaultKnown);
+  const defaultProvider = providerHidden
+    ? undefined
+    : inherited?.provider ||
+      (buzzAgent ? state.data?.agentDefaults?.provider : undefined);
+  const defaultModel = modelHidden
+    ? undefined
+    : inherited?.model ||
+      (buzzAgent && databricks ? state.data?.agentDefaults?.model : undefined);
   const apiKey = gooseProvider ? gooseApiKey(gooseProvider) : undefined;
   const savedKey = !!apiKey && environmentKeys.includes(apiKey.env);
   // Saved keys are write-only; only a key typed for this provider can be shown.

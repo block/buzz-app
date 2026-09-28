@@ -11,6 +11,92 @@ import { controlFixture } from "../../features/agents/control-testing";
 
 afterEach(cleanup);
 
+it("hides inherited Agent defaults hints when a selector override decides the launch", () => {
+  const f = controlFixture();
+  const control = createAgentControl(f.host);
+  const base = {
+    ...agentDraft(f.agent),
+    command: "/opt/tools/goose",
+    provider: "",
+    model: "",
+  };
+  const cases: {
+    draft?: Partial<AgentDraft>;
+    keys?: string[];
+    provider: boolean;
+    model: boolean;
+  }[] = [
+    { provider: true, model: true },
+    { keys: ["GOOSE_MODEL"], provider: true, model: false },
+    { keys: ["GOOSE_PROVIDER"], provider: false, model: true },
+    {
+      draft: { environment: { GOOSE_MODEL: "draft-model" } },
+      provider: true,
+      model: false,
+    },
+    {
+      keys: ["GOOSE_MODEL"],
+      draft: { environment: { GOOSE_MODEL: null } },
+      provider: true,
+      model: true,
+    },
+  ];
+  const fields = (entry: (typeof cases)[number]) => (
+    <AgentSettingsFields
+      draft={{ ...base, ...entry.draft }}
+      control={control}
+      state={{
+        status: "ready",
+        busy: false,
+        error: null,
+        data: {
+          ...f.data,
+          harnessOptions: [
+            {
+              command: "/opt/tools/goose",
+              label: "Goose",
+              available: true,
+              providers: [{ value: "anthropic", label: "Anthropic" }],
+            },
+          ],
+          defaultSettings: {
+            harness: "goose",
+            provider: "anthropic",
+            model: "default-model",
+            effort: "",
+            environmentKeys: [],
+          },
+        },
+      }}
+      disabled={false}
+      environmentKeys={entry.keys ?? []}
+      onChange={vi.fn()}
+    />
+  );
+  const view = render(fields(cases[0] as (typeof cases)[number]));
+  try {
+    for (const entry of cases) {
+      view.rerender(fields(entry));
+      expect(
+        screen.getByRole("combobox", { name: "Model" }),
+        JSON.stringify(entry),
+      ).toHaveAttribute(
+        "placeholder",
+        entry.model
+          ? "Use agent defaults (default-model)"
+          : "Choose or enter a model",
+      );
+      expect(
+        screen.queryAllByText("Use agent defaults (anthropic)").length > 0,
+        JSON.stringify(entry),
+      ).toBe(entry.provider);
+    }
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
 it("only hints the compiled model when the current provider and overrides can use it", () => {
   const f = controlFixture();
   const control = createAgentControl(f.host);

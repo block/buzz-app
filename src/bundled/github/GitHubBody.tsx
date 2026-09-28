@@ -1,4 +1,11 @@
-import { Children, memo, useMemo, useState, type ReactNode } from "react";
+import {
+  Children,
+  isValidElement,
+  memo,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import Markdown, { type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { PhrasingContent, Root, RootContent } from "mdast";
@@ -24,6 +31,18 @@ function containsImage(node: NonNullable<ExtraProps["node"]>): boolean {
       (child) => child.type === "element" && containsImage(child),
     )
   );
+}
+
+function plainText(children: ReactNode): string {
+  return Children.toArray(children)
+    .map((child) => {
+      if (typeof child === "string" || typeof child === "number")
+        return String(child);
+      return isValidElement<{ children?: ReactNode }>(child)
+        ? plainText(child.props.children)
+        : "";
+    })
+    .join("");
 }
 
 // Extract content into Markdown nodes; HTML elements and attributes stay inert.
@@ -155,7 +174,7 @@ export const GitHubBody = memo(function GitHubBody({
     source: string,
     label: ReactNode,
     image = false,
-    description = "",
+    description?: string,
   ) => {
     const attachment = attachmentFor(source, metadata, image);
     const link = (
@@ -169,7 +188,9 @@ export const GitHubBody = memo(function GitHubBody({
         key={source}
         fallback={link}
         caption={
-          Children.toArray(label).some((part) => part !== source) ? label : null
+          !image && Children.toArray(label).some((part) => part !== source)
+            ? label
+            : null
         }
       >
         {attachment.kind === "audio" ? (
@@ -178,7 +199,9 @@ export const GitHubBody = memo(function GitHubBody({
           <MediaAttachment
             attachment={attachment}
             media={(value) => value}
-            imageDescription={description}
+            {...(description !== undefined
+              ? { imageDescription: description }
+              : {})}
             preload="metadata"
           />
         )}
@@ -207,7 +230,12 @@ export const GitHubBody = memo(function GitHubBody({
                   </a>
                 </div>
               );
-            return media(href, children);
+            return media(
+              href,
+              children,
+              false,
+              plainText(children) || undefined,
+            );
           },
           img: ({ src, alt }) =>
             typeof src === "string" && src ? media(src, alt, true, alt) : alt,

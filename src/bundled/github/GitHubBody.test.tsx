@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -120,6 +121,75 @@ it("selects images, audio and named attachments while retaining descriptions and
     );
   }
 });
+
+it.each(["Markdown", "HTML"])(
+  "%s images preserve alt text without loaded captions",
+  (syntax) => {
+    for (const alt of ["Image", "Settings showing notifications enabled", ""]) {
+      const { container, unmount } = render(
+        <GitHubBody
+          url={url}
+          body={
+            syntax === "Markdown"
+              ? `Before ![${alt}](${image}) after.`
+              : `<div>Before <img src="${image}" alt="${alt}"> after.</div>`
+          }
+        />,
+      );
+      const preview = screen.getByAltText(alt);
+      expect(preview).toHaveAttribute("alt", alt);
+      expect(screen.getByRole("link")).toHaveAttribute("href", image);
+      fireEvent.load(preview);
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      expect(container).toHaveTextContent(/^Before after\.$/);
+      fireEvent.error(preview);
+      expect(screen.getByRole("status")).toHaveTextContent("Image unavailable");
+      expect(screen.getByRole("link")).toHaveAttribute("href", image);
+      unmount();
+    }
+  },
+);
+
+it.each([
+  ["Result screenshot", "Result screenshot"],
+  ["**Result *with `details`*** screenshot", "Result with details screenshot"],
+  ["", "Attachment preview"],
+])(
+  "describes image previews and fullscreen from link label %s",
+  (label, description) => {
+    const source = "https://github.com/user-attachments/files/99/result.png";
+    const { container } = render(
+      <GitHubBody
+        url={url}
+        body={`See [${label}](${source}) for the result.`}
+      />,
+    );
+    const preview = screen.getByAltText(description);
+    expect(screen.getByRole("link")).toHaveAttribute("href", source);
+    fireEvent.load(preview);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(container).toHaveTextContent(
+      `See ${label ? description : ""} for the result.`.replace(/ +/g, " "),
+    );
+    if (label.includes("**")) {
+      expect(container.querySelector("strong")).toHaveTextContent(
+        "Result with details",
+      );
+      expect(container.querySelector("em code")).toHaveTextContent("details");
+    }
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open image fullscreen" }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).getByAltText(description),
+    ).toHaveAttribute("src", source);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close fullscreen viewer" }),
+    );
+    fireEvent.error(preview);
+    expect(screen.getByRole("link")).toHaveAttribute("href", source);
+  },
+);
 
 it("keeps original links when media fails before loading", () => {
   const { container } = render(

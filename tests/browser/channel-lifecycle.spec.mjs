@@ -255,13 +255,13 @@ test("typed delete confirmation purges the selected channel and survives reload"
     exact: true,
   });
   await expect(confirm).toBeDisabled();
-  await dialog
-    .getByRole("textbox", { name: "Channel name confirmation" })
-    .fill("wrong name");
+  const confirmation = dialog.getByRole("textbox", {
+    name: "Channel name confirmation",
+  });
+  await expect(confirmation).toHaveAttribute("autocapitalize", "none");
+  await confirmation.fill("wrong name");
   await expect(confirm).toBeDisabled();
-  await dialog
-    .getByRole("textbox", { name: "Channel name confirmation" })
-    .fill("Lifecycle channel");
+  await confirmation.fill("Lifecycle channel");
   await confirm.click();
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);

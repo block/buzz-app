@@ -1160,6 +1160,7 @@ function ChannelWorkspace({
               }
               key={currentId ?? "channels"}
               channel={current}
+              details={queries.channelDetails}
               close={closeSettings}
             >
               <UnreadOptions session={queries} channelId={current?.id} />

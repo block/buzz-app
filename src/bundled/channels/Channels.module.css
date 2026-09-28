@@ -858,3 +858,18 @@
   flex-shrink: 0;
   margin-block: calc(-1 * var(--space-1));
 }
+
+.settingsDescription {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.detailsEditor,
+.detailsEditor form {
+  display: grid;
+  gap: var(--space-4);
+}
+.detailsActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}

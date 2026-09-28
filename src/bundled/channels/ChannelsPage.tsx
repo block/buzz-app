@@ -1,5 +1,6 @@
 import type { AgentControl } from "../../features/agents/control";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
+import { clientMetrics } from "../../features/developer/client-metrics";
 import { ChannelMembersButton } from "./ChannelMembersDialog";
 import {
   channelPlaceholder,
@@ -664,6 +665,7 @@ function ChannelWorkspace({
     messageId: string;
     attachment: Attachment;
     initialTime: number;
+    hasComments: boolean;
     entryId?: string | undefined;
   }>();
   const showingMediaReview = mediaReviewForDestination(
@@ -681,7 +683,12 @@ function ChannelWorkspace({
     destination.current = { current, navigation };
   }, [current, navigation]);
   const openMediaReview = useCallback(
-    (messageId: string, attachment: Attachment, initialTime: number) => {
+    (
+      messageId: string,
+      attachment: Attachment,
+      initialTime: number,
+      hasComments = false,
+    ) => {
       const { current, navigation } = destination.current;
       if (!current) return;
       setSettings(undefined);
@@ -696,6 +703,7 @@ function ChannelWorkspace({
         messageId,
         attachment,
         initialTime,
+        hasComments,
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },
@@ -1069,6 +1077,7 @@ function ChannelWorkspace({
           channelName={showingMediaReview.channelName}
           messageId={showingMediaReview.messageId}
           initialTime={showingMediaReview.initialTime}
+          hasComments={showingMediaReview.hasComments}
           restoreFocus={mediaReviewTrigger}
           onOpenLink={openLink}
           close={() => setMediaReview(undefined)}
@@ -1291,11 +1300,32 @@ const ChannelBody = memo(function ChannelBody({
     messageId: string,
     attachment: Attachment,
     seconds: number,
+    hasComments?: boolean,
   ): void;
 }) {
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
   const window = useChannelWindow(queries.channels, channelId);
+  useLayoutEffect(() => {
+    clientMetrics.channelMounted(channelId);
+    return () => clientMetrics.channelUnmounted(channelId);
+  }, [channelId]);
+  const newest = window.rows.at(-1)?.id;
+  const settled = window.status === "ready" || window.status === "error";
+  useLayoutEffect(() => {
+    // Repeat calls for the same open are ignored; only the first rows count.
+    // Any row counts as content, since a saved scroll position may keep the
+    // newest one unmounted.
+    if (newest)
+      clientMetrics.channelRendered(
+        channelId,
+        () =>
+          !!document.querySelector(
+            `[data-channel-timeline="${CSS.escape(channelId)}"] [data-message-id]`,
+          ),
+      );
+    else if (settled) clientMetrics.channelEmpty(channelId);
+  }, [channelId, newest, settled]);
   useEffect(() => {
     // Only the normalized conversation attempt can acknowledge its channel.
     // A warm child effect runs before the parent's default resolution effect.

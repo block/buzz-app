@@ -1,5 +1,5 @@
 import { profileDefault } from "./profile-default";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -15,7 +15,10 @@ import {
 import type { Communities, PersonalProfile } from "./service";
 import { canSaveProfile, ProfileFields, profilesEqual } from "./ProfileFields";
 import { communityDestination, relayOrigin } from "./destination";
-import { registerBrokerCommunity } from "../relay/transport";
+import { registerCommunity } from "./connection";
+import { nativeIdentityEnabled } from "../identity/service";
+import { readErrorKind } from "../relay/errors";
+import { createJoinJournal, type PendingJoin } from "./join-journal";
 import styles from "./Communities.module.css";
 
 // Exact relay claim refusal codes, forwarded unchanged by the broker.
@@ -25,6 +28,10 @@ const CLAIM_REFUSALS = {
   invite_exhausted:
     "This invite has no uses left. Ask a community admin for a new one.",
   invite_invalid: "This invite code is not valid for this community.",
+  join_policy_required:
+    "This community requires current policy acceptance. Go back and reopen the relay to review it.",
+  join_policy_not_accepted:
+    "The community policy changed. Go back and reopen the relay to review it.",
 };
 
 export function CommunityDialog({
@@ -38,10 +45,27 @@ export function CommunityDialog({
   close(): void;
   onJoined?: (id: string) => void;
 }) {
+  const formId = useId();
   const client = communities.snapshot();
   const unavailable =
     client.status !== "ready" || (mode === "join" && !client.relayAvailable);
-  const [url, setUrl] = useState("");
+  const [journal] = useState(() =>
+    mode === "join" && nativeIdentityEnabled() && client.viewer
+      ? createJoinJournal(client.viewer)
+      : undefined,
+  );
+  const [recovery] = useState(() => {
+    try {
+      return { pending: journal?.latest(), error: "" };
+    } catch (reason) {
+      return { pending: undefined, error: String(reason) };
+    }
+  });
+  const [url, setUrl] = useState(
+    recovery.pending
+      ? communityDestination(recovery.pending.community).url
+      : "",
+  );
   const [destination, setDestination] =
     useState<ReturnType<typeof communityDestination>>();
   const id = destination?.id ?? "";
@@ -57,7 +81,7 @@ export function CommunityDialog({
   const [adult, setAdult] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(recovery.error);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -81,28 +105,57 @@ export function CommunityDialog({
   const allowed =
     (!policy?.age_attestation_required || adult) &&
     (!(policy?.terms_markdown || policy?.privacy_markdown) || agreed);
+  const current = (entry?: PendingJoin) =>
+    mounted.current && (!entry || journal?.current(entry));
+  function showProfile(
+    found: Awaited<ReturnType<typeof inspectProfile>>,
+    pending?: PendingJoin,
+  ) {
+    setOriginal(found);
+    setProfile(
+      pending?.profile ?? (found.exists ? found.profile : client.profile),
+    );
+    setStep("profile");
+  }
   async function submit() {
     if (uploading || unavailable) return;
     if (step === "destination") {
       await work(async () => {
         const next = communityDestination(relayOrigin(url));
         setDestination(next);
-        await registerBrokerCommunity(next.id, AbortSignal.timeout(12000));
+        await registerCommunity(next.id, AbortSignal.timeout(12000));
         const value = await communityRequest<CommunityInfo>(next.id, "info");
+        if (!mounted.current) return;
+        const pending = journal?.get(next.id);
         // Restoring an existing admitted profile is not a new join or policy acceptance.
-        const found = await inspectProfile(next.id).catch(() => undefined);
-        if (mounted.current) {
+        const found = await inspectProfile(next.id).catch((reason: unknown) => {
+          if (pending && readErrorKind(reason) !== "denied") throw reason;
+          return undefined;
+        });
+        if (current(pending)) {
           setInfo(value);
-          if (found?.exists) {
-            setOriginal(found);
-            setProfile(found.profile);
-            setStep("profile");
-          } else setStep("access");
+          if (found && (found.exists || pending)) showProfile(found, pending);
+          else setStep("access");
         }
       });
     } else if (step === "access") {
       if (!allowed) return;
       await work(async () => {
+        const pending = journal?.get(id);
+        if (pending) {
+          // A lost claim response may already have admitted this identity, even
+          // when its invite has since expired. Read before attempting another claim.
+          const found = await inspectProfile(id).catch((reason: unknown) => {
+            if (readErrorKind(reason) !== "denied") throw reason;
+            return undefined;
+          });
+          if (!current(pending)) return;
+          if (found) {
+            showProfile(found, pending);
+            return;
+          }
+        }
+        const transaction = journal?.begin(id);
         if (code.trim()) {
           let receipt: string | undefined;
           if (policy)
@@ -113,6 +166,7 @@ export function CommunityDialog({
                 age_confirmed: adult,
               })
             ).receipt;
+          if (!current(transaction)) return;
           const claim = await communityRequest<{ status: string }>(
             id,
             "claim",
@@ -128,11 +182,10 @@ export function CommunityDialog({
           if (!["joined", "already_member"].includes(claim.status))
             throw new Error("Membership was not confirmed");
         }
+        if (!current(transaction)) return;
         const found = await inspectProfile(id);
-        if (!mounted.current) return;
-        setOriginal(found);
-        setProfile(found.exists ? found.profile : client.profile);
-        setStep("profile");
+        if (!current(transaction)) return;
+        showProfile(found, transaction);
       });
     } else {
       if (!profile.name.trim()) return;
@@ -141,8 +194,29 @@ export function CommunityDialog({
           communities.saveProfile({ ...profile, name: profile.name.trim() });
         else {
           if (!destination) throw new Error("Choose a community first");
-          if (!original?.exists || !profilesEqual(profile, original.profile))
-            await publishProfile(id, profile, original?.existing ?? {});
+          const transaction = journal?.begin(id, profile);
+          const found = journal ? await inspectProfile(id) : original;
+          if (!current(transaction)) return;
+          const next =
+            found?.exists && profilesEqual(profile, found.profile)
+              ? profile
+              : {
+                  ...profile,
+                  name: profile.name.trim(),
+                  about: profile.about?.trim() ?? "",
+                };
+          if (!found?.exists || !profilesEqual(next, found.profile)) {
+            await publishProfile(id, next, found?.existing ?? {});
+            if (!current(transaction)) return;
+            // An accepted replaceable event may already be superseded.
+            const confirmed = await inspectProfile(id);
+            if (!current(transaction)) return;
+            if (!confirmed.exists || !profilesEqual(confirmed.profile, next))
+              throw new Error(
+                "Your profile change is not current. Your edits are retained; try again.",
+              );
+          }
+          if (!current(transaction)) return;
           communities.joined(
             {
               id,
@@ -154,8 +228,9 @@ export function CommunityDialog({
                 ? { icon: info.icon }
                 : {}),
             },
-            profileDefault(profile, communities.snapshot().profile, id),
+            profileDefault(next, communities.snapshot().profile, id),
           );
+          if (transaction) journal?.finish(transaction);
           onJoined?.(id);
         }
         close();
@@ -174,6 +249,58 @@ export function CommunityDialog({
         if (!next) close();
       }}
       preventClose={busy}
+      description={
+        step === "destination" && !unavailable
+          ? "Use your identity across communities. Your profile and conversations stay separate in each one."
+          : undefined
+      }
+      leadingActions={
+        !unavailable && (
+          <Button
+            type="button"
+            disabled={busy || uploading}
+            onClick={() => {
+              if (step === "destination" || mode === "profile") close();
+              else {
+                setError("");
+                setStep(step === "profile" ? "access" : "destination");
+                setAgreed(false);
+                setAdult(false);
+              }
+            }}
+          >
+            Back
+          </Button>
+        )
+      }
+      actions={
+        !unavailable && (
+          <Button
+            variant="prominent"
+            type="submit"
+            form={formId}
+            disabled={
+              busy ||
+              uploading ||
+              (step === "access" && !allowed) ||
+              (step === "profile" &&
+                (keepsProfile
+                  ? !profile.name.trim()
+                  : !canSaveProfile(profile)))
+            }
+          >
+            {busy
+              ? "Working…"
+              : step === "profile"
+                ? mode === "profile"
+                  ? "Save profile"
+                  : keepsProfile
+                    ? "Open community"
+                    : "Publish profile & open"
+                : "Continue"}
+          </Button>
+        )
+      }
       title={
         mode === "profile"
           ? "Your profile"
@@ -183,6 +310,8 @@ export function CommunityDialog({
       }
     >
       <form
+        id={formId}
+        noValidate
         className="space-y-6"
         onSubmit={(event) => {
           event.preventDefault();
@@ -203,39 +332,34 @@ export function CommunityDialog({
         ) : (
           <>
             {step === "destination" && (
-              <>
-                <p>
-                  Use your identity across communities. Your profile and
-                  conversations stay separate in each one.
-                </p>
-                <Field
-                  label="Relay URL"
-                  description="Enter a wss:// or https:// relay address without a path. Continue contacts this relay using your Buzz identity; joining or publishing a profile requires a later step."
-                >
-                  <Input
-                    type="url"
-                    required
-                    autoComplete="url"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    placeholder="wss://relay.example.com"
-                    maxLength={2048}
-                    disabled={busy}
-                    value={url}
-                    onChange={(e) => {
-                      setUrl(e.target.value);
-                      setDestination(undefined);
-                      setCode("");
-                      setAgreed(false);
-                      setAdult(false);
-                      setInfo(undefined);
-                      setOriginal(undefined);
-                      setProfile(client.profile);
-                      setError("");
-                    }}
-                  />
-                </Field>
-              </>
+              <Field
+                label="Relay URL"
+                error={error || undefined}
+                description="Enter a wss:// or https:// relay address without a path. Continue contacts this relay using your Buzz identity; joining or publishing a profile requires a later step."
+              >
+                <Input
+                  type="url"
+                  required
+                  autoComplete="url"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  placeholder="wss://relay.example.com"
+                  maxLength={2048}
+                  disabled={busy}
+                  value={url}
+                  onChange={(e) => {
+                    setUrl(e.target.value);
+                    setDestination(undefined);
+                    setCode("");
+                    setAgreed(false);
+                    setAdult(false);
+                    setInfo(undefined);
+                    setOriginal(undefined);
+                    setProfile(client.profile);
+                    setError("");
+                  }}
+                />
+              </Field>
             )}
             {step === "access" && (
               <>
@@ -316,51 +440,11 @@ export function CommunityDialog({
                 />
               </>
             )}
-            {error && (
+            {error && step !== "destination" && (
               <p role="alert" className={styles.error}>
                 {error}
               </p>
             )}
-            <footer className="buzz-dialog-actions justify-between">
-              <Button
-                type="button"
-                disabled={busy || uploading}
-                onClick={() => {
-                  if (step === "destination" || mode === "profile") close();
-                  else {
-                    setError("");
-                    setStep(step === "profile" ? "access" : "destination");
-                    setAgreed(false);
-                    setAdult(false);
-                  }
-                }}
-              >
-                Back
-              </Button>
-              <Button
-                variant="prominent"
-                type="submit"
-                disabled={
-                  busy ||
-                  uploading ||
-                  (step === "access" && !allowed) ||
-                  (step === "profile" &&
-                    (keepsProfile
-                      ? !profile.name.trim()
-                      : !canSaveProfile(profile)))
-                }
-              >
-                {busy
-                  ? "Working…"
-                  : step === "profile"
-                    ? mode === "profile"
-                      ? "Save profile"
-                      : keepsProfile
-                        ? "Open community"
-                        : "Publish profile & open"
-                    : "Continue"}
-              </Button>
-            </footer>
           </>
         )}
       </form>

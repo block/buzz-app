@@ -221,6 +221,13 @@ export function agentLaunchBlock(
   return null;
 }
 
+/** The host's sanitized rejection reason, if a control command carried one. */
+export function agentFailureReason(problem: unknown): string {
+  return problem instanceof Error && typeof problem.cause === "string"
+    ? problem.cause
+    : "";
+}
+
 /** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
 export function canStopAgent(state: AgentControlState, id: string): boolean {
   if (
@@ -276,8 +283,8 @@ export function createAgentControl(
       update({ status: "loading", error: null });
     const pending = Promise.resolve()
       .then(async () => {
-        // Only read-only native startup/contention failures are transient. Keep
-        // the coalesced read loading for up to twenty 250ms waits, not a UI error.
+        // Only read-only native startup is transient. Keep the coalesced read
+        // loading for up to twenty 250ms waits, not a UI error.
         for (let attempt = 0; !disposed && current === generation; attempt++) {
           try {
             return await host.snapshot();
@@ -285,8 +292,7 @@ export function createAgentControl(
             if (disposed || current !== generation) return;
             if (
               attempt === 20 ||
-              (error !== "Agent runtime is initializing; retry shortly" &&
-                error !== "Another native agent operation is in progress")
+              error !== "Agent runtime is initializing; retry shortly"
             )
               throw error;
             await new Promise<void>((resolve) => setTimeout(resolve, 250));
@@ -355,11 +361,15 @@ export function createAgentControl(
       return result;
     } catch (error) {
       // Host rejects with sanitized user-facing strings, never raw child output.
-      const detail = typeof error === "string" ? `${error} ` : "";
-      const message = `${detail}Could not confirm the operation. Check current status and saved settings before retrying; the operation will not be repeated automatically. Your edits are retained.`;
+      const detail =
+        typeof error === "string"
+          ? `${error}${/[.!?]$/.test(error) ? "" : "."}`
+          : "";
+      const message = `${detail ? `${detail} ` : ""}Could not confirm the operation. Check current status and saved settings before retrying; the operation will not be repeated automatically. Your edits are retained.`;
       if (current === generation) update({ status: "error", error: message });
-      // Dialogs own failed-write details after a successful status read.
-      throw new Error(message);
+      // Dialogs own failed-write details after a successful status read; the
+      // cause carries the host reason without its unconfirmed-status guidance.
+      throw new Error(message, detail ? { cause: detail } : undefined);
     } finally {
       // A superseded credential wait still owns its busy lane, but never the
       // newer Stop's result/error. Credential writes may commit; refresh recovers them.

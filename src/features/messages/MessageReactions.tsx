@@ -110,6 +110,21 @@ function ReactionLabel({
   );
 }
 
+const catalogIndexes = new WeakMap<
+  readonly CustomEmoji[],
+  ReadonlyMap<string, CustomEmoji>
+>();
+/** Every row looks up its quick reactions on each render; index each catalog snapshot once. */
+function catalogEmoji(entries: readonly CustomEmoji[], content: string) {
+  if (!content.startsWith(":")) return undefined;
+  let index = catalogIndexes.get(entries);
+  if (!index) {
+    index = new Map(entries.map((entry) => [`:${entry.shortcode}:`, entry]));
+    catalogIndexes.set(entries, index);
+  }
+  return index.get(content.toLowerCase());
+}
+
 /** PR 1's quick-control slot. The emoji contribution continues to own its picker. */
 export function MessageReactionControls(props: Props) {
   const { row, session, scope, inline, tools } = props;
@@ -121,18 +136,11 @@ export function MessageReactionControls(props: Props) {
   const shortcuts = useQuickReactions(scope, catalog.entries);
   const action = useReactionAction(props);
   const select = (content: string) =>
-    action.toggle(
-      content,
-      catalog.entries.find(
-        (entry) => `:${entry.shortcode}:` === content.toLowerCase(),
-      ),
-    );
+    action.toggle(content, catalogEmoji(catalog.entries, content));
   return (
     <>
       {shortcuts.map((content) => {
-        const emoji = catalog.entries.find(
-          (entry) => `:${entry.shortcode}:` === content.toLowerCase(),
-        );
+        const emoji = catalogEmoji(catalog.entries, content);
         const mine = row.reactions.some(
           (reaction) =>
             reaction.content === content &&
@@ -140,7 +148,16 @@ export function MessageReactionControls(props: Props) {
             reaction.events.some((event) => event.authorId === session.viewer),
         );
         return (
-          <span key={content} className={styles.quickReaction}>
+          <span
+            key={content}
+            className={styles.quickReaction}
+            onPointerEnter={(event) => {
+              event.currentTarget.style.setProperty(
+                "--reaction-hover-rotation",
+                `${Math.random() * 20 - 10}deg`,
+              );
+            }}
+          >
             <IconButton
               size="sm"
               variant="ghost"
@@ -149,16 +166,18 @@ export function MessageReactionControls(props: Props) {
               aria-pressed={mine}
               onClick={() => select(content)}
               icon={
-                <ReactionLabel
-                  row={row}
-                  inline={inline}
-                  session={session}
-                  reaction={{
-                    content,
-                    ...(emoji ? { emoji } : {}),
-                    events: [],
-                  }}
-                />
+                <span className={styles.quickReactionGlyph}>
+                  <ReactionLabel
+                    row={row}
+                    inline={inline}
+                    session={session}
+                    reaction={{
+                      content,
+                      ...(emoji ? { emoji } : {}),
+                      events: [],
+                    }}
+                  />
+                </span>
               }
             />
           </span>
@@ -339,12 +358,7 @@ export function MessageReactions(
     fromIndex: number | undefined;
   }>();
   const select = (content: string) => {
-    return action.toggle(
-      content,
-      catalog.entries.find(
-        (entry) => `:${entry.shortcode}:` === content.toLowerCase(),
-      ),
-    );
+    return action.toggle(content, catalogEmoji(catalog.entries, content));
   };
   return (
     // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.

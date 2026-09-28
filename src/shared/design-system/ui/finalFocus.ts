@@ -14,6 +14,14 @@ type CloseType = Parameters<
 >[0];
 
 /**
+ * Focus inside another closing popup (a submenu, or the popup this one is
+ * nested in) is part of the closing tree, not a user move. Collapsed
+ * disclosures also carry `data-closed`, so match popup roles only.
+ */
+const closingPopup =
+  ':is([role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"])[data-closed]';
+
+/**
  * Keep an explicit `finalFocus` from pulling focus back after the user moved it.
  *
  * Base UI returns focus when a popup finishes closing. For the default `true`
@@ -53,7 +61,7 @@ export function useFinalFocusUnlessMoved(
         active !== doc.body &&
         active !== target &&
         !popup.current?.contains(active) &&
-        !active.closest("[data-closed]");
+        !active.closest(closingPopup);
       return moved ? false : target;
     },
     [finalFocus],

@@ -119,3 +119,53 @@ async fn pending_origin_exclusion_cancellation_and_replacement_keep_one_epoch_ow
     host.revoke();
     assert!(host.state.lock().unwrap().origins.is_empty());
 }
+
+#[test]
+fn delayed_roster_delivery_cannot_authorize_a_replacement_lease() {
+    use nostr::{EventBuilder, Keys, Kind, Tag};
+    let relay = Keys::generate();
+    let identity = IdentityHost::fixture();
+    let viewer = identity.ready_viewer().unwrap();
+    let host = AccountConnection::default();
+    let make = |id: &str| {
+        Arc::new(session::Session::with_identity(
+            id.into(),
+            "https://a.example".into(),
+            viewer.clone(),
+            identity.clone(),
+            relay.public_key().to_hex(),
+            None,
+        ))
+    };
+    let old = make("old");
+    host.state
+        .lock()
+        .unwrap()
+        .sessions
+        .insert("old".into(), Some(old));
+    let captured = host.matching("https://a.example");
+    host.close_session("main", "old").unwrap();
+    let next = make("next");
+    host.state
+        .lock()
+        .unwrap()
+        .sessions
+        .insert("next".into(), Some(next.clone()));
+    let event = EventBuilder::new(Kind::from(39002), "")
+        .tags([Tag::parse(["d", "channel"]).unwrap()])
+        .sign_with_keys(&relay)
+        .unwrap();
+    let rows = [serde_json::to_value(event).unwrap()];
+    for lease in captured {
+        lease.accept_rosters(&rows);
+    }
+    // Old history's epoch cannot contaminate the replacement's authority.
+    assert_eq!(next.history.epoch(), 0);
+    next.accept_rosters(&rows);
+    assert_eq!(
+        next.history.epoch(),
+        1,
+        "the same response applies only when dispatched under this lease"
+    );
+    assert!(next.current().is_ok());
+}

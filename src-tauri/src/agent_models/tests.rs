@@ -287,6 +287,7 @@ fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
     // supplies the inherited workspace and filter.
     let mut req = request(dir.path(), &id, "refresh");
     req["host"] = json!("");
+    req["inheritWorkspace"] = json!(true);
     req["edit"]["harness"]["provider"] = json!("");
     req["edit"]["harness"]
         .as_object_mut()
@@ -307,6 +308,11 @@ fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
     assert!(call(req.clone()).is_err());
     req["host"] = json!("");
     req["filter"] = json!("other-*");
+    assert!(call(req.clone()).is_err());
+    // Without the flag a blank is explicit and still conflicts with the
+    // inherited workspace, as before.
+    req["filter"] = json!("");
+    req["inheritWorkspace"] = json!(false);
     assert!(call(req).is_err());
 }
 

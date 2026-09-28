@@ -38,6 +38,10 @@ pub(crate) struct Request {
     host: String,
     filter: String,
     action: Operation,
+    /// Blank host/filter are inherited from write-only Agent defaults the UI
+    /// cannot see, so native supplies them instead of treating blank as explicit.
+    #[serde(default)]
+    inherit_workspace: bool,
 }
 #[derive(Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -210,14 +214,15 @@ fn resolve(
     if request.host.len() > 4096 || request.filter.len() > 4096 {
         return Err("Connection settings are too long".into());
     }
-    // A blank request defers to native context, which includes write-only
-    // Agent defaults the UI cannot see. A non-blank value must still agree.
+    // Only an inherited blank defers to native context; otherwise explicit
+    // values, including blanks, must agree with a saved/draft override.
+    let defer = |value: &str| request.inherit_workspace && value.is_empty();
     let host = origin(context.host.as_deref().unwrap_or(&request.host))?;
-    if context.host.is_some() && !request.host.is_empty() && origin(&request.host)? != host {
+    if context.host.is_some() && !defer(&request.host) && origin(&request.host)? != host {
         return Err("Workspace conflicts with the saved/draft DATABRICKS_HOST override; use that workspace or edit the override".into());
     }
     let filter = match &context.filter {
-        Some(native) if request.filter.is_empty() => native,
+        Some(native) if defer(&request.filter) => native,
         Some(native) if native != &request.filter => {
             return Err("Filter conflicts with the saved/draft DATABRICKS_MODEL_FILTER override; edit the override or match it explicitly".into());
         }

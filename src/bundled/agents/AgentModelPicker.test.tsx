@@ -741,7 +741,12 @@ it("browses an inherited Agent defaults workspace without repeating it in the fo
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith(
         1,
-        expect.objectContaining({ host: "", filter: "", action: "connect" }),
+        expect.objectContaining({
+          host: "",
+          filter: "",
+          action: "connect",
+          inheritWorkspace: true,
+        }),
       ),
     );
     expect(screen.queryByText(/Set your Databricks workspace/)).toBeNull();

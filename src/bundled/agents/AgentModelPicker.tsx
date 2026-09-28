@@ -133,6 +133,11 @@ export function AgentModelPicker({
           host: external ? "" : host,
           filter: external ? "" : filter,
           action,
+          ...(!external &&
+          ((inheritedWorkspace?.host && !host) ||
+            (inheritedWorkspace?.filter && !filter))
+            ? { inheritWorkspace: true }
+            : {}),
         },
         abort.signal,
       );

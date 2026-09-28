@@ -65,7 +65,7 @@
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-  margin: var(--space-2) 0 var(--space-8);
+  margin: var(--space-3) 0;
 }
 .day::before,
 .day::after {
@@ -79,13 +79,18 @@
   container: message-row / inline-size;
   display: flex;
   gap: var(--space-3);
-  padding: var(--space-2) 0 var(--space-section-gap);
+  padding: var(--space-2) 0;
 }
 .message[data-layout="thread"],
 .message[data-layout="continuation"] {
   gap: var(--space-2);
-  padding-block: var(--space-1);
-  min-block-size: var(--size-control);
+}
+.message[data-layout="continuation"] {
+  padding-block: var(--space-half);
+}
+/* Timeline continuations keep the full-size avatar column's text alignment. */
+.feed .message[data-layout="continuation"] {
+  gap: var(--space-3);
 }
 .messageGutter {
   flex: 0 0 var(--size-control-sm);
@@ -99,9 +104,12 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-2);
-  font-size: var(--text-label-sm);
-  line-height: var(--text-label-sm--line-height);
-  letter-spacing: var(--text-label-sm--letter-spacing);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.author strong {
+  font-weight: var(--type-weight-medium);
 }
 .byline time {
   color: var(--text-subtle);
@@ -365,7 +373,7 @@
   width: 360px;
   max-width: 100%;
   aspect-ratio: 360 / 320;
-  margin-top: var(--space-2);
+  margin-block: var(--space-1);
   overflow: hidden;
   border-radius: var(--media-preview-radius);
   clip-path: var(--media-corner-clip, none);
@@ -477,8 +485,6 @@
   margin-top: var(--space-1h);
 }
 .day span {
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-pill);
   padding: var(--space-1h) var(--space-3);
 }
 .threadUnread {
@@ -489,6 +495,10 @@
   background: var(--text-standard);
 }
 .messageBody [data-thread-summary] {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--type-weight-regular);
   border-radius: var(--radius-pill);
   margin-top: var(--space-1);
   padding: var(--space-1);
@@ -744,6 +754,7 @@ html[data-keyboard-navigation] .audioSeek:focus-visible {
   max-width: 100%;
   aspect-ratio: var(--media-ratio, 16 / 9);
   overflow: hidden;
+  margin-block: var(--space-1);
   padding: 0;
   border: 0;
   border-radius: var(--media-preview-radius);
@@ -1186,6 +1197,10 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
 .plainText {
   white-space: pre-wrap;
 }
+.text :where(p, li),
+.plainText {
+  text-wrap-style: pretty;
+}
 .text p {
   line-height: inherit;
 }
@@ -1480,23 +1495,6 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
     opacity: 0;
     pointer-events: none;
   }
-  /* Reserve the controls' natural height in threads even while hidden, so
-     showing actions neither covers text nor moves neighboring click targets. */
-  .message:is([data-layout="thread"], [data-layout="continuation"])
-  .messageBody {
-    display: flex;
-    flex-direction: column;
-  }
-  .message:is([data-layout="thread"], [data-layout="continuation"])
-    .messageActions {
-    position: static;
-    order: 1;
-    flex-wrap: nowrap;
-    max-width: none;
-    flex-shrink: 0;
-    align-self: flex-end;
-    margin-inline-start: 0;
-  }
   .message:hover .messageActions,
   .message:focus-within .messageActions,
   .messageActions[data-open],
@@ -1644,7 +1642,7 @@ html[data-keyboard-navigation] .replyBranchRail:focus-visible {
 /* Continuations retain a readable clock without repeating the author header. */
 .messageGutter {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   align-items: flex-start;
 }
 .continuationTime {
@@ -1653,7 +1651,7 @@ html[data-keyboard-navigation] .replyBranchRail:focus-visible {
   background: var(--surface-panel);
   color: var(--text-subtle);
   font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
+  line-height: calc(var(--text-body-sm) * var(--text-body-sm--line-height));
   letter-spacing: var(--text-caption--letter-spacing);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -2162,4 +2160,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .imageReviewStage:focus,
 .mediaReviewViewer:focus {
   outline: none;
+}
+
+.feed .message[data-layout="continuation"] .messageGutter {
+  flex-basis: var(--size-control);
+}
+.text pre {
+  text-wrap-style: auto;
 }

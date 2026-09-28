@@ -8,6 +8,7 @@ import type { RelaySession } from "../relay/session";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow } from "./MessageRow";
+import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
@@ -545,6 +546,11 @@ function Timeline({
               />
             ) : (
               <MessageRow
+                layout={
+                  continuesMessageGroup(rows[index - 1], row)
+                    ? "continuation"
+                    : "timeline"
+                }
                 session={queries}
                 scope={scope}
                 key={row.id}

@@ -154,18 +154,18 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(availability).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(
-      page.getByRole("menuitemradio", { name: "Automatic", exact: true }),
+      page.getByRole("menuitemradio", { name: "Online", exact: true }),
     ).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(
-      page.getByRole("menuitemradio", { name: "Online", exact: true }),
+      page.getByRole("menuitemradio", { name: "Away", exact: true }),
     ).toBeFocused();
     await expect(
       page.getByRole("menuitemradio", { name: "Automatic", exact: true }),
-    ).toBeChecked();
+    ).toHaveCount(0);
     await expect(
       page.getByRole("menuitemradio", { name: "Online", exact: true }),
-    ).not.toBeChecked();
+    ).toBeChecked();
     await page.keyboard.press("Escape");
     await expect(availability).toBeFocused();
     await page.keyboard.press("Escape");
@@ -218,6 +218,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   });
   const personalGroups = sections.getByRole("button", {
     name: "Personal groups",
+    exact: true,
+  });
+  const customEmoji = sections.getByRole("button", {
+    name: "Custom emoji",
     exact: true,
   });
   const hostedCommunities = sections.getByRole("button", {
@@ -273,6 +277,8 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await tab();
     await expect(personalGroups).toBeFocused();
     await tab();
+    await expect(customEmoji).toBeFocused();
+    await tab();
     await expect(hostedCommunities).toBeFocused();
     await tab();
     await expect(invites).toBeFocused();
@@ -325,6 +331,8 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(pluginContent).toHaveCount(0);
     await tab();
     await expect(personalGroups).toBeFocused();
+    await tab();
+    await expect(customEmoji).toBeFocused();
     await tab();
     await expect(hostedCommunities).toBeFocused();
     await tab();

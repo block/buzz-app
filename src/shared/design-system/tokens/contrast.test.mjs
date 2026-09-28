@@ -51,7 +51,77 @@ describe("semantic contrast contract", () => {
   it("checks the current text and state-boundary pairs in both modes", () => {
     const result = check(tokens);
     expect(result.status, result.output).toBe(0);
-    expect(result.output).toContain("text and control/state boundaries clear");
+    expect(result.output).toContain(
+      "checked text and control/state boundaries",
+    );
+    expect(result.output.match(/\(accepted link contrast\)/g)).toHaveLength(8);
+    expect(result.output).toContain("not a contrast pass");
+    expect(result.output).not.toContain("exceptions no longer needed");
+  });
+
+  it.each([
+    [
+      "light foreground",
+      "--blue-11: #0d74ce;",
+      "--blue-11: #0d75ce;",
+      "on --affordance-selected",
+    ],
+    [
+      "dark foreground",
+      "--blue-11: #70b8ff;",
+      "--blue-11: #70b7ff;",
+      "on --surface-panel",
+    ],
+    [
+      "light surface",
+      "--neutral-3: #e8e8e8;",
+      "--neutral-3: #e7e7e7;",
+      "on --affordance-selected",
+    ],
+    [
+      "dark surface",
+      "--neutral-5: #333333;",
+      "--neutral-5: #343434;",
+      "on --surface-popover",
+    ],
+    [
+      "another surface role",
+      "--surface-inset: var(--neutral-2);",
+      "--surface-inset: var(--neutral-4);",
+      "on --surface-inset",
+    ],
+    [
+      "hover role",
+      "--affordance-link-hover: var(--blue-3);",
+      "--affordance-link-hover: var(--blue-4);",
+      "on --affordance-link-hover",
+    ],
+    [
+      "hover color",
+      "--blue-3: #0d2847;",
+      "--blue-3: #0d2848;",
+      "on --affordance-link-hover",
+    ],
+  ])("rejects an unapproved change to %s", (_name, from, to, pairing) => {
+    expect(tokens).toContain(from);
+    const result = check(tokens.replaceAll(from, to));
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toMatch(
+      new RegExp(`--text-link \\([^\\n]+\\) ${pairing}`),
+    );
+  });
+
+  it("does not extend link exceptions to another text role", () => {
+    const result = check(
+      tokens.replaceAll(
+        "--text-accent: var(--purple-12);",
+        "--text-accent: var(--blue-11);",
+      ),
+    );
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toMatch(
+      /dark\s+--text-accent .* on --surface-popover/,
+    );
   });
 
   it.each(["danger", "warning"])(
@@ -76,7 +146,8 @@ describe("semantic contrast contract", () => {
 
   it.each([
     ["online", "green"],
-    ["away", "amber"],
+    ["avatar-online-border", "green"],
+    ["avatar-away-border", "amber"],
     ["offline", "neutral"],
   ])("checks %s status on supported surfaces in both modes", (role, hue) => {
     const result = check(
@@ -93,6 +164,25 @@ describe("semantic contrast contract", () => {
       `dark: --status-${role} on --surface-popover`,
     );
   });
+
+  it.each([
+    ["online", "green"],
+    ["away", "amber"],
+  ])(
+    "rejects a %s outline that disappears on hover or selection",
+    (role, hue) => {
+      const result = check(
+        tokens.replaceAll(
+          `--status-avatar-${role}-border: var(--${hue}-11);`,
+          `--status-avatar-${role}-border: var(--${hue}-10);`,
+        ),
+      );
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain(
+        `light: --status-avatar-${role}-border on --affordance-selected`,
+      );
+    },
+  );
 
   it.each(["warning", "success", "accent"])(
     "checks %s text against its semantic fill, not only the palette",

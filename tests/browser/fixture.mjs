@@ -55,6 +55,7 @@ export const test = base.extend({
   agentPeers: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
+  communityRole: ["owner", { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
@@ -94,6 +95,7 @@ export const test = base.extend({
       agentPeers,
       tallMessages,
       membershipActivity,
+      communityRole,
       historyCounts,
       channelIds: channels,
       pluginFixtures,
@@ -688,6 +690,21 @@ export const test = base.extend({
               ),
             ]
           : [];
+      if (filter.kinds?.includes(13534)) {
+        expect(filter).toEqual({
+          authors: [getPublicKey(relayKey)],
+          kinds: [13534],
+          limit: 1,
+        });
+        return [
+          sign(
+            13534,
+            [["member", viewer, communityRole ?? "owner"]],
+            "",
+            relayKey,
+          ),
+        ];
+      }
       if (filter.kinds?.includes(39001))
         return rosterIds
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
@@ -1262,6 +1279,14 @@ export const test = base.extend({
           request.method === "GET"
         )
           return send(response, { policy: null });
+        if (route === "invite" && request.method === "POST")
+          return send(response, {
+            code: "fixture",
+            url: `${JSON.parse(fixtureAliases)[community]}/invite/fixture`,
+            expires_at: 1700003600,
+            max_uses: body.max_uses ?? null,
+            uses_remaining: body.max_uses ?? null,
+          });
         if (route === "session") {
           report.sessions.push(community);
           return send(response, {

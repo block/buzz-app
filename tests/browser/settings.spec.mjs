@@ -133,6 +133,56 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(channelsSidebar).toBeVisible();
 });
 
+test.describe("community administration permissions", () => {
+  test("shows Membership to a verified owner", async ({ page, app }) => {
+    await page.goto(app.origin);
+    await button(page, "Your profile").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    const sections = page.getByRole("navigation", {
+      name: "Settings sections",
+    });
+    await expect(sections).toContainText("Administration");
+    await sections
+      .getByRole("button", { name: "Membership", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Membership", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Invite members" }).click();
+    const dialog = page.getByRole("dialog", { name: "Add or invite people" });
+    await expect(
+      dialog.getByRole("heading", { name: "Add directly" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "Invite with a link" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("textbox", { name: "Public identity" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("combobox", { name: /Search people/ }),
+    ).toHaveCount(0);
+  });
+
+  test.describe("ordinary member", () => {
+    test.use({ communityRole: "member" });
+    test("hides Administration and Membership", async ({ page, app }) => {
+      await page.goto(app.origin);
+      await button(page, "Your profile").click();
+      await page
+        .getByRole("menuitem", { name: "Settings", exact: true })
+        .click();
+      const sections = page.getByRole("navigation", {
+        name: "Settings sections",
+      });
+      await expect(sections).not.toContainText("Administration");
+      await expect(
+        sections.getByRole("button", { name: "Membership", exact: true }),
+      ).toHaveCount(0);
+    });
+  });
+});
+
 // Only this journey requires a confirmed Online badge/radio. Keep unrelated
 // Settings fixtures on their existing synthetic broker.
 const confirmedPresence = test.extend({ productionBroker: true });
@@ -264,8 +314,8 @@ confirmedPresence(
       name: "Hosted communities",
       exact: true,
     });
-    const invites = sections.getByRole("button", {
-      name: "Invites",
+    const membership = sections.getByRole("button", {
+      name: "Membership",
       exact: true,
     });
     const plugins = sections.getByRole("button", {
@@ -321,7 +371,7 @@ confirmedPresence(
       await tab();
       await expect(hostedCommunities).toBeFocused();
       await tab();
-      await expect(invites).toBeFocused();
+      await expect(membership).toBeFocused();
       await tab();
       await expect(
         sections.getByRole("button", { name: "Appearance", exact: true }),
@@ -385,7 +435,7 @@ confirmedPresence(
       await tab();
       await expect(hostedCommunities).toBeFocused();
       await tab();
-      await expect(invites).toBeFocused();
+      await expect(membership).toBeFocused();
       await tab();
       await expect(
         sections.getByRole("button", { name: "Appearance", exact: true }),

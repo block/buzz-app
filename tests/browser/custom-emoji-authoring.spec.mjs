@@ -1,10 +1,7 @@
 import { test, expect } from "@playwright/test";
-import { createServer } from "vite";
+import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { verifyEvent } from "nostr-tools/pure";
@@ -200,11 +197,9 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
   const relayKey = generateSecretKey();
   const viewer = getPublicKey(userKey);
   const relay = localRelay(relayKey, viewer);
-  const cacheDir = await mkdtemp(join(tmpdir(), "buzz-custom-emoji-vite-"));
   let server;
   try {
     server = await createServer({
-      cacheDir,
       root: fileURLToPath(new URL("../../", import.meta.url)),
       configFile: false,
       envFile: false,
@@ -466,6 +461,5 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     expect(errors).toEqual([]);
   } finally {
     await server?.close();
-    await rm(cacheDir, { recursive: true, force: true });
   }
 });

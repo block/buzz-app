@@ -443,6 +443,59 @@ describe("device-local startup", () => {
         .every((f) => f["#h"]?.every((id) => id === "alpha")),
     ).toBe(true);
   });
+  it("confirms restored membership that moved ahead of the cursor before purging saved history", async () => {
+    const { owner, channels, query, storage } = setup();
+    const exact = deferred<RelayEvent[]>();
+    const others = Array.from({ length: 500 }, (_, index) =>
+      roster(relay, `other-${index}`, [viewer.pubkey]),
+    ).sort((a, b) => a.id.localeCompare(b.id));
+    const fresh = roster(relay, "alpha", [viewer.pubkey], 1_700_000_002);
+    query.mockImplementation(async (filters) => {
+      const rosterFilter = filters.find((f) => f.kinds?.includes(39002));
+      if (rosterFilter?.["#d"]?.includes("alpha")) return exact.promise;
+      if (rosterFilter) return rosterFilter.before_id ? [] : others;
+      const metadataFilter = filters.find((f) => f.kinds?.includes(39000));
+      if (metadataFilter)
+        return (metadataFilter["#d"] ?? []).includes("alpha")
+          ? [metadata(relay, "alpha", "Renamed Alpha", 1_700_000_003)]
+          : [];
+      if (filters.some((f) => f["#h"]?.includes("alpha"))) return head("fresh");
+      return [];
+    });
+    await owner.restore();
+    channels.ensure("alpha");
+    channels.ensureList();
+    await vi.waitFor(() =>
+      expect(
+        query.mock.calls
+          .flatMap(([filters]) => filters)
+          .some((filter) => filter["#d"]?.includes("alpha")),
+      ).toBe(true),
+    );
+    expect(channels.get?.("alpha")).toMatchObject({
+      name: "Alpha",
+      cached: true,
+    });
+    expect(channels.window("alpha").rows[0]?.content).toBe("saved");
+    exact.resolve([fresh]);
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+    );
+    expect(channels.get?.("alpha")).toMatchObject({
+      name: "Renamed Alpha",
+    });
+    expect(channels.get?.("alpha")?.cached).toBeUndefined();
+    await vi.waitFor(() =>
+      expect(channels.window("alpha").rows[0]?.content).toBe("fresh"),
+    );
+    expect(
+      (await storage.readStartup?.())?.discovery?.events.some((event) =>
+        (event as RelayEvent).tags.some(
+          ([name, value]) => name === "d" && value === "alpha",
+        ),
+      ),
+    ).toBe(true);
+  });
   it.each(["confirm", "omit", "deny"])(
     "fresh exact and ID-only reads respect held cached authority: %s",
     async (outcome) => {

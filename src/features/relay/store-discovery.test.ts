@@ -98,6 +98,19 @@ function setup(options: ChannelStoreOptions = {}) {
       await settled();
       expect(new Set(requested).size).toBe(count);
     },
+    async confirmOmitted(ids: readonly string[], events: RelayEvent[] = []) {
+      const request = await next(39002);
+      expect(request.filters).toEqual([
+        {
+          kinds: [39002],
+          authors: [relay.pubkey],
+          "#d": ids,
+          "#p": [viewer.pubkey],
+          limit: ids.length + 1,
+        },
+      ]);
+      request.respond(events);
+    },
   };
 }
 
@@ -162,6 +175,10 @@ it.each([500, 1000])(
       before_id: memberships[count - 1]?.id,
     });
     exhaustion.respond([]);
+    expect(
+      h.channels.list().channels.some((channel) => channel.id === "omitted"),
+    ).toBe(true);
+    await h.confirmOmitted(["omitted"]);
     await h.metadata(count);
     expect(h.channels.list().coverage).toBeUndefined();
     expect(h.channels.list().channels).toHaveLength(count);
@@ -171,6 +188,33 @@ it.each([500, 1000])(
     expect(h.pending).toHaveLength(0);
   },
 );
+
+it("confirms a scan-start membership that moved ahead of the cursor before reconciling omissions", async () => {
+  const h = setup();
+  const retained = message(viewer, "omitted", "Retained", 10);
+  h.emit([roster(relay, "omitted", [viewer.pubkey], 1_699_999_999), retained]);
+  const view = h.session.observe([{ kinds: [9], limit: 20 }]);
+  h.channels.ensureList();
+  (await h.next(39002)).respond(memberships.slice(0, 500));
+  (await h.next(39002)).respond([]);
+  const fresh = roster(relay, "omitted", [viewer.pubkey], 1_700_000_001);
+  await h.confirmOmitted(["omitted"], [fresh]);
+  for (let i = 0; i < 2; i++) {
+    const request = await h.next(39000);
+    request.respond(
+      (request.filters[0]?.["#d"] ?? []).flatMap((id) =>
+        names.has(id) ? [named(id)] : [],
+      ),
+    );
+  }
+  await h.settled();
+  expect(h.channels.list().coverage).toBeUndefined();
+  expect(h.channels.get?.("omitted")?.cached).toBeUndefined();
+  expect(view.snapshot().events).toEqual([retained]);
+  expect(
+    h.channels.list().channels.some((channel) => channel.id === "omitted"),
+  ).toBe(true);
+});
 
 it.each(["failure", "cancelled", "repeated full page", "repeated short page"])(
   "preserves partial grants and omitted data after later-page %s, then retries from the beginning",
@@ -199,12 +243,99 @@ it.each(["failure", "cancelled", "repeated full page", "repeated short page"])(
 
     h.channels.ensureList();
     await h.rosters(501);
+    await h.confirmOmitted(["omitted"]);
     await h.metadata(501);
     expect(h.channels.list().coverage).toBeUndefined();
     expect(h.channels.list().channels).toHaveLength(501);
     expect(view.snapshot().events).toEqual([]);
   },
 );
+
+it.each(["failure", "cancelled"])(
+  "preserves omitted data after exact confirmation %s, then retries deliberately",
+  async (failure) => {
+    const h = setup();
+    const retained = message(viewer, "omitted", "Retained", 10);
+    h.emit([roster(relay, "omitted", [viewer.pubkey]), retained]);
+    const view = h.session.observe([{ kinds: [9], limit: 20 }]);
+    h.channels.ensureList();
+    (await h.next(39002)).respond(memberships.slice(0, 500));
+    (await h.next(39002)).respond([]);
+    const confirmation = await h.next(39002);
+    expect(confirmation.filters[0]).toMatchObject({
+      authors: [relay.pubkey],
+      "#d": ["omitted"],
+      "#p": [viewer.pubkey],
+      limit: 2,
+    });
+    if (failure === "cancelled")
+      confirmation.fail(new DOMException("Cancelled", "AbortError"));
+    else confirmation.fail(new Error("offline"));
+    await h.settled(failure === "cancelled" ? "deferred" : "error");
+    expect(h.channels.list().coverage).toBe("partial");
+    expect(
+      h.channels.list().channels.some((channel) => channel.id === "omitted"),
+    ).toBe(true);
+    expect(view.snapshot().events).toEqual([retained]);
+
+    h.channels.ensureList();
+    const restarted = await h.next(39002);
+    expect(restarted.filters[0]?.before_id).toBeUndefined();
+    restarted.respond(memberships.slice(0, 500));
+    (await h.next(39002)).respond([]);
+    await h.confirmOmitted(["omitted"]);
+    await h.metadata(500);
+    expect(h.channels.list().coverage).toBeUndefined();
+    expect(
+      h.channels.list().channels.some((channel) => channel.id === "omitted"),
+    ).toBe(false);
+    expect(view.snapshot().events).toEqual([]);
+  },
+);
+
+it("confirms omitted scan-start memberships in 128-channel batches", async () => {
+  const h = setup();
+  const omitted = Array.from({ length: 129 }, (_, index) => `omitted-${index}`);
+  h.emit(omitted.map((id) => roster(relay, id, [viewer.pubkey])));
+  h.channels.ensureList();
+  (await h.next(39002)).respond(memberships.slice(0, 500));
+  (await h.next(39002)).respond([]);
+  const first = await h.next(39002);
+  const firstIds = first.filters[0]?.["#d"] ?? [];
+  expect(first.filters[0]).toMatchObject({
+    authors: [relay.pubkey],
+    "#p": [viewer.pubkey],
+    limit: 129,
+  });
+  expect(firstIds).toHaveLength(128);
+  first.respond(
+    firstIds.map((id) => roster(relay, id, [viewer.pubkey], 1_700_000_001)),
+  );
+  const second = await h.next(39002);
+  const secondIds = second.filters[0]?.["#d"] ?? [];
+  expect(second.filters[0]).toMatchObject({
+    authors: [relay.pubkey],
+    "#p": [viewer.pubkey],
+    limit: 2,
+  });
+  expect(secondIds).toHaveLength(1);
+  expect(new Set([...firstIds, ...secondIds])).toEqual(new Set(omitted));
+  second.respond(
+    secondIds.map((id) => roster(relay, id, [viewer.pubkey], 1_700_000_001)),
+  );
+  for (let i = 0; i < 2; i++) {
+    const request = await h.next(39000);
+    request.respond(
+      (request.filters[0]?.["#d"] ?? []).flatMap((id) =>
+        names.has(id) ? [named(id)] : [],
+      ),
+    );
+  }
+  await h.settled();
+  expect(h.channels.list().coverage).toBeUndefined();
+  expect(h.channels.list().channels).toHaveLength(629);
+  expect(omitted.every((id) => h.channels.get?.(id))).toBe(true);
+});
 
 it("uses the scan-start roster versions when live grants arrive between pages", async () => {
   const h = setup();
@@ -219,6 +350,7 @@ it("uses the scan-start roster versions when live grants arrive between pages", 
   const second = await h.next(39002);
   h.emit([roster(relay, "new-grant", [viewer.pubkey], 12)]);
   second.respond(memberships.slice(500, 501));
+  await h.confirmOmitted(["omitted"]);
   const namesRead = await h.next(39000);
   expect(h.channels.list().channels.map((channel) => channel.id)).toEqual(
     expect.arrayContaining(["renewed", "new-grant"]),
@@ -232,6 +364,26 @@ it("uses the scan-start roster versions when live grants arrive between pages", 
   expect(h.channels.list().channels).toHaveLength(503);
   expect(h.channels.list().coverage).toBeUndefined();
 });
+
+it.each(["cache clear", "disposal"])(
+  "fences exact omission confirmation after %s",
+  async (action) => {
+    const h = setup();
+    h.emit([roster(relay, "omitted", [viewer.pubkey])]);
+    h.channels.ensureList();
+    (await h.next(39002)).respond(memberships.slice(0, 500));
+    (await h.next(39002)).respond([]);
+    const confirmation = await h.next(39002);
+    if (action === "cache clear") await h.clearCache();
+    else h.dispose();
+    expect(confirmation.signal?.aborted).toBe(true);
+    confirmation.respond([
+      roster(relay, "omitted", [viewer.pubkey], 1_700_000_001),
+    ]);
+    if (action === "cache clear")
+      expect(h.channels.list().coverage).toBe("partial");
+  },
+);
 
 it.each(["revocation", "cache clear"])(
   "fences a later page after %s and allows a fresh scan",

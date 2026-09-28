@@ -68,6 +68,8 @@ export type ChannelStoreOptions = {
 const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
+/** Exact omission confirmations use the relay's explicit channel-ID cap. */
+const DISCOVERY_CONFIRM_LIMIT = 128;
 const UNAVAILABLE: ChannelList = Object.freeze({
   status: "unavailable",
   channels: Object.freeze([]),
@@ -979,11 +981,14 @@ export function createChannelStore(
     const started = discovery.rosterVersions();
     const overflowRevision = discovery.overflowRevision;
     let readingRoster = true;
+    let denyAllOnFailure = true;
     let outcome: RosterRefresh = { state: "deferred" };
     try {
       const ids = new Set<string>();
       const named = new Set<string | undefined>();
       let cursor: RelayEvent | undefined;
+      let complete: Set<string> | undefined;
+      let paged = false;
       // At most the retained roster budget plus its final exhaustion read.
       // This also bounds a relay returning repeated coordinates with new versions.
       for (let page = 0; page <= discovery.capacity / DISCOVERY_LIMIT; page++) {
@@ -1028,21 +1033,77 @@ export function createChannelStore(
               (event.created_at === cursor.created_at && event.id > cursor.id),
           ) &&
           (rosters.length < DISCOVERY_LIMIT || !!last);
-        const complete =
-          advances &&
-          rosters.length < DISCOVERY_LIMIT &&
-          discovery.overflowRevision === overflowRevision
-            ? ids
-            : undefined;
-        if (!applyDiscovery(rosters, complete, started)) return;
-        if (disposed || (!complete && generation !== epoch)) return;
+        const shortPage = advances && rosters.length < DISCOVERY_LIMIT;
+        if (!applyDiscovery(rosters)) return;
+        const overflowed = discovery.overflowRevision !== overflowRevision;
+        if (disposed || (!shortPage && generation !== epoch)) return;
         if (!advances)
           throw new ReadError(
             "invalid-response",
             "Channel discovery cursor did not advance",
           );
-        if (complete || discovery.overflowRevision !== overflowRevision) break;
+        if (shortPage && !overflowed) {
+          complete = ids;
+          break;
+        }
+        if (overflowed) break;
         cursor = last;
+        paged = true;
+      }
+      if (complete) {
+        denyAllOnFailure = false;
+        const current = discovery.rosterVersions();
+        const omitted = paged
+          ? [...started].flatMap(([id, roster]) =>
+              !complete?.has(id) &&
+              current.get(id) === roster &&
+              hasTag(roster, "p", transport.viewer) &&
+              discovery.authorized(id)
+                ? [id]
+                : [],
+            )
+          : [];
+        for (
+          let offset = 0;
+          offset < omitted.length;
+          offset += DISCOVERY_CONFIRM_LIMIT
+        ) {
+          const batch = omitted.slice(offset, offset + DISCOVERY_CONFIRM_LIMIT);
+          const confirmations = await transport.read(
+            [
+              {
+                kinds: [39002],
+                authors: [transport.relayAuthor],
+                "#d": batch,
+                "#p": [transport.viewer],
+                limit: batch.length + 1,
+              },
+            ],
+            { signal: controller.signal, fresh: true },
+          );
+          if (disposed || generation !== epoch) return;
+          if (
+            confirmations.length > batch.length ||
+            confirmations.some(
+              (event) =>
+                event.kind !== 39002 ||
+                event.pubkey !== transport.relayAuthor ||
+                !hasTag(event, "p", transport.viewer) ||
+                !batch.includes(tag(event, "d") ?? ""),
+            )
+          )
+            throw new ReadError(
+              "invalid-response",
+              "Channel discovery confirmation exceeded its read budget",
+            );
+          for (const event of confirmations) {
+            const id = tag(event, "d");
+            if (id) complete.add(id);
+          }
+          applyDiscovery(confirmations);
+          if (disposed || generation !== epoch) return;
+        }
+        if (!applyDiscovery([], complete, started)) return;
       }
       const wanted = [...ids].filter(
         (id) =>
@@ -1052,6 +1113,7 @@ export function createChannelStore(
       );
       generation = epoch;
       readingRoster = false;
+      denyAllOnFailure = false;
       // Applying our own complete roster can invalidate the original request.
       // Metadata gets a fresh cancellation owner, never another completeness set.
       controllers.delete(controller);
@@ -1080,7 +1142,7 @@ export function createChannelStore(
         : { state: "error", error: describe(error) };
       if (error instanceof ReadError && error.retryAfterMs !== undefined)
         listRetryAt = performance.now() + error.retryAfterMs;
-      if (readingRoster && readErrorKind(error) === "denied") {
+      if (denyAllOnFailure && readErrorKind(error) === "denied") {
         discovery.denyAll();
         transport.revokeAccess(() => {
           for (const id of allowed ?? [])

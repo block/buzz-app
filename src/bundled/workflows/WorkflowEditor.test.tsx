@@ -28,6 +28,69 @@ function Example({ initial = fixtureYaml }: { initial?: string }) {
   );
 }
 
+test("labels the name and configured state, and explains the rename control", async () => {
+  const user = userEvent.setup();
+  render(<Example />);
+  expect(screen.getByText("Workflow name")).toBeVisible();
+  const rename = screen.getByRole("button", { name: "Edit workflow name" });
+  await user.hover(rename);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Edit workflow name",
+  );
+  await user.unhover(rename);
+  const toggle = screen.getByRole("switch", { name: "Configuration: Off" });
+  expect(toggle).not.toBeChecked();
+  await user.click(toggle);
+  expect(
+    screen.getByRole("switch", { name: "Configuration: On" }),
+  ).toBeChecked();
+  await user.click(toggle);
+  expect(
+    screen.getByRole("switch", { name: "Configuration: Off" }),
+  ).not.toBeChecked();
+});
+
+test.each([
+  [
+    { readOnly: true },
+    "Read-only: this workflow belongs to another identity. Only its author can change it.",
+  ],
+  [
+    { busy: true },
+    "A workflow operation is pending. Controls are unavailable until it is resolved.",
+  ],
+  [{ locked: true }, "Resolve the submitted operation below before editing."],
+  [{ chooseChannel: true }, "Choose a channel before editing."],
+  [
+    { yaml: "name: [" },
+    "Correct the YAML before changing the name or configured state.",
+  ],
+])("explains unavailable header controls (%j)", async (props, reason) => {
+  const change = vi.fn();
+  const { rerender } = render(
+    <WorkflowEditor
+      yaml={fixtureYaml}
+      onChange={change}
+      onSave={vi.fn()}
+      {...props}
+    />,
+  );
+  const toggle = screen.getByRole("switch");
+  const rename = screen.getByRole("button", { name: "Edit workflow name" });
+  expect(toggle).toHaveAttribute("aria-disabled", "true");
+  expect(rename).toBeDisabled();
+  expect(toggle).toHaveAccessibleDescription(reason);
+  expect(rename).toHaveAccessibleDescription(expect.stringContaining(reason));
+  expect(screen.getByText(reason)).toBeVisible();
+  expect(change).not.toHaveBeenCalled();
+  rerender(
+    <WorkflowEditor yaml={fixtureYaml} onChange={change} onSave={vi.fn()} />,
+  );
+  expect(toggle).not.toHaveAttribute("aria-disabled", "true");
+  expect(rename).toBeEnabled();
+  expect(screen.queryByText(reason)).not.toBeInTheDocument();
+});
+
 test("form errors follow the editable field and clear when corrected", async () => {
   const user = userEvent.setup();
   render(<Example />);
@@ -39,7 +102,9 @@ test("form errors follow the editable field and clear when corrected", async () 
   expect(screen.getByText("Give this workflow a name.")).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Edit workflow name" }),
-  ).toHaveAccessibleDescription("Give this workflow a name.");
+  ).toHaveAccessibleDescription(
+    "Give this workflow a name. Edit workflow name",
+  );
   expect(screen.queryByRole("textbox", { name: "Workflow name" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Edit workflow name" }));
   expect(

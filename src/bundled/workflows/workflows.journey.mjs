@@ -182,7 +182,7 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
   await editor.closeInspector();
   expect(
     await page
-      .getByRole("switch", { name: "Enabled in configuration" })
+      .getByRole("switch", { name: /^Configuration: / })
       .getAttribute("aria-checked"),
   ).toBe("false");
   await editor.rename("Incomplete editor");
@@ -249,7 +249,7 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   const editor = editorControls(page);
   const { button } = editor;
   const enabled = page.getByRole("switch", {
-    name: "Enabled in configuration",
+    name: /^Configuration: /,
   });
   const reply = page.getByRole("switch", {
     name: "Reply in the triggering thread",
@@ -1126,7 +1126,7 @@ test("schedule presets round-trip into YAML and warn before enabling a frequent 
   await expect(preset("Custom cron")).toBeChecked();
 
   await pill("Every hour").click();
-  await page.getByRole("switch", { name: "Enabled in configuration" }).click();
+  await page.getByRole("switch", { name: /^Configuration: / }).click();
   await editor.primary("Create workflow").click();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText(

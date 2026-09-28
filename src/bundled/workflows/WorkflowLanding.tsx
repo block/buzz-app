@@ -1,6 +1,7 @@
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -399,12 +400,16 @@ function WorkflowCard({
     submitted !== null &&
     definition.revision !== submitted &&
     submittedOperation?.outcome !== "rejected";
-  const toggleDisabled =
-    readonly ||
-    locked ||
-    awaitingReadback ||
-    !fields.editable ||
-    !capability.availability.save;
+  const toggleReason = readonly
+    ? "Read-only: only the author can change this workflow."
+    : locked || awaitingReadback
+      ? "Waiting for the submitted change to be resolved."
+      : !fields.editable
+        ? "Correct the YAML before changing the configured state."
+        : !capability.availability.save
+          ? "Saving is unavailable from this host."
+          : undefined;
+  const reasonId = useId();
   const warning = getWorkflowActivationWarning(definition.yaml);
   const name = fields.name || "Unnamed or malformed workflow";
   const toggle = (next: boolean) => {
@@ -479,8 +484,9 @@ function WorkflowCard({
             <div className="workflow-card-switch">
               <Switch
                 aria-label={`Enabled in configuration: ${name}`}
+                aria-describedby={toggleReason ? reasonId : undefined}
                 checked={enabled}
-                disabled={toggleDisabled}
+                disabled={!!toggleReason}
                 onCheckedChange={(next) => {
                   if (next === enabled) return;
                   if (next && warning) setConfirmEnable(true);
@@ -528,6 +534,14 @@ function WorkflowCard({
               </MenuRoot>
             </div>
           </div>
+          {toggleReason && (
+            <p
+              id={reasonId}
+              className="workflow-control-reason text-caption text-secondary"
+            >
+              {toggleReason}
+            </p>
+          )}
           <h2 className="workflow-card-description text-body-lg">
             {presentation.description}
           </h2>
@@ -536,7 +550,7 @@ function WorkflowCard({
               <strong className="text-standard">#{channel.name}</strong>
               <span>{name}</span>
 
-              {readonly && <span>Read-only</span>}
+              <span>Configuration: {enabled ? "On" : "Off"}</span>
             </div>
             <time
               dateTime={new Date(definition.createdAt * 1000).toISOString()}

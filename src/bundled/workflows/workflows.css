@@ -217,7 +217,17 @@
   padding-top: var(--space-4);
 }
 .workflow-name {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
   flex: 1 1 240px;
+}
+.workflow-control-reason {
+  flex-basis: 100%;
+  margin: 0;
+}
+.workflow-card .workflow-control-reason {
+  margin-block: var(--space-2);
 }
 .workflow-steps {
   list-style: none;

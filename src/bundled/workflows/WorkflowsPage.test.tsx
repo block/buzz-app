@@ -30,13 +30,13 @@ vi.stubGlobal(
 );
 afterEach(cleanup);
 
-function mount(initialYaml = fixtureYaml) {
+function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
   const fixture = createWorkflowFixture();
   fixture.definitions.update({
     status: "ready",
     data: {
       partial: false,
-      items: [{ ...fixtureDefinition, yaml: initialYaml }],
+      items: [{ ...fixtureDefinition, owner, yaml: initialYaml }],
     },
   });
   const list = {
@@ -45,7 +45,10 @@ function mount(initialYaml = fixtureYaml) {
     channels: [{ id: fixtureChannel, name: "Fixture channel" }],
   };
   const session = {
-    workflows: fixture.capability,
+    workflows: {
+      ...fixture.capability,
+      availability: { ...fixture.capability.availability, save },
+    },
     channels: {
       list: () => list,
       ensureList: () => {},
@@ -98,6 +101,7 @@ it("labels landing controls as configuration and retains the runtime caveat in d
       name: "Enabled in configuration: Message helper",
     }),
   ).not.toBeChecked();
+  expect(screen.getByText("Configuration: Off")).toBeVisible();
   expect(
     screen.getByText(/Saving a disabled configuration does not confirm/),
   ).toBeVisible();
@@ -114,6 +118,82 @@ it("labels landing controls as configuration and retains the runtime caveat in d
     ),
   ).toBeVisible();
 });
+
+it("explains another author's disabled controls from the landing through the read-only dialog", async () => {
+  const user = userEvent.setup();
+  const fixture = mount(fixtureYaml, "22".repeat(32));
+  const toggle = await screen.findByRole("switch", {
+    name: "Enabled in configuration: Message helper",
+  });
+  expect(toggle).toHaveAttribute("aria-disabled", "true");
+  expect(toggle).toHaveAccessibleDescription(
+    "Read-only: only the author can change this workflow.",
+  );
+  await user.click(toggle);
+  await user.click(screen.getByRole("button", { name: "Open Message helper" }));
+  const dialog = screen.getByRole("dialog", { name: "View workflow" });
+  const controls = within(dialog);
+  expect(controls.getByText("Workflow name")).toBeVisible();
+  expect(
+    controls.getByRole("switch", { name: "Configuration: Off" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(
+    controls.getByRole("button", { name: "Edit workflow name" }),
+  ).toBeDisabled();
+  expect(
+    controls.getByText(/Read-only: this workflow belongs to another identity/),
+  ).toBeVisible();
+  expect(
+    controls.queryByRole("button", { name: "Save changes" }),
+  ).not.toBeInTheDocument();
+  await user.click(controls.getByRole("tab", { name: "YAML" }));
+  expect(
+    controls.getByRole("textbox", { name: "Workflow YAML" }),
+  ).toHaveAttribute("readonly");
+  await user.click(controls.getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(fixture.calls.save).toBe(0);
+});
+
+it("explains a pending toggle until exact readback and then shows the saved state", async () => {
+  const user = userEvent.setup();
+  const fixture = mount();
+  const toggle = await screen.findByRole("switch", {
+    name: "Enabled in configuration: Message helper",
+  });
+  await user.click(toggle);
+  await user.click(screen.getByRole("button", { name: "Turn on" }));
+  expect(fixture.calls.save).toBe(1);
+  expect(toggle).toHaveAttribute("aria-disabled", "true");
+  expect(toggle).toHaveAccessibleDescription(
+    "Waiting for the submitted change to be resolved.",
+  );
+  expect(screen.getByText("Configuration: Off")).toBeVisible();
+  await act(async () => fixture.finish("succeeded"));
+  expect(await screen.findByText("Configuration: On")).toBeVisible();
+  const savedToggle = screen.getByRole("switch", {
+    name: "Enabled in configuration: Message helper",
+  });
+  expect(savedToggle).not.toHaveAttribute("aria-disabled", "true");
+  expect(savedToggle).toBeChecked();
+  expect(savedToggle).not.toHaveAccessibleDescription();
+});
+
+it.each([
+  ["name: [", true, "Correct the YAML before changing the configured state."],
+  [fixtureYaml, false, "Saving is unavailable from this host."],
+])(
+  "explains why the owner's landing toggle is unavailable (%j)",
+  async (yaml, save, reason) => {
+    const fixture = mount(yaml, fixtureViewer, save);
+    const toggle = await screen.findByRole("switch");
+    expect(toggle).toHaveAttribute("aria-disabled", "true");
+    expect(toggle).toHaveAccessibleDescription(reason);
+    expect(screen.getByText(reason)).toBeVisible();
+    await userEvent.setup().click(toggle);
+    expect(fixture.calls.save).toBe(0);
+  },
+);
 
 it("keeps the editor mounted through exact readback beneath the one-time secret", async () => {
   const fixture = mount();

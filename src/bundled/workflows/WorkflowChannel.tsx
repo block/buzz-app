@@ -470,12 +470,6 @@ export function WorkflowChannel({
                     </Button>
                   </div>
                 )}
-                {readonly && (
-                  <p className="text-secondary">
-                    This definition belongs to another identity. Only its author
-                    can manage it here.
-                  </p>
-                )}
                 {!capability.availability.delete && (
                   <p className="text-body-sm text-secondary">
                     Delete requests are unavailable from this host.

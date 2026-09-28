@@ -142,10 +142,27 @@ export function WorkflowEditor({
     else onSave();
   };
   const disabled = readOnly || busy || locked || chooseChannel;
+  const controlReason = readOnly
+    ? "Read-only: this workflow belongs to another identity. Only its author can change it."
+    : busy
+      ? "A workflow operation is pending. Controls are unavailable until it is resolved."
+      : locked
+        ? "Resolve the submitted operation below before editing."
+        : chooseChannel
+          ? "Choose a channel before editing."
+          : !fields.editable
+            ? "Correct the YAML before changing the name or configured state."
+            : undefined;
   return (
     <Dialog
       open
-      title={create ? "Create workflow" : "Edit workflow"}
+      title={
+        create
+          ? "Create workflow"
+          : readOnly
+            ? "View workflow"
+            : "Edit workflow"
+      }
       closeLabel="Close editor"
       size="expanded"
       onOpenChange={(open) => {
@@ -185,7 +202,9 @@ export function WorkflowEditor({
       }
       actions={
         <>
-          {onCancel && <Button onClick={onCancel}>Cancel</Button>}
+          {onCancel && (
+            <Button onClick={onCancel}>{readOnly ? "Close" : "Cancel"}</Button>
+          )}
           {!readOnly && (
             <Button
               variant="prominent"
@@ -222,6 +241,9 @@ export function WorkflowEditor({
       <section aria-label="Workflow editor" className="workflow-editor">
         <div className="workflow-toolbar">
           <div className="workflow-name">
+            {!editingName && (
+              <span className="text-label text-secondary">Workflow name</span>
+            )}
             {editingName ? (
               <Field
                 label="Workflow name"
@@ -269,8 +291,14 @@ export function WorkflowEditor({
                 <IconButton
                   ref={nameButton}
                   aria-label="Edit workflow name"
+                  title={controlReason ?? "Edit workflow name"}
                   aria-describedby={
-                    issue?.field === "name" ? `${id}-name-error` : undefined
+                    [
+                      controlReason && `${id}-control-reason`,
+                      issue?.field === "name" && `${id}-name-error`,
+                    ]
+                      .filter(Boolean)
+                      .join(" ") || undefined
                   }
                   icon={<PencilSimpleIcon size={16} aria-hidden="true" />}
                   size="sm"
@@ -293,13 +321,25 @@ export function WorkflowEditor({
             )}
           </div>
           <Switch
-            label="Enabled in configuration"
+            label={`Configuration: ${fields.enabled !== false ? "On" : "Off"}`}
+            aria-describedby={
+              controlReason ? `${id}-control-reason` : undefined
+            }
             checked={fields.enabled !== false}
             disabled={disabled || !fields.editable}
             onCheckedChange={(enabled) =>
               changeHeader(yamlWithWorkflowEnabled(yaml, enabled), { enabled })
             }
           />
+          {controlReason && (
+            <p
+              id={`${id}-control-reason`}
+              role="status"
+              className="workflow-control-reason text-body-sm text-secondary"
+            >
+              {controlReason}
+            </p>
+          )}
         </div>
         <div className="workflow-editor-body">
           {modeError && (

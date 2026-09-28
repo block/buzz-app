@@ -107,8 +107,11 @@ Quit the app and run the last command again to test a cold start. The bundle lan
 under the workspace `target/` directory because `src-tauri` is a workspace member.
 
 **Windows** packaged/debug builds register the launching binary under the current
-user on every start. Ordinary `just desktop` does not register. Use the installed
-app or run a debug binary once, then open a link:
+user on every start. Ordinary `just desktop` does not register. `just desktop`
+and `just desktop-bundle --no-bundle` share `target/debug`; if you ran
+`just desktop` after the last debug build, rebuild before launching the executable
+or the registered binary will still have development-mode behavior. Use the
+installed app or build and run a debug binary, then open a link:
 
 ```powershell
 just desktop-bundle --no-bundle
@@ -121,8 +124,10 @@ most recently owns the scheme.
 
 **Linux** packaged/debug builds write a `<binary>-handler.desktop` entry and call
 `xdg-mime` and `update-desktop-database` on every start, so both must be
-installed. Ordinary `just desktop` does not register. Packaged `.deb` and
-AppImage builds also declare the scheme in their desktop entry.
+installed. Ordinary `just desktop` does not register. As on Windows, rerun
+`just desktop-bundle --no-bundle` after any `just desktop` launch before testing
+the shared `target/debug` executable. Packaged `.deb` and AppImage builds also
+declare the scheme in their desktop entry.
 
 ```sh
 just desktop-bundle --no-bundle

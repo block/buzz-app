@@ -1,7 +1,7 @@
 //! App lifetime, not page/plugin lifetime. Native startup uses app-owned resources.
 use buzz_agent_controller::{
     Action, AgentEdit, ControlSnapshot, Controller, Credentials, ImportPreview, Imports,
-    LegacySource, NewAgent, PlatformCredentials, RuntimeBundle, Store,
+    LegacySource, NewAgent, PlatformCredentials, ProcessStatus, RuntimeBundle, Store,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -218,7 +218,8 @@ struct Host {
     workspace: PathBuf,
     closed: bool,
     credentials: Arc<dyn Credentials>,
-    starts: BTreeMap<String, (u64, Option<String>)>,
+    starts: BTreeMap<String, (u64, Option<String>, ProcessStatus)>,
+    queued: BTreeSet<String>,
     next_start: u64,
     /// Agents with an explicit Start/Stop since open; queued restore skips them.
     acted: BTreeSet<String>,
@@ -242,6 +243,7 @@ impl Host {
             bundle,
             legacy_parent.join("dev.local.buzz.agent-ownership"),
         );
+        let queued = controller.launch_ids()?.into_iter().collect();
         Ok(Self {
             controller,
             imports: Imports::default(),
@@ -250,6 +252,7 @@ impl Host {
             closed: false,
             credentials,
             starts: BTreeMap::new(),
+            queued,
             next_start: 0,
             acted: BTreeSet::new(),
             profiles: BTreeMap::new(),
@@ -259,12 +262,25 @@ impl Host {
         })
     }
     fn snapshot(&mut self) -> Result<Snapshot, String> {
-        self.controller
-            .snapshot()
-            .map(|data| Snapshot::from(data, cfg!(target_os = "macos"), &self.workspace))
+        let mut data = self.controller.snapshot()?;
+        for agent in &mut data.agents {
+            if let Some((_, _, status)) = self.starts.get(&agent.id) {
+                agent.status = *status;
+                agent.error = None;
+            } else if self.queued.contains(&agent.id) {
+                agent.status = ProcessStatus::Waiting;
+                agent.error = None;
+            }
+        }
+        Ok(Snapshot::from(
+            data,
+            cfg!(target_os = "macos"),
+            &self.workspace,
+        ))
     }
     fn action(&mut self, id: &str, action: Action) -> Result<Snapshot, String> {
         self.starts.remove(id);
+        self.queued.remove(id);
         self.acted.insert(id.to_owned());
         self.controller.action(id, action)?;
         self.snapshot()
@@ -411,9 +427,17 @@ impl AgentHost {
         .await
     }
     pub(crate) async fn restore(&self) {
-        let ids = run(self.clone(), |host| host.controller.launch_ids())
-            .await
-            .unwrap_or_default();
+        let ids = run(self.clone(), |host| {
+            host.queued = host
+                .controller
+                .launch_ids()?
+                .into_iter()
+                .filter(|id| !host.acted.contains(id))
+                .collect();
+            Ok(host.queued.iter().cloned().collect::<Vec<_>>())
+        })
+        .await
+        .unwrap_or_default();
         for id in ids {
             let _ = start(self.clone(), id, Action::Start, true, None, false).await;
         }
@@ -441,8 +465,35 @@ impl AgentHost {
             host.controller.disconnect(&workspace)?;
             // A successful Disconnect also retires pre-existing credential waits.
             // Otherwise their late completion could start against the removed cache.
-            host.starts
-                .retain(|_, (_, pending)| pending.as_deref() != Some(&workspace));
+            let cancelled: Vec<_> = host
+                .starts
+                .iter()
+                .filter(|(_, (_, pending, _))| pending.as_deref() == Some(&workspace))
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in cancelled {
+                host.starts.remove(&id);
+                host.controller.record_error(
+                    &id,
+                    "Start cancelled by Disconnect; reconnect and retry Start".into(),
+                );
+            }
+            // Queued restore has not acquired a ticket yet; fence it too.
+            let queued: Vec<_> = host.queued.iter().cloned().collect();
+            for id in queued {
+                if host
+                    .controller
+                    .credential_request(&id)
+                    .is_ok_and(|request| request.3.as_deref() == Some(&workspace))
+                {
+                    host.queued.remove(&id);
+                    host.acted.insert(id.clone());
+                    host.controller.record_error(
+                        &id,
+                        "Start cancelled by Disconnect; reconnect and retry Start".into(),
+                    );
+                }
+            }
             Ok(())
         })
         .await
@@ -569,6 +620,9 @@ pub(crate) async fn agent_control_start_on_app_launch(
 ) -> Result<Snapshot, String> {
     run(state.inner().clone(), move |host| {
         host.controller.set_start_on_app_launch(&id, enabled)?;
+        if !enabled {
+            host.queued.remove(&id);
+        }
         host.snapshot()
     })
     .await
@@ -581,6 +635,8 @@ pub(crate) async fn agent_control_delete(
 ) -> Result<Snapshot, String> {
     run(state.inner().clone(), move |host| {
         host.starts.remove(&id);
+        host.queued.remove(&id);
+        host.acted.insert(id.clone());
         host.controller.delete(&id, expected_revision)?;
         host.snapshot()
     })
@@ -611,6 +667,7 @@ pub(crate) async fn start(
     let target = id.clone();
     let prepared = run(owner.clone(), move |host| {
         let id = target;
+        host.queued.remove(&id);
         if restore && (host.acted.contains(&id) || !host.controller.launch_ids()?.contains(&id)) {
             return Err("Agent disabled before restore".into());
         }
@@ -626,7 +683,9 @@ pub(crate) async fn start(
         {
             return Err(NOT_WAITING_FOR_GOOSE.into());
         }
-        host.starts.remove(&id);
+        if host.starts.contains_key(&id) {
+            return Err("Agent start already in progress; use Stop to cancel".into());
+        }
         if !restore {
             host.acted.insert(id.clone());
         }
@@ -646,21 +705,41 @@ pub(crate) async fn start(
             .checked_add(1)
             .ok_or("Start sequence exhausted")?;
         let ticket = host.next_start;
-        host.starts.insert(id.clone(), (ticket, request.3.clone()));
+        host.starts.insert(
+            id.clone(),
+            (ticket, request.3.clone(), ProcessStatus::Waiting),
+        );
         Ok((request, ticket, host.credentials.clone()))
     })
     .await?;
     let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
-    let acquired =
-        tauri::async_runtime::spawn_blocking(move || credentials.read(&credential, &pubkey))
-            .await
-            .map_err(|_| "Native credential operation failed".to_owned())
-            .and_then(|v| v)
-            .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()));
+    let acquired = tauri::async_runtime::spawn_blocking(move || {
+        if !restore && replay_floor.is_none() && !from_goose_install {
+            credentials.retry();
+        }
+        credentials.read(&credential, &pubkey)
+    })
+    .await
+    .map_err(|_| "Native credential operation failed".to_owned())
+    .and_then(|v| v)
+    .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()));
+    let target = id.clone();
+    if acquired.is_ok() {
+        run(owner.clone(), move |host| {
+            let pending = host
+                .starts
+                .get_mut(&target)
+                .filter(|(current, _, _)| *current == ticket)
+                .ok_or("Start cancelled by a newer action")?;
+            pending.2 = ProcessStatus::Starting;
+            Ok(())
+        })
+        .await?;
+    }
     run(owner, move |host| {
-        if host.starts.get(&id).map(|(ticket, _)| *ticket) != Some(ticket) {
+        if host.starts.get(&id).map(|(ticket, _, _)| *ticket) != Some(ticket) {
             return Err("Start cancelled by a newer action".into());
         }
         host.starts.remove(&id);
@@ -675,8 +754,12 @@ pub(crate) async fn start(
             host.controller.record_error(&id, error);
             return host.snapshot();
         }
-        host.controller
-            .action_with_key(&id, action, revision, &key, replay_floor)?;
+        if let Err(error) =
+            host.controller
+                .action_with_key(&id, action, revision, &key, replay_floor)
+        {
+            host.controller.record_error(&id, error);
+        }
         host.snapshot()
     })
     .await
@@ -713,10 +796,12 @@ pub(crate) async fn agent_control_import_commit(
         Ok((prepared, host.credentials.clone()))
     })
     .await?;
-    let imported =
-        tauri::async_runtime::spawn_blocking(move || prepared.acquire(credentials.as_ref()))
-            .await
-            .map_err(|_| "Native import credential operation failed")??;
+    let imported = tauri::async_runtime::spawn_blocking(move || {
+        credentials.retry();
+        prepared.acquire(credentials.as_ref())
+    })
+    .await
+    .map_err(|_| "Native import credential operation failed")??;
     run(owner, move |host| {
         host.controller.commit_import(imported)?;
         host.snapshot()
@@ -774,9 +859,12 @@ pub(crate) async fn agent_control_create_commit(
     })
     .await?;
     let saved = prepared.clone();
-    tauri::async_runtime::spawn_blocking(move || saved.save_key(credentials.as_ref()))
-        .await
-        .map_err(|_| "Native credential operation failed")??;
+    tauri::async_runtime::spawn_blocking(move || {
+        credentials.retry();
+        saved.save_key(credentials.as_ref())
+    })
+    .await
+    .map_err(|_| "Native credential operation failed")??;
     run(owner, move |host| {
         if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
             return Err("Create request was replaced".into());
@@ -799,6 +887,7 @@ async fn publish_profile(owner: AgentHost, id: String) -> Result<Snapshot, Strin
     // while allowing settings Save to advance the revision and retain pending.
     let (publication, profile, credentials) = owner.begin_profile(&id).await?;
     let (profile, key) = tauri::async_runtime::spawn_blocking(move || {
+        credentials.retry();
         credentials
             .read(&profile.credential_id, &profile.pubkey)
             .map(|key| (profile, key))

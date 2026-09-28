@@ -1091,3 +1091,22 @@ it("keeps Stop available while Goose installs and refreshes once it settles", as
   expect(control.snapshot().data?.agents[0]?.enabled).toBe(false);
   control.dispose();
 });
+
+for (const status of ["waiting", "starting"] as const) {
+  it(`does not duplicate a native ${status} launch on an outgoing mention`, async () => {
+    const fixture = controlFixture();
+    fixture.agent.status = status;
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    await control.prepareMention(
+      [fixture.agent.pubkey],
+      fixture.agent.relayUrl,
+      1,
+      new AbortController().signal,
+    )();
+    expect(
+      fixture.calls.filter((call) => call.action === "start"),
+    ).toHaveLength(0);
+    control.dispose();
+  });
+}

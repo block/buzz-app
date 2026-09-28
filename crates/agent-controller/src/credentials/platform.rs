@@ -34,6 +34,20 @@ mod macos {
                 .add_generic_password(service, account, value)
                 .map_err(error)
         }
+        fn replace(&self, service: &str, account: &str, value: &[u8]) -> Result<(), Failure> {
+            // Updates the existing item in place; preserves its access controls.
+            let keychain = SecKeychain::default().map_err(error)?;
+            match keychain.find_generic_password(service, account) {
+                Ok((_, mut item)) => item.set_password(value).map_err(error),
+                Err(problem) if status(problem.code()) == Failure::Absent => keychain
+                    .add_generic_password(service, account, value)
+                    .map_err(error),
+                Err(problem) => Err(error(problem)),
+            }
+        }
+        fn bundle_lock(&self) -> Result<Box<dyn super::super::bundle::BundleLock>, Failure> {
+            super::super::bundle_lock::acquire().map(|lock| Box::new(lock) as _)
+        }
         fn delete(&self, service: &str, account: &str) -> Result<(), Failure> {
             let keychain = SecKeychain::default().map_err(error)?;
             ItemSearchOptions::new()

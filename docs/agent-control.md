@@ -250,6 +250,42 @@ use temporary stores, public fixture keys and loopback HTTP. They do not establi
 live relay access, native image rendering or packaged human signing. Camera and
 recording are outside this avatar slice.
 
+## Agent Keychain unlock (macOS)
+
+Managed agent keys share one agent-only Keychain item: service
+`dev.local.buzz.foundation.agents`, account `agent-bundle-v1`. After a successful
+read, the native credential owner caches it for the session; starting another
+migrated agent does not read another Keychain item. Human identity and old Buzz's
+credential blob stay separate. Nothing collects the macOS password or changes
+Keychain access controls. Development signing and other credentials can still
+cause OS prompts; this is not a promise of exactly one total dialog.
+
+Existing app-owned `agent:<key-community>` entries are copied lazily on Start or
+other explicit credential use, with exact identity validation and secure readback.
+The first migration can require multiple approvals. Original entries remain for
+rollback; explicit Delete removes both copies before removing settings. New keys
+are written only to the bundle, so older versions cannot start newly created keys.
+Do not operate older and newer credential writers concurrently during rollback.
+Never delete old Buzz's source credentials for this migration.
+
+A short per-OS-user file lock serializes bundle access across cooperating
+worktrees/profiles. Writes re-read the current bundle under that lock and verify
+readback; a nonsecret invalidation token in the lock file invalidates other
+sessions' cached copies before writes. Lock files contain no keys. Busy storage
+fails visibly and requires explicit Retry; it never waits behind another app's
+consent prompt or automatically replays a write. This does not coordinate manual
+Keychain edits or older app versions; quit the app before changing storage outside
+this owner. A refused unlock is remembered until explicit Start/Retry, Import,
+Create, profile publication, or Delete; later auto-start rows do not reopen it.
+
+All launch-selected agents appear **Waiting to start · unlock Keychain if prompted**
+until their turn finishes acquiring credentials. A successful acquisition advances
+to **Starting process**, then process-alive evidence or a specific failure with
+**Retry start**. Stop remains available while waiting; pending OS dialogs may
+still need dismissal, but a late result cannot start a stopped agent. Quit and
+saved-revision fences remain in force. No frontend polling automatically retries
+Start. Windows/Linux retain their existing per-agent credential adapter.
+
 ## Runtime boundary
 
 Native startup opens `app_data_dir/agent-controller`, never the old library as a
@@ -486,8 +522,8 @@ live handover remains a separate step below.
 
 1. While old Buzz still runs, review/import only. Choose the installed/development
    library and destination under **Import options**. Import may prompt for the
-   selected legacy secure-storage blob; it creates separate app credentials at service
-   `dev.local.buzz.foundation.agents`, account `agent:<key-community>`. The source
+   selected legacy secure-storage blob; it creates app credentials in the separate agent-only bundle described above.
+   The source
    is read-only and imported agents stay stopped. Refused custody is a blocker,
    never a reason to migrate keys implicitly.
 2. Review prompt, workspace, harness/provider/model and write-only overrides.

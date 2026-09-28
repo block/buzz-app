@@ -42,7 +42,13 @@ export interface AgentView {
   revision: number;
   runningRevision: number | null;
   enabled: boolean;
-  status: "stopped" | "starting" | "running" | "stopping" | "failed";
+  status:
+    | "stopped"
+    | "waiting"
+    | "starting"
+    | "running"
+    | "stopping"
+    | "failed";
   error: string | null;
   diagnostics: string[];
   profilePending?: boolean;
@@ -216,6 +222,8 @@ export function agentLaunchBlock(
     return (
       state.data?.runtimeMessage || "The bundled agent runtime is unavailable."
     );
+  if (agent.status === "waiting")
+    return "Waiting to start; unlock Keychain if prompted.";
   if (agent.status === "starting" || agent.status === "stopping")
     return "Waiting for the process transition.";
   return null;
@@ -570,7 +578,12 @@ export function createAgentControl(
         const failures: string[] = [];
         for (const agent of agents) {
           if (!valid()) return;
-          if (agent.status === "running" || state.pendingLaunch === agent.id)
+          if (
+            agent.status === "running" ||
+            agent.status === "waiting" ||
+            agent.status === "starting" ||
+            state.pendingLaunch === agent.id
+          )
             continue;
           try {
             const result = await action(

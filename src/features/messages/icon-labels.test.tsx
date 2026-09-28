@@ -60,6 +60,17 @@ function markPreviewLoaded() {
   });
 }
 
+function deferred<T = void>() {
+  let resolve!: (value?: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = (value) => promiseResolve(value as T | PromiseLike<T>);
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+type DeferredCopy = ReturnType<typeof deferred<void>>;
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -151,16 +162,18 @@ it("prevents duplicate image copy writes until the first settles", async () => {
   markPreviewLoaded();
   const button = screen.getByRole("button", { name: "Copy image" });
 
+  button.focus();
   fireEvent.click(button);
   try {
-    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveFocus();
     fireEvent.click(button);
     expect(write).toHaveBeenCalledTimes(1);
   } finally {
     finish();
   }
   expect(await screen.findByRole("status")).toHaveTextContent("Image copied");
-  expect(button).not.toBeDisabled();
+  expect(button).not.toHaveAttribute("aria-busy", "true");
 });
 
 it("reports image copy failures in a stage-scoped alert", async () => {
@@ -236,56 +249,104 @@ it("clears the image copy notice on a new copy attempt and image switch", async 
   expect(screen.queryByRole("status")).toBeNull();
 });
 
-it("does not show a resolved copy notice after switching selected images", async () => {
-  let finish!: () => void;
-  const write = stubImageCopySupport(
-    vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finish = resolve;
-        }),
-    ),
-  );
-  const first = "https://example.test/a.png";
-  const second = "https://example.test/b.png";
-  const { rerender } = render(
-    <ImageReviewStage
-      attachments={[
-        { url: first, kind: "image" },
-        { url: second, kind: "image" },
-      ]}
-      selectedUrl={first}
-      media={() => proxyImageSource}
-      select={() => {}}
-      onOpenLink={() => false}
-    />,
-  );
-  markPreviewLoaded();
+it.each([
+  ["resolved", "status", (copy: DeferredCopy) => copy.resolve()],
+  [
+    "rejected",
+    "alert",
+    (copy: DeferredCopy) => copy.reject(new Error("denied")),
+  ],
+] as const)(
+  "does not show a %s copy notice after switching selected images",
+  async (_settlement, role, settle) => {
+    const copy = deferred();
+    const write = stubImageCopySupport(vi.fn(() => copy.promise));
+    const first = "https://example.test/a.png";
+    const second = "https://example.test/b.png";
+    const { rerender } = render(
+      <ImageReviewStage
+        attachments={[
+          { url: first, kind: "image" },
+          { url: second, kind: "image" },
+        ]}
+        selectedUrl={first}
+        media={() => proxyImageSource}
+        select={() => {}}
+        onOpenLink={() => false}
+      />,
+    );
+    markPreviewLoaded();
 
-  fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
-  expect(write).toHaveBeenCalledTimes(1);
-  rerender(
-    <ImageReviewStage
-      attachments={[
-        { url: first, kind: "image" },
-        { url: second, kind: "image" },
-      ]}
-      selectedUrl={second}
-      media={() => proxyImageSource}
-      select={() => {}}
-      onOpenLink={() => false}
-    />,
-  );
+    fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+    expect(write).toHaveBeenCalledTimes(1);
+    rerender(
+      <ImageReviewStage
+        attachments={[
+          { url: first, kind: "image" },
+          { url: second, kind: "image" },
+        ]}
+        selectedUrl={second}
+        media={() => proxyImageSource}
+        select={() => {}}
+        onOpenLink={() => false}
+      />,
+    );
 
-  try {
-    await act(async () => {
-      finish();
-    });
-    expect(screen.queryByRole("status")).toBeNull();
-  } finally {
-    finish();
-  }
-});
+    try {
+      await act(async () => {
+        settle(copy);
+      });
+      expect(screen.queryByRole(role)).toBeNull();
+    } finally {
+      copy.resolve();
+    }
+  },
+);
+
+it.each([
+  ["resolved", (copy: DeferredCopy) => copy.resolve()],
+  ["rejected", (copy: DeferredCopy) => copy.reject(new Error("denied"))],
+] as const)(
+  "does not update copy state after unmount when the write %s late",
+  async (_settlement, settle) => {
+    const copy = deferred();
+    const write = stubImageCopySupport(vi.fn(() => copy.promise));
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { unmount } = render(
+      <ImageReviewStage
+        attachments={[{ url: "https://example.test/a.png", kind: "image" }]}
+        selectedUrl="https://example.test/a.png"
+        media={() => proxyImageSource}
+        select={() => {}}
+        onOpenLink={() => false}
+      />,
+    );
+    markPreviewLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+    expect(write).toHaveBeenCalledTimes(1);
+    unmount();
+
+    try {
+      await act(async () => {
+        settle(copy);
+      });
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(consoleError).not.toHaveBeenCalledWith(
+        expect.stringContaining("not wrapped in act"),
+      );
+      expect(consoleError).not.toHaveBeenCalledWith(
+        expect.stringContaining("unmounted component"),
+      );
+    } finally {
+      copy.resolve();
+      consoleError.mockRestore();
+    }
+  },
+);
 
 it("opens external images through the host opener without download semantics", () => {
   const url = "https://example.test/a.png";

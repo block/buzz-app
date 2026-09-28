@@ -242,6 +242,26 @@ Object.assign(window, {
     extensionsActive() {
       return extensions.inline.snapshot().map((entry) => entry.id);
     },
+    imageClipboard(outcome: "success" | "failure") {
+      class FixtureClipboardItem {
+        constructor(readonly items: Record<string, Promise<Blob>>) {}
+      }
+      Object.defineProperty(window, "ClipboardItem", {
+        configurable: true,
+        value: FixtureClipboardItem,
+      });
+      HTMLCanvasElement.prototype.toBlob = function toBlob(callback) {
+        callback(new Blob(["png"], { type: "image/png" }));
+      };
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          write: async () => {
+            if (outcome === "failure") throw new Error("fixture denied");
+          },
+        },
+      });
+    },
     deep(kind: 9 | 40002) {
       const content = `${"> ".repeat(20_000)}literal deep message`;
       const event =

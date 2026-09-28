@@ -74,6 +74,84 @@ function containedWithin(inner, outer) {
   );
 }
 
+async function installImageClipboard(page, outcome) {
+  await page.evaluate(
+    (nextOutcome) => window.messagesFixture.imageClipboard(nextOutcome),
+    outcome,
+  );
+}
+
+async function assertCopyNoticeAboveToolbar(dialog, role, text) {
+  const notice = dialog.getByRole(role).filter({ hasText: text });
+  const toolbar = dialog
+    .getByRole("slider", { name: "Image zoom" })
+    .locator('xpath=ancestor::div[contains(@class, "imageReviewToolbar")][1]');
+  const noticeBox = await visibleBox(notice);
+  const toolbarBox = await visibleBox(toolbar);
+  expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual(toolbarBox.y + 1);
+}
+
+test("media review image copy feedback stays above the toolbar", async ({
+  page,
+}) => {
+  const cases = [
+    {
+      outcome: "success",
+      role: "status",
+      text: "Image copied",
+      viewport: { width: 1280, height: 800 },
+      enlargedText: false,
+    },
+    {
+      outcome: "failure",
+      role: "alert",
+      text: "Couldn't copy image",
+      viewport: { width: 1280, height: 800 },
+      enlargedText: true,
+    },
+    {
+      outcome: "success",
+      role: "status",
+      text: "Image copied",
+      viewport: { width: 640, height: 800 },
+      enlargedText: true,
+    },
+    {
+      outcome: "failure",
+      role: "alert",
+      text: "Couldn't copy image",
+      viewport: { width: 640, height: 800 },
+      enlargedText: false,
+    },
+  ];
+  await withMessagesFixture(page, async () => {
+    for (const item of cases) {
+      await page.setViewportSize(item.viewport);
+      await page.evaluate((enlargedText) => {
+        document.documentElement.style.fontSize = enlargedText ? "150%" : "";
+      }, item.enlargedText);
+      await installImageClipboard(page, item.outcome);
+      await page
+        .getByRole("button", { name: "Review image", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog", { name: "Image viewer" });
+      await expect(dialog).toBeVisible();
+      await expect(
+        dialog.getByRole("button", { name: "Next image" }),
+      ).toBeVisible();
+      await dialog.getByRole("button", { name: "Copy image" }).click();
+      await expect(
+        dialog.getByRole(item.role).filter({ hasText: item.text }),
+      ).toBeVisible();
+      await assertCopyNoticeAboveToolbar(dialog, item.role, item.text);
+      await dialog
+        .getByRole("button", { name: "Close fullscreen viewer" })
+        .click();
+      await expect(dialog).toHaveCount(0);
+    }
+  });
+});
+
 test("media review stage contains portrait video and image media", async ({
   page,
 }) => {

@@ -212,121 +212,127 @@ export function ImageReviewStage({
           transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
         }}
       />
-      {copyNotice && (
-        <div
-          className={`${styles.imageReviewCopyNotice} ${copyNotice === "error" ? styles.imageReviewCopyNoticeError : ""}`}
-          role={copyNotice === "error" ? "alert" : "status"}
-        >
-          {copyNotice === "success" ? "Image copied" : "Couldn't copy image"}
-        </div>
-      )}
-      <div
-        className={styles.imageReviewToolbar}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        {attachments.length > 1 && (
-          <div className={styles.imageReviewSwitcher}>
-            <IconButton
-              size="compact"
-              type="button"
-              aria-label="Previous image"
-              disabled={selectedIndex === 0}
-              onClick={() => choose(selectedIndex - 1)}
-              icon={<CaretLeftIcon size={18} aria-hidden="true" />}
-            />
-            <span>
-              {selectedIndex + 1} / {attachments.length}
-            </span>
-            <IconButton
-              size="compact"
-              type="button"
-              aria-label="Next image"
-              disabled={selectedIndex === attachments.length - 1}
-              onClick={() => choose(selectedIndex + 1)}
-              icon={<CaretRightIcon size={18} aria-hidden="true" />}
-            />
+      <div className={styles.imageReviewToolbarStack}>
+        {copyNotice && (
+          <div
+            className={`${styles.imageReviewCopyNotice} ${copyNotice === "error" ? styles.imageReviewCopyNoticeError : ""}`}
+            role={copyNotice === "error" ? "alert" : "status"}
+          >
+            {copyNotice === "success" ? "Image copied" : "Couldn't copy image"}
           </div>
         )}
-        <div className={styles.imageReviewZoom}>
-          <IconButton
-            size="compact"
-            type="button"
-            aria-label="Zoom out"
-            disabled={zoom <= MIN_ZOOM}
-            onClick={() => setBoundedZoom(zoom - ZOOM_STEP)}
-            icon={<MinusIcon size={16} aria-hidden="true" />}
-          />
-          <input
-            type="range"
-            aria-label="Image zoom"
-            min={MIN_ZOOM}
-            max={MAX_ZOOM}
-            step={ZOOM_STEP}
-            value={zoom}
-            onChange={(event) =>
-              setBoundedZoom(Number(event.currentTarget.value))
-            }
-          />
-          <IconButton
-            size="compact"
-            type="button"
-            aria-label="Zoom in"
-            disabled={zoom >= MAX_ZOOM}
-            onClick={() => setBoundedZoom(zoom + ZOOM_STEP)}
-            icon={<PlusIcon size={16} aria-hidden="true" />}
-          />
-          <Button
-            size="sm"
-            type="button"
-            aria-label="Reset image zoom"
-            onClick={() => setBoundedZoom(MIN_ZOOM)}
-          >
-            {Math.round(zoom * 100)}%
-          </Button>
-        </div>
-        {proxySource && (
-          <>
+        <div
+          className={styles.imageReviewToolbar}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          {attachments.length > 1 && (
+            <div className={styles.imageReviewSwitcher}>
+              <IconButton
+                size="compact"
+                type="button"
+                aria-label="Previous image"
+                disabled={selectedIndex === 0}
+                onClick={() => choose(selectedIndex - 1)}
+                icon={<CaretLeftIcon size={18} aria-hidden="true" />}
+              />
+              <span>
+                {selectedIndex + 1} / {attachments.length}
+              </span>
+              <IconButton
+                size="compact"
+                type="button"
+                aria-label="Next image"
+                disabled={selectedIndex === attachments.length - 1}
+                onClick={() => choose(selectedIndex + 1)}
+                icon={<CaretRightIcon size={18} aria-hidden="true" />}
+              />
+            </div>
+          )}
+          <div className={styles.imageReviewZoom}>
             <IconButton
               size="compact"
               type="button"
-              aria-label="Copy image"
-              title={canCopyImage ? "Copy image" : "Image copy unavailable"}
-              disabled={!canCopyImage || copying}
-              onClick={() => void copyImage()}
-              icon={<CopyIcon size={17} />}
+              aria-label="Zoom out"
+              disabled={zoom <= MIN_ZOOM}
+              onClick={() => setBoundedZoom(zoom - ZOOM_STEP)}
+              icon={<MinusIcon size={16} aria-hidden="true" />}
+            />
+            <input
+              type="range"
+              aria-label="Image zoom"
+              min={MIN_ZOOM}
+              max={MAX_ZOOM}
+              step={ZOOM_STEP}
+              value={zoom}
+              onChange={(event) =>
+                setBoundedZoom(Number(event.currentTarget.value))
+              }
             />
             <IconButton
-              nativeButton={false}
-              role="link"
-              render={<a href={source} download />}
               size="compact"
-              aria-label="Download image"
-              title="Download image"
-              icon={<DownloadIcon size={17} />}
+              type="button"
+              aria-label="Zoom in"
+              disabled={zoom >= MAX_ZOOM}
+              onClick={() => setBoundedZoom(zoom + ZOOM_STEP)}
+              icon={<PlusIcon size={16} aria-hidden="true" />}
             />
-          </>
-        )}
-        {externalSource && (
-          <IconButton
-            nativeButton={false}
-            role="link"
-            render={
-              <a
-                href={source}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => {
-                  if (event.metaKey || event.ctrlKey || event.shiftKey) return;
-                  if (onOpenLink(source)) event.preventDefault();
-                }}
+            <Button
+              size="sm"
+              type="button"
+              aria-label="Reset image zoom"
+              onClick={() => setBoundedZoom(MIN_ZOOM)}
+            >
+              {Math.round(zoom * 100)}%
+            </Button>
+          </div>
+          {proxySource && (
+            <div className={styles.imageReviewActions}>
+              <IconButton
+                size="compact"
+                type="button"
+                aria-label="Copy image"
+                title={canCopyImage ? "Copy image" : "Image copy unavailable"}
+                disabled={!canCopyImage}
+                loading={copying}
+                onClick={() => void copyImage()}
+                icon={<CopyIcon size={17} />}
               />
-            }
-            size="compact"
-            aria-label="Open image in browser"
-            title="Open image in browser"
-            icon={<ArrowSquareOutIcon size={17} />}
-          />
-        )}
+              <IconButton
+                nativeButton={false}
+                role="link"
+                render={<a href={source} download />}
+                size="compact"
+                aria-label="Download image"
+                title="Download image"
+                icon={<DownloadIcon size={17} />}
+              />
+            </div>
+          )}
+          {externalSource && (
+            <div className={styles.imageReviewActions}>
+              <IconButton
+                nativeButton={false}
+                role="link"
+                render={
+                  <a
+                    href={source}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(event) => {
+                      if (event.metaKey || event.ctrlKey || event.shiftKey)
+                        return;
+                      if (onOpenLink(source)) event.preventDefault();
+                    }}
+                  />
+                }
+                size="compact"
+                aria-label="Open image in browser"
+                title="Open image in browser"
+                icon={<ArrowSquareOutIcon size={17} />}
+              />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

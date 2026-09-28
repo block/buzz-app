@@ -171,9 +171,10 @@ for circles and pills of any height. Fields retain `--radius-control`.
 Button labels stay on one line and do not shrink in flex layouts, following
 shadcn's `whitespace-nowrap shrink-0` behavior without changing Buzz's sizing,
 emphasis, or Base UI interactions. Parents must reflow whole controls or provide
-scrolling when space is limited. Small buttons use 16px side padding and 16px
-icons; medium and large use 24px side padding and 24px icons. Labels use the
-complete text-label-sm / text-label roles, with an 8px icon gap.
+scrolling when space is limited. Composite reply summaries may reflow whole
+avatar/count groups without wrapping individual labels. Small buttons use 16px
+side padding and 16px icons; medium and large use 24px side padding and 24px icons.
+Labels use the complete text-label-sm / text-label roles, with an 8px icon gap.
 
 IconButton defaults to round and uses the same sm/md/lg sizes. Existing names
 remain compatibility aliases: primary/solid → prominent, quiet → subtle,

@@ -8,7 +8,11 @@ import type {
   ControlSnapshot,
 } from "../../features/agents/control";
 import type { ModelCatalog } from "../../features/agents/models";
-import { CircleNotchIcon } from "../../shared/design-system/icons";
+import {
+  CheckCircleIcon,
+  CircleNotchIcon,
+  WarningCircleIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentEdit, isGoose, type AgentDraft } from "./agent-edit";
 
@@ -92,8 +96,62 @@ export function AgentModelPicker({
     setQuery(null);
     highlighted.current = null;
   }, [draft.provider]);
+  // A test result belongs to the exact draft it tested.
+  const testKey = JSON.stringify([key, draft.provider, draft.model]);
+  const [test, setTest] = useState<{
+    key: string;
+    run: AbortController;
+    result: string;
+  } | null>(null);
+  const testing = useRef<AbortController | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: editing the tested draft retires its native test.
+  useEffect(
+    () => () => {
+      testing.current?.abort();
+      testing.current = null;
+    },
+    [testKey],
+  );
+  const testResult = test?.key === testKey ? test.result : null;
+  const testConnection = async () => {
+    if (!control.models || testing.current) return;
+    const run = new AbortController();
+    testing.current = run;
+    // Only this run may settle its own result; a retired run clears it.
+    const settle = (result: string) =>
+      setTest((current) =>
+        current?.run !== run
+          ? current
+          : run.signal.aborted
+            ? null
+            : { ...current, result },
+      );
+    setTest({ key: testKey, run, result: "testing" });
+    try {
+      await control.models.request(
+        {
+          id,
+          expectedRevision: id ? draft.revision : undefined,
+          edit: agentEdit(draft, true),
+          host: "",
+          filter: "",
+          action: "test",
+        },
+        run.signal,
+      );
+      settle("ok");
+    } catch (error) {
+      settle((error as Error).message);
+    } finally {
+      if (testing.current === run) testing.current = null;
+    }
+  };
   const run = async (action: "connect" | "refresh" | "disconnect") => {
     if (!control.models || pending.current) return;
+    // Native runs one lookup at a time; model browsing replaces a test.
+    testing.current?.abort();
+    testing.current = null;
+    setTest(null);
     if (!external && !host.trim()) {
       setStatus(
         "Set your Databricks workspace under Advanced → Model to browse models.",
@@ -395,6 +453,34 @@ export function AgentModelPicker({
               Retry models
             </Button>
           )
+        )}
+        {supported && pi && draft.provider && draft.model && !busy && (
+          <div className="space-y-2">
+            <Button
+              disabled={disabled}
+              loading={testResult === "testing"}
+              onClick={() => void testConnection()}
+            >
+              Test connection
+            </Button>
+            {testResult && (
+              <p
+                role="status"
+                className={`flex items-center gap-2 text-body-sm ${testResult === "ok" ? "text-success" : testResult === "testing" ? "text-secondary" : "text-danger"}`}
+              >
+                {testResult === "ok" ? (
+                  <CheckCircleIcon size={16} aria-hidden="true" />
+                ) : testResult !== "testing" ? (
+                  <WarningCircleIcon size={16} aria-hidden="true" />
+                ) : null}
+                {testResult === "ok"
+                  ? "Connected. The model replied."
+                  : testResult === "testing"
+                    ? "Sending a short test message…"
+                    : testResult}
+              </p>
+            )}
+          </div>
         )}
         {pi && draft.provider && !draft.model && (
           <p className="text-body-sm text-warning">

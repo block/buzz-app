@@ -1313,3 +1313,37 @@ fn pi_model_lookup_waits_out_brief_host_contention() {
         json!([{"id":"databricks/model-a","name":"databricks/model-a"}])
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn pi_connection_test_prompts_the_draft_selection() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _host, _app, view) = fixture();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    for tool in ["pi", "node", "buzz-pi-acp"] {
+        let file = tools.join(tool);
+        std::fs::write(&file, "#!/bin/sh\nread request\ncase \"$*\" in *'--model model-a'*) stop=stop;; *) stop=error;; esac\nprintf '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"%s\",\"errorMessage\":\"401\"}}\\n' \"$stop\"\n").unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let test = |model: &str| {
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":{
+                "host":"","filter":"","action":"test","edit":{
+                    "name":"Pi draft","systemPrompt":"","workspace":dir.path(),
+                    "harness":{"command":tools.join("buzz-pi-acp"),"args":[],"provider":"databricks","model":model},
+                    "environment":{}
+                }
+            }}),
+        )
+    };
+    assert_eq!(test("model-a").unwrap()["models"], json!([]));
+    let error = test("model-b").unwrap_err();
+    assert!(
+        error.as_str().unwrap().contains("rejected the API key"),
+        "{error}"
+    );
+}

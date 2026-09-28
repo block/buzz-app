@@ -286,6 +286,12 @@ it("adds a Pi provider API key for lookup and drops it when the provider changes
   const user = userEvent.setup();
   try {
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    // The provider list stays disabled until Pi's catalog arrives.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "LLM Provider" }),
+      ).toBeEnabled(),
+    );
     await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
     await user.click(
       await screen.findByRole("option", {

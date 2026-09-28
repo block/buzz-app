@@ -808,3 +808,82 @@ it("Pi clears discovered providers when catalog context changes or the picker un
     control.dispose();
   }
 });
+
+it("Pi Test connection prompts the draft selection and reports each result", async () => {
+  const f = controlFixture();
+  const tests: { resolve(): void; reject(error: string): void }[] = [];
+  const run = vi.fn(
+    async (_ticket: number, request: { action: string }) =>
+      new Promise<ModelCatalog>((resolve, reject) => {
+        const catalog = {
+          host: "",
+          models: [{ id: "openai/gpt", name: "openai/gpt" }],
+          modelOverridden: false,
+          disconnected: false,
+        };
+        if (request.action !== "test") resolve(catalog);
+        else tests.push({ resolve: () => resolve(catalog), reject });
+      }),
+  );
+  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(f.host);
+  const user = userEvent.setup();
+  let draft = {
+    ...agentDraft(f.agent),
+    command: "/local/buzz-pi-acp",
+    args: "[]",
+    provider: "openai",
+    model: "gpt",
+  };
+  const picker = () => (
+    <AgentModelPicker
+      draft={draft}
+      control={control}
+      defaults={undefined}
+      onChange={() => {}}
+    />
+  );
+  const view = render(picker());
+  const button = () => screen.getByRole("button", { name: "Test connection" });
+  try {
+    await waitFor(() => expect(button()).toBeEnabled());
+    await user.click(button());
+    expect(run).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        action: "test",
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({
+            provider: "openai",
+            model: "gpt",
+          }),
+        }),
+      }),
+    );
+    expect(screen.getByText(/Sending a short test message/)).toBeVisible();
+    await act(async () =>
+      tests.at(-1)?.reject("The provider rejected the API key."),
+    );
+    expect(
+      await screen.findByText("The provider rejected the API key."),
+    ).toBeVisible();
+    await user.click(button());
+    await act(async () => tests.at(-1)?.resolve());
+    expect(
+      await screen.findByText("Connected. The model replied."),
+    ).toBeVisible();
+    // An edit retires the in-flight test; returning must not strand its spinner.
+    await user.click(button());
+    draft = { ...draft, model: "other" };
+    view.rerender(picker());
+    draft = { ...draft, model: "gpt" };
+    view.rerender(picker());
+    await waitFor(() => expect(button()).toBeEnabled());
+    expect(
+      screen.queryByText(/Sending a short test message|cancelled/i),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});

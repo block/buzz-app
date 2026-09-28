@@ -63,6 +63,8 @@ enum Operation {
     Connect,
     Refresh,
     Disconnect,
+    /// Pi only: one tiny prompt with the draft's provider and model.
+    Test,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -284,6 +286,16 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     )
                 })
                 .await?;
+                if request.action == Operation::Test {
+                    let harness = &edit.harness;
+                    crate::pi_models::test(context, &harness.provider, &harness.model).await?;
+                    return Ok(Catalog {
+                        host: String::new(),
+                        models: vec![],
+                        model_overridden: false,
+                        disconnected: false,
+                    });
+                }
                 let models = crate::pi_models::fetch(context)
                     .await?
                     .into_iter()
@@ -298,6 +310,13 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     model_overridden: false,
                     disconnected: false,
                 })
+            })
+            .await;
+    }
+    if request.action == Operation::Test {
+        return host
+            .run(ticket, async {
+                Err("Connection tests are only available for Pi".into())
             })
             .await;
     }

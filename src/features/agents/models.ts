@@ -6,7 +6,8 @@ export interface ModelRequest {
   edit?: AgentEdit | undefined;
   host: string;
   filter: string;
-  action: "connect" | "refresh" | "disconnect";
+  /** "test" is Pi only: one tiny prompt with the draft provider and model. */
+  action: "connect" | "refresh" | "disconnect" | "test";
 }
 export interface ModelCatalog {
   host: string;

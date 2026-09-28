@@ -3,6 +3,7 @@ import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { createChannelDetails } from "./channel-details";
 import {
   channelVisibility,
+  canonicalDetailsName,
   detailsSettings,
   detailsTemplate,
   validateDetailsTemplate,
@@ -423,3 +424,41 @@ it("production session wiring updates shared discovery and cancels a retiring ow
   owner.dispose();
   await expect(owner.session.channelDetails.load(id)).rejects.toThrow();
 });
+
+it.each([
+  ["\u0085# \u0085#renamed\u0085", "renamed"],
+  ["\t # # renamed\u00a0", "renamed"],
+  ["\u2000#renamed\u3000", "renamed"],
+  ["\ufeffrenamed\ufeff", "\ufeffrenamed\ufeff"],
+  ["re\u0085named#", "re\u0085named#"],
+])(
+  "uses relay canonicalization for %j before signing and confirming",
+  async (input, expected) => {
+    const h = harness();
+    const base = await h.owner.capability.load(id);
+    const name = canonicalDetailsName(input);
+    expect(name).toBe(expected);
+    if (input !== expected) {
+      await expect(
+        h.owner.capability.save(base, { ...draft, name: input }),
+      ).rejects.toThrow("Enter a channel name");
+      expect(h.sign).not.toHaveBeenCalled();
+      expect(h.owner.capability.snapshot(id)).toBeUndefined();
+      const command = detailsTemplate(id, draft);
+      command.tags[1] = ["name", input];
+      expect(() => validateDetailsTemplate(command)).toThrow(
+        "Enter a channel name",
+      );
+    }
+    h.publish.mockImplementationOnce(async () => {
+      h.set([
+        h.metadata(expected, draft.description, draft.visibility),
+        ...h.events().slice(1),
+      ]);
+    });
+    await h.owner.capability.save(base, { ...draft, name });
+    expect(h.sign.mock.calls[0]?.[0].tags).toContainEqual(["name", expected]);
+    expect(h.owner.capability.snapshot(id)).toBeUndefined();
+    expect(h.publish).toHaveBeenCalledOnce();
+  },
+);

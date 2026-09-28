@@ -10,6 +10,7 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
 import {
   detailsDraftErrors,
+  canonicalDetailsName,
   type ChannelDetails,
   type ChannelDetailsDraft,
 } from "../../features/relay/channel-details-protocol";
@@ -133,7 +134,7 @@ export function ChannelDetailsEditor({
   const canEdit = !!view.base?.canEdit;
   const normalized = draft && {
     ...draft,
-    name: draft.name.trim().replace(/^#+/, "").trim(),
+    name: canonicalDetailsName(draft.name),
   };
   const errors = normalized ? detailsDraftErrors(normalized) : undefined;
   const nameLength = [...(draft?.name ?? "")].length;

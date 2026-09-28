@@ -368,7 +368,8 @@ growing the excess, and Save stays invalid until both fields meet the limits. Ch
 counts appear at the trailing end of the label row only within the last 10% of
 each limit (`108/120` or `900/1,000`). Visible counters are numeric; the connected
 accessible description retains the full character-count meaning.
-Empty descriptions clear the value. The internal `Buzz session (` marker is
+Names follow the relay’s Unicode whitespace and leading-hash canonicalization
+before validation, signing and confirmation. Empty descriptions clear the value. The internal `Buzz session (` marker is
 rejected with a specific explanation only when present, not as part of length
 feedback. Command validation still rejects oversized input independently of the UI.
 

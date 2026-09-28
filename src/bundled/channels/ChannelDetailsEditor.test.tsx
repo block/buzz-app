@@ -613,3 +613,22 @@ it.each([
     expect(input).toHaveValue(`Ax${replaced.slice(6)}`);
   },
 );
+
+it.each([
+  ["\u0085# \u0085#Renamed\u0085", "Renamed"],
+  ["\ufeffRenamed\ufeff", "\ufeffRenamed\ufeff"],
+])("submits %j with the relay's canonical name", async (input, expected) => {
+  const h = harness();
+  const user = userEvent.setup();
+  render(<ChannelDetailsEditor capability={h.capability} channel={channel} />);
+  await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: input },
+  });
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(h.save).toHaveBeenCalledWith(
+    base,
+    { ...base, name: expected },
+    expect.any(AbortSignal),
+  );
+});

@@ -33,14 +33,20 @@ export function channelVisibility(
     : undefined;
 }
 
+/** Match buzz-core canonical_channel_name: Rust char::is_whitespace uses
+ * Unicode White_Space (unlike JS trim, which omits U+0085 and includes U+FEFF). */
+export function canonicalDetailsName(name: string): string {
+  return name.replace(/^[#\p{White_Space}]+|\p{White_Space}+$/gu, "");
+}
+
 /** Shared field feedback; the command validator remains the write boundary. */
 export function detailsDraftErrors(draft: ChannelDetailsDraft) {
   return {
     name:
       !draft ||
       typeof draft.name !== "string" ||
-      !draft.name.trim() ||
-      draft.name !== draft.name.trim().replace(/^#+/, "").trim() ||
+      !draft.name ||
+      draft.name !== canonicalDetailsName(draft.name) ||
       [...draft.name].length > 120
         ? "Enter a channel name of 1–120 characters without a leading #."
         : undefined,

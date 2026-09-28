@@ -1,21 +1,38 @@
 # Packaged human identity — first slice
 
-Native macOS without the live development broker asks the user to **Use an existing
-key** or **Create a new identity**. These are alternatives. Import accepts an nsec,
+Native macOS, Windows and Linux without the live development broker offer
+**Use an existing key** or **Create a new identity**. These are alternatives. Import accepts an nsec,
 validates its checksum and secp256k1 scalar, and persists that exact key before
 adopting its public identity. It never generates a replacement after an import,
 read or write failure. Denied/unavailable/corrupt storage is not first run.
 
 One native owner keeps the key in memory after successful restore. The new
-create-only Keychain item is service `dev.local.buzz.foundation.identity` in release
+create-only secure-storage item is service `dev.local.buzz.foundation.identity` in release
 builds, or `dev.local.buzz.foundation.identity.debug` with Rust debug assertions,
-account `human`, in the default macOS file Keychain. Debug worktrees share the debug
-item, not the release identity; ports and frontend dev mode do not isolate it. It uses the same security-framework
-primitives as the existing agent adapter, but does not use or change agent
-credentials or old Buzz's `buzz-desktop/secrets` blob. A competing item refuses
-overwrite. There is no file/environment fallback, automatic legacy migration,
-key replacement or delete command. Windows/Linux storage is explicitly unavailable
-in this slice; those platforms skip onboarding and keep the unavailable shell.
+account `human`. Debug worktrees share the debug item, not the release identity;
+ports and frontend dev mode do not isolate it. macOS keeps its existing default
+file Keychain/security-framework implementation. Windows uses Credential Manager;
+Linux uses Secret Service through keyring 3.6.3, as old Buzz does. Linux requires
+a running desktop Secret Service with a default collection (for example GNOME
+Keyring), reachable on the user's session D-Bus. Missing, inaccessible or ambiguous
+storage fails closed: unlock/configure the store and explicitly retry.
+
+Human storage does not use or change agent credentials or old Buzz's
+`buzz-desktop/secrets` blob. A competing item refuses overwrite. Windows/Linux
+creates and agent deletes share a per-user, service/account file lock under the
+OS account's home `.buzz-foundation/credential-locks`, independent of HOME/XDG,
+profile and worktree overrides. Lock files are empty, retained, and never hold keys;
+a busy lock reports a retryable error rather than waiting behind another process's
+consent dialog. Locks serialize cooperating Buzz instances, not arbitrary other
+programs or other machines. Windows credentials use keyring's enterprise persistence
+and may roam under Windows policy; locks do not coordinate machines.
+Neither Windows Credential Manager nor Secret Service supplies per-app access
+isolation from other programs running as the same OS user.
+
+There is no file/environment fallback, automatic legacy migration, human key
+replacement or human delete command. The existing **explicit agent import** may
+read only the selected old Buzz service/account and copy the selected agent key
+into this app's separate agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
 
 A shared credential blob can reduce repeated OS prompts by caching many credentials
@@ -68,11 +85,32 @@ bin/pnpm exec vite --config tests/fixtures/agent-control.vite.mjs --port 1547
 ```
 
 Open `/tests/fixtures/identity.html`. It uses mock IPC and an in-memory public
-fixture key, not Keychain or a relay. Import accepts only the displayed fixture
-key. Reset and simulated restart affect fixture state only. **Never enter a real
+fixture key, not an OS credential store or a relay. Import accepts only the
+displayed fixture key. Reset and simulated restart affect fixture state only. **Never enter a real
 nsec.** Browser exercises prove UI behavior, not secure native persistence.
 
 Before real-key use or a usable-release claim: independent custody review,
 isolated native consent/denial/import/create/restart checks, human UI feedback,
 and installed-app live read/send/receipt/restart acceptance are still required.
 Do not launch/restart someone's desktop app or inspect their credentials to test.
+
+### Windows/Linux native acceptance (not established by the fixture)
+
+Use a disposable **OS account/VM**, not a profile, port or HOME override: credentials
+are per OS user. Use only throwaway keys, keep old Buzz closed for import handover,
+and do not connect that identity to a real community for this storage check.
+
+- On Windows and Linux with a working Secret Service/default collection, create
+  or import, export the throwaway key, quit/relaunch, and confirm the same public
+  identity and export. Repeat separately for debug and release builds.
+- With an existing Linux key locked, dismiss the unlock request. Expect a storage
+  error/retry, not first-run create/import choices; unlock and retry to restore.
+  Without Secret Service, expect an error rather than key generation/fallback.
+- Where two development instances can run, an occupied human/agent item must not
+  be overwritten. Lock contention must be retryable; after exit, locks release.
+- Explicitly import a throwaway old-Buzz agent into this app, restart and verify
+  the exact key. Delete only the destination agent; its old source must remain.
+  This does **not** establish Windows agent execution, which remains separate work.
+
+Attended Windows/Linux execution and human confirmation are release gates, not
+claims made by cross-compilation, fake-store tests, or the browser fixture.

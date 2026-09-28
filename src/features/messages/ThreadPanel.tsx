@@ -814,14 +814,12 @@ function ThreadMessages({
         }}
         tabIndex={0}
       >
-<<<<<<< HEAD
         {showJumpToLatest && (
           <JumpToLatestButton
             newMessageCount={newMessageCount}
             onClick={jumpToLatest}
           />
         )}
-||||||| parent of 8a6b73ce (fix: show older thread loading and shorten initial window)
         {snapshot.root ? (
           <MessageRow
             extensions={extensions}
@@ -850,7 +848,25 @@ function ThreadMessages({
         ) : snapshot.status !== "loading" ? (
           <p className={styles.empty}>Original message unavailable.</p>
         ) : null}
-        <ol>{renderReplies(undefined)}</ol>
+        <ol>
+          {snapshot.direction === "older" &&
+            snapshot.root &&
+            (snapshot.status === "loading" || snapshot.error) && (
+              <li className={styles.threadHistoryPageStatus}>
+                {snapshot.status === "loading" ? (
+                  <p role="status">Loading older replies…</p>
+                ) : (
+                  <>
+                    <p role="alert">{snapshot.error}</p>
+                    <Button type="button" onClick={() => void view.refresh()}>
+                      Retry thread
+                    </Button>
+                  </>
+                )}
+              </li>
+            )}
+          {renderReplies(undefined)}
+        </ol>
         {(snapshot.status === "loading" && snapshot.direction !== "older") ||
         (snapshot.direction !== "older" &&
           snapshot.status === "ready" &&

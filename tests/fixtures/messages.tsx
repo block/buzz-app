@@ -163,6 +163,8 @@ const report = {
 };
 let incoming = (_events: readonly RelayEvent[]) => {};
 const rejected = new Set<string>();
+let releaseOlderPage: (() => void) | undefined;
+let holdOlderPage = false;
 const owner = createRelaySession({
   scope: "https://fixture.test",
   viewer: viewer.pubkey,
@@ -211,6 +213,13 @@ const owner = createRelaySession({
             report.pages.push(rootId);
             report.filters.push(filter);
             if (filter.thread_window) {
+              if (holdOlderPage && filter.until !== undefined) {
+                await new Promise<void>((resolve) => {
+                  releaseOlderPage = resolve;
+                });
+                holdOlderPage = false;
+                releaseOlderPage = undefined;
+              }
               const eligible = events
                 .filter(
                   (event) =>
@@ -316,6 +325,12 @@ owner.session.channels.ensureList();
 Object.assign(window, {
   messagesFixture: {
     report,
+    holdOlderPage() {
+      holdOlderPage = true;
+    },
+    releaseOlderPage() {
+      releaseOlderPage?.();
+    },
     async activate() {
       await plugins.retry();
     },

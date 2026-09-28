@@ -6,6 +6,72 @@ import { watchPageErrors } from "./page-errors.mjs";
 
 // Browser boundary: actual layout/scroll anchoring and user demand over the real
 // StrictMode session and ThreadPanel. Protocol permutations stay in owner tests.
+test("older-page cue stays between root and replies while the request is held", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`,
+    );
+    const history = page.getByRole("region", { name: "Thread messages" });
+    const replies = history.locator("ol [data-message-id]");
+    await expect(replies).toHaveCount(10);
+    await page.evaluate(() => window.messagesFixture.holdOlderPage());
+    await history.hover();
+    await page.mouse.wheel(0, -4000);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.filters.length),
+      )
+      .toBe(2);
+    const cue = history.getByText("Loading older replies…", { exact: true });
+    await cue.scrollIntoViewIfNeeded();
+    await expect(cue).toBeVisible({ timeout: 2_000 });
+    const position = await history.evaluate((element) => {
+      const root = element.querySelector("[data-message-id]");
+      const cue = element.querySelector('[role="status"]');
+      const reply = element.querySelector("ol [data-message-id]");
+      if (!root || !cue || !reply) return undefined;
+      const rootBottom = root.getBoundingClientRect().bottom;
+      const cueTop = cue.getBoundingClientRect().top;
+      const cueBottom = cue.getBoundingClientRect().bottom;
+      const replyTop = reply.getBoundingClientRect().top;
+      const viewport = element.getBoundingClientRect();
+      return {
+        rootBottom,
+        cueTop,
+        cueBottom,
+        replyTop,
+        viewportTop: viewport.top,
+        viewportBottom: viewport.bottom,
+      };
+    });
+    expect(position).toBeDefined();
+    expect(position.cueTop).toBeGreaterThanOrEqual(position.rootBottom);
+    expect(position.cueBottom).toBeLessThanOrEqual(position.replyTop);
+    expect(position.cueTop).toBeGreaterThanOrEqual(position.viewportTop);
+    expect(position.cueBottom).toBeLessThanOrEqual(position.viewportBottom);
+    expect(await replies.count()).toBe(10);
+    await page.evaluate(() => window.messagesFixture.releaseOlderPage());
+    await expect(replies).toHaveCount(60);
+    await expect(cue).toHaveCount(0);
+  } finally {
+    await page
+      .evaluate(() => window.messagesFixture.releaseOlderPage())
+      .catch(() => {});
+    await server.close();
+  }
+});
+
 test("newest window positions immediately; scrollback preserves the visible reply and live following", async ({
   page,
 }) => {
@@ -29,7 +95,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
     });
     const history = panel.getByRole("region", { name: "Thread messages" });
     const replies = history.locator("ol [data-message-id]");
-    await expect(replies).toHaveCount(50);
+    await expect(replies).toHaveCount(10);
     await expect(panel.getByRole("status")).toHaveCount(0);
     await expect(
       panel.getByText("First root reply 302", { exact: true }),
@@ -56,7 +122,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
     );
     await history.hover();
     await page.mouse.wheel(0, -300);
-    await expect(replies).toHaveCount(100);
+    await expect(replies).toHaveCount(60);
     await expect
       .poll(() =>
         history
@@ -66,12 +132,12 @@ test("newest window positions immediately; scrollback preserves the visible repl
       .toBeCloseTo(before, 0);
     const top = await history.evaluate((el) => el.scrollTop);
     await page.evaluate(() => window.messagesFixture.live());
-    await expect(replies).toHaveCount(101);
+    await expect(replies).toHaveCount(61);
     await expect
       .poll(() => history.evaluate((el) => el.scrollTop))
       .toBeCloseTo(top, 0);
     // Demand each remaining older page. No automatic full-history waterfall.
-    for (const count of [151, 201, 251, 301, 305]) {
+    for (const count of [111, 161, 211, 261, 305]) {
       await history.evaluate((el) => {
         el.scrollTop = 0;
         el.dispatchEvent(new Event("scroll"));

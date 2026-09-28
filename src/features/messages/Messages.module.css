@@ -568,16 +568,12 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent;
 }
-.threadHistoryTopStatus {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+.threadHistoryPageStatus {
   padding: var(--space-2);
-  background: var(--surface-panel);
   color: var(--text-subtle);
   font-size: var(--text-caption);
 }
-.threadHistoryTopStatus p {
+.threadHistoryPageStatus p {
   margin: 0;
 }
 .threadHistory ol {

@@ -159,6 +159,8 @@ export function mediaUrl(
 export interface Signer {
   getPublicKey(): Promise<string>;
   signEvent(event: EventTemplate): Promise<VerifiedEvent>;
+  /** Native hosts authenticate and send exact bytes without exposing credentials to JS. */
+  request?(url: string, body: string, signal?: AbortSignal): Promise<Response>;
 }
 
 /** The host's explicit HTTP base wins; otherwise translate the ws(s) relay URL's scheme. */
@@ -924,7 +926,7 @@ export async function connectSignedTransport(
     writer: {
       sign: (event) => signer.signEvent(event),
       async publish(event, signal) {
-        await acceptPublish(
+        return acceptPublish(
           await signedPost(
             signer,
             `${httpOrigin}/events`,
@@ -985,6 +987,19 @@ async function signedPost(
   signal?.throwIfAborted();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
+    const request = signer.request?.bind(signer);
+    if (request)
+      return admittedApiRequest(
+        admission,
+        () => {
+          signal?.throwIfAborted();
+          return profiling.measureAsync("http.fetch", id, () =>
+            request(url, body, signal),
+          );
+        },
+        signal,
+        priority,
+      );
     const payload = hex(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
     );

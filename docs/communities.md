@@ -94,15 +94,36 @@ JavaScript; local preferences contain the public viewer ID only. The app-owned
 [native identity UI](identity.md) has deliberate import/reveal/copy interactions,
 not a plugin key service.
 
-This is the development integration, not a native identity/join implementation.
 Packaged builds do not include the broker. Native macOS [identity import/create](identity.md)
-is available as a separate first slice, without packaged relay transport. Community
-creation/removal and background connection eviction are not implemented. Native
-agent enrollment has its own [local control contract](agent-control.md). Avatar
-uploads reuse the development media host; packaged human-profile publication is
-not established by this frontend slice. Agents have local
+and the native relay adapter provide discovery, admission, profile publication,
+authenticated reads and supported event writes. Community creation/removal and
+background connection eviction are not implemented. Native agent enrollment has
+its own [local control contract](agent-control.md). Avatar uploads still require
+the development media host. Agents have local
 configuration plus separately scoped participation; selecting a community must
 not become a deployment or enrollment command.
+
+## Packaged admission and recovery
+
+The native dialog journals an unfinished join before policy/claim dispatch and a
+submitted profile before publication. Records are partitioned by public viewer
+and canonical community ID. They contain only a transaction ID, destination and
+optional profile draft, never invite codes, policy receipts or private keys.
+Storage failure blocks the remote operation. Completing a native join requires
+successful local membership persistence before clearing its recovery record.
+
+After closing or restarting, open **Add a community** to resume the most recent
+unfinished destination. Continue makes a fresh authenticated profile read, with
+strong consistency. Successful access resumes profile setup even if the profile
+does not exist yet; it never requires reusing an expired invite after admission.
+Network failure retains the record for retry. Confirmed access denial returns to
+the policy/invite step, where the user can supply a valid code and current consent.
+Profile readback avoids repeating a publication whose receipt was lost. Late
+completions cannot advance an unmounted dialog or a replaced transaction.
+
+Saved memberships are restored through the existing session owner. Uncertain
+message delivery stays in the existing endpoint/viewer-scoped IndexedDB outbox,
+with no automatic resend on restart. See the [native transport limits](identity.md#packaged-connection).
 
 ## Development broker boundary
 
@@ -161,7 +182,35 @@ rejection; `broker-url.test.ts` exercises the real middleware with isolated sign
 keys and upstream fixtures, including registration, cross-origin guards, all route
 sinks and captured sends. Service tests cover arbitrary membership persistence,
 selected-only restore, retry registration and equivalent-URL selection. Existing relay tests cover connection generations,
-late responses, delivery and revocation. Run `just scan` for the full checks.
+late responses, delivery and revocation.
+
+`native-join.test.tsx` mounts the real dialog, community service and native adapter
+with fixture IPC to cover claim/profile response loss, persistence failure,
+interrupted setup, alias recovery and selected-only restart. `native-api.test.ts`
+and `relay/native.test.ts` cover routing, verification, live auth, capacity,
+receipt correlation and expired-event readback. `app/services.test.ts` exercises
+native composition, failure/retry and development precedence. Rust tests cover
+actual IPC signing, exact-byte HTTP authentication and redirect rejection without
+touching Keychain.
+
+One browser case is added, with none removed: `tests/browser/native-relay.spec.mjs`
+proves page reload and real localStorage/IndexedDB recovery in Chromium and WebKit.
+It preserves one identity across an uncertain claim, joins, loses a message
+receipt, reloads, then explicitly retries the identical signed message. The IPC
+endpoint is a test fixture; it does not establish Keychain consent, a full native
+process restart, production TLS, deployed relay interoperability or notarized
+release acceptance.
+
+Regression evidence: restoring the original unfiltered signing payload makes
+both browser engines fail at message delivery (`failed` instead of `unknown`),
+because the IPC fixture enforces Rust's strict template shape. Restoring the
+four-field projection passes the journey.
+
+Run it with:
+
+```sh
+bin/pnpm test:browser tests/browser/native-relay.spec.mjs --project chromium --project webkit --no-deps
+```
 
 Open `/tests/fixtures/communities.html` for a browser-only fixture of the actual dialog.
 It intercepts all broker requests and uses a separate fixture identity. Save a

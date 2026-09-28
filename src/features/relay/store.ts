@@ -142,6 +142,8 @@ export function createChannelStore(
   const discovery = transport
     ? new DiscoveryState(transport.viewer, transport.relayAuthor)
     : null;
+  // Restored metadata needs confirmation independently of roster progress/retries.
+  const pendingMetadata = new Set<string>();
   const heads = new ByteLru<Head>(maxHeads, maxHeadBytes);
   const windows = new Map<string, WindowState>();
   const tails = new ByteLru<{
@@ -860,8 +862,16 @@ export function createChannelStore(
     const overflowRevision = discovery.overflowRevision;
     if (cached) discovery.restrictToKnown();
     let discoveryChanged = false;
-    for (const event of events)
+    for (const event of events) {
       discoveryChanged = discovery.accept(event, cached) || discoveryChanged;
+      if (event.kind === 39000) {
+        const id = tag(event, "d");
+        if (id && discovery.metadataVersion(id)?.id === event.id) {
+          if (cached) pendingMetadata.add(id);
+          else pendingMetadata.delete(id);
+        }
+      }
+    }
     if (discovery.overflowRevision !== overflowRevision) {
       coverage = "partial";
       complete = undefined;
@@ -967,12 +977,6 @@ export function createChannelStore(
     let controller = new AbortController();
     controllers.add(controller);
     const started = discovery.rosterVersions();
-    // Roster confirmation clears cached membership before metadata is fetched.
-    const cached = new Set(
-      list.channels
-        .filter((channel) => channel.cached)
-        .map((channel) => channel.id),
-    );
     const overflowRevision = discovery.overflowRevision;
     let readingRoster = true;
     let outcome: RosterRefresh = { state: "deferred" };
@@ -1044,7 +1048,7 @@ export function createChannelStore(
         (id) =>
           discovery.authorized(id) &&
           !named.has(id) &&
-          (force || cached.has(id) || !discovery.named(id)),
+          (force || pendingMetadata.has(id) || !discovery.named(id)),
       );
       generation = epoch;
       readingRoster = false;

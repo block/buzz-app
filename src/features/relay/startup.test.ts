@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { DiscoveryState } from "./discovery";
@@ -139,6 +139,99 @@ function setup(
   };
 }
 describe("device-local startup", () => {
+  let pagedRosters: RelayEvent[];
+  beforeAll(() => {
+    // Alpha is confirmed on page one; the 501st membership requires a continuation.
+    pagedRosters = [
+      roster(relay, "alpha", [viewer.pubkey], 1_700_000_001),
+      ...Array.from({ length: 500 }, (_, index) =>
+        roster(relay, `channel-${index}`, [viewer.pubkey]),
+      ).sort((a, b) => a.id.localeCompare(b.id)),
+    ];
+  });
+
+  it.each(["roster failure", "roster cancellation", "metadata failure"])(
+    "retries restored metadata after %s clears cached membership",
+    async (failure) => {
+      const { owner, channels, query } = setup();
+      const interruption = deferred<RelayEvent[]>();
+      const names = deferred<RelayEvent[]>();
+      const fresh = metadata(relay, "alpha", "Renamed Alpha", 1_700_000_002, [
+        ["archived", "true"],
+      ]);
+      let retry = false;
+      query.mockImplementation(async (filters) => {
+        const filter = filters[0];
+        if (filter?.kinds?.includes(39002)) {
+          if (!filter.before_id) return pagedRosters.slice(0, 500);
+          if (!retry && failure !== "metadata failure")
+            return interruption.promise;
+          return pagedRosters.slice(500);
+        }
+        if (filter?.kinds?.includes(39000)) {
+          if (!retry) return interruption.promise;
+          return filter["#d"]?.includes("alpha") ? names.promise : [];
+        }
+        return [];
+      });
+      await owner.restore();
+      expect(channels.get?.("alpha")).toMatchObject({
+        name: "Alpha",
+        cached: true,
+      });
+      channels.ensureList();
+      try {
+        await vi.waitFor(() =>
+          expect(query).toHaveBeenCalledTimes(
+            failure === "metadata failure" ? 3 : 2,
+          ),
+        );
+        expect(channels.get?.("alpha")?.cached).toBeUndefined();
+        expect(channels.get?.("alpha")?.name).toBe("Alpha");
+        expect(owner.session.live.snapshot().roster.state).toBe("pending");
+      } finally {
+        interruption.reject(
+          failure === "roster cancellation"
+            ? new DOMException("Cancelled", "AbortError")
+            : new ReadError("unavailable", "Offline"),
+        );
+      }
+      await vi.waitFor(() =>
+        expect(owner.session.live.snapshot().roster.state).toBe(
+          failure === "roster cancellation" ? "deferred" : "error",
+        ),
+      );
+      retry = true;
+      query.mockClear();
+      channels.ensureList();
+      try {
+        await vi.waitFor(() =>
+          expect(
+            query.mock.calls
+              .flatMap(([filters]) => filters)
+              .filter((filter) => filter.kinds?.includes(39000))
+              .flatMap((filter) => filter["#d"] ?? []),
+          ).toContain("alpha"),
+        );
+        expect(owner.session.live.snapshot().roster.state).toBe("pending");
+        expect(channels.get?.("alpha")?.name).toBe("Alpha");
+        expect(channels.get?.("alpha")?.archived).toBeUndefined();
+      } finally {
+        names.resolve([fresh]);
+      }
+      await vi.waitFor(() =>
+        expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+      );
+      expect(channels.list().channels).toHaveLength(501);
+      expect(channels.list().coverage).toBeUndefined();
+      expect(channels.get?.("alpha")).toMatchObject({
+        name: "Renamed Alpha",
+        archived: true,
+      });
+      expect(channels.get?.("alpha")?.cached).toBeUndefined();
+    },
+  );
+
   it.each([false, true])(
     "refreshes restored channel metadata with metadata included in the roster response=%s",
     async (included) => {

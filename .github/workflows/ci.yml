@@ -133,7 +133,7 @@ jobs:
     # Measurements stay isolated on their own runner, not on our critical path.
     # CI required still requires their success independently of these jobs.
     runs-on: ubuntu-24.04
-    # Six file-level shards split the large fixture groups that remain together
+    # Six file-level shards split the large file groups that remain together
     # with four or five shards, leaving room for setup inside the same deadline.
     timeout-minutes: 15
     strategy:

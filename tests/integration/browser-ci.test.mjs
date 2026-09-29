@@ -35,9 +35,9 @@ const matrixValues = (key) => {
   return values.split(",").map((value) => value.trim());
 };
 
-test("six independent browser jobs retain isolated measurements and native setup", () => {
+test("twelve independent browser jobs retain isolated measurements and native setup", () => {
   assert.deepEqual(matrixValues("engine"), ["chromium", "webkit"]);
-  assert.deepEqual(matrixValues("shard"), ["1", "2", "3"]);
+  assert.deepEqual(matrixValues("shard"), ["1", "2", "3", "4", "5", "6"]);
   assert.doesNotMatch(browser, /^ {4}(needs|continue-on-error):/m);
   assert.doesNotMatch(browser, /^ {8}(include|exclude):/m);
   assert.match(browser, /^ {6}fail-fast: false$/m);

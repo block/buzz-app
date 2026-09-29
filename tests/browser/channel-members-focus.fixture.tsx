@@ -1,3 +1,8 @@
+import { useState } from "react";
+import { AgentSelection } from "../../src/bundled/channel-templates/TemplateFields";
+import { Dialog } from "../../src/shared/design-system/ui/Dialog";
+import { Button } from "../../src/shared/design-system/ui/Button";
+import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { createRoot } from "react-dom/client";
 import { ChannelMembersButton } from "../../src/bundled/channels/ChannelMembersDialog";
 import { createRelaySession } from "../../src/features/relay/session";
@@ -27,6 +32,7 @@ const held = new Promise<void>((resolve) => {
 const { session } = createRelaySession(
   {
     viewer: viewer.pubkey,
+    scope: "https://relay.example.test",
     relayAuthor: relay.pubkey,
     media: () => undefined,
     readAgentLibrary: async () => ({ definitions: [], identities: [] }),
@@ -67,9 +73,25 @@ const { session } = createRelaySession(
 session.channels.ensureList();
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
-createRoot(root).render(
-  <ChannelMembersButton session={session} channelId={channelId} />,
-);
+function Fixture() {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  return (
+    <ToastProvider>
+      <ChannelMembersButton session={session} channelId={channelId} />
+      <Button onClick={() => setOpen(true)}>Edit team</Button>
+      <Dialog open={open} onOpenChange={setOpen} title="Team">
+        <AgentSelection
+          session={session}
+          selected={selected}
+          onChange={setSelected}
+          agents={[{ pubkey: person.pubkey, name: "Morgan" }]}
+        />
+      </Dialog>
+    </ToastProvider>
+  );
+}
+createRoot(root).render(<Fixture />);
 // The test controls when confirmation arrives; no relay or member is contacted.
 Object.assign(window, {
   focusFixture: { published, confirm: () => releasePublish() },

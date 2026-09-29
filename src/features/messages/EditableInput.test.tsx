@@ -223,6 +223,99 @@ it.each(["blockquote", "code_block"] as const)(
   },
 );
 
+it("opens a code block from a typed fence on Shift+Enter, with one undo restoring the source", async () => {
+  const h = mount();
+  await h.user.keyboard("```{Shift>}{Enter}{/Shift}");
+  expect(h.input.querySelector("pre > code")).not.toBeNull();
+  expect(h.input).toHaveValue("");
+  act(() => h.input.undo(false));
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input).toHaveValue("```");
+  act(() => h.input.undo(true));
+  expect(h.input.querySelector("pre > code")).not.toBeNull();
+  await h.user.keyboard("code{Shift>}{Enter}{/Shift}more");
+  expect(h.input).toHaveValue("code\nmore");
+  expect(h.markdown()).toBe("```\ncode\nmore\n```");
+  // The typed text is its own undo step; it never merges into the conversion.
+  act(() => h.input.undo(false));
+  expect(h.input.querySelector("pre > code")).not.toBeNull();
+  expect(h.input).not.toHaveValue("```");
+  act(() => h.input.undo(true));
+  await h.user.keyboard("{Shift>}{Enter}{Enter}{/Shift}outside");
+  expect(h.input.querySelector(":scope > p")).toHaveTextContent("outside");
+  expect(h.markdown()).toBe("```\ncode\nmore\n```\n\noutside");
+  const saved = JSON.parse(JSON.stringify(h.draft()));
+  act(() => h.input.reset(saved));
+  expect(h.input.querySelectorAll("pre > code")).toHaveLength(1);
+  expect(h.markdown()).toBe("```\ncode\nmore\n```\n\noutside");
+});
+
+it.each([
+  ["```ts", "ts", "```ts\nx\n```"],
+  ["~~~", null, "```\nx\n```"],
+  ["````c++", "c++", "```c++\nx\n```"],
+])(
+  "keeps the info string of %s as the block language through send and persistence",
+  async (fence, language, wire) => {
+    const h = mount();
+    await h.user.keyboard(`${fence}{Shift>}{Enter}{/Shift}x`);
+    const pre = h.input.querySelector("pre");
+    if (!pre) throw new Error("Fence did not open a code block");
+    if (language) expect(pre).toHaveAttribute("data-language", language);
+    else expect(pre).not.toHaveAttribute("data-language");
+    expect(h.input).toHaveValue("x");
+    expect(h.markdown()).toBe(wire);
+    const saved = JSON.parse(JSON.stringify(h.draft()));
+    act(() => h.input.reset(saved));
+    expect(h.markdown()).toBe(wire);
+  },
+);
+
+it("opens a fence typed after existing prose as a separate block", async () => {
+  const h = mount("intro");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}```{Shift>}{Enter}{/Shift}x");
+  expect(h.input.querySelector(":scope > p")).toHaveTextContent("intro");
+  expect(h.input.querySelector(":scope > pre > code")).toHaveTextContent("x");
+  expect(h.input).toHaveValue("intro\nx");
+  expect(h.markdown()).toBe("intro\n\n```\nx\n```");
+});
+
+it.each(["a```", "``", "``` ", "```a b", "```:smile:"])(
+  "leaves %s followed by Shift+Enter as paragraph text",
+  async (line) => {
+    const h = mount();
+    await h.user.keyboard(`${line}{Shift>}{Enter}{/Shift}x`);
+    expect(h.input.querySelector("pre")).toBeNull();
+    expect(h.input).toHaveValue(`${line}\nx`);
+    expect(h.markdown()).toBe(`${line}\nx`);
+  },
+);
+
+it("keeps a fence typed inside an existing code block literal", async () => {
+  const h = mount();
+  act(() => h.input.toggleFormat("code_block"));
+  await h.user.keyboard("```{Shift>}{Enter}{/Shift}x");
+  expect(h.input.querySelectorAll("pre")).toHaveLength(1);
+  expect(h.input).toHaveValue("```\nx");
+  expect(h.markdown()).toBe("````\n```\nx\n````");
+});
+
+it("does not convert a fence carrying inline code or pasted source", async () => {
+  const h = mount();
+  act(() => h.input.toggleFormat("code"));
+  await h.user.keyboard("```");
+  act(() => h.input.toggleFormat("code"));
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}x");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input.querySelector("code")).toHaveTextContent("```");
+  act(() => {
+    h.input.setSelectionRange(0, h.input.value.length);
+    h.input.insertText("```\ncode\n```");
+  });
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.markdown()).toBe("```\ncode\n```");
+});
+
 it("switches a nested bullet to its ordered ancestor's type without outdenting", async () => {
   const h = mount("one\ntwo\nthree");
   act(() => {

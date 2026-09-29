@@ -49,6 +49,7 @@ import {
   activeBlockFormats,
   toggleComposerBlock,
   composerBlockLineBreak,
+  composerCodeFence,
 } from "./composer-blocks";
 import { composerLinkLabel } from "./composer-link-label";
 import { applyComposerCodeInput } from "./composer-code-input";
@@ -148,6 +149,7 @@ export function EditableInput({
   const composing = useRef(false);
   const plain = useRef<PlainLink[]>([]);
   const locked = useRef(false);
+  const codeFence = useRef<() => boolean>(() => false);
   const emitted = useRef(draft);
   const api = useRef<{
     sync(draft: MentionDraft, reset?: boolean): void;
@@ -546,7 +548,8 @@ export function EditableInput({
       const source = projection();
       const { from, to } = editor.state.selection;
       // Existing Markdown code stays literal for other formats. Explicit inline
-      // code treats the selected characters literally, with no fence input rule.
+      // code treats the selected characters literally; a typed fence line only
+      // becomes a block through the Enter/Shift+Enter rule.
       if (
         format !== "code" &&
         markdownRanges(
@@ -599,6 +602,25 @@ export function EditableInput({
       })(editor.state, (tr) => editor.dispatch(closeHistory(tr)));
       editor.focus();
     };
+    // Enter and Shift+Enter share this rule; a typed fence line opens a block
+    // instead of sending or breaking the line, as the previous Buzz client did.
+    const openCodeFence = () => {
+      if (!editable() || composing.current || editor.composing) return false;
+      const tr = composerCodeFence(editor.state);
+      if (!tr) return false;
+      const previous = editor.state;
+      editor.dispatch(closeHistory(tr).scrollIntoView());
+      // Near maxLength the generated fence delimiters can exceed the limit, so
+      // the normalize filter drops the conversion; the line then stays literal
+      // and the keystroke keeps its ordinary meaning.
+      if (editor.state === previous) return false;
+      // The conversion is its own undo step: text typed next into the block
+      // must not merge into it.
+      separateHistory = true;
+      editor.focus();
+      return true;
+    };
+    codeFence.current = openCodeFence;
     const editLink = (): ComposerLinkEdit | null => {
       if (!editable() || composing.current || editor.composing) return null;
       const doc = editor.state.doc,
@@ -1277,6 +1299,7 @@ export function EditableInput({
         value: () => {
           if (!editable() || composing.current || editor.composing)
             return false;
+          if (openCodeFence()) return true;
           const tr = composerBlockLineBreak(editor.state);
           if (!tr) return insert("\n");
           editor.dispatch(closeHistory(tr).scrollIntoView());
@@ -1369,6 +1392,7 @@ export function EditableInput({
       ref.current = null;
       view.current = null;
       api.current = null;
+      codeFence.current = () => false;
       editor.destroy();
     };
   }, [ref]);
@@ -1425,6 +1449,19 @@ export function EditableInput({
             event.nativeEvent.keyCode === 229
           )
             return;
+          // A lone fence line claims unmodified Enter before the host's send
+          // policy sees it. Any other line keeps that policy untouched.
+          if (
+            event.key === "Enter" &&
+            !event.shiftKey &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            codeFence.current()
+          ) {
+            event.preventDefault();
+            return;
+          }
           events.onKeyDown?.(event as KeyboardEvent<ComposerInputElement>);
           if (!event.defaultPrevented && event.key === "Enter") {
             event.preventDefault();

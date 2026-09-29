@@ -61,11 +61,21 @@ function blocksMarkdown(doc: EditorNode): string {
           : "\n\n",
       );
     if (block.type.name === "code_block") {
+      const language: unknown = block.attrs.language;
       blocks.push(
         toMarkdown(
           {
             type: "root",
-            children: [{ type: "code", value: block.textContent }],
+            children: [
+              {
+                type: "code",
+                lang:
+                  typeof language === "string" && language
+                    ? language
+                    : undefined,
+                value: block.textContent,
+              },
+            ],
           },
           { fences: true },
         ).slice(0, -1),

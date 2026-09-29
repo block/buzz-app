@@ -660,8 +660,12 @@ tables, task lists, strikethrough and code, while preserving chat-style single l
 Only credential-free HTTPS links are active; raw HTML is ignored and inline remote images
 are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji remain
 event-local and are not substituted inside links or code.
-Authenticated live traffic reconciles through the same session. Channel creation and composer
-preview/toolbars are not implemented. Reply counts open a bounded thread view; attachments are
+Authenticated live traffic reconciles through the same session. Channel creation is not
+implemented. In the composer, a line holding only ```` ``` ```` or `~~~`, optionally followed by a
+language, becomes a code block when Enter or Shift+Enter follows it, and that Enter does not send;
+the language stays on the sent fence. Shift+Enter on an empty last line leaves the block. Fences
+inside an existing code block, and pasted fences, stay literal text and still render as code once
+sent. Reply counts open a bounded thread view; attachments are
 links. Routine freshness labels are not shown; Channel Settings → Diagnostics
 exposes refresh, outbox inspection and timings. Packaged builds do not
 include the development relay broker. GitHub fetches public data only; signed-in

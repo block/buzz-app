@@ -712,6 +712,26 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.input()).toHaveValue("");
 });
 
+it("opens a code block from a typed fence on plain Enter instead of sending, then sends the fenced block", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "```");
+  await h.user.keyboard("{Enter}");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input().querySelector("pre > code")).not.toBeNull();
+  expect(h.input()).toHaveValue("");
+  await h.user.keyboard("const answer = 42;{Shift>}{Enter}{/Shift}answer");
+  expect(h.input()).toHaveValue("const answer = 42;\nanswer");
+  await h.user.keyboard("{Enter}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "```\nconst answer = 42;\nanswer\n```",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+  expect(h.input().querySelector("pre")).toBeNull();
+});
+
 it("prefixes thread replies with the selected media time and clears it after send", async () => {
   const clearMediaTime = vi.fn();
   const h = mount({

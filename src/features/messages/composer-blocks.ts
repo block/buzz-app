@@ -244,6 +244,53 @@ export function toggleComposerBlock(
   return tr.setStoredMarks([]);
 }
 
+// The opening fence the previous Buzz client recognized: exactly the caret's
+// line, an optional language identifier, nothing else. Info strings that could
+// host a mention/emoji completion (`:`, `@`, spaces) or a backtick never match.
+const FENCE = /^(?:`{3,}|~{3,})([\w+#.-]*)$/;
+
+/** A line holding only an opening fence, followed by Enter or Shift+Enter,
+ * becomes a code block. Only the caret's own typed line qualifies: pasted or
+ * restored fences, fences inside code/link/literal ranges or tokens, and any
+ * line inside an existing code block stay literal source. One transaction
+ * carries the deletion and the block, so one undo restores the typed fence. */
+export function composerCodeFence(state: EditorState): Transaction | undefined {
+  const { $from, empty } = state.selection;
+  if (!empty || $from.parent.type !== schema.nodes.paragraph) return;
+  const source = projectComposerDocument(state.doc);
+  const text = source.draft.text;
+  const caret = source.source($from.pos);
+  const block = source.blocks.find(
+    (block) => $from.pos >= block.from && $from.pos <= block.to,
+  );
+  if (!block) return;
+  // The caret must end the fence line; text after it would be a code line.
+  if (caret !== source.source(block.to) && text[caret] !== "\n") return;
+  const start = Math.max(block.start, text.lastIndexOf("\n", caret - 1) + 1);
+  const match = FENCE.exec(text.slice(start, caret));
+  if (!match) return;
+  const from = source.position(start),
+    to = $from.pos;
+  if (source.source(from) !== start) return;
+  let plain = true;
+  state.doc.nodesBetween(from, to, (node) => {
+    if (!node.isInline) return;
+    if (
+      !node.isText ||
+      (["code", "link", "literal"] as const).some((name) =>
+        schema.marks[name].isInSet(node.marks),
+      )
+    )
+      plain = false;
+  });
+  if (!plain) return;
+  const tr = state.tr.delete(from, to);
+  isolate(tr);
+  const language = match[1] || null;
+  if (!apply(tr, setBlockType(schema.nodes.code_block, { language }))) return;
+  return tr.setStoredMarks([]);
+}
+
 /** Shift+Enter continues the block; an empty last line exits it. Plain Enter
  * remains the host's existing send/completion policy. */
 export function composerBlockLineBreak(

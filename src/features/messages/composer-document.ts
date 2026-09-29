@@ -54,8 +54,23 @@ export const composerSchema = new Schema<
       marks: "recipient",
       code: true,
       defining: true,
-      toDOM: () => ["pre", { spellcheck: "false" }, ["code", 0]],
-      parseDOM: [{ tag: "pre", preserveWhitespace: "full" }],
+      // The info string of a typed fence. Serialization emits it after the
+      // opening fence; toolbar-created blocks have none.
+      attrs: { language: { default: null } },
+      toDOM: (node) => [
+        "pre",
+        { spellcheck: "false", "data-language": node.attrs.language },
+        ["code", 0],
+      ],
+      parseDOM: [
+        {
+          tag: "pre",
+          preserveWhitespace: "full",
+          getAttrs: (element) => ({
+            language: element.getAttribute("data-language"),
+          }),
+        },
+      ],
     },
     bullet_list: { ...bulletList, group: "block", content: "list_item+" },
     ordered_list: { ...orderedList, group: "block", content: "list_item+" },

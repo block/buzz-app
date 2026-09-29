@@ -283,8 +283,9 @@ test("newest window positions immediately; scrollback preserves the visible repl
     );
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     await expect(replies).toHaveCount(60);
-    // WebKit exposes integral scrollTop for this fractional-height row. The
-    // post-gesture anchor may round by one CSS pixel; larger shifts are defects.
+    // scrollTop quantizes the fractional-height row's correction to integral
+    // CSS pixels. WebKit applied 3299 for a requested 3299.859375, leaving
+    // 0.859375 px of displacement; both engines must stay within one pixel.
     await expect
       .poll(() =>
         history
@@ -294,7 +295,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
             before,
           ),
       )
-      .toBeLessThan(test.info().project.name === "webkit" ? 1 : 0.5);
+      .toBeLessThan(1);
     const top = await history.evaluate((el) => el.scrollTop);
     await page.evaluate(() => window.messagesFixture.live());
     await expect(replies).toHaveCount(61);

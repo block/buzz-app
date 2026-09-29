@@ -951,7 +951,9 @@ it("restores the default row when the appearance is disabled without losing cont
     const content = view.container.textContent;
     act(() => {
       entries = bubbleAppearances;
-      listeners.forEach((listener) => listener());
+      listeners.forEach((listener) => {
+        listener();
+      });
     });
     expect(
       view.container.querySelector('[data-appearance="bubbles"]'),
@@ -962,7 +964,9 @@ it("restores the default row when the appearance is disabled without losing cont
     ).not.toBeNull();
     act(() => {
       entries = [];
-      listeners.forEach((listener) => listener());
+      listeners.forEach((listener) => {
+        listener();
+      });
     });
     expect(view.container.querySelector("[data-appearance]")).toBeNull();
     expect(view.container.querySelector("[data-own]")).toBeNull();

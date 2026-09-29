@@ -585,3 +585,60 @@ async fn discovery_body_is_bounded_for_length_and_chunked_transfer() {
         task.join().unwrap();
     }
 }
+
+#[tokio::test]
+async fn sidebar_ipc_only_decodes_verified_self_coordinates_and_signs_valid_payloads() {
+    let host = IdentityHost::fixture();
+    let payload =
+        serde_json::json!({"version":1,"channels":{"channel":{"starred":true,"updatedAt":1}}});
+    let event = host
+        .sign_sidebar("channel-stars".into(), payload.clone(), 1)
+        .await
+        .unwrap();
+    verify(&event);
+    assert_eq!(
+        host.decode_sidebar(vec![event.clone()]).await.unwrap()["channel-stars"],
+        payload
+    );
+    assert!(host
+        .decode_sidebar(vec![event.clone(), event.clone()])
+        .await
+        .is_err());
+    assert!(host.decode_sidebar(vec![event.clone(); 5]).await.is_err());
+    let mut tampered = event.clone();
+    tampered["content"] = serde_json::json!("changed");
+    assert!(host.decode_sidebar(vec![tampered]).await.is_err());
+    let mut wrong_coordinate = event.clone();
+    wrong_coordinate["tags"][0][1] = serde_json::json!("unknown");
+    assert!(host.decode_sidebar(vec![wrong_coordinate]).await.is_err());
+    assert!(host
+        .sign_sidebar("other".into(), payload.clone(), 1)
+        .await
+        .is_err());
+    assert!(host.sign_sidebar("channel-stars".into(), serde_json::json!({"version":1,"channels":{"c":{"starred":"not boolean","updatedAt":1}}}), 1).await.is_err());
+    let other = IdentityHost::fixture()
+        .sign_sidebar(
+            "channel-sort".into(),
+            serde_json::json!({"version":1,"groups":{}}),
+            1,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        host.decode_sidebar(vec![other]).await.unwrap()["channel-sort"]["version"],
+        1
+    );
+}
+
+#[tokio::test]
+async fn sidebar_decoder_interoperates_with_nostr_tools_nip44_v2() {
+    // Produced with nostr-tools 2.25.2, private key [1; 32].
+    let event: serde_json::Value = serde_json::from_str(r#"{"kind":30078,"created_at":1700000000,"tags":[["d","channel-mutes"],["t","channel-mutes"]],"content":"Ajhdtq+PsGhpLGhyo0hAN55quGVmOE8/p0id4UVmJPz/Aki5aZUHWBymErqORblF9uPjX6XD5DjFJDR18qIHIIullzAvPKE5z336CV5caxsevvNkXoeRk7U0xVpk+piVfM9z2+cgyuJoG3cGMzFp78/53XHDvsEUgtE9Wv8kgvj5vQc=","pubkey":"1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f","id":"e4471969b8f1b27fad968343db8deb4346c3e530c69b548f68a6adb31f99628c","sig":"14064569d6085363f32865b2204037c4a5769a09f116209fda3790feef12e6672d1806c7626c6857d0696cfe43f39ed4a8dc13d965989300ec757fb3a2fd44cd"}"#).unwrap();
+    assert_eq!(
+        IdentityHost::fixture()
+            .decode_sidebar(vec![event])
+            .await
+            .unwrap()["channel-mutes"],
+        serde_json::json!({"version":1,"channels":{"cross":{"muted":true,"updatedAt":1}}})
+    );
+}

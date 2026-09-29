@@ -21,6 +21,7 @@ use relay::{
     relay_channel_publish, relay_channel_sign, relay_direct_message, relay_http, relay_kit_decode,
     relay_kit_prepare, relay_kit_sign, relay_sign, relay_workflow_runs,
 };
+use relay::{relay_decode_sidebar, relay_http, relay_sign, relay_sign_sidebar, relay_workflow_runs};
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 mod goose_models;
@@ -384,6 +385,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_kit_prepare,
         relay_kit_decode,
         relay_direct_message,
+        relay_decode_sidebar,
+        relay_sign_sidebar,
         get_os_idle_seconds,
         plugin_import_folder,
         plugin_import_git,

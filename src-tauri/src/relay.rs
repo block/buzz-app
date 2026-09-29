@@ -307,6 +307,24 @@ fn validate_workflow_template(event: &EventTemplate) -> Result<()> {
     Ok(())
 }
 
+#[tauri::command]
+pub(crate) async fn relay_decode_sidebar(
+    host: tauri::State<'_, IdentityHost>,
+    events: Vec<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    host.decode_sidebar(events).await
+}
+
+#[tauri::command]
+pub(crate) async fn relay_sign_sidebar(
+    host: tauri::State<'_, IdentityHost>,
+    coordinate: String,
+    payload: serde_json::Value,
+    created_at: u64,
+) -> Result<serde_json::Value> {
+    host.sign_sidebar(coordinate, payload, created_at).await
+}
+
 #[derive(Serialize)]
 pub(crate) struct RelayResponse {
     status: u16,

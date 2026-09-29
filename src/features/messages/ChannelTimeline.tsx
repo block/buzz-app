@@ -201,7 +201,7 @@ function Timeline({
       if (
         anchor &&
         position.anchor?.id === renderedAnchor &&
-        position.anchor.y === anchor.y &&
+        position.anchor?.y === anchor.y &&
         element.scrollHeight - element.clientHeight - element.scrollTop > 1 &&
         !rows.some((row) =>
           row.membershipRows?.some((member) => member.id === anchor.id),

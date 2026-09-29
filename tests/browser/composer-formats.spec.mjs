@@ -90,6 +90,27 @@ test("list toolbar, native item splitting and indentation survive reload and sen
   ).toBe("- one\n- two\n- three\n\noutside");
 });
 
+test("a typed fence opens a code block on Enter instead of sending, and the block sends fenced", async ({
+  page,
+}) => {
+  const input = await composer(page);
+  await input.pressSequentially("```ts");
+  await input.press("Enter");
+  await expect(input.locator("pre code")).toHaveCount(1);
+  expect(
+    await page.evaluate(() => window.linkComposerFixture.sent.length),
+  ).toBe(0);
+  await page.keyboard.type("const answer = 42;");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("answer");
+  await expect(input.locator("pre code")).toContainText("answer");
+  await input.press("Enter");
+  expect(
+    await page.evaluate(() => window.linkComposerFixture.sent.at(-1).text),
+  ).toBe("```ts\nconst answer = 42;\nanswer\n```");
+  await expect(input.locator("pre")).toHaveCount(0);
+});
+
 test("sent spoilers hide content and links behind a keyboard-accessible reduced-motion sparkle", async ({
   page,
 }) => {

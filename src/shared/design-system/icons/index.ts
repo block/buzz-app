@@ -332,3 +332,6 @@ export const SpeakerSlashIcon = defineIcon(
   "phosphor",
   PhosphorSpeakerSlashIcon,
 );
+
+import { ThumbsUpIcon as PhosphorThumbsUpIcon } from "@phosphor-icons/react/dist/csr/ThumbsUp";
+export const ThumbsUpIcon = defineIcon("phosphor", PhosphorThumbsUpIcon);

@@ -18,6 +18,7 @@ import {
 import {
   CircleNotchIcon,
   SmileyIcon,
+  ThumbsUpIcon,
   CheckIcon,
   GearIcon,
   UserIcon,
@@ -236,6 +237,7 @@ export function ProfileButton({
           }
         />
         <MenuPopup
+          data-profile-menu=""
           align="end"
           sideOffset={8}
           aria-labelledby={accountLabel}
@@ -247,7 +249,7 @@ export function ProfileButton({
           <div className={styles.profileHeader}>
             <span className={styles.profileAvatar}>{avatar}</span>
             <div className={styles.profileDetails}>
-              <p className="m-0 truncate text-label-sm">{name}</p>
+              <p className="m-0 truncate text-body">{name}</p>
               {viewer && (
                 <MenuRoot modal={false}>
                   <span className={styles.availability} data-status={observed}>
@@ -360,7 +362,7 @@ export function ProfileButton({
                   ) : (
                     <>
                       <MenuIcon>
-                        <SmileyIcon size={17} aria-hidden="true" />
+                        <SmileyIcon size={16} aria-hidden="true" />
                       </MenuIcon>
                       {statusEditor.loading
                         ? "Loading status…"
@@ -387,15 +389,20 @@ export function ProfileButton({
               )}
             </>
           )}
+          <MenuSeparator />
           {actions.map((action) => (
             <MenuItem
               key={action.key}
               onClick={() => setSelectedAction(action)}
             >
+              {action.pluginId === "buzz.feedback" && (
+                <MenuIcon>
+                  <ThumbsUpIcon size={16} aria-hidden="true" />
+                </MenuIcon>
+              )}
               {action.title}
             </MenuItem>
           ))}
-          <MenuSeparator />
           <MenuItem
             aria-current={settingsSelected ? "page" : undefined}
             onClick={() => {
@@ -404,7 +411,7 @@ export function ProfileButton({
             }}
           >
             <MenuIcon>
-              <GearIcon aria-hidden="true" size={17} />
+              <GearIcon aria-hidden="true" size={16} />
             </MenuIcon>
             Settings
             {settingsSelected && (

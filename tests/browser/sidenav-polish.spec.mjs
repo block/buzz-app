@@ -276,7 +276,7 @@ test("section disclosure toggles content and honors reduced motion", async ({
 });
 
 // Browser layout verifies the header contract, including inline icon sizing.
-test("top bar keeps 28px controls, 16px icons and an 18px Bestie image", async ({
+test("top bar keeps unboxed 28px controls, 16px icons and no Bestie launcher", async ({
   page,
   app,
 }, info) => {
@@ -298,9 +298,50 @@ test("top bar keeps 28px controls, 16px icons and an 18px Bestie image", async (
     const box = await icon.boundingBox();
     expect([box.width, box.height]).toEqual([16, 16]);
   }
-  const bestie = await header.locator('img[src="/bestie.png"]').boundingBox();
-  expect([bestie.width, bestie.height]).toEqual([18, 18]);
-  await page.screenshot({ path: info.outputPath("top-bar.png") });
+  await expect(header.locator('img[src="/bestie.png"]')).toHaveCount(0);
+  await page.mouse.move(700, 500);
+  for (const control of await header
+    .locator('[data-icon-variant="ghost"]')
+    .all())
+    await expect(control).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 950 });
+    for (const group of [".shell-communities", ".shell-actions"]) {
+      const boxes = await header
+        .locator(`${group} .buzz-button[data-icon-variant]`)
+        .evaluateAll((nodes) =>
+          nodes.map((node) => {
+            const { x, width } = node.getBoundingClientRect();
+            return { x, width };
+          }),
+        );
+      for (let i = 1; i < boxes.length; i++)
+        expect(boxes[i].x - boxes[i - 1].x - boxes[i - 1].width).toBe(8);
+    }
+    const avatar = await header
+      .getByRole("button", { name: "Your profile" })
+      .boundingBox();
+    for (const control of await controls.all()) {
+      if (await control.isDisabled()) continue;
+      await control.hover();
+      const box = await control.boundingBox();
+      expect([box.width, box.height]).toEqual([avatar.width, avatar.height]);
+      await expect(control).toHaveCSS(
+        "border-radius",
+        await header
+          .getByRole("button", { name: "Your profile" })
+          .evaluate((node) => getComputedStyle(node).borderRadius),
+      );
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await header
+    .getByRole("button", { name: "Search Buzz", exact: true })
+    .hover();
+  await page.screenshot({
+    path: info.outputPath("top-bar.png"),
+    clip: { x: 0, y: 0, width: 1440, height: 100 },
+  });
 });
 
 // Real responsive layout owns the Settings overlay and the desktop sidebar.

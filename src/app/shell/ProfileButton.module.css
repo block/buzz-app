@@ -17,20 +17,21 @@
 .profileHeader {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  min-width: 15rem;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-1);
+  min-width: 0;
   max-width: min(20rem, calc(100vw - 3rem));
 }
 .profileAvatar {
   position: relative;
   display: flex;
-  width: 2.75rem;
-  height: 2.75rem;
-  flex: 0 0 2.75rem;
+  width: calc(var(--space-5) * 2);
+  height: calc(var(--space-5) * 2);
+  flex: 0 0 calc(var(--space-5) * 2);
 }
 .profileDetails {
   display: grid;
+  gap: var(--space-1);
   justify-items: start;
   min-width: 0;
 }
@@ -68,7 +69,29 @@
 }
 .statusCard {
   --user-status-emoji-offset: -2px;
-  margin: var(--space-2);
+  margin: var(--space-3) 0;
+  background: var(--surface-inset);
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-control);
+}
+
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules scopes the profile menu without changing shared menus. */
+:global(.buzz-menu-popup[data-profile-menu]) {
+  width: 18rem;
+  padding: var(--space-3);
+  border-radius: var(--radius-panel);
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: Direct profile actions match the compact sidenav rows. */
+:global(.buzz-menu-popup[data-profile-menu] > .buzz-menu-item) {
+  min-height: calc(var(--space-6) + var(--space-1));
+  gap: var(--space-3);
+  font-size: var(--text-body);
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: The existing status menu item keeps its keyboard behavior. */
+.statusCard :global(.buzz-menu-item) {
+  min-height: calc(var(--space-5) * 2);
+  padding-inline: var(--space-3);
+  border-radius: inherit;
+  color: var(--text-subtle);
+  font-size: var(--text-body);
 }

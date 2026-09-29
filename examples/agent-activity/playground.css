@@ -141,7 +141,7 @@
     padding: var(--space-control-inset);
   }
   .lab-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-panel-inset);
   }
   .lab-nav {

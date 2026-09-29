@@ -965,7 +965,7 @@ it("isolates three request recipients, namesakes, stale work and terminal no-rep
 });
 
 it.each([2, 3, 4, 7])(
-  "groups %i pending agents without hiding identity, delivery or typing evidence",
+  "shows %i pending agents independently without hiding identity, delivery or typing evidence",
   async (count) => {
     const user = userEvent.setup();
     let generation = 0;
@@ -1040,14 +1040,12 @@ it.each([2, 3, 4, 7])(
     );
     const view = render(tree(), { reactStrictMode: true });
     try {
-      const group = screen.getByRole("button", {
-        name: `${count} agents · Activity · ${count} awaiting reply`,
-      });
-      expect(screen.getAllByRole("button")).toHaveLength(1);
-      expect(group.querySelectorAll(".buzz-avatar")).toHaveLength(
-        Math.min(count, 3),
-      );
-      expect(group.textContent?.includes(`+${count - 3}`)).toBe(count > 3);
+      expect(
+        screen.getAllByRole("button", { name: "Waiting for response…" }),
+      ).toHaveLength(count);
+      expect(
+        screen.getAllByRole("status", { name: "Agent activity status" }),
+      ).toHaveLength(count);
       act(() =>
         activity.receive(
           {
@@ -1066,20 +1064,10 @@ it.each([2, 3, 4, 7])(
           generation,
         ),
       );
-      // Hidden working children must not suppress public typing.
-      expect(
-        screen.getByRole("status", { name: "Typing activity" }),
-      ).toBeTruthy();
-      await user.tab();
-      expect(document.activeElement).toBe(group);
-      await user.keyboard("{Enter}");
-      expect(group.getAttribute("aria-expanded")).toBe("true");
+      // Pending work is visible independently; no aggregate disclosure is needed.
       expect(
         screen.queryByRole("status", { name: "Typing activity" }),
       ).toBeNull();
-      expect(
-        screen.getAllByRole("status", { name: "Agent activity status" }),
-      ).toHaveLength(count);
       for (let i = 0; i < count; i++)
         expect(
           screen.getByText(`Agent ${i + 1}`, { selector: "p" }),
@@ -1087,50 +1075,29 @@ it.each([2, 3, 4, 7])(
       const working = screen.getByRole("button", { name: "Working…" });
       await user.click(working);
       expect(working.getAttribute("aria-expanded")).toBe("true");
-      await user.click(group);
-      expect(
-        screen.getByRole("status", { name: "Typing activity" }),
-      ).toBeTruthy();
-      await user.keyboard(" ");
-      expect(screen.getByRole("button", { name: "Working…" })).not.toBe(
-        working,
-      );
-      const remounted = screen.getByRole("button", { name: "Working…" });
-      expect(remounted.getAttribute("aria-expanded")).toBe("false");
-      // One original request keeps its trigger/focus and child state as replies arrive.
+      // A shrinking pending lineup preserves the exact agent's open popup.
       view.rerender(tree([agents[0] ?? ""]));
-      expect(
-        screen.getByRole("button", {
-          name: "1 agent · Activity · 1 awaiting reply",
-        }),
-      ).toBe(group);
-      expect(document.activeElement).toBe(group);
-      expect(screen.getByRole("button", { name: "Working…" })).toBe(remounted);
+      expect(screen.getByRole("button", { name: "Working…" })).toBe(working);
+      expect(working.getAttribute("aria-expanded")).toBe("true");
       for (const [delivery, label] of [
         ["sending", "Sending request…"],
         ["unknown", "Delivery unconfirmed"],
         ["failed", "Request not sent"],
       ] as const) {
         view.rerender(tree(agents, root, delivery));
-        expect(
-          screen.getByRole("button", {
-            name: `${count} agents · Activity · ${label}`,
-          }),
-        ).toBe(group);
+        expect(screen.getAllByRole("button", { name: label })).toHaveLength(
+          count,
+        );
         expect(
           screen.getByRole("status", { name: "Typing activity" }),
         ).toBeTruthy();
       }
-      // A new request starts collapsed and does not inherit the previous disclosure.
+      // A new request does not inherit the old agent popup's expansion.
       view.rerender(tree(agents, "f".repeat(64)));
-      expect(
-        screen
-          .getByRole("button", {
-            name: `${count} agents · Activity · ${count} awaiting reply`,
-          })
-          .getAttribute("aria-expanded"),
-      ).toBe("false");
-      expect(screen.getAllByRole("button")).toHaveLength(1);
+      for (const button of screen.getAllByRole("button", {
+        name: "Waiting for response…",
+      }))
+        expect(button.getAttribute("aria-expanded")).toBe("false");
       view.unmount();
       expect(screen.queryByRole("button")).toBeNull();
     } finally {

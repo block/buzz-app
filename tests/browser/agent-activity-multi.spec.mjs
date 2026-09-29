@@ -139,30 +139,8 @@ test("three recipients work independently through coordination, replies and a no
       .getByRole("button", { name: "Send message", exact: true })
       .click();
     await started;
-    const group = thread
-      .getByRole("region", {
-        name: "Agent coordination and activity",
-        exact: true,
-      })
-      .getByRole("button", {
-        name: "3 agents · Activity · Sending request…",
-        exact: true,
-      });
-    await expect(group).toHaveAttribute("aria-expanded", "false");
-    await expect(tail).toHaveCount(0);
-    const avatars = group.locator(".buzz-avatar");
-    await expect(avatars).toHaveCount(3);
-    const boxes = await avatars.evaluateAll((nodes) =>
-      nodes.map((node) => {
-        const box = node.getBoundingClientRect();
-        return { left: box.left, right: box.right };
-      }),
-    );
-    expect(boxes[1].left).toBeGreaterThan(boxes[0].left);
-    expect(boxes[1].left).toBeLessThan(boxes[0].right);
-    await group.focus();
-    await page.keyboard.press("Enter");
-    await expect(group).toHaveAttribute("aria-expanded", "true");
+    await expect(tail).toBeVisible();
+    await expect(tail.locator(".buzz-avatar")).toHaveCount(3);
     await expect(
       tail.getByRole("button", { name: "Sending request…", exact: true }),
     ).toHaveCount(3);
@@ -286,7 +264,7 @@ test("three recipients work independently through coordination, replies and a no
   );
   app.relay.publish("primary", coordination);
   const transcriptToggle = thread.getByRole("button", {
-    name: "View 1 coordination message",
+    name: `${byKey.get(agents[0].pubkey)} · Coordination`,
     exact: true,
   });
   await expect(transcriptToggle).toHaveAttribute("aria-expanded", "false");
@@ -360,7 +338,7 @@ test("three recipients work independently through coordination, replies and a no
   });
   const firstGroup = groups.first();
   const groupTrigger = firstGroup.getByRole("button", {
-    name: /^3 agents · 1 coordination message/,
+    name: `${byKey.get(agents[0].pubkey)} · Coordination`,
   });
   await groupTrigger.click();
   await expect(groupTrigger).toHaveAttribute("aria-expanded", "false");
@@ -382,7 +360,7 @@ test("three recipients work independently through coordination, replies and a no
   app.relay.publish("primary", extra);
   await expect(
     firstGroup.getByRole("button", {
-      name: /^3 agents · 1 coordination message/,
+      name: `${byKey.get(agents[0].pubkey)} · Coordination`,
     }),
   ).toHaveAttribute("aria-expanded", "false");
   await expect(firstGroup.locator("[data-message-id]")).toHaveCount(0);
@@ -418,7 +396,10 @@ test("three recipients work independently through coordination, replies and a no
   ).toHaveCount(0);
   // No human mention was necessary; the unresolved request remains before it.
   await expect(
-    firstGroup.getByRole("button", { name: /1 awaiting reply$/ }),
+    firstGroup.getByRole("button", {
+      name: "Observed activity ended · error reported",
+      exact: true,
+    }),
   ).toBeVisible();
   const later = finalizeEvent(
     {
@@ -452,13 +433,13 @@ test("three recipients work independently through coordination, replies and a no
   await expect(groups).toHaveCount(2);
   await expect(
     firstGroup.getByRole("button", {
-      name: "3 agents · 1 coordination message",
+      name: `${byKey.get(agents[0].pubkey)} · Coordination`,
       exact: true,
     }),
   ).toHaveAttribute("aria-expanded", "false");
   const lastGroup = groups.last();
   const lastTrigger = lastGroup.getByRole("button", {
-    name: "1 agent · 1 coordination message",
+    name: "Scout · Coordination",
     exact: true,
   });
   await expect(lastTrigger).toHaveAttribute("aria-expanded", "false");
@@ -488,12 +469,6 @@ test("three recipients work independently through coordination, replies and a no
   expect((await frontiers())[`msg:${later.id}`]).toBeUndefined();
   await lastTrigger.focus();
   await lastTrigger.press("Enter");
-  await expect(lastGroup.locator("[data-message-id]")).toHaveCount(0);
-  await page.clock.runFor(800);
-  expect((await frontiers())[`msg:${later.id}`]).toBeUndefined();
-  await lastGroup
-    .getByRole("button", { name: "View 1 coordination message", exact: true })
-    .click();
   await expect(
     lastGroup.locator(`[data-message-id="${later.id}"]`),
   ).toBeVisible();
@@ -553,7 +528,7 @@ test("three recipients work independently through coordination, replies and a no
     .toBe("opened");
   await expect(
     groups.first().getByRole("button", {
-      name: "3 agents · 1 coordination message",
+      name: `${byKey.get(agents[0].pubkey)} · Coordination`,
       exact: true,
     }),
   ).toHaveAttribute("aria-expanded", "false");
@@ -561,7 +536,7 @@ test("three recipients work independently through coordination, replies and a no
   // link is a fresh navigation and must still reach its target.
   await groups
     .last()
-    .getByRole("button", { name: "Hide coordination messages", exact: true })
+    .getByRole("button", { name: "Scout · Coordination", exact: true })
     .click();
   await expect(thread.locator(`[data-message-id="${later.id}"]`)).toHaveCount(
     0,
@@ -598,7 +573,7 @@ test("three recipients work independently through coordination, replies and a no
   ).toHaveCount(0);
   // Its ancestor body can close without hiding or acknowledging the answer.
   await thread
-    .getByRole("button", { name: "Hide coordination messages", exact: true })
+    .getByRole("button", { name: "Scout · Coordination", exact: true })
     .click();
   await expect(thread.locator(`[data-message-id="${later.id}"]`)).toHaveCount(
     0,

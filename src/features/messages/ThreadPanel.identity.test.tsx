@@ -264,24 +264,24 @@ it("collapses explicit coordination from cached profiles before choices load and
   );
   try {
     const initialGroup = await screen.findByRole("button", {
-      name: "1 agent · 1 coordination message",
+      name: / · Coordination$/,
     });
     expect(initialGroup).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("Agent answer")).toBeNull();
+    expect(
+      screen.queryByText("Agent answer", { selector: "[data-message-id] *" }),
+    ).toBeNull();
     act(() => {
       choices = { ...choices, status: "ready" };
       for (const listener of listeners) listener();
     });
     const group = screen.getByRole("button", {
-      name: "1 agent · 1 coordination message",
+      name: / · Coordination$/,
     });
     expect(group).toBe(initialGroup);
-    expect(screen.queryByText("Agent answer")).toBeNull();
+    expect(
+      screen.queryByText("Agent answer", { selector: "[data-message-id] *" }),
+    ).toBeNull();
     fireEvent.click(group);
-    expect(screen.queryByText("Agent answer")).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: "View 1 coordination message" }),
-    );
     expect(screen.getByText("Agent answer")).toBeInTheDocument();
     fireEvent.click(group);
     expect(
@@ -311,8 +311,12 @@ it("collapses explicit coordination from cached profiles before choices load and
       for (const listener of listeners) listener();
     });
     expect(screen.getByText("Always visible follow-up")).toBeInTheDocument();
-    expect(screen.queryByText("Agent answer")).toBeNull();
-    expect(screen.queryByText("Later answer")).toBeNull();
+    expect(
+      screen.queryByText("Agent answer", { selector: "[data-message-id] *" }),
+    ).toBeNull();
+    expect(
+      screen.queryByText("Later answer", { selector: "[data-message-id] *" }),
+    ).toBeNull();
     expect(
       screen.getAllByRole("region", {
         name: "Agent coordination and activity",
@@ -320,7 +324,7 @@ it("collapses explicit coordination from cached profiles before choices load and
     ).toHaveLength(2);
     expect(
       screen.getAllByRole("button", {
-        name: "1 agent · 1 coordination message",
+        name: / · Coordination$/,
       })[0],
     ).toBe(group);
     const final = {
@@ -350,8 +354,12 @@ it("collapses explicit coordination from cached profiles before choices load and
       choices = { ...choices, status: "loading" };
       for (const listener of listeners) listener();
     });
-    expect(screen.queryByText("Agent answer")).toBeNull();
-    expect(screen.queryByText("Later answer")).toBeNull();
+    expect(
+      screen.queryByText("Agent answer", { selector: "[data-message-id] *" }),
+    ).toBeNull();
+    expect(
+      screen.queryByText("Later answer", { selector: "[data-message-id] *" }),
+    ).toBeNull();
     expect(screen.getByText("Human-facing result")).toBeInTheDocument();
   } finally {
     view.unmount();

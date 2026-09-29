@@ -175,9 +175,11 @@ function setup(
 it("expands immediate children, collapses all descendant state, and supports the rail shortcut", async () => {
   setup();
   expect(screen.getByText("parent")).toBeVisible();
-  expect(screen.queryByText("child")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("child", { selector: "article span" }),
+  ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
-  expect(screen.getByText("child")).toBeVisible();
+  expect(screen.getByText("child", { selector: "article span" })).toBeVisible();
   expect(screen.queryByText("grandchild")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
   expect(screen.getByText("grandchild")).toBeVisible();
@@ -185,14 +187,16 @@ it("expands immediate children, collapses all descendant state, and supports the
   expect(rail).toBeDefined();
   if (!rail) throw new Error("Missing branch rail");
   fireEvent.click(rail);
-  expect(screen.queryByText("child")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("child", { selector: "article span" }),
+  ).not.toBeInTheDocument();
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "View 2 replies" }),
     ).toHaveFocus(),
   );
   fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
-  expect(screen.getByText("child")).toBeVisible();
+  expect(screen.getByText("child", { selector: "article span" })).toBeVisible();
   expect(screen.queryByText("grandchild")).not.toBeInTheDocument();
 });
 it("targets a child, cancels on repeated Reply, resets after send and reveals the own branch", () => {
@@ -278,7 +282,7 @@ it("keeps ordinary replies flat and visible when nested branches close or new re
     parent?.closest('[aria-label="Agent coordination and activity"]'),
   ).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
-  expect(screen.getByText("child")).toBeVisible();
+  expect(screen.getByText("child", { selector: "article span" })).toBeVisible();
   const collapse = screen.getAllByRole("button", { name: "Hide replies" })[0];
   if (!collapse) throw new Error("Missing nested collapse control");
   fireEvent.click(collapse);
@@ -290,7 +294,9 @@ it("keeps ordinary replies flat and visible when nested branches close or new re
   ]);
   for (const id of ["parent", "peer", "new"])
     expect(screen.getByText(id)).toBeVisible();
-  expect(screen.queryByText("child")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("child", { selector: "article span" }),
+  ).not.toBeInTheDocument();
   expect(screen.getByLabelText("Composer")).toBeVisible();
 });
 it("an own ordinary reply stays visible without opening a nested branch", () => {
@@ -299,7 +305,9 @@ it("an own ordinary reply stays visible without opening a nested branch", () => 
   h.update([row("parent", "root"), row("child", "parent"), row("new", "root")]);
   expect(screen.getByText("new")).toBeVisible();
   expect(screen.getByText("parent")).toBeVisible();
-  expect(screen.queryByText("child")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("child", { selector: "article span" }),
+  ).not.toBeInTheDocument();
   expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
 });
 
@@ -320,10 +328,11 @@ it("keeps same-author continuation layout through pending, failed, and accepted 
   const h = setup("child");
   for (const delivery of ["sending", "failed", "accepted"] as const) {
     h.update([row("parent", "root"), { ...row("child", "parent"), delivery }]);
-    expect(screen.getByText("child").closest("article")).toHaveAttribute(
-      "data-layout",
-      "continuation",
-    );
+    expect(
+      screen
+        .getByText("child", { selector: "article span" })
+        .closest("article"),
+    ).toHaveAttribute("data-layout", "continuation");
   }
 });
 
@@ -339,7 +348,9 @@ it("preserves ordinary reply identity, focus and nested collapse state through r
   h.setRoot(row("root"));
   expect(screen.getByText("parent").closest("article")).toBe(parent);
   expect(reply).toHaveFocus();
-  expect(screen.queryByText("child")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("child", { selector: "article span" }),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Hide thread replies" }),
   ).not.toBeInTheDocument();
@@ -377,15 +388,11 @@ it("keeps human-facing descendants visible through coordination ancestry and pre
   });
   h.update([coord("coord", "root"), coord("nested-coord", "coord")]);
   const trigger = screen.getByRole("button", {
-    name: "1 agent · 1 coordination message",
+    name: "Agent · Coordination",
   });
-  expect(screen.queryByText("coord")).toBeNull();
+  expect(screen.queryByText("coord", { selector: "article span" })).toBeNull();
   fireEvent.click(trigger);
-  expect(screen.queryByText("coord")).toBeNull();
-  fireEvent.click(
-    screen.getByRole("button", { name: "View 1 coordination message" }),
-  );
-  expect(screen.getByText("coord")).toBeVisible();
+  expect(screen.getByText("coord", { selector: "article span" })).toBeVisible();
   fireEvent.click(trigger);
   const response = {
     ...row("human-facing", "nested-coord"),
@@ -400,7 +407,7 @@ it("keeps human-facing descendants visible through coordination ancestry and pre
   for (const text of ["human-facing", "human"])
     expect(screen.getByText(text)).toBeVisible();
   for (const text of ["coord", "nested-coord"])
-    expect(screen.queryByText(text)).toBeNull();
+    expect(screen.queryByText(text, { selector: "article span" })).toBeNull();
   const groups = screen.getAllByRole("region", {
     name: "Agent coordination and activity",
   });
@@ -409,23 +416,20 @@ it("keeps human-facing descendants visible through coordination ancestry and pre
   if (!firstGroup) throw new Error("Missing ancestor coordination group");
   fireEvent.click(
     within(firstGroup).getByRole("button", {
-      name: "1 agent · 1 coordination message",
+      name: "Agent · Coordination",
     }),
   );
-  fireEvent.click(
-    within(firstGroup).getByRole("button", {
-      name: "View 1 coordination message",
-    }),
-  );
-  expect(screen.getByText("coord")).toBeVisible();
-  expect(screen.queryByText("nested-coord")).toBeNull();
+  expect(screen.getByText("coord", { selector: "article span" })).toBeVisible();
+  expect(
+    screen.queryByText("nested-coord", { selector: "article span" }),
+  ).toBeNull();
   expect(screen.getByText("human-facing")).toBeVisible();
   fireEvent.click(
     within(firstGroup).getByRole("button", {
-      name: "1 agent · 1 coordination message",
+      name: "Agent · Coordination",
     }),
   );
-  expect(screen.queryByText("coord")).toBeNull();
+  expect(screen.queryByText("coord", { selector: "article span" })).toBeNull();
   expect(screen.getByText("human-facing")).toBeVisible();
   fireEvent.click(
     screen.getByRole("button", { name: "Reply to human-facing" }),
@@ -460,14 +464,14 @@ it("does not combine coordination siblings across branches or a visible answer",
   expect(
     screen.getAllByRole("region", { name: "Agent coordination and activity" }),
   ).toHaveLength(3);
-  expect(screen.queryByText("child")).toBeNull();
+  expect(screen.queryByText("child", { selector: "article span" })).toBeNull();
 });
 
 it("retains the selected reply target when late choices would group it", () => {
   const h = setup();
   const key = "a".repeat(64);
   h.update([{ ...row("coord", "root"), audience: "agents" }]);
-  expect(screen.getByText("coord")).toBeVisible();
+  expect(screen.getByText("coord", { selector: "article span" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Reply to coord" }));
   h.setChoices("ready", [key]);
   expect(screen.getByText("coord", { selector: "article span" })).toBeVisible();
@@ -509,7 +513,7 @@ it("gives a nested addressed request exactly one pending group under its own anc
   ).toHaveLength(1);
   expect(
     screen.getByRole("button", {
-      name: "1 agent · 1 coordination message · 1 awaiting reply",
+      name: "Agent · Coordination",
     }),
   ).toHaveAttribute("aria-expanded", "false");
 });
@@ -520,14 +524,14 @@ it("keeps a visible answer's byline when the preceding same-author coordination 
     { ...row("coord", "root"), audience: "agents", agentEnvelope: true },
     { ...row("answer", "root"), audience: "everyone" },
   ]);
-  expect(screen.queryByText("coord")).toBeNull();
+  expect(screen.queryByText("coord", { selector: "article span" })).toBeNull();
   expect(screen.getByText("answer").closest("article")).toHaveAttribute(
     "data-layout",
     "thread",
   );
 });
 
-it("keeps one collapsed coordination group and preserves request intent through coordination", () => {
+it("keeps individual coordination collapsed and preserves request intent separately", () => {
   const keys = ["a".repeat(64), "b".repeat(64), "c".repeat(64)] as const;
   const empty = { snapshot: () => [], subscribe: () => () => {} };
   const entries = [
@@ -556,10 +560,7 @@ it("keeps one collapsed coordination group and preserves request intent through 
   h.update([]);
   h.setChoices("ready", keys);
   h.setRoot({ ...row("root"), authorId: "viewer", mentions: keys });
-  const group = screen.getByRole("button", {
-    name: "3 agents · Activity · 3 awaiting reply",
-  });
-  expect(group).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("region", { name: "Request details" })).toBeVisible();
   const coord = (id: string, key: string) => ({
     ...row(id, "root"),
     authorId: key,
@@ -568,14 +569,15 @@ it("keeps one collapsed coordination group and preserves request intent through 
   });
   const first = coord("coord-a", keys[0]);
   h.update([first]);
+  const group = screen.getByRole("button", { name: "Agent · Coordination" });
   expect(group).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByText("coord-a")).toBeNull();
+  expect(
+    screen.queryByText("coord-a", { selector: "article span" }),
+  ).toBeNull();
   fireEvent.click(group);
-  expect(screen.queryByText("coord-a")).toBeNull();
-  fireEvent.click(
-    screen.getByRole("button", { name: "View 1 coordination message" }),
-  );
-  expect(screen.getByText("coord-a")).toBeVisible();
+  expect(
+    screen.getByText("coord-a", { selector: "article span" }),
+  ).toBeVisible();
   expect(screen.getByText(`Pending details ${keys[0]}`)).toBeVisible();
   expect(screen.getByText(`Pending details ${keys[1]}`)).toBeVisible();
   expect(screen.getByText(`Pending details ${keys[2]}`)).toBeVisible();
@@ -584,7 +586,7 @@ it("keeps one collapsed coordination group and preserves request intent through 
   expect(group).toHaveAttribute("aria-expanded", "true"); // Manual expansion survives traffic.
   expect(screen.getByText(`Pending details ${keys[1]}`)).toBeVisible();
   expect(screen.getByText(`Pending details ${keys[2]}`)).toBeVisible();
-  expect(group).toHaveTextContent("3 awaiting reply"); // Presentation is not settlement.
+  expect(screen.getAllByText(/^Pending details /)).toHaveLength(3); // Coordination is not settlement.
   const third = coord("coord-c", keys[2]);
   h.update([first, second, third]);
   expect(screen.getByRole("region", { name: "Request details" })).toBeVisible();
@@ -598,7 +600,9 @@ it("keeps one collapsed coordination group and preserves request intent through 
   fireEvent.click(group);
   expect(group).toHaveAttribute("aria-expanded", "false");
   expect(screen.getByText("Human-facing answer")).toBeVisible();
-  expect(screen.queryByText("coord-a")).toBeNull();
+  expect(
+    screen.queryByText("coord-a", { selector: "article span" }),
+  ).toBeNull();
   expect(
     screen.getAllByRole("region", { name: "Agent coordination and activity" }),
   ).toHaveLength(1);
@@ -615,13 +619,12 @@ it("does not revive focus on a later manual coordination expansion", async () =>
   const answer = row("answer", "coord");
   h.update([coord, answer]);
   const header = screen.getByRole("button", {
-    name: "1 agent · 1 coordination message",
+    name: "Agent · Coordination",
   });
   fireEvent.click(header);
-  fireEvent.click(
-    screen.getByRole("button", { name: "View 1 coordination message" }),
-  );
-  const target = screen.getByText("coord").closest("article");
+  const target = screen
+    .getByText("coord", { selector: "article span" })
+    .closest("article");
   if (!target) throw new Error("Missing revealed coordination target");
   target.tabIndex = -1;
   target.focus();
@@ -630,17 +633,16 @@ it("does not revive focus on a later manual coordination expansion", async () =>
   h.update([coord, answer, row("missing", "root")]);
   expect(screen.getByText("answer")).toBeVisible();
   const nextHeader = screen.getByRole("button", {
-    name: "1 agent · 1 coordination message",
+    name: "Agent · Coordination",
   });
   expect(nextHeader).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByText("coord")).toBeNull();
+  expect(screen.queryByText("coord", { selector: "article span" })).toBeNull();
   // A manual later expansion must not revive captured focus intent.
   await act(async () => {});
   fireEvent.click(nextHeader);
-  fireEvent.click(
-    screen.getByRole("button", { name: "View 1 coordination message" }),
-  );
-  expect(screen.getByText("coord").closest("article")).not.toHaveFocus();
+  expect(
+    screen.getByText("coord", { selector: "article span" }).closest("article"),
+  ).not.toHaveFocus();
 });
 
 it("restores the exact coordination target after late reparenting, not its visible answer", async () => {
@@ -658,18 +660,42 @@ it("restores the exact coordination target after late reparenting, not its visib
   };
   const answer = row("answer", "coord");
   h.update([coord, answer]);
-  const target = screen.getByText("coord").closest("article");
+  const target = screen
+    .getByText("coord", { selector: "article span" })
+    .closest("article");
   if (!target) throw new Error("Missing exact coordination target");
   target.tabIndex = -1;
   target.focus();
   h.update([coord, answer, row("missing", "root")]);
   await waitFor(() =>
-    expect(screen.getByText("coord").closest("article")).toHaveFocus(),
+    expect(
+      screen
+        .getByText("coord", { selector: "article span" })
+        .closest("article"),
+    ).toHaveFocus(),
   );
   expect(screen.getByText("answer")).toBeVisible();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Hide coordination messages" }),
-  );
-  expect(screen.queryByText("coord")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Agent · Coordination" }));
+  expect(screen.queryByText("coord", { selector: "article span" })).toBeNull();
   expect(screen.getByText("answer")).toBeVisible();
+});
+
+it("keeps each independently expanded coordination author's byline", () => {
+  const h = setup();
+  h.update(
+    ["first", "second"].map((id) => ({
+      ...row(id, "root"),
+      audience: "agents" as const,
+      agentEnvelope: true as const,
+    })),
+  );
+  const second = screen.getAllByRole("button", {
+    name: "Agent · Coordination",
+  })[1];
+  if (!second) throw new Error("Missing second coordination control");
+  fireEvent.click(second);
+  expect(screen.queryByText("first", { selector: "article span" })).toBeNull();
+  expect(
+    screen.getByText("second", { selector: "article span" }).closest("article"),
+  ).toHaveAttribute("data-layout", "thread");
 });

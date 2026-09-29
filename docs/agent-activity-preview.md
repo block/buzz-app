@@ -12,13 +12,13 @@ for trying Activity, not replacing an everyday installation.
 ## What to try
 
 - Multiple agents with exact identities, including namesakes.
-- Human-facing messages visible; explicitly tagged coordination grouped and
-  initially collapsed. Human follow-ups stay outside, and the composer remains usable.
-- Opening Activity exposes progress, not the coordination transcript. Inside the
-  same group, **View N coordination messages** explicitly reveals the transcript.
-  Incoming messages stay unmounted until that control is opened. Exact-message
-  navigation can reveal its target; collapsing the outer group resets transcript
-  expansion. Human-facing answers remain outside both disclosures.
+- Human-facing messages remain visible. Each explicitly tagged coordination message
+  starts as one compact author/preview row. One click reveals that message, and the
+  same control collapses it. There is no aggregate agent-count wrapper or second
+  transcript dropdown. New coordination rows start collapsed independently.
+- Pending agent work stays separate from coordination. Exact-message navigation
+  can reveal its target; hidden full message rows stay unmounted and earn no read
+  dwell. A short preview is not a read acknowledgement.
 - Hover/click response Activity popups, expandable tools/messages, and the profile Activity tab.
   Profile human request text is expanded by default; agent communications are not.
 - Channel thread controls show exact working agents only with fresh evidence;
@@ -29,6 +29,8 @@ for trying Activity, not replacing an everyday installation.
 - Side-panel opening by dragging or the Activity context menu, without losing the thread.
 - Working, unknown, error and ended-without-reply states. Coordination/ended telemetry
   does not mean a human-facing answer was delivered.
+- Activity retains reported event/method names when no friendly label exists; known
+  session-configuration capture stays under diagnostics, not the primary work list.
 - Coordination alerts suppressed; normal human-facing alerts still follow preferences.
   Unread counts and badges are not cleared by suppression.
 

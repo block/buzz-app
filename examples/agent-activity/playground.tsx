@@ -91,22 +91,33 @@ function Experience({
             kind: "agents",
             id: "sample",
             agents: [agent, peer],
-            rows: [{ authorId: agent }, { authorId: peer }] as ChannelMessage[],
+            rows: [
+              {
+                id: "agent",
+                authorId: agent,
+                content: "Please verify the retry behavior.",
+              },
+              {
+                id: "peer",
+                authorId: peer,
+                content: "Checked it. The selected agent is preserved.",
+              },
+            ] as ChannelMessage[],
             tail: false,
           }}
-          coordination={
+          coordination={(row) => (
             <div className="lab-coordination text-body-sm">
-              <p>
-                <strong>Rivet:</strong> Please verify the retry behavior.
-              </p>
-              <p>
-                <strong>Review agent:</strong> Checked it. The selected agent is
-                preserved.
-              </p>
+              <p>{row.content}</p>
             </div>
-          }
+          )}
         >
-          {activity}
+          <ActivityDisclosure
+            label="View activity"
+            expanded={expanded}
+            onExpand={expand}
+          >
+            {activity}
+          </ActivityDisclosure>
         </ThreadAgentGroup>
       ) : (
         <div className="lab-person">

@@ -9,21 +9,23 @@ import {
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useIdentityNames } from "../identity-names/react";
-import type { Profile } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadAgentBlock } from "./thread-agent-groups";
 import styles from "./ThreadAgentGroup.module.css";
 
-// Mounted group presentation only: no telemetry, persistence or completion state.
+// Presentation only. Coordination never settles pending work or owns capture.
 export const CoordinationAuthors = createContext<ReadonlySet<string>>(
   new Set(),
 );
 
+/** Brad's per-message disclosure: no aggregate wrapper or second reveal step. */
 export function ThreadAgentGroup({
   block,
   session,
   profiles,
   reveal,
+  revealMessageId,
   children,
   coordination,
   onHideCoordination,
@@ -32,128 +34,104 @@ export function ThreadAgentGroup({
   session: RelaySession;
   profiles: ReadonlyMap<string, Profile>;
   reveal?: AbortSignal | undefined;
+  revealMessageId?: string | undefined;
   children: ReactNode;
-  coordination?: ReactNode;
-  /** Explicitly hiding either disclosure revokes the current exact-row reveal. */
+  coordination?: ((row: ChannelMessage) => ReactNode) | undefined;
   onHideCoordination?(): void;
 }) {
   const authors = useMemo(
     () => new Set(block.rows.map((row) => row.authorId)),
     [block.rows],
   );
-  const [expanded, expand] = useState(false);
-  // Opening progress is not permission to expose the coordination transcript.
-  const [transcriptOpen, openTranscript] = useState(false);
-  const revealed = useRef<AbortSignal | undefined>(undefined);
-  const name = useIdentityNames(session.names);
-  useLayoutEffect(() => {
-    if (reveal && !reveal.aborted && revealed.current !== reveal) {
-      revealed.current = reveal;
-      expand(true);
-      openTranscript(true);
-    }
-  }, [reveal]);
-  const delivery = block.request?.message.delivery;
-  const status =
-    delivery === "failed"
-      ? "Request not sent"
-      : delivery === "sending"
-        ? "Sending request…"
-        : delivery === "unknown"
-          ? "Delivery unconfirmed"
-          : block.request
-            ? `${block.request.agents.length} awaiting reply`
-            : "";
   return (
     <section
       aria-label="Agent coordination and activity"
       className={styles.group}
     >
-      <Accordion
-        variant="activity"
-        value={expanded ? ["replies"] : []}
-        onValueChange={(value) => {
-          const open = value.includes("replies");
-          if (!open) {
-            openTranscript(false);
-            onHideCoordination?.();
-          }
-          expand(open);
-        }}
-        items={[
-          {
-            value: "replies",
-            title: (
-              <span className={styles.summary}>
-                <span className={styles.avatars} aria-hidden="true">
-                  {block.agents.slice(0, 3).map((key) => {
-                    const profile = profiles.get(key);
-                    return (
-                      <span key={key} className={styles.avatar}>
-                        <Avatar
-                          alt=""
-                          shape="squircle"
-                          fallback={name(key, profile?.name ?? "Agent")}
-                          src={
-                            profile?.picture
-                              ? session.media(profile.picture)
-                              : undefined
-                          }
-                        />
-                      </span>
-                    );
-                  })}
-                  {block.agents.length > 3 && (
-                    <span className={styles.overflow}>
-                      +{block.agents.length - 3}
-                    </span>
-                  )}
-                </span>
-                <span className="text-body-sm">
-                  {block.agents.length}{" "}
-                  {block.agents.length === 1 ? "agent" : "agents"}
-                  {block.rows.length
-                    ? ` · ${block.rows.length} coordination ${block.rows.length === 1 ? "message" : "messages"}`
-                    : " · Activity"}
-                  {status ? ` · ${status}` : ""}
-                </span>
-              </span>
-            ),
-            // Unmount immediately on collapse: hidden rows cannot earn read dwell or
-            // claim typing replacement during the shared accordion's exit animation.
-            content: expanded ? (
-              <CoordinationAuthors.Provider value={authors}>
-                {block.rows.length > 0 && (
-                  <Accordion
-                    variant="activity"
-                    value={transcriptOpen ? ["coordination"] : []}
-                    onValueChange={(value) => {
-                      const open = value.includes("coordination");
-                      openTranscript(open);
-                      if (!open) onHideCoordination?.();
-                    }}
-                    items={[
-                      {
-                        value: "coordination",
-                        title: (
-                          <span className="text-body-sm">
-                            {transcriptOpen
-                              ? "Hide coordination messages"
-                              : `View ${block.rows.length} coordination ${block.rows.length === 1 ? "message" : "messages"}`}
-                          </span>
-                        ),
-                        // Hidden coordination must not earn read dwell, even during exit.
-                        content: transcriptOpen ? coordination : null,
-                      },
-                    ]}
-                  />
-                )}
-                {children}
-              </CoordinationAuthors.Provider>
-            ) : null,
-          },
-        ]}
-      />
+      <CoordinationAuthors.Provider value={authors}>
+        {block.rows.map((row) => (
+          <CoordinationRow
+            key={row.id}
+            row={row}
+            session={session}
+            profile={profiles.get(row.authorId)}
+            reveal={revealMessageId === row.id ? reveal : undefined}
+            onHide={revealMessageId === row.id ? onHideCoordination : undefined}
+          >
+            {coordination?.(row)}
+          </CoordinationRow>
+        ))}
+        {children}
+      </CoordinationAuthors.Provider>
     </section>
+  );
+}
+function CoordinationRow({
+  row,
+  session,
+  profile,
+  reveal,
+  children,
+  onHide,
+}: {
+  row: ChannelMessage;
+  session: RelaySession;
+  profile: Profile | undefined;
+  reveal: AbortSignal | undefined;
+  children: ReactNode;
+  onHide: (() => void) | undefined;
+}) {
+  const [expanded, expand] = useState(false);
+  const revealed = useRef<AbortSignal | undefined>(undefined);
+  const resolveName = useIdentityNames(session.names);
+  const name = resolveName(row.authorId, profile?.name ?? "Agent");
+  useLayoutEffect(() => {
+    if (reveal && !reveal.aborted && revealed.current !== reveal) {
+      revealed.current = reveal;
+      expand(true);
+    }
+  }, [reveal]);
+  return (
+    <Accordion
+      variant="activity"
+      value={expanded ? [row.id] : []}
+      onValueChange={(values) => {
+        const next = values.includes(row.id);
+        expand(next);
+        if (!next) onHide?.();
+      }}
+      items={[
+        {
+          value: row.id,
+          title: (
+            <span className={styles.summary}>
+              <Avatar
+                alt=""
+                fallback={name}
+                shape="squircle"
+                size="small"
+                src={
+                  profile?.picture
+                    ? session.media(profile.picture, "small")
+                    : undefined
+                }
+              />
+              <span className="text-label-sm">{name}</span>{" "}
+              <span className="text-caption text-subtle"> · Coordination</span>
+              {!expanded && (
+                <span
+                  aria-hidden="true"
+                  className={`${styles.preview} text-body-sm text-subtle`}
+                >
+                  {row.content?.replace(/\s+/g, " ").trim().slice(0, 160)}
+                </span>
+              )}
+            </span>
+          ),
+          // Unmount immediately: hidden coordination cannot earn read dwell, even on exit.
+          content: expanded ? <ol>{children}</ol> : null,
+        },
+      ]}
+    />
   );
 }

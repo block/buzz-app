@@ -2,36 +2,24 @@
 
 .group {
   min-width: 0;
-  padding-block: var(--space-2);
+  padding-block: var(--space-1);
 }
 .summary {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  min-width: 0;
   text-align: start;
 }
-.avatars {
-  display: inline-flex;
-  align-items: center;
+.summary > :not(.preview) {
   flex-shrink: 0;
-  isolation: isolate;
 }
-.avatar,
-.overflow {
-  position: relative;
-  border-radius: var(--radius-pill);
-  outline: 2px solid var(--surface-panel);
+.preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
-.avatars > :not(:first-child) {
-  margin-inline-start: calc(-1 * var(--space-2));
-}
-.overflow {
-  @apply text-caption;
-  display: grid;
-  place-items: center;
-  min-width: 2rem;
-  height: 2rem;
-  padding-inline: var(--space-1);
-  background: var(--affordance-subtle);
-  color: var(--text-subtle);
+.group [class~="buzz-accordion-trigger"] > span {
+  min-width: 0;
 }

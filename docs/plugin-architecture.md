@@ -184,14 +184,18 @@ History owners retain bottom-follow and older-reading intent when the tail chang
 
 Thread reply ancestry remains host-owned. Within each sibling list, only explicit
 original `audience=agents` messages from a known agent or agent envelope can enter
-coordination groups; human-facing/legacy messages remain ordinary visible rows.
+coordination rows; human-facing/legacy messages remain ordinary visible rows.
+Each coordination message has one compact author/preview disclosure. Full message
+DOM mounts only on explicit expansion; previews do not acknowledge reading. New
+rows do not inherit another message’s expansion. Pending work renders separately,
+without an aggregate agent-count disclosure.
 A loaded human-facing descendant keeps its ancestry path open, but each tagged
 coordination ancestor keeps its own body collapsed. Descendants remain outside
 that body disclosure; opening an answer never reveals coordination implicitly.
 An explicitly selected reply target remains reachable. Pending decoration has one
 request/branch owner; it is not reply causality.
 Collapsing unmounts decoration and message DOM, never capture or the composer.
-Exact navigation reopens the matching group unless that visit was explicitly collapsed.
+Exact navigation reopens only the matching message/path unless that visit was explicitly collapsed.
 
 Agent Activity uses thread-only conversation placement. A regular channel send
 with exact known-agent recipients immediately opens its root thread; human-only

@@ -611,3 +611,54 @@ it.each([false, true])(
     }
   },
 );
+
+it("keeps configuration capture in diagnostics and names unknown reported operations", () => {
+  const make = (
+    id: string,
+    kind: string,
+    payload: unknown,
+  ): ActivityRecord => ({
+    id,
+    envelopeId: id,
+    agent: "agent",
+    receivedAt: 0,
+    kind,
+    plaintext: JSON.stringify({
+      kind,
+      turnId: "turn",
+      channelId: "alpha",
+      payload,
+    }),
+  });
+  const input = [
+    make("setup", "session_config_captured", { configOptions: [] }),
+    make("operation", "acp_write", {
+      method: "session/custom_operation",
+      id: 42,
+    }),
+  ];
+  const view = render(
+    <ActivityStream records={input} turns={[]} showDiagnostics={false} />,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Session configuration captured" }),
+  ).toBeNull();
+  const operation = screen.getByRole("button", {
+    name: "session/custom_operation",
+  });
+  expect(
+    view.container.querySelector('[data-activity-action="command"]'),
+  ).toBeNull();
+  fireEvent.click(operation);
+  expect(view.container.querySelector("pre")?.textContent).toContain(
+    '"method":"session/custom_operation"',
+  );
+  view.rerender(<ActivityStream records={input} turns={[]} showDiagnostics />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Setup and diagnostics (1)" }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Session configuration captured" }),
+  );
+  expect(view.container.textContent).toContain('"configOptions":[]');
+});

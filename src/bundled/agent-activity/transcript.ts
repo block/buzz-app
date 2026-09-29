@@ -139,7 +139,7 @@ export function activityTranscript(records: readonly ActivityRecord[]) {
     const entry: TranscriptEntry = {
       id,
       kind: "event",
-      title: "Other activity",
+      title: "Unrecognized activity",
       body: "",
       input: "",
       output: "",
@@ -148,6 +148,16 @@ export function activityTranscript(records: readonly ActivityRecord[]) {
     };
     const method = text(payload?.method);
     const params = object(payload?.params);
+    // Preserve reported identity when the renderer has no friendly mapping.
+    entry.title =
+      identity(method) ||
+      (kind === "acp_read" || kind === "acp_write"
+        ? payload?.error !== undefined
+          ? "ACP error response"
+          : payload?.result !== undefined
+            ? "ACP response"
+            : "ACP event"
+        : identity(kind) || "Unrecognized activity");
     const priorChunk = chunks.get(key);
     chunks.delete(key);
     const rpcScope = JSON.stringify([
@@ -266,8 +276,14 @@ export function activityTranscript(records: readonly ActivityRecord[]) {
     } else if (kind === "prompt_context_delivery") {
       entry.title = "Context delivered";
       entry.diagnostic = true;
-    } else if (kind === "agent_initialized") {
-      entry.title = "Agent initialized";
+    } else if (
+      kind === "agent_initialized" ||
+      kind === "session_config_captured"
+    ) {
+      entry.title =
+        kind === "agent_initialized"
+          ? "Agent initialized"
+          : "Session configuration captured";
       entry.diagnostic = true;
     } else if (
       kind === "acp_write" &&
@@ -418,7 +434,7 @@ export function activityTranscript(records: readonly ActivityRecord[]) {
           .filter(Boolean)
           .join("\n");
       } else {
-        entry.title = updateKind || "Activity update";
+        entry.title = identity(updateKind) || identity(method) || "ACP update";
       }
     } else if (kind === "turn_completed") {
       entry.title = "Turn ended";

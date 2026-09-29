@@ -621,16 +621,26 @@ function ThreadMessages({
       // A disclosure is a visual boundary even when its children are unmounted.
       // Do not omit an answer's byline because a hidden coordination row matched it.
       previousReply = undefined;
+      const bodies = new Map(
+        block.rows.map((row) => {
+          // Each body opens independently; a hidden sibling cannot supply its byline.
+          previousReply = undefined;
+          return [row.id, renderReply(row, parent, depth)];
+        }),
+      );
       const group = (
         <li key={`agents:${block.id}`}>
           <ThreadAgentGroup
             block={block}
             session={session}
             profiles={profiles}
-            coordination={
-              <ol>
-                {block.rows.map((row) => renderReply(row, parent, depth))}
-              </ol>
+            coordination={(row) => bodies.get(row.id)}
+            revealMessageId={
+              block.rows.find(
+                (row) =>
+                  row.id === messageId ||
+                  tree.ancestors(messageId).includes(row.id),
+              )?.id
             }
             reveal={
               !rootTarget &&
@@ -731,11 +741,8 @@ function ThreadMessages({
           }}
           session={session}
           profiles={profiles}
-          coordination={
-            <ol>
-              <li>{messageRow()}</li>
-            </ol>
-          }
+          coordination={() => <li>{messageRow()}</li>}
+          revealMessageId={row.id}
           reveal={
             !rootTarget &&
             row.id === messageId &&

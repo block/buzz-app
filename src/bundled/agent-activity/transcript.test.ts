@@ -166,8 +166,8 @@ it("keeps update-only, failed, unknown, nontext and malformed observations inspe
     "Tool call",
     "Thinking",
     "Plan",
-    "Other activity",
-    "Other activity",
+    "ACP event",
+    "new-event",
     "Turn error",
     "Turn ended",
   ]);
@@ -323,10 +323,10 @@ it("classifies setup by direction, pairs only captured control responses, and ne
     ["Permission response", false],
     ["Prepare session", true],
     ["Session setup response error", false],
-    ["Other activity", false],
+    ["ACP response", false],
     ["Session update", true],
     ["Usage update", true],
-    ["Other activity", false],
+    ["initialize", false],
     ["future_update", false],
   ]);
 });
@@ -364,7 +364,7 @@ it("pairs unassigned setup RPCs by stable scope without pairing across sessions"
     ),
   ).toEqual([
     ["Initialize agent", true],
-    ["Other activity", false],
+    ["ACP response", false],
     ["Session setup response", true],
   ]);
 });
@@ -497,4 +497,43 @@ it("keeps malformed empty permission choices primary and recovers after collided
     recovered.filter((e) => e.title === "Permission allowed"),
   ).toHaveLength(1);
   expect(recovered.at(-1)?.sourceIds).toEqual(["4", "5"]);
+});
+
+it("preserves reported event and method names without inventing command semantics", () => {
+  const input = records([
+    event("session_config_captured", { configOptions: [] }),
+    event("acp_write", {
+      id: 12,
+      method: "session/set_config_option",
+      params: {},
+    }),
+    event("acp_read", { id: 12, result: {} }),
+    event("acp_read", { id: 13, error: { message: "failed" } }),
+    event("new_observer_event", {}),
+    event("acp_read", { method: "session/update", params: { update: {} } }),
+    event("", {}),
+  ]);
+  const transcript = activityTranscript(input);
+  expect(
+    transcript.groups.flatMap((group) =>
+      group.entries.map((entry) => [
+        entry.title,
+        !!entry.diagnostic,
+        entry.kind,
+      ]),
+    ),
+  ).toEqual([
+    ["Session configuration captured", true, "event"],
+    ["session/set_config_option", false, "event"],
+    ["ACP response", false, "event"],
+    ["ACP error response", false, "event"],
+    ["new_observer_event", false, "event"],
+    ["session/update", false, "event"],
+    ["Unrecognized activity", false, "event"],
+  ]);
+  for (const group of transcript.groups)
+    for (const entry of group.entries)
+      expect(
+        transcript.source(entry.sourceIds[0] ?? "")?.plaintext,
+      ).toBeTruthy();
 });

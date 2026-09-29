@@ -1207,16 +1207,6 @@ test.describe("local agent request", () => {
       await expect(
         thread.getByText(/Please inspect the request/),
       ).toBeVisible();
-      await thread
-        .getByRole("region", {
-          name: "Agent coordination and activity",
-          exact: true,
-        })
-        .getByRole("button", {
-          name: "1 agent · Activity · Sending request…",
-          exact: true,
-        })
-        .click();
       const sending = region.getByRole("button", {
         name: "Sending request…",
         exact: true,
@@ -1621,7 +1611,7 @@ test.describe("local agent request", () => {
     );
     app.relay.publish("primary", coordination);
     const coordinationToggle = thread.getByRole("button", {
-      name: "View 1 coordination message",
+      name: "Alice Fixture · Coordination",
       exact: true,
     });
     await expect(coordinationToggle).toHaveAttribute("aria-expanded", "false");

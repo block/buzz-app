@@ -287,6 +287,12 @@ it("finishes confirmed local-agent startup after closing and reopening during pu
   t.hold();
   await t.user.click(await t.search());
   await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+  const preview = screen.getByRole("dialog", {
+    name: "Fixture agent identity",
+  });
+  await t.user.keyboard("{Escape}");
+  await vi.waitFor(() => expect(preview).not.toBeInTheDocument());
+  expect(screen.getByRole("dialog", { name: "Channel members" })).toBeVisible();
   await t.user.keyboard("{Escape}");
   await vi.waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -313,6 +319,12 @@ it("keeps closed-dialog startup failures recoverable without another membership 
   t.hold();
   await t.user.click(await t.search());
   await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+  const preview = screen.getByRole("dialog", {
+    name: "Fixture agent identity",
+  });
+  await t.user.keyboard("{Escape}");
+  await vi.waitFor(() => expect(preview).not.toBeInTheDocument());
+  expect(screen.getByRole("dialog", { name: "Channel members" })).toBeVisible();
   await t.user.keyboard("{Escape}");
   await vi.waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),

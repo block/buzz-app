@@ -468,7 +468,7 @@ export function ExternalAgentModelPicker({
             </Button>
           )
         )}
-        {supported && pi && draft.provider && draft.model && !busy && (
+        {supported && external && draft.provider && draft.model && !busy && (
           <div className="space-y-2">
             <Button
               disabled={disabled}

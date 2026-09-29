@@ -4,6 +4,7 @@ import {
   agentFailureReason,
   type AgentControl,
   type AgentControlState,
+  type CloneSettings,
   type AgentView,
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -33,6 +34,7 @@ function newAgentDraft(state: AgentControlState): AgentDraft {
     revision: 0,
     name: "",
     systemPrompt: "",
+    sessionPolicy: null,
     workspace: state.data?.defaultWorkspace ?? "",
     command,
     args: JSON.stringify(chosen?.defaultArgs ?? []),
@@ -56,6 +58,7 @@ export function AgentCreateDialog({
   destination,
   owner,
   source,
+  initialSettings,
   onClose,
   onOpenHarnesses,
 }: {
@@ -65,6 +68,7 @@ export function AgentCreateDialog({
   destination: string;
   owner: string;
   source?: AgentView;
+  initialSettings?: CloneSettings | undefined;
   onClose(): void;
 }) {
   const [requestId] = useState(() => crypto.randomUUID());
@@ -74,7 +78,11 @@ export function AgentCreateDialog({
           ...agentDraft(source),
           name: `${source.name} copy`,
         }
-      : newAgentDraft(state),
+      : {
+          ...newAgentDraft(state),
+          name: initialSettings?.name ?? "",
+          systemPrompt: initialSettings?.systemPrompt ?? "",
+        },
   );
   const [validatedDraft, setValidatedDraft] = useState<AgentDraft | null>(null);
   const [validationVersion, setValidationVersion] = useState(0);
@@ -236,7 +244,11 @@ export function AgentCreateDialog({
         >
           <header className="buzz-dialog-header">
             <Dialog.Title className="text-heading">
-              {source ? `Duplicate ${source.name}` : "Create agent"}
+              {source
+                ? `Duplicate ${source.name}`
+                : initialSettings
+                  ? "Clone agent"
+                  : "Create agent"}
             </Dialog.Title>
           </header>
           <Dialog.Description className="buzz-dialog-description">
@@ -244,6 +256,14 @@ export function AgentCreateDialog({
             {destination || "a connected community"}. It won't join a channel
             automatically.
           </Dialog.Description>
+          {initialSettings && (
+            <p className="text-body-sm text-secondary">
+              Only the name and instructions were copied. Review them for
+              embedded secrets. Choose this computer’s workspace and runtime
+              settings. Identity keys, environment values, history and community
+              membership are not copied. The source stays unchanged.
+            </p>
+          )}
           <form
             className="buzz-dialog-body space-y-section-gap"
             onSubmit={(event) => {
@@ -335,7 +355,9 @@ export function AgentCreateDialog({
                     ? nextStep === "start"
                       ? "Start agent"
                       : "Finish profile"
-                    : "Create agent"}
+                    : initialSettings
+                      ? "Clone agent"
+                      : "Create agent"}
               </Button>
             </div>
           </form>

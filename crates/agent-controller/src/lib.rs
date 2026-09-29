@@ -3,7 +3,9 @@
 mod agent_defaults;
 mod bundle;
 pub mod codex;
+mod community;
 mod config;
+pub use community::CommunityResolution;
 pub mod connection;
 mod create;
 mod credentials;
@@ -34,7 +36,9 @@ pub use config::{
 pub use create::{CreationProfile, NewAgent};
 pub use credentials::PlatformCredentials;
 pub use defaults::{build_defaults, BuildDefaults};
-pub use import::{CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport};
+pub use import::{
+    CloneSettings, CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport,
+};
 pub use process::Process as ContainedProcess;
 pub use restart::{RestartChange, RestartDiffEntry};
 pub use runtime::{installed, managed_tool, Action, Controller, GooseModelContext, ModelContext};

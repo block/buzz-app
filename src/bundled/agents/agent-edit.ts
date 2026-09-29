@@ -5,6 +5,7 @@ export interface AgentDraft {
   name: string;
   picture?: string;
   systemPrompt: string;
+  sessionPolicy: "channel" | "thread" | null;
   workspace: string;
   command: string;
   args: string;
@@ -58,6 +59,7 @@ export function agentDraft(agent: AgentView): AgentDraft {
     revision: agent.revision,
     name: agent.name,
     systemPrompt: agent.systemPrompt,
+    sessionPolicy: agent.sessionPolicy ?? null,
     workspace: agent.workspace,
     command: agent.harness.command,
     args: JSON.stringify(agent.harness.args, null, 2),
@@ -97,6 +99,7 @@ export function agentEdit(
     name: draft.name,
     ...(draft.picture === undefined ? {} : { picture: draft.picture }),
     systemPrompt: draft.systemPrompt,
+    sessionPolicy: draft.sessionPolicy,
     workspace: draft.workspace,
     harness: {
       command: draft.command,
@@ -113,6 +116,8 @@ export function agentProcessLabel(agent: AgentView): string {
   switch (agent.status) {
     case "running":
       return "Process running · relay readiness unverified";
+    case "waiting":
+      return "Waiting to start · unlock Keychain if prompted";
     case "starting":
       return "Starting process";
     case "stopping":

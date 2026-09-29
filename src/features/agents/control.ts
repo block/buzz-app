@@ -37,6 +37,8 @@ export interface AgentView {
   /** Missing preserves existing artwork; empty removes it. */
   picture?: string | null;
   systemPrompt: string;
+  /** Null inherits Agent defaults; imported agents can carry their own choice. */
+  sessionPolicy: "channel" | "thread" | null;
   workspace: string;
   harness: {
     command: string;
@@ -50,7 +52,13 @@ export interface AgentView {
   revision: number;
   runningRevision: number | null;
   enabled: boolean;
-  status: "stopped" | "starting" | "running" | "stopping" | "failed";
+  status:
+    | "stopped"
+    | "waiting"
+    | "starting"
+    | "running"
+    | "stopping"
+    | "failed";
   error: string | null;
   diagnostics: string[];
   profilePending?: boolean;
@@ -75,8 +83,11 @@ export interface AgentView {
   deployedRemote?: boolean;
   /** Older imports need an explicit snapshot of their legacy team instructions. */
   needsTeamImport?: boolean;
+  /** Absent on older hosts means an existing configured setup. */
+  configured?: boolean;
 }
 export interface ControlSnapshot {
+  localInventoryActions?: boolean;
   agents: AgentView[];
   runtimeAvailable: boolean;
   /** Native executable presence and editing suggestions, not sign-in or execution evidence.
@@ -120,6 +131,7 @@ export interface AgentDefaultSettings {
   provider: string;
   model: string;
   effort: string;
+  sessionPolicy: "channel" | "thread";
   environmentKeys: string[];
 }
 export interface AgentDefaultsEdit
@@ -141,6 +153,7 @@ export interface AgentEdit {
   /** Omitted preserves artwork; empty removes it. */
   picture?: string;
   systemPrompt: string;
+  sessionPolicy: "channel" | "thread" | null;
   workspace: string;
   harness: Omit<AgentView["harness"], "environmentKeys">;
   /** Missing preserves the native value; null removes it; string replaces it. */
@@ -167,8 +180,21 @@ export interface GooseInstallReport {
   output: string;
   error: string | null;
 }
+
+export type CommunityResolution = {
+  pubkey: string;
+  relayUrl: string;
+  owner: string;
+  signature: string;
+};
+export type CloneSettings = Pick<AgentEdit, "name" | "systemPrompt">;
 export interface AgentControlHost {
   readLog?(target: AgentLogTarget): Promise<string>;
+  cloneSettings?(source: ImportSource, pubkey: string): Promise<CloneSettings>;
+  configureHere?(
+    id: string,
+    resolution: CommunityResolution,
+  ): Promise<ControlSnapshot>;
   models?: ModelHost;
   installGoose?(): Promise<GooseInstallReport>;
   installPi?(): Promise<GooseInstallReport>;
@@ -193,6 +219,12 @@ export interface AgentControlHost {
   ): Promise<ControlSnapshot>;
   delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   saveDefaults?(edit: AgentDefaultsEdit): Promise<ControlSnapshot>;
+  /** Attach replay input only; never starts or restarts a process. */
+  attachMention?(
+    id: string,
+    expectedRevision: number,
+    replayFloor: number,
+  ): Promise<void>;
   action(
     id: string,
     action: AgentAction,
@@ -229,6 +261,8 @@ export interface AgentControlState {
 export interface AgentControl {
   /** Sensitive local output. Native custody and exact community are rechecked per read. */
   readLog?(target: AgentLogTarget): Promise<string>;
+  cloneSettings?: AgentControlHost["cloneSettings"];
+  configureHere?: AgentControlHost["configureHere"];
   models?: AgentModels;
   installGoose?(): Promise<GooseInstallReport>;
   installPi?(): Promise<GooseInstallReport>;
@@ -263,12 +297,16 @@ export function agentLaunchBlock(
   state: AgentControlState,
   agent: AgentView,
 ): string | null {
+  if (agent.configured === false)
+    return "Choose Use here before starting this imported identity.";
   if (state.status !== "ready") return "Refresh status before starting.";
   if (state.busy) return "Waiting for the current operation.";
   if (!state.data?.runtimeAvailable)
     return (
       state.data?.runtimeMessage || "The bundled agent runtime is unavailable."
     );
+  if (agent.status === "waiting")
+    return "Waiting to start; unlock Keychain if prompted.";
   if (agent.status === "starting" || agent.status === "stopping")
     return "Waiting for the process transition.";
   return null;
@@ -681,14 +719,38 @@ export function createAgentControl(
         const agents =
           state.data?.agents.filter(
             (agent) =>
+              agent.configured !== false &&
               pubkeys.includes(agent.pubkey) &&
               relayOrigin(agent.relayUrl) === relayOrigin(relayUrl),
           ) ?? [];
         const failures: string[] = [];
         for (const agent of agents) {
           if (!valid()) return;
-          if (agent.status === "running" || state.pendingLaunch === agent.id)
+          if (agent.status === "running" && state.pendingLaunch !== agent.id)
             continue;
+          if (
+            agent.status === "waiting" ||
+            agent.status === "starting" ||
+            state.pendingLaunch === agent.id
+          ) {
+            try {
+              if (!host.attachMention)
+                throw new Error("Replay attachment unavailable");
+              // Replay metadata has its own native admission. It never mutates the
+              // projection or supersedes the in-flight Start/Stop write lane.
+              await host.attachMention(
+                agent.id,
+                agent.revision,
+                Math.min(replayFloor, earliestPending),
+              );
+            } catch {
+              if (!valid()) return;
+              failures.push(
+                `${agent.name}'s pending launch could not confirm replay of this mention. Open Agents to check its status.`,
+              );
+            }
+            continue;
+          }
           try {
             const result = await action(
               agent.id,
@@ -714,6 +776,35 @@ export function createAgentControl(
           update({ mentionError: `Message sent, but ${failures.join(" ")}` });
       };
     },
+    ...(host?.configureHere
+      ? {
+          configureHere: (id: string, resolution: CommunityResolution) =>
+            run(
+              (native) => {
+                if (!native.configureHere)
+                  throw new Error("Use here is unavailable.");
+                return native.configureHere(id, resolution);
+              },
+              (data) => update({ data }),
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
+    ...(host?.cloneSettings
+      ? {
+          cloneSettings: (source: ImportSource, pubkey: string) =>
+            run(
+              (native) => {
+                if (!native.cloneSettings)
+                  throw new Error("Clone settings are unavailable.");
+                return native.cloneSettings(source, pubkey);
+              },
+              () => {},
+            ),
+        }
+      : {}),
     previewImport: (source, destination) =>
       run(
         (native) => native.previewImport(source, destination),

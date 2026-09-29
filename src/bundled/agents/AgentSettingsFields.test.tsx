@@ -18,6 +18,7 @@ it("browses an own Databricks workspace before global defaults, and inherits whe
     provider: "databricks_v2",
     model: "",
     effort: "",
+    sessionPolicy: "channel",
     environmentKeys: ["DATABRICKS_HOST", "DATABRICKS_MODEL_FILTER"],
   };
   f.data.databricksDefaults = {
@@ -158,6 +159,7 @@ it("hides inherited Agent defaults hints when a selector override decides the la
             provider: "anthropic",
             model: "default-model",
             effort: "",
+            sessionPolicy: "channel",
             environmentKeys: entry.globalKeys ?? [],
           },
         },
@@ -191,71 +193,6 @@ it("hides inherited Agent defaults hints when a selector override decides the la
   }
 });
 
-it("uses the inherited provider before the build floor to choose the build-model hint", () => {
-  const f = controlFixture();
-  const control = createAgentControl(f.host);
-  const base = {
-    ...agentDraft(f.agent),
-    command: "buzz-agent",
-    provider: "",
-    model: "",
-  };
-  const cases = [
-    // Global anthropic beats the Databricks build floor: no Databricks model.
-    { build: "databricks_v2", global: "anthropic", hint: false },
-    // Global Databricks makes the build model apply despite a non-Databricks floor.
-    { build: "anthropic", global: "databricks_v2", hint: true },
-    { build: "databricks_v2", global: "", hint: true },
-  ];
-  const fields = (entry: (typeof cases)[number]) => (
-    <AgentSettingsFields
-      draft={base}
-      control={control}
-      state={{
-        status: "ready",
-        busy: false,
-        error: null,
-        data: {
-          ...f.data,
-          agentDefaults: {
-            provider: entry.build,
-            model: "build-model",
-            ownerOnly: false,
-          },
-          defaultSettings: {
-            harness: "buzz-agent",
-            provider: entry.global,
-            model: "",
-            effort: "",
-            environmentKeys: [],
-          },
-        },
-      }}
-      disabled={false}
-      environmentKeys={[]}
-      onChange={vi.fn()}
-    />
-  );
-  const view = render(fields(cases[0] as (typeof cases)[number]));
-  try {
-    for (const entry of cases) {
-      view.rerender(fields(entry));
-      expect(
-        screen.getByRole("combobox", { name: "Model" }),
-        JSON.stringify(entry),
-      ).toHaveAttribute(
-        "placeholder",
-        entry.hint
-          ? "Use agent defaults (build-model)"
-          : "Choose or enter a model",
-      );
-    }
-  } finally {
-    view.unmount();
-    control.dispose();
-  }
-});
-
 it("only hints the compiled model when the current provider and overrides can use it", () => {
   const f = controlFixture();
   const control = createAgentControl(f.host);
@@ -268,12 +205,16 @@ it("only hints the compiled model when the current provider and overrides can us
   };
   const cases: {
     provider: string;
+    globalProvider?: string;
     draft?: Partial<AgentDraft>;
     keys?: string[];
     globalKeys?: string[];
     hint: boolean;
   }[] = [
     { provider: "databricks_v2", hint: true },
+    // The inherited provider wins over the compiled provider in both directions.
+    { provider: "databricks_v2", globalProvider: "anthropic", hint: false },
+    { provider: "anthropic", globalProvider: "databricks_v2", hint: true },
     { provider: "databricks-v2", hint: true },
     { provider: "databricks", hint: true },
     { provider: "openai", hint: false },
@@ -374,9 +315,10 @@ it("only hints the compiled model when the current provider and overrides can us
           },
           defaultSettings: {
             harness: "buzz-agent",
-            provider: "",
+            provider: entry.globalProvider ?? "",
             model: "",
             effort: "",
+            sessionPolicy: "channel",
             environmentKeys: entry.globalKeys ?? [],
           },
         },
@@ -586,7 +528,19 @@ it("adds a Pi provider API key for lookup and drops it when the provider changes
         }),
       }),
     );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "Model" }),
+      ).not.toHaveAttribute("aria-busy", "true"),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Model" }));
     await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      ),
+    );
     await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
     await user.click(await screen.findByRole("option", { name: "Not set" }));
     expect(screen.queryByLabelText("Google Gemini API key")).toBeNull();

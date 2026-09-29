@@ -30,6 +30,7 @@ it("all command names and camelCase payloads match the native contract", async (
   const edit = {
     name: "Agent",
     systemPrompt: "Prompt",
+    sessionPolicy: null,
     workspace: "/fixture",
     harness: { command: "acp", args: [""], model: "", provider: "" },
     environment: { KEY: null },
@@ -95,6 +96,7 @@ it("model operations use explicit ticket commands and no construction-time invoc
         provider: "databricks_v2",
       },
       environment: {},
+      sessionPolicy: null,
     },
     integration: {
       kind: "databricks" as const,
@@ -149,4 +151,34 @@ it("does not retry failed authorization or native log errors", async () => {
   await expect(host.readLog(target)).rejects.toBe("Log authorization expired");
   expect(invoke).toHaveBeenCalledTimes(2);
   expect(authorize).toHaveBeenCalledTimes(1);
+});
+
+it("pending mentions annotate the existing native launch without another Start", async () => {
+  vi.mocked(invoke).mockClear();
+  vi.mocked(isTauri).mockReturnValue(true);
+  await nativeAgentControlHost()?.attachMention?.("exact-id", 3, 1234567890);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith(
+    "agent_control_attach_mention",
+    {
+      id: "exact-id",
+      expectedRevision: 3,
+      replayFloor: 1234567890,
+    },
+  );
+});
+
+it("retained inventory actions use native custody commands", async () => {
+  vi.mocked(invoke).mockReset();
+  vi.mocked(isTauri).mockReturnValue(true);
+  const host = nativeAgentControlHost();
+  const resolution = {
+    pubkey: "ab".repeat(32),
+    relayUrl: "wss://relay.example",
+    owner: "cd".repeat(32),
+    signature: "signed",
+  };
+  await host?.configureHere?.("retained", resolution);
+  expect(vi.mocked(invoke).mock.calls).toEqual([
+    ["agent_control_use_here", { id: "retained", resolution }],
+  ]);
 });

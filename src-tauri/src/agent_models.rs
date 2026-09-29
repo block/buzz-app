@@ -79,7 +79,7 @@ enum Operation {
     Connect,
     Refresh,
     Disconnect,
-    /// Pi only: one tiny prompt with the draft's provider and model.
+    /// One small completion with the draft's provider and model.
     Test,
 }
 #[derive(Serialize)]
@@ -664,16 +664,6 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             })
             .await;
     }
-    if request.action == Operation::Test {
-        return host
-            .run(ticket, async {
-                Err(ModelError::new(
-                    "configuration",
-                    "Connection tests are only available for Pi",
-                ))
-            })
-            .await;
-    }
     let goose = matches!(request.integration.as_ref(), Some(Integration::Goose))
         || request.edit.as_ref().is_some_and(|edit| {
             std::path::Path::new(&edit.harness.command)
@@ -682,9 +672,9 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                 == Some("goose")
         });
     if goose {
-        // Goose's catalog handler may start OAuth on a cache miss. Only the
-        // explicit Browse/Retry action may invoke it; Refresh stays headless.
-        if request.action != Operation::Connect {
+        // Goose's catalog handler may start OAuth on a cache miss. Only an
+        // explicit Browse/Retry or Test may invoke Goose; Refresh stays headless.
+        if !matches!(request.action, Operation::Connect | Operation::Test) {
             return host
                 .run(ticket, async {
                     Err(ModelError::new(
@@ -705,6 +695,18 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
         return host
             .run(ticket, async move {
                 let context = prepared.map_err(ModelError::from)?;
+                if request.action == Operation::Test {
+                    crate::goose_models::test(context).await?;
+                    return Ok(Catalog {
+                        integration: CatalogIntegration::Goose,
+                        host: Some(String::new()),
+                        defaults: None,
+                        discovery: None,
+                        models: vec![],
+                        model_overridden: false,
+                        disconnected: false,
+                    });
+                }
                 let model_overridden = context.model_overridden;
                 let models = crate::goose_models::fetch(context)
                     .await?
@@ -725,6 +727,13 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     model_overridden,
                     disconnected: false,
                 })
+            })
+            .await;
+    }
+    if request.action == Operation::Test {
+        return host
+            .run(ticket, async {
+                Err("Connection tests are only available for Pi and Goose".into())
             })
             .await;
     }

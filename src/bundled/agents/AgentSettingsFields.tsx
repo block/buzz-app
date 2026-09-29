@@ -328,6 +328,34 @@ export function AgentSettingsFields({
             draft={draft}
             onChange={change}
           />
+          <Select
+            label="Conversation context"
+            variant="field"
+            disabled={disabled}
+            value={draft.sessionPolicy ?? ""}
+            groups={[
+              {
+                label: "",
+                options: [
+                  {
+                    value: "",
+                    label: `Use agent defaults (${state.data?.defaultSettings?.sessionPolicy === "thread" ? "Each thread" : "Entire channel"})`,
+                  },
+                  { value: "channel", label: "Entire channel" },
+                  { value: "thread", label: "Each thread" },
+                ],
+              },
+            ]}
+            onValueChange={(sessionPolicy) =>
+              onChange({
+                sessionPolicy:
+                  sessionPolicy === ""
+                    ? null
+                    : (sessionPolicy as "channel" | "thread"),
+              })
+            }
+            description="Entire channel shares one conversation across threads. Each thread keeps a separate conversation; direct messages remain shared."
+          />
           {pi && (
             <p className="text-body-sm text-secondary">
               Providers and models load from your local Pi configuration,

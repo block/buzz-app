@@ -68,7 +68,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   page,
   app,
 }) => {
-  // Hold the byline's first read before broker admission. Add telemetry demand
+  // Hold an explicit profile's first read before broker admission. Add telemetry demand
   // while it is pending, so a fast runner cannot coalesce both into one read.
   const firstSnapshot = Promise.withResolvers();
   let firstAuthors;
@@ -89,6 +89,10 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   let unsafe;
   try {
     await open(page, app);
+    await page
+      .getByRole("button", { name: "View Alice Fixture profile", exact: true })
+      .first()
+      .click();
     await expect.poll(() => firstAuthors).toBeDefined();
     await expect(
       page.getByRole("button", { name: "Agent Activity", exact: true }),
@@ -127,6 +131,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     firstSnapshot.resolve();
   }
   await expect(firstEntry).toHaveAccessibleName(/, Presence: online$/);
+  await page.getByRole("button", { name: "Close channel panel" }).click();
   // A busy skip followed by a successful retry must not masquerade as recovery.
   expect(
     app.report.brokerRequests.filter(({ url }) =>
@@ -239,7 +244,10 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     .poll(() => app.relay.hasRoute("primary", "observer"))
     .toBe(false);
   expect(app.relay.sockets).toHaveLength(sockets);
-  await page.getByRole("button", { name: "Go back", exact: true }).click();
+  await page
+    .getByRole("complementary", { name: "Settings sidebar" })
+    .getByRole("button", { name: "Back", exact: true })
+    .click();
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(region).toHaveCount(0);
 
@@ -249,7 +257,10 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await toggle.click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
-  await page.getByRole("button", { name: "Go back", exact: true }).click();
+  await page
+    .getByRole("complementary", { name: "Settings sidebar" })
+    .getByRole("button", { name: "Back", exact: true })
+    .click();
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(agentEntry(page, first)).toBeVisible();
   await expect(agentEntry(page, second)).toHaveCount(0);
@@ -272,10 +283,9 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     firstKey,
   );
   await expect(agentEntry(page, first)).toContainText("status unknown");
-  await expect(agentEntry(page, first).locator("svg")).toHaveCSS(
-    "animation-name",
-    "none",
-  );
+  await expect(
+    agentEntry(page, first).locator(".navigation-item-trailing svg"),
+  ).toHaveCSS("animation-name", "none");
   app.observer(activity("turn_liveness", "alpha", "fresh"), firstKey);
   await expect(agentEntry(page, first)).toContainText("working");
   app.observer(activity("turn_completed", "alpha", "fresh"), firstKey);
@@ -422,8 +432,39 @@ it("profile activity opens the exact agent and originating channel before its fi
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  const profile = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
+  });
+  // A person's profile carries no activity card: neither preview nor launcher.
+  const personKey = generateSecretKey();
+  const personMessage = finalizeEvent(
+    {
+      kind: 9,
+      tags: [["h", profileChannelId]],
+      content: "Contextual person entry",
+      created_at: Math.floor(Date.now() / 1000),
+    },
+    personKey,
+  );
+  app.relay.publish("primary", personMessage);
+  await page
+    .locator(`[data-message-id="${personMessage.id}"]`)
+    .getByRole("button", { name: /profile/ })
+    .click();
+  // The settled metadata read is the barrier: no agent evidence can follow it.
+  await expect(
+    profile.getByText("No profile metadata is available in this community."),
+  ).toBeVisible();
+  await expect(
+    profile.getByRole("region", { name: "Activity preview" }),
+  ).toHaveCount(0);
+  await expect(
+    profile.getByRole("button", { name: "View activity", exact: true }),
+  ).toHaveCount(0);
   const agentKey = generateSecretKey();
   const agent = getPublicKey(agentKey);
+  app.serveProfile(agentKey, { name: "Fixture agent", is_agent: true });
   const message = finalizeEvent(
     {
       kind: 9,
@@ -453,10 +494,6 @@ it("profile activity opens the exact agent and originating channel before its fi
     )
     .toBe(true);
   await avatar.click();
-  const profile = page.getByRole("complementary", {
-    name: "Profile",
-    exact: true,
-  });
   await expect(
     profile.getByRole("region", { name: "Activity preview" }),
   ).toContainText("No activity yet");
@@ -626,7 +663,10 @@ it("profile activity opens the exact agent and originating channel before its fi
   await page
     .getByRole("switch", { name: "Enable Agent Activity", exact: true })
     .click();
-  await page.getByRole("button", { name: "Go back", exact: true }).click();
+  await page
+    .getByRole("complementary", { name: "Settings sidebar" })
+    .getByRole("button", { name: "Back", exact: true })
+    .click();
   await page.locator(`[data-channel-id="${profileChannelId}"]`).click();
   await avatar.click();
   await expect(profile).toBeVisible();

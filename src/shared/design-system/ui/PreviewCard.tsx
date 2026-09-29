@@ -56,7 +56,19 @@ export function PreviewCard({
         }}
       />
       <BasePreviewCard.Portal>
-        <BasePreviewCard.Positioner side={side} align="start" sideOffset={8}>
+        <BasePreviewCard.Positioner
+          side={side}
+          align="start"
+          sideOffset={8}
+          positionMethod="fixed"
+          className="buzz-preview-card-positioner"
+          popover="manual"
+          ref={(element) => {
+            // Join the top layer after the hovered row's floating actions.
+            // Base UI still owns placement, timing, focus and unmounting.
+            element?.showPopover?.();
+          }}
+        >
           <BasePreviewCard.Popup
             data-buzz-ui=""
             ref={popupRef}

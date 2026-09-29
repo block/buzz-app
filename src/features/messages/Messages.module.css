@@ -2065,11 +2065,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   }
 }
 
-.mediaPreview[data-video-preview]:has([aria-expanded="true"]) {
-  overflow: visible;
-  clip-path: none;
-  z-index: 5;
-}
 .mediaPreview[data-video-preview] .mediaVideo,
 .mediaPreview[data-video-preview] .mediaPoster {
   border-radius: inherit;

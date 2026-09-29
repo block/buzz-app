@@ -17,6 +17,7 @@ const channelActivity = (page) =>
 const channelScope = "Channel activity, including other threads";
 
 async function openSidePanel(page, entry, keyboard = false) {
+  const trigger = await entry.elementHandle();
   if (keyboard) {
     await entry.focus();
     await entry.press("Shift+F10");
@@ -34,7 +35,7 @@ async function openSidePanel(page, entry, keyboard = false) {
   // Base UI may retain a closing portal; wait before resizing or measuring.
   await expect(page.getByRole("menu", { includeHidden: true })).toHaveCount(0);
   await expect(activityPanel(page)).toBeVisible();
-  await expect(entry).toHaveAttribute("aria-expanded", "false");
+  expect(await trigger.getAttribute("aria-expanded")).toBe("false");
 }
 
 async function expectHistoryPlacement(region, history, form) {
@@ -96,9 +97,22 @@ async function expectHistoryPlacement(region, history, form) {
     .toBeLessThan(1);
 }
 const activityPanel = (page) =>
+  page.getByRole("region", { name: "Agent activity", exact: true }).or(
+    page.getByRole("tabpanel", { name: "Activity", exact: true }).filter({
+      hasNot: page.getByRole("region", {
+        name: "Agent activity",
+        exact: true,
+      }),
+    }),
+  );
+const closeActivityPanel = (page) =>
   page
-    .getByRole("region", { name: "Agent activity", exact: true })
-    .or(page.getByRole("tabpanel", { name: "Activity", exact: true }));
+    .getByRole("button", { name: "Close channel panel", exact: true })
+    .or(
+      page.locator(
+        '.buzz-tabs-item:has([data-tab-value^="agent:"][data-selected]) .buzz-tabs-dismiss',
+      ),
+    );
 async function showActivityDetails(panel) {
   const details = panel.getByRole("button", { name: "Details", exact: true });
   await expect(details).toBeVisible();
@@ -139,8 +153,8 @@ async function profileEntry(
     .getByRole("button", { name: /profile/ });
 }
 async function expectProfileActivitySelected(page) {
-  const profile = page.getByRole("complementary", {
-    name: "Profile",
+  const profile = page.getByRole("region", {
+    name: "Profile details",
     exact: true,
   });
   const tab = profile.getByRole("tab", { name: "Activity", exact: true });
@@ -166,7 +180,7 @@ async function expectProfileActivitySelected(page) {
 async function openProfileActivity(page, avatar) {
   await avatar.click();
   await page
-    .getByRole("complementary", { name: "Profile", exact: true })
+    .getByRole("region", { name: "Profile details", exact: true })
     .getByRole("tab", { name: "Activity", exact: true })
     .click();
   await expectProfileActivitySelected(page);
@@ -248,7 +262,7 @@ test("profile activity consumes telemetry, isolates mixed batches, selects agent
   await matchingChild.click();
   await expect(panel.locator("pre code")).toContainText('"channelId": "alpha"');
   await expect(panel.locator("pre code")).not.toContainText("other channel");
-  await page.getByRole("button", { name: "Close channel panel" }).click();
+  await closeActivityPanel(page).click();
   await expect(firstAvatar).toBeFocused();
   await openProfileActivity(page, secondAvatar);
   await showActivityDetails(panel);
@@ -260,7 +274,7 @@ test("profile activity consumes telemetry, isolates mixed batches, selects agent
     panel.getByRole("button", { name: /turn_liveness/ }),
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
-  await page.getByRole("button", { name: "Close channel panel" }).click();
+  await closeActivityPanel(page).click();
   await expect(secondAvatar).toBeFocused();
 
   const sockets = app.relay.sockets.length;
@@ -302,7 +316,7 @@ test("profile activity consumes telemetry, isolates mixed batches, selects agent
     panel.getByRole("button", { name: /turn_completed/ }),
   ).toBeVisible();
   await expect(panel.getByText("Working now", { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Close channel panel" }).click();
+  await closeActivityPanel(page).click();
   await openProfileActivity(page, secondAvatar);
   await expect(panel.getByText("No activity captured yet")).toBeVisible();
 });
@@ -451,8 +465,8 @@ for (const mode of ["light", "dark"]) {
       readable.getByRole("heading", { name: "Turn", exact: true }),
     ).toHaveCount(0);
     await expect(readable.getByText("Working", { exact: true })).toHaveCount(0);
-    const profile = page.getByRole("complementary", {
-      name: "Profile",
+    const profile = page.getByRole("region", {
+      name: "Profile details",
       exact: true,
     });
     await expect(
@@ -586,8 +600,8 @@ it("profile activity opens the exact agent and originating channel before its fi
     )
     .toBe(true);
   await avatar.click();
-  const profile = page.getByRole("complementary", {
-    name: "Profile",
+  const profile = page.getByRole("region", {
+    name: "Profile details",
     exact: true,
   });
   await profile.getByRole("tab", { name: "Activity", exact: true }).click();
@@ -690,7 +704,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   // Finish the reopened profile's focus handoff and timeline layout before
   // starting read dwell; visible profile content alone proves neither.
   await expect(
-    profile.getByRole("region", { name: "Profile details" }),
+    page.locator('[role="tab"][data-tab-value^="agent:"][data-selected]'),
   ).toBeFocused();
   await settle(page);
   const history = page.getByRole("region", {
@@ -711,7 +725,176 @@ test.describe("thread activity", () => {
     historyCounts: { alpha: 2, beta: 1 }, // Thread fixtures replace the last two Alpha rows with roots.
   });
 
-  test("thread typing stays isolated and activity opens beside the preserved thread", async ({
+  // App integration: actual activity entry -> shared host tabs, retained composer,
+  // signed profile naming, and channel navigation. State permutations live in Vitest.
+  test("multiple named agents retain independent activity tabs beside the thread", async ({
+    page,
+    app,
+  }, testInfo) => {
+    await open(page, app);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    const keys = [generateSecretKey(), generateSecretKey()];
+    const names = ["Carl", "Vogue"];
+    const profiles = keys.map((key, i) =>
+      finalizeEvent(
+        {
+          kind: 0,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [],
+          content: JSON.stringify({
+            name: names[i],
+            display_name: names[i],
+            is_agent: true,
+          }),
+        },
+        key,
+      ),
+    );
+    await page.route("**/api/relay/**/query", async (route) => {
+      const response = await route.fetch();
+      const events = await response.json();
+      const filters = route.request().postDataJSON();
+      const matching = profiles.filter((profile) =>
+        filters.some(
+          (filter) =>
+            filter.kinds?.includes(0) &&
+            filter.authors?.includes(profile.pubkey),
+        ),
+      );
+      return route.fulfill({
+        response,
+        json: Array.isArray(events) ? [...events, ...matching] : events,
+      });
+    });
+    for (const key of keys)
+      app.observer(activity("turn_completed", "alpha", "recognized"), key);
+    const avatars = [];
+    for (let i = 0; i < keys.length; i++) {
+      avatars.push(
+        await profileEntry(page, app, keys[i], `${names[i]} agent message`),
+      );
+      await expect(avatars[i]).toHaveAttribute(
+        "aria-label",
+        `View ${names[i]} profile`,
+      );
+    }
+    const roots = app.histories
+      .get("primary/alpha")
+      .filter((row) => row.content.startsWith("Thread root"));
+    const openThread = async (root) => {
+      const row = page.locator(
+        `[data-channel-timeline] [data-message-id="${root.id}"]`,
+      );
+      await row.hover();
+      await row.getByRole("button", { name: /^View thread:/ }).click();
+    };
+    await openThread(roots[0]);
+    const thread = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const composer = thread.getByRole("textbox", {
+      name: "Reply to thread",
+      exact: true,
+    });
+    await composer.fill("Keep both agents and this draft");
+    const openActivity = async (index) => {
+      const row = avatars[index].locator(
+        "xpath=ancestor::*[@data-message-id][1]",
+      );
+      await row.hover();
+      await row
+        .getByRole("button", { name: "More message actions", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "View activity", exact: true })
+        .click();
+      await expect(
+        page
+          .getByRole("region", { name: "Profile details", exact: true })
+          .getByRole("tab", { name: "Activity", exact: true }),
+      ).toHaveAttribute("aria-selected", "true");
+    };
+    await openActivity(0);
+    const threadTab = page.getByRole("tab", { name: "Thread", exact: true });
+    await openActivity(1);
+    for (const name of names)
+      await expect(page.getByRole("tab", { name, exact: true })).toHaveCount(1);
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({ width, height: 950 });
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBe(width);
+      await expect(
+        page.getByRole("tab", { name: "Vogue", exact: true }),
+      ).toBeInViewport();
+      await page.screenshot({
+        path: testInfo.outputPath(`named-agent-tabs-${width}.png`),
+      });
+    }
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await threadTab.click();
+    await expect(composer).toHaveText("Keep both agents and this draft");
+    await openActivity(0);
+    await expect(
+      page.getByRole("tab", { name: "Carl", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.locator('[role="tab"][data-tab-value^="agent:"]'),
+    ).toHaveCount(2);
+    await page
+      .getByRole("button", { name: "Close Carl tab", exact: true })
+      .click();
+    await expect(
+      page.getByRole("tab", { name: "Vogue", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await threadTab.click();
+    await expect(composer).toHaveText("Keep both agents and this draft");
+    // Avatar retargets the existing identity tab to Info without losing Thread.
+    await avatars[1].click();
+    const profile = page.getByRole("region", {
+      name: "Profile details",
+      exact: true,
+    });
+    await expect(
+      profile.getByRole("tab", { name: "Info", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.getByRole("tab", { name: "Vogue", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.locator('[role="tab"][data-tab-value^="agent:"]'),
+    ).toHaveCount(1);
+    await threadTab.click();
+    await expect(composer).toHaveText("Keep both agents and this draft");
+    await openThread(roots[1]);
+    await expect(threadTab).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.getByRole("tab", { name: "Vogue", exact: true }),
+    ).toHaveCount(1);
+    await expect(
+      thread.getByText(roots[1].content, { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Close Thread tab", exact: true })
+      .click();
+    await expect(
+      page.getByRole("tab", { name: "Vogue", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(profile).toBeVisible();
+    await page.locator('[data-channel-id="beta"]').click();
+    await expect(
+      page.locator('[role="tab"][data-tab-value^="agent:"]'),
+    ).toHaveCount(0);
+    await page.locator('[data-channel-id="alpha"]').click();
+    await expect(
+      page.locator('[role="tab"][data-tab-value^="agent:"]'),
+    ).toHaveCount(0);
+  });
+
+  test("thread typing stays isolated and activity tabs preserve the thread", async ({
     page,
     app,
   }, testInfo) => {
@@ -732,6 +915,7 @@ test.describe("thread activity", () => {
     const thread = page.getByRole("complementary", {
       name: "Thread",
       exact: true,
+      includeHidden: true,
     });
     await expect(
       thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
@@ -746,6 +930,7 @@ test.describe("thread activity", () => {
     const region = thread.getByRole("region", {
       name: "Agent activity in this thread",
       exact: true,
+      includeHidden: true,
     });
     const marker = page
       .locator('[data-channel-id="alpha"]')
@@ -788,11 +973,8 @@ test.describe("thread activity", () => {
     await expect(
       activityPanel(page).getByText("Working now", { exact: true }),
     ).toHaveCount(0);
-    await page.getByRole("button", { name: "Close channel panel" }).click();
-    // General profile navigation replaces the thread panel; restore the exact
-    // root after the observer barrier, before exercising thread-only typing.
-    await row.hover();
-    await row.getByRole("button", { name: /^View thread:/ }).click();
+    await closeActivityPanel(page).click();
+    // Closing the profile returns to the retained thread.
     await expect(
       thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
     ).toBeVisible();
@@ -817,10 +999,15 @@ test.describe("thread activity", () => {
     await expect(page.locator(`[data-message-id="${typing.id}"]`)).toHaveCount(
       0,
     );
-    const entry = region.getByRole("button", { name: "Working…", exact: true });
+    const entry = region.getByRole("button", {
+      name: "Working…",
+      exact: true,
+      includeHidden: true,
+    });
     const form = thread.getByRole("form", {
       name: "Reply to thread",
       exact: true,
+      includeHidden: true,
     });
     const history = thread.getByRole("region", {
       name: "Thread messages",
@@ -850,6 +1037,7 @@ test.describe("thread activity", () => {
     const composer = thread.getByRole("textbox", {
       name: "Reply to thread",
       exact: true,
+      includeHidden: true,
     });
     await composer.fill("Keep this thread draft");
     await entry.click();
@@ -889,65 +1077,58 @@ test.describe("thread activity", () => {
         exact: true,
       }),
     ).toHaveText("Alpha · alpha");
-    const board = page.locator('[class*="withActivity"]');
+    const threadTab = page.getByRole("tab", { name: "Thread", exact: true });
+    const activityTab = page.getByRole("tab", {
+      name: agent.slice(0, 10),
+      exact: true,
+    });
+    const threadNode = await thread.elementHandle();
+    const composerNode = await composer.elementHandle();
     for (const width of [1440, 768, 390]) {
+      await page.emulateMedia({
+        colorScheme: width === 768 ? "dark" : "light",
+      });
       await page.setViewportSize({ width, height: 844 });
       await expect
         .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
         .toBe(width);
-      await expect(board).toHaveCSS("overflow-x", "auto");
-      await expect
-        .poll(
-          async () => {
-            return board.evaluate((element) => {
-              const conversation = element.querySelector(
-                  ':scope > [aria-label="Conversation"]',
-                ),
-                thread = element.querySelector('[class*="panelStack"]'),
-                activity = element.querySelector('[class*="activityPane"]');
-              if (!conversation || !thread || !activity) return false;
-              const c = conversation.getBoundingClientRect(),
-                t = thread.getBoundingClientRect(),
-                a = activity.getBoundingClientRect(),
-                b = element.getBoundingClientRect();
-              const gap = Number.parseFloat(
-                getComputedStyle(element).columnGap,
-              );
-              const minimum = window.innerWidth <= 650 ? 260 : 320;
-              return (
-                c.width >= minimum &&
-                t.width >= 300 &&
-                a.width >= 300 &&
-                Math.abs(t.left - c.right - gap) < 1 &&
-                Math.abs(a.left - t.right - gap) < 1 &&
-                (window.innerWidth < 1000 ||
-                  (Math.abs(c.left - b.left) < 1 &&
-                    Math.abs(a.right - b.right) < 1))
-              );
-            });
-          },
-          {
-            message:
-              "conversation/thread/activity fill adjacent tracks without phantom sidebar columns",
-          },
-        )
-        .toBe(true);
-      if (width < 1000) {
-        await expect
-          .poll(() =>
-            board.evaluate(
-              (element) => element.scrollWidth > element.clientWidth,
-            ),
-          )
-          .toBe(true);
-        await activityPanel(page).scrollIntoViewIfNeeded();
-        await expect(activityPanel(page)).toBeInViewport();
-        await composer.scrollIntoViewIfNeeded();
-        await expect(composer).toBeInViewport();
-      }
+      await expect(activityTab).toHaveAttribute("aria-selected", "true");
+      await expect(thread).toBeHidden();
+      await expect(activityPanel(page)).toBeInViewport();
+      await threadTab.click();
+      await expect(threadTab).toBeFocused();
+      await expect(thread).toBeVisible();
+      await expect(activityPanel(page)).toBeHidden();
       await expect(composer).toHaveText("Keep this thread draft");
+      expect(
+        await composer.evaluate(
+          (node, original) => node === original,
+          composerNode,
+        ),
+      ).toBe(true);
+      expect(
+        await thread.evaluate(
+          (node, original) => node === original,
+          threadNode,
+        ),
+      ).toBe(true);
+      const scroll = await history.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+        return element.scrollTop;
+      });
+      await activityTab.click();
+      await expect(activityTab).toBeFocused();
+      await expect(activityPanel(page).locator("code").first()).toHaveText(
+        agent,
+      );
+      await threadTab.click();
+      expect(await history.evaluate((element) => element.scrollTop)).toBe(
+        scroll,
+      );
+      await activityTab.click();
       await page.screenshot({
-        path: testInfo.outputPath(`thread-activity-side-by-side-${width}.png`),
+        path: testInfo.outputPath(`thread-activity-tabs-${width}.png`),
       });
     }
     await page.setViewportSize({ width: 1440, height: 950 });
@@ -965,13 +1146,11 @@ test.describe("thread activity", () => {
     await settings
       .getByRole("button", { name: "Close channel settings", exact: true })
       .click();
-    await expect(thread).toBeVisible();
+    await expect(thread).toBeHidden();
     await expect(activityPanel(page)).toBeVisible();
     await expect(composer).toHaveText("Keep this thread draft");
     await expect(activityPanel(page).locator("code").first()).toHaveText(agent);
-    await page
-      .getByRole("button", { name: "Close channel panel", exact: true })
-      .click();
+    await closeActivityPanel(page).click();
     await expect(activityPanel(page)).toHaveCount(0);
     await expect(entry).toBeFocused();
     await expect(composer).toHaveText("Keep this thread draft");
@@ -1031,9 +1210,7 @@ test.describe("thread activity", () => {
     await expect(
       activityPanel(page).getByRole("region", { name: "Readable activity" }),
     ).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Close channel panel", exact: true })
-      .click();
+    await closeActivityPanel(page).click();
     await expect(replyEntry).toBeFocused();
     // The profile-entry channel message suppressed delayed channel typing for
     // two seconds. Move the controlled clock past that real scope boundary.
@@ -1379,9 +1556,7 @@ test.describe("local agent request", () => {
     await expect(
       activityPanel(page).getByText(/Only visible to you/),
     ).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Close channel panel", exact: true })
-      .click();
+    await closeActivityPanel(page).click();
     emitTurn("request-work", "turn_completed");
     // Request-linked telemetry, not public typing, drives live work. Observe
     // real pending and completed tool updates before publishing any chat reply.
@@ -1571,9 +1746,7 @@ test.describe("local agent request", () => {
     await expect(activityPanel(page)).toContainText("git diff --stat");
     await expect(activityPanel(page).getByRole("combobox")).toHaveCount(0);
     await expect(activityPanel(page)).not.toContainText("unrelated-work");
-    await page
-      .getByRole("button", { name: "Close channel panel", exact: true })
-      .click();
+    await closeActivityPanel(page).click();
     // A signed coordination reply is communication, not the requested answer.
     const coordination = finalizeEvent(
       {
@@ -1974,9 +2147,7 @@ test.describe("local agent request", () => {
     await expect(detachedWork.locator("pre").last()).not.toContainText(
       reply.id,
     );
-    await page
-      .getByRole("button", { name: "Close channel panel", exact: true })
-      .click();
+    await closeActivityPanel(page).click();
     await expect(correctionEntry).toBeFocused();
     await page.screenshot({
       path: testInfo.outputPath("agent-thread-response.png"),

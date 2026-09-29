@@ -1,3 +1,4 @@
+import { profileActivityTarget } from "../agents/activity-target";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { useChannelIdentityNames } from "../identity-names/react";
@@ -20,7 +21,7 @@ import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
-import { profileTarget } from "../profiles/target";
+import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { MessageBody } from "../conversation/MessageBody";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -38,7 +39,7 @@ import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import { MessageActionBar } from "./MessageActionBar";
-import { FlagIcon } from "../../shared/design-system/icons";
+import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
@@ -152,6 +153,30 @@ export const MessageRow = memo(function MessageRow({
     : undefined;
   const target = profileTarget(row.authorId);
   const clickable = target && canOpenLink?.(target);
+  const activityTarget = profileActivityViewTarget(row.authorId);
+  const canViewActivity =
+    (row.agentEnvelope ||
+      agentPubkeys?.has(row.authorId) ||
+      profile?.isAgent) &&
+    activityTarget &&
+    canOpenLink?.(activityTarget) &&
+    canOpenLink(profileActivityTarget(row.authorId, row.channelId));
+  const activityItem = canViewActivity && (
+    <MenuItem
+      onClick={() => {
+        if (
+          canOpenLink?.(activityTarget) &&
+          canOpenLink(profileActivityTarget(row.authorId, row.channelId))
+        )
+          onOpenLink(activityTarget);
+      }}
+    >
+      <MenuIcon>
+        <ListBulletsIcon />
+      </MenuIcon>
+      View activity
+    </MenuItem>
+  );
   const avatarShape =
     row.agentEnvelope || agentPubkeys?.has(row.authorId)
       ? "squircle"
@@ -358,6 +383,7 @@ export const MessageRow = memo(function MessageRow({
                   />
                 ) : undefined)
               }
+              menuItems={activityItem}
               overflowItems={
                 overflowItems || reportItem ? (
                   <>

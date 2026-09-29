@@ -1,3 +1,10 @@
+import { useChannelIdentityNames } from "../../features/identity-names/react";
+import {
+  panelIdentity,
+  openingTab,
+  usePanelOpenings,
+  type PanelOpening,
+} from "./usePanelOpenings";
 import { TypingPresentation } from "../../features/conversation/typing-presentation";
 import type { AgentControl } from "../../features/agents/control";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -19,7 +26,6 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
-import { activitySelection } from "../../features/agents/activity-target";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import {
@@ -60,9 +66,11 @@ import {
   useChannelWindow,
   useRelayConnection,
 } from "../../features/relay/react";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import type { Panels } from "../../features/panels/service";
 import type { PagesReader } from "../../features/pages/service";
 import { PanelCard } from "../../features/panels/PanelCard";
+import { TabbedPanel, type PanelTab } from "../../features/panels/TabbedPanel";
+import { PanelView } from "../../features/panels/PanelView";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
@@ -269,6 +277,7 @@ function ChannelWorkspace({
     [navigate],
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
+  const conversation = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const { channels } = useChannelLabels(
     list.channels,
@@ -545,18 +554,28 @@ function ChannelWorkspace({
   useEffect(() => {
     if (thread && !showingThread) setThread(undefined);
   }, [thread, showingThread]);
-  type Opening = { channelId: string; panel: RegisteredPanel; target: string };
-  const [opened, setOpened] = useState<Opening>();
-  const opening = useRef<Opening | undefined>(undefined);
-  const open = useCallback((next: Opening | undefined) => {
-    // Retire callbacks synchronously, before React commits the next opening.
-    opening.current = next;
-    setOpened(next);
-  }, []);
+  const {
+    openings,
+    current: opening,
+    open,
+    remove,
+    showThread,
+    selected: panelTab,
+    select: setPanelTab,
+  } = usePanelOpenings();
+  const identityName = useChannelIdentityNames(queries, current?.id);
+  const visibleOpenings = openings.filter(
+    (entry) =>
+      entry.channelId === current?.id && available.includes(entry.panel),
+  );
+  const opened = visibleOpenings.find((entry) => !panelIdentity(entry.target));
   useLayoutEffect(() => {
-    if (draftParent || composingMessage || placeholder || requestedMessage) {
+    if (draftParent || composingMessage || placeholder) {
       setThread(undefined);
       open(undefined);
+    } else if (requestedMessage && requestedChannel) {
+      setThread(undefined);
+      showThread(requestedChannel);
     }
     const activity = handoff?.activityThread.current;
     if (
@@ -575,14 +594,10 @@ function ChannelWorkspace({
     requestedChannel,
     requestedThread,
     open,
+    showThread,
     handoff?.activityThread,
   ]);
-  const panel =
-    opened &&
-    opened.channelId === current?.id &&
-    available.includes(opened.panel)
-      ? opened.panel
-      : undefined;
+  const panel = opened?.panel;
   const mounted = useRef(false);
   const channel = useRef(current?.id);
   useLayoutEffect(() => {
@@ -595,8 +610,11 @@ function ChannelWorkspace({
     };
   }, []);
   useEffect(() => {
-    if (opened && !panel) open(undefined);
-  }, [opened, panel, open]);
+    for (const entry of openings) {
+      if (entry.channelId !== current?.id || !available.includes(entry.panel))
+        remove(entry);
+    }
+  }, [openings, current?.id, available, remove]);
   const [replyRequest, setReplyRequest] = useState<{
     channelId: string;
     messageId: string;
@@ -615,6 +633,7 @@ function ChannelWorkspace({
   const openThread = useCallback(
     (messageId: string, threadRootId: string, intent?: "reply") => {
       if (!currentId) return;
+      setPanelTab("thread");
       const requestReply = () =>
         setReplyRequest((previous) =>
           intent === "reply"
@@ -656,9 +675,9 @@ function ChannelWorkspace({
         });
       } else setThread({ channelId: currentId, messageId });
       requestReply();
-      open(undefined);
+      showThread(currentId);
     },
-    [currentId, navigator, viewer, scope, open],
+    [currentId, navigator, viewer, scope, showThread, setPanelTab],
   );
   const onAgentRequestSend = useCallback(
     (id: string, agents: readonly string[]) => {
@@ -734,14 +753,23 @@ function ChannelWorkspace({
     if (showingThread?.navigation && current) select(current.id);
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
+    else conversation.current?.focus({ preventScroll: true });
   };
   const panelTrigger = useRef<HTMLElement | null>(null);
+  const restorePanelFocus = useRef(false);
   const close = useCallback(() => {
+    restorePanelFocus.current = true;
     open(undefined);
+  }, [open]);
+  useLayoutEffect(() => {
+    if (openings.length || !restorePanelFocus.current) return;
+    restorePanelFocus.current = false;
+    // The Thread tab must leave inert before its originating control can focus.
     if (panelTrigger.current?.isConnected)
       panelTrigger.current.focus({ preventScroll: true });
     else if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
-  }, [open]);
+    else conversation.current?.focus({ preventScroll: true });
+  }, [openings]);
   // Availability follows active contributions; dispatch still re-resolves at click time.
   const canOpenLink = useCallback(
     (target: string) =>
@@ -790,7 +818,13 @@ function ChannelWorkspace({
                 ? document.activeElement
                 : null;
           setThread(undefined);
-          open(undefined);
+          if (
+            target.kind === "conversation" &&
+            target.messageId &&
+            target.channelId === current?.id
+          )
+            showThread(target.channelId);
+          else open(undefined);
           void navigator.open(target);
           return true;
         }
@@ -803,50 +837,56 @@ function ChannelWorkspace({
           document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null;
-        if (!activitySelection(url)) {
+        if (!panelIdentity(url)) {
           if (context.routedThread) select(context.channelId);
           setThread(undefined);
         }
-        open({
-          channelId: context.channelId,
-          panel: candidate,
-          target: url,
-        });
+        open({ channelId: context.channelId, panel: candidate, target: url });
         return true;
       }
       return false;
     },
-    [panels, open, relay, queries, select, navigator, viewer, scope],
+    [
+      panels,
+      open,
+      showThread,
+      relay,
+      queries,
+      select,
+      navigator,
+      viewer,
+      scope,
+    ],
   );
-  const panelActive = () => {
+  const panelActive = (entry: PanelOpening) => {
     const connection = relay.snapshot();
     return !!(
       mounted.current &&
-      opened &&
-      panel &&
-      opening.current === opened &&
-      channel.current === opened.channelId &&
-      panels.snapshot().includes(panel) &&
+      opening.current.includes(entry) &&
+      channel.current === entry.channelId &&
+      panels.snapshot().includes(entry.panel) &&
       connection.status === "ready" &&
       connection.session === queries &&
       !navigation?.signal.aborted
     );
   };
-  const panelContext =
-    opened && panel
-      ? {
-          channelId: opened.channelId,
-          canOpen: (target: string) => !!panels.resolve(target),
-          open: (target: string) => {
-            if (!panelActive()) return false;
-            const next = panels.resolve(target);
-            if (!next) return false;
-            // Keep the original conversation trigger for close/focus restoration.
-            open({ channelId: opened.channelId, panel: next, target });
-            return true;
-          },
-        }
-      : undefined;
+  const panelContext = (entry: PanelOpening) => ({
+    channelId: entry.channelId,
+    canOpen: (target: string) => !!panels.resolve(target),
+    open: (target: string) => {
+      if (!panelActive(entry)) return false;
+      const next = panels.resolve(target);
+      if (!next) return false;
+      // Keep the original conversation trigger for close/focus restoration.
+      open({ channelId: entry.channelId, panel: next, target });
+      return true;
+    },
+  });
+  const closeOpening = (entry: PanelOpening) => {
+    if (!opening.current.includes(entry)) return;
+    restorePanelFocus.current = opening.current.length === 1;
+    remove(entry);
+  };
   const drawerContext = useMemo(
     () =>
       current && !current.readOnly && viewer && !placeholder
@@ -867,12 +907,66 @@ function ChannelWorkspace({
   const drawer = useChannelPanels(panels, drawerContext, () =>
     setSettings(undefined),
   );
+  const panelTabs: PanelTab[] = [];
+  if (showingThread)
+    panelTabs.push({
+      value: "thread",
+      label: "Thread",
+      close: closeThread,
+      content: (
+        <ThreadPanel
+          embedded
+          sessionConversation={current?.channelType === "session"}
+          extensions={extensions}
+          session={queries}
+          scope={scope}
+          channelName={current?.name ?? ""}
+          channelId={showingThread.channelId}
+          messageId={showingThread.messageId}
+          navigation={showingThread.navigation}
+          replyRequest={
+            replyRequest?.channelId === showingThread.channelId &&
+            replyRequest.messageId === showingThread.messageId &&
+            replyRequest.entryId === showingThread.navigation?.entryId
+              ? replyRequest.sequence
+              : undefined
+          }
+          close={closeThread}
+          onOpenLink={openLink}
+          onOpenMediaReview={openMediaReview}
+          canOpenLink={canOpenLink}
+        />
+      ),
+    });
+  for (const entry of visibleOpenings) {
+    const agent = panelIdentity(entry.target);
+    if (!agent) continue;
+    panelTabs.push({
+      value: openingTab(entry),
+      label: identityName(agent, agent.slice(0, 10)),
+      close: () => closeOpening(entry),
+      content: (
+        <div className="min-h-0 overflow-auto">
+          <PanelView
+            panel={entry.panel}
+            target={entry.target}
+            context={panelContext(entry)}
+            close={() => closeOpening(entry)}
+          />
+        </div>
+      ),
+    });
+  }
   const showingPanel =
     !composingMessage &&
-    (showingSettings || panel || showingThread || companion || drawer.side);
+    (showingSettings ||
+      visibleOpenings.length > 0 ||
+      showingThread ||
+      companion ||
+      drawer.side);
   const board = (
     <div
-      className={`${styles.board} ${!composingMessage && (showingSettings || panel || showingThread || companion || drawer.side) ? styles.withPanel : ""} ${!composingMessage && !showingSettings && !showingMediaReview && panel && showingThread && opened && activitySelection(opened.target) ? styles.withActivity : ""}`}
+      className={`${styles.board} ${!composingMessage && (showingSettings || visibleOpenings.length > 0 || showingThread || companion || drawer.side) ? styles.withPanel : ""}`}
     >
       {current && !current.readOnly && canvasOpen && (
         <ChannelCanvasDialog
@@ -884,7 +978,12 @@ function ChannelWorkspace({
           onOpenChange={setCanvasOpen}
         />
       )}
-      <Panel as="article" aria-label="Conversation">
+      <Panel
+        as="article"
+        ref={conversation}
+        tabIndex={-1}
+        aria-label="Conversation"
+      >
         {/* biome-ignore lint/a11y/noStaticElementInteractions: file-drop fallback; the composer also provides a keyboard-accessible picker. */}
         <div
           className={styles.conversation}
@@ -1214,46 +1313,30 @@ function ChannelWorkspace({
               )}
             </ChannelSettingsPanel>
           )}
-          {showingThread && (
+          {panelTabs.length > 0 && (
             <div className={styles.retainedPanel} inert={showingSettings}>
-              <ThreadPanel
-                sessionConversation={current?.channelType === "session"}
-                extensions={extensions}
-                session={queries}
-                scope={scope}
-                channelName={current?.name ?? ""}
-                channelId={showingThread.channelId}
-                messageId={showingThread.messageId}
-                navigation={showingThread.navigation}
-                replyRequest={
-                  replyRequest?.channelId === showingThread.channelId &&
-                  replyRequest.messageId === showingThread.messageId &&
-                  replyRequest.entryId === showingThread.navigation?.entryId
-                    ? replyRequest.sequence
-                    : undefined
-                }
-                close={closeThread}
-                onOpenLink={openLink}
-                onOpenMediaReview={openMediaReview}
-                canOpenLink={canOpenLink}
+              <TabbedPanel
+                tabs={panelTabs}
+                value={panelTab}
+                onValueChange={setPanelTab}
+                onClose={() => {
+                  if (openings.length) close();
+                  if (showingThread) closeThread();
+                }}
               />
             </div>
           )}
-
-          {panel &&
-            opened &&
-            !(showingThread && activitySelection(opened.target)) && (
-              <div className={styles.retainedPanel} inert={showingSettings}>
-                <PanelCard
-                  key="target"
-                  panel={panel}
-                  target={opened.target}
-                  context={panelContext}
-                  close={close}
-                  closeLabel="Close channel panel"
-                />
-              </div>
-            )}
+          {panel && opened && (
+            <div className={styles.retainedPanel} inert={showingSettings}>
+              <PanelCard
+                panel={panel}
+                target={opened.target}
+                context={panelContext(opened)}
+                close={close}
+                closeLabel="Close channel panel"
+              />
+            </div>
+          )}
           {drawer.side && (
             <div className={styles.retainedPanel} hidden={showingSettings}>
               {drawer.side}
@@ -1266,22 +1349,6 @@ function ChannelWorkspace({
           )}
         </div>
       )}
-      {!composingMessage &&
-        !showingMediaReview &&
-        showingThread &&
-        panel &&
-        opened &&
-        activitySelection(opened.target) && (
-          <div className={styles.activityPane} hidden={showingSettings}>
-            <PanelCard
-              panel={panel}
-              target={opened.target}
-              context={panelContext}
-              close={close}
-              closeLabel="Close channel panel"
-            />
-          </div>
-        )}
     </div>
   );
   return (

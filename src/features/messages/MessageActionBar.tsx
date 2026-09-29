@@ -24,6 +24,7 @@ export function MessageActionBar({
   copyText,
   quickControls,
   branchControl,
+  menuItems,
   overflowItems,
   messageId,
   menuTriggerRef,
@@ -36,6 +37,7 @@ export function MessageActionBar({
   copyText(): string;
   quickControls?: ReactNode;
   branchControl?: ReactNode;
+  menuItems?: ReactNode;
   overflowItems?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -131,6 +133,7 @@ export function MessageActionBar({
               </MenuIcon>
               Copy link
             </MenuItem>
+            {menuItems}
             {overflowItems && (
               <>
                 <MenuSeparator />

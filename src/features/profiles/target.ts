@@ -16,3 +16,21 @@ export function profileKey(target: string): string | undefined {
     return undefined;
   }
 }
+
+/** Internal presentation target; public nostr identity locators stay exact. */
+export function profileActivityViewTarget(pubkey: string): string | undefined {
+  return profileTarget(pubkey)
+    ? `buzz:profile?agent=${pubkey.toLowerCase()}&tab=activity`
+    : undefined;
+}
+export function profileActivityViewKey(target: string): string | undefined {
+  try {
+    const url = new URL(target);
+    const agent = url.searchParams.get("agent");
+    return agent && target === profileActivityViewTarget(agent)
+      ? agent
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}

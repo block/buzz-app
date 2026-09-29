@@ -1,7 +1,8 @@
 @reference "../../shared/styles/globals.css";
 
 /* Reusable conversation components; plugins own placement and surrounding layout. */
-.thread {
+.thread,
+.embeddedThread {
   container-type: inline-size;
   container-name: messages;
   min-width: 0;
@@ -9,6 +10,8 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+.thread {
   background: var(--surface-panel);
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-card);
@@ -506,6 +509,29 @@
   list-style: none;
   margin: 0;
   padding: 0;
+}
+/* Labelled boundary between the root message and its replies. The label leads,
+   the hairline carries the eye across. The root row already reserves its action
+   strip below the text, so the boundary adds no space above — only the small gap
+   below that attaches the label to the replies it introduces. */
+.threadDivider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.threadDivider::after {
+  content: "";
+  flex: 1;
+  min-width: var(--space-4);
+  height: 1px;
+  background: var(--border-standard);
 }
 .threadHistoryControls {
   flex-shrink: 0;

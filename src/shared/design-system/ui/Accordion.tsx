@@ -1,5 +1,5 @@
 import { Accordion as BaseAccordion } from "@base-ui/react/accordion";
-import { CaretDownIcon } from "../icons/index";
+import { CaretDownIcon, CaretRightIcon } from "../icons/index";
 import type { ReactNode } from "react";
 
 /** Accessible disclosure groups. Base UI owns expansion and keyboard behavior. */
@@ -46,7 +46,11 @@ export function Accordion({
           >
             <BaseAccordion.Trigger className="buzz-accordion-trigger text-body">
               <span>{item.title}</span>
-              <CaretDownIcon size={14} aria-hidden="true" />
+              {variant === "activity" ? (
+                <CaretRightIcon size={14} aria-hidden="true" />
+              ) : (
+                <CaretDownIcon size={14} aria-hidden="true" />
+              )}
             </BaseAccordion.Trigger>
           </BaseAccordion.Header>
           <BaseAccordion.Panel className="buzz-accordion-panel">

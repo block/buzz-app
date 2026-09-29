@@ -1,3 +1,4 @@
+import { Shimmer } from "../../../../src/shared/design-system/ui/Shimmer";
 import { Calendar } from "../../../../src/shared/design-system/ui/Calendar";
 import { FieldButton } from "../../../../src/shared/design-system/ui/FieldButton";
 import {
@@ -439,11 +440,56 @@ const TABS_PANEL_PARTS = [
   },
 ] as const;
 
+const TABS_PILL_PARTS = [
+  {
+    name: "Container",
+    selector: ".buzz-tabs",
+    show: ["background", "shadow", "blur", "radius"],
+    note: "Nothing drawn. The pill is the only fill, so there is no second surface behind it.",
+  },
+  {
+    name: "Selected tab",
+    selector: ".buzz-tabs-item:has([data-selected])",
+    show: ["background", "radius"],
+    note: "The selection is the pill itself, drawn on the group that holds the label and its close control so both sit inside one shape.",
+  },
+  {
+    name: "Unselected tab",
+    selector: ".buzz-tabs-item:not(:has([data-selected])) .buzz-tabs-tab",
+    show: ["color", "background"],
+  },
+  {
+    name: "Close control",
+    selector: ".buzz-tabs-dismiss",
+    show: ["color", "background", "radius"],
+    note: "A sibling of the tab, not a child: a button inside a button is invalid and would announce one control where a person has two.",
+  },
+] as const;
+
+const NARROW_TABS = [
+  { value: "thread", label: "Thread" },
+  { value: "carl", label: "Carl" },
+  { value: "princess-donut", label: "Princess Donut" },
+  { value: "bartholomew", label: "Bartholomew Featherstonehaugh" },
+  { value: "vogue", label: "Vogue" },
+] as const;
+type NarrowTab = (typeof NARROW_TABS)[number]["value"];
+
 function TabsSpecimen() {
   const [destination, setDestination] = useState<Destination>("messages");
   const [panelDestination, setPanelDestination] =
     useState<Destination>("messages");
   const [iconDestination, setIconDestination] = useState<Destination>("home");
+  const [open, setOpen] = useState<readonly Destination[]>([
+    "home",
+    "messages",
+    "projects",
+  ]);
+  const [pillDestination, setPillDestination] = useState<Destination>("home");
+  const [narrowTab, setNarrowTab] = useState<NarrowTab>("vogue");
+  const [narrowOpen, setNarrowOpen] = useState<readonly NarrowTab[]>(
+    NARROW_TABS.map((item) => item.value),
+  );
   const iconItems = DESTINATIONS.map((item) => ({
     ...item,
     icon: <ChatCircleIcon size={16} aria-hidden="true" />,
@@ -507,6 +553,70 @@ function TabsSpecimen() {
           caption="The same parts in the panel variant. The container and the tab draw nothing at all, which is what makes this legible on a plain surface: there is no second fill to collide with the first."
           parts={TABS_PANEL_PARTS}
         />
+      </section>
+      <section className="component-specimen-group">
+        <h2 className="text-body-sm text-tertiary">
+          Pill — dismissible views on a plain surface
+        </h2>
+        <SpecimenFrame>
+          <div data-anatomy="tabs-pill">
+            <Tabs
+              value={pillDestination}
+              items={DESTINATIONS.filter((item) =>
+                open.includes(item.value),
+              ).map((item) => ({
+                ...item,
+                dismiss: {
+                  label: `Close ${item.label} tab`,
+                  onDismiss: () =>
+                    setOpen((previous) =>
+                      previous.filter((value) => value !== item.value),
+                    ),
+                },
+              }))}
+              label="Open views"
+              onValueChange={setPillDestination}
+              variant="pill"
+            />
+          </div>
+        </SpecimenFrame>
+        <ComponentAnatomy
+          scope='[data-anatomy="tabs-pill"]'
+          caption="The pill variant, where the selection is a container rather than a mark — which is what lets each view carry its own close control inside the same shape as its label."
+          parts={TABS_PILL_PARTS}
+        />
+      </section>
+      <section className="component-specimen-group">
+        <h2 className="text-body-sm text-tertiary">
+          Pill, in a narrow panel — more views than the strip can show
+        </h2>
+        {/* The panel width a person actually gets on a narrow window, because a
+            strip wide enough for every tab is exactly the case that hid the
+            defect: the selected view sat outside the visible strip with nothing
+            to say it existed. Names rather than destinations, since these labels
+            are people and their length is not ours to predict. */}
+        <SpecimenFrame>
+          <div style={{ maxWidth: "20rem" }}>
+            <Tabs
+              value={narrowTab}
+              items={NARROW_TABS.filter((item) =>
+                narrowOpen.includes(item.value),
+              ).map((item) => ({
+                ...item,
+                dismiss: {
+                  label: `Close ${item.label} tab`,
+                  onDismiss: () =>
+                    setNarrowOpen((previous) =>
+                      previous.filter((value) => value !== item.value),
+                    ),
+                },
+              }))}
+              label="Open views in a narrow panel"
+              onValueChange={setNarrowTab}
+              variant="pill"
+            />
+          </div>
+        </SpecimenFrame>
       </section>
       <section className="component-specimen-group">
         <h2 className="text-body-sm text-tertiary">
@@ -1019,6 +1129,20 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "choice-row": ChoiceRowSpecimen,
   select: SelectExamples,
   combobox: ComboboxExamples,
+  shimmer: () => (
+    <SpecimenFrame>
+      <SpecimenGroup label="Live activity">
+        <p className="text-body text-subtle">
+          <Shimmer>Reading project files…</Shimmer>
+        </p>
+      </SpecimenGroup>
+      <SpecimenGroup label="Inactive">
+        <p className="text-body text-subtle">
+          <Shimmer active={false}>Details may be out of date</Shimmer>
+        </p>
+      </SpecimenGroup>
+    </SpecimenFrame>
+  ),
   switch: SwitchSpecimen,
   "preference-row": SwitchSpecimen,
   accordion: () => (

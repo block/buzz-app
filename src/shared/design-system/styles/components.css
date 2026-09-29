@@ -1,6 +1,33 @@
 @import "./composer.css" layer(components);
 
 @layer components {
+  /* Keep ordinary text as the fallback, including reduced motion and forced
+     colors. The sweep strengthens the inherited text, never washes it out. */
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    @supports (background-clip: text) {
+      .buzz-shimmer[data-active] {
+        background-image: linear-gradient(
+          100deg,
+          currentColor 35%,
+          var(--text-standard) 50%,
+          currentColor 65%
+        );
+        background-size: 200% 100%;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: buzz-text-shimmer 2s linear infinite;
+      }
+    }
+  }
+  @keyframes buzz-text-shimmer {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: -100% 0;
+    }
+  }
+
   .buzz-button {
     position: relative;
     display: inline-grid;
@@ -602,6 +629,164 @@
     background: var(--text-standard);
   }
 
+  /* --- pill: a contained pill on a plain surface -------------- */
+
+  /* For views a person opened and can dismiss one at a time, which is why this
+     is not the `panel` underline: the selected pill is a container, so a close
+     control can sit inside the same shape as the label it belongs to and read
+     as part of that view rather than as a header action. An underline has no
+     container to put one in.
+
+     No fill on the strip itself. The pill is the only drawn surface, so there is
+     no second background for it to collide with — the same reason `panel` draws
+     nothing. */
+  .buzz-tabs[data-variant="pill"] {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .buzz-tabs[data-variant="pill"] .buzz-tabs-list {
+    min-width: 0;
+    flex: 1;
+    overflow-x: auto;
+    /* Room for the focus ring and the pill's own fill at either end of a
+       scrolling strip, so neither is clipped by the scroll container. */
+    padding: var(--space-half) var(--space-1);
+    margin: calc(var(--space-half) * -1) calc(var(--space-1) * -1);
+    scroll-padding-inline: var(--space-1);
+    gap: var(--space-1);
+  }
+
+  /* The tab and its close control share one pill. The group carries the fill and
+     the corner; the tab inside it carries only the label. They are siblings
+     rather than nested controls because a button inside a button is invalid and
+     would announce one control where a person has two. */
+  .buzz-tabs[data-variant="pill"] .buzz-tabs-item {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: var(--space-half);
+    height: var(--size-control-sm);
+    padding-inline-end: var(--space-1);
+    border-radius: var(--radius-pill);
+    color: var(--text-metadata);
+    transition: background-color var(--duration-state) var(--easing-state);
+  }
+
+  .buzz-tabs[data-variant="pill"] .buzz-tabs-tab {
+    flex-shrink: 0;
+    height: var(--size-control-sm);
+    border-radius: var(--radius-pill);
+    padding-inline: var(--space-3);
+    color: inherit;
+  }
+
+  /* These labels are people's names, so their length is not ours to predict. An
+     unbounded one makes a pill wider than the strip that holds it, and then
+     scrolling can only ever show the middle of a single tab — the one thing a
+     scrolling strip is supposed to prevent. Bounded at the same 16ch the agent
+     activity line uses, so a long name is recognisable from its start and the
+     tabs beside it stay reachable. The full name is on the view it opens. */
+  .buzz-tabs[data-variant="pill"] .buzz-tabs-tab > span {
+    overflow: hidden;
+    max-width: 16ch;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* A dismissible tab's own padding ends where its close control begins, so the
+     label is not pushed off-centre inside the pill by the control beside it. */
+  .buzz-tabs[data-variant="pill"] .buzz-tabs-item .buzz-tabs-tab {
+    padding-inline-end: var(--space-1);
+    /* Keyboard focus scrolls the focused element into view, and the focused
+       element here is only half of the pill. Reserving its close control's
+       footprint means arriving at a tab reveals the whole pill, rather than
+       stopping at the label and leaving the way to dismiss it off-screen. */
+    scroll-margin-inline-end: calc(
+      var(--space-6) +
+      var(--space-half) +
+      var(--space-1)
+    );
+  }
+
+  /* The same in reverse, as far as a fixed distance can go: reaching the close
+     control reveals the end of the label beside it rather than the control
+     alone, so it is clear what is about to be dismissed. */
+  .buzz-tabs[data-variant="pill"] .buzz-tabs-dismiss {
+    scroll-margin-inline-start: var(--space-8);
+  }
+
+  /* One pill, one surface: whichever element owns the pill's shape is the only
+     thing that ever fills. For a dismissible tab that is the group, so pointing
+     at the label or at the close control lights the same shape once, instead of
+     a small fill appearing inside a larger one. A tab with no close control is
+     the pill, and is matched as a direct child of the list so it cannot also
+     paint inside a group.
+
+     Selected pills are excluded for the same reason as the chrome variant above:
+     a cursor can rest on the selected pill, and a selected item in a toggle
+     group does not react. */
+  .buzz-tabs[data-variant="pill"]
+  .buzz-tabs-item:hover:not(:has([data-selected])),
+  .buzz-tabs[data-variant="pill"]
+    .buzz-tabs-list
+    > .buzz-tabs-tab:hover:not([data-selected]) {
+    background: var(--affordance-subtle-hover);
+    color: var(--text-standard);
+  }
+
+  .buzz-tabs[data-variant="pill"] .buzz-tabs-item:has([data-selected]),
+  .buzz-tabs[data-variant="pill"]
+    .buzz-tabs-list
+    > .buzz-tabs-tab[data-selected] {
+    background: var(--affordance-selected);
+    color: var(--text-standard);
+  }
+
+  /* The travelling bar belongs to the underline variant. Here the pill itself is
+     the selection, and a second mark would say the same thing twice. */
+  .buzz-tabs[data-variant="pill"] .buzz-tabs-indicator {
+    display: none;
+  }
+
+  /* 20px of artwork in a 24px control: below the 24px minimum on its own, so the
+     pill's own height supplies the rest of the target — the control is inset
+     within a 32px row that is entirely its own tab, with no adjacent target to
+     mis-hit. `text-metadata` at rest keeps it quieter than the label it follows,
+     which is the thing a person came to read. */
+  .buzz-tabs[data-variant="pill"] .buzz-tabs-dismiss {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: var(--space-6);
+    height: var(--space-6);
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text-metadata);
+    cursor: pointer;
+    transition:
+      color var(--duration-state) var(--easing-state),
+      background-color var(--duration-state) var(--easing-state);
+  }
+
+  /* No fill of its own: the pill around it is already the hover surface, and a
+     second fill inside that one is the two-stage effect. Colour alone marks which
+     of the pill's two controls the cursor is actually on. */
+  .buzz-tabs[data-variant="pill"] .buzz-tabs-dismiss:hover {
+    color: var(--text-standard);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-tabs[data-variant="pill"] .buzz-tabs-item,
+    .buzz-tabs[data-variant="pill"] .buzz-tabs-dismiss {
+      transition-duration: 0ms;
+    }
+  }
+
   .panel-header {
     position: relative;
     display: flex;
@@ -805,9 +990,20 @@
 
   html[data-keyboard-navigation] .buzz-button:focus-visible,
   html[data-keyboard-navigation] .navigation-item:focus-visible,
+  html[data-keyboard-navigation] .buzz-tabs-dismiss:focus-visible,
   html[data-keyboard-navigation] .buzz-tabs-tab:focus-visible {
     outline: 2px solid var(--text-standard);
     outline-offset: 2px;
+  }
+
+  /* Offset inward of the shared 2px: this ring sits inside a pill that is
+     already inset in the row, so the shared offset would cross its edge. Written
+     after the shared rule, and more specific, so the ring itself still comes
+     from one place. */
+  html[data-keyboard-navigation]
+    .buzz-tabs[data-variant="pill"]
+    .buzz-tabs-dismiss:focus-visible {
+    outline-offset: 1px;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1258,12 +1454,19 @@
   }
   .buzz-accordion[data-variant="activity"] .buzz-accordion-trigger {
     justify-content: flex-start;
+    gap: var(--space-1);
     padding: var(--space-2) 0;
     color: var(--text-subtle);
     overflow-wrap: anywhere;
   }
   .buzz-accordion[data-variant="activity"] .buzz-accordion-trigger > svg {
     flex-shrink: 0;
+    transition: transform var(--duration-settle) var(--easing-settle);
+  }
+  .buzz-accordion[data-variant="activity"]
+    .buzz-accordion-trigger[aria-expanded="true"]
+    > svg {
+    transform: rotate(90deg);
   }
   .buzz-accordion[data-variant="activity"] .buzz-accordion-panel {
     padding: 0;
@@ -1274,9 +1477,6 @@
   .buzz-accordion[data-variant="activity"]
     .buzz-accordion-panel:is([data-starting-style], [data-ending-style]) {
     height: 0;
-  }
-  .buzz-accordion[data-variant="activity"] .buzz-accordion-trigger > svg {
-    transition: transform var(--duration-settle) var(--easing-settle);
   }
   @media (prefers-reduced-motion: reduce) {
     .buzz-accordion[data-variant="activity"] .buzz-accordion-panel,

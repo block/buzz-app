@@ -1,6 +1,7 @@
 import { Accordion } from "@base-ui/react/accordion";
 import type { ReactNode } from "react";
-import { CaretDownIcon } from "../../shared/design-system/icons";
+import styles from "./ActivityDisclosure.module.css";
+import { CaretRightIcon } from "../../shared/design-system/icons";
 
 /** Local one-button activity disclosure using shared styles and Base UI behavior. */
 export function ActivityDisclosure({
@@ -28,8 +29,8 @@ export function ActivityDisclosure({
       <Accordion.Item value="activity">
         <Accordion.Header className="buzz-accordion-heading">
           <Accordion.Trigger className="buzz-accordion-trigger text-body-sm">
-            <span>{label}</span>
-            <CaretDownIcon size={14} aria-hidden="true" />
+            <span className={styles.label}>{label}</span>
+            <CaretRightIcon size={14} aria-hidden="true" />
           </Accordion.Trigger>
         </Accordion.Header>
         <Accordion.Panel className="buzz-accordion-panel">

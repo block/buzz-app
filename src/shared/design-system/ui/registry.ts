@@ -112,6 +112,19 @@ export type ComponentDefinition = {
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
   {
+    slug: "shimmer",
+    name: "Shimmer",
+    purpose: "A quiet text sweep that signals ongoing work.",
+    behavior:
+      "Keeps text and semantics intact; inactive, reduced-motion and forced-color states render ordinary text. Callers own activity freshness.",
+    variants: ["active", "inactive"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Shimmer.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "calendar",
     name: "Calendar",
     purpose: "Choose a date using a month grid.",
@@ -472,9 +485,9 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "tabs",
     name: "Tabs",
     purpose:
-      "A single-select switch between sibling views. `chrome` is the glass pill for the app gradient; `panel` is an underline for a plain surface; `workspace` is quiet title tabs for a combined pane. One component because only the surface differs — the behaviour, keyboard model, and props are identical.",
+      "A single-select switch between sibling views. `chrome` is the glass pill for the app gradient; `panel` is an underline for a plain surface; `pill` is a contained pill on a plain surface, for views a person opened and can dismiss one at a time; `workspace` is quiet title tabs for a combined pane. One component because only the surface differs — the behaviour, keyboard model, and props are identical.",
     behavior: "Base UI Tabs",
-    variants: ["chrome", "panel", "workspace"],
+    variants: ["chrome", "panel", "pill", "workspace"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

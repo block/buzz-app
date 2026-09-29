@@ -37,9 +37,11 @@ import { useKnownAgentPubkeys } from "../agents/use-known";
 import { pendingAgentRequest } from "./agent-request";
 import { threadAgentGroups, isAgentCoordination } from "./thread-agent-groups";
 import { ThreadAgentGroup } from "./ThreadAgentGroup";
+import { ThreadActivityContext } from "./ThreadActivityContext";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 
 export type ThreadPanelProps = {
+  embedded?: boolean;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -64,19 +66,19 @@ export type ThreadPanelProps = {
 export function ThreadPanel(props: ThreadPanelProps) {
   return (
     <aside
-      className={styles.thread}
+      className={props.embedded ? styles.embeddedThread : styles.thread}
       data-attachment-drop-zone=""
       onDragOver={rejectUnhandledFileDrop}
       onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        if (event.key === "Escape" && !props.embedded) {
           event.stopPropagation();
           props.close();
         }
       }}
     >
-      <ThreadHeader close={props.close} />
+      {!props.embedded && <ThreadHeader close={props.close} />}
       <OwnedThreadPanel
         key={messageViewKey(
           props.session,
@@ -574,17 +576,19 @@ function ThreadMessages({
   }, []);
   const renderActivity = (pending: typeof request) =>
     snapshot.root && extensions?.accessories ? (
-      <ComposerAccessories
-        registry={extensions.accessories}
-        placement="conversation"
-        session={session}
-        scope={scope}
-        channelId={channelId}
-        threadRootId={snapshot.root.id}
-        request={pending}
-        canOpen={(target) => canOpenLink?.(target) ?? false}
-        open={onOpenLink}
-      />
+      <ThreadActivityContext value={rows.map((row) => row.id)}>
+        <ComposerAccessories
+          registry={extensions.accessories}
+          placement="conversation"
+          session={session}
+          scope={scope}
+          channelId={channelId}
+          threadRootId={snapshot.root.id}
+          request={pending}
+          canOpen={(target) => canOpenLink?.(target) ?? false}
+          open={onOpenLink}
+        />
+      </ThreadActivityContext>
     ) : null;
   // Each parent owns its sibling sequence; never flatten ancestry to form a group.
   const requestBranch =
@@ -598,7 +602,7 @@ function ThreadMessages({
       parent ? byId.get(parent) : snapshot.root,
       tree.children.get(parent) ?? [],
       groupAgents,
-      requestBranch && parent !== request?.message.id ? undefined : request,
+      undefined,
       session.viewer,
       visibleAncestors,
     );
@@ -642,11 +646,7 @@ function ThreadMessages({
                 collapsedReveal.current = navigation?.signal;
             }}
           >
-            {block.request
-              ? renderActivity(block.request)
-              : !parent && block.tail
-                ? renderActivity(undefined)
-                : null}
+            {null}
           </ThreadAgentGroup>
         </li>
       );
@@ -654,7 +654,9 @@ function ThreadMessages({
       return group;
     });
   }
-  let previousReply: ChannelMessage | undefined = snapshot.root;
+  // The divider ends the root's authorship run: the first reply keeps its byline
+  // even when the same author wrote the root.
+  let previousReply: ChannelMessage | undefined;
   function renderReply(
     row: ChannelMessage,
     parent: string | undefined,
@@ -839,19 +841,15 @@ function ThreadMessages({
         ) : snapshot.status !== "loading" ? (
           <p className={styles.empty}>Original message unavailable.</p>
         ) : null}
-        <div className={styles.threadDivider}>
-          {snapshot.replies.length}{" "}
-          {snapshot.replies.length === 1 ? "reply" : "replies"}
-          {request?.agents.length && request.message.delivery !== "failed"
-            ? ` · ${request.agents.length} pending`
-            : ""}
-        </div>
+        {snapshot.root && snapshot.replies.length > 0 && (
+          <p className={styles.threadDivider}>
+            {snapshot.replies.length}{" "}
+            {snapshot.replies.length === 1 ? "reply" : "replies"}
+          </p>
+        )}
         <ol ref={accessoryTail}>
           {renderReplies(undefined)}
-          {!blocksFor(undefined).some(
-            (block) => block.kind === "agents" && block.tail,
-          ) &&
-            extensions?.accessories && <li>{renderActivity(undefined)}</li>}
+          {extensions?.accessories && <li>{renderActivity(request)}</li>}
         </ol>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (

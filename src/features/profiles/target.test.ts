@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { profileKey, profileTarget } from "./target";
+import {
+  profileKey,
+  profileTarget,
+  profileActivityViewTarget,
+  profileActivityViewKey,
+} from "./target";
 it("round-trips only exact public identity locators", () => {
   const key = "ab".repeat(32);
   const target = profileTarget(key);
@@ -17,4 +22,24 @@ it("round-trips only exact public identity locators", () => {
     "nostr:npub1abc",
   ])
     expect(profileKey(invalid)).toBeUndefined();
+});
+
+it("keeps activity profile targets internal and rejects extra scope or malformed identities", () => {
+  const key = "ab".repeat(32);
+  const target = profileActivityViewTarget(key);
+  if (!target) throw new Error("Expected a valid activity profile target");
+  expect(profileActivityViewKey(target)).toBe(key);
+  expect(profileActivityViewTarget(key.toUpperCase())).toBe(target);
+  expect(profileKey(target)).toBeUndefined();
+  expect(profileActivityViewTarget("bad")).toBeUndefined();
+  for (const invalid of [
+    profileTarget(key) ?? "",
+    `${target}&message=abc`,
+    `${target}&agent=${key}`,
+    `${target}#activity`,
+    target.replace("tab=activity", "tab=runtime"),
+    target.replace(key, "bad"),
+    target.replace("buzz:profile", "https://profile"),
+  ])
+    expect(profileActivityViewKey(invalid)).toBeUndefined();
 });

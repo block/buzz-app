@@ -63,7 +63,7 @@ function fixture() {
     status: "listening",
     records: [],
     turns: [],
-    typing: [{ channelId: "c", threadRootId: "m", agent: a }],
+    typing: [{ channelId: "c", threadRootId: "m", agent: a, timestamp: 1 }],
     trimmed: 0,
   };
   const subscribe = (listener: () => void) => {
@@ -165,14 +165,14 @@ it("uses channel scope in link previews and activity, and participant scope in s
     screen.getByRole("region", { name: "Agent activity in this thread" }),
   );
   expect(activity.getByText("Larry")).toBeVisible();
-  expect(activity.getByRole("button", { name: "Working…" })).toBeVisible();
+  expect(
+    activity.getByRole("button", {
+      name: "Larry Working…",
+    }),
+  ).toBeVisible();
   act(() => f.setPresence("away"));
   expect(activity.getByText("Larry")).toBeVisible();
-  expect(
-    view.container.querySelector(
-      '[aria-label="Agent activity in this thread"] [data-status="away"]',
-    ),
-  ).toBeVisible();
+
   act(() => f.join());
   expect(view.container.querySelector("strong")).toHaveTextContent(
     "Larry · rcaj",
@@ -181,11 +181,6 @@ it("uses channel scope in link previews and activity, and participant scope in s
     "Larry · rcaj, Larry · 04hu",
   );
   expect(activity.getByText("Larry · rcaj")).toBeVisible();
-  expect(
-    view.container.querySelector(
-      '[aria-label="Agent activity in this thread"] [data-status="away"]',
-    ),
-  ).toBeVisible();
 });
 it("scopes search DM labels and message authors to their own conversation", async () => {
   const f = fixture();

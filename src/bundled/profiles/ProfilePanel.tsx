@@ -43,7 +43,11 @@ import { PanelView } from "../../features/panels/PanelView";
 import { contributionKey } from "../../features/conversation/ContributionBoundary";
 import type { Panels, RegisteredPanel } from "../../features/panels/service";
 import type { PanelProps } from "../../features/panels/service";
-import { profileKey, profileTarget } from "../../features/profiles/target";
+import {
+  profileKey,
+  profileTarget,
+  profileActivityViewKey,
+} from "../../features/profiles/target";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
@@ -86,13 +90,15 @@ export function ProfilePanel({
   refreshControl?: boolean;
 }) {
   const connection = useRelayConnection(relay);
-  const pubkey = profileKey(target);
+  const activityKey = profileActivityViewKey(target);
+  const pubkey = profileKey(target) ?? activityKey;
   if (!pubkey) return <p>Unsupported profile.</p>;
   if (connection.status !== "ready")
     return <p>Connect to a community to view this profile.</p>;
   return (
     <ProfileDetails
-      key={`${connection.scope}:${connection.generation}:${pubkey}:${instanceId ?? ""}`}
+      key={`${connection.scope}:${connection.generation}:${pubkey}:${instanceId ?? ""}:${activityKey ? "activity" : "info"}`}
+      initialTab={activityKey ? "activity" : "info"}
       refreshControl={refreshControl}
       session={connection.session}
       pubkey={pubkey}
@@ -117,6 +123,7 @@ export function ProfilePanel({
   );
 }
 function ProfileDetails({
+  initialTab,
   children,
   refreshControl,
   session,
@@ -130,6 +137,7 @@ function ProfileDetails({
   instanceId,
   close,
 }: {
+  initialTab: "info" | "activity";
   instanceId?: string | undefined;
   refreshControl: boolean;
   children?: ReactNode;
@@ -170,7 +178,7 @@ function ProfileDetails({
   );
   const [tab, setTab] = useState<
     "info" | "runtime" | "channels" | "memories" | "activity"
-  >("info");
+  >(initialTab);
   const available = useSyncExternalStore(
     panels?.subscribe ?? noSubscribe,
     panels?.snapshot ?? emptyPanels,

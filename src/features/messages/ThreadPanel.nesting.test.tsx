@@ -86,7 +86,11 @@ function row(id: string, replyParentId?: string): ChannelMessage {
     replyCount: 0,
   };
 }
-function setup(messageId = "root", extensions?: ConversationExtensions) {
+function setup(
+  messageId = "root",
+  extensions?: ConversationExtensions,
+  embedded = false,
+) {
   let snapshot: ThreadSnapshot = {
     root: row("root"),
     replies: [
@@ -129,19 +133,27 @@ function setup(messageId = "root", extensions?: ConversationExtensions) {
       attention: () => ({ unread: false }),
     },
   } as unknown as RelaySession;
+  const close = vi.fn();
+  const parentKeyDown = vi.fn();
   render(
-    <ThreadPanel
-      extensions={extensions}
-      session={session}
-      scope="test"
-      channelName="C"
-      channelId="c"
-      messageId={messageId}
-      close={() => {}}
-      onOpenLink={() => false}
-    />,
+    // biome-ignore lint/a11y/noStaticElementInteractions: observe bubbling to the containing panel owner.
+    <div onKeyDown={parentKeyDown}>
+      <ThreadPanel
+        embedded={embedded}
+        extensions={extensions}
+        session={session}
+        scope="test"
+        channelName="C"
+        channelId="c"
+        messageId={messageId}
+        close={close}
+        onOpenLink={() => false}
+      />
+    </div>,
   );
   return {
+    close,
+    parentKeyDown,
     setChoices(status: "ready" | "loading", keys: readonly string[]) {
       act(() => {
         choices = {
@@ -236,22 +248,49 @@ it("does not silently retarget a deleted parent to the root", () => {
   ).toBeEnabled();
 });
 
-it("groups the first same-author reply with the root but respects the time window", () => {
+it("restarts authorship at the divider and still groups same-author siblings", () => {
   const h = setup();
+  // The divider ends the root's authorship run, so the first reply keeps its
+  // byline even though the root shares its author and timestamp.
   expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+    "data-layout",
+    "thread",
+  );
+  // The window and author checks still apply between consecutive replies.
+  h.update([row("parent", "root"), row("peer", "root")]);
+  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+    "data-layout",
+    "thread",
+  );
+  expect(screen.getByText("peer").closest("article")).toHaveAttribute(
     "data-layout",
     "continuation",
   );
-  h.update([{ ...row("parent", "root"), createdAt: 602 }]);
-  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+  h.update([row("parent", "root"), { ...row("peer", "root"), createdAt: 602 }]);
+  expect(screen.getByText("peer").closest("article")).toHaveAttribute(
     "data-layout",
     "thread",
   );
-  h.update([{ ...row("parent", "root"), authorId: "b".repeat(64) }]);
-  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+  h.update([
+    row("parent", "root"),
+    { ...row("peer", "root"), authorId: "b".repeat(64) },
+  ]);
+  expect(screen.getByText("peer").closest("article")).toHaveAttribute(
     "data-layout",
     "thread",
   );
+});
+it("counts loaded replies on the divider and omits it with none", () => {
+  const h = setup();
+  expect(screen.getByText("3 replies")).toBeVisible();
+  h.update([row("parent", "root")]);
+  expect(screen.getByText("1 reply")).toBeVisible();
+  h.update([]);
+  expect(screen.queryByText(/^\d+ repl(?:y|ies)$/)).toBeNull();
+  // A lost root removes the boundary with the message it separated.
+  h.update([row("parent", "root")]);
+  h.setRoot(undefined);
+  expect(screen.queryByText(/^\d+ repl(?:y|ies)$/)).toBeNull();
 });
 it("keeps ordinary replies flat and visible when nested branches close or new replies arrive", () => {
   const h = setup();
@@ -449,7 +488,7 @@ it("retains the selected reply target when late choices would group it", () => {
   ).toBeNull();
 });
 
-it("gives a nested addressed request exactly one pending group under its own ancestry", () => {
+it("keeps nested coordination ancestry without a settled activity group", () => {
   const h = setup();
   const key = "a".repeat(64);
   h.setChoices("ready", [key]);
@@ -461,8 +500,8 @@ it("gives a nested addressed request exactly one pending group under its own anc
   h.update([row("parent", "root"), nested]);
   fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
   expect(
-    screen.getAllByRole("region", { name: "Agent coordination and activity" }),
-  ).toHaveLength(1);
+    screen.queryByRole("region", { name: "Agent coordination and activity" }),
+  ).toBeNull();
   h.update([
     row("parent", "root"),
     nested,
@@ -478,7 +517,7 @@ it("gives a nested addressed request exactly one pending group under its own anc
   ).toHaveLength(1);
   expect(
     screen.getByRole("button", {
-      name: "1 agent · 1 coordination message · 1 awaiting reply",
+      name: "1 agent · 1 coordination message",
     }),
   ).toHaveAttribute("aria-expanded", "false");
 });
@@ -507,13 +546,14 @@ it("keeps one collapsed coordination group and preserves request intent through 
       pluginId: "test",
       title: "Activity",
       placement: "conversation" as const,
-      component: ({ request }: ComposerAccessoryProps) => (
-        <section aria-label="Request details">
-          {request?.agents.map((key) => (
-            <p key={key}>Pending details {key}</p>
-          ))}
-        </section>
-      ),
+      component: ({ request, message }: ComposerAccessoryProps) =>
+        message ? null : (
+          <section aria-label="Request details">
+            {request?.agents.map((key) => (
+              <p key={key}>Pending details {key}</p>
+            ))}
+          </section>
+        ),
     },
   ];
   const extensions: ConversationExtensions = {
@@ -525,10 +565,10 @@ it("keeps one collapsed coordination group and preserves request intent through 
   h.update([]);
   h.setChoices("ready", keys);
   h.setRoot({ ...row("root"), authorId: "viewer", mentions: keys });
-  const group = screen.getByRole("button", {
-    name: "3 agents · Activity · 3 awaiting reply",
-  });
-  expect(group).toHaveAttribute("aria-expanded", "false");
+  expect(
+    screen.queryByRole("region", { name: "Agent coordination and activity" }),
+  ).toBeNull();
+  expect(screen.getByText(`Pending details ${keys[0]}`)).toBeVisible();
   const coord = (id: string, key: string) => ({
     ...row(id, "root"),
     authorId: key,
@@ -537,6 +577,9 @@ it("keeps one collapsed coordination group and preserves request intent through 
   });
   const first = coord("coord-a", keys[0]);
   h.update([first]);
+  const group = screen.getByRole("button", {
+    name: "3 agents · 1 coordination message",
+  });
   expect(group).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByText("coord-a")).toBeNull();
   fireEvent.click(group);
@@ -553,7 +596,8 @@ it("keeps one collapsed coordination group and preserves request intent through 
   expect(group).toHaveAttribute("aria-expanded", "true"); // Manual expansion survives traffic.
   expect(screen.getByText(`Pending details ${keys[1]}`)).toBeVisible();
   expect(screen.getByText(`Pending details ${keys[2]}`)).toBeVisible();
-  expect(group).toHaveTextContent("3 awaiting reply"); // Presentation is not settlement.
+  // The divider counts loaded replies; collapsing coordination does not hide them.
+  expect(screen.getByText("2 replies")).toBeVisible();
   const third = coord("coord-c", keys[2]);
   h.update([first, second, third]);
   expect(screen.getByRole("region", { name: "Request details" })).toBeVisible();
@@ -571,5 +615,21 @@ it("keeps one collapsed coordination group and preserves request intent through 
   expect(
     screen.getAllByRole("region", { name: "Agent coordination and activity" }),
   ).toHaveLength(1);
-  expect(screen.getByText("4 replies · 2 pending")).toBeVisible();
+  // Four loaded replies regardless of which are inside the collapsed group.
+  expect(screen.getByText("4 replies")).toBeVisible();
+  expect(screen.getByText(`Pending details ${keys[1]}`)).toBeVisible();
+  expect(screen.getByText(`Pending details ${keys[2]}`)).toBeVisible();
 });
+
+// The outer tabbed panel owns Escape when the thread is embedded.
+it.each([false, true])(
+  "routes Escape to the correct panel owner (embedded=%s)",
+  (embedded) => {
+    const fixture = setup("root", undefined, embedded);
+    fireEvent.keyDown(screen.getByRole("complementary", { name: "Thread" }), {
+      key: "Escape",
+    });
+    expect(fixture.close).toHaveBeenCalledTimes(embedded ? 0 : 1);
+    expect(fixture.parentKeyDown).toHaveBeenCalledTimes(embedded ? 1 : 0);
+  },
+);

@@ -1,69 +1,120 @@
-import { CoordinationAuthors } from "../../features/messages/ThreadAgentGroup";
-import { useTypingReplacement } from "../../features/conversation/typing-presentation";
-import { activityTranscript } from "./transcript";
-import { workingActivityLabel } from "./activity-presentation";
-import { useChannelIdentityNames } from "../../features/identity-names/react";
+import { Shimmer } from "../../shared/design-system/ui/Shimmer";
 import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
-import { ContextMenu } from "@base-ui/react/context-menu";
-import type { RelaySession } from "../../features/relay/session";
+import { ThreadActivityContext } from "../../features/messages/ThreadActivityContext";
+import { useTypingReplacement } from "../../features/conversation/typing-presentation";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
-import { activityTarget } from "../../features/agents/activity-target";
-import { activityRecords } from "../../features/agents/activity-records";
-import { requestActivity, requestActivityState } from "./request-activity";
+import type { RelaySession } from "../../features/relay/session";
+import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { usePresenceStatus } from "../../features/presence/react";
+import { requestActivity } from "./request-activity";
+import { activityTranscript } from "./transcript";
+import { liveAction, liveLabel, liveTranscript } from "./live-activity";
 import { ActivityStream } from "./ActivityStream";
-import { ResponseActivity } from "./ResponseActivity";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { ActivityFeedStatus } from "./ActivityFeedStatus";
 import styles from "./ActivityAccessory.module.css";
 
-/** Plugin activation owns capture. These are ephemeral decorations, never messages. */
+type Snapshot = ReturnType<RelaySession["agentActivity"]["snapshot"]>;
+
+/** One live tail only. Settled messages deliberately have no activity decoration. */
 export function ActivityAccessory(props: ComposerAccessoryProps) {
-  const { session, channelId, threadRootId, message, request } = props;
+  return props.threadRootId && !props.message ? (
+    <LiveActivity {...props} />
+  ) : null;
+}
+function LiveActivity(props: ComposerAccessoryProps) {
+  const { session, channelId, threadRootId, request } = props;
+  const messageIds = useContext(ThreadActivityContext);
   const snapshot = useSyncExternalStore(
     session.agentActivity.subscribe,
     session.agentActivity.snapshot,
     session.agentActivity.snapshot,
   );
-  const typing = snapshot.typing.filter(
-    (entry) =>
-      entry.channelId === channelId && entry.threadRootId === threadRootId,
-  );
-  const keys = !threadRootId
-    ? ""
-    : message
-      ? message.agentEnvelope ||
-        session.profiles.snapshot().get(message.authorId)?.isAgent ||
-        snapshot.records.some(
-          (row) =>
-            row.agent === message.authorId &&
-            row.channelIds.includes(channelId),
+  const entries = useMemo(() => {
+    const ids = new Set([
+      ...messageIds,
+      ...(threadRootId ? [threadRootId] : []),
+      ...(request ? [request.message.id] : []),
+    ]);
+    const typing = snapshot.typing.filter(
+      (entry) =>
+        entry.channelId === channelId && entry.threadRootId === threadRootId,
+    );
+    const agents = new Set([
+      ...typing.map((entry) => entry.agent),
+      ...snapshot.turns
+        .filter(
+          (turn) => turn.channelId === channelId && turn.state !== "ended",
         )
-        ? message.authorId
-        : ""
-      : [
-          ...new Set(
-            request ? request.agents : typing.map((entry) => entry.agent),
-          ),
-        ]
-          .sort()
-          .join(":");
+        .map((turn) => turn.agent),
+    ]);
+    return [...agents].sort().flatMap((agent) => {
+      const records = new Map<
+        string,
+        ReturnType<typeof requestActivity>["records"][number]
+      >();
+      const turnIds = new Set<string>();
+      for (const id of ids) {
+        const selected = requestActivity(
+          snapshot.records,
+          agent,
+          channelId,
+          id,
+        );
+        for (const turn of selected.turnIds) turnIds.add(turn);
+        for (const record of selected.records) records.set(record.id, record);
+      }
+      const turns = snapshot.turns.filter(
+        (turn) =>
+          turn.agent === agent &&
+          turn.channelId === channelId &&
+          turnIds.has(turn.turnId),
+      );
+      const live = turns.filter((turn) => turn.state !== "ended");
+      const terminalTime = Math.max(
+        -Infinity,
+        ...turns
+          .filter((turn) => turn.state === "ended")
+          .map((turn) => turn.timestamp),
+      );
+      const isTyping = typing.some(
+        (entry) => entry.agent === agent && entry.timestamp > terminalTime,
+      );
+      // A known terminal beats delayed typing for that same observed work.
+      if (!live.length && !isTyping) return [];
+      const fresh = live.filter((turn) => turn.state === "working");
+      // Typing establishes scope, not which unknown turn is doing the work.
+      // Never promote an old target back to current just because typing resumed.
+      const detailTurns = fresh.length ? fresh : isTyping ? [] : live;
+      const selectedRecords = detailTurns.length ? [...records.values()] : [];
+      const transcript = liveTranscript(
+        activityTranscript(selectedRecords),
+        detailTurns,
+      );
+      return [
+        {
+          agent,
+          transcript,
+          records: selectedRecords,
+          turns: detailTurns,
+          working: fresh.length > 0 || isTyping,
+        },
+      ];
+    });
+  }, [messageIds, threadRootId, request, snapshot, channelId]);
+  const keys = entries.map((entry) => entry.agent).join(":");
   useEffect(() => {
-    if (keys && !message)
+    if (keys)
       void session.profiles
         .ensure(keys.split(":"), "background")
         .catch(() => {});
-  }, [session.profiles, keys, message]);
-  const resolveName = useChannelIdentityNames(session, channelId);
+  }, [session.profiles, keys]);
   const profiles = useMemo(
     () => selectProfiles(session.profiles, keys ? keys.split(":") : []),
     [session.profiles, keys],
@@ -73,160 +124,69 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
     profiles.snapshot,
     profiles.snapshot,
   );
-  if (!keys) return null;
-  const agents = keys.split(":");
-  const entries = () =>
-    agents.map((agent) => {
-      const profile = identities.get(agent);
-      return (
-        <ActivityEntry
-          key={agent}
-          {...props}
-          agent={agent}
-          name={resolveName(
-            agent,
-            profile?.name ?? `Agent ${agent.slice(0, 8)}`,
-          )}
-          picture={profile?.picture}
-          working={typing.some((entry) => entry.agent === agent)}
-          records={snapshot.records}
-          turns={snapshot.turns}
-          feedStatus={snapshot.status}
-          trimmed={snapshot.trimmed}
-        />
-      );
-    });
+  const name = useChannelIdentityNames(session, channelId);
+  if (!entries.length) return null;
   return (
     <section
       className={styles.root}
       data-buzz-ui=""
-      aria-label={
-        message
-          ? "Message agent activity"
-          : threadRootId
-            ? "Agent activity in this thread"
-            : "Agent activity in this channel"
-      }
+      aria-label="Agent activity in this thread"
     >
-      {entries()}
+      {entries.map((entry) => (
+        <LiveEntry
+          key={entry.agent}
+          {...props}
+          {...entry}
+          snapshot={snapshot}
+          name={name(
+            entry.agent,
+            identities.get(entry.agent)?.name ??
+              `Agent ${entry.agent.slice(0, 8)}`,
+          )}
+        />
+      ))}
     </section>
   );
 }
-function ActivityEntry({
+function LiveEntry({
   session,
   channelId,
   threadRootId,
-  message,
   request,
-  canOpen,
-  open,
   agent,
-  name,
-  picture,
+  records,
+  transcript,
+  turns,
   working,
-  records: source,
-  turns: allTurns,
-  feedStatus,
-  trimmed,
+  snapshot,
+  name,
 }: ComposerAccessoryProps & {
-  feedStatus: ReturnType<RelaySession["agentActivity"]["snapshot"]>["status"];
-  trimmed: number;
   agent: string;
-  name: string;
-  picture: string | undefined;
+  records: ReturnType<typeof requestActivity>["records"];
+  turns: Snapshot["turns"];
+  transcript: ReturnType<typeof liveTranscript>;
   working: boolean;
-  records: ReturnType<
-    ComposerAccessoryProps["session"]["agentActivity"]["snapshot"]
-  >["records"];
-  turns: ReturnType<
-    ComposerAccessoryProps["session"]["agentActivity"]["snapshot"]
-  >["turns"];
+  snapshot: Snapshot;
+  name: string;
 }) {
-  const represented = useContext(CoordinationAuthors).has(agent);
-  const presence = usePresenceStatus(
-    message ? undefined : session.presence,
-    agent,
-  );
-  const [expanded, expand] = useState<string[]>([]);
-  const requestId = request?.message.id;
-  const selected = useMemo(
-    () =>
-      !message && requestId
-        ? requestActivity(source, agent, channelId, requestId)
-        : undefined,
-    [message, requestId, source, agent, channelId],
-  );
-  const records = useMemo(
-    () =>
-      message
-        ? []
-        : (selected?.records ??
-          (expanded.length ? activityRecords(source, agent, channelId) : [])),
-    [message, selected, expanded.length, source, agent, channelId],
-  );
-  const turns = useMemo(
-    () =>
-      allTurns.filter(
-        (turn) =>
-          turn.agent === agent &&
-          turn.channelId === channelId &&
-          (!selected || selected.turnIds.has(turn.turnId)),
-      ),
-    [allTurns, agent, channelId, selected],
-  );
-  const transcript = useMemo(() => activityTranscript(records), [records]);
-  const requestState = selected
-    ? requestActivityState(selected, turns, trimmed)
-    : undefined;
-  const requestWorking = selected ? requestState === "working" : working;
-  const [menu, setMenu] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const region = useRef<HTMLDivElement>(null);
-  const pointer = useRef<{
-    id: number;
-    x: number;
-    y: number;
-    moved: boolean;
-  } | null>(null);
-  const suppressClick = useRef(false);
-  const target = activityTarget(
-    agent,
-    channelId,
-    message?.id,
-    message ? undefined : requestId,
-  );
-  function detach() {
-    region.current
-      ?.querySelector<HTMLButtonElement>("button")
-      ?.focus({ preventScroll: true });
-    if (canOpen(target) && open(target)) expand([]);
-    setMenu(false);
-  }
-  const delivery = request?.message.delivery;
-  const label = message
-    ? "View activity"
-    : delivery === "failed"
-      ? "Request not sent"
-      : delivery === "sending"
-        ? "Sending request…"
-        : delivery === "unknown"
-          ? "Delivery unconfirmed"
-          : requestWorking
-            ? selected
-              ? workingActivityLabel(transcript, turns)
-              : "Working…"
-            : requestState === "unknown"
-              ? "Status unknown"
-              : requestState === "error"
-                ? "Observed activity ended · error reported"
-                : requestState === "ended"
-                  ? "Observed activity ended"
-                  : "Waiting for response…";
-  const replacesTyping =
-    !message &&
-    requestWorking &&
-    feedStatus === "listening" &&
-    (!delivery || delivery === "accepted" || delivery === "seen");
+  const [expanded, expand] = useState(false);
+  const displayTranscript = {
+    ...transcript,
+    groups: transcript.groups.map((group) => ({
+      ...group,
+      entries: group.entries.map((entry) => {
+        const projected = { ...entry };
+        // Show the invocation, never duplicate a posted reply as an activity row.
+        delete projected.communication;
+        if (entry.kind === "tool" || entry.title.startsWith("Permission "))
+          projected.title = liveAction(entry);
+        return projected;
+      }),
+    })),
+  };
+  const label = working
+    ? liveLabel(transcript)
+    : `${liveLabel(transcript)} · details may be out of date`;
   useTypingReplacement(
     {
       session,
@@ -234,207 +194,42 @@ function ActivityEntry({
       threadRootId,
       pubkey: agent,
       channelComposer:
-        !!request &&
-        request.message.id === threadRootId &&
-        !request.message.threadRootId,
+        request?.message.id === threadRootId && !request?.message.threadRootId,
     },
-    replacesTyping,
+    working && snapshot.status === "listening",
   );
-  // Hide only a clean ended duplicate. Coordination is NOT a final answer;
-  // preserve work/uncertainty/errors (including later turns) and no-message agents.
-  if (
-    request &&
-    !message &&
-    represented &&
-    requestState === "ended" &&
-    feedStatus === "listening" &&
-    !working &&
-    (!delivery || delivery === "accepted" || delivery === "seen") &&
-    !allTurns.some(
-      (turn) =>
-        turn.agent === agent &&
-        turn.channelId === channelId &&
-        turn.state !== "ended",
-    )
-  )
-    return null;
   return (
-    <div className={message ? styles.attached : styles.response} ref={region}>
-      {!message && (
-        <Avatar
-          src={picture ? session.media(picture) : undefined}
-          alt=""
-          fallback={name}
-          shape="squircle"
-          statusBadge={presence === "unknown" ? undefined : presence}
-          size="large"
-        />
-      )}
-      <div className={styles.body}>
-        {!message && <p className="text-label-sm">{name}</p>}
-        {!message && (
-          <span
-            className="sr-only"
-            role="status"
-            aria-label="Agent activity status"
-          >
-            {replacesTyping
-              ? `${name} is working. ${label}`
-              : `${name}: ${label}`}
-          </span>
-        )}
-        <ContextMenu.Root open={menu} onOpenChange={setMenu}>
-          <ContextMenu.Trigger
-            className={styles.disclosure}
-            onKeyDown={(event) => {
-              if (
-                event.key === "ContextMenu" ||
-                (event.shiftKey && event.key === "F10")
-              ) {
-                event.preventDefault();
-                event.stopPropagation();
-                setMenu(true);
-              }
-            }}
-            onPointerDown={(event) => {
-              if (
-                event.button !== 0 ||
-                (event.target !== event.currentTarget.querySelector("button") &&
-                  !(
-                    event.target instanceof Element &&
-                    event.currentTarget
-                      .querySelector("button")
-                      ?.contains(event.target)
-                  ))
-              )
-                return;
-              pointer.current = {
-                id: event.pointerId,
-                x: event.clientX,
-                y: event.clientY,
-                moved: false,
-              };
-              suppressClick.current = false;
-            }}
-            onPointerMove={(event) => {
-              const start = pointer.current;
-              if (!event.buttons) {
-                pointer.current = null;
-                setDragging(false);
-                return;
-              }
-              if (!start || start.id !== event.pointerId || !canOpen(target))
-                return;
-              if (
-                event.clientX - start.x > 60 &&
-                Math.abs(event.clientY - start.y) < 100
-              ) {
-                event.currentTarget.setPointerCapture(event.pointerId);
-                start.moved = true;
-                setDragging(true);
-                suppressClick.current = true;
-              }
-            }}
-            onPointerUp={(event) => {
-              const start = pointer.current;
-              pointer.current = null;
-              setDragging(false);
-              if (start?.moved && event.clientX - start.x > 60) {
-                event.preventDefault();
-                detach();
-              }
-            }}
-            onLostPointerCapture={() => {
-              pointer.current = null;
-              setDragging(false);
-            }}
-            onPointerLeave={() => {
-              if (!pointer.current?.moved) pointer.current = null;
-            }}
-            onPointerCancel={() => {
-              pointer.current = null;
-              setDragging(false);
-            }}
-            onClickCapture={(event) => {
-              if (suppressClick.current) {
-                event.preventDefault();
-                event.stopPropagation();
-                suppressClick.current = false;
-              }
-            }}
-          >
-            <ActivityDisclosure
-              label={label}
-              expanded={expanded.length > 0}
-              onExpand={(value) => expand(value ? ["activity"] : [])}
+    <div className={styles.line}>
+      <ActivityDisclosure
+        expanded={expanded}
+        onExpand={expand}
+        label={
+          <span className={styles.label}>
+            <span className={`${styles.name} text-label-sm`}>{name}</span>{" "}
+            <Shimmer
+              className={styles.action}
+              active={working && snapshot.status === "listening"}
             >
-              <ActivityFeedStatus
-                status={feedStatus}
-                trimmed={trimmed}
-                retry={() => session.live.retry()}
-              />
-              {source.some((row) => row.saveError) && (
-                <p role="status" className="text-body-sm text-subtle">
-                  Some live Activity could not be saved. Saved history may have
-                  gaps.
-                </p>
-              )}
-              {message ? (
-                feedStatus !== "unavailable" && (
-                  <ResponseActivity
-                    records={source}
-                    session={session}
-                    agent={agent}
-                    channelId={channelId}
-                    messageId={message.id}
-                  />
-                )
-              ) : (
-                <div className={styles.details}>
-                  {!selected && (
-                    <p className="text-body-sm text-subtle">
-                      Channel activity, including other threads
-                    </p>
-                  )}
-                  {feedStatus === "listening" && !records.length && (
-                    <p className="text-body-sm text-subtle">
-                      No activity received yet. The request does not confirm the
-                      agent has started.
-                    </p>
-                  )}
-                  <ActivityStream
-                    records={records}
-                    session={session}
-                    transcript={transcript}
-                    turns={turns}
-                    compact
-                    showTurnHeading={false}
-                    showDiagnostics={false}
-                  />
-                </div>
-              )}
-            </ActivityDisclosure>
-          </ContextMenu.Trigger>
-          <ContextMenu.Portal>
-            <ContextMenu.Positioner>
-              <ContextMenu.Popup data-buzz-ui="" className={styles.menu}>
-                <ContextMenu.Item
-                  className={styles.menuItem}
-                  disabled={!canOpen(target)}
-                  onClick={detach}
-                >
-                  Open activity in side panel
-                </ContextMenu.Item>
-              </ContextMenu.Popup>
-            </ContextMenu.Positioner>
-          </ContextMenu.Portal>
-        </ContextMenu.Root>
-        {dragging && (
-          <span className={styles.dragHint} role="status">
-            Release to open activity beside the conversation
+              {label}
+            </Shimmer>
           </span>
-        )}
-      </div>
+        }
+      >
+        <ActivityFeedStatus
+          status={snapshot.status}
+          trimmed={snapshot.trimmed}
+          retry={() => session.live.retry()}
+        />
+        <ActivityStream
+          records={records}
+          session={session}
+          transcript={displayTranscript}
+          turns={turns}
+          compact
+          showTurnHeading={false}
+          showDiagnostics={false}
+        />
+      </ActivityDisclosure>
     </div>
   );
 }

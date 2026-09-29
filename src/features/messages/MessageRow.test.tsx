@@ -8,7 +8,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { messageCopyText } from "./message-copy";
-import { profileTarget } from "../profiles/target";
+import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
 import { keypair, message, signed, summary } from "../relay/testing";
@@ -914,3 +914,77 @@ it.each([
     cleanup();
   },
 );
+
+it("opens an agent's full profile activity from the overflow menu only while both panels are available", () => {
+  const authorId = "a".repeat(64);
+  const target = profileActivityViewTarget(authorId);
+  const open = vi.fn(() => true);
+  let available = true;
+  const canOpen = vi.fn(() => available);
+  const props = {
+    row: { ...row, authorId },
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: open,
+    canOpenLink: canOpen,
+    day: false,
+    retry: undefined,
+  };
+  const view = renderDom(
+    <MessageRow {...props} agentPubkeys={new Set([authorId])} />,
+  );
+  try {
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "View activity" }));
+    expect(open).toHaveBeenCalledWith(target);
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    available = false;
+    fireEvent.click(screen.getByRole("menuitem", { name: "View activity" }));
+    expect(open).toHaveBeenCalledTimes(1);
+    view.rerender(
+      <MessageRow
+        {...props}
+        canOpenLink={() => false}
+        agentPubkeys={new Set([authorId])}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "View activity" }),
+    ).toBeNull();
+  } finally {
+    view.unmount();
+    cleanup();
+  }
+});
+
+it("does not offer activity for a human message", () => {
+  const view = renderDom(
+    <MessageRow
+      row={{ ...row, authorId: "a".repeat(64) }}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => true}
+      canOpenLink={() => true}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  try {
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "View activity" }),
+    ).toBeNull();
+  } finally {
+    view.unmount();
+    cleanup();
+  }
+});

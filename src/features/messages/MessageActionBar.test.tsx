@@ -102,3 +102,30 @@ it("prevents duplicate clipboard writes until the first settles", async () => {
   await screen.findByText("Link copied");
   expect(link.hasAttribute("disabled")).toBe(false);
 });
+
+it("places activity after copying and separates reporting at the bottom", () => {
+  render(
+    <MessageActionBar
+      copyText={() => "Hello"}
+      menuItems={<MenuItem>View activity</MenuItem>}
+      overflowItems={<MenuItem>Report message</MenuItem>}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "More message actions" }));
+  const menu = screen.getByRole("menu");
+  expect(
+    Array.from(
+      menu.querySelectorAll('[role="menuitem"], [role="separator"]'),
+    ).map((element) =>
+      element.getAttribute("role") === "separator"
+        ? "divider"
+        : element.textContent,
+    ),
+  ).toEqual([
+    "Copy message",
+    "Copy link",
+    "View activity",
+    "divider",
+    "Report message",
+  ]);
+});

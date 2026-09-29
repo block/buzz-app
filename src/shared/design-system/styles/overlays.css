@@ -210,6 +210,46 @@
   .buzz-tabs-panel {
     min-width: 0;
   }
+  .buzz-tab-panels[data-retain-panels] {
+    height: 100%;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0;
+  }
+  /* The tab strip is this panel's header, so it takes the shared header's height
+     and inset rather than inventing its own, and carries the same inset hairline
+     that separates every other panel header from the content beneath it. Without
+     one, the pill variant draws no line of its own and scrolling content ran
+     straight into the tabs. */
+  .buzz-tab-panels[data-retain-panels] > .buzz-tabs {
+    position: relative;
+    min-height: var(--size-panel-header);
+    padding-block: var(--space-2);
+    padding-inline: var(--space-panel-inset);
+  }
+  .buzz-tab-panels[data-retain-panels] > .buzz-tabs::after {
+    position: absolute;
+    right: var(--space-panel-inset);
+    bottom: 0;
+    left: var(--space-panel-inset);
+    height: 1px;
+    background: var(--border-standard);
+    content: "";
+    pointer-events: none;
+  }
+  .buzz-tab-panels[data-retain-panels] > .buzz-tabs > .buzz-tabs-list {
+    flex: 1;
+  }
+  .buzz-tab-panels[data-retain-panels] > .buzz-tabs-panel {
+    grid-area: 2 / 1;
+    display: grid;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .buzz-tab-panels[data-retain-panels] > .buzz-tabs-panel[inert] {
+    visibility: hidden;
+    opacity: 0;
+  }
   html[data-keyboard-navigation] .buzz-tabs-panel:focus-visible {
     outline: 2px solid var(--border-focus);
     outline-offset: 2px;

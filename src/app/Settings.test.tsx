@@ -32,6 +32,7 @@ function registry(initial: Contribution<SettingsCard>[]) {
     },
     register() {},
     retainVisibility: () => () => {},
+    visibility: (key) => entries.some((entry) => entry.key === key),
   };
   return {
     cards,

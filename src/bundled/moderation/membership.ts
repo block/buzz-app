@@ -115,10 +115,9 @@ export function createCommunityMembership(relay: RelayData) {
   const relayChanged = () => {
     const before = key;
     const connection = current();
-    if (before !== key) {
-      for (const listener of listeners) listener();
-      if (demands && connection.status === "ready") void load(false);
-    }
+    for (const listener of listeners) listener();
+    if (before !== key && demands && connection.status === "ready")
+      void load(false);
   };
   const stop = relay.subscribe(relayChanged);
   return {

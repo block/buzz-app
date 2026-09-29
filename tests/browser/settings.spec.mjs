@@ -135,10 +135,15 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
 
 test.describe("community administration permissions", () => {
   test("shows Membership to a verified owner", async ({ page, app }) => {
+    let rosterGate;
+    let rosterStarted = () => {};
     await page.route("**/api/relay/primary/query", async (route) => {
       const filters = route.request().postDataJSON();
-      if (filters.some((filter) => filter.kinds?.includes(13534)))
+      if (filters.some((filter) => filter.kinds?.includes(13534))) {
+        rosterStarted();
+        await rosterGate;
         return route.fulfill({ json: [app.membershipSnapshot("owner")] });
+      }
       return route.continue();
     });
     await page.goto(app.origin);
@@ -148,9 +153,13 @@ test.describe("community administration permissions", () => {
       name: "Settings sections",
     });
     await expect(sections).toContainText("Administration");
-    await sections
-      .getByRole("button", { name: "Membership", exact: true })
-      .click();
+    const membership = sections.getByRole("button", {
+      name: "Membership",
+      exact: true,
+    });
+    await membership.focus();
+    await membership.press("Enter");
+    await expect(membership).toBeFocused();
     await expect(
       page.getByRole("heading", { name: "Membership", exact: true }),
     ).toBeVisible();
@@ -168,6 +177,35 @@ test.describe("community administration permissions", () => {
     await expect(
       dialog.getByRole("combobox", { name: /Search people/ }),
     ).toHaveCount(0);
+
+    // Keep browser history/reload, real roster verification, and host wiring real.
+    // A held response proves this route cannot fall through to Profile or failure.
+    await page.keyboard.press("Escape");
+    let releaseRoster;
+    rosterGate = new Promise((resolve) => {
+      releaseRoster = resolve;
+    });
+    const started = new Promise((resolve) => {
+      rosterStarted = resolve;
+    });
+    try {
+      await page.reload();
+      await started;
+      await expect(
+        page.getByText("Opening destination…", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("This destination couldn’t open", { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        sections.getByRole("button", { name: "Membership", exact: true }),
+      ).toHaveCount(0);
+    } finally {
+      releaseRoster();
+    }
+    await expect(
+      page.getByRole("heading", { name: "Membership", exact: true }),
+    ).toBeVisible();
   });
 });
 

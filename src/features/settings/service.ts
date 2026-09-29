@@ -18,7 +18,7 @@ export type SettingsCard = {
   section?: "administration";
   /** Reactive verified authorization for permission-gated navigation. */
   visibility?: {
-    snapshot(): boolean;
+    snapshot(): boolean | "pending" | "error";
     subscribe(listener: () => void): () => void;
     ensure(): () => void;
   };
@@ -28,6 +28,7 @@ export type SettingsCards = {
   subscribe(listener: () => void): () => void;
   register(card: SettingsCard): void;
   retainVisibility(): () => void;
+  visibility(key: string): boolean | "pending" | "error";
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -46,16 +47,21 @@ export class SettingsCardsService extends Service implements SettingsCards {
   private publish = () => {
     const next = this.entries
       .snapshot()
-      .filter((entry) => entry.visibility?.snapshot() !== false);
+      .filter(
+        (entry) => !entry.visibility || entry.visibility.snapshot() === true,
+      );
     if (
-      next.length === this.visible.length &&
-      next.every((entry, index) => entry === this.visible[index])
+      next.length !== this.visible.length ||
+      next.some((entry, index) => entry !== this.visible[index])
     )
-      return;
-    this.visible = Object.freeze(next);
+      this.visible = Object.freeze(next);
     for (const listener of this.listeners) listener();
   };
   snapshot = () => this.visible;
+  visibility = (key: string) => {
+    const entry = this.entries.snapshot().find((entry) => entry.key === key);
+    return entry ? (entry.visibility?.snapshot() ?? true) : false;
+  };
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

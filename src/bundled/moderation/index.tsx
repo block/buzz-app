@@ -12,7 +12,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Membership",
     section: "administration",
     visibility: {
-      snapshot: () => canManageMembership(membership.snapshot()),
+      snapshot: () => {
+        const connection = relay.snapshot();
+        const state = membership.snapshot();
+        if (canManageMembership(state)) return true;
+        if (
+          connection.status === "error" ||
+          connection.status === "disconnected" ||
+          state.error
+        )
+          return "error";
+        if (
+          state.status === "idle" ||
+          state.status === "loading" ||
+          state.refreshing
+        )
+          return "pending";
+        return false;
+      },
       subscribe: membership.subscribe,
       ensure: membership.ensure,
     },

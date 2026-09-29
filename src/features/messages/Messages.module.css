@@ -1554,7 +1554,7 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
   }
 }
 @media (hover: hover) and (pointer: fine) {
-  /* Float at the byline center without reserving message height. */
+  /* Float above prose without reserving message height. */
   .messageBody {
     position: relative;
   }
@@ -1568,9 +1568,8 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
     margin-inline-start: 0;
   }
   .message:not([data-layout="continuation"]) .messageActions {
-    top: calc(var(--text-body-sm) * var(--text-body-sm--line-height) / 2);
-    bottom: auto;
-    transform: translateY(-50%);
+    /* Bound the lower edge even when a narrow toolbar wraps. */
+    bottom: calc(100% - var(--text-body-sm) * var(--text-body-sm--line-height));
   }
   .message:hover .messageActions,
   .message:focus-within .messageActions,

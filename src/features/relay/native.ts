@@ -10,7 +10,7 @@ import {
 import { PublishRejected } from "./outbox";
 
 export const nativeWriteKinds = [
-  7, 9, 1984, 9000, 9001, 30315, 40003, 40100, 42000,
+  7, 9, 1984, 9000, 9001, 30315, 40003, 40100, 42000, 45010,
 ] as const;
 
 /** Cancellation fences JS results; a dispatched native write may still complete. */

@@ -1422,6 +1422,7 @@ export function relayBrokerPlugin({
                 30078,
                 40100,
                 1984,
+                45010,
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
@@ -2380,6 +2381,8 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
+            } else if (filters?.kind === 45010) {
+              // NIP-AR artifacts; the relay enforces write permission.
             } else if (filters?.kind === 1984) {
               if (!validReport(filters))
                 return json(res, 400, {

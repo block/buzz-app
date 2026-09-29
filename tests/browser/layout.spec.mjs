@@ -31,7 +31,13 @@ const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
 // The fixture's active plugin pages, in shell order, lead the channel sidebar.
 // Sidebar rows are the primary pages; Messages and Sessions stay in search only.
-const destinationTitles = ["Projects", "Agents", "Workflows"];
+const destinationTitles = [
+  "Inbox",
+  "Bestie",
+  "Projects",
+  "Agents",
+  "Workflows",
+];
 const sidebarDestinations = (page, options = {}) =>
   page
     .getByRole("complementary", { name: "Channel sidebar", ...options })
@@ -130,10 +136,13 @@ async function shellFits(page, width) {
     await channels.evaluate((element) => {
       element.scrollTop = 0;
     });
-  // The header keeps its launchers; sidebar destinations are not duplicated there.
+  // The header keeps its launchers; sidebar destinations are not duplicated
+  // there. Bestie's header button is its companion launcher, not a page row.
   await expect(
     page.locator(".shell-header").getByRole("button", {
-      name: new RegExp(`^(${destinationTitles.join("|")})$`),
+      name: new RegExp(
+        `^(${destinationTitles.filter((title) => title !== "Bestie").join("|")})$`,
+      ),
       includeHidden: true,
     }),
   ).toHaveCount(0);
@@ -904,7 +913,15 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   // Header search owns page navigation, including while narrow Settings
   // collapses the sidebar; its Pages group must preserve plugin ordering.
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
-  const titles = ["Messages", "Projects", "Agents", "Sessions", "Workflows"];
+  const titles = [
+    "Messages",
+    "Inbox",
+    "Bestie",
+    "Projects",
+    "Agents",
+    "Sessions",
+    "Workflows",
+  ];
   const expectPageOrder = async (expected) => {
     const choices = await pageChoices(page);
     await expect(choices.getByRole("option")).toHaveText([
@@ -977,7 +994,14 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   });
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
-  await expectPageOrder(["Messages", "Agents", "Sessions", "Workflows"]);
+  await expectPageOrder([
+    "Messages",
+    "Inbox",
+    "Bestie",
+    "Agents",
+    "Sessions",
+    "Workflows",
+  ]);
   await closeSearch();
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "true");

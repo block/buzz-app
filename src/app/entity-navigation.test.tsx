@@ -38,6 +38,14 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/agents"),
     },
     {
+      manifest: { id: "buzz.inbox", name: "Inbox", apiVersion: 1 },
+      module: await import("../bundled/inbox"),
+    },
+    {
+      manifest: { id: "buzz.bestie", name: "Bestie", apiVersion: 1 },
+      module: await import("../bundled/bestie"),
+    },
+    {
       // A vended page without the primary flag: listed in search, no sidebar row.
       manifest: { id: "fixture.notes", name: "Notes", apiVersion: 1 },
       module: {
@@ -295,7 +303,7 @@ it("lists only active primary pages in the channel sidebar", async () => {
       within(pages)
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Projects", "Agents"]),
+    ).toEqual(["Inbox", "Bestie", "Projects", "Agents"]),
   );
 
   // The fixture page is active and searchable but never a sidebar row.
@@ -309,7 +317,7 @@ it("lists only active primary pages in the channel sidebar", async () => {
       within(screen.getByRole("navigation", { name: "Pages" }))
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Projects"]),
+    ).toEqual(["Inbox", "Bestie", "Projects"]),
   );
 
   await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));

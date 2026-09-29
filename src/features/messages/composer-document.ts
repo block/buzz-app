@@ -166,11 +166,12 @@ export const composerSchema = new Schema<
 export type SourceToken = { start: number; end: number; editAsText?: boolean };
 export type SourceRange = { start: number; end: number };
 
+/** Source ranges the editor must not format: existing Markdown code, images,
+ * definitions and HTML stay literal text. */
 export function markdownRanges(text: string) {
   const { tree, tooDeep } = scanMarkdown(text);
-  const bold: SourceRange[] = [],
-    literal: SourceRange[] = [];
-  if (tooDeep) return { bold, literal: [{ start: 0, end: text.length }] };
+  const literal: SourceRange[] = [];
+  if (tooDeep) return { literal: [{ start: 0, end: text.length }] };
   const pending = [tree];
   while (pending.length) {
     const node = pending.pop();
@@ -191,10 +192,9 @@ export function markdownRanges(text: string) {
       literal.push({ start, end });
       continue;
     }
-    if (node.type === "strong") bold.push({ start, end });
     pending.push(...(node.children ?? []));
   }
-  return { bold, literal };
+  return { literal };
 }
 
 /** Draft text stays the editing/completion coordinate space. Formatting metadata

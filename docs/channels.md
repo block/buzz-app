@@ -665,7 +665,10 @@ implemented. In the composer, a line holding only ```` ``` ```` or `~~~`, option
 language, becomes a code block when Enter or Shift+Enter follows it, and that Enter does not send;
 the language stays on the sent fence. Shift+Enter on an empty last line leaves the block. Fences
 inside an existing code block, and pasted fences, stay literal text and still render as code once
-sent. Reply counts open a bounded thread view; attachments are
+sent. Typing an inline span (`**bold**` or `__bold__`, `_italic_` or `*italic*`, `~~strike~~`,
+`` `code` ``) converts it to formatting as the closing delimiter is typed, and one undo restores
+the typed characters. A single `~` never strikes, and pasted or restored delimiters stay literal
+text that still renders once sent. Reply counts open a bounded thread view; attachments are
 links. Routine freshness labels are not shown; Channel Settings → Diagnostics
 exposes refresh, outbox inspection and timings. Packaged builds do not
 include the development relay broker. GitHub fetches public data only; signed-in

@@ -10,6 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { afterEach, expect, it } from "vitest";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { EditableInput } from "./EditableInput";
 import type { ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
@@ -148,6 +149,150 @@ it("clearing all code and reentering a code edge leaves subsequent prose unmarke
   });
   await h.user.keyboard("outside");
   expect(h.markdown()).toBe("outside");
+});
+
+it("converts typed **Hello** on the closing delimiter, keeps later typing plain and undoes in one step", async () => {
+  const h = mount();
+  await h.user.keyboard("**Hello**");
+  expect(h.input.querySelector("strong")).toHaveTextContent("Hello");
+  expect(h.input).toHaveValue("Hello");
+  expect(h.markdown()).toBe("**Hello**");
+  await h.user.keyboard(" world");
+  expect(h.input.querySelector("strong")).toHaveTextContent("Hello");
+  expect(h.markdown()).toBe("**Hello** world");
+  // The prose typed next is its own step; one more undo restores the source.
+  act(() => h.input.undo(false));
+  expect(h.markdown()).toBe("**Hello**");
+  act(() => h.input.undo(false));
+  expect(h.input.querySelector("strong")).toBeNull();
+  expect(h.input).toHaveValue("**Hello**");
+  act(() => h.input.undo(true));
+  expect(h.input.querySelector("strong")).toHaveTextContent("Hello");
+  const saved = JSON.parse(JSON.stringify(h.draft()));
+  act(() => h.input.reset(saved));
+  expect(h.input.querySelector("strong")).toHaveTextContent("Hello");
+  expect(h.markdown()).toBe("**Hello**");
+});
+
+it("one undo after a typed code span restores the closing backtick too", async () => {
+  const h = mount();
+  await h.user.keyboard("`abc`");
+  expect(h.markdown()).toBe("`abc`");
+  act(() => h.input.undo(false));
+  expect(h.input.querySelector("code")).toBeNull();
+  expect(h.input).toHaveValue("`abc`");
+});
+
+it.each([
+  ["__x__", "strong", "**x**"],
+  ["*x*", "em", "_x_"],
+  ["_x_", "em", "_x_"],
+  ["~~x~~", "s", "~~x~~"],
+])(
+  "converts typed %s and sends the serializer's canonical delimiters",
+  async (typed, tag, wire) => {
+    const h = mount();
+    await h.user.keyboard(typed);
+    expect(h.input.querySelector(tag)).toHaveTextContent("x");
+    expect(h.input).toHaveValue("x");
+    expect(h.markdown()).toBe(wire);
+  },
+);
+
+it("adds both marks for ***x*** and leaves ~x~ literal", async () => {
+  const h = mount();
+  await h.user.keyboard("***x***");
+  expect(h.input.querySelector("em strong, strong em")).toHaveTextContent("x");
+  expect(h.input).toHaveValue("x");
+  expect(h.markdown()).toBe("**_x_**");
+  await h.user.keyboard(" ~y~");
+  expect(h.input.querySelector("s")).toBeNull();
+  expect(h.input).toHaveValue("x ~y~");
+  expect(h.markdown()).toBe("**_x_** ~y~");
+});
+
+it("waits for the whole closing run instead of italicising midway through **a**", async () => {
+  const h = mount();
+  await h.user.keyboard("**a*");
+  expect(h.input.querySelector("em, strong")).toBeNull();
+  expect(h.input).toHaveValue("**a*");
+  await h.user.keyboard("*");
+  expect(h.input.querySelector("strong")).toHaveTextContent("a");
+  expect(h.input.querySelector("em")).toBeNull();
+  expect(h.markdown()).toBe("**a**");
+});
+
+it("follows the parser for intraword delimiters: snake_case stays literal, 5*3*2 italicises 3", async () => {
+  const h = mount();
+  await h.user.keyboard("snake_case_more 5*3*2");
+  expect(h.input.querySelectorAll("em")).toHaveLength(1);
+  expect(h.input.querySelector("em")).toHaveTextContent("3");
+  expect(h.input).toHaveValue("snake_case_more 532");
+  // The wire form encodes the neighbours so recipients render what the composer shows.
+  expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+    type: "paragraph",
+    children: [
+      { type: "text", value: "snake_case_more 5" },
+      { type: "emphasis", children: [{ type: "text", value: "3" }] },
+      { type: "text", value: "2" },
+    ],
+  });
+});
+
+it("leaves delimiters typed inside inline code or a code block literal", async () => {
+  const h = mount();
+  act(() => h.input.toggleFormat("code"));
+  await h.user.keyboard("**x**");
+  act(() => h.input.toggleFormat("code"));
+  expect(h.input.querySelector("strong")).toBeNull();
+  expect(h.input.querySelector("code")).toHaveTextContent("**x**");
+  expect(h.markdown()).toBe("`**x**`");
+  const block = mount();
+  act(() => block.input.toggleFormat("code_block"));
+  await block.user.keyboard("_y_ ~~z~~");
+  expect(block.input.querySelector("em, s")).toBeNull();
+  expect(block.markdown()).toBe("```\n_y_ ~~z~~\n```");
+});
+
+it.each([true, false])(
+  "leaves delimiters around a link label (linked=%s) and pasted delimiters literal",
+  async (linked) => {
+    const h = mount("**label");
+    act(() => {
+      h.input.setSelectionRange(2, 7);
+      const edit = h.input.editLink();
+      if (!edit) throw new Error("Link editing unavailable");
+      if (linked) edit.save("label", "https://example.com");
+      else edit.remove();
+      h.input.setSelectionRange(7, 7);
+    });
+    await h.user.keyboard("**");
+    expect(h.input.querySelector("strong")).toBeNull();
+    expect(h.input).toHaveValue("**label**");
+    expect(h.markdown()).toBe(
+      linked ? "**[label](https://example.com/)**" : "**label**",
+    );
+    act(() => {
+      h.input.setSelectionRange(0, h.input.value.length);
+      h.input.insertText("**pasted** _source_");
+    });
+    expect(h.input.querySelector("strong, em")).toBeNull();
+    expect(h.markdown()).toBe("**pasted** _source_");
+  },
+);
+
+it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
+  const h = mount();
+  const honey = { pubkey: "a".repeat(64), name: "Honey" };
+  await h.user.keyboard("**");
+  act(() => h.input.insertText("", honey));
+  expect(h.input).toHaveValue("**@Honey ");
+  act(() => h.input.setSelectionRange(8, 8));
+  await h.user.keyboard("**");
+  expect(h.input).toHaveValue("@Honey ");
+  expect(h.input.querySelector('strong [data-source="@Honey"]')).not.toBeNull();
+  expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
+  expect(h.markdown()).toBe("**@Honey** ");
 });
 
 it.each([

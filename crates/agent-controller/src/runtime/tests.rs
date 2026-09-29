@@ -4,9 +4,7 @@ use crate::config::{agent_id, HarnessEdit};
 use crate::process::Process;
 use crate::Secret;
 use serde_json::json;
-#[cfg(unix)]
 use std::fs;
-#[cfg(unix)]
 use std::time::{Duration, Instant};
 const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
 const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -157,17 +155,24 @@ fn denied_credential_deletion_keeps_a_disabled_card_for_retry() {
     assert_eq!(remaining.len(), 1);
     assert!(!remaining[0].enabled);
 }
-#[cfg(unix)]
 fn bundle(directory: &Path) -> RuntimeBundle {
-    use std::os::unix::fs::PermissionsExt;
-    for name in [
+    let names = [
         "buzz-acp",
         "buzz-agent",
         "buzz-dev-mcp",
         "buzz",
         "git-credential-nostr",
-    ] {
+    ]
+    .map(|name| format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    for name in &names {
         let path = directory.join(name);
+        // Windows cannot run this sh fixture; the listener is `windows_listener`
+        // and the other tools are only integrity-checked.
+        #[cfg(windows)]
+        if name == "buzz-acp.exe" {
+            fs::copy(std::env::current_exe().unwrap(), &path).unwrap();
+            continue;
+        }
         fs::write(&path, r#"#!/bin/sh
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
 printf '%s' "$BUZZ_ACP_TEAM_INSTRUCTIONS" > team-instructions
@@ -176,33 +181,30 @@ printf 'harness fixture output\n'
 trap 'exit 0' TERM INT
 while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 0.1; done
 "#).unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
     }
-    let files: BTreeMap<_, _> = [
-        "buzz-acp",
-        "buzz-agent",
-        "buzz-dev-mcp",
-        "buzz",
-        "git-credential-nostr",
-    ]
-    .into_iter()
-    .map(|name| {
-        use sha2::{Digest, Sha256};
-        (
-            name,
-            format!(
-                "{:x}",
-                Sha256::digest(fs::read(directory.join(name)).unwrap())
-            ),
-        )
-    })
-    .collect();
+    let files: BTreeMap<_, _> = names
+        .iter()
+        .map(|name| {
+            use sha2::{Digest, Sha256};
+            (
+                name,
+                format!(
+                    "{:x}",
+                    Sha256::digest(fs::read(directory.join(name)).unwrap())
+                ),
+            )
+        })
+        .collect();
     let source: serde_json::Value =
         serde_json::from_str(include_str!("../../../../runtime/agent-runtime.json")).unwrap();
     fs::write(directory.join("manifest.json"), serde_json::to_vec(&json!({"version":1,"revision":source["revision"],"target":env!("BUZZ_RUNTIME_TARGET"),"files":files})).unwrap()).unwrap();
     RuntimeBundle::new(directory.into()).unwrap()
 }
-#[cfg(unix)]
 fn wait_for_contents<T>(path: &Path, parse: impl Fn(&str) -> Option<T>) -> T {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -645,7 +647,6 @@ fn stop_reports_cleanup_before_durable_disable_failure() {
 }
 
 #[test]
-#[cfg(unix)]
 fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
@@ -698,6 +699,88 @@ fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
     assert!(controller.running.is_empty());
     let stopped = controller.action(&a.id, Action::Stop).unwrap();
     assert!(!stopped.agents[0].enabled);
+}
+/// Windows listener stand-in: `bundle` installs this test binary as
+/// buzz-acp.exe, and the guardian runs only this test from that copy.
+#[test]
+#[cfg(windows)]
+fn windows_listener() {
+    let exe = std::env::current_exe().unwrap();
+    if exe.file_stem() != Some("buzz-acp".as_ref()) {
+        return;
+    }
+    let env: BTreeMap<_, _> = std::env::vars()
+        .map(|(key, value)| (key.to_ascii_uppercase(), value))
+        .collect();
+    let mut line = serde_json::to_vec(&env).unwrap();
+    line.push(b'\n');
+    let mut starts = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("starts")
+        .unwrap();
+    std::io::Write::write_all(&mut starts, &line).unwrap();
+    // Bounded, so a containment failure cannot leave it running indefinitely.
+    std::thread::sleep(Duration::from_secs(300));
+}
+#[test]
+#[cfg(windows)]
+fn windows_start_restart_shutdown_hold_custody_and_isolate_the_listener() {
+    let dir = tempfile::tempdir().unwrap();
+    // Spaces reach the guardian's argv, the workspace and PATH.
+    let root = dir.path().join("Buzz profile");
+    let tools = root.join("agent runtime");
+    fs::create_dir_all(&tools).unwrap();
+    let mut store = Store::open(root.join("config")).unwrap();
+    let a = agent(&root);
+    store.insert(vec![a.clone()]).unwrap();
+    let ownership = root.join("ownership");
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(&tools)),
+        ownership.clone(),
+    );
+    let mut runs = Vec::new();
+    for action in [Action::Start, Action::Restart] {
+        let snapshot = controller.action(&a.id, action).unwrap();
+        assert!(
+            matches!(snapshot.agents[0].status, ProcessStatus::Running),
+            "{:?}",
+            snapshot.agents[0].error
+        );
+        assert!(crate::ownership::Ownership::acquire(&ownership, &a.id).is_err());
+        // Running is acknowledged at spawn, before the listener records its
+        // environment; wait so the next action cannot kill it before that row.
+        let count = runs.len() + 1;
+        runs = wait_for_contents(&root.join("starts"), |text| {
+            let runs = text
+                .lines()
+                .map(|line| serde_json::from_str(line).ok())
+                .collect::<Option<Vec<BTreeMap<String, String>>>>()?;
+            (runs.len() == count).then_some(runs)
+        });
+    }
+    // Restart confirmed the first session's full teardown before starting again.
+    assert!(!Path::new(&runs[0]["TEMP"]).exists());
+    controller.shutdown().unwrap();
+    assert!(controller.running.is_empty());
+    assert!(!Path::new(&runs[1]["TEMP"]).exists());
+    let _released = crate::ownership::Ownership::acquire(&ownership, &a.id).unwrap();
+    assert!(controller.store.agents().unwrap()[0].enabled);
+    // The listener got the launch environment, not the test process's.
+    let env = &runs[1];
+    assert_eq!(env["BUZZ_PRIVATE_KEY"], KEY);
+    assert_eq!(env["SYSTEMROOT"], std::env::var("SystemRoot").unwrap());
+    assert!(std::env::var_os("CARGO_MANIFEST_DIR").is_some());
+    assert!(!env.contains_key("CARGO_MANIFEST_DIR"));
+    let native = std::env::var_os("PATH").unwrap();
+    assert_eq!(
+        std::env::split_paths(&env["PATH"]).collect::<Vec<_>>(),
+        std::iter::once(tools)
+            .chain(std::env::split_paths(&native))
+            .collect::<Vec<_>>()
+    );
 }
 #[test]
 #[cfg(unix)]
@@ -934,6 +1017,31 @@ fn blank_selectors_without_overrides_leave_harness_defaults_intact() {
     for key in ["BUZZ_AGENT_PROVIDER", "BUZZ_AGENT_MODEL", "BUZZ_ACP_MODEL"] {
         assert!(!env.contains_key(std::ffi::OsStr::new(key)));
     }
+}
+
+#[test]
+fn launch_path_puts_bundled_tools_before_platform_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let command = bundle(tools.path())
+        .command(&agent(dir.path()), &Secret::parse(KEY, PUB).unwrap())
+        .unwrap();
+    let env: BTreeMap<_, _> = command.get_envs().collect();
+    let path = env[std::ffi::OsStr::new("PATH")].unwrap();
+    let mut expected = vec![tools.path().to_owned()];
+    if cfg!(windows) {
+        // Native PATH is where Git Bash and user tools live; system keys come along.
+        expected.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        assert!(env.contains_key(std::ffi::OsStr::new("SystemRoot")));
+    } else {
+        if cfg!(target_os = "linux") {
+            let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+            expected.extend(home.map(|home| home.join(".local/bin")));
+            expected.push("/usr/local/bin".into());
+        }
+        expected.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(Into::into));
+    }
+    assert_eq!(std::env::split_paths(path).collect::<Vec<_>>(), expected);
 }
 
 #[test]

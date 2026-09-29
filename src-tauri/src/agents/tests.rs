@@ -424,7 +424,10 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         json!({
             "command":"buzz-agent", "label":"Buzz Agent",
             "available":true, "status":"ready", "defaultArgs":[],
-            "providers":[{"value":"databricks_v2", "label":"Databricks v2"}]
+            "providers":[
+                {"value":"databricks_v2", "label":"Databricks v2"},
+                {"value":"openai", "label":"OpenAI"}
+            ]
         })
     );
     assert_eq!(before["harnessOptions"].as_array().unwrap().len(), 3);

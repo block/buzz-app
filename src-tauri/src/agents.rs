@@ -190,10 +190,16 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             status: "ready",
             install_supported: None,
             default_args: &[],
-            providers: &[ProviderOption {
-                value: "databricks_v2",
-                label: "Databricks v2",
-            }],
+            providers: &[
+                ProviderOption {
+                    value: "databricks_v2",
+                    label: "Databricks v2",
+                },
+                ProviderOption {
+                    value: "openai",
+                    label: "OpenAI",
+                },
+            ],
         },
         HarnessOption {
             command: goose.as_ref().map_or_else(

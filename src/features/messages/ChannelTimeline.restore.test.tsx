@@ -213,3 +213,70 @@ it.each([false, true])(
     );
   },
 );
+
+it("never mounts tagged coordination in a channel or reveals it through an exact target", async () => {
+  const viewer = keypair(),
+    relay = keypair(),
+    agent = keypair();
+  const owner = createRelaySession(
+    scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+  );
+  owners.push(owner);
+  const hidden = {
+    id: "a".repeat(64),
+    channelId: "c",
+    authorId: agent.pubkey,
+    content: "Private coordination body",
+    createdAt: 1,
+    mentions: [],
+    participants: [],
+    attachments: [],
+    reactions: [],
+    replyCount: 0,
+    audience: "agents" as const,
+    agentEnvelope: true as const,
+  };
+  const visible = {
+    ...hidden,
+    id: "b".repeat(64),
+    content: "Human-facing answer",
+    audience: "everyone" as const,
+  };
+  const snapshot: ChannelWindow = {
+    channelId: "c",
+    status: "ready",
+    freshness: "verified",
+    hasMore: false,
+    loadingOlder: false,
+    error: undefined,
+    rows: [hidden, visible],
+  };
+  const complete = vi.fn(() => true);
+  const navigation = {
+    signal: new AbortController().signal,
+    target: { kind: "conversation", messageId: hidden.id },
+    complete,
+  } as unknown as import("../navigation/service").PageNavigation;
+  const view = render(
+    <ChannelTimeline
+      queries={owner.session}
+      scope="visibility"
+      channelId="c"
+      viewer={viewer.pubkey}
+      window={snapshot}
+      onOpenLink={() => false}
+      navigation={navigation}
+    />,
+  );
+  await frame();
+  expect(
+    view.container.querySelector(`[data-message-id="${hidden.id}"]`),
+  ).toBeNull();
+  expect(screen.queryByText(hidden.content)).toBeNull();
+  expect(screen.getByText(visible.content)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /Coordination/ })).toBeNull();
+  expect(complete).toHaveBeenCalledWith({
+    status: "failed",
+    reason: "unavailable",
+  });
+});

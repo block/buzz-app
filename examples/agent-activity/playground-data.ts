@@ -64,7 +64,7 @@ export const scenarios = [
   [
     "coordination",
     "Agent handoff",
-    "Open progress, then explicitly reveal coordination. Human-facing answers stay outside the group.",
+    "Coordination is available inside Activity only. The human-facing answer stays in the conversation.",
   ],
   [
     "long",

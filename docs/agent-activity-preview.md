@@ -12,20 +12,20 @@ for trying Activity, not replacing an everyday installation.
 ## What to try
 
 - Multiple agents with exact identities, including namesakes.
-- Human-facing messages remain visible. Each explicitly tagged coordination message
-  starts as one compact author/preview row. One click reveals that message, and the
-  same control collapses it. There is no aggregate agent-count wrapper or second
-  transcript dropdown. New coordination rows start collapsed independently.
-- Pending agent work stays separate from coordination. Exact-message navigation
-  can reveal its target; hidden full message rows stay unmounted and earn no read
-  dwell. A short preview is not a read acknowledgement.
+- Human-facing messages remain visible. Explicitly tagged coordination is absent
+  from channels and threads: no body, preview, avatar row, count or disclosure.
+  Retained coordination evidence remains available inside Activity.
+- Pending work stays independent of coordination. Hidden messages earn no read
+  dwell; exact conversation links to them report unavailable rather than revealing
+  them. Relay history and unread evidence are not rewritten or acknowledged.
+- Sending a channel message stays in the channel. Open its thread explicitly with
+  the working-agent, awaiting-response or reply control; sending never opens it.
 - Hover/click response Activity popups, expandable tools/messages, and the profile Activity tab.
   Profile human request text is expanded by default; agent communications are not.
 - Channel thread controls show exact working agents only with fresh evidence;
   pending requests say awaiting response, never a fabricated reply.
-- Tagged coordination ancestors keep their bodies collapsed even when a visible
-  human-facing answer is nested below them. Exact-message navigation can reveal
-  its own target, but opening the answer does not reveal its ancestors.
+- Human-facing descendants remain visible through hidden coordination ancestry.
+  Ordinary visible reply nesting and exact reply targeting are preserved.
 - Side-panel opening by dragging or the Activity context menu, without losing the thread.
 - Working, unknown, error and ended-without-reply states. Coordination/ended telemetry
   does not mean a human-facing answer was delivered.
@@ -83,7 +83,7 @@ notarized release. Follow the native identity setup/import flow and select your 
 approve the OS Keychain prompt yourself. Never paste a key into a fixture.
 
 Required attended checks:
-1. Run a bounded three-agent handoff in a test thread. Verify collapsed coordination,
+1. Run a bounded three-agent handoff in a test thread. Verify coordination absent from the conversation,
    visible human answer, and exact reply/profile Activity.
 2. Close/reopen Activity, quit normally, reopen and restore the selected community. Verify
    Saved Activity restores without reviving a working indicator.

@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { isAgentCoordination } from "./conversation-visibility";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { MembershipRow } from "./MembershipRow";
@@ -125,14 +126,21 @@ function Timeline({
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<string | undefined>(undefined);
-  const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
   const resolveName = useChannelIdentityNames(queries, channelId);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
+  const visibleRows = useMemo(
+    () =>
+      window.rows.filter(
+        (row) => !isAgentCoordination(row, agentPubkeys, viewer),
+      ),
+    [window.rows, agentPubkeys, viewer],
+  );
+  const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
   const [geometry] = useState(() => geometryFor(queries.channels));
   const signature = useMemo(
-    () => geometrySignature(window.rows, profiles, resolveName),
-    [window.rows, profiles, resolveName],
+    () => geometrySignature(visibleRows, profiles, resolveName),
+    [visibleRows, profiles, resolveName],
   );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const [pinnedIds, setPinnedIds] = useState<ReadonlySet<string>>(
@@ -218,6 +226,16 @@ function Timeline({
       ? navigation.target.messageId
       : undefined;
   const targetIndex = rows.findIndex((row) => row.id === targetId);
+  const targetHidden =
+    !!targetId &&
+    window.rows.some(
+      (row) =>
+        row.id === targetId && isAgentCoordination(row, agentPubkeys, viewer),
+    );
+  useLayoutEffect(() => {
+    if (targetHidden && !navigation?.signal.aborted)
+      navigation?.complete({ status: "failed", reason: "unavailable" });
+  }, [targetHidden, navigation]);
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
     intent.current++;
@@ -287,7 +305,10 @@ function Timeline({
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.
     edges.current = { first: rows[0]?.id, last: rows.at(-1)?.id };
     if (
-      (targetId && navigation && exactRevealed.current !== navigation.signal) ||
+      (targetId &&
+        !targetHidden &&
+        navigation &&
+        exactRevealed.current !== navigation.signal) ||
       !size.width ||
       !size.height ||
       !rows.length ||
@@ -378,6 +399,7 @@ function Timeline({
     };
   }, [
     rows,
+    targetHidden,
     size,
     prepend,
     recordPosition,
@@ -491,6 +513,9 @@ function Timeline({
       }}
     >
       <div className={styles.edge}>
+        {targetHidden && (
+          <span role="status">Selected message unavailable.</span>
+        )}
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>

@@ -168,7 +168,7 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   owner.dispose();
 });
 
-it("collapses explicit coordination from cached profiles before choices load and keeps human-facing replies visible", async () => {
+it("omits explicit coordination from cached profiles before choices load and keeps human-facing replies visible", async () => {
   const relay = keypair(),
     viewer = keypair(),
     agent = keypair();
@@ -263,32 +263,13 @@ it("collapses explicit coordination from cached profiles before choices load and
     { reactStrictMode: true },
   );
   try {
-    const initialGroup = await screen.findByRole("button", {
-      name: / · Coordination$/,
-    });
-    expect(initialGroup).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.queryByText("Agent answer", { selector: "[data-message-id] *" }),
-    ).toBeNull();
+    expect(screen.queryByText("Agent answer")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Coordination/ })).toBeNull();
     act(() => {
       choices = { ...choices, status: "ready" };
       for (const listener of listeners) listener();
     });
-    const group = screen.getByRole("button", {
-      name: / · Coordination$/,
-    });
-    expect(group).toBe(initialGroup);
-    expect(
-      screen.queryByText("Agent answer", { selector: "[data-message-id] *" }),
-    ).toBeNull();
-    fireEvent.click(group);
-    expect(screen.getByText("Agent answer")).toBeInTheDocument();
-    fireEvent.click(group);
-    expect(
-      view.container.querySelector(
-        '[data-message-id="2222222222222222222222222222222222222222222222222222222222222222"]',
-      ),
-    ).toBeNull();
+    expect(screen.queryByText("Agent answer")).toBeNull();
     const human = {
       ...make(
         "3333333333333333333333333333333333333333333333333333333333333333",
@@ -318,15 +299,8 @@ it("collapses explicit coordination from cached profiles before choices load and
       screen.queryByText("Later answer", { selector: "[data-message-id] *" }),
     ).toBeNull();
     expect(
-      screen.getAllByRole("region", {
-        name: "Agent coordination and activity",
-      }),
-    ).toHaveLength(2);
-    expect(
-      screen.getAllByRole("button", {
-        name: / · Coordination$/,
-      })[0],
-    ).toBe(group);
+      screen.queryByRole("region", { name: "Agent coordination and activity" }),
+    ).toBeNull();
     const final = {
       ...make(
         "5555555555555555555555555555555555555555555555555555555555555555",

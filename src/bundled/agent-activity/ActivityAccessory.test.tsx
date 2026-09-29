@@ -19,10 +19,7 @@ import { createAgentDirectory } from "../../features/identity-names/testing";
 import { ActivityAccessory } from "./ActivityAccessory";
 import { stubPopoverBrowserApis } from "./popover-testing";
 stubPopoverBrowserApis();
-import {
-  CoordinationAuthors,
-  ThreadAgentGroup,
-} from "../../features/messages/ThreadAgentGroup";
+
 import { TypingPresentation } from "../../features/conversation/typing-presentation";
 import { TypingIndicator } from "../../features/messages/TypingIndicator";
 import type { RelaySession } from "../../features/relay/session";
@@ -1006,35 +1003,19 @@ it.each([2, 3, 4, 7])(
       delivery: ChannelMessage["delivery"] = "seen",
     ) => (
       <TypingPresentation active>
-        <ThreadAgentGroup
+        <ActivityAccessory
           key={id}
           session={session}
-          profiles={profiles}
-          block={{
-            kind: "agents",
-            id,
+          scope="scope"
+          channelId="alpha"
+          threadRootId={root}
+          request={{
             agents: recipients,
-            rows: [],
-            tail: true,
-            request: {
-              agents: recipients,
-              message: { id, channelId: "alpha", delivery } as ChannelMessage,
-            },
+            message: { id, channelId: "alpha", delivery } as ChannelMessage,
           }}
-        >
-          <ActivityAccessory
-            session={session}
-            scope="scope"
-            channelId="alpha"
-            threadRootId={root}
-            request={{
-              agents: recipients,
-              message: { id, channelId: "alpha", delivery } as ChannelMessage,
-            }}
-            canOpen={() => true}
-            open={() => true}
-          />
-        </ThreadAgentGroup>
+          canOpen={() => true}
+          open={() => true}
+        />
         <TypingIndicator session={session} channelId="alpha" />
       </TypingPresentation>
     );
@@ -1140,28 +1121,23 @@ it.each(["turn_completed", "turn_error", "agent_panic"])(
       },
       media: () => undefined,
     } as unknown as RelaySession;
-    const tree = (
-      delivery: ChannelMessage["delivery"] = "seen",
-      represented = false,
-    ) => (
-      <CoordinationAuthors.Provider value={new Set(represented ? [agent] : [])}>
-        <ActivityAccessory
-          session={session}
-          scope="terminal"
-          channelId="alpha"
-          threadRootId={root}
-          request={{
-            message: {
-              id: root,
-              channelId: "alpha",
-              delivery,
-            } as ChannelMessage,
-            agents: [agent],
-          }}
-          open={() => false}
-          canOpen={() => false}
-        />
-      </CoordinationAuthors.Provider>
+    const tree = (delivery: ChannelMessage["delivery"] = "seen") => (
+      <ActivityAccessory
+        session={session}
+        scope="terminal"
+        channelId="alpha"
+        threadRootId={root}
+        request={{
+          message: {
+            id: root,
+            channelId: "alpha",
+            delivery,
+          } as ChannelMessage,
+          agents: [agent],
+        }}
+        open={() => false}
+        canOpen={() => false}
+      />
     );
     const view = render(tree(), { reactStrictMode: true });
     let seq = 0;
@@ -1218,13 +1194,8 @@ it.each(["turn_completed", "turn_error", "agent_panic"])(
         screen.getByRole("status", { name: "Agent activity status" })
           .textContent,
       ).toBe(`Helper: ${terminal}`);
-      // Only a clean-ended duplicate disappears. A posted coordination never
-      // hides a failure, uncertainty, or an agent with no message in this group.
-      view.rerender(tree("seen", true));
-      if (kind === "turn_completed")
-        expect(screen.queryByRole("button", { name: terminal })).toBeNull();
-      else expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
-      view.rerender(tree());
+      // Coordination has no conversation representation and never settles a request.
+      view.rerender(tree("seen"));
       expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
       // A malformed/future later error cannot rewrite the accepted completion.
       emit("turn_error", "one", {
@@ -1256,7 +1227,7 @@ it.each(["turn_completed", "turn_error", "agent_panic"])(
       view.rerender(tree());
       expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
       act(() => activity.state(live));
-      view.rerender(tree("seen", true));
+      view.rerender(tree("seen"));
       emit("turn_started", "two");
       expect(screen.getByRole("button", { name: "Working…" })).toBeTruthy();
       act(() => activity.state({ status: "retrying", routes: [] }));

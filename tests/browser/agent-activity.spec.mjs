@@ -1093,7 +1093,7 @@ test.describe("local agent request", () => {
   // Browser-only boundary: actual member picker/composer, signing-gated outbox,
   // automatic local-root navigation, signed replies replacing the tail, and the
   // same response-specific work surviving inline-to-panel detachment.
-  test("send opens a pending root thread and real replies retain distinct response activity", async ({
+  test("send stays in the channel until a thread click; real replies retain distinct response activity", async ({
     page,
     app,
   }, testInfo) => {
@@ -1203,6 +1203,15 @@ test.describe("local agent request", () => {
         .getByRole("button", { name: "Send message", exact: true })
         .click();
       await started;
+      await expect(thread).toHaveCount(0);
+      const pendingThread = page
+        .getByRole("region", { name: "Channel message history", exact: true })
+        .getByRole("button", {
+          name: "View thread: 1 agent awaiting response",
+          exact: true,
+        });
+      await expect(pendingThread).toBeVisible();
+      await pendingThread.click();
       await expect(thread).toBeVisible();
       await expect(
         thread.getByText(/Please inspect the request/),
@@ -1610,26 +1619,15 @@ test.describe("local agent request", () => {
       agentKey,
     );
     app.relay.publish("primary", coordination);
-    const coordinationToggle = thread.getByRole("button", {
-      name: "Alice Fixture · Coordination",
-      exact: true,
-    });
-    await expect(coordinationToggle).toHaveAttribute("aria-expanded", "false");
     await expect(
       thread.locator(`[data-message-id="${coordination.id}"]`),
     ).toHaveCount(0);
-    await coordinationToggle.click();
     await expect(
-      thread.locator(`[data-message-id="${coordination.id}"]`),
-    ).toBeVisible();
+      thread.getByRole("button", { name: /Coordination/ }),
+    ).toHaveCount(0);
     await expect(region).toBeVisible();
     await expect(
-      thread
-        .locator(`[data-message-id="${coordination.id}"]`)
-        .getByRole("button", { name: "View activity", exact: true }),
-    ).toBeVisible();
-    await expect(
-      thread.getByText("1 reply · 1 pending", { exact: true }),
+      thread.getByText("0 replies · 1 pending", { exact: true }),
     ).toBeVisible();
     const reply = finalizeEvent(
       {
@@ -1725,28 +1723,26 @@ test.describe("local agent request", () => {
       "Inspecting the initial request before the first response";
     const correctionThought =
       "Checking the revised result before the correction";
-    emit("turn_started");
+    emit("turn_started", { triggeringEventIds: [request.id] });
     responseWork(
       coordination,
       "Asking a peer while continuing work",
       "send-coordination",
     );
-    const coordinationRow = thread.locator(
-      `[data-message-id="${coordination.id}"]`,
-    );
-    await coordinationRow
-      .getByRole("button", { name: "View activity", exact: true })
-      .click();
+    // Coordination evidence stays accessible in Activity, not as a conversation row.
+    await openSidePanel(page, region.getByRole("button").first());
     await expect(
-      activityPopup(page).getByText(
+      activityPanel(page).getByText(
         "Send message · Reported sent · Reported coordination",
         { exact: true },
       ),
     ).toBeVisible();
-    await expect(region).toBeVisible();
-    await coordinationRow
-      .getByRole("button", { name: "View activity", exact: true })
+    await page
+      .getByRole("button", { name: "Close channel panel", exact: true })
       .click();
+    await expect(
+      thread.locator(`[data-message-id="${coordination.id}"]`),
+    ).toHaveCount(0);
     responseWork(reply, firstThought, "send-first");
     app.relay.publish("primary", reply);
     const replyRow = thread.locator(`[data-message-id="${reply.id}"]`);

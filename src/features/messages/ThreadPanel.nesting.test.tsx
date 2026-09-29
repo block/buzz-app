@@ -148,6 +148,12 @@ function setup(
     />,
   );
   return {
+    setTarget(target: ChannelMessage) {
+      act(() => {
+        snapshot = { ...snapshot, target, targetStatus: "ready" };
+        for (const fn of listeners) fn();
+      });
+    },
     setChoices(status: "ready" | "loading", keys: readonly string[]) {
       act(() => {
         choices = {
@@ -379,160 +385,70 @@ for (const startsWithChild of [false, true])
       ).toBeVisible();
   });
 
-it("keeps human-facing descendants visible through coordination ancestry and preserves reply targeting", () => {
+const coordination = (id: string, parent: string) => ({
+  ...row(id, parent),
+  audience: "agents" as const,
+  agentEnvelope: true as const,
+});
+it("omits coordination and indicators but keeps human-facing descendants and reply targeting", () => {
   const h = setup();
-  const coord = (id: string, parent: string) => ({
-    ...row(id, parent),
-    audience: "agents" as const,
-    agentEnvelope: true as const,
-  });
-  h.update([coord("coord", "root"), coord("nested-coord", "coord")]);
-  const trigger = screen.getByRole("button", {
-    name: "Agent · Coordination",
-  });
-  expect(screen.queryByText("coord", { selector: "article span" })).toBeNull();
-  fireEvent.click(trigger);
-  expect(screen.getByText("coord", { selector: "article span" })).toBeVisible();
-  fireEvent.click(trigger);
-  const response = {
-    ...row("human-facing", "nested-coord"),
-    audience: "everyone" as const,
-  };
   h.update([
-    coord("coord", "root"),
-    coord("nested-coord", "coord"),
-    response,
+    coordination("coord", "root"),
+    coordination("nested", "coord"),
+    row("answer", "nested"),
     row("human", "root"),
   ]);
-  for (const text of ["human-facing", "human"])
-    expect(screen.getByText(text)).toBeVisible();
-  for (const text of ["coord", "nested-coord"])
-    expect(screen.queryByText(text, { selector: "article span" })).toBeNull();
-  const groups = screen.getAllByRole("region", {
-    name: "Agent coordination and activity",
-  });
-  expect(groups).toHaveLength(2);
-  const firstGroup = groups[0];
-  if (!firstGroup) throw new Error("Missing ancestor coordination group");
-  fireEvent.click(
-    within(firstGroup).getByRole("button", {
-      name: "Agent · Coordination",
-    }),
-  );
-  expect(screen.getByText("coord", { selector: "article span" })).toBeVisible();
+  expect(screen.queryByText("coord")).toBeNull();
+  expect(screen.queryByText("nested")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Coordination/ })).toBeNull();
   expect(
-    screen.queryByText("nested-coord", { selector: "article span" }),
+    screen.queryByRole("region", { name: "Agent coordination and activity" }),
   ).toBeNull();
-  expect(screen.getByText("human-facing")).toBeVisible();
-  fireEvent.click(
-    within(firstGroup).getByRole("button", {
-      name: "Agent · Coordination",
-    }),
-  );
-  expect(screen.queryByText("coord", { selector: "article span" })).toBeNull();
-  expect(screen.getByText("human-facing")).toBeVisible();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Reply to human-facing" }),
-  );
+  expect(screen.getByText("answer")).toBeVisible();
+  expect(screen.getByText("human")).toBeVisible();
+  expect(screen.getByText("2 replies")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Reply to answer" }));
   expect(screen.getByLabelText("Composer")).toHaveAttribute(
     "data-parent",
-    "human-facing",
+    "answer",
   );
   expect(
     screen.getByRole("button", { name: "Send fixture reply" }),
   ).not.toBeDisabled();
 });
-
-it("does not combine coordination siblings across branches or a visible answer", () => {
+it("preserves ordinary nesting across hidden parents without inventing a coordination branch", () => {
   const h = setup();
-  const coord = (id: string, parent: string) => ({
-    ...row(id, parent),
-    audience: "agents" as const,
-    agentEnvelope: true as const,
-  });
-  h.update([
-    coord("before", "root"),
-    row("answer", "root"),
-    coord("child", "answer"),
-    coord("after", "root"),
-  ]);
-  expect(screen.getByText("answer")).toBeVisible();
-  expect(
-    screen.getAllByRole("region", { name: "Agent coordination and activity" }),
-  ).toHaveLength(2);
-  fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
-  expect(
-    screen.getAllByRole("region", { name: "Agent coordination and activity" }),
-  ).toHaveLength(3);
-  expect(screen.queryByText("child", { selector: "article span" })).toBeNull();
-});
-
-it("retains the selected reply target when late choices would group it", () => {
-  const h = setup();
-  const key = "a".repeat(64);
-  h.update([{ ...row("coord", "root"), audience: "agents" }]);
-  expect(screen.getByText("coord", { selector: "article span" })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Reply to coord" }));
-  h.setChoices("ready", [key]);
-  expect(screen.getByText("coord", { selector: "article span" })).toBeVisible();
-  expect(screen.getByLabelText("Composer")).toHaveAttribute(
-    "data-parent",
-    "coord",
-  );
-  expect(
-    screen.queryByRole("region", { name: "Agent coordination and activity" }),
-  ).toBeNull();
-});
-
-it("gives a nested addressed request exactly one pending group under its own ancestry", () => {
-  const h = setup();
-  const key = "a".repeat(64);
-  h.setChoices("ready", [key]);
-  const nested = {
-    ...row("request", "parent"),
-    authorId: "viewer",
-    mentions: [key],
-  };
-  h.update([row("parent", "root"), nested]);
-  fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
-  expect(
-    screen.getAllByRole("region", { name: "Agent coordination and activity" }),
-  ).toHaveLength(1);
   h.update([
     row("parent", "root"),
-    nested,
-    { ...row("coord", "request"), audience: "agents" },
+    coordination("hidden", "parent"),
+    row("answer", "hidden"),
+    coordination("only-hidden", "root"),
   ]);
-  const requestRow = screen.getByText("request").closest("li");
-  if (!requestRow) throw new Error("Missing request row");
-  fireEvent.click(
-    within(requestRow).getByRole("button", { name: "View 1 reply" }),
-  );
-  expect(
-    screen.getAllByRole("region", { name: "Agent coordination and activity" }),
-  ).toHaveLength(1);
-  expect(
-    screen.getByRole("button", {
-      name: "Agent · Coordination",
-    }),
-  ).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("hidden")).toBeNull();
+  expect(screen.queryByText("answer")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
+  expect(screen.getByText("answer")).toBeVisible();
+  expect(screen.queryByText("only-hidden")).toBeNull();
 });
-
-it("keeps a visible answer's byline when the preceding same-author coordination is collapsed", () => {
+it("does not reveal a late-classified coordination reply target; cancel restores the composer", () => {
   const h = setup();
-  h.update([
-    { ...row("coord", "root"), audience: "agents", agentEnvelope: true },
-    { ...row("answer", "root"), audience: "everyone" },
-  ]);
-  expect(screen.queryByText("coord", { selector: "article span" })).toBeNull();
-  expect(screen.getByText("answer").closest("article")).toHaveAttribute(
-    "data-layout",
-    "thread",
-  );
+  h.update([{ ...row("coord", "root"), audience: "agents" }]);
+  fireEvent.click(screen.getByRole("button", { name: "Reply to coord" }));
+  h.setChoices("ready", ["a".repeat(64)]);
+  expect(screen.queryByText("coord")).toBeNull();
+  expect(
+    screen.getByText("Reply target is no longer available."),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Send fixture reply" }),
+  ).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel reply target" }));
+  expect(
+    screen.getByRole("button", { name: "Send fixture reply" }),
+  ).not.toBeDisabled();
 });
-
-it("keeps individual coordination collapsed and preserves request intent separately", () => {
-  const keys = ["a".repeat(64), "b".repeat(64), "c".repeat(64)] as const;
+it("preserves pending request identities until human-facing replies, not hidden coordination", () => {
+  const keys = ["a".repeat(64), "b".repeat(64)];
   const empty = { snapshot: () => [], subscribe: () => () => {} };
   const entries = [
     {
@@ -543,159 +459,111 @@ it("keeps individual coordination collapsed and preserves request intent separat
       title: "Activity",
       placement: "conversation" as const,
       component: ({ request }: ComposerAccessoryProps) => (
-        <section aria-label="Request details">
+        <section aria-label="Pending work">
           {request?.agents.map((key) => (
-            <p key={key}>Pending details {key}</p>
+            <p key={key}>Pending {key}</p>
           ))}
         </section>
       ),
     },
   ];
-  const extensions: ConversationExtensions = {
+  const h = setup("root", {
     tools: empty,
     inline: empty,
     accessories: { snapshot: () => entries, subscribe: () => () => {} },
-  };
-  const h = setup("root", extensions);
-  h.update([]);
+  });
   h.setChoices("ready", keys);
   h.setRoot({ ...row("root"), authorId: "viewer", mentions: keys });
-  expect(screen.getByRole("region", { name: "Request details" })).toBeVisible();
-  const coord = (id: string, key: string) => ({
-    ...row(id, "root"),
-    authorId: key,
+  const hidden = {
+    ...coordination("coord", "root"),
     threadRootId: "root",
-    audience: "agents" as const,
-  });
-  const first = coord("coord-a", keys[0]);
-  h.update([first]);
-  const group = screen.getByRole("button", { name: "Agent · Coordination" });
-  expect(group).toHaveAttribute("aria-expanded", "false");
-  expect(
-    screen.queryByText("coord-a", { selector: "article span" }),
-  ).toBeNull();
-  fireEvent.click(group);
-  expect(
-    screen.getByText("coord-a", { selector: "article span" }),
-  ).toBeVisible();
-  expect(screen.getByText(`Pending details ${keys[0]}`)).toBeVisible();
-  expect(screen.getByText(`Pending details ${keys[1]}`)).toBeVisible();
-  expect(screen.getByText(`Pending details ${keys[2]}`)).toBeVisible();
-  const second = coord("coord-b", keys[1]);
-  h.update([first, second]);
-  expect(group).toHaveAttribute("aria-expanded", "true"); // Manual expansion survives traffic.
-  expect(screen.getByText(`Pending details ${keys[1]}`)).toBeVisible();
-  expect(screen.getByText(`Pending details ${keys[2]}`)).toBeVisible();
-  expect(screen.getAllByText(/^Pending details /)).toHaveLength(3); // Coordination is not settlement.
-  const third = coord("coord-c", keys[2]);
-  h.update([first, second, third]);
-  expect(screen.getByRole("region", { name: "Request details" })).toBeVisible();
-  const answer = {
-    ...row("Human-facing answer", "root"),
-    authorId: keys[0],
-    threadRootId: "root",
-    audience: "everyone" as const,
+    authorId: keys[0] ?? "",
   };
-  h.update([first, second, third, answer]);
-  fireEvent.click(group);
-  expect(group).toHaveAttribute("aria-expanded", "false");
-  expect(screen.getByText("Human-facing answer")).toBeVisible();
-  expect(
-    screen.queryByText("coord-a", { selector: "article span" }),
-  ).toBeNull();
-  expect(
-    screen.getAllByRole("region", { name: "Agent coordination and activity" }),
-  ).toHaveLength(1);
-  expect(screen.getByText("4 replies · 2 pending")).toBeVisible();
-});
-
-it("does not revive focus on a later manual coordination expansion", async () => {
-  const h = setup("coord");
-  const coord = {
-    ...row("coord", "missing"),
-    audience: "agents" as const,
-    agentEnvelope: true as const,
-  };
-  const answer = row("answer", "coord");
-  h.update([coord, answer]);
-  const header = screen.getByRole("button", {
-    name: "Agent · Coordination",
-  });
-  fireEvent.click(header);
-  const target = screen
-    .getByText("coord", { selector: "article span" })
-    .closest("article");
-  if (!target) throw new Error("Missing revealed coordination target");
-  target.tabIndex = -1;
-  target.focus();
-  expect(target).toHaveFocus();
-  // Late ordinary ancestry moves this body; opening the new transcript is explicit.
-  h.update([coord, answer, row("missing", "root")]);
+  h.update([hidden]);
+  expect(screen.getAllByText(/^Pending /)).toHaveLength(2);
+  expect(screen.queryByText("coord")).toBeNull();
+  expect(screen.getByText("0 replies · 2 pending")).toBeVisible();
+  h.update([
+    hidden,
+    {
+      ...row("answer", "coord"),
+      threadRootId: "root",
+      authorId: keys[0] ?? "",
+      audience: "everyone",
+    },
+  ]);
+  expect(screen.getAllByText(/^Pending /)).toHaveLength(1);
   expect(screen.getByText("answer")).toBeVisible();
-  const nextHeader = screen.getByRole("button", {
-    name: "Agent · Coordination",
-  });
-  expect(nextHeader).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByText("coord", { selector: "article span" })).toBeNull();
-  // A manual later expansion must not revive captured focus intent.
-  await act(async () => {});
-  fireEvent.click(nextHeader);
-  expect(
-    screen.getByText("coord", { selector: "article span" }).closest("article"),
-  ).not.toHaveFocus();
+  expect(screen.getByText("1 reply · 1 pending")).toBeVisible();
 });
-
-it("restores the exact coordination target after late reparenting, not its visible answer", async () => {
-  const signal = new AbortController().signal;
+it("fails exact navigation to coordination without mounting it or hiding its human answer", async () => {
+  const complete = vi.fn(() => true);
   const navigation = {
-    signal,
+    signal: new AbortController().signal,
     target: { kind: "conversation", messageId: "coord" },
-    complete: () => true,
+    complete,
   } as unknown as PageNavigation;
   const h = setup("coord", undefined, navigation);
-  const coord = {
-    ...row("coord", "missing"),
-    audience: "agents" as const,
-    agentEnvelope: true as const,
-  };
-  const answer = row("answer", "coord");
-  h.update([coord, answer]);
-  const target = screen
-    .getByText("coord", { selector: "article span" })
-    .closest("article");
-  if (!target) throw new Error("Missing exact coordination target");
-  target.tabIndex = -1;
-  target.focus();
-  h.update([coord, answer, row("missing", "root")]);
+  h.update([coordination("coord", "root"), row("answer", "coord")]);
   await waitFor(() =>
-    expect(
-      screen
-        .getByText("coord", { selector: "article span" })
-        .closest("article"),
-    ).toHaveFocus(),
+    expect(complete).toHaveBeenCalledWith({
+      status: "failed",
+      reason: "unavailable",
+    }),
   );
+  expect(screen.queryByText("coord")).toBeNull();
   expect(screen.getByText("answer")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Agent · Coordination" }));
-  expect(screen.queryByText("coord", { selector: "article span" })).toBeNull();
-  expect(screen.getByText("answer")).toBeVisible();
+  expect(screen.getByText("Selected message unavailable.")).toBeVisible();
+  h.update([
+    coordination("coord", "missing"),
+    row("answer", "coord"),
+    row("missing", "root"),
+  ]);
+  expect(screen.queryByText("coord")).toBeNull();
+});
+it("keeps the viewer, unknown/legacy text and human-facing answers visible", () => {
+  const h = setup();
+  h.update([
+    { ...row("Coordination: legacy", "root"), authorId: "unknown" },
+    { ...coordination("viewer text", "root"), authorId: "viewer" },
+    { ...row("human-facing", "root"), audience: "everyone" },
+  ]);
+  for (const text of ["Coordination: legacy", "viewer text", "human-facing"])
+    expect(screen.getByText(text)).toBeVisible();
 });
 
-it("keeps each independently expanded coordination author's byline", () => {
+it("omits a coordination root without hiding its visible descendants or disabling ordinary replies", () => {
   const h = setup();
-  h.update(
-    ["first", "second"].map((id) => ({
-      ...row(id, "root"),
-      audience: "agents" as const,
-      agentEnvelope: true as const,
-    })),
-  );
-  const second = screen.getAllByRole("button", {
-    name: "Agent · Coordination",
-  })[1];
-  if (!second) throw new Error("Missing second coordination control");
-  fireEvent.click(second);
-  expect(screen.queryByText("first", { selector: "article span" })).toBeNull();
+  h.setRoot({ ...row("root"), audience: "agents", agentEnvelope: true });
+  h.update([row("answer", "root")]);
+  expect(screen.queryByText("root")).toBeNull();
+  expect(screen.getByText("answer")).toBeVisible();
   expect(
-    screen.getByText("second", { selector: "article span" }).closest("article"),
-  ).toHaveAttribute("data-layout", "thread");
+    screen.getByRole("button", { name: "Send fixture reply" }),
+  ).not.toBeDisabled();
+});
+
+it("classifies an exact target before context and fails it when late identity evidence confirms coordination", async () => {
+  const complete = vi.fn(() => true);
+  const navigation = {
+    signal: new AbortController().signal,
+    target: { kind: "conversation", messageId: "coord" },
+    complete,
+  } as unknown as PageNavigation;
+  const h = setup("coord", undefined, navigation);
+  h.update([]);
+  h.setTarget({ ...row("coord", "root"), audience: "agents" });
+  expect(complete).not.toHaveBeenCalledWith({
+    status: "failed",
+    reason: "unavailable",
+  });
+  h.setChoices("ready", ["a".repeat(64)]);
+  await waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({
+      status: "failed",
+      reason: "unavailable",
+    }),
+  );
+  expect(screen.queryByText("coord")).toBeNull();
+  expect(screen.getByText("Selected message unavailable.")).toBeVisible();
 });

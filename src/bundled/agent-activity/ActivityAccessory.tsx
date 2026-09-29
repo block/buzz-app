@@ -1,10 +1,8 @@
-import { CoordinationAuthors } from "../../features/messages/ThreadAgentGroup";
 import { useTypingReplacement } from "../../features/conversation/typing-presentation";
 import { activityTranscript } from "./transcript";
 import { workingActivityLabel } from "./activity-presentation";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import {
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -142,7 +140,6 @@ function ActivityEntry({
     ComposerAccessoryProps["session"]["agentActivity"]["snapshot"]
   >["turns"];
 }) {
-  const represented = useContext(CoordinationAuthors).has(agent);
   const presence = usePresenceStatus(
     message ? undefined : session.presence,
     agent,
@@ -244,24 +241,6 @@ function ActivityEntry({
     },
     replacesTyping,
   );
-  // Hide only a clean ended duplicate. Coordination is NOT a final answer;
-  // preserve work/uncertainty/errors (including later turns) and no-message agents.
-  if (
-    request &&
-    !message &&
-    represented &&
-    requestState === "ended" &&
-    feedStatus === "listening" &&
-    !working &&
-    (!delivery || delivery === "accepted" || delivery === "seen") &&
-    !allTurns.some(
-      (turn) =>
-        turn.agent === agent &&
-        turn.channelId === channelId &&
-        turn.state !== "ended",
-    )
-  )
-    return null;
   return (
     <div className={message ? styles.attached : styles.response} ref={region}>
       {!message && (

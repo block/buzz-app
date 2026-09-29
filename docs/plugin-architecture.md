@@ -182,24 +182,20 @@ and command revocation on removal/unmount. Session/channel/thread/message keys
 fence retargeting. The accessory remains usable on read-only connections.
 History owners retain bottom-follow and older-reading intent when the tail changes.
 
-Thread reply ancestry remains host-owned. Within each sibling list, only explicit
-original `audience=agents` messages from a known agent or agent envelope can enter
-coordination rows; human-facing/legacy messages remain ordinary visible rows.
-Each coordination message has one compact author/preview disclosure. Full message
-DOM mounts only on explicit expansion; previews do not acknowledge reading. New
-rows do not inherit another message’s expansion. Pending work renders separately,
-without an aggregate agent-count disclosure.
-A loaded human-facing descendant keeps its ancestry path open, but each tagged
-coordination ancestor keeps its own body collapsed. Descendants remain outside
-that body disclosure; opening an answer never reveals coordination implicitly.
-An explicitly selected reply target remains reachable. Pending decoration has one
-request/branch owner; it is not reply causality.
-Collapsing unmounts decoration and message DOM, never capture or the composer.
-Exact navigation reopens only the matching message/path unless that visit was explicitly collapsed.
+Thread reply ancestry remains host-owned. Explicit original `audience=agents`
+messages from a known agent or agent envelope are omitted from channel/thread
+presentation. Human-facing/legacy messages remain visible, with no prose inference.
+There is no coordination disclosure, preview or count. The presentation tree skips
+hidden ancestors while retaining visible descendants and ordinary visible nesting;
+signed rows, reply targets, relay history and unread state are unchanged. Hidden
+message DOM never mounts or earns read dwell. Exact links report unavailable in
+conversation rather than revealing coordination. Activity retains its own evidence.
+Pending request decoration remains independent and coordination never settles it.
 
-Agent Activity uses thread-only conversation placement. A regular channel send
-with exact known-agent recipients immediately opens its root thread; human-only
-sends and flat Sessions retain existing behavior. The thread reader folds the
+Agent Activity uses thread-only conversation placement. Channel sends never open
+or switch the thread panel. The user chooses the thread-opening action; existing
+open threads and flat Sessions retain their ordinary send behavior.
+The thread reader folds the
 outgoing root locally while signing/publishing and begins finite thread repair
 only after verified root observation. Local intent never becomes verified evidence.
 The pending agent entry distinguishes sending, unconfirmed/failed delivery, waiting

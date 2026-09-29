@@ -139,6 +139,14 @@ test("three recipients work independently through coordination, replies and a no
       .getByRole("button", { name: "Send message", exact: true })
       .click();
     await started;
+    await expect(thread).toHaveCount(0);
+    await page
+      .getByRole("region", { name: "Channel message history", exact: true })
+      .getByRole("button", {
+        name: "View thread: 3 agents awaiting response",
+        exact: true,
+      })
+      .click();
     await expect(tail).toBeVisible();
     await expect(tail.locator(".buzz-avatar")).toHaveCount(3);
     await expect(
@@ -263,26 +271,13 @@ test("three recipients work independently through coordination, replies and a no
     1,
   );
   app.relay.publish("primary", coordination);
-  const transcriptToggle = thread.getByRole("button", {
-    name: `${byKey.get(agents[0].pubkey)} · Coordination`,
-    exact: true,
-  });
-  await expect(transcriptToggle).toHaveAttribute("aria-expanded", "false");
   await expect(
     thread.locator(`[data-message-id="${coordination.id}"]`),
   ).toHaveCount(0);
-  await expect(tail.locator("p.text-label-sm")).toHaveCount(3);
-  // Opening pending Activity did not consent to the future transcript.
-  await transcriptToggle.click();
   await expect(
-    thread.locator(`[data-message-id="${coordination.id}"]`),
-  ).toBeVisible();
+    thread.getByRole("button", { name: /Coordination/ }),
+  ).toHaveCount(0);
   await expect(tail.locator("p.text-label-sm")).toHaveCount(3);
-  await expect(
-    thread
-      .locator(`[data-message-id="${coordination.id}"]`)
-      .getByRole("button", { name: "View activity", exact: true }),
-  ).toBeVisible();
   const secondReply = reply(
     agents[1],
     "Agent B: review complete.",
@@ -328,29 +323,17 @@ test("three recipients work independently through coordination, replies and a no
     }),
   ).toBeVisible();
   await expect(
-    thread.getByText("3 replies · 1 pending", { exact: true }),
+    thread.getByText("2 replies · 1 pending", { exact: true }),
   ).toBeVisible();
-  // The thread host, not pending recipients, owns this disclosure. Keep it
-  // after every recipient settles and across new messages while collapsed.
-  const groups = thread.getByRole("region", {
-    name: "Agent coordination and activity",
-    exact: true,
-  });
-  const firstGroup = groups.first();
-  const groupTrigger = firstGroup.getByRole("button", {
-    name: `${byKey.get(agents[0].pubkey)} · Coordination`,
-  });
-  await groupTrigger.click();
-  await expect(groupTrigger).toHaveAttribute("aria-expanded", "false");
-  await expect(firstGroup.locator("[data-message-id]")).toHaveCount(0);
-  // Human-facing replies remain visible when coordination is collapsed.
+  await expect(
+    thread.locator(`[data-message-id="${coordination.id}"]`),
+  ).toHaveCount(0);
   await expect(
     thread.locator(`[data-message-id="${firstReply.id}"]`),
   ).toBeVisible();
   await expect(
     thread.locator(`[data-message-id="${secondReply.id}"]`),
   ).toBeVisible();
-  // Unmounted coordination rows cannot be observed by useReading's DOM scan.
   const extra = reply(
     agents[0],
     "Another retained agent message.",
@@ -358,12 +341,6 @@ test("three recipients work independently through coordination, replies and a no
     4,
   );
   app.relay.publish("primary", extra);
-  await expect(
-    firstGroup.getByRole("button", {
-      name: `${byKey.get(agents[0].pubkey)} · Coordination`,
-    }),
-  ).toHaveAttribute("aria-expanded", "false");
-  await expect(firstGroup.locator("[data-message-id]")).toHaveCount(0);
   await expect(thread.locator(`[data-message-id="${extra.id}"]`)).toBeVisible();
   const replyComposer = thread.getByRole("textbox", {
     name: "Reply to thread",
@@ -396,7 +373,7 @@ test("three recipients work independently through coordination, replies and a no
   ).toHaveCount(0);
   // No human mention was necessary; the unresolved request remains before it.
   await expect(
-    firstGroup.getByRole("button", {
+    tail.getByRole("button", {
       name: "Observed activity ended · error reported",
       exact: true,
     }),
@@ -430,19 +407,12 @@ test("three recipients work independently through coordination, replies and a no
   );
   app.relay.publish("primary", final);
   await expect(thread.locator(`[data-message-id="${final.id}"]`)).toBeVisible();
-  await expect(groups).toHaveCount(2);
   await expect(
-    firstGroup.getByRole("button", {
-      name: `${byKey.get(agents[0].pubkey)} · Coordination`,
-      exact: true,
-    }),
-  ).toHaveAttribute("aria-expanded", "false");
-  const lastGroup = groups.last();
-  const lastTrigger = lastGroup.getByRole("button", {
-    name: "Scout · Coordination",
-    exact: true,
-  });
-  await expect(lastTrigger).toHaveAttribute("aria-expanded", "false");
+    thread.getByRole("region", { name: "Agent coordination and activity" }),
+  ).toHaveCount(0);
+  await expect(thread.locator(`[data-message-id="${later.id}"]`)).toHaveCount(
+    0,
+  );
   // Control actual dwell time: hidden messages must not enter durable read state.
   await page.clock.install({ time: new Date((human.created_at + 2) * 1000) });
   const frontiers = () =>
@@ -467,25 +437,7 @@ test("three recipients work independently through coordination, replies and a no
     .focus();
   await page.clock.runFor(800);
   expect((await frontiers())[`msg:${later.id}`]).toBeUndefined();
-  await lastTrigger.focus();
-  await lastTrigger.press("Enter");
-  await expect(
-    lastGroup.locator(`[data-message-id="${later.id}"]`),
-  ).toBeVisible();
-  const readRow = lastGroup.locator(`[data-message-id="${later.id}"]`);
-  await readRow.scrollIntoViewIfNeeded();
-  await thread
-    .getByRole("region", { name: "Thread messages", exact: true })
-    .focus();
-  await page.clock.runFor(800);
-  await expect
-    .poll(async () => (await frontiers())[`msg:${later.id}`])
-    .toBeDefined();
   await page.clock.resume();
-  await lastTrigger.focus();
-  await lastTrigger.press("Space");
-  await expect(lastGroup.locator("[data-message-id]")).toHaveCount(0);
-  await expect(lastTrigger).toBeFocused();
   await expect(humanRow).toBeVisible();
   await expect(thread.locator(`[data-message-id="${final.id}"]`)).toBeVisible();
   for (const mode of ["light", "dark"]) {
@@ -494,11 +446,11 @@ test("three recipients work independently through coordination, replies and a no
     }, mode);
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
-      await lastTrigger.scrollIntoViewIfNeeded();
-      await expect(lastTrigger).toBeInViewport();
+      await replyComposer.scrollIntoViewIfNeeded();
+      await expect(replyComposer).toBeInViewport();
       await expect(replyComposer).toBeEditable();
       await page.screenshot({
-        path: testInfo.outputPath(`agent-groups-${mode}-${width}.png`),
+        path: testInfo.outputPath(`activity-only-${mode}-${width}.png`),
       });
     }
   }
@@ -508,7 +460,7 @@ test("three recipients work independently through coordination, replies and a no
   app.histories
     .get("primary/alpha")
     .push(coordination, secondReply, firstReply, extra, later, final);
-  // Exact navigation must expand the real containing block before focus/ack.
+  // An exact coordination link cannot reintroduce hidden conversation content.
   await page.getByRole("button", { name: "Close thread", exact: true }).click();
   const linkMessage = app.append(
     "primary",
@@ -519,33 +471,24 @@ test("three recipients work independently through coordination, replies and a no
     `[data-channel-timeline] [data-message-id="${linkMessage.id}"]`,
   );
   await linkRow.getByRole("link", { name: "Alpha", exact: true }).click();
-  await expect(
-    thread.locator(`[data-message-id="${later.id}"]`),
-  ).toBeInViewport();
-  await expect(thread.locator(`[data-message-id="${later.id}"]`)).toBeFocused();
   await expect
     .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
-    .toBe("opened");
+    .toBe("failed");
+  await expect(page.locator(`[data-message-id="${later.id}"]`)).toHaveCount(0);
+  // Failed exact navigation retires its destination. Back restores the channel before another click.
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
   await expect(
-    groups.first().getByRole("button", {
-      name: `${byKey.get(agents[0].pubkey)} · Coordination`,
-      exact: true,
-    }),
-  ).toHaveAttribute("aria-expanded", "false");
-  // Hiding the transcript cancels only this reveal intent; reopening an exact
-  // link is a fresh navigation and must still reach its target.
-  await groups
-    .last()
-    .getByRole("button", { name: "Scout · Coordination", exact: true })
-    .click();
-  await expect(thread.locator(`[data-message-id="${later.id}"]`)).toHaveCount(
-    0,
+    page.getByRole("region", { name: "Channel message history", exact: true }),
+  ).toBeVisible();
+  const rootLink = app.append(
+    "primary",
+    "alpha",
+    `<buzz://message?channel=alpha&id=${request.id}&thread=${request.id}>`,
   );
-  await page.getByRole("button", { name: "Close thread", exact: true }).click();
-  await linkRow.getByRole("link", { name: "Alpha", exact: true }).click();
-  await expect(thread.locator(`[data-message-id="${later.id}"]`)).toBeFocused();
-  // A late human-facing descendant escapes coordination collapse while retaining
-  // explicit ancestry and the exact Reply target. This is real DOM/focus behavior.
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${rootLink.id}"]`)
+    .getByRole("link", { name: "Alpha", exact: true })
+    .click();
   const nestedAnswer = finalizeEvent(
     {
       kind: 9,
@@ -565,19 +508,14 @@ test("three recipients work independently through coordination, replies and a no
   app.relay.publish("primary", nestedAnswer);
   const nestedRow = thread.locator(`[data-message-id="${nestedAnswer.id}"]`);
   await expect(nestedRow).toBeVisible();
-  await expect(thread.locator(`[data-message-id="${later.id}"]`)).toBeVisible();
+  await expect(thread.locator(`[data-message-id="${later.id}"]`)).toHaveCount(
+    0,
+  );
   await expect(
     nestedRow.locator(
       'xpath=ancestor::*[@aria-label="Agent coordination and activity"]',
     ),
   ).toHaveCount(0);
-  // Its ancestor body can close without hiding or acknowledging the answer.
-  await thread
-    .getByRole("button", { name: "Scout · Coordination", exact: true })
-    .click();
-  await expect(thread.locator(`[data-message-id="${later.id}"]`)).toHaveCount(
-    0,
-  );
   await expect(nestedRow).toBeVisible();
   await nestedRow.hover();
   await nestedRow.getByRole("button", { name: "Reply", exact: true }).click();

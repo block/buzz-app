@@ -660,13 +660,6 @@ function ChannelWorkspace({
     },
     [currentId, navigator, viewer, scope, open],
   );
-  const onAgentRequestSend = useCallback(
-    (id: string, agents: readonly string[]) => {
-      onComposerSend(id);
-      if (!flatSession && agents.length) openThread(id, id);
-    },
-    [onComposerSend, flatSession, openThread],
-  );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
     channelId: string;
@@ -1071,7 +1064,7 @@ function ChannelWorkspace({
                         ? "Message this session"
                         : undefined
                     }
-                    onSend={onAgentRequestSend}
+                    onSend={onComposerSend}
                   />
                 )}
               </SessionColumn>

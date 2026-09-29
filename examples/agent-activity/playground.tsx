@@ -6,15 +6,12 @@ import { ActivityDetails } from "../../src/bundled/agent-activity/ActivityPanel"
 import { ActivityStream } from "../../src/bundled/agent-activity/ActivityStream";
 import { ActivityDisclosure } from "../../src/bundled/agent-activity/ActivityDisclosure";
 import { ActivityFeedStatus } from "../../src/bundled/agent-activity/ActivityFeedStatus";
-import { ThreadAgentGroup } from "../../src/features/messages/ThreadAgentGroup";
-import type { ChannelMessage } from "../../src/features/relay/contracts";
 import { activityRecords } from "../../src/features/agents/activity-records";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import { Avatar } from "../../src/shared/design-system/ui/Avatar";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import {
   agent,
-  peer,
   channel,
   response,
   scenarios,
@@ -83,63 +80,25 @@ function Experience({
           </p>
         </div>
       </div>
-      {scenario === "coordination" ? (
-        <ThreadAgentGroup
-          session={data.session}
-          profiles={data.profiles}
-          block={{
-            kind: "agents",
-            id: "sample",
-            agents: [agent, peer],
-            rows: [
-              {
-                id: "agent",
-                authorId: agent,
-                content: "Please verify the retry behavior.",
-              },
-              {
-                id: "peer",
-                authorId: peer,
-                content: "Checked it. The selected agent is preserved.",
-              },
-            ] as ChannelMessage[],
-            tail: false,
-          }}
-          coordination={(row) => (
-            <div className="lab-coordination text-body-sm">
-              <p>{row.content}</p>
-            </div>
-          )}
-        >
+      <div className="lab-person">
+        <Avatar fallback="Rivet" alt="Rivet" shape="squircle" />
+        <div className="lab-activity">
+          <p className="text-label-sm">Rivet</p>
           <ActivityDisclosure
-            label="View activity"
+            label={
+              snapshot.turns[0]?.state === "working"
+                ? "Working"
+                : snapshot.turns[0]?.state === "unknown"
+                  ? "Status unknown"
+                  : "View activity"
+            }
             expanded={expanded}
             onExpand={expand}
           >
             {activity}
           </ActivityDisclosure>
-        </ThreadAgentGroup>
-      ) : (
-        <div className="lab-person">
-          <Avatar fallback="Rivet" alt="Rivet" shape="squircle" />
-          <div className="lab-activity">
-            <p className="text-label-sm">Rivet</p>
-            <ActivityDisclosure
-              label={
-                snapshot.turns[0]?.state === "working"
-                  ? "Working"
-                  : snapshot.turns[0]?.state === "unknown"
-                    ? "Status unknown"
-                    : "View activity"
-              }
-              expanded={expanded}
-              onExpand={expand}
-            >
-              {activity}
-            </ActivityDisclosure>
-          </div>
         </div>
-      )}
+      </div>
       {["complete", "recovered", "coordination"].includes(scenario) && (
         <div className="lab-person">
           <Avatar fallback="Rivet" alt="Rivet" shape="squircle" />
@@ -278,7 +237,8 @@ function Playground() {
             States are frozen for inspection. Reset clears disclosures and
             sample history changes. No relay, account, real agents or persistent
             storage is used. Inline surrounding conversation is fixture chrome;
-            activity and coordination disclosures are production components.
+            Activity details are production components. Coordination stays
+            inside Activity.
           </p>
           <div className="lab-links text-body-sm">
             <a href="./index.html">Drag-out design study ↗</a>

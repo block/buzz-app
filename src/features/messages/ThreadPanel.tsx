@@ -35,8 +35,10 @@ import type { MediaPlayback } from "./MediaAttachment";
 import { formatMediaTime } from "./media-timecode";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { pendingAgentRequest } from "./agent-request";
-import { threadAgentGroups, isAgentCoordination } from "./thread-agent-groups";
-import { ThreadAgentGroup } from "./ThreadAgentGroup";
+import {
+  conversationReplies,
+  isAgentCoordination,
+} from "./conversation-visibility";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 
 export type ThreadPanelProps = {
@@ -218,21 +220,6 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
-  const tree = useMemo(
-    () => replyTree(snapshot.replies, snapshot.root?.id),
-    [snapshot.replies, snapshot.root?.id],
-  );
-  const branchReplies = useMemo(() => {
-    const branches = new Map<string, ChannelMessage[]>();
-    for (const reply of snapshot.replies) {
-      for (const ancestor of tree.ancestors(reply.id)) {
-        const replies = branches.get(ancestor) ?? [];
-        replies.push(reply);
-        branches.set(ancestor, replies);
-      }
-    }
-    return branches;
-  }, [tree, snapshot.replies]);
   const subscribeUnread = useCallback(
     (listener: () => void) =>
       session.unread.subscribe(
@@ -259,9 +246,17 @@ function ThreadMessages({
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
     [snapshot.root, snapshot.replies],
   );
+  // Exact lookup can precede bounded context; classify its identity with the same evidence.
+  const identityRows = useMemo(
+    () =>
+      snapshot.target && !rows.some((row) => row.id === snapshot.target?.id)
+        ? [...rows, snapshot.target]
+        : rows,
+    [rows, snapshot.target],
+  );
   const authors = [
     ...new Set(
-      rows.flatMap((row) => [
+      identityRows.flatMap((row) => [
         row.authorId,
         ...row.mentions,
         ...(row.mentionReferences ?? []),
@@ -276,7 +271,7 @@ function ThreadMessages({
         .ensure(authors.split(":"), "background")
         .catch(() => {});
   }, [session.profiles, authors]);
-  const profiles = useRowProfiles(session.profiles, rows);
+  const profiles = useRowProfiles(session.profiles, identityRows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const request = useMemo(
     () =>
@@ -288,34 +283,36 @@ function ThreadMessages({
       ),
     [rows, session.viewer, agentPubkeys, snapshot.root?.id],
   );
-  // Use the same cached exact-agent evidence as the rest of this thread,
-  // including profile hints, rather than a narrower second inventory view.
-  const groupAgents = new Set(agentPubkeys);
-  if (session.viewer) groupAgents.delete(session.viewer);
-  // A visible descendant opens its branch path, never a coordination body.
-  // Ordinary non-coordination branches retain main's explicit branch controls.
-  const byId = new Map(snapshot.replies.map((row) => [row.id, row]));
-  const visibleAncestors = new Set(
-    snapshot.replies
-      .filter(
-        (row) =>
-          !isAgentCoordination(row, groupAgents, session.viewer) &&
-          tree.ancestors(row.id).some((id) => {
-            const ancestor = byId.get(id);
-            return (
-              ancestor &&
-              isAgentCoordination(ancestor, groupAgents, session.viewer)
-            );
-          }),
-      )
-      .flatMap((row) => tree.ancestors(row.id)),
+  const hidden = useMemo(
+    () =>
+      new Set(
+        identityRows
+          .filter((row) =>
+            isAgentCoordination(row, agentPubkeys, session.viewer),
+          )
+          .map((row) => row.id),
+      ),
+    [identityRows, agentPubkeys, session.viewer],
   );
-  // Keep the active reply target reachable if new identity evidence regroups it.
-  if (replyParent) {
-    visibleAncestors.add(replyParent);
-    for (const id of tree.ancestors(replyParent)) visibleAncestors.add(id);
-  }
-  const collapsedReveal = useRef<AbortSignal | undefined>(undefined);
+  const visibleReplies = useMemo(
+    () => conversationReplies(snapshot.replies, hidden, snapshot.root?.id),
+    [snapshot.replies, hidden, snapshot.root?.id],
+  );
+  const tree = useMemo(
+    () => replyTree(visibleReplies, snapshot.root?.id),
+    [visibleReplies, snapshot.root?.id],
+  );
+  const branchReplies = useMemo(() => {
+    const branches = new Map<string, ChannelMessage[]>();
+    for (const reply of visibleReplies)
+      for (const ancestor of tree.ancestors(reply.id)) {
+        const replies = branches.get(ancestor) ?? [];
+        replies.push(reply);
+        branches.set(ancestor, replies);
+      }
+    return branches;
+  }, [tree, visibleReplies]);
+  const targetHidden = hidden.has(messageId);
   const accessoryTail = useRef<HTMLOListElement>(null);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
@@ -345,8 +342,6 @@ function ThreadMessages({
           restoreNow &&
           row?.isConnected &&
           !navigation?.signal.aborted &&
-          (!navigation?.signal ||
-            collapsedReveal.current !== navigation?.signal) &&
           !branch.closest("[inert]") &&
           document.activeElement === document.body
         ) {
@@ -355,7 +350,7 @@ function ThreadMessages({
         }
       };
       restoreTarget();
-      // Body-only coordination can mount during the child's layout effect.
+      // A child can mount during its ancestor's layout effect.
       if (restoreNow) queueMicrotask(restoreTarget);
       restore = false;
       return () => {
@@ -412,7 +407,7 @@ function ThreadMessages({
     scroller,
     settled: positioned,
     messageId,
-    signal: rootTarget ? undefined : navigation?.signal,
+    signal: rootTarget || targetHidden ? undefined : navigation?.signal,
     ready:
       snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
@@ -420,13 +415,21 @@ function ThreadMessages({
   });
   useEffect(() => {
     if (!navigation || navigation.signal.aborted) return;
-    if (rootTarget && snapshot.status === "error")
+    if (targetHidden)
+      navigation.complete({ status: "failed", reason: "unavailable" });
+    else if (rootTarget && snapshot.status === "error")
       navigation.complete({ status: "failed", reason: "unavailable" });
     else if (snapshot.targetStatus === "unavailable")
       navigation.complete({ status: "failed", reason: "not-found" });
     else if (snapshot.targetStatus === "error")
       navigation.complete({ status: "failed", reason: "unavailable" });
-  }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
+  }, [
+    navigation,
+    rootTarget,
+    targetHidden,
+    snapshot.status,
+    snapshot.targetStatus,
+  ]);
   useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
@@ -464,8 +467,9 @@ function ThreadMessages({
     [rootId, onOpenMediaReview, hasMediaComments],
   );
   // Without a selected viewer, bare timecodes need one unambiguous video.
+  const visibleMediaRows = identityRows.filter((row) => !hidden.has(row.id));
   const videoUrls = new Set(
-    [snapshot.root, snapshot.target, ...snapshot.replies].flatMap(
+    visibleMediaRows.flatMap(
       (row) =>
         row?.attachments
           .filter((item) => item.kind === "video")
@@ -474,7 +478,7 @@ function ThreadMessages({
   );
   const videoOwner =
     videoUrls.size === 1
-      ? [snapshot.root, snapshot.target, ...snapshot.replies].find((row) =>
+      ? visibleMediaRows.find((row) =>
           row?.attachments.some((item) => item.kind === "video"),
         )
       : undefined;
@@ -515,6 +519,7 @@ function ThreadMessages({
       rootTarget &&
       snapshot.status !== "error" &&
       snapshot.root?.id === messageId &&
+      !targetHidden &&
       revealed.current !== navigation.signal
     ) {
       revealed.current = navigation.signal;
@@ -550,6 +555,7 @@ function ThreadMessages({
     sent,
     navigation,
     rootTarget,
+    targetHidden,
     revealed,
     selectedOffset,
   ]);
@@ -598,101 +604,25 @@ function ThreadMessages({
         open={onOpenLink}
       />
     ) : null;
-  // Each parent owns its sibling sequence; never flatten ancestry to form a group.
-  const requestBranch =
-    request &&
-    request.message.id !== snapshot.root?.id &&
-    ((request.message.replyParentId &&
-      request.message.replyParentId !== snapshot.root?.id) ||
-      tree.children.has(request.message.id));
-  const blocksFor = (parent: string | undefined) =>
-    threadAgentGroups(
-      parent ? byId.get(parent) : snapshot.root,
-      tree.children.get(parent) ?? [],
-      groupAgents,
-      requestBranch && parent !== request?.message.id ? undefined : request,
-      session.viewer,
-      visibleAncestors,
-    );
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
-    return blocksFor(parent).map((block) => {
-      if (block.kind === "message")
-        return renderReply(block.row, parent, depth);
-      // A disclosure is a visual boundary even when its children are unmounted.
-      // Do not omit an answer's byline because a hidden coordination row matched it.
-      previousReply = undefined;
-      const bodies = new Map(
-        block.rows.map((row) => {
-          // Each body opens independently; a hidden sibling cannot supply its byline.
-          previousReply = undefined;
-          return [row.id, renderReply(row, parent, depth)];
-        }),
-      );
-      const group = (
-        <li key={`agents:${block.id}`}>
-          <ThreadAgentGroup
-            block={block}
-            session={session}
-            profiles={profiles}
-            coordination={(row) => bodies.get(row.id)}
-            revealMessageId={
-              block.rows.find(
-                (row) =>
-                  row.id === messageId ||
-                  tree.ancestors(messageId).includes(row.id),
-              )?.id
-            }
-            reveal={
-              !rootTarget &&
-              collapsedReveal.current !== navigation?.signal &&
-              block.rows.some(
-                (row) =>
-                  row.id === messageId ||
-                  tree.ancestors(messageId).includes(row.id),
-              )
-                ? navigation?.signal
-                : undefined
-            }
-            onHideCoordination={() => {
-              if (
-                block.rows.some(
-                  (row) =>
-                    row.id === messageId ||
-                    tree.ancestors(messageId).includes(row.id),
-                )
-              )
-                collapsedReveal.current = navigation?.signal;
-            }}
-          >
-            {block.request
-              ? renderActivity(block.request)
-              : !parent && block.tail
-                ? renderActivity(undefined)
-                : null}
-          </ThreadAgentGroup>
-        </li>
-      );
-      previousReply = undefined;
-      return group;
-    });
+    return (tree.children.get(parent) ?? []).map((row) =>
+      renderReply(row, parent, depth),
+    );
   }
-  let previousReply: ChannelMessage | undefined = snapshot.root;
+  let previousReply: ChannelMessage | undefined =
+    snapshot.root && !hidden.has(snapshot.root.id) ? snapshot.root : undefined;
   function renderReply(
     row: ChannelMessage,
     parent: string | undefined,
     depth: number,
   ): ReactNode {
     const children = tree.children.get(row.id);
-    const ownsPending = requestBranch && request?.message.id === row.id;
     const continuation =
       previousReply?.authorId === row.authorId &&
       row.createdAt >= previousReply.createdAt &&
       row.createdAt - previousReply.createdAt <= 10 * 60 &&
       !row.membership;
-    previousReply =
-      children?.length && !expanded.has(row.id) && !visibleAncestors.has(row.id)
-        ? undefined
-        : row;
+    previousReply = children?.length && !expanded.has(row.id) ? undefined : row;
     const descendants = branchReplies.get(row.id) ?? [];
     const unreadCount = descendants.filter(
       (reply) => session.unread.attention(channelId, reply.id).unread,
@@ -724,42 +654,6 @@ function ThreadMessages({
           : {})}
       />
     );
-    const collapsedCoordination =
-      visibleAncestors.has(row.id) &&
-      row.id !== replyParent &&
-      isAgentCoordination(row, groupAgents, session.viewer);
-    if (collapsedCoordination) previousReply = undefined;
-    const message = (branchControl?: ReactNode) =>
-      collapsedCoordination ? (
-        <ThreadAgentGroup
-          block={{
-            kind: "agents",
-            id: row.id,
-            rows: [row],
-            agents: [row.authorId],
-            tail: false,
-          }}
-          session={session}
-          profiles={profiles}
-          coordination={() => <li>{messageRow()}</li>}
-          revealMessageId={row.id}
-          reveal={
-            !rootTarget &&
-            row.id === messageId &&
-            collapsedReveal.current !== navigation?.signal
-              ? navigation?.signal
-              : undefined
-          }
-          onHideCoordination={() => {
-            if (row.id === messageId)
-              collapsedReveal.current = navigation?.signal;
-          }}
-        >
-          {null}
-        </ThreadAgentGroup>
-      ) : (
-        messageRow(branchControl)
-      );
     return (
       <li
         key={row.id}
@@ -774,8 +668,8 @@ function ThreadMessages({
         )}
 
         <ReplyBranch
-          message={message}
-          collapsible={!!children?.length && !visibleAncestors.has(row.id)}
+          message={messageRow}
+          collapsible={!!children?.length}
           layout={continuation ? "continuation" : "thread"}
           label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
           summary={
@@ -795,7 +689,7 @@ function ThreadMessages({
             />
           }
           depth={depth}
-          open={expanded.has(row.id) || visibleAncestors.has(row.id)}
+          open={expanded.has(row.id)}
           onOpenChange={(open) => {
             follow.current = false;
             targetAnchor.current = undefined;
@@ -811,17 +705,14 @@ function ThreadMessages({
             });
           }}
         >
-          {(expanded.has(row.id) || visibleAncestors.has(row.id)) && (
-            <ol>{renderReplies(row.id, depth + 1)}</ol>
-          )}
+          {expanded.has(row.id) && <ol>{renderReplies(row.id, depth + 1)}</ol>}
         </ReplyBranch>
-        {ownsPending && !children?.length && (
-          <ol>{renderReplies(row.id, depth + 1)}</ol>
-        )}
       </li>
     );
   }
-  const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
+  const selectedParent = snapshot.replies.find(
+    (row) => row.id === replyParent && !hidden.has(row.id),
+  );
   return (
     <>
       <section
@@ -854,7 +745,7 @@ function ThreadMessages({
         }}
         tabIndex={0}
       >
-        {snapshot.root ? (
+        {snapshot.root && !hidden.has(snapshot.root.id) ? (
           <>
             <MessageRow
               extensions={extensions}
@@ -896,28 +787,25 @@ function ThreadMessages({
               </span>
             )}
           </>
-        ) : snapshot.status !== "loading" ? (
+        ) : !snapshot.root && snapshot.status !== "loading" ? (
           <p className={styles.empty}>Original message unavailable.</p>
         ) : null}
         <div className={styles.threadDivider}>
-          {snapshot.replies.length}{" "}
-          {snapshot.replies.length === 1 ? "reply" : "replies"}
+          {visibleReplies.length}{" "}
+          {visibleReplies.length === 1 ? "reply" : "replies"}
           {request?.agents.length && request.message.delivery !== "failed"
             ? ` · ${request.agents.length} pending`
             : ""}
         </div>
         <ol ref={accessoryTail}>
           {renderReplies(undefined)}
-          {!blocksFor(undefined).some(
-            (block) => block.kind === "agents" && block.tail,
-          ) &&
-            extensions?.accessories && <li>{renderActivity(undefined)}</li>}
+          {extensions?.accessories && <li>{renderActivity(request)}</li>}
         </ol>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>
         )}
-        {snapshot.targetStatus === "unavailable" && (
+        {(targetHidden || snapshot.targetStatus === "unavailable") && (
           <p role="status">Selected message unavailable.</p>
         )}
         {snapshot.error && <p role="alert">{snapshot.error}</p>}

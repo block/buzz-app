@@ -11,7 +11,12 @@ const copy = {
   archive: {
     title: "Archive channel",
     detail:
-      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. A channel administrator can unarchive it later using another supported client; this app cannot restore it yet.",
+      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search and open Settings to unarchive it later.",
+  },
+  unarchive: {
+    title: "Unarchive channel",
+    detail:
+      "Unarchive this channel for everyone and return it to the sidebar. Members can send messages again.",
   },
   delete: {
     title: "Delete channel",

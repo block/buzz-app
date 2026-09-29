@@ -1156,7 +1156,7 @@ function ChannelWorkspace({
                       current.channelType !== "dm" &&
                       current.channelType !== "session" && (
                         <ChannelLifecycleActions
-                          key={current.id}
+                          key={`${current.id}:${!!current.archived}`}
                           channelId={current.id}
                           lifecycle={queries.channelLifecycle}
                           choose={(action, trigger) =>

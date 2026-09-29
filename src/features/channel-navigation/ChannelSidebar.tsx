@@ -887,6 +887,8 @@ function ReadySidebar({
             const id = lifecycleDialog.channel.id;
             lifecycleFocus.current = id;
             handoff?.closeLifecycle();
+            // Restoration retains the current conversation and Settings.
+            if (lifecycleDialog.action === "unarchive") return;
             // Confirmed access loss can already have removed current from the roster.
             if (
               (target.kind === "conversation"

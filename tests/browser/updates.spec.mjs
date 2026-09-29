@@ -8,7 +8,10 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 // Native IPC is the boundary fixture; the updater plugin client, the
 // updates owner, Settings and the toast are production code. Plugin commands
 // are denied unless the main-window capability grants them, as Tauri's ACL does.
-async function nativeUpdater(page, { checkResults, installErrors = [] }) {
+async function nativeUpdater(
+  page,
+  { checkResults, installErrors = [], restartErrors = [], holdChecks = false },
+) {
   const capability = JSON.parse(
     await readFile(
       new URL("../../src-tauri/capabilities/default.json", import.meta.url),
@@ -19,7 +22,7 @@ async function nativeUpdater(page, { checkResults, installErrors = [] }) {
     typeof permission === "string" ? permission : permission.identifier,
   );
   await page.addInitScript(
-    ({ granted, checkResults, installErrors }) => {
+    ({ granted, checkResults, installErrors, restartErrors, holdChecks }) => {
       window.isTauri = true;
       window.updaterCalls = [];
       window.checkResults = checkResults;
@@ -66,6 +69,14 @@ async function nativeUpdater(page, { checkResults, installErrors = [] }) {
               `${command} not allowed. Permissions: ${permission}`,
             );
           if (command === "plugin:updater|check") {
+            if (
+              holdChecks &&
+              window.updaterCalls.filter((call) => call.command === command)
+                .length > 1
+            )
+              await new Promise((resolve) => {
+                window.finishCheck = resolve;
+              });
             const result = window.checkResults.shift();
             if (typeof result === "string") throw new Error(result);
             return result
@@ -80,12 +91,14 @@ async function nativeUpdater(page, { checkResults, installErrors = [] }) {
             return new Promise((resolve) => {
               window.finishDownload = () => resolve(++nextResource);
             });
+          if (command === "update_restart" && restartErrors.length)
+            throw new Error(restartErrors.shift());
           if (command === "plugin:updater|install" && installErrors.length)
             throw new Error(installErrors.shift());
         },
       };
     },
-    { granted, checkResults, installErrors },
+    { granted, checkResults, installErrors, restartErrors, holdChecks },
   );
 }
 
@@ -109,16 +122,37 @@ test("update checks recover from failure, download, and restart from the toast",
   // The startup background check finds nothing; manual checks consume the rest.
   await nativeUpdater(page, {
     checkResults: [null, null, "network down", true],
+    holdChecks: true,
   });
   const status = await openUpdates(page, app);
   const notices = page.getByRole("region", { name: "App notifications" });
 
   await expect(status).toHaveText("Check if a new version is available.");
-  await button(page, "Check for Updates").click();
-  await expect(status).toHaveText("You're on the latest version.");
-  await button(page, "Check Again").click();
-  await expect(status).toHaveText("Update failed: network down");
-  await button(page, "Retry").click();
+  const action = button(page, "Check for Updates");
+  await action.focus();
+  // Native focus must survive the held IPC check and every result row.
+  for (const [label, result] of [
+    ["Check for Updates", "You're on the latest version."],
+    ["Check Again", "Update failed: network down"],
+    ["Retry", "Downloading update..."],
+  ]) {
+    await button(page, label).press("Enter");
+    await expect(status).toHaveText("Checking for updates...");
+    await expect(button(page, "Check for Updates")).toBeFocused();
+    await expect
+      .poll(() => page.evaluate(() => typeof window.finishCheck))
+      .toBe("function");
+    await page.evaluate(() => {
+      window.finishCheck();
+      delete window.finishCheck;
+    });
+    await expect(status).toHaveText(result);
+    await expect(
+      page
+        .getByRole("region", { name: "Software Updates", exact: true })
+        .getByRole("button"),
+    ).toBeFocused();
+  }
   await expect(status).toHaveText("Downloading update...");
   await expect(notices.getByText("Ready to update!")).toHaveCount(0);
 
@@ -154,6 +188,7 @@ test("retry after a failed install releases native update resources before check
   await nativeUpdater(page, {
     checkResults: [true, true],
     installErrors: ["read-only location"],
+    restartErrors: ["shutdown refused"],
   });
   const status = await openUpdates(page, app);
   await expect(status).toHaveText("Downloading update...");
@@ -163,11 +198,13 @@ test("retry after a failed install releases native update resources before check
     .getByRole("region", { name: "App notifications" })
     .getByRole("button", { name: "Update now", exact: true })
     .click();
-  await button(page, "Updates").click();
-  await expect(status).toHaveText("Update failed: read-only location");
-
-  await button(page, "Retry").click();
-  await expect(status).toHaveText("Downloading update...");
+  const notices = page.getByRole("region", { name: "App notifications" });
+  await expect(
+    notices.getByText("Update failed", { exact: true }),
+  ).toBeVisible();
+  await expect(notices.getByText("read-only location")).toBeVisible();
+  await notices.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(notices.getByText("Downloading update...")).toBeVisible();
   const calls = await page.evaluate(() => window.updaterCalls);
   expect(calls.slice(3).map(({ command, args }) => [command, args])).toEqual([
     ["plugin:resources|close", { rid: 102 }],
@@ -181,6 +218,15 @@ test("retry after a failed install releases native update resources before check
       expect.objectContaining({ rid: 103, timeout: 1_800_000 }),
     ],
   ]);
+  await page.evaluate(() => window.finishDownload());
+  await notices
+    .getByRole("button", { name: "Update now", exact: true })
+    .click();
+  await expect(notices.getByText("shutdown refused")).toBeVisible();
+  await notices.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    notices.getByText("You're on the latest version."),
+  ).toBeVisible();
 });
 
 test("the ready toast yields to Settings → Updates, which offers the same action", async ({

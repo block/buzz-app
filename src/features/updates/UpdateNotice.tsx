@@ -5,7 +5,7 @@ import type { Updates } from "./updates";
 
 /** Offers restart once a downloaded update is ready, except while Settings shows it inline; dismissal lasts until it resolves. */
 export function UpdateNotice({ updates }: { updates: Updates }) {
-  const { state } = useSyncExternalStore(
+  const status = useSyncExternalStore(
     updates.subscribe,
     updates.snapshot,
     updates.snapshot,
@@ -20,24 +20,59 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
     updates.noticeDismissed,
     updates.noticeDismissed,
   );
-  const visible = state === "ready" || state === "installing";
+  const recovery = useSyncExternalStore(
+    updates.subscribe,
+    updates.noticeRecovery,
+    updates.noticeRecovery,
+  );
+  const { state } = status;
+  const visible = state === "ready" || state === "installing" || recovery;
   if (!visible || dismissed || inline) return null;
-  const pending = state === "installing";
+  const pending = [
+    "checking",
+    "available",
+    "downloading",
+    "installing",
+  ].includes(state);
+  const descriptions = {
+    idle: "Click to update",
+    ready: "Click to update",
+    installing: "Updating",
+    checking: "Checking for updates...",
+    available: "Preparing update...",
+    downloading: "Downloading update...",
+    "up-to-date": "You're on the latest version.",
+    unavailable:
+      "Automatic updates aren't available on this build. Download the latest release manually.",
+    error: "",
+  };
   return (
     <ToastNotice
-      title="Ready to update!"
-      description={pending ? "Updating" : "Click to update"}
-      tone="info"
+      title={
+        state === "error"
+          ? "Update failed"
+          : recovery
+            ? "Software Updates"
+            : "Ready to update!"
+      }
+      description={
+        status.state === "error" ? status.message : descriptions[state]
+      }
+      tone={state === "error" ? "error" : "info"}
       onDismiss={updates.dismissNotice}
       closeLabel="Dismiss update notification"
     >
       <Button
         type="button"
         size="sm"
-        disabled={pending}
-        onClick={() => void updates.installAndRelaunch()}
+        loading={pending}
+        onClick={() =>
+          void (state === "ready"
+            ? updates.installAndRelaunch()
+            : updates.checkForUpdate())
+        }
       >
-        Update now
+        {state === "ready" || state === "installing" ? "Update now" : "Retry"}
       </Button>
     </ToastNotice>
   );

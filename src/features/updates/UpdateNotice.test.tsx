@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -62,20 +63,59 @@ it("offers update and restart once the download is ready", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "Update now" }));
   expect(await screen.findByText("Updating")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Update now" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Update now" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(update.install).toHaveBeenCalledOnce();
   install.resolve();
   await waitFor(() => expect(relaunch).toHaveBeenCalledOnce());
 });
 
-it("clears the notice when installing fails so settings can retry", async () => {
-  const { updates, install } = await readyUpdate();
-  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
-  install.reject(new Error("signature mismatch"));
-  await waitFor(() => expect(updates.snapshot().state).toBe("error"));
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+it.each(["install", "restart"])(
+  "keeps %s failure and retry reachable in the notice",
+  async (failure) => {
+    const { install, relaunch, view, updates } = await readyUpdate();
+    if (failure === "restart")
+      relaunch.mockRejectedValueOnce(new Error("shutdown refused"));
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    if (failure === "install") install.reject(new Error("read-only location"));
+    else install.resolve();
+    expect(
+      await screen.findByRole("dialog", { name: "Update failed" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        failure === "install" ? "read-only location" : "shutdown refused",
+      ),
+    ).toBeVisible();
+    // App restoration may remount the notice; recovery belongs to the update owner.
+    view.unmount();
+    render(
+      <ToastProvider>
+        <UpdateNotice updates={updates} />
+      </ToastProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByText("You're on the latest version."),
+    ).toBeVisible();
+  },
+);
+
+it("does not surface background check failures", async () => {
+  const check = vi.fn(async () => {
+    throw new Error("offline");
+  });
+  updates = createUpdates({ desktop: true, check, relaunch: async () => {} });
+  await act(async () => {});
+  render(
+    <ToastProvider>
+      <UpdateNotice updates={updates} />
+    </ToastProvider>,
   );
+  expect(check).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 it("stays dismissed until the update leaves the ready state", async () => {

@@ -3,7 +3,7 @@ import { open } from "./timeline.mjs";
 
 test.use({ savedSidebar: true });
 
-test("sidebar scrollbar starts below the top inset without changing content geometry", async ({
+test("sidebar scrollbar stays close to the divider without clipping its native thumb", async ({
   page,
   app,
 }) => {
@@ -21,28 +21,19 @@ test("sidebar scrollbar starts below the top inset without changing content geom
     const frame = viewport.parentElement;
     if (!(frame instanceof HTMLElement))
       throw new Error("Missing sidebar frame");
-    const mask = getComputedStyle(frame, "::after");
-    const panel = viewport.closest("[data-buzz-surface]");
-    if (!(panel instanceof HTMLElement))
-      throw new Error("Missing sidebar panel");
+    const panel = viewport.closest('[aria-label="Channel sidebar"]');
+    const bounds = viewport.getBoundingClientRect();
+    const panelBounds = panel.getBoundingClientRect();
     return {
-      maskTop: Number.parseFloat(mask.top),
-      maskHeight: Number.parseFloat(mask.height),
-      maskRight: Number.parseFloat(mask.right),
-      maskWidth: Number.parseFloat(mask.width),
-      maskColor: mask.backgroundColor,
-      panelColor: getComputedStyle(panel).backgroundColor,
+      rightInset: panelBounds.right - bounds.right,
+      clipped: bounds.right > frame.getBoundingClientRect().right,
       paddingTop: Number.parseFloat(getComputedStyle(viewport).paddingTop),
       scrollTop: viewport.scrollTop,
     };
   });
   expect(geometry).toEqual({
-    maskTop: 0,
-    maskHeight: 24,
-    maskRight: 0,
-    maskWidth: 5,
-    maskColor: geometry.panelColor,
-    panelColor: geometry.panelColor,
+    rightInset: 2,
+    clipped: false,
     paddingTop: 8,
     scrollTop: 0,
   });
@@ -87,7 +78,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
       ),
     );
     for (const row of geometry) {
-      expect(row.left).toBe(13);
+      expect(row.left).toBe(12);
       expect(row.right).toBe(row.left + row.gutter);
     }
   };

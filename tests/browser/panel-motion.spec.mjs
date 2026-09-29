@@ -314,7 +314,11 @@ for (const destination of ["Messages", "Projects"]) {
             .some((animation) =>
               animation.effect
                 .getKeyframes()
-                .some((frame) => frame.transform?.includes("12px")),
+                .some(
+                  (frame) =>
+                    typeof frame.transform === "string" &&
+                    new DOMMatrix(frame.transform).m41 === 12,
+                ),
             ),
         ),
       ).toBe(true);

@@ -574,6 +574,13 @@ it("profile activity opens the exact agent and originating channel before its fi
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
   await panel.press("Escape");
+  await expect(profile).toBeVisible();
+  const profileTab = page
+    .getByRole("tablist", { name: "Panel tabs" })
+    .getByRole("tab", { selected: true });
+  await expect(profileTab).toBeFocused();
+  await profileTab.press("Escape");
+  await expect(profile).toBeHidden();
   await expect(avatar).toBeFocused();
   await avatar.click();
   await expect(
@@ -688,6 +695,12 @@ it("profile activity opens the exact agent and originating channel before its fi
     .getByRole("button", { name: "Back", exact: true })
     .click();
   await page.locator(`[data-channel-id="${profileChannelId}"]`).click();
+  // Channel navigation restores the existing profile tab. Close it explicitly
+  // so this exercises a fresh opening and its focus handoff after disable.
+  await page
+    .getByRole("button", { name: "Close Fixture agent tab", exact: true })
+    .click();
+  await expect(profile).toBeHidden();
   await avatar.click();
   await expect(profile).toBeVisible();
   await expect(
@@ -695,9 +708,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   ).toHaveCount(0);
   // Finish the reopened profile's focus handoff and timeline layout before
   // starting read dwell; visible profile content alone proves neither.
-  await expect(
-    profile.getByRole("region", { name: "Profile details" }),
-  ).toBeFocused();
+  await expect(profileTab).toBeFocused();
   await settle(page);
   const history = page.getByRole("region", {
     name: "Channel message history",

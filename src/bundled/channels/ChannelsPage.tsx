@@ -1695,6 +1695,7 @@ function ChannelWorkspace({
                     }),
                     ...panelTabs.map((entry) => ({
                       id: tabId(entry),
+                      instance: entry,
                       label: entry.panel.title,
                       ...(entry.channelContext && {
                         icon: channelToolIcon(entry.panel),

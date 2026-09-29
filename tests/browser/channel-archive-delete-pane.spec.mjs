@@ -326,9 +326,14 @@ test.describe("owner-profile retry focus", () => {
     const open = async () => {
       outcome = "failure";
       gate = undefined;
-      await page
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .click();
+      // Keyboard activation can reopen during exit without racing the
+      // header's position as the main conversation expands.
+      const trigger = page.getByRole("button", {
+        name: "Channel settings",
+        exact: true,
+      });
+      await trigger.focus();
+      await trigger.press("Enter");
       await expect(retry).toBeVisible();
     };
     const attempt = async (result, moveFocus = false) => {

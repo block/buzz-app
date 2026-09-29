@@ -25,6 +25,8 @@ type Item = {
   label: string;
   icon?: ReactNode;
   content: ReactNode;
+  /** Stable for one opening, including retained exit content. */
+  instance?: object;
   close(): void;
 };
 type Identity = { label: string; icon?: ReactNode };
@@ -133,9 +135,12 @@ export function PanelWorkspace({
   ]);
   const active = tabs.find((tab) => tab.id === selected);
   const previous = useRef<string>(undefined);
+  const instance = items.find((item) => item.id === selected)?.instance;
+  const previousInstance = useRef<object>(undefined);
   useLayoutEffect(() => {
     if (
       previous.current !== selected ||
+      previousInstance.current !== instance ||
       focusTab.current ||
       (closingTab.current && !tabs.some((tab) => tab.id === closingTab.current))
     ) {
@@ -148,6 +153,7 @@ export function PanelWorkspace({
         inline: "nearest",
       });
       previous.current = selected;
+      previousInstance.current = instance;
       focusTab.current = false;
       closingTab.current = undefined;
     }

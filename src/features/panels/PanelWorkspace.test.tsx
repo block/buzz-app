@@ -1,11 +1,19 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode, useState } from "react";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { StrictMode, useRef, useState } from "react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test } from "vitest";
 import { PanelWorkspace, usePanelTabTitle } from "./PanelWorkspace";
 import { PanelSubview } from "./PanelSubview";
+import { PanelDock } from "./PanelDock";
 
 afterEach(cleanup);
 function Profile({ authorized }: { authorized: boolean }) {
@@ -105,6 +113,13 @@ test("local details are retained sibling tabs and close without dismissing the p
   expect(within(tabs()).queryByRole("tab", { name: "Harness log" })).toBeNull();
   expect(tab("Ada")).toHaveFocus();
   expect(filter).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Open log" }));
+  await user.click(tab("Ada"));
+  await user.click(
+    screen.getByRole("button", { name: "Close Harness log tab" }),
+  );
+  expect(tab("Ada")).toHaveFocus();
+  expect(within(tabs()).queryByRole("tab", { name: "Harness log" })).toBeNull();
 });
 
 test("revoking access removes the local tab; closing its owner also removes retained local content", async () => {
@@ -138,3 +153,75 @@ test("revoking access removes the local tab; closing its owner also removes reta
   expect(within(tabs()).getAllByRole("tab")).toHaveLength(1);
   expect(tab("Thread")).toHaveFocus();
 });
+
+for (const action of ["close", "escape"]) {
+  test(`reopening the last tab during its ${action} exit restores focus`, async () => {
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const original = HTMLElement.prototype.getAnimations;
+    Object.defineProperty(HTMLElement.prototype, "getAnimations", {
+      configurable: true,
+      writable: true,
+      value: () => [{ finished }],
+    });
+    function Host() {
+      const [opening, setOpening] = useState<object | null>(null);
+      const open = !!opening;
+      const trigger = useRef<HTMLButtonElement>(null);
+      return (
+        <>
+          <button ref={trigger} type="button" onClick={() => setOpening({})}>
+            Open profile
+          </button>
+          <PanelDock open={open} className="">
+            {opening && (
+              <PanelWorkspace
+                value="profile"
+                select={() => {}}
+                items={[
+                  {
+                    id: "profile",
+                    instance: opening,
+                    label: "Profile",
+                    content: <input aria-label="Profile draft" />,
+                    close() {
+                      setOpening(null);
+                      trigger.current?.focus();
+                    },
+                  },
+                ]}
+              />
+            )}
+          </PanelDock>
+        </>
+      );
+    }
+    try {
+      render(<Host />);
+      const trigger = screen.getByRole("button", { name: "Open profile" });
+      fireEvent.click(trigger);
+      expect(tab("Profile")).toHaveFocus();
+      if (action === "close")
+        fireEvent.click(
+          screen.getByRole("button", { name: "Close Profile tab" }),
+        );
+      else fireEvent.keyDown(tab("Profile"), { key: "Escape" });
+      expect(trigger).toHaveFocus();
+      expect(
+        screen
+          .getByRole("textbox", { name: "Profile draft", hidden: true })
+          .closest("[inert]"),
+      ).not.toBeNull();
+      fireEvent.click(trigger);
+      expect(tab("Profile")).toHaveFocus();
+      await act(async () => finish());
+      expect(tab("Profile")).toHaveFocus();
+    } finally {
+      finish();
+      if (original) HTMLElement.prototype.getAnimations = original;
+      else Reflect.deleteProperty(HTMLElement.prototype, "getAnimations");
+    }
+  });
+}

@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Panels, RegisteredPanel } from "../../features/panels/service";
 
-type Opened = { panel: RegisteredPanel; trigger: HTMLButtonElement };
+type Opened = {
+  id: string;
+  panel: RegisteredPanel;
+  trigger: HTMLButtonElement;
+};
 export function usePanelLauncher(panels: Panels, ready: boolean) {
   const available = useSyncExternalStore(
     panels.subscribe,
@@ -32,10 +36,13 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
   return {
     available: ready ? available : [],
     selected,
+    openingId: selected ? opened?.id : undefined,
     launch(panel: RegisteredPanel, trigger: HTMLButtonElement) {
       if (ready && panel.launcher && panels.snapshot().includes(panel))
         setOpened((current) =>
-          current?.panel === panel ? undefined : { panel, trigger },
+          current?.panel === panel
+            ? undefined
+            : { id: crypto.randomUUID(), panel, trigger },
         );
     },
     close() {

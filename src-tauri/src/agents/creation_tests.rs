@@ -1,4 +1,4 @@
-use super::tests::{fixture, invoke, use_credentials};
+use super::tests::{fixture, has_prepared_identity, invoke, use_credentials};
 use super::*;
 use buzz_agent_controller::Secret;
 use serde_json::{json, Value};
@@ -69,7 +69,7 @@ fn commit_binds_validated_draft_and_defaults_before_credentials_and_preserves_re
     };
     invoke(&view, "agent_control_save_defaults", defaults("first")).unwrap();
     let edit = json!({"name":"Prepared", "systemPrompt":"", "workspace":dir.path(),
-        "harness":{"command":"buzz-agent","args":[],"provider":"","model":"","configuration":{"mode":"default"}},
+        "harness":{"command":"buzz-agent","args":[],"provider":"","model":""},
         "environment":{}});
     let request_id = uuid::Uuid::new_v4().to_string();
     let prepare = || {
@@ -93,10 +93,6 @@ fn commit_binds_validated_draft_and_defaults_before_credentials_and_preserves_re
         ),
         ("/harness/model", json!("not-validated")),
         ("/harness/provider", json!("openai")),
-        (
-            "/harness/configuration",
-            json!({"mode":"advanced","effort":{"kind":"value","value":"unsupported"}}),
-        ),
         ("/environment", json!({"KEEP_ME":"different"})),
         ("/workspace", json!("/different/workspace")),
     ] {
@@ -130,4 +126,25 @@ fn commit_binds_validated_draft_and_defaults_before_credentials_and_preserves_re
     assert_eq!(stored["agents"][0]["environment"], json!({}));
     assert_eq!(stored["agents"][0]["harness"]["provider"], "");
     assert_eq!(stored["agents"][0]["harness"]["model"], "");
+}
+
+#[test]
+fn default_buzz_agent_creation_rejects_missing_model_before_identity() {
+    let (dir, host, _app, view) = fixture();
+    let edit = json!({"name":"Needs a model", "systemPrompt":"", "workspace":dir.path(),
+        "harness":{"command":"buzz-agent","args":[],"provider":"databricks_v2","model":"",
+        "configuration":{"mode":"default"}}, "environment":{}});
+    let error = invoke(
+        &view,
+        "agent_control_create_prepare",
+        json!({"requestId":uuid::Uuid::new_v4().to_string(),
+            "destination":"wss://relay.example", "owner":owner().x_only_public_key().0.to_string(),
+            "edit":edit}),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Buzz Agent requires a model"), "{error}");
+    assert!(!has_prepared_identity(&host));
+    assert!(!dir.path().join("store/agents.json").exists());
 }

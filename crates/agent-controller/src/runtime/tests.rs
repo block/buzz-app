@@ -1459,6 +1459,57 @@ fn launch_selectors_show_defaults_blanks_and_overrides() {
 }
 
 #[test]
+#[cfg(unix)]
+fn advanced_model_selection_wins_over_hidden_model_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let mut agent = agent(dir.path());
+    agent.harness.provider = "databricks_v2".into();
+    agent.harness.model = "selected-model".into();
+    agent.harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Default,
+    });
+    agent
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "hidden-model".into());
+
+    let defaults = crate::BuildDefaults::default();
+    let resolved = defaults.resolve(&agent.harness, &agent.environment);
+    assert_eq!(resolved.model, "selected-model");
+    assert_eq!(
+        crate::defaults::selectors(&resolved, &agent.environment).model,
+        Some("selected-model")
+    );
+
+    let context = model_context_with_defaults(
+        &agent.harness,
+        &agent.environment,
+        &agent.workspace,
+        &defaults,
+    )
+    .unwrap();
+    assert!(!context.model_overridden);
+
+    let view = agent.view(&Default::default());
+    assert_eq!(view.launch_model.as_deref(), Some("selected-model"));
+    assert_eq!(view.launch_model_env, None);
+
+    let command = runtime
+        .command_with_defaults(&agent, &Secret::parse(KEY, PUB).unwrap(), &defaults)
+        .unwrap();
+    let env: BTreeMap<_, _> = command.get_envs().collect();
+    assert_eq!(
+        env[std::ffi::OsStr::new("BUZZ_AGENT_MODEL")],
+        Some(std::ffi::OsStr::new("selected-model"))
+    );
+    assert_eq!(
+        env[std::ffi::OsStr::new("BUZZ_ACP_MODEL")],
+        Some(std::ffi::OsStr::new("selected-model"))
+    );
+}
+
+#[test]
 fn external_harnesses_never_receive_buzz_agent_build_defaults() {
     let dir = tempfile::tempdir().unwrap();
     let mut agent = agent(dir.path());
@@ -1837,7 +1888,7 @@ fn import_and_repair_deliver_team_instructions_to_a_started_process() {
         fs::create_dir_all(&source).unwrap();
         let mut saved = agent(dir.path());
         saved.imported["record"]["team_id"] = json!("crew");
-        let record = json!({"pubkey":PUB,"private_key_nsec":KEY,"name":"Old name","team_id":"crew","auth_tag":saved.auth_tag,"system_prompt":"Old prompt"});
+        let record = json!({"pubkey":PUB,"private_key_nsec":KEY,"name":"Old name","model":"test-model","team_id":"crew","auth_tag":saved.auth_tag,"system_prompt":"Old prompt"});
         fs::write(
             source.join("managed-agents.json"),
             serde_json::to_vec(&json!([record])).unwrap(),
@@ -2452,25 +2503,11 @@ fn managed_provider_switch_does_not_launch_with_openai_key_or_default_model() {
         model: "build-model".into(),
         ..Default::default()
     };
-    let command = runtime.command_with_defaults(&a, &key, &public).unwrap();
-    let env: BTreeMap<_, _> = command.get_envs().collect();
-    for name in [
-        "OPENAI_COMPAT_API_KEY",
-        "BUZZ_AGENT_MODEL",
-        "BUZZ_ACP_MODEL",
-    ] {
-        assert!(
-            env.get(std::ffi::OsStr::new(name))
-                .copied()
-                .flatten()
-                .is_none(),
-            "{name}"
-        );
-    }
-    assert_eq!(
-        env[std::ffi::OsStr::new("PROVIDER_TEST_SETTING")],
-        Some(std::ffi::OsStr::new("explicit-value"))
-    );
+    let error = runtime
+        .command_with_defaults(&a, &key, &public)
+        .unwrap_err();
+    assert!(error.contains("Buzz Agent requires a model"), "{error}");
+    assert_eq!(a.environment["PROVIDER_TEST_SETTING"], "explicit-value");
     // Explicit legacy environments still belong to their owner.
     a.harness.configuration = None;
     let command = runtime.command_with_defaults(&a, &key, &public).unwrap();

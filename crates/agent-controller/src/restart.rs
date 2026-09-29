@@ -1,6 +1,6 @@
 //! Redacted saved-versus-running differences for the restart-required notice.
 //! Raw values are compared natively; only the redacted entries cross IPC.
-use crate::config::Agent;
+use crate::config::{Agent, AiConfiguration, EffortSelection};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::path::Path;
@@ -47,6 +47,21 @@ pub(crate) fn spawn_config(agent: &Agent) -> Value {
         .file_name()
         .and_then(|name| name.to_str());
     let selected = crate::defaults::selectors(&harness, env);
+    // Explicit configuration is applied after the legacy/imported selector
+    // setup in RuntimeBundle::command_with_defaults. Keep this projection in
+    // lockstep with that final launch state so Save compares what will run,
+    // not only the legacy inputs that were used to build it.
+    let (model, effort) = match &harness.configuration {
+        Some(AiConfiguration::Default) => (None, None),
+        Some(AiConfiguration::Advanced { effort }) => (
+            Some(harness.model.as_str()),
+            match effort {
+                EffortSelection::Value { value } => Some(value.as_str()),
+                EffortSelection::Default | EffortSelection::Unsupported => None,
+            },
+        ),
+        None => (selected.model, crate::agent_defaults::effort(agent)),
+    };
     let provider = selected
         .provider
         .or_else(|| (!harness.provider.is_empty()).then_some(harness.provider.as_str()));
@@ -75,12 +90,12 @@ pub(crate) fn spawn_config(agent: &Agent) -> Value {
         "workspace": agent.workspace,
         "command": harness.command,
         "args": harness.args,
-        "model": selected.model,
+        "model": model,
         "provider": provider,
         "databricks_host": host,
         "databricks_filter": filter,
         "env": env,
-        "effort": crate::agent_defaults::effort(agent),
+        "effort": effort,
         "session_policy": agent.session_policy.unwrap_or_default(),
     })
 }

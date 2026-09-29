@@ -74,8 +74,14 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
     await page.mouse.wheel(0, -4000);
     await expect(replies).toHaveCount(60);
     await page.evaluate(() => window.messagesFixture.failOlderPages(2));
+    // Re-establish the scrollback boundary after the first page settles. One
+    // wheel step alone can stop mid-history in WebKit's hosted viewport.
+    await history.evaluate((el) => {
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event("scroll"));
+    });
     await history.hover();
-    await page.mouse.wheel(0, -4000);
+    await page.mouse.wheel(0, -300);
     const error = history.getByRole("alert");
     const retry = history.getByRole("button", { name: "Retry thread" });
     await expect(error).toContainText("Older page failed");

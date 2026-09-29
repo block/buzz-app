@@ -44,16 +44,26 @@ relaunch/version, and absent-feed and mismatched-key handling on disposable
 clients before expanding preview distribution. There is no safe way to perform
 a live old→new check against a fixed URL without first exposing a candidate
 to clients already pointed there; keep first promotion manual and controlled.
-The release build does not yet embed the public key or endpoint (#312 owns that).
+The release build must embed the same pinned public key and preview endpoint as
+#312; promotion verifies both in the candidate executable. Builds made before
+that integration are ineligible even if their updater archive and signature
+exist. The promotion gate downloads the archive and signature, verifies the
+Minisign archive and trusted-comment signatures against the client's pinned
+key, and requires the authenticated `version:` to equal the candidate version.
+Legacy signatures without a signed version cannot be promoted. A mismatch
+fails before the rolling manifest is replaced. First confirm the release CI
+signer emits that field; merely enabling the client's version requirement
+without changing signer output breaks updates.
 
-The promotion job verifies the versioned prerelease contains a nonempty archive
-and signature, builds the `darwin-aarch64` Tauri manifest with the signature
-from that release and an immutable versioned asset URL, refuses rollback and
+The job builds the `darwin-aarch64` Tauri manifest with the signature from that
+release and an immutable versioned asset URL, refuses full-SemVer rollback and
 changed same-version metadata, and replaces the rolling manifest last. The
-archive and signature remain on the immutable versioned release. The job reads
-back and compares the served manifest; GitHub asset replacement can briefly
-return 404 while the old asset is replaced. Promotion is serialized with the
-release workflow, and a failed upload needs investigation before retrying.
+archive and signature remain on the versioned release. The job reads back
+and compares the GitHub API asset; this is not evidence of public endpoint
+availability. Confirm the endpoint in an installed client on a controlled
+promotion. GitHub asset replacement can briefly return 404 while the old asset
+is replaced. Promotion is serialized with the release workflow, and a failed
+upload needs investigation before retrying.
 Recover from a broken feed by promoting a higher tested build; for key loss or
 client failure, distribute a manually installed Apple-signed DMG. Do not assume
 rolling back a signed archive can undo an installed update.

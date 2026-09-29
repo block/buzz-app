@@ -205,15 +205,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/current" "$RUNNER_TEMP/served"
           gh release view "v$VERSION" --json assets,isPrerelease --jq \
             '.isPrerelease and (any(.assets[]; .name == env.archive and .size > 0)) and (any(.assets[]; .name == (env.archive + ".sig") and .size > 0))' | grep -qx true
+          gh release download "v$VERSION" --pattern "$archive" --dir "$RUNNER_TEMP/candidate"
           gh release download "v$VERSION" --pattern "$archive.sig" --dir "$RUNNER_TEMP/candidate"
-          test -s "$RUNNER_TEMP/candidate/$archive.sig"
+          test -s "$RUNNER_TEMP/candidate/$archive" && test -s "$RUNNER_TEMP/candidate/$archive.sig"
+          tar -xOzf "$RUNNER_TEMP/candidate/$archive" 'Buzz Foundation.app/Contents/MacOS/buzz-foundation' > "$RUNNER_TEMP/candidate/buzz-foundation"
+          test -s "$RUNNER_TEMP/candidate/buzz-foundation"
           current=''
           if gh release view preview-feed >/dev/null 2>&1; then
             gh release download preview-feed --pattern latest.json --dir "$RUNNER_TEMP/current"
             current="$RUNNER_TEMP/current/latest.json"
           fi
-          node scripts/preview-feed.mjs generate "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" ${current:+"$current"}
-          node scripts/preview-feed.mjs verify "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" ${current:+"$current"}
+          node scripts/preview-feed.mjs generate "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/$archive" "$RUNNER_TEMP/candidate/buzz-foundation" ${current:+"$current"}
+          node scripts/preview-feed.mjs verify "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/$archive" "$RUNNER_TEMP/candidate/buzz-foundation" ${current:+"$current"}
           if [[ -z "$current" ]]; then
             gh release create preview-feed "$RUNNER_TEMP/candidate/latest.json" \
               --target "$GITHUB_SHA" --prerelease --latest=false \

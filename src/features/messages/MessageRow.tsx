@@ -411,9 +411,7 @@ export const MessageRow = memo(function MessageRow({
             <div
               className={layout === "continuation" ? "sr-only" : styles.byline}
             >
-              <span className={styles.author}>
-                <strong>{name}</strong>
-              </span>
+              <strong className={styles.author}>{name}</strong>
               {layout !== "continuation" && (
                 <MessageTimestamp createdAt={row.createdAt} />
               )}

@@ -117,9 +117,6 @@
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
-.author strong {
-  font-weight: var(--type-weight-medium);
-}
 .byline time {
   color: var(--text-subtle);
   font-size: var(--text-caption);
@@ -127,6 +124,7 @@
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .author {
+  font-weight: var(--type-weight-medium);
   --user-status-emoji-size: 14px;
   display: inline-flex;
   align-items: baseline;

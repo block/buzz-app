@@ -7,7 +7,7 @@ import {
   nip44,
   verifyEvent,
 } from "nostr-tools";
-import { SIDEBAR_REQUEST_BYTES } from "./sidebar-preferences.mjs";
+import { SIDEBAR_HEAD_BYTES } from "./sidebar-preferences.mjs";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { prepareSidebarStar } from "./sidebar-stars.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
@@ -175,9 +175,7 @@ it.each(["query", "oversized", "publication", "receipt", "conflict"])(
     if (failure === "query")
       h.failQuery(new Response("failed", { status: 503 }));
     if (failure === "oversized")
-      h.failQuery(
-        new Response(`[${" ".repeat(SIDEBAR_REQUEST_BYTES + 4096)}]`),
-      );
+      h.failQuery(new Response(`[${" ".repeat(SIDEBAR_HEAD_BYTES)}]`));
     if (failure === "publication")
       h.failPublication(new Response("failed", { status: 503 }));
     if (failure === "receipt")

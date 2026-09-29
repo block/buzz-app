@@ -199,6 +199,11 @@ it("refocuses the retained profile on repeat openings and returns focus after Es
   for (const keyboard of [false, true]) {
     await user.click(trigger);
     const menu = await screen.findByRole("menu");
+    // Base UI moves focus into an opened menu on the next animation frame.
+    // Keys pressed before then reach the header trigger, which ignores Home.
+    await waitFor(() =>
+      expect(menu).toContainElement(document.activeElement as HTMLElement),
+    );
     const viewProfile = within(menu).getByRole("menuitem", {
       name: "View your profile",
     });

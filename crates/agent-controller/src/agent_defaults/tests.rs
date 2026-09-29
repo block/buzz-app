@@ -106,11 +106,34 @@ fn conversation_context_inherits_defaults_unless_agent_or_imported_definition_se
         effective(&agent, &defaults).session_policy,
         Some(SessionPolicy::Thread)
     );
+    agent.imported = serde_json::json!({
+        "record": {"session_policy": "thread"},
+        "definition": {}
+    });
+    assert_eq!(
+        effective(&agent, &defaults).session_policy,
+        Some(SessionPolicy::Channel),
+        "a linked definition's omitted field is legacy Channel, not the record's stale Thread"
+    );
+    agent.imported = serde_json::json!({"record": {}});
+    assert_eq!(
+        effective(&agent, &defaults).session_policy,
+        Some(SessionPolicy::Channel),
+        "an unlinked import's omitted field is legacy Channel, not the device default"
+    );
+    agent.imported = serde_json::Value::Null;
+    assert_eq!(
+        effective(&agent, &defaults).session_policy,
+        Some(SessionPolicy::Thread),
+        "a new agent still inherits the device default"
+    );
+    agent.imported = serde_json::json!({"record": {}});
     agent.session_policy_inherit = true;
     assert_eq!(agent.view(&defaults).session_policy, None);
     assert_eq!(
-        effective(&agent, &AgentDefaults::default()).session_policy,
-        Some(SessionPolicy::Channel)
+        effective(&agent, &defaults).session_policy,
+        Some(SessionPolicy::Thread),
+        "explicit inheritance overrides an imported legacy Channel"
     );
     assert_eq!(
         AgentDefaults::default().session_policy,

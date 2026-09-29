@@ -38,7 +38,7 @@ fn edit() -> AgentEdit {
         picture: None,
         name: "Edited Brain".into(),
         system_prompt: "New prompt".into(),
-        session_policy: None,
+        session_policy: Some(None),
         // Only validated/serialized here; never used to launch a harness.
         workspace: std::env::current_dir().unwrap().to_str().unwrap().into(),
         harness: fixture().harness,
@@ -151,7 +151,7 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     let agent = fixture();
     store.insert(vec![agent.clone()]).unwrap();
     let mut update = edit();
-    update.session_policy = Some(crate::config::SessionPolicy::Thread);
+    update.session_policy = Some(Some(crate::config::SessionPolicy::Thread));
     store.save(&agent.id, 1, update).unwrap();
     let stale = store.save(&agent.id, 1, edit()).unwrap_err();
     assert!(stale.contains("Reload"));
@@ -219,6 +219,32 @@ fn explicitly_inheriting_context_can_replace_an_imported_policy() {
     assert!(saved.session_policy_inherit);
     assert_eq!(saved.selected_session_policy(), None);
     assert_eq!(saved.imported, agent.imported);
+}
+
+#[test]
+fn an_omitted_ipc_policy_preserves_the_imported_choice_but_null_inherits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let mut agent = fixture();
+    agent.imported = json!({"record": {"session_policy": "thread"}});
+    store.insert(vec![agent.clone()]).unwrap();
+    let mut payload = json!({
+        "name": "Renamed Brain",
+        "systemPrompt": agent.system_prompt,
+        "workspace": agent.workspace,
+        "harness": agent.harness,
+        "environment": {}
+    });
+    let omitted: AgentEdit = serde_json::from_value(payload.clone()).unwrap();
+    store.save(&agent.id, agent.revision, omitted).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap().agents[0].session_policy,
+        Some(crate::config::SessionPolicy::Thread)
+    );
+    payload["sessionPolicy"] = Value::Null;
+    let inherit: AgentEdit = serde_json::from_value(payload).unwrap();
+    store.save(&agent.id, agent.revision + 1, inherit).unwrap();
+    assert_eq!(store.snapshot().unwrap().agents[0].session_policy, None);
 }
 
 #[test]

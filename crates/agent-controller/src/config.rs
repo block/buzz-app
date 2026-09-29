@@ -1,5 +1,5 @@
 use crate::Result;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -25,6 +25,11 @@ impl SessionPolicy {
 }
 fn is_false(value: &bool) -> bool {
     !value
+}
+fn policy_edit<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<SessionPolicy>>, D::Error> {
+    Option::<SessionPolicy>::deserialize(deserializer).map(Some)
 }
 
 // Only these explicit projections may cross IPC. Environment values and unknown
@@ -105,8 +110,9 @@ pub struct AgentEdit {
     #[serde(default)]
     pub picture: Option<String>,
     pub system_prompt: String,
-    #[serde(default)]
-    pub session_policy: Option<SessionPolicy>,
+    /// Missing preserves the current choice; null explicitly inherits defaults.
+    #[serde(default, deserialize_with = "policy_edit")]
+    pub session_policy: Option<Option<SessionPolicy>>,
     pub workspace: String,
     pub harness: HarnessEdit,
     /// Absence preserves; null deletes; a value replaces. Never a read API.
@@ -213,17 +219,24 @@ impl Agent {
     }
     pub(crate) fn selected_session_policy(&self) -> Option<SessionPolicy> {
         if self.session_policy_inherit {
-            return self.session_policy;
+            return None;
         }
         self.session_policy.or_else(|| {
-            let imported = self.imported["definition"]["session_policy"]
-                .as_str()
-                .or_else(|| self.imported["record"]["session_policy"].as_str());
-            match imported {
-                Some("channel") => Some(SessionPolicy::Channel),
-                Some("thread") => Some(SessionPolicy::Thread),
-                _ => None,
-            }
+            // Old Buzz omitted Channel on serialization; a linked definition
+            // still wins over the record when its field is absent.
+            let imported = self
+                .imported
+                .get("definition")
+                .filter(|value| value.is_object())
+                .or_else(|| {
+                    self.imported
+                        .get("record")
+                        .filter(|value| value.is_object())
+                })?;
+            Some(match imported["session_policy"].as_str() {
+                Some("thread") => SessionPolicy::Thread,
+                _ => SessionPolicy::Channel,
+            })
         })
     }
     pub fn respond_to(&self, owner_only: bool) -> Result<&str> {
@@ -259,8 +272,10 @@ impl Agent {
         }
         self.name = edit.name;
         self.system_prompt = edit.system_prompt;
-        self.session_policy = edit.session_policy;
-        self.session_policy_inherit = edit.session_policy.is_none();
+        if let Some(policy) = edit.session_policy {
+            self.session_policy = policy;
+            self.session_policy_inherit = policy.is_none();
+        }
         self.workspace = edit.workspace;
         self.harness = edit.harness;
         for (key, value) in edit.environment {

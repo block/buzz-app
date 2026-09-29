@@ -5,6 +5,7 @@ import { ChannelNavigationProvider } from "../features/channel-navigation/Channe
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { AgentWakeNotice } from "../features/agents/AgentWakeNotice";
+import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { useEffect, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
@@ -170,6 +171,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           workspace={startup === "ready" && route.page?.layout === "workspace"}
         >
           <AgentWakeNotice control={services.agentControl} />
+          <UpdateNotice updates={services.updates} />
           {startup === "recovery" && !settings ? (
             <RecoveryScreen plugins={plugins} />
           ) : (!route.state.ingress && route.failure) ||
@@ -192,6 +194,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 Open Settings
               </Button>
             </div>
+          ) : route.waiting ? (
+            <p role="status">Opening destination…</p>
           ) : settings ? (
             <Settings
               plugins={plugins}
@@ -203,6 +207,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               shortcutBindings={services.shortcutBindings}
               notifications={services.notifications}
               agentControl={services.agentControl}
+              updates={services.updates}
               navigation={route.request}
               navigationPane
               onSection={(section) => {
@@ -223,7 +228,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 });
               }}
             />
-          ) : route.waiting || startup === "loading" ? (
+          ) : startup === "loading" ? (
             <p role="status">Opening destination…</p>
           ) : route.page ? (
             <PageView

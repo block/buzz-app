@@ -1,4 +1,10 @@
 import {
+  deleteAuthorityFilter,
+  deleteAuthorityText,
+  parseDeleteAuthority,
+  type ChannelDeleteAuthority,
+} from "./channel-delete-authority";
+import {
   memoryResponseText,
   type MemoryReader,
   type MemoryListing,
@@ -85,6 +91,7 @@ export interface ReadTransport {
   readonly channelLifecycle?: RelayWriter;
   /** Name/about/private-only metadata writer, separate from lifecycle and outbox. */
   readonly channelDetails?: RelayWriter;
+  readonly readChannelDeleteAuthority?: ChannelDeleteAuthority;
   /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
@@ -369,6 +376,7 @@ export async function connectBrokerTransport(
     directMessages?: boolean;
     channelLifecycle?: boolean;
     channelDetails?: boolean;
+    channelDeleteCommunity?: string;
     identityArchives?: boolean;
     relayUrl?: string;
     relayHttpUrl?: string;
@@ -817,6 +825,36 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.channelDetails === true
       ? { channelDetails: routeWriter("channel-details") }
+      : {}),
+    ...(session.channelDeleteCommunity
+      ? {
+          async readChannelDeleteAuthority(
+            channelId: string,
+            signal: AbortSignal,
+          ) {
+            const response = await fetch(`${endpoint}/query`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(
+                deleteAuthorityFilter(channelId, session.viewer as string),
+              ),
+              signal,
+            });
+            if (!response.ok)
+              throw new Error(
+                `Delete authority unavailable (${response.status})`,
+              );
+            const value = JSON.parse(await deleteAuthorityText(response));
+            signal.throwIfAborted();
+            return parseDeleteAuthority(
+              value,
+              session.channelDeleteCommunity as string,
+              session.viewer as string,
+              channelId,
+            );
+          },
+        }
       : {}),
     ...(session.channelLifecycle === true
       ? { channelLifecycle: routeWriter("channel-lifecycle") }

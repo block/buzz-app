@@ -236,69 +236,74 @@ export function ActivityStream({
           </BaseButton>
         </div>
       )}
-      {communication.length > 0 && (
-        <Accordion
-          variant="activity"
-          defaultValue={expandHumanRequests ? ["communication"] : []}
-          items={[
-            {
-              value: "communication",
-              title: (
-                <span className="text-caption text-subtle">
-                  Communication ({communication.length})
-                </span>
-              ),
-              content: (
-                <div className={styles.messageEvidence}>
-                  {communication.map(({ entry, agent }) =>
-                    entry.kind === "thought" ? (
-                      <ProgressEntry
-                        key={entry.id}
-                        entry={entry}
-                        source={source}
-                        showDiagnostics={showDiagnostics}
-                      />
-                    ) : (
-                      <MessageEntry
-                        key={entry.id}
-                        entry={entry}
-                        agent={agent}
-                        session={session}
-                        source={source}
-                        expandHumanRequests={expandHumanRequests}
-                      />
-                    ),
-                  )}
-                </div>
-              ),
-            },
-          ]}
-        />
-      )}
-      {showDiagnostics && diagnostics.length > 0 && (
-        <Accordion
-          variant="activity"
-          items={[
-            {
-              value: "diagnostics",
-              title: (
-                <span className="text-caption text-subtle">
-                  Diagnostics ({diagnostics.length}){diagnosticAttention}
-                </span>
-              ),
-              content: (
-                <Accordion
-                  variant="activity"
-                  items={diagnostics.map((entry) => ({
-                    value: entry.id,
-                    title: entry.title,
-                    content: <EntryDetail entry={entry} source={source} />,
-                  }))}
-                />
-              ),
-            },
-          ]}
-        />
+      {(communication.length > 0 ||
+        (showDiagnostics && diagnostics.length > 0)) && (
+        <div className={styles.secondary}>
+          {communication.length > 0 && (
+            <Accordion
+              variant="activity"
+              defaultValue={expandHumanRequests ? ["communication"] : []}
+              items={[
+                {
+                  value: "communication",
+                  title: (
+                    <span className="text-caption text-subtle">
+                      Communication ({communication.length})
+                    </span>
+                  ),
+                  content: (
+                    <div className={styles.messageEvidence}>
+                      {communication.map(({ entry, agent }) =>
+                        entry.kind === "thought" ? (
+                          <ProgressEntry
+                            key={entry.id}
+                            entry={entry}
+                            source={source}
+                            showDiagnostics={showDiagnostics}
+                          />
+                        ) : (
+                          <MessageEntry
+                            key={entry.id}
+                            entry={entry}
+                            agent={agent}
+                            session={session}
+                            source={source}
+                            expandHumanRequests={expandHumanRequests}
+                          />
+                        ),
+                      )}
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          )}
+          {showDiagnostics && diagnostics.length > 0 && (
+            <Accordion
+              variant="activity"
+              items={[
+                {
+                  value: "diagnostics",
+                  title: (
+                    <span className="text-caption text-subtle">
+                      Diagnostics ({diagnostics.length}){diagnosticAttention}
+                    </span>
+                  ),
+                  content: (
+                    <Accordion
+                      variant="activity"
+                      items={diagnostics.map((entry) => ({
+                        value: entry.id,
+                        title: entry.title,
+                        content: <EntryDetail entry={entry} source={source} />,
+                      }))}
+                    />
+                  ),
+                },
+              ]}
+            />
+          )}
+        </div>
       )}
     </section>
   );

@@ -441,6 +441,12 @@ for (const mode of ["light", "dark"]) {
         }),
         agentKey,
       );
+    app.observer(
+      activity("session_config_captured", "alpha", "layout", {
+        configOptions: [],
+      }),
+      agentKey,
+    );
     await openProfileActivity(page, avatar);
     await expect(channelActivity(page)).toHaveCount(0);
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
@@ -477,8 +483,40 @@ for (const mode of ["light", "dark"]) {
         exact: true,
       }),
     ).toBeVisible();
+    const communication = readable.getByRole("button", {
+      name: /^Communication/,
+    });
+    const diagnostics = readable.getByRole("button", { name: /^Diagnostics/ });
+    if ((await communication.getAttribute("aria-expanded")) === "true")
+      await communication.click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
+      // Real-browser geometry: secondary controls align to the tool's leading
+      // icon edge and form a compact stack, without cumulative indentation.
+      await expect
+        .poll(
+          async () => {
+            const icon = await tool
+              .locator("[data-activity-action]")
+              .boundingBox();
+            const c = await communication
+              .locator(":scope > span")
+              .boundingBox();
+            const d = await diagnostics.locator(":scope > span").boundingBox();
+            const cb = await communication.boundingBox();
+            const db = await diagnostics.boundingBox();
+            return (
+              Math.abs(c.x - icon.x) < 1 &&
+              Math.abs(d.x - icon.x) < 1 &&
+              Math.abs(db.y - (cb.y + cb.height)) < 1
+            );
+          },
+          {
+            message:
+              "secondary sections align with tool rows and have no extra inter-row gap",
+          },
+        )
+        .toBe(true);
       await expect
         .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
         .toBe(width);

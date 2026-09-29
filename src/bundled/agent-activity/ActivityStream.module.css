@@ -278,3 +278,18 @@
   margin-inline-start: var(--space-6);
   max-width: calc(100% - var(--space-6));
 }
+
+/* Secondary sections share the operation row's leading edge, not its icon gutter. */
+.secondary {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.secondary
+  > [class~="buzz-accordion"]
+  > div
+  > [class~="buzz-accordion-heading"]
+  > [class~="buzz-accordion-trigger"] {
+  margin-inline-start: 0;
+  max-width: 100%;
+}

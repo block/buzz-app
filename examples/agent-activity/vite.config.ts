@@ -12,6 +12,10 @@ export default defineConfig({
   server: { host: "127.0.0.1", port: 1451, strictPort: true },
   build: {
     outDir: "dist/agent-activity-preview",
-    rollupOptions: { input: `${root}/examples/agent-activity/index.html` },
+    rollupOptions: {
+      input: ["index", "playground"].map(
+        (page) => `${root}/examples/agent-activity/${page}.html`,
+      ),
+    },
   },
 });

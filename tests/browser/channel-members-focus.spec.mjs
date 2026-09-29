@@ -37,6 +37,15 @@ test("identity copy preserves modal focus and addition returns focus only to its
       preview: { host: "127.0.0.1", port: 0, strictPort: true },
     });
     const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/browser/channel-members-focus.html`;
+    await page.addInitScript(() => {
+      window.copiedNpubs = [];
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (value) => window.copiedNpubs.push(value),
+        },
+      });
+    });
     for (const moved of [false, true]) {
       await page.goto(url);
       await page.getByRole("button", { name: "Channel members" }).click();
@@ -46,20 +55,12 @@ test("identity copy preserves modal focus and addition returns focus only to its
       const add = dialog.getByRole("button", { name: /Add Morgan/ });
       await expect(add).toBeEnabled();
       if (!moved) {
-        await page.evaluate(() => {
-          window.copiedNpubs = [];
-          Object.defineProperty(navigator, "clipboard", {
-            configurable: true,
-            value: {
-              writeText: async (value) => window.copiedNpubs.push(value),
-            },
-          });
-        });
         await dialog.evaluate(async (element) => {
           await Promise.all(
             element.getAnimations({ subtree: true }).map((a) => a.finished),
           );
         });
+        await expect(add).not.toBeFocused();
         const before = await add.boundingBox();
         await add.hover({ position: { x: 20, y: 20 } });
         const card = page.getByRole("dialog", {
@@ -85,6 +86,12 @@ test("identity copy preserves modal focus and addition returns focus only to its
           .poll(() => page.evaluate(() => window.copiedNpubs))
           .toEqual([npub]);
         await expect(add).toBeEnabled();
+        // Pointer entry has not focused Add: Escape must find the row control.
+        await expect(copy).toBeFocused();
+        await page.keyboard.press("Escape");
+        await expect(card).not.toBeVisible();
+        await expect(dialog).toBeVisible();
+        await expect(add).toBeFocused();
         await page.mouse.move(0, 0);
         await search.focus();
         await expect(card).not.toBeVisible();
@@ -159,6 +166,20 @@ test("identity copy preserves modal focus and addition returns focus only to its
       name: "Morgan identity",
       exact: true,
     });
+    // No prior checkbox focus: the wrapper itself cannot receive focus.
+    await expect(checkbox).not.toBeFocused();
+    await checkbox.hover();
+    await expect(card).toBeVisible();
+    const copy = card.getByRole("button", { name: "Copy npub", exact: true });
+    await copy.click();
+    await expect(copy).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(card).not.toBeVisible();
+    await expect(team).toBeVisible();
+    await expect(checkbox).toBeFocused();
+    await expect(checkbox).not.toBeChecked();
+    await page.mouse.move(0, 0);
+    await team.getByRole("textbox").focus();
     for (const mode of ["light", "dark"]) {
       await page.evaluate((mode) => {
         document.documentElement.className = mode;

@@ -51,8 +51,23 @@ export function PreviewCard({
   const popupRef = useRef<HTMLDivElement>(null);
   const focusedTrigger = useRef<HTMLElement | null>(null);
   const returnFocusOnClose = useRef(false);
-  const restoreFocus = () =>
-    (focusedTrigger.current ?? triggerRef.current)?.focus();
+  const restoreFocus = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    // Pointer entry may never focus a child of a non-focusable trigger wrapper.
+    const candidates = [
+      focusedTrigger.current,
+      trigger,
+      ...trigger.querySelectorAll<HTMLElement>(
+        "button, a[href], input, select, textarea, [tabindex]",
+      ),
+    ];
+    for (const candidate of candidates) {
+      if (!candidate || !trigger.contains(candidate)) continue;
+      candidate.focus();
+      if (document.activeElement === candidate) return;
+    }
+  };
   return (
     <BasePreviewCard.Root
       open={open}

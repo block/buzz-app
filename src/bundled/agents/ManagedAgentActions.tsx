@@ -7,6 +7,7 @@ import {
   type AgentControlState,
   type AgentView,
 } from "../../features/agents/control";
+import { agentSetupConfirmationAvailable } from "../../features/communities/api";
 import { LocalInventoryAction } from "./LocalInventoryAction";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentProcessLabel } from "./agent-edit";
@@ -29,6 +30,7 @@ export function ManagedAgentActions({
   onUseHere?: ((pubkey: string) => void) | undefined;
 }) {
   const [settingUp, setSettingUp] = useState(false);
+  const setupAvailable = agentSetupConfirmationAvailable();
   const details = useRef<HTMLDivElement>(null);
   const [checking, setChecking] = useState(false);
   // Describes one refreshed status; any later status change supersedes it.
@@ -93,12 +95,14 @@ export function ManagedAgentActions({
         <p role="status" className="m-0 text-body-sm">
           Imported, not started.{" "}
           {agent.configured === false
-            ? "Choose Use here to set up this identity in a community."
+            ? setupAvailable
+              ? "Choose Use here to set up this identity in a community."
+              : "It is not set up in a community yet."
             : "Start it when you are ready."}
         </p>
       )}
       {agent.configured === false &&
-        (onUseHere ? (
+        (onUseHere && setupAvailable ? (
           <Button
             disabled={state.busy || state.status !== "ready"}
             onClick={() => onUseHere(agent.pubkey)}

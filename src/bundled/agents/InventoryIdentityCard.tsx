@@ -8,6 +8,8 @@ import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
+import { agentSetupConfirmationAvailable } from "../../features/communities/api";
+import { agentSetupUnavailableMessage } from "./LocalInventoryAction";
 import { ManagedAgentActions } from "./ManagedAgentActions";
 import { localHereGroup, type inventoryDecision } from "./inventory-decisions";
 import { type AgentInventoryIdentity, localSetups } from "./inventory-model";
@@ -44,6 +46,7 @@ export function InventoryIdentityCard({
   if (!data) return null;
   const avatar = row.avatar ?? publicProfiles.get(row.pubkey)?.picture;
   const tile = decision.group === localHereGroup;
+  const setupAvailable = agentSetupConfirmationAvailable();
   // The app runs every saved setup, so each keeps its controls whether or not
   // its community is the one currently selected or connected.
   const setups = localSetups(row, destination);
@@ -88,17 +91,20 @@ export function InventoryIdentityCard({
                 state.status !== "ready" ||
                 !!decision.blocked ||
                 !data.localInventoryActions ||
-                !control.configureHere
+                !control.configureHere ||
+                !setupAvailable
               }
               onClick={() => onUseHere(row.pubkey)}
             >
               Use here
             </Button>
             {decision.blocked && <p role="status">{decision.blocked}</p>}
-            {!data.localInventoryActions && (
+            {!data.localInventoryActions ? (
               <p>
                 Restart an updated desktop build to use local inventory actions.
               </p>
+            ) : (
+              !setupAvailable && <p>{agentSetupUnavailableMessage}</p>
             )}
           </>
         )}

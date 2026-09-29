@@ -3,7 +3,9 @@
 The shell is owned by `src/app/shell`, independently of relay operations and page
 content. `App.tsx` composes startup/recovery, built-in Settings, and the
 existing contributed-page lifecycle. Messages is the default destination at
-startup; legacy Home targets resolve to Messages in the same visit. Channels is
+startup; legacy Home targets resolve to Messages in the same visit. Old version-1
+Channels Inbox/Bestie routes resolve to their standalone pages in that same visit,
+preserving community scope and normal plugin availability checks. Channels is
 required, including when older preferences saved it disabled. Navigation removes
 disabled optional plugins
 from page choices; a retained destination whose provider is unavailable displays

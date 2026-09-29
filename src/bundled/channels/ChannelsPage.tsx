@@ -399,14 +399,14 @@ function ChannelWorkspace({
       : undefined;
   const currentId = current?.id;
   useEffect(() => {
-    if (!currentId || composingMessage || placeholder || draftParent) return;
+    if (!currentId || composingMessage || draftParent) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
     return () => {
       setSent((previous) =>
         previous?.channelId === currentId ? undefined : previous,
       );
     };
-  }, [currentId, composingMessage, placeholder, draftParent]);
+  }, [currentId, composingMessage, draftParent]);
   const [settings, setSettings] = useState<{
     channelId: string | undefined;
     entryId: string | undefined;

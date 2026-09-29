@@ -764,3 +764,98 @@ fillSidebar(
     expect(await fillBounds(profile)).toEqual(await fillBounds(back));
   },
 );
+
+// Wheel scrolling and clipping in a short viewport require a real layout engine.
+test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 220 });
+  await page.route("**/session", (route) => route.fulfill({ json: {} }));
+  await page.goto(app.origin);
+  const sidebar = page.getByRole("complementary", {
+    name: "Channel sidebar",
+    exact: true,
+  });
+  const retry = sidebar.getByRole("button", {
+    name: "Retry channels",
+    exact: true,
+  });
+  await expect(retry).toBeAttached();
+  const scrollToBottom = async (target) => {
+    await sidebar.hover();
+    await page.mouse.wheel(0, 800);
+    await expect
+      .poll(async () => {
+        const bounds = await sidebar.boundingBox();
+        const row = await target.boundingBox();
+        return (
+          !!bounds &&
+          !!row &&
+          row.y >= bounds.y &&
+          row.y + row.height <= bounds.y + bounds.height
+        );
+      })
+      .toBe(true);
+  };
+  const expectUnclippedFocus = async (button) => {
+    await page.keyboard.press("Tab");
+    await button.focus();
+    await expect(button).toBeFocused();
+    await expect
+      .poll(() =>
+        button.evaluate((element) => {
+          const style = getComputedStyle(element);
+          const extent =
+            parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+          let scroll = element.parentElement;
+          while (scroll && getComputedStyle(scroll).overflowY !== "auto")
+            scroll = scroll.parentElement;
+          if (!scroll || style.outlineStyle === "none" || extent <= 0)
+            return false;
+          const row = element.getBoundingClientRect();
+          const clip = scroll.getBoundingClientRect();
+          return (
+            row.left - extent >= clip.left &&
+            row.right + extent <= clip.left + scroll.clientWidth
+          );
+        }),
+      )
+      .toBe(true);
+  };
+  await scrollToBottom(retry);
+  await expectUnclippedFocus(retry);
+  await expect
+    .poll(() =>
+      retry.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const extent =
+          parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+        return (
+          element.getBoundingClientRect().bottom + extent <=
+          element.parentElement.getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBe(true);
+  await page.unroute("**/session");
+  await retry.click();
+  await expect(
+    page.getByRole("navigation", { name: "Subscribed channels" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Personal space", exact: true })
+    .click();
+  const status = sidebar.getByText("Choose a community to see channels.", {
+    exact: true,
+  });
+  await expect(status).toBeAttached();
+  await scrollToBottom(status);
+  await expectUnclippedFocus(
+    sidebar.getByRole("button", { name: "Workflows", exact: true }),
+  );
+  await sidebar.getByRole("button", { name: "Workflows", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Workflows", exact: true }),
+  ).toBeVisible();
+});

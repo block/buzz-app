@@ -99,15 +99,18 @@ export function ChannelSidebar(props: Props) {
         <div className="shell-sidebar-default">
           <Panel as="aside" aria-label="Channel sidebar">
             <div className={styles.sidebar}>
-              {navigation}
-              <p className={styles.empty}>
-                {connection.status === "connecting"
-                  ? "Connecting to your relay…"
-                  : (connection.error ?? "Choose a community to see channels.")}
-              </p>
-              {connection.status === "error" && (
-                <Button onClick={props.relay.retry}>Retry channels</Button>
-              )}
+              <div className={styles.sidebarScroll}>
+                {navigation}
+                <p className={styles.empty}>
+                  {connection.status === "connecting"
+                    ? "Connecting to your relay…"
+                    : (connection.error ??
+                      "Choose a community to see channels.")}
+                </p>
+                {connection.status === "error" && (
+                  <Button onClick={props.relay.retry}>Retry channels</Button>
+                )}
+              </div>
             </div>
           </Panel>
         </div>
@@ -146,11 +149,13 @@ class SidebarBoundary extends Component<
       <div className="shell-sidebar-default">
         <Panel as="aside" aria-label="Channel sidebar">
           <div className={styles.sidebar}>
-            {this.props.fallback}
-            <p role="alert">Channels couldn’t open.</p>
-            <Button onClick={() => this.setState({ failed: false })}>
-              Retry channels
-            </Button>
+            <div className={styles.sidebarScroll}>
+              {this.props.fallback}
+              <p role="alert">Channels couldn’t open.</p>
+              <Button onClick={() => this.setState({ failed: false })}>
+                Retry channels
+              </Button>
+            </div>
           </div>
         </Panel>
       </div>

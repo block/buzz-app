@@ -45,6 +45,15 @@
   --sidenav-emoji-size: 13px;
   padding-inline: var(--sidebar-padding) var(--sidebar-padding-end);
 }
+.sidebarScroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  /* Keep row focus outlines inside the scrollport without shifting content. */
+  margin-inline: calc(-1 * var(--sidebar-padding))
+    calc(-1 * var(--sidebar-padding-end));
+  padding: 0 var(--sidebar-padding-end) var(--space-1) var(--sidebar-padding);
+}
 .sidebarBrand {
   height: var(--space-6);
   display: flex;

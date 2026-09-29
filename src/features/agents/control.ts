@@ -86,8 +86,16 @@ export interface AgentView {
   /** Absent on older hosts means an existing configured setup. */
   configured?: boolean;
 }
+export interface ParkedIdentity {
+  pubkey: string;
+  name: string;
+  /** Historical metadata sources, not a credential availability assertion. */
+  sources: ImportSource[];
+}
 export interface ControlSnapshot {
   localInventoryActions?: boolean;
+  parked?: ParkedIdentity[];
+  inventoryWarnings?: string[];
   agents: AgentView[];
   runtimeAvailable: boolean;
   /** Native executable presence and editing suggestions, not sign-in or execution evidence.
@@ -190,11 +198,11 @@ export type CommunityResolution = {
 export type CloneSettings = Pick<AgentEdit, "name" | "systemPrompt">;
 export interface AgentControlHost {
   readLog?(target: AgentLogTarget): Promise<string>;
-  cloneSettings?(source: ImportSource, pubkey: string): Promise<CloneSettings>;
   configureHere?(
     id: string,
     resolution: CommunityResolution,
   ): Promise<ControlSnapshot>;
+  cloneSettings?(source: ImportSource, pubkey: string): Promise<CloneSettings>;
   models?: ModelHost;
   installGoose?(): Promise<GooseInstallReport>;
   installPi?(): Promise<GooseInstallReport>;
@@ -261,8 +269,8 @@ export interface AgentControlState {
 export interface AgentControl {
   /** Sensitive local output. Native custody and exact community are rechecked per read. */
   readLog?(target: AgentLogTarget): Promise<string>;
-  cloneSettings?: AgentControlHost["cloneSettings"];
   configureHere?: AgentControlHost["configureHere"];
+  cloneSettings?: AgentControlHost["cloneSettings"];
   models?: AgentModels;
   installGoose?(): Promise<GooseInstallReport>;
   installPi?(): Promise<GooseInstallReport>;

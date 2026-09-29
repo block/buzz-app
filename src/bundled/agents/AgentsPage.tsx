@@ -1,3 +1,4 @@
+import { UnifiedInventory } from "./UnifiedInventory";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { PageProps } from "../../features/pages/service";
@@ -140,11 +141,32 @@ export function AgentsPage({
                       : undefined
                   }
                 >
-                  {(state, edit, duplicate, remove, importedId, label) =>
+                  {(
+                    state,
+                    edit,
+                    duplicate,
+                    remove,
+                    importedId,
+                    label,
+                    onUseHere,
+                  ) =>
                     state.status === "unavailable" ? (
                       library
+                    ) : state.data?.parked !== undefined ? (
+                      <UnifiedInventory
+                        key={connection.viewer ?? "offline"}
+                        state={state}
+                        edit={edit}
+                        duplicate={duplicate}
+                        remove={control.delete ? remove : undefined}
+                        importedId={importedId}
+                        control={control}
+                        connection={connection}
+                        onUseHere={onUseHere}
+                      />
                     ) : (
                       <ManagedAgents
+                        onUseHere={onUseHere}
                         key={`${connection.scope}:${connection.generation}`}
                         state={state}
                         label={label}
@@ -155,6 +177,7 @@ export function AgentsPage({
                         control={control}
                         connection={connection}
                         destination={importDestination}
+                        headerActions={headerActions}
                       />
                     )
                   }
@@ -185,6 +208,8 @@ function ManagedAgents({
   connection,
   label,
   destination,
+  headerActions,
+  onUseHere,
 }: {
   label(agent: AgentView): string;
   state: AgentControlState;
@@ -195,6 +220,8 @@ function ManagedAgents({
   control: AgentControl;
   connection: RelaySnapshot;
   destination: string;
+  headerActions: HTMLElement | null;
+  onUseHere(pubkey: string): void;
 }) {
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(
@@ -202,15 +229,13 @@ function ManagedAgents({
     library.snapshot,
     library.snapshot,
   );
-  useEffect(() => {
-    if (connection.status === "ready") void library.refresh();
-  }, [library, connection.status]);
   return (
     <section aria-label="My agents" className="flex flex-col gap-4">
       <h2 className="sr-only">My agents</h2>
       <p className="m-0 text-body-sm text-secondary">
-        Mention an agent in a channel to add it and start it. Stop old Buzz and
-        its listeners before using an imported identity here.
+        Set up an imported agent with Use here, then start it separately. Before
+        starting the same identity here, stop the old agent and disable its
+        automatic startup in the old app.
       </p>
       {state.data?.agents.length === 0 && (
         <p>No agents yet. Create an agent or import one from old Buzz below.</p>
@@ -239,6 +264,7 @@ function ManagedAgents({
             >
               <ManagedAgentActions
                 agent={agent}
+                onUseHere={onUseHere}
                 state={state}
                 control={control}
                 imported={agent.id === importedId}
@@ -251,6 +277,13 @@ function ManagedAgents({
           );
         })}
       </div>
+      {connection.status === "ready" && (
+        <AgentLibrary
+          session={connection.session}
+          headerActions={headerActions}
+          managedKeys={state.data?.agents.map((agent) => agent.pubkey) ?? []}
+        />
+      )}
     </section>
   );
 }

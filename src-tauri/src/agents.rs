@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 pub(crate) struct Snapshot {
     #[serde(flatten)]
     pub(crate) data: ControlSnapshot,
+    inventory_warnings: Vec<String>,
     import_available: bool,
     create_available: bool,
     configuration_available: bool,
@@ -39,6 +40,7 @@ impl Snapshot {
     ) -> Self {
         Self {
             data,
+            inventory_warnings: Vec::new(),
             import_available,
             create_available: import_available,
             configuration_available: true,
@@ -326,6 +328,7 @@ impl PreparedCreation {
 }
 
 struct Host {
+    inventory_warnings: Vec<String>,
     controller: Controller,
     imports: Imports,
     legacy_parent: PathBuf,
@@ -355,7 +358,8 @@ impl Host {
             .parent()
             .ok_or("Invalid local agent storage")?
             .to_path_buf();
-        let store = Store::open(root)?;
+        let mut store = Store::open(root)?;
+        let inventory_warnings = store.migrate_legacy(&legacy_parent);
         let queued = store
             .snapshot()?
             .agents
@@ -376,6 +380,7 @@ impl Host {
             legacy_parent.join("dev.local.buzz.agent-ownership"),
         );
         Ok(Self {
+            inventory_warnings,
             controller,
             imports: Imports::default(),
             legacy_parent,
@@ -404,12 +409,14 @@ impl Host {
                 agent.error = None;
             }
         }
-        Ok(Snapshot::from(
+        let mut snapshot = Snapshot::from(
             data,
             cfg!(target_os = "macos"),
             &self.workspace,
             &self.app_data,
-        ))
+        );
+        snapshot.inventory_warnings = self.inventory_warnings.clone();
+        Ok(snapshot)
     }
     fn action(&mut self, id: &str, action: Action) -> Result<Snapshot, String> {
         self.starts.remove(id);

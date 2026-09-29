@@ -309,6 +309,7 @@ it.each(["action", "initial read"])(
 it("offers the activity preview to known agents only, never to people", async () => {
   const person = keypair();
   const agent = keypair();
+  const localAgent = keypair();
   const activity = createAgentActivity(true, vi.fn(), () => true);
   const owner = createRelaySession({
     viewer: key,
@@ -317,7 +318,12 @@ it("offers the activity preview to known agents only, never to people", async ()
     query: async () => [
       profile(person, { name: "Plain person" }),
       profile(agent, { name: "Declared agent", is_agent: true }),
+      profile(localAgent, { name: "Local agent" }),
     ],
+    readAgentLibrary: async () => ({
+      definitions: [],
+      identities: [{ pubkey: localAgent.pubkey, name: "Local agent" }],
+    }),
   });
   const release = activity.queries.activate();
   activity.state({
@@ -363,6 +369,19 @@ it("offers the activity preview to known agents only, never to people", async ()
     ).not.toBeInTheDocument();
     mounted.rerender(view(agent.pubkey));
     await screen.findByRole("heading", { name: "Declared agent" });
+    expect(
+      await screen.findByRole("region", { name: "Activity preview" }),
+    ).toHaveTextContent("No activity yet");
+    expect(screen.getByRole("button", { name: "View activity" })).toBeEnabled();
+    mounted.rerender(view(localAgent.pubkey));
+    await screen.findByRole("heading", { name: "Local agent" });
+    await act(() => owner.session.agentChoices.refresh());
+    expect(owner.session.agentChoices.snapshot().identities).toEqual([
+      expect.objectContaining({ pubkey: localAgent.pubkey }),
+    ]);
+    expect(
+      owner.session.profiles.snapshot().get(localAgent.pubkey)?.isAgent,
+    ).not.toBe(true);
     expect(
       await screen.findByRole("region", { name: "Activity preview" }),
     ).toHaveTextContent("No activity yet");

@@ -340,7 +340,7 @@ function reportedReply(
   });
   f.send(agent, turnId, 4, "turn_completed");
 }
-it("attaches each agent's request work to its own real reply; tabs preserve selection on panel expansion", async () => {
+it("locks each reply popup and its expanded target to the author without agent tabs", async () => {
   const f = fixture();
   const answers = [A, B].map((key, index) => ({
     ...row(String(index + 3).repeat(64)),
@@ -374,17 +374,17 @@ it("attaches each agent's request work to its own real reply; tabs preserve sele
     fireEvent.click(
       within(screen.getByTestId(B)).getByRole("button", { name: /Worked/ }),
     );
-    expect(screen.getByRole("tab", { name: "Bubbles" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /Run command/ })).toHaveLength(
+      1,
     );
-    vi.useRealTimers();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "Blossom" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Open activity in panel" }),
     );
     expect(f.props.open).toHaveBeenCalledWith(
-      expect.stringContaining(`agent=${A}`),
+      expect.stringContaining(
+        `agent=${B}&channel=c&request=${root}&thread=${root}&view=agent`,
+      ),
     );
   } finally {
     view.unmount();

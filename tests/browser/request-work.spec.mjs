@@ -283,6 +283,86 @@ test("one request work header spans agents and replies without absorbing a follo
     "true",
   );
   await choose("Bubbles");
+  await popup
+    .getByRole("button", { name: "Open activity in panel", exact: true })
+    .click();
+  const panel = page.getByRole("region", {
+    name: "Agent activity",
+    exact: true,
+  });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("tab", { name: /^Bubbles/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    panel.getByRole("tablist", { name: "Agents", exact: true }),
+  ).toBeVisible();
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate(
+      (m) => (document.documentElement.dataset.colorMode = m),
+      mode,
+    );
+    for (const width of [1280, 800, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await panel.scrollIntoViewIfNeeded();
+      const tablist = panel.getByRole("tablist", { name: "Agents" });
+      await tablist.getByRole("tab").last().focus();
+      await tablist.getByRole("tab").last().press("Enter");
+      const measure = () =>
+        tablist.evaluate((list) => {
+          const bounds = list.getBoundingClientRect(),
+            selected = list
+              .querySelector('[aria-selected="true"]')
+              .getBoundingClientRect();
+          return {
+            overflow: list.scrollWidth > list.clientWidth,
+            left: selected.left >= bounds.left - 1,
+            right: selected.right <= bounds.right + 1,
+            pageFits: document.documentElement.scrollWidth <= window.innerWidth,
+          };
+        });
+      await expect
+        .poll(measure, `${mode} ${width} tab bounds`)
+        .toMatchObject({ left: true, right: true, pageFits: true });
+
+      await page.screenshot({
+        path: testInfo.outputPath(`agent-tabs-${mode}-${width}.png`),
+      });
+    }
+  }
+  // Enlarged text forces real native tab overflow without changing production labels.
+  await page.evaluate(() => (document.documentElement.style.fontSize = "24px"));
+  await panel.scrollIntoViewIfNeeded();
+  const overflowTabs = panel.getByRole("tablist", { name: "Agents" });
+  await expect
+    .poll(() =>
+      overflowTabs.evaluate((list) => list.scrollWidth > list.clientWidth),
+    )
+    .toBe(true);
+  await overflowTabs.getByRole("tab").last().focus();
+  await overflowTabs.getByRole("tab").last().press("Enter");
+  await expect
+    .poll(() =>
+      overflowTabs.evaluate((list) => {
+        const tab = list
+          .querySelector('[aria-selected="true"]')
+          .getBoundingClientRect();
+        const bounds = list.getBoundingClientRect();
+        return tab.left >= bounds.left - 1 && tab.right <= bounds.right + 1;
+      }),
+    )
+    .toBe(true);
+  await page.evaluate(() =>
+    document.documentElement.style.removeProperty("font-size"),
+  );
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page
+    .getByRole("button", { name: "Close channel panel", exact: true })
+    .click();
+  await header.getByRole("button").click();
+  await expect(popup).toBeVisible();
+  await choose("Bubbles");
   const bubbleAnswer = reply(1, "Portions checked.");
   finish(1, "second", "verify", bubbleAnswer);
   app.relay.publish("primary", bubbleAnswer);
@@ -380,7 +460,10 @@ test("one request work header spans agents and replies without absorbing a follo
     .getByRole("region", { name: "Agent work on this request" })
     .getByRole("button")
     .click();
-  await choose("Bubbles");
+  await expect(popup.getByRole("tablist")).toHaveCount(0);
+  await expect(
+    popup.getByRole("button", { name: /compare.py|portions.py/ }),
+  ).toHaveCount(0);
   await expect(popup.getByRole("button", { name: /verify.py/ })).toBeVisible();
   await expect(popup.getByRole("button", { name: /followup.py/ })).toHaveCount(
     0,
@@ -388,78 +471,13 @@ test("one request work header spans agents and replies without absorbing a follo
   await popup
     .getByRole("button", { name: "Open activity in panel", exact: true })
     .click();
-  const panel = page.getByRole("region", {
-    name: "Agent activity",
-    exact: true,
-  });
   await expect(panel).toBeVisible();
   await expect(thread).toBeVisible();
-  await expect(panel.getByRole("tab", { name: /^Bubbles/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(panel.getByRole("tablist")).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: /verify.py/ })).toBeVisible();
   await expect(
-    panel.getByRole("tablist", { name: "Agents", exact: true }),
-  ).toBeVisible();
-  for (const mode of ["light", "dark"]) {
-    await page.evaluate(
-      (m) => (document.documentElement.dataset.colorMode = m),
-      mode,
-    );
-    for (const width of [1280, 800, 390]) {
-      await page.setViewportSize({ width, height: 844 });
-      await panel.scrollIntoViewIfNeeded();
-      const tablist = panel.getByRole("tablist", { name: "Agents" });
-      await tablist.getByRole("tab").last().focus();
-      await tablist.getByRole("tab").last().press("Enter");
-      const measure = () =>
-        tablist.evaluate((list) => {
-          const bounds = list.getBoundingClientRect(),
-            selected = list
-              .querySelector('[aria-selected="true"]')
-              .getBoundingClientRect();
-          return {
-            overflow: list.scrollWidth > list.clientWidth,
-            left: selected.left >= bounds.left - 1,
-            right: selected.right <= bounds.right + 1,
-            pageFits: document.documentElement.scrollWidth <= window.innerWidth,
-          };
-        });
-      await expect
-        .poll(measure, `${mode} ${width} tab bounds`)
-        .toMatchObject({ left: true, right: true, pageFits: true });
-
-      await page.screenshot({
-        path: testInfo.outputPath(`agent-tabs-${mode}-${width}.png`),
-      });
-    }
-  }
-  // Enlarged text forces real native tab overflow without changing production labels.
-  await page.evaluate(() => (document.documentElement.style.fontSize = "24px"));
-  await panel.scrollIntoViewIfNeeded();
-  const overflowTabs = panel.getByRole("tablist", { name: "Agents" });
-  await expect
-    .poll(() =>
-      overflowTabs.evaluate((list) => list.scrollWidth > list.clientWidth),
-    )
-    .toBe(true);
-  await overflowTabs.getByRole("tab").last().focus();
-  await overflowTabs.getByRole("tab").last().press("Enter");
-  await expect
-    .poll(() =>
-      overflowTabs.evaluate((list) => {
-        const tab = list
-          .querySelector('[aria-selected="true"]')
-          .getBoundingClientRect();
-        const bounds = list.getBoundingClientRect();
-        return tab.left >= bounds.left - 1 && tab.right <= bounds.right + 1;
-      }),
-    )
-    .toBe(true);
-  await page.evaluate(() =>
-    document.documentElement.style.removeProperty("font-size"),
-  );
-  await page.setViewportSize({ width: 1440, height: 950 });
+    panel.getByRole("button", { name: /compare.py|portions.py|followup.py/ }),
+  ).toHaveCount(0);
   await page
     .getByRole("button", { name: "Close channel panel", exact: true })
     .click();

@@ -198,7 +198,10 @@ controls open the same request-linked work, not separate effort or a claimed exa
 answer interval; no body text or final-answer inference controls their placement.
 Only a direct visible root child removes that agent from the shared header: nested
 branches may be collapsed, so they retain request-level access. All linked agents
-remain inspectable from the compact tabs, including those without answers. Open
+remain inspectable from the shared header's compact tabs, including those without
+answers. Reply-attached popups show only the exact author, with no agent tabs.
+Their internal request+thread target uses `view=agent` to preserve that scope in the
+panel; missing author evidence stays empty rather than falling back to a peer. Open
 popups persist through reply arrival until dismissed. Replies never move or merge;
 signed ancestry remains their placement owner and follow-ups stay independent.
 The thread-wide count divider is removed, not branch navigation or unread evidence.

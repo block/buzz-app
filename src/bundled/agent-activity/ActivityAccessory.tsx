@@ -201,8 +201,8 @@ function WorkHeader(props: ComposerAccessoryProps) {
         .replace(`${title} is working…`, "Working…")
     : namedLabel;
   const first =
-    fullWork.agents.find((agent) => agent.agent === selectedAgent)?.agent ??
     message?.authorId ??
+    fullWork.agents.find((agent) => agent.agent === selectedAgent)?.agent ??
     work.agents[0]?.agent ??
     keys[0];
   const target = activityTarget(
@@ -211,6 +211,7 @@ function WorkHeader(props: ComposerAccessoryProps) {
     undefined,
     workRequest.id,
     threadRootId,
+    message ? "agent" : undefined,
   );
   return (
     <section
@@ -275,7 +276,7 @@ function WorkHeader(props: ComposerAccessoryProps) {
           retry={() => session.live.retry()}
         />
         <RequestWorkDetails
-          work={fullWork}
+          work={message ? work : fullWork}
           session={session}
           names={names}
           selectedAgent={first}

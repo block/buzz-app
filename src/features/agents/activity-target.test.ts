@@ -103,3 +103,32 @@ it("allows an explicit request within its loaded thread without accepting respon
     threadRootId: root,
   });
 });
+
+it("preserves fixed-agent request scope and rejects ambiguous or incomplete fixed views", () => {
+  const request = "e".repeat(64),
+    root = "f".repeat(64);
+  const target = activityTarget(
+    agent,
+    "alpha",
+    undefined,
+    request,
+    root,
+    "agent",
+  );
+  expect(activitySelection(target)).toEqual({
+    agent,
+    channelId: "alpha",
+    requestId: request,
+    threadRootId: root,
+    view: "agent",
+  });
+  for (const value of [
+    `${target}&view=agent`,
+    `${target}&view=profile`,
+    `${target}&message=${root}`,
+    `${activityTarget(agent, "alpha")}&view=agent`,
+    `${activityTarget(agent, "alpha", undefined, request)}&view=agent`,
+    `${activityTarget(agent, "alpha", undefined, undefined, root)}&view=agent`,
+  ])
+    expect(activitySelection(value)).toBeUndefined();
+});

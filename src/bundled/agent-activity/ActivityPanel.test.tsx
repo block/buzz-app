@@ -15,6 +15,12 @@ import { createAgentActivity } from "../../features/agents/activity";
 import type { RelaySession } from "../../features/relay/session";
 import { createAgentLibrary } from "../../features/agents/library";
 import { ActivityDetails } from "./ActivityPanel";
+import {
+  createThreadViews,
+  ThreadViews,
+} from "../../features/messages/thread-views";
+import type { ThreadSnapshot } from "../../features/relay/threads";
+import type { ChannelMessage } from "../../features/relay/contracts";
 
 afterEach(cleanup);
 const agent = "a".repeat(64);
@@ -1159,6 +1165,155 @@ it("retains working evidence when only diagnostic activity is readable", () => {
     ).toBeTruthy();
   } finally {
     view.unmount();
+    release();
+    activity.dispose();
+  }
+});
+
+it("keeps an expanded reply fixed to its exact author and never falls back to a peer after evidence disappears", () => {
+  const other = "b".repeat(64),
+    root = "c".repeat(64),
+    viewer = "d".repeat(64);
+  let generation = 0,
+    serial = 0;
+  const activity = createAgentActivity(
+    true,
+    (g) => {
+      generation = g ?? 0;
+    },
+    () => true,
+  );
+  const release = activity.queries.activate();
+  activity.state({
+    status: "connected",
+    routes: [{ id: "observer", status: "live", replay: "unknown" }],
+  });
+  const profiles = new Map([
+    [agent, { name: "Same" }],
+    [other, { name: "Same" }],
+  ]);
+  const channels = {
+    status: "ready",
+    channels: [{ id: "alpha", name: "Alpha" }],
+  };
+  const session = {
+    viewer,
+    agentChoices: createAgentLibrary(undefined).queries,
+    agentActivity: activity.queries,
+    profiles: { snapshot: () => profiles, subscribe: () => () => {} },
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    live: { retry() {} },
+  } as unknown as RelaySession;
+  const views = createThreadViews();
+  const request: ChannelMessage = {
+    id: root,
+    channelId: "alpha",
+    authorId: viewer,
+    content: "request",
+    createdAt: 1,
+    mentions: [agent, other],
+    participants: [],
+    replyCount: 0,
+    attachments: [],
+    reactions: [],
+  };
+  const thread: ThreadSnapshot = {
+    root: request,
+    replies: [],
+    status: "ready",
+    error: undefined,
+    limited: false,
+    canLoadMore: false,
+  };
+  const unregister = views.register(session, "alpha", {
+    snapshot: () => thread,
+    subscribe: () => () => {},
+    refresh: vi.fn(),
+    loadMore: vi.fn(),
+    dispose: vi.fn(),
+  });
+  const emit = (key: string) => {
+    for (const [seq, kind, payload] of [
+      [1, "turn_started", { triggeringEventIds: [root] }],
+      [
+        2,
+        "acp_read",
+        {
+          method: "session/update",
+          params: {
+            sessionId: "S",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "tool",
+              title: "buzz-dev-mcp__shell",
+              status: "in_progress",
+              rawInput: {
+                command:
+                  key === agent ? "python3 author.py" : "python3 peer.py",
+              },
+            },
+          },
+        },
+      ],
+    ] as const)
+      activity.receive(
+        {
+          id: String(++serial).padStart(64, "0"),
+          agent: key,
+          createdAt: Math.floor(Date.now() / 1000),
+          plaintext: JSON.stringify({
+            kind,
+            seq,
+            turnId: key,
+            sessionId: "S",
+            channelId: "alpha",
+            timestamp: new Date().toISOString(),
+            payload,
+          }),
+        },
+        generation,
+      );
+  };
+  emit(agent);
+  emit(other);
+  const content = (fixed: boolean) => (
+    <ThreadViews value={views}>
+      <ActivityDetails
+        session={session}
+        selection={{
+          agent,
+          channelId: "alpha",
+          requestId: root,
+          threadRootId: root,
+          ...(fixed ? { view: "agent" as const } : {}),
+        }}
+      />
+    </ThreadViews>
+  );
+  const rendered = render(content(true), { reactStrictMode: true });
+  try {
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getByRole("button", { name: /author.py/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /peer.py/ })).toBeNull();
+    act(() => {
+      activity.clear();
+      activity.state({
+        status: "connected",
+        routes: [{ id: "observer", status: "live", replay: "unknown" }],
+      });
+      emit(other);
+    });
+    expect(
+      screen.queryByRole("button", { name: /author.py|peer.py/ }),
+    ).toBeNull();
+    expect(
+      screen.getByText("No retained work is linked to this request yet."),
+    ).toBeTruthy();
+    rendered.rerender(content(false));
+    expect(screen.getByRole("button", { name: /peer.py/ })).toBeTruthy();
+  } finally {
+    rendered.unmount();
+    unregister();
     release();
     activity.dispose();
   }

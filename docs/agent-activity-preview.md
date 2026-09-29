@@ -32,7 +32,9 @@ for trying Activity, not replacing an everyday installation.
   Tabs scroll horizontally; touch swipes on noninteractive activity content switch
   agents without wrapping. Tool controls and code/output retain their gestures.
   Expand preserves the selected agent in the existing side panel and keeps the thread.
-  Attached work covers that agent's request-linked turns, not just that answer's send.
+  Reply-attached previews show only their author's request-linked turns, without
+  agent tabs; expanding preserves that exact-agent scope. Shared headers retain
+  tabs for all linked participants. Neither view claims an exact answer interval.
 - Request linkage uses every explicit triggering message ID and uniquely reported
   sends matched to loaded message author/channel IDs. Multiple distinct successful
   receipts in one tool can link their messages to the same producer turn, never to

@@ -5,7 +5,7 @@ export type ActivitySelection = Readonly<{
   messageId?: string;
   requestId?: string;
   threadRootId?: string;
-  view?: "profile";
+  view?: "profile" | "agent";
 }>;
 export function activityTarget(
   agent: string,
@@ -13,12 +13,14 @@ export function activityTarget(
   messageId?: string,
   requestId?: string,
   threadRootId?: string,
+  view?: "agent",
 ): string {
   const query = new URLSearchParams({ agent });
   if (channelId) query.set("channel", channelId);
   if (messageId) query.set("message", messageId);
   if (requestId) query.set("request", requestId);
   if (threadRootId) query.set("thread", threadRootId);
+  if (view) query.set("view", view);
   return `buzz:agent-activity?${query}`;
 }
 /** Private host presentation target for the Profile tab, not an OS/deep link.
@@ -59,11 +61,11 @@ export function activitySelection(
           messageId !== null ||
           !/^[0-9a-f]{64}$/.test(threadRootId))) ||
       params.getAll("view").length > 1 ||
-      (view !== null &&
-        (view !== "profile" ||
-          messageId !== null ||
-          requestId !== null ||
-          threadRootId !== null)) ||
+      (view !== null && view !== "profile" && view !== "agent") ||
+      (view === "profile" &&
+        (messageId !== null || requestId !== null || threadRootId !== null)) ||
+      (view === "agent" &&
+        (!requestId || !threadRootId || messageId !== null)) ||
       (requestId !== null &&
         (!channelId ||
           messageId !== null ||
@@ -90,7 +92,7 @@ export function activitySelection(
       ...(messageId !== null ? { messageId } : {}),
       ...(requestId !== null ? { requestId } : {}),
       ...(threadRootId !== null ? { threadRootId } : {}),
-      ...(view === "profile" ? { view } : {}),
+      ...(view === "profile" || view === "agent" ? { view } : {}),
     };
   } catch {
     return;

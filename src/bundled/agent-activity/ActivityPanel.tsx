@@ -315,8 +315,17 @@ export function ActivityDetails({
         {feedStatus}
         {work ? (
           <RequestWorkDetails
-            key={`${selection.requestId}:${selection.agent}`}
-            work={work}
+            key={`${selection.requestId}:${selection.agent}:${selection.view ?? "shared"}`}
+            work={
+              selection.view === "agent"
+                ? {
+                    ...work,
+                    agents: work.agents.filter(
+                      (agent) => agent.agent === selection.agent,
+                    ),
+                  }
+                : work
+            }
             session={session}
             names={names}
             initialAgent={selection.agent}

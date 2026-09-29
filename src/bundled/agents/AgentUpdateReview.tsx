@@ -127,12 +127,20 @@ export function matchingManagementAgents(
 ): AgentView[] {
   const target = request.value.request.agentName.trim().toLocaleLowerCase();
   const origin = relayOrigin(community);
-  return agents.filter(
-    (agent) =>
-      agent.name.trim().toLocaleLowerCase() === target &&
-      relayOrigin(agent.relayUrl) === origin &&
-      agent.pubkey === request.agent,
-  );
+  return agents.filter((agent) => {
+    if (
+      agent.configured === false ||
+      !agent.relayUrl ||
+      agent.name.trim().toLocaleLowerCase() !== target ||
+      agent.pubkey !== request.agent
+    )
+      return false;
+    try {
+      return relayOrigin(agent.relayUrl) === origin;
+    } catch {
+      return false;
+    }
+  });
 }
 
 export function enqueueManagementRequest(

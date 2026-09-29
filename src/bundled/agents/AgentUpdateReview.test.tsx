@@ -47,7 +47,7 @@ const pending = (
   },
 });
 
-it("matches only personal agents configured for the request community", () => {
+it("matches only configured personal agents in the request community", () => {
   const { agent } = controlFixture();
   const request = pending("request-1", agent.pubkey);
   expect(
@@ -63,6 +63,17 @@ it("matches only personal agents configured for the request community", () => {
           ...agent,
           id: "same-community-other-owner",
           pubkey: "cd".repeat(32),
+        },
+        {
+          ...agent,
+          id: "unconfigured",
+          configured: false,
+          relayUrl: "",
+        },
+        {
+          ...agent,
+          id: "invalid-community",
+          relayUrl: "not a relay URL",
         },
       ],
       request,

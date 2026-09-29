@@ -31,6 +31,7 @@ vi.mock("./MessageRow", () => ({
       data-compact-avatar={compactAvatar}
     >
       <span>{row.content}</span>
+      <a href="https://example.com">Link in {row.content}</a>
       <button type="button" onClick={() => onReply?.(row.id)}>
         Reply to {row.content}
       </button>
@@ -401,4 +402,45 @@ it("uses compact avatars only below ordinary thread replies", () => {
       "true",
     );
   }
+});
+
+for (const focused of ["row", "button", "link"] as const) {
+  for (const nested of [false, true]) {
+    it(`recovers a deleted ${focused} to ${nested ? "its parent" : "tabbable history"}`, async () => {
+      const h = setup(nested ? "child" : "parent");
+      const id = nested ? "child" : "parent";
+      const message = screen.getByText(id).closest("article");
+      const target = nested
+        ? screen.getByText("parent").closest("article")
+        : screen.getByRole("region", { name: "Thread messages" });
+      if (focused === "button")
+        screen.getByRole("button", { name: `Reply to ${id}` }).focus();
+      else if (focused === "link")
+        screen.getByRole("link", { name: `Link in ${id}` }).focus();
+      else if (message) {
+        // Match the programmatic row focus used by exact-link navigation.
+        message.tabIndex = -1;
+        message.focus();
+      }
+      expect(message?.contains(document.activeElement)).toBe(true);
+      const remaining = nested ? [row("parent", "root")] : [];
+      await act(async () => h.update(remaining));
+      expect(target).toHaveFocus();
+      expect(target).toHaveAttribute("tabindex", nested ? "-1" : "0");
+      h.update([...remaining, row("arrival", "root")]);
+      expect(target).toHaveFocus();
+      expect(target).toHaveAttribute("tabindex", nested ? "-1" : "0");
+    });
+  }
+}
+
+it("does not steal focus moved after removal but before queued recovery", async () => {
+  const h = setup("child");
+  screen.getByRole("button", { name: "Reply to child" }).focus();
+  const send = screen.getByRole("button", { name: "Send fixture reply" });
+  await act(async () => {
+    h.update([row("parent", "root")]);
+    send.focus();
+  });
+  expect(send).toHaveFocus();
 });

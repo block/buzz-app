@@ -47,7 +47,7 @@ export function ReplyBranch({
     if (!element) return;
     return () => {
       const row = element.querySelector<HTMLElement>("[data-message-id]");
-      if (!row || document.activeElement !== row) return;
+      if (!row?.contains(document.activeElement)) return;
       const parent = element.parentElement?.parentElement
         ?.closest("[data-depth]")
         ?.querySelector<HTMLElement>("[data-message-id]");
@@ -60,7 +60,7 @@ export function ReplyBranch({
         if (row.isConnected || document.activeElement !== document.body) return;
         const target = parent?.isConnected ? parent : history;
         if (!target?.isConnected || target.closest("[inert]")) return;
-        target.tabIndex = -1;
+        if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
         target.focus({ preventScroll: true });
       });
     };

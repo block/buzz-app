@@ -1022,6 +1022,25 @@ liveTest(
       region.locator(`[data-message-id="${app.exact.root.id}"]`),
     ).toBeAttached();
     await expect(region.locator("[data-message-id]")).toHaveCount(80);
+    await expect(region).toBeFocused();
+    await expect(region).toHaveAttribute("tabindex", "0");
+    app.append(
+      "primary",
+      "alpha",
+      "Reply after selected deletion",
+      true,
+      true,
+      app.exact.root.id,
+    );
+    await expect(
+      region.getByText("Reply after selected deletion", { exact: true }),
+    ).toBeVisible();
+    await expect(region).toHaveAttribute("tabindex", "0");
+    await page
+      .getByRole("button", { name: "Close thread", exact: true })
+      .focus();
+    await page.keyboard.press("Tab");
+    await expect(region).toBeFocused();
     await expect(
       region.getByText("Selected message unavailable."),
     ).toBeVisible();

@@ -1,9 +1,14 @@
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { RelayData } from "../../features/relay/service";
-import { agentDraft, type AgentDraft } from "./agent-edit";
+import { agentDraft, harnessKind, type AgentDraft } from "./agent-edit";
 import { AgentEditor } from "./AgentEditor";
-import type { AgentControl, AgentView } from "../../features/agents/control";
+import type {
+  AgentControl,
+  AgentView,
+  ControlSnapshot,
+} from "../../features/agents/control";
 import type { ChannelList } from "../../features/relay/contracts";
 import type { AgentManagementRequest } from "../../features/agents/management-request";
 import { relayOrigin } from "../../features/communities/destination";
@@ -59,25 +64,49 @@ export function AgentUpdateReview({
   useEffect(() => {
     if (!request) return;
     const authorized = managementRequesterAuthorized(request, channelList);
-    if (authorized === false) setRequests((pending) => pending.slice(1));
-  }, [channelList, request]);
+    if (authorized === false) {
+      setRequests((pending) => pending.slice(1));
+      return;
+    }
+    if (
+      authorized !== null ||
+      channelList.status !== "ready" ||
+      channelList.coverage !== "partial" ||
+      !connection.session.channels.resolve
+    )
+      return;
+    let current = true;
+    const channelId = request.value.request.channelId;
+    void connection.session.channels
+      .resolve([channelId])
+      .catch(() => {})
+      .then(() => {
+        if (!current) return;
+        const refreshed = connection.session.channels.list();
+        if (managementRequesterAuthorized(request, refreshed) !== true)
+          setRequests((pending) => pending.slice(1));
+      });
+    return () => {
+      current = false;
+    };
+  }, [channelList, connection.session.channels, request]);
   useEffect(() => {
-    if (!request) {
+    if (request?.value.action !== "update") {
       setRefreshedRequestId(null);
       return;
     }
     const requestId = request.value.requestId;
     setRefreshedRequestId(null);
     let current = true;
-    void control.refresh().finally(() => {
-      if (current) setRefreshedRequestId(requestId);
+    void refreshManagementInventory(control).then((ready) => {
+      if (current && ready) setRefreshedRequestId(requestId);
     });
     return () => {
       current = false;
     };
   }, [control, request]);
   const matches = useMemo(() => {
-    if (!request || !connection.scope) return [];
+    if (request?.value.action !== "update" || !connection.scope) return [];
     const community = connection.scope.split(":").slice(0, -1).join(":");
     return matchingManagementAgents(
       controlState.data?.agents ?? [],
@@ -85,13 +114,37 @@ export function AgentUpdateReview({
       community,
     );
   }, [connection.scope, controlState.data?.agents, request]);
+  if (!request || channelList.status !== "ready") return null;
+  const dismiss = () => setRequests((pending) => pending.slice(1));
+  if (request.value.action === "create") {
+    return (
+      <ToastNotice
+        title="Agent creation needs attention"
+        description="Agent-requested creation is not supported yet. Create the agent yourself from Agents."
+        onDismiss={dismiss}
+      />
+    );
+  }
+  if (controlState.status === "error") {
+    return (
+      <ToastNotice
+        title="Could not load personal agents"
+        description="Refresh local agents before reviewing this request."
+      >
+        <Button
+          type="button"
+          onClick={() => void refreshManagementInventory(control)}
+        >
+          Retry
+        </Button>
+      </ToastNotice>
+    );
+  }
   if (
-    !request ||
-    channelList.status !== "ready" ||
+    controlState.status !== "ready" ||
     refreshedRequestId !== request.value.requestId
   )
     return null;
-  const dismiss = () => setRequests((pending) => pending.slice(1));
   const agent = matches.length === 1 ? matches[0] : undefined;
   if (!agent) {
     return (
@@ -106,7 +159,11 @@ export function AgentUpdateReview({
       />
     );
   }
-  const initial = requestedDraft(agent, request.value);
+  const initial = requestedDraft(
+    agent,
+    request.value,
+    controlState.data?.harnessOptions ?? [],
+  );
   return (
     <AgentEditor
       key={request.value.requestId}
@@ -120,11 +177,19 @@ export function AgentUpdateReview({
   );
 }
 
+export async function refreshManagementInventory(
+  control: AgentControl,
+): Promise<boolean> {
+  await control.refresh();
+  return control.snapshot().status === "ready";
+}
+
 export function matchingManagementAgents(
   agents: readonly AgentView[],
   request: PendingManagementRequest,
   community: string,
 ): AgentView[] {
+  if (request.value.action !== "update") return [];
   const target = request.value.request.agentName.trim().toLocaleLowerCase();
   const origin = relayOrigin(community);
   return agents.filter((agent) => {
@@ -147,7 +212,11 @@ export function enqueueManagementRequest(
   pending: readonly PendingManagementRequest[],
   request: PendingManagementRequest,
 ): PendingManagementRequest[] {
-  return [...pending, request].slice(-MANAGEMENT_QUEUE_LIMIT);
+  const next = [...pending, request];
+  if (next.length <= MANAGEMENT_QUEUE_LIMIT) return next;
+  const [head] = next;
+  if (!head) return [];
+  return [head, ...next.slice(-(MANAGEMENT_QUEUE_LIMIT - 1))];
 }
 
 export function managementRequesterAuthorized(
@@ -158,20 +227,37 @@ export function managementRequesterAuthorized(
   const channel = channels.channels.find(
     (candidate) => candidate.id === request.value.request.channelId,
   );
+  if (!channel && channels.coverage === "partial") return null;
   return channel?.members?.includes(request.agent) ?? false;
 }
 
 export function requestedDraft(
   agent: AgentView,
-  request: AgentManagementRequest,
+  request: Extract<AgentManagementRequest, { action: "update" }>,
+  harnessOptions: NonNullable<ControlSnapshot["harnessOptions"]>,
 ): AgentDraft {
   const current = agentDraft(agent);
   const changes = request.request;
+  const runtime = changes.runtime
+    ? harnessOptions.find((option) => {
+        const executable = option.command
+          .replaceAll("\\", "/")
+          .split("/")
+          .at(-1);
+        return (
+          option.available !== false &&
+          (option.command === changes.runtime ||
+            executable === changes.runtime ||
+            harnessKind(option.command) === changes.runtime)
+        );
+      })
+    : undefined;
   return {
     ...current,
     name: changes.displayName ?? current.name,
     systemPrompt: changes.systemPrompt ?? current.systemPrompt,
-    command: changes.runtime ?? current.command,
+    command: runtime?.command ?? changes.runtime ?? current.command,
+    args: runtime ? JSON.stringify(runtime.defaultArgs ?? []) : current.args,
     provider: changes.provider ?? current.provider,
     model: changes.model ?? current.model,
   };

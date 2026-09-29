@@ -385,6 +385,59 @@ it("notifies the working-channel subscriber only on set changes, including timer
   unsubscribe();
   f.release();
 });
+it("resolves an unknown management channel before applying its access check", async () => {
+  let allowed = false;
+  let resolvePending: (() => void) | undefined;
+  const resolution = new Promise<void>((resolve) => {
+    resolvePending = () => {
+      allowed = true;
+      resolve();
+    };
+  });
+  const resolve = vi.fn(() => resolution);
+  const observe = vi.fn();
+  const activity = createAgentActivity(
+    true,
+    observe,
+    () => allowed,
+    (listener) => listener(),
+    resolve,
+  );
+  const receive = vi.fn();
+  activity.management.activate();
+  activity.management.subscribe(receive);
+  activity.state(connected);
+  const request = {
+    type: "agent_management_request",
+    action: "update",
+    requestId: "request-overflow",
+    request: {
+      channelId: "overflow-channel",
+      agentName: "Sol",
+      model: "gpt-6-sol",
+    },
+  };
+  activity.receive(
+    {
+      id: "1".repeat(64),
+      agent,
+      createdAt: Math.floor(Date.now() / 1000),
+      plaintext: JSON.stringify({
+        kind: "agent_management_request",
+        channelId: request.request.channelId,
+        payload: request,
+      }),
+    },
+    observe.mock.lastCall?.[0] as number,
+  );
+  expect(resolve).toHaveBeenCalledExactlyOnceWith("overflow-channel");
+  resolvePending?.();
+  for (let tick = 0; tick < 5; tick++) await Promise.resolve();
+  expect(allowed).toBe(true);
+  expect(receive).toHaveBeenCalledWith(agent, request);
+  activity.dispose();
+});
+
 it("delivers each valid owner-reviewed agent update once without adding it to activity", () => {
   const f = fixture();
   const receive = vi.fn();
@@ -435,7 +488,16 @@ it("rejects unknown and secret-shaped agent-management fields", () => {
         systemPrompt: "Help.",
       },
     }),
-  ).toBeNull();
+  ).toEqual({
+    type: "agent_management_request",
+    action: "create",
+    requestId: "request-1",
+    request: {
+      channelId: request.request.channelId,
+      displayName: "New agent",
+      systemPrompt: "Help.",
+    },
+  });
   expect(
     parseAgentManagementRequest({
       ...request,

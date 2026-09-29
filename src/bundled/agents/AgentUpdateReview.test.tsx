@@ -1,9 +1,11 @@
-import { expect, it } from "vitest";
+import type { ControlSnapshot } from "../../features/agents/control";
+import { expect, it, vi } from "vitest";
 import { controlFixture } from "../../features/agents/control-testing";
 import {
   enqueueManagementRequest,
   managementRequesterAuthorized,
   matchingManagementAgents,
+  refreshManagementInventory,
   type PendingManagementRequest,
   requestedDraft,
 } from "./AgentUpdateReview";
@@ -11,16 +13,20 @@ import {
 it("prefills only requested update fields over current saved settings", () => {
   const { agent } = controlFixture();
   expect(
-    requestedDraft(agent, {
-      type: "agent_management_request",
-      action: "update",
-      requestId: "request-1",
-      request: {
-        channelId: "34aeaccc-c83b-4422-beac-a4b8661f9f59",
-        agentName: "Fixture agent",
-        model: "gpt-6-sol",
+    requestedDraft(
+      agent,
+      {
+        type: "agent_management_request",
+        action: "update",
+        requestId: "request-1",
+        request: {
+          channelId: "34aeaccc-c83b-4422-beac-a4b8661f9f59",
+          agentName: "Fixture agent",
+          model: "gpt-6-sol",
+        },
       },
-    }),
+      [],
+    ),
   ).toMatchObject({
     name: "Fixture agent",
     systemPrompt: "Help with the project.",
@@ -28,6 +34,53 @@ it("prefills only requested update fields over current saved settings", () => {
     provider: "fixture-provider",
     model: "gpt-6-sol",
   });
+});
+
+it("resolves requested runtime IDs through installed harness options", () => {
+  const { agent } = controlFixture();
+  const harnessOptions: NonNullable<ControlSnapshot["harnessOptions"]> = [
+    {
+      command: "/opt/homebrew/bin/goose",
+      label: "Goose",
+      defaultArgs: ["acp"],
+      providers: [],
+    },
+  ];
+  expect(
+    requestedDraft(
+      agent,
+      {
+        type: "agent_management_request",
+        action: "update",
+        requestId: "request-1",
+        request: {
+          channelId: "34aeaccc-c83b-4422-beac-a4b8661f9f59",
+          agentName: "Fixture agent",
+          runtime: "goose",
+        },
+      },
+      harnessOptions,
+    ),
+  ).toMatchObject({
+    command: "/opt/homebrew/bin/goose",
+    args: '["acp"]',
+  });
+});
+
+it("requires a successful inventory snapshot before review", async () => {
+  const refresh = vi.fn(async () => {});
+  expect(
+    await refreshManagementInventory({
+      refresh,
+      snapshot: () => ({
+        status: "error",
+        data: null,
+        busy: false,
+        error: "Could not refresh",
+      }),
+    } as never),
+  ).toBe(false);
+  expect(refresh).toHaveBeenCalledOnce();
 });
 
 const pending = (
@@ -93,7 +146,8 @@ it("queues requests received while another review is open and bounds the queue",
   for (let index = 0; index < 200; index++)
     requests = enqueueManagementRequest(requests, pending(`request-${index}`));
   expect(requests).toHaveLength(200);
-  expect(requests[0]?.value.requestId).toBe("request-0");
+  expect(requests[0]?.value.requestId).toBe("open");
+  expect(requests[1]?.value.requestId).toBe("request-1");
 });
 
 it("waits for a ready roster before authorizing the requester", () => {
@@ -102,6 +156,13 @@ it("waits for a ready roster before authorizing the requester", () => {
     managementRequesterAuthorized(request, {
       status: "loading",
       channels: [],
+    }),
+  ).toBeNull();
+  expect(
+    managementRequesterAuthorized(request, {
+      status: "ready",
+      channels: [],
+      coverage: "partial",
     }),
   ).toBeNull();
   expect(

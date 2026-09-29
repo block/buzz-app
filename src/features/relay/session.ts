@@ -219,6 +219,7 @@ export function createRelaySession(
     else listener();
   };
   let canAccess: (id: string) => boolean = () => true;
+  let resolveChannelAccess: (id: string) => Promise<void> = async () => {};
   const typing = createTyping(
     transport?.viewer ?? "",
     (id) =>
@@ -631,6 +632,7 @@ export function createRelaySession(
     (generation) => traffic?.observe?.(generation),
     (channel) => canAccess(channel),
     notify,
+    (channel) => resolveChannelAccess(channel),
   );
   const archives = createIdentityArchives(
     requests.reader,
@@ -669,6 +671,10 @@ export function createRelaySession(
     },
   );
   canAccess = channels.canAccess;
+  resolveChannelAccess = (id) =>
+    channels.queries.list().coverage === "partial"
+      ? (channels.queries.resolve?.([id]) ?? Promise.resolve())
+      : Promise.reject(new Error("Channel access is fully resolved"));
   retainedChannelEvent = channels.retainedEvent;
   const projects = projectDestinations(async (filters, signal) => {
     const bound = AbortSignal.any([signal, lifetime.signal]);

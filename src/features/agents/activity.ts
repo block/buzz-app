@@ -69,6 +69,7 @@ export function createAgentActivity(
   observe: (generation: number | null) => void,
   canAccess: (channel: string) => boolean,
   notify = (listener: () => void) => listener(),
+  resolveAccess?: (channel: string) => Promise<void>,
 ) {
   let closed = false,
     leases = 0,
@@ -89,6 +90,7 @@ export function createAgentActivity(
     (agent: string, request: AgentManagementRequest) => void
   >();
   const managementIds = new Set<string>();
+  const resolvingManagement = new Set<string>();
   let workingChannels = "[]";
   let snapshot: Snapshot = Object.freeze({
     status,
@@ -298,6 +300,43 @@ export function createAgentActivity(
           ? object(envelope.payload)?.events
           : undefined;
       const items = Array.isArray(children) ? children : [raw];
+      const management =
+        envelope?.kind === "agent_management_request"
+          ? parseAgentManagementRequest(envelope.payload)
+          : null;
+      const managementChannel = management?.request.channelId;
+      if (
+        management &&
+        managementChannel &&
+        !canAccess(managementChannel) &&
+        resolveAccess &&
+        !resolvingManagement.has(frame.id)
+      ) {
+        resolvingManagement.add(frame.id);
+        void resolveAccess(managementChannel)
+          .then(() => {
+            resolvingManagement.delete(frame.id);
+            if (
+              closed ||
+              current !== generation ||
+              [raw, ...items].some((value) => {
+                const item = object(value);
+                return text(item?.channelId) && !canAccess(item.channelId);
+              }) ||
+              managementIds.has(management.requestId)
+            )
+              return;
+            managementIds.add(management.requestId);
+            if (managementIds.size > MANAGEMENT_REQUEST_LIMIT) {
+              const oldest = managementIds.values().next().value;
+              if (oldest) managementIds.delete(oldest);
+            }
+            for (const listener of managementListeners)
+              notify(() => listener(frame.agent, management));
+          })
+          .catch(() => resolvingManagement.delete(frame.id));
+        return;
+      }
       // A denied child cannot leak through an otherwise visible raw batch.
       if (
         [raw, ...items].some((value) => {
@@ -306,10 +345,6 @@ export function createAgentActivity(
         })
       )
         return;
-      const management =
-        envelope?.kind === "agent_management_request"
-          ? parseAgentManagementRequest(envelope.payload)
-          : null;
       if (management) {
         if (!managementIds.has(management.requestId)) {
           managementIds.add(management.requestId);

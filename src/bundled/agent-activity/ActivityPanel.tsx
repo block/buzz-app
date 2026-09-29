@@ -1,4 +1,4 @@
-import { requestWork } from "./request-work";
+import { cachedRequestWork } from "./request-work-cache";
 import { RequestWorkDetails } from "./RequestWorkDetails";
 import { useLoadedThread } from "../../features/messages/thread-views";
 import { threadActivity } from "./thread-activity";
@@ -281,9 +281,9 @@ export function ActivityDetails({
       </section>
     );
   if (selection?.threadRootId && selection.requestId && selection.channelId) {
-    const work = requestWork(
+    const work = cachedRequestWork(
       snapshot,
-      loadedThread?.root ? [loadedThread.root, ...loadedThread.replies] : [],
+      loadedThread ?? [],
       selection.channelId,
       selection.threadRootId,
       session.viewer,
@@ -293,9 +293,16 @@ export function ActivityDetails({
     const names = new Map(
       keys.map((key) => [
         key,
-        `${resolveName(key, identities.get(key)?.name ?? "Agent")} · ${suffix.get(key) ?? ""}`,
+        resolveName(
+          key,
+          identities.get(key)?.name ?? suffix.get(key) ?? "Agent",
+        ),
       ]),
     );
+    const labels = [...names.values()];
+    for (const [key, label] of names)
+      if (labels.filter((value) => value === label).length > 1)
+        names.set(key, `${label} · ${suffix.get(key)}`);
     return (
       <section
         ref={region}
@@ -308,7 +315,7 @@ export function ActivityDetails({
         {feedStatus}
         {work ? (
           <RequestWorkDetails
-            key={selection.requestId}
+            key={`${selection.requestId}:${selection.agent}`}
             work={work}
             session={session}
             names={names}

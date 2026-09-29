@@ -796,10 +796,6 @@ function ThreadMessages({
         ) : !snapshot.root && snapshot.status !== "loading" ? (
           <p className={styles.empty}>Original message unavailable.</p>
         ) : null}
-        <div className={styles.threadDivider}>
-          {visibleReplies.length}{" "}
-          {visibleReplies.length === 1 ? "reply" : "replies"}
-        </div>
         <ol ref={accessoryTail}>{renderReplies(undefined)}</ol>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (

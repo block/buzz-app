@@ -406,7 +406,7 @@ it("omits coordination and indicators but keeps human-facing descendants and rep
   ).toBeNull();
   expect(screen.getByText("answer")).toBeVisible();
   expect(screen.getByText("human")).toBeVisible();
-  expect(screen.getByText("2 replies")).toBeVisible();
+  expect(screen.queryByText("2 replies")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Reply to answer" }));
   expect(screen.getByLabelText("Composer")).toHaveAttribute(
     "data-parent",
@@ -483,7 +483,7 @@ it("preserves pending request identities until human-facing replies, not hidden 
   h.update([hidden]);
   expect(screen.getAllByText(/^Pending /)).toHaveLength(2);
   expect(screen.queryByText("coord")).toBeNull();
-  expect(screen.getByText("0 replies")).toBeVisible();
+  expect(screen.queryByText("0 replies")).toBeNull();
   h.update([
     hidden,
     {
@@ -495,7 +495,7 @@ it("preserves pending request identities until human-facing replies, not hidden 
   ]);
   expect(screen.getAllByText(/^Pending /)).toHaveLength(2);
   expect(screen.getByText("answer")).toBeVisible();
-  expect(screen.getByText("1 reply")).toBeVisible();
+  expect(screen.queryByText("1 reply")).toBeNull();
 });
 it("fails exact navigation to coordination without mounting it or hiding its human answer", async () => {
   const complete = vi.fn(() => true);

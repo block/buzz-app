@@ -20,3 +20,8 @@
   outline: 2px solid var(--surface-panel);
   border-radius: var(--radius-control);
 }
+
+.attached {
+  min-width: 0;
+  padding-bottom: var(--space-2);
+}

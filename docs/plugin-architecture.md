@@ -169,8 +169,8 @@ frontend hot reload alone cannot add the entry.
 `ctx.conversation.registerAccessory({ id, title, order?, placement?, component })`
 contributes read-only contextual UI. Composer placement is unchanged. Conversation
 placement receives `message?` at an authored row and `workRequest?` after each viewer
-request, plus already-loaded `threadMessages?` and `threadComplete?`. Activity renders
-only the request anchor. Session/channel/thread/message-or-request keys fence mounted
+request, plus already-loaded `threadMessages?` and `threadComplete?`. Activity uses
+both the request anchor and strictly linked authored replies. Session/channel/thread/message-or-request keys fence mounted
 commands; removal/unmount revokes navigation. These are decorations, never messages,
 unread entries, delivery intent or persisted history. The host passes `canOpen/open`,
 not a writer or access grant. Channels owns panel placement and thread preservation.
@@ -191,10 +191,15 @@ open threads and flat Sessions retain their ordinary send behavior.
 The thread reader folds the
 outgoing root locally while signing/publishing and begins finite thread repair
 only after verified root observation. Local intent never becomes verified evidence.
-One shared request-work header replaces the old per-agent tail and answer links.
-It stays immediately after the initiating viewer request, without moving or merging
-real replies. Existing signed ancestry remains their placement owner. One request
-can have zero, one or multiple real replies. Follow-ups have separate headers.
+A shared request-work header replaces the old per-agent tail. Each agent's work
+attaches to its first strictly linked visible reply through the existing message
+accessory slot; it is whole request-linked work, not a claimed exact answer interval.
+Only a direct visible root child removes that agent from the shared header: nested
+branches may be collapsed, so they retain request-level access. All linked agents
+remain inspectable from the compact tabs, including those without answers. Open
+popups persist through reply arrival until dismissed. Replies never move or merge;
+signed ancestry remains their placement owner and follow-ups stay independent.
+The thread-wide count divider is removed, not branch navigation or unread evidence.
 The channel retains neutral View thread and its existing exact-thread working signal.
 
 `request-work.ts` is a bounded, rebuilt presentation projection, not a new journal:
@@ -203,7 +208,9 @@ propagates only through the existing strict reported-send boundary and a loaded
 message with matching author/channel. Unresolved cycles, unknown/mixed triggers,
 reused turns and conflicting reports never acquire a guessed scope. Profile Activity
 remains available for unassigned work. No native/producer changes, new reads, leases,
-routes, timers, or persistence owners are added.
+routes, timers, or persistence owners are added. A plugin-local weak memo shares
+one pure projection per activity/thread evidence snapshot across reply decorations
+and the panel, rather than reparsing retained records for every mounted message.
 
 Elapsed text uses local `receivedAt` from the first retained start to last retained
 terminal, never cross-producer wall clocks. It requires ended lifecycle evidence,

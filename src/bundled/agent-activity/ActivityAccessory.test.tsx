@@ -93,6 +93,7 @@ function fixture() {
             kind,
             turnId,
             channelId: "c",
+            sessionId: "S",
             seq,
             timestamp: new Date().toISOString(),
             payload,
@@ -275,10 +276,191 @@ it("keeps namesake exact identities selectable and scope-completeness fences dur
     fireEvent.click(header);
     vi.useRealTimers();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("combobox", { name: "Agent" }));
-    const options = await screen.findAllByRole("option");
+    const options = screen.getAllByRole("tab");
+    await user.click(options[1] as HTMLElement);
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
     expect(options).toHaveLength(2);
     expect(options[0]?.textContent).not.toBe(options[1]?.textContent);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+function reportedReply(
+  f: ReturnType<typeof fixture>,
+  agent: string,
+  id: string,
+) {
+  f.send(agent, agent, 1, "turn_started", { triggeringEventIds: [root] });
+  f.send(agent, agent, 2, "acp_read", {
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "send",
+        title: "buzz-dev-mcp__shell",
+        status: "in_progress",
+        rawInput: { command: "buzz messages send --audience everyone" },
+      },
+    },
+  });
+  f.send(agent, agent, 3, "acp_read", {
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "send",
+        status: "completed",
+        rawOutput: { isError: false },
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: JSON.stringify({
+                exit_code: 0,
+                timed_out: false,
+                stdout_truncated: false,
+                stdout: JSON.stringify({
+                  accepted: true,
+                  event_id: id,
+                  message: "",
+                  mention_pubkeys: [],
+                  audience: "everyone",
+                }),
+              }),
+            },
+          },
+        ],
+      },
+    },
+  });
+  f.send(agent, agent, 4, "turn_completed");
+}
+it("attaches each agent's request work to its own real reply; tabs preserve selection on panel expansion", async () => {
+  const f = fixture();
+  const answers = [A, B].map((key, index) => ({
+    ...row(String(index + 3).repeat(64)),
+    authorId: key,
+    replyParentId: root,
+    audience: "everyone" as const,
+  }));
+  for (const answer of answers) reportedReply(f, answer.authorId, answer.id);
+  const props = { ...f.props, threadMessages: [row(), ...answers] };
+  const view = render(
+    <>
+      <ActivityAccessory {...props} />
+      {answers.map((message) => (
+        <div key={message.id} data-testid={message.authorId}>
+          <ActivityAccessory
+            {...props}
+            workRequest={undefined}
+            message={message}
+          />
+        </div>
+      ))}
+    </>,
+  );
+  try {
+    expect(
+      screen.queryByRole("region", { name: "Work linked to this request" }),
+    ).toBeNull();
+    expect(
+      screen.getAllByRole("region", { name: "Agent work on this request" }),
+    ).toHaveLength(2);
+    fireEvent.click(
+      within(screen.getByTestId(B)).getByRole("button", { name: /Worked/ }),
+    );
+    expect(screen.getByRole("tab", { name: "Bubbles" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    vi.useRealTimers();
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Blossom" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open activity in panel" }),
+    );
+    expect(f.props.open).toHaveBeenCalledWith(
+      expect.stringContaining(`agent=${A}`),
+    );
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+it("combines a single direct answer without repeated avatar and keeps fallback access for collapsed nested answers", () => {
+  const f = fixture();
+  const request = { ...row(), mentions: [A] },
+    answer = { ...row("3".repeat(64)), authorId: A, replyParentId: root };
+  reportedReply(f, A, answer.id);
+  const props = {
+    ...f.props,
+    workRequest: request,
+    threadMessages: [request, answer],
+  };
+  const view = render(
+    <>
+      <ActivityAccessory {...props} />
+      <ActivityAccessory {...props} workRequest={undefined} message={answer} />
+    </>,
+  );
+  try {
+    expect(
+      screen.queryByRole("region", { name: "Work linked to this request" }),
+    ).toBeNull();
+    expect(
+      screen
+        .getByRole("region", { name: "Agent work on this request" })
+        .querySelector(".buzz-avatar"),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Worked/ }));
+    expect(screen.queryByRole("tablist")).toBeNull();
+    const nested = { ...answer, replyParentId: next };
+    view.rerender(
+      <ActivityAccessory
+        {...props}
+        threadMessages={[request, row(next), nested]}
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "Work linked to this request" }),
+    ).toBeVisible();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+it("keeps an open shared popup stable as all direct replies arrive, then removes the redundant header on close", () => {
+  const f = fixture(),
+    request = { ...row(), mentions: [A] };
+  const view = render(
+    <ActivityAccessory
+      {...f.props}
+      workRequest={request}
+      threadMessages={[request]}
+    />,
+  );
+  try {
+    fireEvent.click(screen.getByRole("button", { name: /awaiting activity/ }));
+    const popup = screen.getByRole("dialog");
+    const answer = { ...row("3".repeat(64)), authorId: A, replyParentId: root };
+    reportedReply(f, A, answer.id);
+    view.rerender(
+      <ActivityAccessory
+        {...f.props}
+        workRequest={request}
+        threadMessages={[request, answer]}
+      />,
+    );
+    expect(screen.getByRole("dialog")).toBe(popup);
+    expect(
+      screen.getByRole("button", { name: /Blossom worked/ }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close activity" }));
+    expect(
+      screen.queryByRole("region", { name: "Work linked to this request" }),
+    ).toBeNull();
   } finally {
     view.unmount();
     f.dispose();

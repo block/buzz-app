@@ -213,11 +213,33 @@ export function requestWork(
             turn.channelId === channelId &&
             selected.turnIds.has(turn.turnId),
         );
+        const state = requestActivityState(selected, turns, uncertain ? 1 : 0);
+        const agentNodes = linked.filter((node) => node.agent === agent);
+        const elapsed =
+          state === "ended" &&
+          agentNodes.every(
+            (node) => node.end !== undefined && node.end >= node.start,
+          )
+            ? Math.max(...agentNodes.map((node) => node.end ?? node.start)) -
+              Math.min(...agentNodes.map((node) => node.start))
+            : undefined;
         return {
           agent,
           records,
           turns,
-          state: requestActivityState(selected, turns, uncertain ? 1 : 0),
+          state,
+          // Ordering chooses a presentation anchor, never attribution. Hidden
+          // coordination still participates in lineage; callers filter visibility.
+          responseIds: rows
+            .filter((row) => {
+              const producer = producers.get(row.id);
+              return (
+                producer?.agent === agent &&
+                scopes.get(producer.key) === requestId
+              );
+            })
+            .map((row) => row.id),
+          ...(elapsed !== undefined ? { elapsed } : {}),
         };
       });
     const state =

@@ -1,0 +1,11 @@
+.root {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  touch-action: pan-y pinch-zoom;
+}
+/* These nested scroll containers retain native horizontal gestures. */
+.root [role="tablist"],
+.root pre {
+  touch-action: auto;
+}

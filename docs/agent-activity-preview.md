@@ -20,13 +20,18 @@ for trying Activity, not replacing an everyday installation.
   them. Relay history and unread evidence are not rewritten or acknowledged.
 - Sending a channel message stays in the channel. Open its thread explicitly with
   the working-agent, awaiting-response or View thread control; sending never opens it.
-- A single shared work header follows each viewer request with known agent recipients
-  or retained linked work. It is not a message. Actual authored replies remain below
-  in their original order/nesting; a follow-up gets a separate header. No per-agent
-  blank rows or repeated Activity links are attached to answers.
+- Request-linked work starts in a shared header after its viewer request. An agent's
+  work moves into its first strictly linked visible reply, below its author line,
+  without a duplicate avatar or synthetic response. Other participants stay in the
+  header. Nested replies retain request-level access because their branch may be
+  collapsed. Actual reply order/nesting and separate follow-up scopes are unchanged.
+  An open header popup stays mounted until dismissed even as the last reply arrives.
 - The header names currently working agents while live, then agents with retained
-  work. Hover/click opens a shared tool-first preview with an exact-agent selector;
-  Expand opens the same request in the existing side panel, preserving the thread.
+  work. Hover/click opens a shared tool-first preview with compact exact-agent tabs.
+  Tabs scroll horizontally; touch swipes on noninteractive activity content switch
+  agents without wrapping. Tool controls and code/output retain their gestures.
+  Expand preserves the selected agent in the existing side panel and keeps the thread.
+  Attached work covers that agent's request-linked turns, not just that answer's send.
 - Request linkage uses every explicit triggering message ID and uniquely reported
   sends matched to loaded message author/channel IDs. Cross-request, missing or
   conflicting links remain unassigned; there is no nearest-time, prose or root-only
@@ -36,8 +41,9 @@ for trying Activity, not replacing an everyday installation.
   trimming, ambiguity, missing lifecycle evidence, incomplete thread reads or feed
   interruption. Late linked work can resume; ended does not mean the task is final.
 - The channel keeps its exact-thread working indicator and neutral **View thread**
-  action. Thread reply counts include visible authored replies only. Unread evidence
-  is not cleared by Activity or hidden coordination.
+  action. The thread-wide reply-count divider is removed; collapsed-branch counts
+  remain navigation controls. Unread evidence is not cleared by Activity or hidden
+  coordination.
 - Profile Activity remains the fallback for retained work that cannot be assigned
   to a request. Explicit response diagnostics retain their bounded send interval.
 - Activity is tool-first: tool invocations and explicit plans are primary. Each

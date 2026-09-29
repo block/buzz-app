@@ -247,13 +247,38 @@ test("one request work header spans agents and replies without absorbing a follo
   await expect(popup).toBeVisible();
   await expect(draft).toBeFocused();
   const choose = async (name) => {
-    await popup.getByRole("combobox", { name: "Agent", exact: true }).click();
-    await page.getByRole("option", { name, exact: true }).click();
+    await popup.getByRole("tab", { name, exact: true }).click();
   };
   await choose("Bubbles");
   await expect(
     popup.getByRole("button", { name: /Run command.*python3 verify.py/ }),
   ).toBeVisible();
+  const tabs = popup.getByRole("tablist", { name: "Agents" });
+  await popup.getByRole("tab", { name: "Bubbles", exact: true }).press("Home");
+  const firstTab = tabs.getByRole("tab").first();
+  await expect(firstTab).toBeFocused();
+  await firstTab.press("Enter");
+  await expect(firstTab).toHaveAttribute("aria-selected", "true");
+  const swipeSurface = popup.getByText(/^Observed work linked/);
+  await swipeSurface.dispatchEvent("pointerdown", {
+    pointerId: 9,
+    pointerType: "touch",
+    isPrimary: true,
+    clientX: 250,
+    clientY: 120,
+  });
+  await swipeSurface.dispatchEvent("pointerup", {
+    pointerId: 9,
+    pointerType: "touch",
+    isPrimary: true,
+    clientX: 120,
+    clientY: 125,
+  });
+  await expect(tabs.getByRole("tab").nth(1)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await choose("Bubbles");
   const bubbleAnswer = reply(1, "Portions checked.");
   finish(1, "second", "verify", bubbleAnswer);
   app.relay.publish("primary", bubbleAnswer);
@@ -270,13 +295,20 @@ test("one request work header spans agents and replies without absorbing a follo
     .click();
   await expect(
     header.getByRole("button", {
-      name: /(?=.*Blossom)(?=.*Bubbles)(?=.*Buttercup).*worked for 2 minutes/,
+      name: /Blossom worked for less than a minute/,
     }),
   ).toBeVisible();
   const firstAnswer = thread.locator(`[data-message-id="${bubbleAnswer.id}"]`),
     lastAnswer = thread.locator(`[data-message-id="${finalAnswer.id}"]`);
   await expect(firstAnswer).toBeVisible();
   await expect(lastAnswer).toBeVisible();
+  await expect(
+    firstAnswer.getByRole("region", { name: "Agent work on this request" }),
+  ).toBeVisible();
+  await expect(
+    lastAnswer.getByRole("region", { name: "Agent work on this request" }),
+  ).toBeVisible();
+  await expect(thread.getByText(/^[0-9]+ repl(?:y|ies)$/)).toHaveCount(0);
   await expect(
     thread.getByRole("button", { name: "View activity", exact: true }),
   ).toHaveCount(0);
@@ -287,6 +319,17 @@ test("one request work header spans agents and replies without absorbing a follo
     (await firstAnswer.boundingBox()).y,
   );
   await expect(draft).toHaveText("Keep this draft");
+  // The final participant's actual answer takes its work into that response.
+  emit(0, "return", "turn_started", { triggeringEventIds: [request.id] });
+  tool(0, "return", "answer", "buzz messages send --audience everyone");
+  const blossomAnswer = reply(0, "My independent cost recommendation.");
+  finish(0, "return", "answer", blossomAnswer);
+  app.relay.publish("primary", blossomAnswer);
+  emit(0, "return", "turn_completed");
+  await expect(header).toHaveCount(0);
+  await expect(
+    thread.getByRole("region", { name: "Agent work on this request" }),
+  ).toHaveCount(3);
   // A second request gets a separate anchored header; the first keeps its old records.
   await draft.fill("Follow up on portion sizes.");
   await thread
@@ -306,8 +349,11 @@ test("one request work header spans agents and replies without absorbing a follo
     name: "Work linked to this request",
     exact: true,
   });
-  await expect(headers).toHaveCount(2);
-  await headers.first().getByRole("button").click();
+  await expect(headers).toHaveCount(1);
+  await firstAnswer
+    .getByRole("region", { name: "Agent work on this request" })
+    .getByRole("button")
+    .click();
   await choose("Bubbles");
   await expect(popup.getByRole("button", { name: /verify.py/ })).toBeVisible();
   await expect(popup.getByRole("button", { name: /followup.py/ })).toHaveCount(
@@ -322,9 +368,72 @@ test("one request work header spans agents and replies without absorbing a follo
   });
   await expect(panel).toBeVisible();
   await expect(thread).toBeVisible();
+  await expect(panel.getByRole("tab", { name: /^Bubbles/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(
-    panel.getByRole("combobox", { name: "Agent", exact: true }),
+    panel.getByRole("tablist", { name: "Agents", exact: true }),
   ).toBeVisible();
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate(
+      (m) => (document.documentElement.dataset.colorMode = m),
+      mode,
+    );
+    for (const width of [1280, 800, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await panel.scrollIntoViewIfNeeded();
+      const tablist = panel.getByRole("tablist", { name: "Agents" });
+      await tablist.getByRole("tab").last().focus();
+      await tablist.getByRole("tab").last().press("Enter");
+      const measure = () =>
+        tablist.evaluate((list) => {
+          const bounds = list.getBoundingClientRect(),
+            selected = list
+              .querySelector('[aria-selected="true"]')
+              .getBoundingClientRect();
+          return {
+            overflow: list.scrollWidth > list.clientWidth,
+            left: selected.left >= bounds.left - 1,
+            right: selected.right <= bounds.right + 1,
+            pageFits: document.documentElement.scrollWidth <= window.innerWidth,
+          };
+        });
+      await expect
+        .poll(measure, `${mode} ${width} tab bounds`)
+        .toMatchObject({ left: true, right: true, pageFits: true });
+
+      await page.screenshot({
+        path: testInfo.outputPath(`agent-tabs-${mode}-${width}.png`),
+      });
+    }
+  }
+  // Enlarged text forces real native tab overflow without changing production labels.
+  await page.evaluate(() => (document.documentElement.style.fontSize = "24px"));
+  await panel.scrollIntoViewIfNeeded();
+  const overflowTabs = panel.getByRole("tablist", { name: "Agents" });
+  await expect
+    .poll(() =>
+      overflowTabs.evaluate((list) => list.scrollWidth > list.clientWidth),
+    )
+    .toBe(true);
+  await overflowTabs.getByRole("tab").last().focus();
+  await overflowTabs.getByRole("tab").last().press("Enter");
+  await expect
+    .poll(() =>
+      overflowTabs.evaluate((list) => {
+        const tab = list
+          .querySelector('[aria-selected="true"]')
+          .getBoundingClientRect();
+        const bounds = list.getBoundingClientRect();
+        return tab.left >= bounds.left - 1 && tab.right <= bounds.right + 1;
+      }),
+    )
+    .toBe(true);
+  await page.evaluate(() =>
+    document.documentElement.style.removeProperty("font-size"),
+  );
+  await page.setViewportSize({ width: 1440, height: 950 });
   await page
     .getByRole("button", { name: "Close channel panel", exact: true })
     .click();

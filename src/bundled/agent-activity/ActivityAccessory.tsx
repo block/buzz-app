@@ -10,25 +10,22 @@ import { useLoadedThread } from "../../features/messages/thread-views";
 import { ActivityPopover } from "./ActivityPopover";
 import { ActivityFeedStatus } from "./ActivityFeedStatus";
 import { RequestWorkDetails } from "./RequestWorkDetails";
-import { requestWork, elapsedWork } from "./request-work";
+import { elapsedWork } from "./request-work";
+import { cachedRequestWork } from "./request-work-cache";
+import {
+  conversationReplies,
+  isAgentCoordination,
+} from "../../features/messages/conversation-visibility";
 import styles from "./ActivityAccessory.module.css";
 
-/** One request-anchored work header, never a synthetic reply or a thread-wide rollup. */
+/** Request overview or work attached to a real reply, never a synthetic message. */
 export function ActivityAccessory(props: ComposerAccessoryProps) {
-  return props.workRequest && props.threadRootId && !props.message ? (
+  return (props.workRequest || props.message) && props.threadRootId ? (
     <WorkHeader {...props} />
   ) : null;
 }
 function WorkHeader(props: ComposerAccessoryProps) {
-  const {
-    session,
-    channelId,
-    threadRootId,
-    workRequest,
-    threadComplete,
-    canOpen,
-    open,
-  } = props;
+  const { session, channelId, threadRootId, message, canOpen, open } = props;
   const snapshot = useSyncExternalStore(
     session.agentActivity.subscribe,
     session.agentActivity.snapshot,
@@ -39,29 +36,77 @@ function WorkHeader(props: ComposerAccessoryProps) {
   );
   const known = useKnownAgentPubkeys(session, profiles);
   const loaded = useLoadedThread(session, channelId, threadRootId ?? "");
+  const rows = useMemo(
+    () =>
+      props.threadMessages ??
+      (loaded?.root ? [loaded.root, ...loaded.replies] : []),
+    [props.threadMessages, loaded],
+  );
   const projection = useMemo(
     () =>
-      requestWork(
+      cachedRequestWork(
         snapshot,
-        props.threadMessages ??
-          (loaded?.root ? [loaded.root, ...loaded.replies] : []),
+        loaded ?? rows,
         channelId,
         threadRootId ?? "",
         session.viewer,
       ),
-    [
-      snapshot,
-      props.threadMessages,
-      loaded,
-      channelId,
-      threadRootId,
-      session.viewer,
-    ],
+    [snapshot, loaded, rows, channelId, threadRootId, session.viewer],
   );
-  const work = projection.find((work) => work.requestId === workRequest?.id);
+  const fullWork = projection.find((work) =>
+    message
+      ? work.agents.some(
+          (agent) =>
+            agent.agent === message.authorId &&
+            agent.responseIds.includes(message.id),
+        )
+      : work.requestId === props.workRequest?.id,
+  );
+  const workRequest =
+    props.workRequest ?? rows.find((row) => row.id === fullWork?.requestId);
+  const hidden = new Set(
+    rows
+      .filter((row) => isAgentCoordination(row, known, session.viewer))
+      .map((row) => row.id),
+  );
+  const visible = conversationReplies(rows, hidden, threadRootId);
+  const anchors = new Map(
+    fullWork?.agents.map((agent) => [
+      agent.agent,
+      visible.find(
+        (row) => agent.responseIds.includes(row.id) && !row.membership,
+      ),
+    ]),
+  );
+  // Only direct visible root children are guaranteed mounted without borrowing
+  // the thread host's branch-expansion state. Keep the overview for nested work.
+  const attached = (key: string) => {
+    const row = anchors.get(key);
+    return row && row.id !== threadRootId && row.replyParentId === threadRootId;
+  };
+  const [expanded, setExpanded] = useState(false);
+  const displayed =
+    fullWork?.agents.filter((agent) =>
+      message
+        ? agent.agent === message.authorId &&
+          anchors.get(agent.agent)?.id === message.id
+        : !attached(agent.agent) ||
+          (expanded && fullWork.agents.every((item) => attached(item.agent))),
+    ) ?? [];
+  const state = displayed.some((agent) => agent.state === "working")
+    ? "working"
+    : displayed.some((agent) => agent.state === "error")
+      ? "error"
+      : fullWork?.uncertain ||
+          displayed.some((agent) => agent.state === "unknown")
+        ? "unknown"
+        : displayed.length
+          ? "ended"
+          : "waiting";
+  const work = fullWork && { ...fullWork, agents: displayed, state };
   const keys = [
     ...new Set([
-      ...(work?.agents.map((agent) => agent.agent) ?? []),
+      ...(fullWork?.agents.map((agent) => agent.agent) ?? []),
       ...(workRequest?.mentions.filter((key) => known.has(key)) ?? []),
     ]),
   ].sort();
@@ -80,21 +125,42 @@ function WorkHeader(props: ComposerAccessoryProps) {
       names.set(key, `${label} · ${suffix.get(key)}`);
   const linkedNames =
     work?.agents.map((agent) => names.get(agent.agent) ?? "Agent") ?? [];
+  const remainingKeys = keys.filter((key) => !attached(key));
   const displayNames = linkedNames.length
     ? linkedNames
-    : keys.map((key) => names.get(key) ?? "Agent");
+    : remainingKeys.map((key) => names.get(key) ?? "Agent");
   const title = new Intl.ListFormat(undefined, {
     style: "long",
     type: "conjunction",
   }).format(displayNames);
-  const [expanded, setExpanded] = useState(false);
   const panelOpened = useRef(false);
-  if (!workRequest || !work || !keys.length) return null;
+  const [selectedAgent, setSelectedAgent] = useState("");
+  if (
+    !workRequest ||
+    !work ||
+    !fullWork ||
+    !keys.length ||
+    (message && !displayed.length) ||
+    (!message && !remainingKeys.length && !expanded)
+  )
+    return null;
   const delivery = workRequest.delivery;
   const healthy = snapshot.status === "listening";
+  const complete =
+    props.threadComplete ??
+    (loaded?.status === "ready" &&
+      !loaded.canLoadMore &&
+      !loaded.limited &&
+      !loaded.error);
+  const elapsed =
+    work.agents.length === fullWork.agents.length
+      ? fullWork.elapsed
+      : work.agents.length === 1
+        ? work.agents[0]?.elapsed
+        : undefined;
   const duration =
-    threadComplete && healthy && work.elapsed !== undefined
-      ? elapsedWork(work.elapsed)
+    complete && healthy && !work.uncertain && elapsed !== undefined
+      ? elapsedWork(elapsed)
       : undefined;
   const namedState = (state: string) =>
     new Intl.ListFormat(undefined, {
@@ -108,7 +174,7 @@ function WorkHeader(props: ComposerAccessoryProps) {
   const workingAgents = work.agents.filter(
     (agent) => agent.state === "working",
   );
-  const label =
+  const namedLabel =
     delivery === "sending"
       ? "Sending request…"
       : delivery === "failed"
@@ -126,7 +192,16 @@ function WorkHeader(props: ComposerAccessoryProps) {
                   : work.agents.length
                     ? `${title} worked${duration ? ` for ${duration}` : " on this request"}`
                     : `${title} · awaiting activity`;
-  const first = work.agents[0]?.agent ?? keys[0];
+  const label = message
+    ? namedLabel
+        .replace(`${title} worked`, "Worked")
+        .replace(`${title} is working…`, "Working…")
+    : namedLabel;
+  const first =
+    fullWork.agents.find((agent) => agent.agent === selectedAgent)?.agent ??
+    message?.authorId ??
+    work.agents[0]?.agent ??
+    keys[0];
   const target = activityTarget(
     first ?? "",
     channelId,
@@ -136,33 +211,40 @@ function WorkHeader(props: ComposerAccessoryProps) {
   );
   return (
     <section
-      className={styles.root}
+      className={message ? styles.attached : styles.root}
       data-buzz-ui=""
-      aria-label="Work linked to this request"
+      aria-label={
+        message ? "Agent work on this request" : "Work linked to this request"
+      }
     >
       {work.agents
         .filter((agent) => healthy && agent.state === "working")
         .map((agent) => (
           <TypingReplacement key={agent.agent} {...props} agent={agent.agent} />
         ))}
-      <span className={styles.avatars} aria-hidden="true">
-        {(work.agents.length ? work.agents.map((agent) => agent.agent) : keys)
-          .slice(0, 3)
-          .map((key) => (
-            <Avatar
-              key={key}
-              size="small"
-              shape="squircle"
-              alt=""
-              fallback={names.get(key) ?? "Agent"}
-              src={
-                profiles.get(key)?.picture
-                  ? session.media(profiles.get(key)?.picture ?? "")
-                  : undefined
-              }
-            />
-          ))}
-      </span>
+      {!message && (
+        <span className={styles.avatars} aria-hidden="true">
+          {(work.agents.length
+            ? work.agents.map((agent) => agent.agent)
+            : remainingKeys
+          )
+            .slice(0, 3)
+            .map((key) => (
+              <Avatar
+                key={key}
+                size="small"
+                shape="squircle"
+                alt=""
+                fallback={names.get(key) ?? "Agent"}
+                src={
+                  profiles.get(key)?.picture
+                    ? session.media(profiles.get(key)?.picture ?? "")
+                    : undefined
+                }
+              />
+            ))}
+        </span>
+      )}
       <ActivityPopover
         name="Request activity"
         label={label}
@@ -189,7 +271,13 @@ function WorkHeader(props: ComposerAccessoryProps) {
           trimmed={snapshot.trimmed}
           retry={() => session.live.retry()}
         />
-        <RequestWorkDetails work={work} session={session} names={names} />
+        <RequestWorkDetails
+          work={fullWork}
+          session={session}
+          names={names}
+          selectedAgent={first}
+          onAgentChange={setSelectedAgent}
+        />
         {duration && (
           <p className="text-caption text-subtle">
             Local capture span across linked turns, including overlap and gaps.

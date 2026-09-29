@@ -330,3 +330,36 @@ it("unresolved circular handoffs never create a new scope", () => {
     )[0]?.agents,
   ).toEqual([]);
 });
+it("exposes only strictly reported same-author replies for each independent request and per-agent local duration", () => {
+  const f = fixture(),
+    answer = "4".repeat(64),
+    later = "5".repeat(64);
+  f.start(A, "first", [root]);
+  f.send(A, "first", answer);
+  f.end(A, "first", 61000);
+  f.start(B, "second", [root], 1000);
+  f.end(B, "second", 121000);
+  f.start(A, "followup", [next]);
+  f.send(A, "followup", later);
+  f.end(A, "followup", 31000);
+  const rows = [
+    message(root),
+    message(next),
+    message(answer, A),
+    message(later, A),
+    message("6".repeat(64), B),
+  ];
+  const work = requestWork(f.snapshot(), rows, "c", root, viewer);
+  expect(work[0]?.agents[0]?.responseIds).toEqual([answer]);
+  expect(work[0]?.agents[0]?.elapsed).toBe(60000);
+  expect(work[0]?.agents[1]?.responseIds).toEqual([]);
+  expect(work[1]?.agents[0]?.responseIds).toEqual([later]);
+  const mismatch = requestWork(
+    f.snapshot(),
+    rows.map((row) => (row.id === answer ? { ...row, authorId: B } : row)),
+    "c",
+    root,
+    viewer,
+  );
+  expect(mismatch[0]?.agents[0]?.responseIds).toEqual([]);
+});

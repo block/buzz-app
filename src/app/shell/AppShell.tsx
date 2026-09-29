@@ -27,6 +27,7 @@ export function AppShell({
   sidebar,
   communities,
   accountActions,
+  onProfile,
   searchServices,
   navigationControls,
   onCommunitySelect,
@@ -43,6 +44,7 @@ export function AppShell({
   sidebar?: (pages: ReactNode) => ReactNode;
   communities: Communities;
   accountActions: AccountActionsService;
+  onProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
   searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
@@ -139,6 +141,7 @@ export function AppShell({
             accountActions={accountActions}
             settingsSelected={selected === "settings"}
             onSettings={() => onSelect("settings")}
+            onProfile={onProfile}
           />
         </div>
       </header>

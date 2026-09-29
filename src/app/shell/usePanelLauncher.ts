@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Panels, RegisteredPanel } from "../../features/panels/service";
 
-type Opened = { panel: RegisteredPanel; trigger: HTMLButtonElement };
+type Opened = {
+  panel: RegisteredPanel;
+  target: string;
+  trigger: HTMLButtonElement;
+};
 export function usePanelLauncher(panels: Panels, ready: boolean) {
   const available = useSyncExternalStore(
     panels.subscribe,
@@ -11,9 +15,7 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
   const [opened, setOpened] = useState<Opened>();
   // Exact installation object, not just key/revision: same-revision re-enable is new intent.
   const selected =
-    ready && opened && available.includes(opened.panel)
-      ? opened.panel
-      : undefined;
+    ready && opened && available.includes(opened.panel) ? opened : undefined;
   useEffect(() => {
     if (opened && !selected) setOpened(undefined);
   }, [opened, selected]);
@@ -31,12 +33,24 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
   }, [opened, panels]);
   return {
     available: ready ? available : [],
-    selected,
+    selected: selected?.panel,
+    target: selected?.target,
     launch(panel: RegisteredPanel, trigger: HTMLButtonElement) {
-      if (ready && panel.launcher && panels.snapshot().includes(panel))
+      const { launcher } = panel;
+      if (ready && launcher && panels.snapshot().includes(panel))
         setOpened((current) =>
-          current?.panel === panel ? undefined : { panel, trigger },
+          current?.panel === panel
+            ? undefined
+            : { panel, target: launcher.target, trigger },
         );
+    },
+    canOpen(target: string) {
+      return ready && !!panels.resolve(target);
+    },
+    /** Show whichever registered panel claims this target; reopening keeps it. */
+    open(target: string, trigger: HTMLButtonElement) {
+      const panel = ready ? panels.resolve(target) : undefined;
+      if (panel) setOpened({ panel, target, trigger });
     },
     close() {
       // Bind to this opening, not merely this panel: reopening gets a new lifetime.

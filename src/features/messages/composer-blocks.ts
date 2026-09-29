@@ -244,49 +244,65 @@ export function toggleComposerBlock(
   return tr.setStoredMarks([]);
 }
 
-// The opening fence the previous Buzz client recognized: exactly the caret's
-// line, an optional language identifier, nothing else. Info strings that could
-// host a mention/emoji completion (`:`, `@`, spaces) or a backtick never match.
-const FENCE = /^(?:`{3,}|~{3,})([\w+#.-]*)$/;
-// Any fence line CommonMark accepts in authored source, for reading the lines
-// above the caret: up to three spaces of indentation and any info string.
+/** Typed characters that can complete a fence line. */
+export const composerFenceDelimiters: ReadonlySet<string> = new Set(["`", "~"]);
+// The fence the composer converts as it is typed: exactly three backticks or
+// tildes filling the caret's line. The third character is the trigger, so an
+// info string can never be typed before the block opens, and a fourth character
+// typed after undoing the conversion leaves the line literal.
+const FENCE = /^(`{3}|~{3})$/;
+// Any fence line CommonMark accepts in authored source, for reading the other
+// lines of the paragraph: up to three spaces of indentation and any info string.
 const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
-/** Whether authored lines leave a fenced block open, as the timeline will read
- * them. A block closes only on a line holding the opening marker, at least as
- * long, followed by nothing but whitespace; a backtick fence's info string
- * cannot hold a backtick. */
+type Fence = { marker: string; length: number };
+
+/** The fence a line opens or closes, as the timeline will read it. A block
+ * closes only on a line holding the opening marker, at least as long, followed
+ * by nothing but whitespace; a backtick fence's info string cannot hold a
+ * backtick. */
+function readFence(line: string, open: Fence | undefined): Fence | undefined {
+  const match = FENCE_LINE.exec(line);
+  const run = match?.[1],
+    info = match?.[2] ?? "";
+  if (!run) return open;
+  const marker = run[0] ?? "";
+  if (!open)
+    return marker === "~" || !info.includes("`")
+      ? { marker, length: run.length }
+      : undefined;
+  return marker === open.marker && run.length >= open.length && !info.trim()
+    ? undefined
+    : open;
+}
+
+/** Whether authored lines leave a fenced block open. */
 function insideFence(lines: readonly string[]): boolean {
-  let open: { marker: string; length: number } | undefined;
-  for (const line of lines) {
-    const match = FENCE_LINE.exec(line);
-    const run = match?.[1],
-      info = match?.[2] ?? "";
-    if (!run) continue;
-    const marker = run[0] ?? "";
-    if (!open) {
-      if (marker === "~" || !info.includes("`"))
-        open = { marker, length: run.length };
-    } else if (
-      marker === open.marker &&
-      run.length >= open.length &&
-      !info.trim()
-    )
-      open = undefined;
-  }
+  let open: Fence | undefined;
+  for (const line of lines) open = readFence(line, open);
   return !!open;
 }
 
-/** A line holding only an opening fence, followed by Enter or Shift+Enter,
- * becomes a code block. Only the caret's own typed line qualifies: a fence that
- * closes or sits inside a block the paragraph's earlier lines opened (pasted
- * source, or a message opened for editing), fences inside code/link/literal
- * ranges or tokens, and any line inside an existing code block stay literal
- * source, so Enter after them keeps its ordinary meaning. One transaction
- * carries the deletion and the block, so one undo restores the typed fence. */
-export function composerCodeFence(state: EditorState): Transaction | undefined {
+/** Whether one of the lines below a fence closes it. */
+function closedBelow(fence: Fence, lines: readonly string[]): boolean {
+  return lines.some((line) => !readFence(line, fence));
+}
+
+/** Typing the third character of a line holding only ``` or ~~~ turns that line
+ * into a code block at once, without waiting for Enter. Only a fence the typed
+ * character completes at the end of its line qualifies: a fence that closes or
+ * sits inside a block the paragraph's other lines open (pasted source, or a
+ * message opened for editing), fences inside code/link/literal ranges or
+ * tokens, and any line inside an existing code block stay literal source. The
+ * transaction carries the deletion and the block; the caller closes history
+ * around it, so one undo restores the typed fence. */
+export function composerCodeFence(
+  state: EditorState,
+  typed: string,
+): Transaction | undefined {
   const { $from, empty } = state.selection;
-  if (!empty || $from.parent.type !== schema.nodes.paragraph) return;
+  if (!composerFenceDelimiters.has(typed) || !empty) return;
+  if ($from.parent.type !== schema.nodes.paragraph) return;
   const source = projectComposerDocument(state.doc);
   const text = source.draft.text;
   const caret = source.source($from.pos);
@@ -298,10 +314,17 @@ export function composerCodeFence(state: EditorState): Transaction | undefined {
   if (caret !== source.source(block.to) && text[caret] !== "\n") return;
   const start = Math.max(block.start, text.lastIndexOf("\n", caret - 1) + 1);
   const match = FENCE.exec(text.slice(start, caret));
-  if (!match) return;
-  // A closing fence, or a fence line inside an open block, is authored source
-  // the timeline already renders as code: it never opens a second block.
+  if (!match || match[1]?.[0] !== typed) return;
+  // A closing fence, a fence line inside an open block, or an opening fence a
+  // later line already closes is authored source the timeline renders as code:
+  // it never opens a second block.
   if (insideFence(text.slice(block.start, start).split("\n"))) return;
+  const below = text.slice(caret, source.source(block.to));
+  if (
+    below &&
+    closedBelow({ marker: typed, length: 3 }, below.slice(1).split("\n"))
+  )
+    return;
   const from = source.position(start),
     to = $from.pos;
   if (source.source(from) !== start) return;
@@ -319,8 +342,7 @@ export function composerCodeFence(state: EditorState): Transaction | undefined {
   if (!plain) return;
   const tr = state.tr.delete(from, to);
   isolate(tr);
-  const language = match[1] || null;
-  if (!apply(tr, setBlockType(schema.nodes.code_block, { language }))) return;
+  if (!apply(tr, setBlockType(schema.nodes.code_block))) return;
   return tr.setStoredMarks([]);
 }
 

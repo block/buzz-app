@@ -74,7 +74,9 @@ it("shows immediate thread intent without telemetry, keeps waiting after typing 
   try {
     const entry = screen.getByRole("button", { name: "Sending request…" });
     fireEvent.click(entry);
-    expect(await screen.findByText(/No activity received yet/)).toBeTruthy();
+    expect(
+      await screen.findByText(/No retained activity is linked/),
+    ).toBeTruthy();
     expect(props.open).not.toHaveBeenCalled();
     const settled = {
       ...request,
@@ -220,7 +222,7 @@ it("keeps retained activity on a thread reply without querying profiles; channel
     expect(ensure).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "View activity" }));
     expect(
-      await screen.findByText(/Activity unavailable for this response/),
+      await screen.findByText(/No retained activity is linked/),
     ).toBeTruthy();
     act(() => release());
     expect(screen.queryByText("View activity")).toBeNull();
@@ -361,7 +363,7 @@ it("renders explicitly linked tools while no reply exists, keeps fast commands o
       screen.getByRole("button", { name: /cat > REPORT.md/ }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /wc -w REPORT.md/ }),
+      screen.getByRole("button", { name: /^Run command · wc -w REPORT.md$/ }),
     ).toBeTruthy();
     fireEvent.click(group);
     send("turn_liveness", {});
@@ -443,7 +445,7 @@ it.each([false, true])(
         }),
       );
       expect(screen.getByText(/Feed: interrupted/)).toBeTruthy();
-      expect(screen.queryByText(/No activity received yet/)).toBeNull();
+      expect(screen.getByText(/No retained activity is linked/)).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Retry live feed" }));
       expect(retry).toHaveBeenCalledOnce();
       expect(
@@ -1167,14 +1169,8 @@ it.each(["turn_completed", "turn_error", "agent_panic"])(
       kind === "turn_completed"
         ? "View activity"
         : "Observed activity ended · error reported";
-    const expectTerminal = () => {
-      if (
-        kind === "turn_completed" &&
-        activity.queries.snapshot().status === "listening"
-      )
-        expect(screen.queryByRole("button", { name: terminal })).toBeNull();
-      else expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
-    };
+    const expectTerminal = () =>
+      expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
     try {
       emit("turn_started");
       emit("acp_read", "one", {

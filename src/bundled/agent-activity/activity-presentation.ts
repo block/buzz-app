@@ -177,7 +177,32 @@ export function toolGroupSummary(
   return { label, status, active: !!active };
 }
 
-/** A short action label from one fresh associated turn, never a private excerpt. */
+/** Reported tool input only; bounded/inert text, never a command parser or execution. */
+function toolActionLabel(entry: TranscriptEntry, completed = false): string {
+  const presentation = activityPresentation(entry);
+  const tool = knownTool(entry);
+  if (tool && presentation.target) {
+    const verb =
+      tool.action === "command"
+        ? "Running"
+        : tool.action === "read"
+          ? "Reading"
+          : tool.action === "edit"
+            ? "Editing"
+            : "Viewing";
+    return completed
+      ? `Last action: ${presentation.title} · ${presentation.target}`
+      : `${verb} ${presentation.target}`;
+  }
+  if (tool) return completed ? tool.completed : tool.active;
+  const name = (entry.toolName || entry.title)
+    .replace(/\p{Cc}/gu, " ")
+    .trim()
+    .slice(0, 100);
+  return name ? `${completed ? "Last action:" : "Using"} ${name}` : "Working…";
+}
+
+/** A short specific action label from fresh exact-thread evidence. */
 export function workingActivityLabel(
   transcript: ReturnType<typeof activityTranscript>,
   turns: readonly ActivityTurn[],
@@ -200,8 +225,7 @@ export function workingActivityLabel(
       ["pending", "in_progress"].includes(entry.status),
   );
   if (active.length > 1) return "Working…";
-  if (active.length === 1 && active[0])
-    return knownTool(active[0])?.active ?? "Working…";
+  if (active.length === 1 && active[0]) return toolActionLabel(active[0]);
   const order = (entry: TranscriptEntry) =>
     Math.max(
       ...entry.sourceIds.map(
@@ -216,7 +240,7 @@ export function workingActivityLabel(
   // Fast tools can complete between paints. Name the last reported operation,
   // not its outcome: completed invocation does not establish successful work.
   if (latest?.kind === "tool" && latest.status === "completed")
-    return knownTool(latest)?.completed ?? "Working…";
+    return toolActionLabel(latest, true);
   if (latest?.kind === "thought") return "Thinking…";
   if (latest?.kind === "message" && !latest.communication && latest.body.trim())
     return "Writing a response…";

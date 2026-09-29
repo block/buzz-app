@@ -24,13 +24,18 @@ for trying Activity, not replacing an everyday installation.
   Profile human request text is expanded by default; agent communications are not.
 - Channel controls and live Activity share exact-thread work evidence. Loaded
   hidden handoff IDs can link later turns and additional agents; no channel-wide
-  fallback or new history read is used. Clean-ended live rows disappear without
-  claiming that an answer arrived. Errors and uncertain work remain inspectable.
+  fallback or new history read is used. Participating agents keep a stable entry
+  while their thread evidence is retained; ended work becomes View activity,
+  never a success or reply-delivery claim. Errors and uncertainty remain distinct.
 - The channel uses **View thread**, not the relay's audience-unfiltered reply total.
   The open thread counts visible replies; unread evidence remains unchanged.
-- Live hover/panel details include all retained linked thread activity, not just
-  the original request or the five newest entries. Response Activity keeps its
-  exact send-boundary scope. Missing/trimmed telemetry is not a complete transcript.
+- Every conversation View activity entry, including those on an answer, opens that
+  exact agent’s retained thread activity, not only its final send interval. The
+  popup stays open across completion and pending-request changes. Exact-response
+  diagnostic targets retain their explicit send-boundary scope. Missing/trimmed
+  telemetry is not a complete transcript.
+- Working labels name the reported command or file target when available. Command
+  headlines are bounded literal previews; full input stays expandable in Activity.
 - Human-facing descendants remain visible through hidden coordination ancestry.
   Ordinary visible reply nesting and exact reply targeting are preserved.
 - Side-panel opening by dragging or the Activity context menu, without losing the thread.

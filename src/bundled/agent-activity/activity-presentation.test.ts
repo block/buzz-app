@@ -167,7 +167,7 @@ it("previews distinct command text rather than repeated working directories", ()
   ).toBe("wc -w file");
 });
 
-it("derives only current, unambiguous structured work, with no private excerpts", () => {
+it("derives current structured commands without exposing thought or response excerpts", () => {
   const records: ActivityRecord[] = [];
   const turn = {
     agent: "agent",
@@ -207,13 +207,13 @@ it("derives only current, unambiguous structured work, with no private excerpts"
     status: "pending",
     rawInput: { command: "private command" },
   });
-  expect(label()).toBe("Running a command…");
+  expect(label()).toBe("Running private command");
   push({
     sessionUpdate: "tool_call_update",
     toolCallId: "command",
     status: "completed",
   });
-  expect(label()).toBe("Last action: Run command");
+  expect(label()).toBe("Last action: Run command · private command");
   push({
     sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: "private response" },
@@ -298,7 +298,7 @@ it.each([
     "Viewing image…",
     "Last action: View image",
   ],
-  ["unknown", "tool", "Working…", "Working…"],
+  ["unknown", "tool", "Using unknown", "Last action: unknown"],
 ])(
   "uses exact %s semantics for active/completed action and icon",
   (toolName, action, active, completed) => {
@@ -409,3 +409,58 @@ it.each([
     expect(label).not.toMatch(/success|completed|Running|Ran /i);
   },
 );
+
+it("uses a bounded literal command or file target in the working headline, not thoughts or output", () => {
+  const turn = {
+    agent: "agent",
+    channelId: "alpha",
+    turnId: "T",
+    timestamp: 0,
+    state: "working" as const,
+  };
+  const label = (tool: TranscriptEntry) =>
+    workingActivityLabel(
+      {
+        ...activityTranscript([]),
+        groups: [
+          {
+            id: "g",
+            agent: "agent",
+            channelId: "alpha",
+            turnId: "T",
+            sessionId: null,
+            receivedAt: 0,
+            entries: [tool],
+          },
+        ],
+      },
+      [turn],
+    );
+  expect(
+    label({
+      ...entry("buzz-dev-mcp__shell", {
+        command: "pnpm test --filter activity",
+      }),
+      status: "in_progress",
+    }),
+  ).toBe("Running pnpm test --filter activity");
+  expect(
+    label({
+      ...entry("buzz-dev-mcp__read_file", {
+        path: "/work/src/ActivityPanel.tsx",
+      }),
+      status: "pending",
+    }),
+  ).toBe("Reading ActivityPanel.tsx");
+  const command = `printf '${"a".repeat(120)}'\nprivate heredoc body`;
+  const text = label({
+    ...entry("buzz-dev-mcp__shell", { command }),
+    status: "in_progress",
+  });
+  expect(text.length).toBeLessThanOrEqual(99);
+  expect(text).not.toContain("heredoc");
+  expect(text).toContain("…");
+  expect(label({ ...entry("unmapped_tool"), status: "in_progress" })).toBe(
+    "Using unmapped_tool",
+  );
+});

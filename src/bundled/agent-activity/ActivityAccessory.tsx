@@ -20,7 +20,6 @@ import { selectProfiles } from "../../features/relay/profile-selection";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { usePresenceStatus } from "../../features/presence/react";
 import { ActivityStream } from "./ActivityStream";
-import { ResponseActivity } from "./ResponseActivity";
 import { ActivityPopover } from "./ActivityPopover";
 import { ActivityFeedStatus } from "./ActivityFeedStatus";
 import styles from "./ActivityAccessory.module.css";
@@ -36,15 +35,13 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
   const loaded = useLoadedThread(session, channelId, threadRootId ?? "");
   const live = useMemo(
     () =>
-      message
-        ? []
-        : threadActivity(
-            snapshot,
-            channelId,
-            threadRootId ?? "",
-            loaded?.replies ?? props.threadMessages,
-            request?.message.id,
-          ),
+      threadActivity(
+        snapshot,
+        channelId,
+        threadRootId ?? "",
+        loaded?.replies ?? props.threadMessages ?? (message ? [message] : []),
+        request?.message.id,
+      ),
     [
       snapshot,
       message,
@@ -70,9 +67,7 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
       : [
           ...new Set([
             ...(request?.agents ?? []),
-            ...live
-              .filter((entry) => entry.state !== "ended")
-              .map((entry) => entry.agent),
+            ...live.map((entry) => entry.agent),
           ]),
         ]
           .sort()
@@ -102,6 +97,7 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
         <ActivityEntry
           key={agent}
           {...props}
+          request={request?.agents.includes(agent) ? request : undefined}
           agent={agent}
           name={resolveName(
             agent,
@@ -175,18 +171,13 @@ function ActivityEntry({
   const requestId = request?.message.id;
   const selected = useMemo(
     () =>
-      message
-        ? undefined
-        : (threadEvidence?.selected ??
-          (requestId
-            ? requestActivity(source, agent, channelId, requestId)
-            : undefined)),
-    [message, threadEvidence, requestId, source, agent, channelId],
+      threadEvidence?.selected ??
+      (requestId
+        ? requestActivity(source, agent, channelId, requestId)
+        : undefined),
+    [threadEvidence, requestId, source, agent, channelId],
   );
-  const records = useMemo(
-    () => (message ? [] : (selected?.records ?? [])),
-    [message, selected],
-  );
+  const records = useMemo(() => selected?.records ?? [], [selected]);
   const turns = useMemo(
     () =>
       allTurns.filter(
@@ -232,9 +223,9 @@ function ActivityEntry({
   const target = activityTarget(
     agent,
     channelId,
-    message?.id,
     undefined,
-    message ? undefined : threadRootId,
+    undefined,
+    threadRootId,
   );
   function detach() {
     region.current
@@ -284,16 +275,6 @@ function ActivityEntry({
     },
     replacesTyping,
   );
-  // A clean-ended turn is retained in Activity, not a persistent live-work row.
-  // Delivery failures and incomplete/error evidence remain visible.
-  if (
-    !message &&
-    displayState === "ended" &&
-    !requestWorking &&
-    feedStatus === "listening" &&
-    (!delivery || delivery === "accepted" || delivery === "seen")
-  )
-    return null;
   return (
     <div className={message ? styles.attached : styles.response} ref={region}>
       {!message && (
@@ -422,41 +403,24 @@ function ActivityEntry({
                   gaps.
                 </p>
               )}
-              {message ? (
-                feedStatus !== "unavailable" && (
-                  <ResponseActivity
-                    records={source}
-                    session={session}
-                    agent={agent}
-                    channelId={channelId}
-                    messageId={message.id}
-                  />
-                )
-              ) : (
-                <div className={styles.details}>
-                  {requestWorking && !records.length && (
-                    <p className="text-body-sm text-subtle">
-                      No retained tool details are linked to this thread yet.
-                    </p>
-                  )}
-                  {feedStatus === "listening" &&
-                    !requestWorking &&
-                    !records.length && (
-                      <p className="text-body-sm text-subtle">
-                        No activity received yet. The request does not confirm
-                        the agent has started.
-                      </p>
-                    )}
-                  <ActivityStream
-                    records={records}
-                    session={session}
-                    transcript={transcript}
-                    turns={turns}
-                    showTurnHeading={false}
-                    showDiagnostics={false}
-                  />
-                </div>
-              )}
+              <div className={styles.details}>
+                <p className="text-caption text-subtle">
+                  This agent’s activity in this thread
+                </p>
+                {!records.length && (
+                  <p className="text-body-sm text-subtle">
+                    No retained activity is linked to this thread yet.
+                  </p>
+                )}
+                <ActivityStream
+                  records={records}
+                  session={session}
+                  transcript={transcript}
+                  turns={turns}
+                  showTurnHeading={false}
+                  showDiagnostics={false}
+                />
+              </div>
             </ActivityPopover>
           </ContextMenu.Trigger>
           <ContextMenu.Portal>

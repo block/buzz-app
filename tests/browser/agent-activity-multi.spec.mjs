@@ -280,7 +280,12 @@ test("three recipients work independently through coordination, replies and a no
   await expect(tail.locator("p.text-label-sm")).toHaveCount(3);
   // A later turn can be triggered by hidden coordination, not the original human request.
   emit(agents[1], "turn_completed");
-  await expect(entry(agents[1])).toHaveCount(0);
+  await expect(
+    entry(agents[1]).getByRole("button", {
+      name: "View activity",
+      exact: true,
+    }),
+  ).toBeVisible();
   app.observer(
     {
       kind: "turn_started",
@@ -318,7 +323,7 @@ test("three recipients work independently through coordination, replies and a no
   );
   await expect(
     entry(agents[1]).getByRole("button", {
-      name: "Reading file…",
+      name: "Reading later-handoff.md",
       exact: true,
     }),
   ).toBeVisible();
@@ -331,7 +336,7 @@ test("three recipients work independently through coordination, replies and a no
     }),
   ).toBeVisible();
   await entry(agents[1])
-    .getByRole("button", { name: "Reading file…", exact: true })
+    .getByRole("button", { name: "Reading later-handoff.md", exact: true })
     .click();
   const handoffPopup = page.getByRole("dialog", {
     name: byKey.get(agents[1].pubkey),
@@ -340,9 +345,7 @@ test("three recipients work independently through coordination, replies and a no
   await expect(
     handoffPopup.getByRole("button", { name: /Read file.*later-handoff.md/ }),
   ).toBeVisible();
-  await handoffPopup
-    .getByRole("button", { name: "Close activity", exact: true })
-    .click();
+
   const secondReply = reply(
     agents[1],
     "Agent B: review complete.",
@@ -367,8 +370,20 @@ test("three recipients work independently through coordination, replies and a no
     },
     agents[1].secret,
   );
-  await expect(tail.locator("p.text-label-sm")).toHaveCount(2);
-  await expect(entry(agents[1])).toHaveCount(0);
+  await expect(handoffPopup).toBeVisible();
+  await expect(
+    handoffPopup.getByRole("button", { name: /Read file.*later-handoff.md/ }),
+  ).toBeVisible();
+  await handoffPopup
+    .getByRole("button", { name: "Close activity", exact: true })
+    .click();
+  await expect(tail.locator("p.text-label-sm")).toHaveCount(3);
+  await expect(
+    entry(agents[1]).getByRole("button", {
+      name: "View activity",
+      exact: true,
+    }),
+  ).toBeVisible();
   emit(agents[2], "turn_error", {
     error: "Agent C could not finish; no reply was sent.",
   });
@@ -395,7 +410,7 @@ test("three recipients work independently through coordination, replies and a no
     thread.locator(`[data-message-id="${firstReply.id}"]`),
   ).toBeVisible();
   emit(agents[0], "turn_completed");
-  await expect(tail.locator("p.text-label-sm")).toHaveCount(1);
+  await expect(tail.locator("p.text-label-sm")).toHaveCount(3);
   await expect(
     entry(agents[2]).getByRole("button", {
       name: "Observed activity ended · error reported",

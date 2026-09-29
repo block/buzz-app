@@ -179,7 +179,8 @@ canOpen, open }`: no editor commands, new socket, or implied access grant. Chann
 target resolution and panel placement; other consumers can omit navigation and
 return unavailable. The shared renderer owns deterministic order, error isolation
 and command revocation on removal/unmount. Session/channel/thread/message keys
-fence retargeting. The accessory remains usable on read-only connections.
+fence retargeting. Pending request changes update props without remounting the
+thread accessory or closing its popup. The accessory remains usable on read-only connections.
 History owners retain bottom-follow and older-reading intent when the tail changes.
 
 Thread reply ancestry remains host-owned. Explicit original `audience=agents`
@@ -211,20 +212,20 @@ existing pure request association selector against all loaded exact thread IDs,
 including hidden coordination. A workspace-local bridge borrows active ThreadView
 handles, never copies a journal or creates reads. It unregisters on close/session
 retirement; without an open view only root/typing evidence is available. The live
-tail and channel control share this projection. Clean-ended rows disappear while
-error/unknown evidence stays visible, and a newer pending request is not hidden by
-old completion. The thread Activity popup and explicitly thread-scoped panel expose
+tail and channel control share this projection. Agents with retained thread evidence keep their entries after completion, labelled
+View activity. Error/unknown evidence stays distinct, and a newer pending request
+is evaluated only for its actual recipients. The thread Activity popup and explicitly thread-scoped panel expose
 all retained matching records; missing starts/evicted records remain unavailable.
 No capture lease, timer, subscription route or persistence owner is added. Channels reads the
 same activity snapshot for its sidebar marker and retains an open thread when the
 registered activity target opens in an additional column. Other panel behavior is
 unchanged. Pending activity/general inspection remains exact-agent/channel scoped.
-Completed message entries carry the exact agent/channel/message ID into a pure
-retained-event selector. A supported, successful send-tool result closes each
-response interval; the preceding send or retained turn start opens it. Missing or
-ambiguous evidence is unavailable, never a channel-wide fallback. Both inline and
-detached response views use this selector, without scope-changing selectors in the
-response panel. This is best-effort reported activity, not verified causal proof.
+Conversation View activity controls (both agent entries and posted answers) open
+exact agent/thread inspection over retained linked turns. Explicit response-target
+inspection remains a separate diagnostic with its strict reported-send interval;
+it is no longer the default behind the generic View activity label. No time/prose
+inference or channel-wide fallback supplies missing work. Reported command/file
+input can label current work with a bounded literal preview; it is never executed.
 Activity text opens a hover/click Base UI popup instead of expanding the thread.
 Hover dismissal preserves composer focus; keyboard dismissal returns to the trigger.
 The popup expands into the existing side panel. Pointer drag-right and the context

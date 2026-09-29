@@ -63,7 +63,16 @@ function fixture() {
     status: "listening",
     records: [],
     turns: [],
-    typing: [{ channelId: "c", threadRootId: "m", agent: a }],
+    typing: [
+      {
+        channelId: "c",
+        threadRootId: "m",
+        agent: a,
+        timestamp: Date.now(),
+        working: true,
+        expiresAt: Date.now() + 8_000,
+      },
+    ],
     trimmed: 0,
   };
   const subscribe = (listener: () => void) => {

@@ -133,3 +133,60 @@ it("keeps composer placement unchanged and fences conversation commands on retar
   view.unmount();
   expect(saved.at(-1)?.open("target")).toBe(false);
 });
+
+it("keeps thread Activity mounted when pending recipients settle or a follow-up changes", () => {
+  const mounts = vi.fn(),
+    stops = vi.fn();
+  let props: ComposerAccessoryProps | undefined;
+  function Activity(next: ComposerAccessoryProps) {
+    useLayoutEffect(() => {
+      mounts();
+      return stops;
+    }, []);
+    useLayoutEffect(() => {
+      props = next;
+    });
+    return <span>Activity remains</span>;
+  }
+  const entries: Contribution<ComposerAccessory>[] = [
+    {
+      id: "activity",
+      key: "activity",
+      pluginId: "test",
+      revision: "one",
+      title: "Activity",
+      placement: "conversation",
+      component: Activity,
+    },
+  ];
+  const registry = { snapshot: () => entries, subscribe: () => () => {} };
+  const session = {} as RelaySession;
+  const request = (id: string) => ({
+    message: { id } as import("../relay/contracts").ChannelMessage,
+    agents: ["agent"],
+  });
+  const common = {
+    registry,
+    session,
+    scope: "s",
+    channelId: "c",
+    threadRootId: "root",
+    placement: "conversation" as const,
+    canOpen: () => true,
+    open: () => true,
+  };
+  const view = render(
+    <ComposerAccessories {...common} request={request("first")} />,
+  );
+  const original = props;
+  view.rerender(<ComposerAccessories {...common} />);
+  expect(mounts).toHaveBeenCalledOnce();
+  expect(stops).not.toHaveBeenCalled();
+  expect(original?.open("target")).toBe(true);
+  view.rerender(<ComposerAccessories {...common} request={request("next")} />);
+  expect(props?.request?.message.id).toBe("next");
+  expect(mounts).toHaveBeenCalledOnce();
+  view.rerender(<ComposerAccessories {...common} threadRootId="other" />);
+  expect(stops).toHaveBeenCalledOnce();
+  expect(original?.open("target")).toBe(false);
+});

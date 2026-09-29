@@ -865,7 +865,7 @@ test.describe("thread activity", () => {
       await expect(entry).toHaveAttribute("aria-expanded", "true");
       await expect(
         activityPopup(page).getByText(
-          "No retained tool details are linked to this thread yet.",
+          "No retained activity is linked to this thread yet.",
           { exact: true },
         ),
       ).toBeVisible();
@@ -1042,26 +1042,32 @@ test.describe("thread activity", () => {
       .toBe(true);
     await replyEntry.click();
     await expect(replyEntry).toHaveAttribute("aria-expanded", "true");
-    const unavailable =
-      "Activity unavailable for this response. Its send boundary is missing or ambiguous in the retained feed.";
-    await expect(activityPopup(page).getByRole("status")).toHaveText(
-      unavailable,
-    );
+    const unavailable = "No retained activity is linked to this thread yet.";
+    await expect(
+      activityPopup(page).getByText(unavailable, { exact: true }),
+    ).toHaveText(unavailable);
     await expect(
       activityPopup(page).getByText(channelScope, { exact: true }),
     ).toHaveCount(0);
     await expect(
-      activityPopup(page).getByRole("region", { name: "Readable activity" }),
+      activityPopup(page)
+        .getByRole("region", { name: "Readable activity" })
+        .getByRole("button"),
     ).toHaveCount(0);
     await expect(activityPanel(page)).toHaveCount(0);
     await openSidePanel(page, replyEntry, true);
     await expect(composer).toHaveText("Keep this thread draft");
-    await expect(activityPanel(page).getByRole("status")).toHaveText(
-      unavailable,
-    );
+    await expect(
+      activityPanel(page).getByText(
+        "No retained activity linked to this thread yet.",
+        { exact: true },
+      ),
+    ).toBeVisible();
     await expect(activityPanel(page).getByRole("combobox")).toHaveCount(0);
     await expect(
-      activityPanel(page).getByRole("region", { name: "Readable activity" }),
+      activityPanel(page)
+        .getByRole("region", { name: "Readable activity" })
+        .getByRole("button"),
     ).toHaveCount(0);
     await page
       .getByRole("button", { name: "Close channel panel", exact: true })
@@ -1094,7 +1100,7 @@ test.describe("local agent request", () => {
   // Browser-only boundary: actual member picker/composer, signing-gated outbox,
   // automatic local-root navigation, signed replies replacing the tail, and the
   // same response-specific work surviving inline-to-panel detachment.
-  test("send stays in the channel until a thread click; real replies retain distinct response activity", async ({
+  test("send stays in the channel until a thread click; every agent retains thread-wide activity through replies", async ({
     page,
     app,
   }, testInfo) => {
@@ -1263,7 +1269,7 @@ test.describe("local agent request", () => {
       await sending.click();
       await expect(
         activityPopup(page).getByText(
-          "No activity received yet. The request does not confirm the agent has started.",
+          "No retained activity is linked to this thread yet.",
           { exact: true },
         ),
       ).toBeVisible();
@@ -1460,7 +1466,10 @@ test.describe("local agent request", () => {
     ).toBeVisible();
     startTool(0);
     await expect(
-      region.getByRole("button", { name: "Running a command…", exact: true }),
+      region.getByRole("button", {
+        name: `Running ${commandPreview(commands[0])}`,
+        exact: true,
+      }),
     ).toBeVisible();
     startTool(1);
     await expect(working).toBeVisible();
@@ -1477,8 +1486,7 @@ test.describe("local agent request", () => {
     await expect(toolRow(1, "Completed")).toBeVisible();
     await expect(
       region.getByRole("button", {
-        name: "Last action: Run command",
-        exact: true,
+        name: /^Last action: Run command · /,
       }),
     ).toBeVisible();
     await expect(pendingGroup).toHaveAttribute("aria-expanded", "true");
@@ -1500,8 +1508,7 @@ test.describe("local agent request", () => {
     await expect(toolRow(2, "Completed")).toHaveCount(0);
     await expect(
       region.getByRole("button", {
-        name: "Last action: Run command",
-        exact: true,
+        name: /^Last action: Run command · /,
       }),
     ).toBeVisible();
     // Live thread inspection keeps all retained tools, without a sliding five-entry cap.
@@ -1532,8 +1539,7 @@ test.describe("local agent request", () => {
     await openSidePanel(
       page,
       region.getByRole("button", {
-        name: "Last action: Run command",
-        exact: true,
+        name: /^Last action: Run command · /,
       }),
       true,
     );
@@ -1707,9 +1713,15 @@ test.describe("local agent request", () => {
     await expect(
       firstWork.getByText("Send message · Reported sent", { exact: true }),
     ).toBeVisible();
+    const previousTools = firstWork.getByRole("button", {
+      name: /7 tool calls/,
+    });
+    await expect(previousTools).toHaveAttribute("aria-expanded", "false");
+    await previousTools.click();
     await expect(
       firstWork.getByRole("button", { name: /Reading file/ }),
-    ).toHaveCount(0);
+    ).toHaveCount(7);
+    await previousTools.click();
     await expect(
       replyRow.getByText(
         "Retained activity through this response’s reported send. The feed may have gaps.",
@@ -1807,12 +1819,14 @@ test.describe("local agent request", () => {
     ).toBeVisible();
     await expect(
       correctionWork.getByText("Send message · Reported sent", { exact: true }),
-    ).toBeVisible();
-    await expect(correctionWork).not.toContainText(commandPreview(commands[0]));
-    await expect(correctionWork).not.toContainText(firstThought);
+    ).toHaveCount(2);
     await expect(
-      correctionWork.getByRole("button", { name: /Reading file/ }),
-    ).toHaveCount(0);
+      correctionWork.getByRole("button", { name: /6 commands/ }),
+    ).toBeVisible();
+    await expect(correctionWork).toContainText(firstThought);
+    await expect(
+      correctionWork.getByRole("button", { name: /7 tool calls/ }),
+    ).toBeVisible();
     // Reopen the first exact response after later telemetry; only one popup is inspected at a time.
     await activityPopup(page)
       .getByRole("button", { name: "Close activity", exact: true })
@@ -1820,8 +1834,10 @@ test.describe("local agent request", () => {
     await expect(activityPopup(page)).toHaveCount(0);
     await replyEntry.click();
     await expect(firstWork).toContainText(firstThought);
-    await expect(firstWork).not.toContainText(correctionThought);
-    await expect(firstWork).not.toContainText(commandPreview(commands[0]));
+    await expect(firstWork).toContainText(correctionThought);
+    await expect(
+      firstWork.getByRole("button", { name: /6 commands/ }),
+    ).toBeVisible();
     await activityPopup(page)
       .getByRole("button", { name: "Close activity", exact: true })
       .click();
@@ -1843,9 +1859,11 @@ test.describe("local agent request", () => {
     await expect(
       correctionWork.getByRole("button", { name: /Setup and diagnostics/ }),
     ).toHaveCount(0);
-    const messageDisclosure = correctionWork.getByRole("button", {
-      name: /Send message · Reported sent/,
-    });
+    const messageDisclosure = correctionWork
+      .getByRole("button", {
+        name: /Send message · Reported sent/,
+      })
+      .last();
     await expect(messageDisclosure).toHaveAttribute("aria-expanded", "false");
     await expect(
       correctionWork.getByText(
@@ -1921,16 +1939,18 @@ test.describe("local agent request", () => {
     });
     await expect(primaryContents(detachedWork)).toHaveText(inlineContents);
     const diagnostics = detachedWork.getByRole("button", {
-      name: "Setup and diagnostics (2)",
+      name: /^Setup and diagnostics/,
       exact: true,
     });
     await diagnostics.focus();
     await diagnostics.press("Enter");
     await expect(
-      detachedWork.getByRole("button", {
-        name: "Permission allowed",
-        exact: true,
-      }),
+      detachedWork
+        .getByRole("button", {
+          name: "Permission allowed",
+          exact: true,
+        })
+        .last(),
     ).toBeVisible();
     await diagnostics.press("Space");
     await expect(
@@ -1939,7 +1959,7 @@ test.describe("local agent request", () => {
         exact: true,
       }),
     ).toHaveCount(0);
-    await expect(panel).not.toContainText(firstThought);
+    await expect(panel).toContainText(firstThought);
     await expect(panel.getByRole("combobox")).toHaveCount(0);
     await expect(
       panel.getByRole("button", { name: "Raw events", exact: true }),
@@ -1947,6 +1967,7 @@ test.describe("local agent request", () => {
     await expect(panel.getByText(channelScope, { exact: true })).toHaveCount(0);
     await detachedWork
       .getByRole("button", { name: /Send message · Reported sent/ })
+      .last()
       .click();
     await detachedWork
       .getByRole("button", { name: "Message details", exact: true })

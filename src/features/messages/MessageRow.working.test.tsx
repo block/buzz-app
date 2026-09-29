@@ -311,7 +311,7 @@ it("shares later hidden-handoff work and tools between the channel and live thre
       screen.getByRole("button", { name: "View thread: Buzzy working…" }),
     ).toBeVisible();
     const live = screen.getByRole("button", {
-      name: "Reading file…",
+      name: "Reading later-work.ts",
     });
     fireEvent.click(live);
     expect(
@@ -321,7 +321,14 @@ it("shares later hidden-handoff work and tools between the channel and live thre
       screen.queryByText(hidden.content, { selector: "[data-message-id] p" }),
     ).toBeNull();
     act(() => f.observe("turn_completed", "handoff"));
-    expect(screen.queryByRole("button", { name: "Reading file…" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Reading later-work.ts" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "View activity" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Buzzy" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Read file.*later-work.ts/ }),
+    ).toBeVisible();
     expect(screen.getByRole("button", { name: "View thread" })).toBeVisible();
   } finally {
     cleanup();
@@ -385,6 +392,146 @@ it("keeps a newer accepted request waiting instead of hiding it behind an older 
     cleanup();
     release();
     owned.dispose();
+    await f.dispose();
+  }
+});
+
+it("keeps all participating agents and the same open thread preview after completion and request settlement", async () => {
+  const { ActivityAccessory } = await import(
+    "../../bundled/agent-activity/ActivityAccessory"
+  );
+  const { createThreadViews, ThreadViews } = await import("./thread-views");
+  const f = await threadThinkingFixture();
+  const peer = "c".repeat(64),
+    third = "d".repeat(64);
+  const views = createThreadViews();
+  const owned = f.session.thread("channel", f.first.id);
+  const release = views.register(f.session, "channel", owned);
+  const props = {
+    session: f.session,
+    scope: "test",
+    channelId: "channel",
+    threadRootId: f.first.id,
+    canOpen: () => false,
+    open: () => false,
+  };
+  const agents = [f.agent, peer, third];
+  try {
+    const view = render(
+      <ThreadViews value={views}>
+        <ActivityAccessory {...props} request={{ message: f.first, agents }} />
+      </ThreadViews>,
+    );
+    act(() => {
+      for (const [i, agent] of agents.entries()) {
+        f.observe(
+          "turn_started",
+          `t${i}`,
+          { triggeringEventIds: [f.first.id] },
+          agent,
+        );
+        f.observe(
+          "acp_read",
+          `t${i}`,
+          {
+            method: "session/update",
+            params: {
+              update: {
+                sessionUpdate: "tool_call",
+                toolCallId: `tool${i}`,
+                title: "buzz-dev-mcp__shell",
+                status: "in_progress",
+                rawInput: { command: `pnpm test agent-${i}` },
+              },
+            },
+          },
+          agent,
+        );
+      }
+    });
+    const control = screen.getByRole("button", {
+      name: "Running pnpm test agent-1",
+    });
+    fireEvent.click(control);
+    const popup = screen.getByRole("dialog");
+    expect(
+      await screen.findByRole("button", { name: /Run command.*agent-1/ }),
+    ).toBeVisible();
+    act(() =>
+      agents.forEach((agent, i) => {
+        f.observe("turn_completed", `t${i}`, {}, agent);
+      }),
+    );
+    view.rerender(
+      <ThreadViews value={views}>
+        <ActivityAccessory {...props} />
+      </ThreadViews>,
+    );
+    expect(
+      screen.getAllByRole("button", { name: "View activity" }),
+    ).toHaveLength(3);
+    expect(control).toHaveTextContent("View activity");
+    expect(screen.getByRole("dialog")).toBe(popup);
+    expect(
+      screen.getByRole("button", { name: /Run command.*agent-1/ }),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    release();
+    owned.dispose();
+    await f.dispose();
+  }
+});
+
+it("does not apply a B-only follow-up's delivery state to retained agent A", async () => {
+  const { ActivityAccessory } = await import(
+    "../../bundled/agent-activity/ActivityAccessory"
+  );
+  const f = await threadThinkingFixture();
+  const other = "c".repeat(64);
+  const next = {
+    ...f.first,
+    id: "e".repeat(64),
+    threadRootId: f.first.id,
+    content: "Only B should act",
+  };
+  const props = {
+    session: f.session,
+    scope: "test",
+    channelId: "channel",
+    threadRootId: f.first.id,
+    threadMessages: [f.first, next],
+    canOpen: () => false,
+    open: () => false,
+  };
+  try {
+    act(() => {
+      f.start(f.first.id);
+      f.finish(f.first.id);
+    });
+    const tree = (delivery: "sending" | "accepted" | "failed") => (
+      <ActivityAccessory
+        {...props}
+        request={{ message: { ...next, delivery }, agents: [other] }}
+      />
+    );
+    const view = render(tree("sending"));
+    expect(screen.getByRole("button", { name: "View activity" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Sending request…" }),
+    ).toBeVisible();
+    view.rerender(tree("accepted"));
+    expect(screen.getByRole("button", { name: "View activity" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Waiting for response…" }),
+    ).toBeVisible();
+    view.rerender(tree("failed"));
+    expect(screen.getByRole("button", { name: "View activity" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Request not sent" }),
+    ).toBeVisible();
+  } finally {
+    cleanup();
     await f.dispose();
   }
 });

@@ -194,6 +194,14 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   await expect(clock).toHaveCSS("opacity", "1");
   await clock.hover();
   await expect(page.getByRole("tooltip")).toContainText(/\d{4}/);
+  // Focus within the row only reveals the clock under keyboard modality. The
+  // ArrowUp edit shortcut above switched it on and nothing has clicked since
+  // (hovers leave it alone), so this programmatic focus reads as keyboard
+  // focus. Any pointer click added between the two would clear the flag.
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-keyboard-navigation",
+    "",
+  );
   await grandchildRow
     .getByRole("button", { name: "Reply", exact: true })
     .focus();

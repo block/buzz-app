@@ -595,14 +595,16 @@ export function ActivityDetails({
                   Channel activity, including threads
                 </p>
               )}
-              <p className="text-caption text-subtle" role="status">
-                {working
-                  ? `${working} working ${working === 1 ? "turn" : "turns"}.`
-                  : "No fresh working evidence."}{" "}
-                {unknown
-                  ? `Status unknown for ${unknown} ${unknown === 1 ? "turn" : "turns"}.`
-                  : ""}
-              </p>
+              {(working > 1 || unknown > 0 || !records.length) && (
+                <p className="text-caption text-subtle" role="status">
+                  {working
+                    ? `${working} working ${working === 1 ? "turn" : "turns"}.`
+                    : "No fresh working evidence."}{" "}
+                  {unknown
+                    ? `Status unknown for ${unknown} ${unknown === 1 ? "turn" : "turns"}.`
+                    : ""}
+                </p>
+              )}
               {snapshot.status === "listening" && !records.length && (
                 <p>
                   Waiting for live records for this identity

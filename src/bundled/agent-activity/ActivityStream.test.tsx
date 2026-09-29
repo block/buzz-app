@@ -369,6 +369,11 @@ it("keeps completed tool rows quiet while retaining group completion and failure
   const view = render(
     <ActivityStream showDiagnostics records={input} turns={turns} />,
   );
+  const previous = screen.getByRole("button", {
+    name: /1 tool call.*Completed/,
+  });
+  expect(previous.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(previous);
   expect(screen.getByRole("button", { name: "Read file 0" })).toBeTruthy();
   expect(
     screen.queryByRole("button", { name: /Read file 0.*Completed/ }),
@@ -502,7 +507,7 @@ it("hides inline turn metadata without merging turns and maps exact tool/action 
 });
 
 it.each(["agent_thought_chunk", "agent_message_chunk"])(
-  "uses a semantic decorative icon for %s without a second heading",
+  "keeps %s readable without extra progress chrome",
   (sessionUpdate) => {
     const record = records(1)[0];
     if (!record) throw new Error("Missing record");
@@ -531,13 +536,19 @@ it.each(["agent_thought_chunk", "agent_message_chunk"])(
         showTurnHeading={false}
       />,
     );
-    const action =
-      sessionUpdate === "agent_thought_chunk" ? "thought" : "message";
-    expect(
-      view.container
-        .querySelector(`[data-activity-action="${action}"]`)
-        ?.getAttribute("aria-hidden"),
-    ).toBe("true");
+    if (sessionUpdate === "agent_thought_chunk") {
+      expect(
+        view.container.querySelector('[data-activity-action="thought"]'),
+      ).toBeNull();
+      expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Raw source" })).toBeNull();
+    } else {
+      expect(
+        view.container
+          .querySelector('[data-activity-action="message"]')
+          ?.getAttribute("aria-hidden"),
+      ).toBe("true");
+    }
     expect(screen.getByText("Reported progress")).toBeTruthy();
   },
 );

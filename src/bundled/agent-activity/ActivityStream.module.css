@@ -24,6 +24,9 @@
   text-align: start;
 }
 .label > svg {
+  width: var(--space-3);
+  height: var(--space-3);
+  color: var(--text-subtle);
   flex-shrink: 0;
   align-self: center;
 }
@@ -34,7 +37,7 @@
   color: var(--text-standard);
 }
 .detail {
-  padding: var(--space-1) 0 var(--space-2) var(--space-6);
+  padding-block: var(--space-1) var(--space-2);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -55,7 +58,7 @@
   overflow-wrap: anywhere;
 }
 .toolGroup {
-  padding-left: var(--space-4);
+  min-width: 0;
 }
 .progress {
   padding-block: var(--space-2);
@@ -88,7 +91,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding-inline-start: var(--space-6);
+  padding-inline: 0;
 }
 .message {
   display: flex;
@@ -97,4 +100,167 @@
   /* The shared disclosure trigger owns row height, as it does for tools. */
   padding-block: 0;
   min-width: 0;
+}
+
+.motion [class~="buzz-accordion-trigger"] > svg {
+  transition: transform var(--duration-state) cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* One reading edge at every disclosure depth; no cumulative tree indentation. */
+.heading,
+.progressBody,
+.detail p,
+.messageContent > p,
+.messageEvidence > p {
+  padding-inline: var(--space-8) var(--space-2);
+  overflow-wrap: anywhere;
+}
+.detail pre {
+  max-width: calc(100% - var(--space-6));
+  margin-inline-start: var(--space-6);
+  padding-inline: var(--space-2);
+}
+.detail pre code {
+  white-space: inherit;
+  overflow-wrap: anywhere;
+}
+.stream [class~="buzz-accordion-trigger"] > span {
+  min-width: 0;
+}
+.stream [class~="buzz-accordion-trigger"] {
+  width: fit-content;
+  max-width: 100%;
+  min-height: var(--space-8);
+  padding: var(--space-1h) var(--space-2);
+  margin-inline-start: 0;
+  gap: var(--space-2);
+  border-radius: var(--radius-row);
+  color: var(--text-subtle);
+  transition:
+    background-color var(--duration-fast) var(--easing-state),
+    color var(--duration-fast) var(--easing-state);
+}
+.stream [class~="buzz-accordion-trigger"][aria-expanded="true"] {
+  color: var(--text-standard);
+}
+.stream [class~="buzz-accordion-trigger"] > svg {
+  width: var(--space-3);
+  height: var(--space-3);
+  transform: rotate(-90deg);
+}
+.stream [class~="buzz-accordion-trigger"][aria-expanded="true"] > svg {
+  transform: rotate(0deg);
+}
+.toolGroup {
+  padding-inline-start: 0;
+}
+.progress {
+  padding-block: var(--space-1h);
+  color: var(--text-subtle);
+}
+.title {
+  color: inherit;
+}
+.entryLabel[data-active="true"] {
+  color: var(--text-standard);
+}
+@media (hover: hover) and (pointer: fine) {
+  .stream [class~="buzz-accordion-trigger"]:hover {
+    background: var(--affordance-subtle-hover);
+    color: var(--text-standard);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stream [class~="buzz-accordion-trigger"] {
+    transition: none;
+  }
+}
+.stream {
+  max-width: 36rem;
+}
+.stream [data-activity-action] {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex-shrink: 0;
+  color: var(--text-subtle);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .entryLabel[data-active="true"] .title > span:first-child {
+    background: linear-gradient(
+      100deg,
+      var(--text-subtle) 20%,
+      var(--text-standard) 45%,
+      var(--text-subtle) 70%
+    );
+    background-size: 240% 100%;
+    background-clip: text;
+    color: transparent;
+    animation: activity-shimmer 2.4s linear infinite;
+  }
+}
+@keyframes activity-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* Base UI owns measured height and interruption; activity owns its motion rhythm. */
+.motion [class~="buzz-accordion-panel"] {
+  transition:
+    height var(--duration-settle) cubic-bezier(0.23, 1, 0.32, 1),
+    opacity var(--duration-state) var(--easing-state);
+  opacity: 1;
+}
+.motion
+  [class~="buzz-accordion-panel"]:is(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+  opacity: 0;
+}
+.motion [class~="buzz-accordion-panel"][data-ending-style] {
+  transition-duration: var(--duration-fast);
+}
+.motion [class~="buzz-accordion-trigger"] {
+  padding-inline: var(--space-2);
+  transition:
+    background-color var(--duration-fast) var(--easing-state),
+    color var(--duration-fast) var(--easing-state);
+}
+.motion [class~="buzz-accordion-trigger"]:active:not([aria-disabled="true"]) {
+  background: var(--affordance-subtle-pressed);
+}
+.motion[data-motion-input="keyboard"] [class~="buzz-accordion-panel"],
+.motion[data-motion-input="keyboard"] [class~="buzz-accordion-trigger"],
+.motion[data-motion-input="keyboard"] [class~="buzz-accordion-trigger"] > svg {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .motion [class~="buzz-accordion-panel"],
+  .motion [class~="buzz-accordion-trigger"],
+  .motion [class~="buzz-accordion-trigger"] > svg {
+    transition: none;
+  }
+}
+
+/* Keep the icon gutter outside iconless controls, including their state surfaces. */
+.stream [class~="buzz-accordion-trigger"]:not(:has([data-activity-action])) {
+  margin-inline-start: var(--space-6);
+  max-width: calc(100% - var(--space-6));
+  padding-inline-start: var(--space-2);
+}
+
+.messageEvidence {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.progress > [class~="buzz-button"],
+.messageContent > div:has(> [class~="buzz-button"]) {
+  margin-inline-start: var(--space-6);
+  max-width: calc(100% - var(--space-6));
 }

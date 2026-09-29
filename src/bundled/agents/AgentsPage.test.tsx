@@ -25,7 +25,11 @@ import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import type {
+  PanelProps,
+  Panels,
+  RegisteredPanel,
+} from "../../features/panels/service";
 import { profileTarget } from "../../features/profiles/target";
 
 const disposals: (() => void)[] = [];
@@ -201,6 +205,62 @@ it("opens the selected managed agent in the existing profile panel", async () =>
       within(card).getByRole("button", { name: "Actions for Fixture agent" }),
     ).toHaveFocus(),
   );
+});
+
+it("lets the hosted profile replace itself with another profile target", async () => {
+  const replacementTarget = "buzz:profile-instance:test";
+  const targets: string[] = [];
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: ({ target, context }: PanelProps) => {
+      targets.push(target);
+      return (
+        <button
+          type="button"
+          disabled={!context?.canOpen(replacementTarget)}
+          onClick={() => context?.open(replacementTarget)}
+        >
+          Open exact instance
+        </button>
+      );
+    },
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  const { f } = setup("connected", undefined, undefined, undefined, panels);
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Open exact instance" }),
+  );
+
+  await waitFor(() => expect(targets.at(-1)).toBe(replacementTarget));
+  fireEvent.click(screen.getByRole("button", { name: "Close Profile panel" }));
+  await waitFor(() =>
+    expect(
+      within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+    ).toHaveFocus(),
+  );
+  expect(targets).toContain(profileTarget(f.agent.pubkey));
 });
 
 it("focuses the Agents surface when the profile trigger was removed", async () => {

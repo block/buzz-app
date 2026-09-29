@@ -10,7 +10,11 @@ import {
 import type { PageProps } from "../../features/pages/service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import type { OpenResult } from "../../features/navigation/controller";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import type {
+  PanelContext,
+  Panels,
+  RegisteredPanel,
+} from "../../features/panels/service";
 import { profileTarget } from "../../features/profiles/target";
 import { editAgentRoute } from "./edit-route";
 import type {
@@ -82,6 +86,18 @@ export function AgentsPage({
     if (profile && !registeredPanels.includes(profile.panel))
       setProfile(undefined);
   }, [profile, registeredPanels]);
+  const canOpenProfile = (target: string) =>
+    panels?.resolve(target) !== undefined;
+  const panelContext: PanelContext = {
+    channelId: "",
+    canOpen: canOpenProfile,
+    open: (target) => {
+      const panel = panels?.resolve(target);
+      if (!panel || !profile) return false;
+      setProfile({ ...profile, panel, target });
+      return true;
+    },
+  };
   const resolveProfile: ProfileResolver = (pubkey) => {
     const target = profileTarget(pubkey);
     const panel = target && panels?.resolve(target);
@@ -148,6 +164,7 @@ export function AgentsPage({
           <PanelCard
             panel={profile.panel}
             target={profile.target}
+            context={panelContext}
             close={() => setProfile(undefined)}
           />
         )}

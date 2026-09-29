@@ -1,9 +1,10 @@
 import { InventoryIdentityCard } from "./InventoryIdentityCard";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type {
   AgentControl,
   AgentControlState,
   AgentView,
+  ImportSource,
 } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
@@ -29,6 +30,8 @@ export function InventoryView({
   duplicate,
   remove,
   importedId,
+  onUseHere,
+  onImport,
   children,
 }: {
   state: AgentControlState;
@@ -42,8 +45,13 @@ export function InventoryView({
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   importedId: string | null;
+  onUseHere(pubkey: string): void;
+  onImport(pubkey: string, source?: ImportSource): void;
   children?: ReactNode;
 }) {
+  const [selectedSources, setSelectedSources] = useState<
+    Record<string, ImportSource>
+  >({});
   const data = state.data;
   if (!data) return null;
   const groups = new Map<string, InventoryEntry[]>();
@@ -77,10 +85,11 @@ export function InventoryView({
         <section key={group} aria-label={group} className="flex flex-col gap-3">
           <h2 className="m-0 text-heading">{group}</h2>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] items-start gap-4">
-            {identities.map(({ row }) => (
+            {identities.map(({ row, decision }) => (
               <InventoryIdentityCard
                 key={row.pubkey}
                 row={row}
+                decision={decision}
                 state={state}
                 control={control}
                 session={session}
@@ -90,6 +99,15 @@ export function InventoryView({
                 duplicate={duplicate}
                 remove={remove}
                 importedId={importedId}
+                onUseHere={onUseHere}
+                onImport={onImport}
+                selectedSource={selectedSources[row.pubkey]}
+                onSourceChange={(source) =>
+                  setSelectedSources((saved) => ({
+                    ...saved,
+                    [row.pubkey]: source,
+                  }))
+                }
               />
             ))}
           </div>

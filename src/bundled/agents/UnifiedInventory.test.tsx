@@ -95,6 +95,8 @@ function setup(
       connection={connection}
       edit={() => {}}
       importedId={null}
+      onUseHere={() => {}}
+      onImport={() => {}}
     />
   );
   const mounted = render(view());

@@ -147,7 +147,9 @@ pub(crate) fn effective_settings(
         if harness.provider.is_empty() {
             harness.provider.clone_from(&defaults.provider);
         }
-        if harness.model.is_empty() {
+        if harness.model.is_empty()
+            && !matches!(harness.configuration, Some(crate::AiConfiguration::Default))
+        {
             harness.model.clone_from(&defaults.model);
         }
     }
@@ -156,6 +158,20 @@ pub(crate) fn effective_settings(
     let own_databricks =
         harness_kind(&harness.command) == Some("buzz-agent") && harness.databricks.is_some();
     for (key, value) in &defaults.environment {
+        // The managed OpenAI default key belongs to that provider. Explicit
+        // per-agent environments keep their legacy/custom semantics.
+        if key == "OPENAI_COMPAT_API_KEY"
+            && defaults.harness == "buzz-agent"
+            && defaults.provider == "openai"
+            && !(harness.command == "buzz-agent"
+                && environment
+                    .get("BUZZ_AGENT_PROVIDER")
+                    .or_else(|| defaults.environment.get("BUZZ_AGENT_PROVIDER"))
+                    .map_or(harness.provider.as_str(), String::as_str)
+                    == "openai")
+        {
+            continue;
+        }
         if own_databricks && matches!(key.as_str(), "DATABRICKS_HOST" | "DATABRICKS_MODEL_FILTER") {
             continue;
         }

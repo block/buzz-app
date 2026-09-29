@@ -2596,3 +2596,98 @@ fn use_here_exhausted_revision_preserves_the_saved_import() {
     assert_eq!(fs::read(path).unwrap(), before);
     assert!(!store.snapshot().unwrap().agents[0].configured);
 }
+
+#[test]
+#[cfg(unix)]
+fn managed_provider_switch_does_not_launch_with_openai_key_or_default_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let mut a = agent(dir.path());
+    a.harness.provider = "databricks_v2".into();
+    a.harness.model.clear();
+    a.harness.configuration = Some(crate::AiConfiguration::Default);
+    a.environment
+        .insert("OPENAI_COMPAT_API_KEY".into(), "old-key".into());
+    let public = crate::BuildDefaults {
+        model: "build-model".into(),
+        ..Default::default()
+    };
+    let command = runtime.command_with_defaults(&a, &key, &public).unwrap();
+    let env: BTreeMap<_, _> = command.get_envs().collect();
+    for name in [
+        "OPENAI_COMPAT_API_KEY",
+        "BUZZ_AGENT_MODEL",
+        "BUZZ_ACP_MODEL",
+    ] {
+        assert!(
+            env.get(std::ffi::OsStr::new(name))
+                .copied()
+                .flatten()
+                .is_none(),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        env[std::ffi::OsStr::new("PROVIDER_TEST_SETTING")],
+        Some(std::ffi::OsStr::new("explicit-value"))
+    );
+    // Explicit legacy environments still belong to their owner.
+    a.harness.configuration = None;
+    let command = runtime.command_with_defaults(&a, &key, &public).unwrap();
+    assert!(command
+        .get_envs()
+        .any(|(k, v)| k == "OPENAI_COMPAT_API_KEY" && v == Some(std::ffi::OsStr::new("old-key"))));
+}
+
+#[test]
+#[cfg(unix)]
+fn managed_openai_default_key_stays_with_its_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let store = Store::open(dir.path().join("store")).unwrap();
+    store
+        .save_defaults(
+            &serde_json::from_value(json!({
+                "harness":"buzz-agent", "provider":"openai", "model":"test-model", "effort":"",
+                "environment":{"OPENAI_COMPAT_API_KEY":"inherited-key","KEEP_ME":"inherited-value"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let defaults = store.defaults().unwrap();
+    for (provider, managed, override_openai) in [
+        ("openai", true, false),
+        ("databricks_v2", true, false),
+        ("databricks_v2", false, false),
+        ("databricks_v2", false, true),
+    ] {
+        let mut a = agent(dir.path());
+        a.harness.provider = provider.into();
+        a.harness.configuration = managed.then_some(crate::AiConfiguration::Advanced {
+            effort: crate::EffortSelection::Default,
+        });
+        if override_openai {
+            a.environment
+                .insert("BUZZ_AGENT_PROVIDER".into(), "openai".into());
+        }
+        let a = crate::agent_defaults::effective(&a, &defaults);
+        let command = runtime
+            .command_with_defaults(&a, &Secret::parse(KEY, PUB).unwrap(), &Default::default())
+            .unwrap();
+        let env: BTreeMap<_, _> = command.get_envs().collect();
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("OPENAI_COMPAT_API_KEY"))
+                .copied()
+                .flatten(),
+            (provider == "openai" || override_openai)
+                .then_some(std::ffi::OsStr::new("inherited-key"))
+        );
+        assert_eq!(
+            env[std::ffi::OsStr::new("KEEP_ME")],
+            Some(std::ffi::OsStr::new("inherited-value"))
+        );
+    }
+}

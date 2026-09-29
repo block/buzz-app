@@ -297,3 +297,46 @@ async fn stalled_http_response_hits_the_production_deadline_without_saving_a_key
         .unwrap();
     assert_eq!(serde_json::to_value(error).unwrap()["code"], "timeout");
 }
+
+#[test]
+fn creation_and_discovery_share_inherited_openai_provider_and_key() {
+    let (endpoint, server) = server(200, CATALOG.into(), 2);
+    let (dir, host, _app, view) = fixture_with_models(|dir| {
+        let mut models = ModelHost::new(Ok(dir.join("store")));
+        models.openai_endpoint = endpoint;
+        models
+    });
+    use_credentials(&host, Arc::new(Keys));
+    invoke(
+        &view,
+        "agent_control_save_defaults",
+        json!({"edit":{
+            "harness":"buzz-agent", "provider":"openai", "model":"", "effort":"",
+            "environment":{"OPENAI_COMPAT_API_KEY":KEY}
+        }}),
+    )
+    .unwrap();
+    let mut req = request(dir.path(), None);
+    req["edit"]["harness"]["provider"] = json!("");
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let catalog = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":req}),
+    )
+    .unwrap();
+    assert_eq!(catalog["models"][0]["id"], "test-model");
+    let prepared = invoke(
+        &view,
+        "agent_control_create_prepare",
+        json!({
+            "edit":req["edit"], "requestId":uuid::Uuid::new_v4().to_string(),
+            "destination":"wss://relay.example", "owner":"ab".repeat(32)
+        }),
+    )
+    .unwrap();
+    assert!(prepared["pubkey"].is_string());
+    assert!(!prepared.to_string().contains(KEY));
+    assert!(!dir.path().join("store/agents.json").exists());
+    server.join().unwrap();
+}

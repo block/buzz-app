@@ -751,3 +751,48 @@ printf '%s\n' '{"id":"catalog","type":"response","command":"get_available_models
         json!([])
     );
 }
+
+#[test]
+fn creation_preflight_resolves_inherited_workspace_and_explicit_overrides() {
+    let fake = Arc::new(Fake::default());
+    let (dir, host, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let mut models = ModelHost::new(Ok(dir.join("store")));
+        models.factory = Arc::new(fake.clone());
+        models
+    });
+    invoke(&view, "agent_control_save_defaults", json!({"edit":{
+        "harness":"buzz-agent","provider":"databricks_v2","model":"","effort":"",
+        "environment":{"DATABRICKS_HOST":"https://inherited.example","DATABRICKS_MODEL_FILTER":"endpoint-*"}
+    }})).unwrap();
+    let mut edit = json!({"name":"Test","systemPrompt":"","workspace":dir.path(),"environment":{},
+        "harness":{"command":"buzz-agent","args":[],"provider":"","model":"endpoint-two",
+        "configuration":{"mode":"advanced","effort":{"kind":"unsupported"}}}});
+    for expected in ["https://inherited.example", "https://explicit.example"] {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let prepared = invoke(
+            &view,
+            "agent_control_create_prepare",
+            json!({"requestId":request_id,
+            "destination":"wss://relay.example","owner":"ab".repeat(32),"edit":edit}),
+        )
+        .unwrap();
+        assert!(prepared["pubkey"].is_string());
+        assert_eq!(fake.opened.lock().unwrap().last().unwrap().0, expected);
+        assert!(!dir.path().join("store/agents.json").exists());
+        edit["harness"]["provider"] = json!("databricks_v2");
+        edit["harness"]["databricks"] =
+            json!({"host":"https://explicit.example","filter":"endpoint-*"});
+    }
+    assert!(crate::agents::tests::has_prepared_identity(&host));
+    edit["harness"]["model"] = json!("catalog.schema.model-service");
+    let error = invoke(
+        &view,
+        "agent_control_create_prepare",
+        json!({"requestId":uuid::Uuid::new_v4().to_string(),
+        "destination":"wss://relay.example","owner":"ab".repeat(32),"edit":edit}),
+    )
+    .unwrap_err();
+    assert_eq!(error["code"], "model");
+    assert_eq!(fake.connects.load(Ordering::SeqCst), 0);
+    assert!(!dir.path().join("store/agents.json").exists());
+}

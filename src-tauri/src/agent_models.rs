@@ -208,12 +208,16 @@ impl ModelHost {
             expected_revision: None,
             edit: None,
             integration: None,
-            host: settings
-                .map(|settings| settings.host.clone())
-                .unwrap_or(defaults.host),
-            filter: settings
-                .map(|settings| settings.filter.clone())
-                .unwrap_or(defaults.filter),
+            host: context.host.clone().unwrap_or_else(|| {
+                settings
+                    .map(|settings| settings.host.clone())
+                    .unwrap_or(defaults.host)
+            }),
+            filter: context.filter.clone().unwrap_or_else(|| {
+                settings
+                    .map(|settings| settings.filter.clone())
+                    .unwrap_or(defaults.filter)
+            }),
             action: Operation::Refresh,
             inherit_workspace: false,
         };

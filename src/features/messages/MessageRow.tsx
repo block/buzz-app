@@ -1,3 +1,4 @@
+import { useThreadWorkingAgents } from "./use-thread-working-agents";
 import { profileActivityTarget } from "../agents/activity-target";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
@@ -121,8 +122,29 @@ export const MessageRow = memo(function MessageRow({
   onOpenMediaReview,
   agentPubkeys,
 }: MessageRowProps) {
+  const working = useThreadWorkingAgents(
+    onOpenThread && layout === "timeline" ? session : undefined,
+    row.channelId,
+    row.threadRootId ?? row.id,
+  );
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
+  // Staging experiment: inline activity replaces the runtime's seen/working reactions.
+  // These arrive as ordinary reactions, so identify them by emoji and agent author.
+  const reactions = import.meta.env.DEV
+    ? row.reactions.flatMap((reaction) => {
+        if (reaction.emoji || !["👀", "💬"].includes(reaction.content))
+          return [reaction];
+        const events = reaction.events.filter(
+          ({ authorId }) =>
+            !agentPubkeys?.has(authorId) &&
+            !directory.profiles.get(authorId)?.isAgent &&
+            !directory.agents.some((agent) => agent.pubkey === authorId),
+        );
+        return events.length ? [{ ...reaction, events }] : [];
+      })
+    : row.reactions;
+
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
@@ -193,12 +215,26 @@ export const MessageRow = memo(function MessageRow({
   // A new request's first local response slot opens the thread before relay
   // reply-count evidence exists. Never write this presentation into relay state.
   const onePending = row.replyCount === 0 && pendingAgentCount === 1;
+  const workingAgent = working.agents.at(-1);
+  const workingName = workingAgent
+    ? resolveName(
+        workingAgent,
+        working.profiles.get(workingAgent)?.name ?? workingAgent.slice(0, 10),
+      )
+    : undefined;
+  const workingLabel =
+    working.agents.length > 1
+      ? `${working.agents.length} agents working…`
+      : workingName
+        ? `${workingName} working…`
+        : undefined;
   const threadLabel =
-    row.replyCount > 0
+    workingLabel ??
+    (row.replyCount > 0
       ? `${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}`
       : onePending
         ? "1 reply"
-        : `${pendingAgentCount} pending responses`;
+        : `${pendingAgentCount} pending responses`);
   const canReact = !!(
     extensions &&
     session &&
@@ -553,7 +589,7 @@ export const MessageRow = memo(function MessageRow({
           {session && scope && extensions ? (
             <MessageReactions
               onFocusedRemoval={() => menuTrigger.current?.focus()}
-              row={row}
+              row={{ ...row, reactions }}
               session={session}
               scope={scope}
               tools={extensions.tools}
@@ -565,9 +601,9 @@ export const MessageRow = memo(function MessageRow({
               }
             />
           ) : (
-            row.reactions.length > 0 && (
+            reactions.length > 0 && (
               <div className={`${styles.reactions} ${styles.reactionFallback}`}>
-                {row.reactions.map((reaction) => (
+                {reactions.map((reaction) => (
                   <span
                     key={JSON.stringify([
                       reaction.content,
@@ -596,41 +632,53 @@ export const MessageRow = memo(function MessageRow({
               </div>
             )
           )}
-          {(row.replyCount > 0 || pendingAgentCount > 0) && onOpenThread && (
-            <Button
-              variant="ghost"
-              size="sm"
-              data-thread-summary=""
-              data-first-participant-shape={
-                agentPubkeys?.has(row.participants[0] ?? "")
-                  ? "squircle"
-                  : "circle"
-              }
-              type="button"
-              aria-label={`View thread: ${threadLabel}${unreadLabel ? `. ${unreadLabel}` : ""}`}
-              aria-description={
-                onePending ? "Agent response pending" : undefined
-              }
-              onClick={(event) => {
-                event.currentTarget.focus();
-                onOpenThread(row.id, row.threadRootId ?? row.id);
-              }}
-            >
-              {row.replyCount === 0 ? (
-                <span>{threadLabel}</span>
-              ) : (
-                <ReplySummary
-                  count={row.replyCount}
-                  participants={row.participants}
-                  profiles={participantProfiles}
-                  agentPubkeys={agentPubkeys}
-                  resolveName={resolveName}
-                  media={media}
-                  unreadLabel={unreadLabel}
-                />
-              )}
-            </Button>
-          )}
+          {(row.replyCount > 0 ||
+            pendingAgentCount > 0 ||
+            working.agents.length > 0) &&
+            onOpenThread && (
+              <Button
+                variant="ghost"
+                size="sm"
+                data-thread-summary=""
+                data-first-participant-shape={
+                  agentPubkeys?.has(row.participants[0] ?? "")
+                    ? "squircle"
+                    : "circle"
+                }
+                type="button"
+                aria-label={`View thread: ${threadLabel}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+                aria-description={
+                  onePending ? "Agent response pending" : undefined
+                }
+                onClick={(event) => {
+                  event.currentTarget.focus();
+                  onOpenThread(row.id, row.threadRootId ?? row.id);
+                }}
+              >
+                {row.replyCount === 0 && !working.agents.length ? (
+                  <span>{threadLabel}</span>
+                ) : (
+                  <ReplySummary
+                    count={row.replyCount}
+                    participants={row.participants}
+                    profiles={
+                      working.agents.length
+                        ? new Map([
+                            ...(participantProfiles ?? []),
+                            ...working.profiles,
+                          ])
+                        : participantProfiles
+                    }
+                    workingAgents={working.agents}
+                    workingLabel={workingLabel}
+                    agentPubkeys={agentPubkeys}
+                    resolveName={resolveName}
+                    media={media}
+                    unreadLabel={unreadLabel}
+                  />
+                )}
+              </Button>
+            )}
         </div>
       </div>
     </div>

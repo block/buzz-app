@@ -988,3 +988,33 @@ it("does not offer activity for a human message", () => {
     cleanup();
   }
 });
+
+it("hides agent status reactions in staging while retaining human reactions and other agent emojis", () => {
+  const event = (authorId: string) => ({ id: authorId, authorId });
+  const reactions = [
+    { content: "👀", events: [event("agent"), event("human")] },
+    { content: "💬", events: [event("agent")] },
+    { content: "👍", events: [event("agent")] },
+  ];
+  const view = renderDom(
+    <MessageRow
+      row={{ ...row, reactions }}
+      agentPubkeys={new Set(["agent"])}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  try {
+    expect(view.container.textContent).not.toContain("💬");
+    expect(view.container.textContent).toContain("👀");
+    expect(view.container.textContent).toContain("👍");
+    expect(reactions[0]?.events).toHaveLength(2);
+    expect(screen.getByText("👀 1")).toBeVisible();
+    expect(screen.getByText("👍 1")).toBeVisible();
+  } finally {
+    cleanup();
+  }
+});

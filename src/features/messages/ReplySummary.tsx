@@ -1,3 +1,4 @@
+import { Shimmer } from "../../shared/design-system/ui/Shimmer";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import type { Profile } from "../relay/contracts";
 import styles from "./Messages.module.css";
@@ -12,8 +13,13 @@ export function ReplySummary({
   media,
   unreadLabel,
   unreadCount,
+  workingAgents = [],
+  workingLabel,
 }: {
+  workingAgents?: readonly string[];
+  workingLabel?: string | undefined;
   count: number;
+  /** Distinct responders, most recent first (matching relay summaries). */
   participants: readonly string[];
   profiles?: ReadonlyMap<string, Profile> | undefined;
   agentPubkeys?: ReadonlySet<string> | undefined;
@@ -22,14 +28,29 @@ export function ReplySummary({
   unreadLabel?: string | undefined;
   unreadCount?: number;
 }) {
+  const active = new Set(workingAgents);
+  const others = [...new Set(participants)].filter((id) => !active.has(id));
+  const shown = workingAgents.length
+    ? [
+        ...others.slice(0, Math.max(0, 3 - workingAgents.length)).reverse(),
+        ...workingAgents,
+      ]
+    : others.slice(0, 3).reverse();
+  const overflow = others.length + active.size - shown.length;
   return (
     <>
-      {participants.length > 0 && (
+      {shown.length > 0 && (
         <span className={styles.threadAvatars} aria-hidden="true">
-          {participants.slice(0, 3).map((id) => {
+          {workingAgents.length > 0 && overflow > 0 && (
+            <span className={styles.threadAvatarCount}>+{overflow}</span>
+          )}
+          {shown.map((id) => {
             const profile = profiles?.get(id);
             const name = resolveName(id, profile?.name ?? id.slice(0, 10));
-            const shape = agentPubkeys?.has(id) ? "squircle" : "circle";
+            const shape =
+              active.has(id) || agentPubkeys?.has(id) || profile?.isAgent
+                ? "squircle"
+                : "circle";
             return (
               <span
                 key={id}
@@ -51,16 +72,20 @@ export function ReplySummary({
               </span>
             );
           })}
-          {participants.length > 3 && (
-            <span className={styles.threadAvatarCount}>
-              +{participants.length - 3}
-            </span>
+          {!workingAgents.length && overflow > 0 && (
+            <span className={styles.threadAvatarCount}>+{overflow}</span>
           )}
         </span>
       )}
-      <span>
-        {count} {count === 1 ? "reply" : "replies"}
-      </span>
+      {workingLabel ? (
+        <Shimmer active className="text-body-sm text-subtle">
+          {workingLabel}
+        </Shimmer>
+      ) : (
+        <span>
+          {count} {count === 1 ? "reply" : "replies"}
+        </span>
+      )}
       {unreadCount ? (
         <span>({unreadCount} new)</span>
       ) : unreadLabel ? (

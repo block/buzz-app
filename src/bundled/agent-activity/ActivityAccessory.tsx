@@ -1,11 +1,8 @@
-import { Shimmer } from "../../shared/design-system/ui/Shimmer";
-import {
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { ActivityPopover } from "./ActivityPopover";
+import { activityTarget } from "../../features/agents/activity-target";
+import { usePresenceStatus } from "../../features/presence/react";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { useContext, useEffect, useMemo, useSyncExternalStore } from "react";
 import { ThreadActivityContext } from "../../features/messages/ThreadActivityContext";
 import { useTypingReplacement } from "../../features/conversation/typing-presentation";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
@@ -14,9 +11,13 @@ import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { requestActivity } from "./request-activity";
 import { activityTranscript } from "./transcript";
-import { liveAction, liveLabel, liveTranscript } from "./live-activity";
+import {
+  liveAction,
+  liveLabel,
+  liveTranscript,
+  liveReplyVisible,
+} from "./live-activity";
 import { ActivityStream } from "./ActivityStream";
-import { ActivityDisclosure } from "./ActivityDisclosure";
 import { ActivityFeedStatus } from "./ActivityFeedStatus";
 import styles from "./ActivityAccessory.module.css";
 
@@ -100,6 +101,7 @@ function LiveActivity(props: ComposerAccessoryProps) {
       return [
         {
           agent,
+          replyVisible: liveReplyVisible(transcript, messageIds),
           transcript,
           records: selectedRecords,
           turns: detailTurns,
@@ -138,6 +140,7 @@ function LiveActivity(props: ComposerAccessoryProps) {
           {...props}
           {...entry}
           snapshot={snapshot}
+          picture={identities.get(entry.agent)?.picture}
           name={name(
             entry.agent,
             identities.get(entry.agent)?.name ??
@@ -160,16 +163,23 @@ function LiveEntry({
   working,
   snapshot,
   name,
+  picture,
+  replyVisible,
+  canOpen,
+  open,
 }: ComposerAccessoryProps & {
   agent: string;
   records: ReturnType<typeof requestActivity>["records"];
   turns: Snapshot["turns"];
   transcript: ReturnType<typeof liveTranscript>;
   working: boolean;
+  replyVisible: boolean;
   snapshot: Snapshot;
   name: string;
+  picture: string | undefined;
 }) {
-  const [expanded, expand] = useState(false);
+  const panelTarget = activityTarget(agent, channelId);
+  const presence = usePresenceStatus(session.presence, agent);
   const displayTranscript = {
     ...transcript,
     groups: transcript.groups.map((group) => ({
@@ -198,38 +208,47 @@ function LiveEntry({
     },
     working && snapshot.status === "listening",
   );
+  if (replyVisible) return null;
+  const details = (
+    <>
+      <ActivityFeedStatus
+        status={snapshot.status}
+        trimmed={snapshot.trimmed}
+        retry={() => session.live.retry()}
+      />
+      <ActivityStream
+        records={records}
+        session={session}
+        transcript={displayTranscript}
+        turns={turns}
+        compact
+        showTurnHeading={false}
+        showDiagnostics={false}
+      />
+    </>
+  );
   return (
     <div className={styles.line}>
-      <ActivityDisclosure
-        expanded={expanded}
-        onExpand={expand}
-        label={
-          <span className={styles.label}>
-            <span className={`${styles.name} text-label-sm`}>{name}</span>{" "}
-            <Shimmer
-              className={styles.action}
-              active={working && snapshot.status === "listening"}
-            >
-              {label}
-            </Shimmer>
-          </span>
-        }
-      >
-        <ActivityFeedStatus
-          status={snapshot.status}
-          trimmed={snapshot.trimmed}
-          retry={() => session.live.retry()}
-        />
-        <ActivityStream
-          records={records}
-          session={session}
-          transcript={displayTranscript}
-          turns={turns}
-          compact
-          showTurnHeading={false}
-          showDiagnostics={false}
-        />
-      </ActivityDisclosure>
+      <Avatar
+        shape="squircle"
+        alt={`${name} avatar`}
+        fallback={name}
+        src={picture ? session.media(picture, "small") : undefined}
+        statusBadge={presence === "unknown" ? undefined : presence}
+      />
+      <div className={styles.body}>
+        <div className={styles.name}>
+          <strong>{name}</strong>
+        </div>
+        <ActivityPopover
+          name={name}
+          label={label}
+          working={working && snapshot.status === "listening"}
+          onExpand={canOpen(panelTarget) ? () => open(panelTarget) : undefined}
+        >
+          {details}
+        </ActivityPopover>
+      </div>
     </div>
   );
 }

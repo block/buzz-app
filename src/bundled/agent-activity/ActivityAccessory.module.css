@@ -1,29 +1,24 @@
 .root,
-.line,
-.label,
-.action {
+.line {
   min-width: 0;
 }
 .line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
   padding-block: var(--space-1);
 }
-.label {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-.action {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-subtle);
-}
-
 .name {
   color: var(--text-standard);
-  flex: 0 0 auto;
-  max-width: calc(100% - var(--space-2));
+  font-size: var(--text-label-sm);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
 }

@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import { stubPopoverBrowserApis } from "./popover-testing";
+stubPopoverBrowserApis();
+import userEvent from "@testing-library/user-event";
+import { activityTarget } from "../../features/agents/activity-target";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -478,3 +482,140 @@ it("shimmers only the live action, stopping on disconnect, staleness and complet
     f.stop();
   }
 });
+
+it("opens the selected agent's channel activity panel from the popover", async () => {
+  const user = userEvent.setup();
+  const f = setup();
+  const open = vi.fn(() => true);
+  const view = render(<ActivityAccessory {...f.props} open={open} />);
+  try {
+    f.send("turn_started", { triggeringEventIds: [root] });
+    await user.click(screen.getByRole("button", { name: "Rivet Working…" }));
+    expect(screen.getByRole("dialog", { name: "Rivet" })).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Open activity in panel" }),
+    );
+    expect(open).toHaveBeenCalledWith(activityTarget(agent, "alpha"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  } finally {
+    view.unmount();
+    f.stop();
+  }
+});
+
+it("keeps the popover open if the host cannot open the activity panel", async () => {
+  const user = userEvent.setup();
+  const f = setup();
+  const view = render(<ActivityAccessory {...f.props} open={() => false} />);
+  try {
+    f.send("turn_started", { triggeringEventIds: [root] });
+    await user.click(screen.getByRole("button", { name: "Rivet Working…" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open activity in panel" }),
+    );
+    expect(screen.getByRole("dialog", { name: "Rivet" })).toBeTruthy();
+  } finally {
+    view.unmount();
+    f.stop();
+  }
+});
+
+it("retires the live row when its sent reply is visible, without ending the turn or hiding another agent", () => {
+  const f = setup();
+  const reply = "d".repeat(64);
+  const other = "e".repeat(64);
+  const renderActivity = (ids: string[]) => (
+    <ThreadActivityContext value={ids}>
+      <ActivityAccessory {...f.props} />
+    </ThreadActivityContext>
+  );
+  const view = render(renderActivity([root]));
+  try {
+    f.send("turn_started", { triggeringEventIds: [root] });
+    f.send("turn_started", { triggeringEventIds: [root] }, "other", other);
+    const send = tool("send_message", { content: "Done", channel_id: "alpha" });
+    send.params.update.toolCallId = "post";
+    f.send("acp_read", send);
+    f.typing();
+    f.send("acp_read", {
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "post",
+          status: "completed",
+          rawOutput: { accepted: true, event_id: reply },
+        },
+      },
+    });
+    // A tool report alone must not remove the only visible response indicator.
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+    view.rerender(renderActivity([root, "f".repeat(64)]));
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+    view.rerender(renderActivity([root, reply]));
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(
+      f.service.queries.snapshot().turns.find((turn) => turn.turnId === "ours")
+        ?.state,
+    ).toBe("working");
+    f.send("acp_read", {
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "I sent the message." },
+        },
+      },
+    });
+    const stop = tool("buzz-dev-mcp___Stop", {}, "completed");
+    stop.params.update.toolCallId = "stop";
+    f.send("acp_read", stop);
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    const continued = tool("buzz-dev-mcp__read_file", {
+      path: "/project/follow-up.ts",
+    });
+    continued.params.update.toolCallId = "continued";
+    f.send("acp_read", continued);
+    expect(
+      screen.getByRole("button", { name: "Rivet Reading follow-up.ts" }),
+    ).toBeTruthy();
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+  } finally {
+    view.unmount();
+    f.stop();
+  }
+});
+
+it.each(["failed", "concurrent"])(
+  "keeps %s work visible after a message arrives",
+  (scenario) => {
+    const f = setup();
+    const reply = "d".repeat(64);
+    const view = render(
+      <ThreadActivityContext value={[root, reply]}>
+        <ActivityAccessory {...f.props} />
+      </ThreadActivityContext>,
+    );
+    try {
+      f.send("turn_started", { triggeringEventIds: [root] });
+      if (scenario === "concurrent") f.send("acp_read", tool());
+      f.send("acp_read", {
+        method: "session/update",
+        params: {
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "post",
+            title: "send_message",
+            rawInput: { content: "Done", channel_id: "alpha" },
+            status: scenario === "failed" ? "failed" : "completed",
+            rawOutput: { accepted: scenario !== "failed", event_id: reply },
+          },
+        },
+      });
+      expect(screen.getByRole("button", { name: /Rivet/ })).toBeTruthy();
+    } finally {
+      view.unmount();
+      f.stop();
+    }
+  },
+);

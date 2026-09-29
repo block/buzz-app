@@ -27,7 +27,37 @@ for (const multiple of [false, true]) {
       const rows = popup.getByRole("button", {
         name: /Open unread thread from/,
       });
+      const settleNavigation = async () => {
+        await expect(
+          page.locator("[data-shell-sidebar-toggle]"),
+        ).toHaveAccessibleName(
+          page.viewportSize().width <= 650
+            ? /^(Show|Hide) navigation$/
+            : /^(Show|Hide) Channel sidebar$/,
+        );
+      };
+      // Discover the narrowest viewport that keeps the trigger hoverable, so
+      // the geometry matrix follows the responsive drawer breakpoint wherever
+      // it moves, instead of hardcoding a width just above it.
+      const wide = 1440;
+      let narrow = 320;
+      for (let high = wide; narrow < high; ) {
+        const mid = (narrow + high) >> 1;
+        await page.setViewportSize({ width: mid, height: 950 });
+        await settleNavigation();
+        if (
+          await alpha.evaluate((element) => element.getClientRects().length > 0)
+        )
+          high = mid;
+        else narrow = mid + 1;
+      }
       const openPopup = async () => {
+        const showNavigation = page.getByRole("button", {
+          name: "Show navigation",
+          exact: true,
+        });
+        if (await showNavigation.isVisible()) await showNavigation.click();
+        await expect(alpha).toBeVisible();
         await alpha.hover();
         await expect(rows).toHaveCount(multiple ? 2 : 1);
         await rows.first().hover();
@@ -42,24 +72,20 @@ for (const multiple of [false, true]) {
         await page.evaluate((mode) => {
           document.documentElement.dataset.colorMode = mode;
         }, mode);
-        // Include the narrow popup and enlarged text without changing its content.
-        for (const width of [1440, 640]) {
+        // Include the enlarged text and an offset trigger position without
+        // changing the popup's content. The second width hugs the discovered
+        // hoverable boundary: beyond it the sidebar folds into the navigation
+        // drawer and the channel trigger stops being hoverable.
+        for (const width of [wide, narrow]) {
           await page.setViewportSize({ width, height: 950 });
-          await page.evaluate((width) => {
+          await settleNavigation();
+          const enlarged = width === narrow;
+          await page.evaluate((enlarged) => {
             document.documentElement.style.setProperty(
               "--type-scale",
-              width === 640 ? "2" : "1",
+              enlarged ? "2" : "1",
             );
-          }, width);
-          const toggle = page.locator("[data-shell-sidebar-toggle]");
-          await expect(toggle).toHaveAccessibleName(
-            width <= 650
-              ? /^(Show|Hide) navigation$/
-              : /^(Show|Hide) Channel sidebar$/,
-          );
-          if ((await toggle.getAttribute("aria-expanded")) === "false")
-            await toggle.click();
-          await expect(alpha).toBeVisible();
+          }, enlarged);
           // Resize only while closed: moving a hover popup away from the pointer
           // legitimately dismisses it, racing the next row interaction.
           await openPopup();
@@ -104,7 +130,7 @@ for (const multiple of [false, true]) {
       }
       // A short viewport makes this same real popover scroll, without replacing
       // its rows or disabling clipping to make the corner assertion pass.
-      await page.setViewportSize({ width: 640, height: 240 });
+      await page.setViewportSize({ width: narrow, height: 240 });
       await openPopup();
       if (multiple) {
         await expect

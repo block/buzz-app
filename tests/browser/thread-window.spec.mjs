@@ -282,26 +282,59 @@ test("newest window positions immediately; scrollback preserves the visible repl
     expect(continuation.thread_window).toBe(true);
     expect(continuation.until).toBeDefined();
     expect(continuation.before_id).toBeDefined();
-    const anchor = history.locator("ol [data-message-id]").first();
-    const id = await anchor.getAttribute("data-message-id");
-    const before = await anchor.evaluate(
-      (el) => el.getBoundingClientRect().top,
-    );
+    // Preserve the reader's place, not an exact CSS-pixel offset: browser scroll
+    // rounding may move a row slightly, but a row-sized jump changes the reply
+    // at this fixed reading point. Choose a row well inside the viewport.
+    const reading = await history.evaluate((el) => {
+      const viewport = el.getBoundingClientRect();
+      const rows = [...el.querySelectorAll("ol [data-message-id]")];
+      const row = rows
+        .filter((item) => {
+          const bounds = item.getBoundingClientRect();
+          return bounds.top >= viewport.top && bounds.bottom <= viewport.bottom;
+        })
+        .reduce((nearest, item) => {
+          const distance = (candidate) => {
+            const bounds = candidate.getBoundingClientRect();
+            return Math.abs(
+              (bounds.top + bounds.bottom - viewport.top - viewport.bottom) / 2,
+            );
+          };
+          return !nearest || distance(item) < distance(nearest)
+            ? item
+            : nearest;
+        }, null);
+      if (!row) throw new Error("No complete reply near the reading point");
+      const bounds = row.getBoundingClientRect();
+      return {
+        id: row.dataset.messageId,
+        x: bounds.left + bounds.width / 2,
+        y: bounds.top + bounds.height / 2,
+        before: { top: bounds.top, bottom: bounds.bottom },
+      };
+    });
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     await expect(replies).toHaveCount(60);
-    // scrollTop quantizes the fractional-height row's correction to integral
-    // CSS pixels. WebKit applied 3299 for a requested 3299.859375, leaving
-    // 0.859375 px of displacement; both engines must stay within one pixel.
     await expect
-      .poll(() =>
-        history
-          .locator(`[data-message-id="${id}"]`)
-          .evaluate(
-            (el, before) => Math.abs(el.getBoundingClientRect().top - before),
-            before,
-          ),
+      .poll(
+        () =>
+          history.evaluate((el, reading) => {
+            const hit = document
+              .elementFromPoint(reading.x, reading.y)
+              ?.closest("ol [data-message-id]");
+            const expected = [
+              ...el.querySelectorAll("ol [data-message-id]"),
+            ].find((row) => row.dataset.messageId === reading.id);
+            const bounds = expected?.getBoundingClientRect();
+            return {
+              id: hit && el.contains(hit) ? hit.dataset.messageId : null,
+              before: reading.before,
+              after: bounds && { top: bounds.top, bottom: bounds.bottom },
+            };
+          }, reading),
+        { message: `reply at fixed reading point remains ${reading.id}` },
       )
-      .toBeLessThan(1);
+      .toMatchObject({ id: reading.id });
     const top = await history.evaluate((el) => el.scrollTop);
     await page.evaluate(() => window.messagesFixture.live());
     await expect(replies).toHaveCount(61);

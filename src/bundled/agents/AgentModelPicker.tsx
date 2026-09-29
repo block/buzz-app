@@ -126,7 +126,7 @@ function ConfiguredAgentModelPicker({
       draft.provider,
       draft.args,
       draft.workspace,
-      codex || openai ? null : draft.configuration?.mode,
+      openai ? null : draft.configuration?.mode,
       environment,
       supported,
       recoveryAvailable,
@@ -247,11 +247,13 @@ function ConfiguredAgentModelPicker({
           ? "Disconnected from this workspace in Foundation."
           : data.models.length
             ? ""
-            : openai
-              ? "No models are available for this key. Check its project permissions, then refresh."
-              : advanced
-                ? "No available models found. Check your account, workspace and filter, then refresh."
-                : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
+            : codex && defaultsMode
+              ? ""
+              : openai
+                ? "No models are available for this key. Check its project permissions, then refresh."
+                : advanced
+                  ? "No available models found. Check your account, workspace and filter, then refresh."
+                  : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
       );
     } catch (error) {
       if (!abort.signal.aborted && currentKey.current === key) {

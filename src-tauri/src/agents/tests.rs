@@ -435,6 +435,72 @@ fn saving_defaults_never_starts_or_enables_stopped_agents() {
 }
 
 #[test]
+#[cfg(unix)]
+fn codex_catalog_prefers_managed_adapter_over_system_path() {
+    const CHILD_HOME: &str = "BUZZ_TEST_CODEX_CATALOG_HOME";
+    if let Some(home) = std::env::var_os(CHILD_HOME) {
+        let home = PathBuf::from(home);
+        #[cfg(target_os = "macos")]
+        let data = home.join("Library/Application Support");
+        #[cfg(not(target_os = "macos"))]
+        let data = home.join(".local/share");
+        let expected = data.join("Buzz/node-tools/bin/codex-acp");
+        let (_dir, _host, _app, view) = fixture();
+        let snapshot = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+        let codex = snapshot["harnessOptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|option| option["id"] == "codex")
+            .unwrap();
+        assert_eq!(codex["command"], expected.to_string_lossy().as_ref());
+        assert_eq!(codex["available"], true);
+        let harness = serde_json::from_value(json!({"command":"codex-acp","args":[],"model":"","provider":"","configuration":{"mode":"default"}})).unwrap();
+        let context = buzz_agent_controller::codex::Context::new(
+            &harness,
+            &BTreeMap::new(),
+            home.to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(context.adapter, expected);
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().unwrap();
+    // Both possible managed layouts keep this fixture independent of the host OS.
+    for directory in [
+        "Library/Application Support/Buzz/node-tools/bin",
+        ".local/share/Buzz/node-tools/bin",
+        "system",
+    ] {
+        let directory = home.path().join(directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let adapter = directory.join("codex-acp");
+        std::fs::write(&adapter, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&adapter, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    // A separate process scopes HOME/PATH without racing other native tests.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "agents::tests::codex_catalog_prefers_managed_adapter_over_system_path",
+            "--nocapture",
+        ])
+        .env(CHILD_HOME, home.path())
+        .env("HOME", home.path())
+        .env("PATH", home.path().join("system"))
+        .env_remove("XDG_DATA_HOME")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     let (dir, _host, _app, view) = fixture();
     let id = seed(dir.path());
@@ -463,7 +529,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["harnessOptions"][3]["id"], "codex");
     assert_eq!(
         before["harnessOptions"][3]["available"],
-        buzz_agent_controller::installed("codex-acp").is_some()
+        buzz_agent_controller::codex::installed_adapter().is_some()
     );
     assert_eq!(
         before["harnessOptions"][2]["status"],

@@ -1,5 +1,20 @@
 # Add the Codex agent harness
 
+## Step 5 review checkpoint — September 29
+
+Step 5 is ready for review. Phil confirmed the native Codex Harness Defaults
+creation/start flow is working after the readiness, adapter-selection and
+discovery fixes. Default discovery reads the initial session without model
+switches; Advanced alone scans model-specific efforts. Native Create still
+performs fresh validation. The mode-aware cache and stale-result regression
+coverage are recorded below.
+
+All current code changes have passed focused checks and engineering review.
+This is not full integration acceptance: formal cold/warm timings and a live
+Advanced metadata comparison remain review follow-ups. Applied runtime settings
+and fallback evidence remain Step 6 work; broader desktop/platform acceptance
+remains Step 9 work. The earlier dated checkpoints below are historical.
+
 Status (September 24): Steps 1 and 2 are implemented. **Step 3 is complete and accepted.**
 Phil confirmed the remaining GUI checks passed on September 24.
 The native desktop has created and run Codex agents using the installed adapter
@@ -145,15 +160,17 @@ formatting and Clippy for the controller and native app passed. Tests bind the
 production parser, resolver and ACP transport. Live desktop comparison remains
 deferred; restart the native app and refresh models to use the managed adapter.
 
-## Complete model/effort cache and separate controls
+## Mode-aware model/effort discovery and cache
 
 This follow-up supersedes literal legacy-variant picker parity above.
 
-- [x] Load all base-model effort choices in one bounded ACP session, once per
-  execution context. Each base model is selected at most once during discovery.
-- [x] Cache the complete catalog in memory, independently of the selected model
-  or configuration mode. Reopening and model changes reuse it; explicit Refresh
-  reloads it. Context/revision changes use separate cache entries.
+- [x] In Harness defaults, read the effective model and effort from the initial
+  ACP session and stop. Advanced loads all base-model effort choices in one
+  bounded session, selecting each base model at most once.
+- [x] Cache one Codex evidence entry per execution context with a completeness
+  marker. A full Advanced catalog may satisfy Defaults, while Defaults evidence
+  never satisfies Advanced. Reopening and model changes reuse it; explicit
+  Refresh reloads the context. Context/revision changes use separate entries.
 - [x] Display each configurable base model once. Omit `model[effort]` aliases
   when that base is advertised; effort belongs in the separate Effort field.
 - [x] Preserve older saved aliases for native validation, display their base
@@ -162,12 +179,15 @@ This follow-up supersedes literal legacy-variant picker parity above.
   choice never bypasses the native authentication/model/effort checks. Refresh
   failure invalidates cache reuse and retains an explicit retry affordance.
 
-Validation: 49 tests across the model service, picker, creation dialog and Agents
-page passed; 11 native Codex tests passed. Native call-count assertions verify
-one session and one effort probe per base model; UI tests verify model/mode
-changes and reopening use the cached catalog, and stale effort cannot validate
-another model. TypeScript, Rust formatting and native Clippy passed. Live desktop timing/layout remains unverified; restart the
-native app to use the updated discovery response.
+Validation: model-service and picker tests verify mode-specific caching, Default
+to Advanced refreshes, Advanced to Default reuse, and stale-result fencing.
+Native call-count assertions verify Defaults initializes and creates a session
+without model switches, while Advanced performs one effort probe per base model.
+Validation passed: 34 tests across the model service, picker and creation dialog;
+23 native Codex tests (one optional live-account test skipped); TypeScript,
+Biome, Rust formatting and native library Clippy. Phil subsequently confirmed
+the native Default creation/start flow works. Formal timing measurements and
+broader layout/platform checks remain unverified.
 
 ## Outcome and boundaries
 
@@ -494,14 +514,14 @@ Codex context without logging out the normal account; no live secrets in tests.
 
 ### Step 5 — Discover models and model-dependent configuration
 
-- [ ] Implement the full-capability discovery path chosen in step 0.
-- [ ] Initialize/create a session in the effective context; select an explicit
+- [x] Implement the full-capability discovery path chosen in step 0.
+- [x] Initialize/create a session in the effective context; select an explicit
   draft model before collecting its supported reasoning choices.
-- [ ] Normalize model IDs, defaults/current values, supported effort options,
+- [x] Normalize model IDs, defaults/current values, supported effort options,
   and capability absence without claiming entitlement or successful inference.
-- [ ] Bound protocol messages, output, duration, and child lifetime. Fence stale
+- [x] Bound protocol messages, output, duration, and child lifetime. Fence stale
   results by context/request generation and keep explicit refresh available.
-- [ ] Invalidate cached evidence on app-driven login/context/adapter changes;
+- [x] Invalidate cached evidence on app-driven login/context/adapter changes;
   external account/config changes are refreshed explicitly, not magically known.
 
 **Code:** native Codex discovery helper, shared model DTOs and `models.ts`;

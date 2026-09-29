@@ -8,7 +8,7 @@ import { AgentModelPicker } from "./AgentModelPicker";
 import { agentDraft } from "./agent-edit";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
-import type { ModelCatalog } from "../../features/agents/models";
+import type { ModelCatalog, ModelRequest } from "../../features/agents/models";
 
 afterEach(cleanup);
 for (const opening of ["typing", "ArrowDown", "closed"] as const) {
@@ -690,6 +690,16 @@ it("loads Codex defaults in the background, reuses cached settings on remount, a
   try {
     await screen.findByText(/Default model: fixture-default · Effort: medium/);
     expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({
+            configuration: { mode: "default" },
+          }),
+        }),
+      }),
+    );
     expect(screen.queryByRole("button", { name: /^Model$/ })).toBeNull();
     expect(onChange).not.toHaveBeenCalled(); // defaults remain delegated, not saved overrides
     view.unmount();
@@ -838,6 +848,116 @@ it("uses the complete Codex cache for model and mode changes without another pro
     );
     expect(run).toHaveBeenCalledTimes(1);
   } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("refreshes when Default needs a full Codex catalog and fences stale mode results", async () => {
+  const f = controlFixture();
+  const advancedData: ModelCatalog = {
+    integration: { kind: "codex" },
+    discovery: {
+      source: "codexAcp",
+      authentication: "authenticated",
+      catalog: "adapter",
+    },
+    defaults: { model: "old-default", effort: "high" },
+    models: [
+      {
+        id: "advanced-model",
+        name: "Advanced model",
+        effort: {
+          status: "supported",
+          options: [{ value: "high", name: "High" }],
+        },
+      },
+    ],
+    modelOverridden: false,
+    disconnected: false,
+  };
+  const defaultData: ModelCatalog = {
+    ...advancedData,
+    defaults: { model: "new-default", effort: "low" },
+    models: [],
+  };
+  let releaseAdvanced!: (value: ModelCatalog) => void;
+  let releaseDefault!: (value: ModelCatalog) => void;
+  const run = vi.fn(async (_ticket: number, request: ModelRequest) => {
+    if (request.edit?.harness.configuration?.mode === "advanced") {
+      return new Promise<ModelCatalog>((resolve) => {
+        releaseAdvanced = resolve;
+      });
+    }
+    return new Promise<ModelCatalog>((resolve) => {
+      releaseDefault = resolve;
+    });
+  });
+  f.host.models = { begin: async () => 1, run, cancel: vi.fn(async () => {}) };
+  const control = createAgentControl(f.host);
+  const props = {
+    control,
+    defaults: undefined,
+    capabilities: { modelDiscovery: "codex" as const },
+    onChange: vi.fn(),
+  };
+  const advancedDraft = {
+    ...agentDraft(f.agent),
+    command: "codex-acp",
+    provider: "",
+    model: "advanced-model",
+    configuration: {
+      mode: "advanced" as const,
+      effort: { kind: "value" as const, value: "high" },
+    },
+  };
+  const view = render(<AgentModelPicker {...props} draft={advancedDraft} />);
+  try {
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    const defaultDraft = {
+      ...advancedDraft,
+      model: "",
+      configuration: { mode: "default" as const },
+    };
+    view.rerender(<AgentModelPicker {...props} draft={defaultDraft} />);
+    await act(async () => releaseAdvanced(advancedData));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run).toHaveBeenNthCalledWith(
+      2,
+      1,
+      expect.objectContaining({
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({
+            configuration: { mode: "default" },
+          }),
+        }),
+      }),
+    );
+    expect(screen.queryByText(/Default model: old-default/)).toBeNull();
+    await act(async () => releaseDefault(defaultData));
+    await screen.findByText(/Default model: new-default · Effort: low/);
+    view.rerender(<AgentModelPicker {...props} draft={advancedDraft} />);
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    await act(async () => releaseAdvanced(advancedData));
+    await screen.findByRole("combobox", { name: "Effort" });
+    expect(
+      screen.getByText(
+        "Model and effort are advertised in the refreshed catalog.",
+      ),
+    ).toBeVisible();
+    expect(run).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({
+            configuration: expect.objectContaining({ mode: "advanced" }),
+          }),
+        }),
+      }),
+    );
+  } finally {
+    releaseAdvanced?.(advancedData);
+    releaseDefault?.(defaultData);
     view.unmount();
     control.dispose();
   }

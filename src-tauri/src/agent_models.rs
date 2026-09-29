@@ -527,7 +527,13 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
 ) -> Result<Catalog, ModelError> {
     let host = state.inner().clone();
     let controller = agents.inner().clone();
-    if let Some(Integration::Openai(settings)) = request.integration.take() {
+    if matches!(request.integration.as_ref(), Some(Integration::Openai(_))) {
+        let Some(Integration::Openai(settings)) = request.integration.take() else {
+            return Err(ModelError::new(
+                "configuration",
+                "Open AI integration settings are missing",
+            ));
+        };
         let prepared = match request.edit.take() {
             Some(edit) => controller
                 .model_context(request.id.as_deref(), request.expected_revision, edit)
@@ -551,6 +557,13 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             .await;
     }
     if matches!(request.integration.as_ref(), Some(Integration::Codex)) {
+        let advanced = request.edit.as_ref().is_some_and(|edit| {
+            matches!(
+                edit.harness.configuration,
+                Some(buzz_agent_controller::AiConfiguration::Advanced { .. })
+            )
+        });
+        let selected = if advanced { None } else { Some(String::new()) };
         let prepared = match request.edit.clone() {
             Some(edit) => controller
                 .model_context(request.id.as_deref(), request.expected_revision, edit)
@@ -577,7 +590,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                         "Use codex login in your terminal, then Refresh models. Buzz does not log out or replace your shared Codex account.",
                     ));
                 }
-                codex::discover(prepared?, None).await
+                codex::discover(prepared?, selected).await
             })
             .await;
     }

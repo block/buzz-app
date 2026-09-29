@@ -1533,36 +1533,50 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
   }
 }
 @media (hover: hover) and (pointer: fine) and (min-width: 640px) {
-  .messageActions {
+  .messageActionsSlot {
     position: absolute;
     inset-inline-end: 0;
     top: 0;
+    width: 100%;
+    height: 0;
+  }
+  .messageActions {
     opacity: 0;
     pointer-events: none;
   }
-  /* Reserve the controls' natural height in threads even while hidden, so
-     showing actions neither covers text nor moves neighboring click targets. */
+  /* Closed controls remain focusable at their slot, with no viewport offsets. */
+  .messageActions[popover] {
+    position: absolute;
+    inset: auto;
+    inset-block-start: 0;
+    inset-inline-end: 0;
+    margin: 0;
+    overflow: visible;
+  }
+  .messageActions[popover]:popover-open {
+    position: fixed;
+    inset: auto;
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .message:is([data-layout="thread"], [data-layout="continuation"])
+    .messageActions {
+    flex-wrap: nowrap;
+    max-width: none;
+  }
+  /* Keep the reserved space even while the controls are in the top layer. */
   .message:is([data-layout="thread"], [data-layout="continuation"])
   .messageBody {
     display: flex;
     flex-direction: column;
   }
   .message:is([data-layout="thread"], [data-layout="continuation"])
-    .messageActions {
-    position: static;
+    .messageActionsSlot {
+    position: relative;
     order: 1;
-    flex-wrap: nowrap;
-    max-width: none;
     flex-shrink: 0;
     align-self: flex-end;
-    margin-inline-start: 0;
-  }
-  .message:hover .messageActions,
-  .message:focus-within .messageActions,
-  .messageActions[data-open],
-  .messageActions:has([aria-haspopup][aria-expanded="true"]) {
-    opacity: 1;
-    pointer-events: auto;
+    block-size: calc(var(--size-control-sm) + 2 * var(--space-half) + 2px);
   }
 }
 
@@ -1730,7 +1744,8 @@ html[data-keyboard-navigation] .replyBranchRail:focus-visible {
     opacity: 0;
   }
   .message:hover .continuationTime,
-  .message:focus-within .continuationTime {
+  .message:focus-within .continuationTime,
+  .message[data-actions-revealed] .continuationTime {
     opacity: 1;
   }
 }

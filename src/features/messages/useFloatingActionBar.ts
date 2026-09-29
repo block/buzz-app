@@ -1,0 +1,149 @@
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
+
+const floatingQuery =
+  "(hover: hover) and (pointer: fine) and (min-width: 640px)";
+const subscribe = (notify: () => void) => {
+  const query = window.matchMedia?.(floatingQuery);
+  query?.addEventListener("change", notify);
+  return () => query?.removeEventListener("change", notify);
+};
+const snapshot = () => window.matchMedia?.(floatingQuery).matches ?? false;
+
+/** Keep the controls in DOM/tab order while painting outside list containment. */
+export function useFloatingActionBar(
+  rowRef: RefObject<HTMLDivElement | null> | undefined,
+  barRef: RefObject<HTMLDivElement | null>,
+  slotRef: RefObject<HTMLDivElement | null>,
+  open: boolean,
+  layout: "timeline" | "thread" | "continuation",
+) {
+  const floating = useSyncExternalStore(subscribe, snapshot, () => false);
+  const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    const row = rowRef?.current;
+    const bar = barRef.current;
+    if (!floating || !row || !bar) return;
+    // Top-layer descendants don't contribute to :hover or :focus-within.
+    let hovered = row.matches(":hover") || bar.matches(":hover");
+    let focused = row.contains(document.activeElement);
+    const update = () => {
+      const next =
+        hovered ||
+        focused ||
+        open ||
+        !!bar.querySelector('[aria-haspopup][aria-expanded="true"]');
+      row.toggleAttribute("data-actions-revealed", next);
+      setRevealed(next);
+    };
+    const enter = () => {
+      hovered = true;
+      update();
+    };
+    const leave = () => {
+      hovered = false;
+      update();
+    };
+    const focusIn = () => {
+      focused = true;
+      update();
+    };
+    const focusOut = (event: FocusEvent) => {
+      focused =
+        event.relatedTarget instanceof Node &&
+        row.contains(event.relatedTarget);
+      update();
+    };
+    row.addEventListener("pointerenter", enter);
+    row.addEventListener("pointerleave", leave);
+    row.addEventListener("focusin", focusIn);
+    row.addEventListener("focusout", focusOut);
+    const observer = new MutationObserver(() => {
+      // Removing a focused branch control does not dispatch focusout.
+      focused = row.contains(document.activeElement);
+      update();
+    });
+    observer.observe(bar, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["aria-expanded"],
+    });
+    update();
+    return () => {
+      row.removeEventListener("pointerenter", enter);
+      row.removeEventListener("pointerleave", leave);
+      row.removeEventListener("focusin", focusIn);
+      row.removeEventListener("focusout", focusOut);
+      observer.disconnect();
+      row.removeAttribute("data-actions-revealed");
+    };
+  }, [floating, open, rowRef, barRef]);
+
+  useLayoutEffect(() => {
+    const row = rowRef?.current;
+    const bar = barRef.current;
+    const slot = slotRef.current;
+    if (!floating || !revealed || !row || !bar || !slot) return;
+    const scroller = row.closest<HTMLElement>("[data-message-scroller]");
+    let frame = 0;
+    const hide = () => {
+      if (bar.hasAttribute("popover")) bar.hidePopover?.();
+      // Closed popovers return to their slot's containing block. Viewport offsets
+      // there would create invisible overflow and interfere with scrolling.
+      bar.style.top = "";
+      bar.style.left = "";
+      bar.style.right = "";
+      bar.style.maxWidth = "";
+    };
+    const position = () => {
+      frame = 0;
+      const anchor = slot.getBoundingClientRect();
+      const viewport = scroller?.getBoundingClientRect();
+      // Timeline slots have zero height; include the bar itself when testing
+      // intersection so a partially clipped toolbar can still be revealed.
+      const bottom =
+        layout === "timeline" ? anchor.top + bar.offsetHeight : anchor.bottom;
+      if (
+        viewport &&
+        (bottom <= viewport.top || anchor.top >= viewport.bottom)
+      ) {
+        hide();
+        return;
+      }
+      const rtl = getComputedStyle(row).direction === "rtl";
+      bar.style.top = `${anchor.top}px`;
+      bar.style.left = rtl ? `${anchor.left}px` : "auto";
+      bar.style.right = rtl
+        ? "auto"
+        : `${document.documentElement.clientWidth - anchor.right}px`;
+      bar.style.maxWidth = layout === "timeline" ? `${row.clientWidth}px` : "";
+      bar.showPopover?.();
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(position);
+    };
+    position();
+    document.addEventListener("scroll", schedule, true);
+    window.addEventListener("resize", schedule);
+    const observer = new ResizeObserver(schedule);
+    observer.observe(slot);
+    observer.observe(row);
+    if (scroller) observer.observe(scroller);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("scroll", schedule, true);
+      window.removeEventListener("resize", schedule);
+      observer.disconnect();
+      hide();
+    };
+  }, [floating, revealed, rowRef, barRef, slotRef, layout]);
+
+  return floating;
+}

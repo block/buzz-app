@@ -1,4 +1,4 @@
-# macOS test releases
+# Desktop test releases
 
 The **Desktop previews** workflow builds and signs Apple Silicon test builds from
 `main`. It publishes a DMG and `SHA256SUMS` as a GitHub prerelease, tagged
@@ -58,7 +58,8 @@ Linux reuses old Buzz's Ubuntu 24.04 recipe and guarded Wayland/GStreamer AppIma
 repair from `block/buzz` tag `desktop-v0.5.25`. Repacking tools and the type2 runtime
 are checksum-pinned. Resource binaries must retain their manifest hashes; the
 repair restores the verified original tools after linuxdeploy rewrites ELF RPATHs,
-then the workflow verifies both extracted package payloads after repacking. Compatibility guards fail rather than silently omitting a fix.
+then the workflow verifies both extracted package payloads after repacking.
+Compatibility guards fail rather than silently omitting a fix.
 AppImage still relies on host desktop/media libraries; this is not a promise of
 universal distro compatibility. Neither candidate job writes shared build caches.
 

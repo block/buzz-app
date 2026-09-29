@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,14 +68,19 @@ function fixture(t) {
     '#!/bin/sh\nset -eu\ntest "$1" = --appimage-extract\ncp -a "$FIXTURE_EXTRACTED" squashfs-root\n',
     { mode: 0o755 },
   );
+  // Exercise a spaced executable path even when the host Node path has none.
+  const node = join(root, "tools/node with spaces");
+  symlinkSync(process.execPath, node);
   writeFileSync(
     join(root, "tools/appimagetool"),
-    `#!${process.execPath}
+    `#!/bin/sh
+exec "$FIXTURE_NODE" - "$@" <<'NODE'
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
 assert.equal(process.argv[2], '--runtime-file');
 assert.equal(process.argv[3], process.env.APPIMAGETOOL_RUNTIME_FILE);
 fs.cpSync(process.argv[4], process.env.FIXTURE_REPACKED, { recursive: true });
+NODE
 `,
     { mode: 0o755 },
   );
@@ -86,6 +92,7 @@ fs.cpSync(process.argv[4], process.env.FIXTURE_REPACKED, { recursive: true });
       env: {
         ...process.env,
         PATH: `${join(root, "tools")}:${dirname(process.execPath)}:${process.env.PATH}`,
+        FIXTURE_NODE: node,
         FIXTURE_EXTRACTED: extracted,
         FIXTURE_REPACKED: repacked,
         APPIMAGETOOL_RUNTIME_FILE: join(root, "pinned-runtime"),

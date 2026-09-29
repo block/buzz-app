@@ -750,6 +750,13 @@ pub(crate) async fn agent_control_action(
 pub(crate) const NOT_WAITING_FOR_GOOSE: &str = "Agent no longer waiting for Goose";
 pub(crate) const NOT_WAITING_FOR_PI: &str = "Agent no longer waiting for Pi";
 #[derive(Clone, Copy)]
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "linux")),
+    expect(
+        dead_code,
+        reason = "Harness installation is unavailable on this platform"
+    )
+)]
 pub(crate) enum InstallRestart {
     Goose,
     Pi,

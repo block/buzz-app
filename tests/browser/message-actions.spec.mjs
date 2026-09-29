@@ -75,10 +75,15 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   const root = panel.locator(`[data-message-id="${event.id}"]`);
   await expect(root).toBeVisible();
   // A pointer click leaves focus on the control; the bar still follows hover.
+  const copyLink = row.getByRole("button", { name: "Copy link", exact: true });
   await row.hover();
-  await row.getByRole("button", { name: "Copy link", exact: true }).click();
+  await copyLink.click();
   await root.hover();
   await expect(actions).toHaveCSS("opacity", "0");
+  // Tab only exercises the keyboard path if focus is still on Copy link, so
+  // it lands on the row's next control. Copy link is briefly disabled while
+  // copying, which would otherwise let focus fall back to the body.
+  await expect(copyLink).toBeFocused();
   // Keyboard focus still reveals it while the mouse is elsewhere.
   await page.keyboard.press("Tab");
   await expect(actions).toHaveCSS("opacity", "1");

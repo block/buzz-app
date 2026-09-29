@@ -62,6 +62,7 @@ pub struct AgentDefaultsEdit {
     pub provider: String,
     pub model: String,
     pub effort: String,
+    #[serde(default)]
     pub session_policy: SessionPolicy,
     /// Absence preserves; null deletes; a value replaces. Never a read API.
     pub environment: BTreeMap<String, Option<String>>,

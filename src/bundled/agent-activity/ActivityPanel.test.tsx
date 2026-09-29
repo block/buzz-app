@@ -673,7 +673,7 @@ it("keeps profile identity primary, namesakes selectable and exact evidence disc
     await user.click(
       await screen.findByRole("option", { name: "Same name · beta" }),
     );
-    expect(screen.queryByText("1 working turn.")).toBeNull();
+    expect(screen.getByText("1 working turn.")).toBeTruthy();
     expect(screen.getByText("Working", { exact: true })).toBeTruthy();
     const stream = screen.getByRole("region", { name: "Readable activity" });
     const exact = screen.getByRole("button", { name: "Exact identity" });
@@ -1088,6 +1088,72 @@ it("matches the old profile's evidence-first initialization and selected-channel
     ).toBeNull();
     act(() => activity.clear());
     expect(screen.getByLabelText("Activity channel").textContent).toBe("#Zeta");
+  } finally {
+    view.unmount();
+    release();
+    activity.dispose();
+  }
+});
+
+it("retains working evidence when only diagnostic activity is readable", () => {
+  let generation = 0;
+  const activity = createAgentActivity(
+    true,
+    (next) => {
+      generation = next ?? 0;
+    },
+    () => true,
+  );
+  const release = activity.queries.activate();
+  activity.state({
+    status: "connected",
+    routes: [{ id: "observer", status: "live", replay: "unknown" }],
+  });
+  activity.receive(
+    {
+      id: "d".repeat(64),
+      agent,
+      createdAt: Math.floor(Date.now() / 1000),
+      plaintext: JSON.stringify({
+        kind: "acp_read",
+        turnId: "T",
+        channelId: "alpha",
+        timestamp: new Date().toISOString(),
+        payload: {
+          method: "session/update",
+          params: { update: { sessionUpdate: "usage_update" } },
+        },
+      }),
+    },
+    generation,
+  );
+  const profiles = new Map([[agent, { name: "Rivet" }]]);
+  const channels = {
+    status: "ready",
+    channels: [{ id: "alpha", name: "Alpha" }],
+  };
+  const session = {
+    agentChoices: createAgentLibrary(undefined).queries,
+    agentActivity: activity.queries,
+    profiles: { snapshot: () => profiles, subscribe: () => () => {} },
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    live: { retry() {} },
+  } as unknown as RelaySession;
+  const view = render(
+    <ActivityDetails
+      session={session}
+      selection={{ agent, channelId: "alpha" }}
+    />,
+  );
+  try {
+    const stream = screen.getByRole("region", { name: "Readable activity" });
+    expect(within(stream).queryByText("Working", { exact: true })).toBeNull();
+    expect(screen.getByText("1 working turn.").getAttribute("role")).toBe(
+      "status",
+    );
+    expect(
+      within(stream).getByRole("button", { name: "Setup and diagnostics (1)" }),
+    ).toBeTruthy();
   } finally {
     view.unmount();
     release();

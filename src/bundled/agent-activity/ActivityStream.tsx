@@ -274,6 +274,7 @@ export function ActivityStream({
           <BaseButton
             type="button"
             className="buzz-accordion-trigger text-body-sm"
+            data-activity-scope-control=""
             aria-expanded={showAll}
             aria-controls={streamId}
             onClick={() => setShowAll(!showAll)}
@@ -324,45 +325,8 @@ function ToolGroup({
   working: boolean;
   source: ReturnType<typeof activityTranscript>["source"];
 }) {
-  const completed = entries.filter((entry) => entry.status === "completed");
-  const current = entries.filter((entry) => entry.status !== "completed");
-  if (
-    completed.length &&
-    current.some(
-      (entry) => entry.status === "in_progress" || entry.status === "pending",
-    )
-  )
-    return (
-      <>
-        <ToolGroup entries={completed} working={false} source={source} />
-        {current.map((entry) => (
-          <Accordion
-            key={entry.id}
-            variant="activity"
-            items={[
-              {
-                value: entry.id,
-                title: <EntryLabel entry={entry} working={working} />,
-                content: <EntryDetail entry={entry} source={source} />,
-              },
-            ]}
-          />
-        ))}
-      </>
-    );
-  return (
-    <ToolGroupDetails entries={entries} working={working} source={source} />
-  );
-}
-function ToolGroupDetails({
-  entries,
-  working,
-  source,
-}: {
-  entries: TranscriptEntry[];
-  working: boolean;
-  source: ReturnType<typeof activityTranscript>["source"];
-}) {
+  // Keep the chain and its detail disclosures mounted across status updates.
+  // Repartitioning completed/current tools would discard explicit expansion intent.
   const summary = toolGroupSummary(entries, working);
   const actions = new Set(entries.map(activityAction));
   const first = entries[0];

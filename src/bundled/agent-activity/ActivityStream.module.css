@@ -124,10 +124,13 @@
   white-space: inherit;
   overflow-wrap: anywhere;
 }
-.stream [class~="buzz-accordion-trigger"] > span {
+.stream
+  [class~="buzz-accordion-trigger"]:where(:not([data-activity-scope-control]))
+  > span {
   min-width: 0;
 }
-.stream [class~="buzz-accordion-trigger"] {
+.stream
+  [class~="buzz-accordion-trigger"]:where(:not([data-activity-scope-control])) {
   width: fit-content;
   max-width: 100%;
   min-height: var(--space-8);
@@ -140,15 +143,24 @@
     background-color var(--duration-fast) var(--easing-state),
     color var(--duration-fast) var(--easing-state);
 }
-.stream [class~="buzz-accordion-trigger"][aria-expanded="true"] {
+.stream
+  [class~="buzz-accordion-trigger"]:where(
+    :not([data-activity-scope-control])
+  )[aria-expanded="true"] {
   color: var(--text-standard);
 }
-.stream [class~="buzz-accordion-trigger"] > svg {
+.stream
+  [class~="buzz-accordion-trigger"]:where(:not([data-activity-scope-control]))
+  > svg {
   width: var(--space-3);
   height: var(--space-3);
   transform: rotate(-90deg);
 }
-.stream [class~="buzz-accordion-trigger"][aria-expanded="true"] > svg {
+.stream
+  [class~="buzz-accordion-trigger"]:where(
+    :not([data-activity-scope-control])
+  )[aria-expanded="true"]
+  > svg {
   transform: rotate(0deg);
 }
 .toolGroup {
@@ -165,13 +177,19 @@
   color: var(--text-standard);
 }
 @media (hover: hover) and (pointer: fine) {
-  .stream [class~="buzz-accordion-trigger"]:hover {
+  .stream
+    [class~="buzz-accordion-trigger"]:where(
+      :not([data-activity-scope-control])
+    ):hover {
     background: var(--affordance-subtle-hover);
     color: var(--text-standard);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .stream [class~="buzz-accordion-trigger"] {
+  .stream
+    [class~="buzz-accordion-trigger"]:where(
+      :not([data-activity-scope-control])
+    ) {
     transition: none;
   }
 }
@@ -225,7 +243,6 @@
   transition-duration: var(--duration-fast);
 }
 .motion [class~="buzz-accordion-trigger"] {
-  padding-inline: var(--space-2);
   transition:
     background-color var(--duration-fast) var(--easing-state),
     color var(--duration-fast) var(--easing-state);
@@ -247,7 +264,10 @@
 }
 
 /* Keep the icon gutter outside iconless controls, including their state surfaces. */
-.stream [class~="buzz-accordion-trigger"]:not(:has([data-activity-action])) {
+.stream
+[class~="buzz-accordion-trigger"]:where(
+  :not([data-activity-scope-control])
+):not(:has([data-activity-action])) {
   margin-inline-start: var(--space-6);
   max-width: calc(100% - var(--space-6));
   padding-inline-start: var(--space-2);

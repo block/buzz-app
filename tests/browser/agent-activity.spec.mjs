@@ -100,7 +100,10 @@ const activityPanel = (page) =>
     .getByRole("region", { name: "Agent activity", exact: true })
     .or(page.getByRole("tabpanel", { name: "Activity", exact: true }));
 async function showActivityDetails(panel) {
-  const details = panel.getByRole("button", { name: "Details", exact: true });
+  // Thought entries now have their own Details control; this opens panel metadata.
+  const details = panel
+    .getByRole("button", { name: "Details", exact: true })
+    .and(panel.locator('button:not([aria-label="Readable activity"] button)'));
   await expect(details).toBeVisible();
   if ((await details.getAttribute("aria-expanded")) === "false")
     await details.click();
@@ -505,6 +508,11 @@ for (const mode of ["light", "dark"]) {
         await Promise.all(
           element
             .getAnimations({ subtree: true })
+            // Active labels shimmer indefinitely; only disclosure motion settles.
+            .filter(
+              (animation) =>
+                animation.effect?.getTiming().iterations !== Infinity,
+            )
             .map((animation) => animation.finished.catch(() => {})),
         );
       });
@@ -1928,14 +1936,17 @@ test.describe("local agent request", () => {
         { exact: true },
       ),
     ).toHaveCount(0);
-    const inlineContents = await correctionWork.textContent();
+    // Inspector-only Details chrome may differ; compare each primary content row.
+    const primaryContents = (work) => work.locator("p, article");
+    const inlineContents =
+      await primaryContents(correctionWork).allTextContents();
     await openSidePanel(page, correctionEntry, true);
     const panel = activityPanel(page);
     const detachedWork = panel.getByRole("region", {
       name: "Readable activity",
       exact: true,
     });
-    await expect(detachedWork).toContainText(inlineContents);
+    await expect(primaryContents(detachedWork)).toHaveText(inlineContents);
     const diagnostics = detachedWork.getByRole("button", {
       name: "Setup and diagnostics (2)",
       exact: true,

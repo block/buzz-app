@@ -369,11 +369,6 @@ it("keeps completed tool rows quiet while retaining group completion and failure
   const view = render(
     <ActivityStream showDiagnostics records={input} turns={turns} />,
   );
-  const previous = screen.getByRole("button", {
-    name: /1 tool call.*Completed/,
-  });
-  expect(previous.getAttribute("aria-expanded")).toBe("false");
-  fireEvent.click(previous);
   expect(screen.getByRole("button", { name: "Read file 0" })).toBeTruthy();
   expect(
     screen.queryByRole("button", { name: /Read file 0.*Completed/ }),
@@ -550,5 +545,69 @@ it.each(["agent_thought_chunk", "agent_message_chunk"])(
       ).toBe("true");
     }
     expect(screen.getByText("Reported progress")).toBeTruthy();
+  },
+);
+
+it.each([false, true])(
+  "preserves explicit chain expansion (%s) and tool details across completion and new work",
+  (open) => {
+    const tools = (states: string[]) =>
+      records(states.length).map((record, index) => {
+        const value = JSON.parse(record.plaintext);
+        value.turnId = "current";
+        value.payload.params.update.status = states[index];
+        value.payload.params.update.rawOutput = `Output ${index}`;
+        return { ...record, plaintext: JSON.stringify(value) };
+      });
+    const turns = [
+      {
+        agent: "agent",
+        channelId: "alpha",
+        turnId: "current",
+        timestamp: 0,
+        state: "working" as const,
+      },
+    ];
+    const view = render(
+      <ActivityStream
+        records={tools(["in_progress", "in_progress"])}
+        turns={turns}
+        showDiagnostics
+      />,
+      { reactStrictMode: true },
+    );
+    const group = screen.getByRole("button", { name: /2 tool calls/ });
+    if (open)
+      fireEvent.click(screen.getByRole("button", { name: /Read file 1/ }));
+    else fireEvent.click(group);
+    for (const states of [
+      ["completed", "in_progress"],
+      ["completed", "completed"],
+      ["completed", "completed", "pending"],
+      ["completed", "completed", "completed"],
+    ]) {
+      view.rerender(
+        <ActivityStream
+          records={tools(states)}
+          turns={turns}
+          showDiagnostics
+        />,
+      );
+      const updated = screen.getByRole("button", { name: /\d+ tool calls/ });
+      expect(updated).toBe(group);
+      expect(updated.getAttribute("aria-expanded")).toBe(String(open));
+      if (open) {
+        expect(
+          screen
+            .getByRole("button", { name: /Read file 1/ })
+            .getAttribute("aria-expanded"),
+        ).toBe("true");
+        expect(screen.getByText('"Output 1"')).toBeTruthy();
+      } else {
+        expect(
+          screen.queryByRole("button", { name: /Read file 1/ }),
+        ).toBeNull();
+      }
+    }
   },
 );

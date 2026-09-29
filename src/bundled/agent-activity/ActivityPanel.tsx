@@ -595,7 +595,7 @@ export function ActivityDetails({
                   Channel activity, including threads
                 </p>
               )}
-              {(working > 1 || unknown > 0 || !records.length) && (
+              {(working > 0 || unknown > 0 || !records.length) && (
                 <p className="text-caption text-subtle" role="status">
                   {working
                     ? `${working} working ${working === 1 ? "turn" : "turns"}.`

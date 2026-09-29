@@ -143,16 +143,20 @@ impl ModelHost {
         if edit.harness.configuration.is_none() {
             return Ok(());
         }
-        edit.harness.validate_configuration().map_err(|message| {
-            let code = match &edit.harness.configuration {
-                Some(AiConfiguration::Advanced { .. }) if edit.harness.model.trim().is_empty() => {
-                    "model"
-                }
-                Some(AiConfiguration::Advanced { .. }) => "effort",
-                _ => "configuration",
-            };
-            ModelError::new(code, message)
-        })?;
+        edit.harness
+            .validate_launch_configuration()
+            .map_err(|message| {
+                let code = match &edit.harness.configuration {
+                    Some(AiConfiguration::Advanced { .. })
+                        if edit.harness.model.trim().is_empty() =>
+                    {
+                        "model"
+                    }
+                    Some(AiConfiguration::Advanced { .. }) => "effort",
+                    _ => "configuration",
+                };
+                ModelError::new(code, message)
+            })?;
         if edit.harness.command == "buzz-agent" && edit.harness.provider == "openai" {
             buzz_agent_controller::openai::validate_selection(&edit.harness)?;
             let context = Controller::draft_model_context(edit.clone())?

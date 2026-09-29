@@ -198,6 +198,34 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
         );
     }
 }
+
+#[test]
+fn reopen_keeps_model_less_harness_defaults_with_valid_agents_editable() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let mut legacy = fixture();
+    legacy.name = "Saved defaults agent".into();
+    legacy.harness.model.clear();
+    legacy.harness.configuration = Some(crate::AiConfiguration::Default);
+    let mut valid = fixture();
+    valid.relay_url = "wss://other.example".into();
+    valid.id = agent_id(&valid.pubkey, &valid.relay_url);
+    store.insert(vec![legacy.clone(), valid.clone()]).unwrap();
+    drop(store);
+
+    let mut reopened = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(reopened.snapshot().unwrap().agents.len(), 2);
+    let mut legacy_edit = edit();
+    legacy_edit.name = "Still editable".into();
+    legacy_edit.harness = legacy.harness;
+    reopened
+        .save(&legacy.id, legacy.revision, legacy_edit)
+        .unwrap();
+    let agents = reopened.snapshot().unwrap().agents;
+    assert_eq!(agents.len(), 2);
+    assert!(agents.iter().any(|agent| agent.name == "Still editable"));
+    assert!(agents.iter().any(|agent| agent.id == valid.id));
+}
 #[test]
 fn explicitly_inheriting_context_can_replace_an_imported_policy() {
     let dir = tempfile::tempdir().unwrap();

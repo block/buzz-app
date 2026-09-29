@@ -164,7 +164,7 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
       ).toBeVisible();
       expect(
         screen.getByText(
-          /git\+https:\/\/github.com\/salman1993\/buzz-pi-acp.git#cff9964/,
+          /git\+https:\/\/github.com\/salman1993\/buzz-pi-acp.git#8fdc91c/,
         ),
       ).toBeVisible();
       const write = vi
@@ -174,7 +174,7 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
         screen.getByRole("button", { name: "Copy Adapter command" }),
       );
       expect(write).toHaveBeenCalledWith(
-        "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#cff9964'",
+        "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#8fdc91c'",
       );
       expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
         "Adapter command copied.",
@@ -445,7 +445,7 @@ it.each([
     expect(
       screen.getByText(/confirm the selected path is the same/),
     ).toBeVisible();
-    expect(screen.getByText(/buzz-pi-acp.git#cff9964/)).toBeVisible();
+    expect(screen.getByText(/buzz-pi-acp.git#8fdc91c/)).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Copy Pi command" }),
     ).toBeNull();
@@ -456,7 +456,7 @@ it.each([
       screen.getByRole("button", { name: "Copy Adapter command" }),
     );
     expect(write).toHaveBeenCalledWith(
-      `npm install -g --install-links=true --prefix '${prefix}' 'git+https://github.com/salman1993/buzz-pi-acp.git#cff9964'`,
+      `npm install -g --install-links=true --prefix '${prefix}' 'git+https://github.com/salman1993/buzz-pi-acp.git#8fdc91c'`,
     );
   },
 );

@@ -200,7 +200,7 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
 
   ```sh
   npm install -g @earendil-works/pi-coding-agent
-  npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#cff9964'
+  npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#8fdc91c'
   ```
 
 **Check again** re-detects installed Harnesses without reopening Buzz. Status

@@ -49,8 +49,9 @@ export const composerSchema = new Schema<
       code: true,
       defining: true,
       // The info string of a typed fence. Serialization emits it after the
-      // opening fence; toolbar-created blocks have none.
-      attrs: { language: { default: null } },
+      // opening fence; toolbar-created blocks have none. A corrupted persisted
+      // draft fails doc.check() here instead of reaching the DOM attribute.
+      attrs: { language: { default: null, validate: "string|null" } },
       toDOM: (node) => [
         "pre",
         { spellcheck: "false", "data-language": node.attrs.language },

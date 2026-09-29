@@ -86,6 +86,21 @@ function spanOf(node: Nodes, start: number, end: number, raw: string) {
   return span;
 }
 
+/** Offsets of every unescaped `typed` character in a literal text node's
+ * source. Each character of a run counts, so a run beside a span is found
+ * whichever of its characters touches the span. */
+function literalDelimiters(text: string, typed: string): number[] {
+  const offsets: number[] = [];
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (escaped) escaped = false;
+    else if (char === "\\") escaped = true;
+    else if (char === typed) offsets.push(i);
+  }
+  return offsets;
+}
+
 /** Adopt only the inline span just closed by typing, never pasted/restored
  * Markdown or fenced blocks. The parser owns escapes, flanking and delimiter
  * matching, so the composer styles exactly what recipients will render. */
@@ -105,12 +120,8 @@ export function applyComposerInlineInput(
     extensions: [gfmStrikethrough({ singleTilde: false })],
     mdastExtensions: [gfmStrikethroughFromMarkdown()],
   });
-  const unescaped = new RegExp(
-    `(?:^|[^\\\\])(?:\\\\\\\\)*${typed === "*" ? "\\*" : typed}`,
-    "g",
-  );
   const pending: Nodes[] = [tree];
-  const openers: number[] = [];
+  const literal: number[] = [];
   let matched: { node: Nodes; start: number; end: number } | undefined;
   while (pending.length) {
     const node = pending.pop();
@@ -123,18 +134,26 @@ export function applyComposerInlineInput(
       continue;
     }
     if (node.type === "text")
-      for (const match of markdown.slice(start, end).matchAll(unescaped))
-        openers.push(start + (match.index ?? 0) + match[0].length - 1);
+      for (const offset of literalDelimiters(markdown.slice(start, end), typed))
+        literal.push(start + offset);
     if (CONTAINERS.has(node.type)) pending.push(...children(node));
   }
   if (!matched) return false;
   if (/[\r\n]/.test(markdown.slice(matched.start, matched.end))) return false;
   // A shorter inner pair can look complete while a longer opener is unfinished
   // (**a*, ``a`b`). Wait for that outer delimiter rather than consuming the pair.
-  const lineStart = markdown.lastIndexOf("\n", matched.start - 1) + 1;
+  // Backtick runs pair only by exact length, so any literal backtick earlier on
+  // the line may still be that opener. For *, _ and ~ the parser's flanking
+  // rules have already settled the pairing, so only a literal run touching the
+  // span's opening delimiter is an unfinished outer run: snake_case _x_ and
+  // 5 * 3 is *great* convert exactly as the timeline renders them.
   const { start: matchedStart } = matched;
-  if (openers.some((offset) => offset >= lineStart && offset < matchedStart))
-    return false;
+  const lineStart = markdown.lastIndexOf("\n", matchedStart - 1) + 1;
+  const unfinished =
+    typed === "`"
+      ? literal.some((offset) => offset >= lineStart && offset < matchedStart)
+      : literal.includes(matchedStart - 1);
+  if (unfinished) return false;
   // Nested spans (***x***) each add their own mark. A link, image, HTML or
   // code span inside keeps its source text and only receives the outer mark.
   const spans: Span[] = [];
@@ -195,7 +214,9 @@ export function applyComposerInlineInput(
     project = projectComposerDocument(tr.doc);
   }
   // Emphasis marks apply across mention/emoji atoms, so chips and recipients
-  // survive; only code turns them into literal text.
+  // survive; only code turns them into literal text. An italic recipient is
+  // serialized as *@Honey*, a form the timeline still binds, where _@Honey_
+  // would not (see paragraphMarkdown), so the conversion needs no exception.
   const edits: {
     mark: MarkType;
     first: number;

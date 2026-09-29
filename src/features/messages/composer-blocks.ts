@@ -248,11 +248,41 @@ export function toggleComposerBlock(
 // line, an optional language identifier, nothing else. Info strings that could
 // host a mention/emoji completion (`:`, `@`, spaces) or a backtick never match.
 const FENCE = /^(?:`{3,}|~{3,})([\w+#.-]*)$/;
+// Any fence line CommonMark accepts in authored source, for reading the lines
+// above the caret: up to three spaces of indentation and any info string.
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+/** Whether authored lines leave a fenced block open, as the timeline will read
+ * them. A block closes only on a line holding the opening marker, at least as
+ * long, followed by nothing but whitespace; a backtick fence's info string
+ * cannot hold a backtick. */
+function insideFence(lines: readonly string[]): boolean {
+  let open: { marker: string; length: number } | undefined;
+  for (const line of lines) {
+    const match = FENCE_LINE.exec(line);
+    const run = match?.[1],
+      info = match?.[2] ?? "";
+    if (!run) continue;
+    const marker = run[0] ?? "";
+    if (!open) {
+      if (marker === "~" || !info.includes("`"))
+        open = { marker, length: run.length };
+    } else if (
+      marker === open.marker &&
+      run.length >= open.length &&
+      !info.trim()
+    )
+      open = undefined;
+  }
+  return !!open;
+}
 
 /** A line holding only an opening fence, followed by Enter or Shift+Enter,
- * becomes a code block. Only the caret's own typed line qualifies: pasted or
- * restored fences, fences inside code/link/literal ranges or tokens, and any
- * line inside an existing code block stay literal source. One transaction
+ * becomes a code block. Only the caret's own typed line qualifies: a fence that
+ * closes or sits inside a block the paragraph's earlier lines opened (pasted
+ * source, or a message opened for editing), fences inside code/link/literal
+ * ranges or tokens, and any line inside an existing code block stay literal
+ * source, so Enter after them keeps its ordinary meaning. One transaction
  * carries the deletion and the block, so one undo restores the typed fence. */
 export function composerCodeFence(state: EditorState): Transaction | undefined {
   const { $from, empty } = state.selection;
@@ -269,6 +299,9 @@ export function composerCodeFence(state: EditorState): Transaction | undefined {
   const start = Math.max(block.start, text.lastIndexOf("\n", caret - 1) + 1);
   const match = FENCE.exec(text.slice(start, caret));
   if (!match) return;
+  // A closing fence, or a fence line inside an open block, is authored source
+  // the timeline already renders as code: it never opens a second block.
+  if (insideFence(text.slice(block.start, start).split("\n"))) return;
   const from = source.position(start),
     to = $from.pos;
   if (source.source(from) !== start) return;

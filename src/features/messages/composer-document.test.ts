@@ -60,9 +60,35 @@ describe("composer document boundary", () => {
           },
         ],
       },
+      {
+        type: "doc",
+        content: [
+          {
+            type: "code_block",
+            attrs: { language: { corrupt: true } },
+            content: [{ type: "text", text: "x" }],
+          },
+        ],
+      },
     ]) {
       expect(readComposerSnapshot({ version: 1, content })).toBeUndefined();
     }
+    for (const language of ["ts", null])
+      expect(
+        readComposerSnapshot({
+          version: 1,
+          content: {
+            type: "doc",
+            content: [
+              {
+                type: "code_block",
+                attrs: { language },
+                content: [{ type: "text", text: "x" }],
+              },
+            ],
+          },
+        })?.firstChild?.attrs.language,
+      ).toBe(language);
     expect(mentionDraft("legacy __bold__")).toEqual({
       text: "legacy __bold__",
       recipients: [],
@@ -219,6 +245,32 @@ describe("inline formatting batch", () => {
     expect(
       serialize(marked("one\ntwo ", "italic", "strike"), schema.text("plain")),
     ).toBe("_~~one\ntwo~~_ plain");
+  });
+  it("writes an italic recipient with asterisks so the timeline still binds the mention", () => {
+    const honey = { pubkey: "a".repeat(64), name: "Honey" };
+    const chip = (...marks: InlineFormat[]) =>
+      schema.nodes.token.create(
+        { source: "@Honey", recipient: honey },
+        null,
+        marks.map((name) => schema.marks[name].create()),
+      );
+    expect(serialize(chip("italic"), schema.text(" "))).toBe("*@Honey* ");
+    expect(
+      serialize(marked("hi ", "italic"), chip("italic"), schema.text(" there")),
+    ).toBe("*hi @Honey* there");
+    expect(serialize(chip("bold", "italic"))).toBe("***@Honey***");
+    // Only the span holding the recipient changes marker.
+    expect(
+      serialize(marked("x", "italic"), schema.text(" "), chip("italic")),
+    ).toBe("_x_ *@Honey*");
+    // A mention without signed provenance is prose; nothing binds it either way.
+    expect(
+      serialize(
+        schema.nodes.token.create({ source: "@Honey" }, null, [
+          schema.marks.italic.create(),
+        ]),
+      ),
+    ).toBe("_@Honey_");
   });
   it("escapes literal punctuation in each generated format", () => {
     for (const mark of ["bold", "italic", "strike"] as const)

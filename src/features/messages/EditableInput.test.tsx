@@ -16,9 +16,24 @@ import type { ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
 import { composerMarkdown } from "./composer-markdown";
 import { mentionDraft, type MentionDraft } from "./mention-draft";
+import { profileMentionParts } from "./profile-mentions";
+import { profileTarget } from "../profiles/target";
 
 composerDOMFixture();
 afterEach(cleanup);
+
+/** The editor's text/plain paste handler, not the insertText API. */
+function paste(input: ComposerInputElement, text: string) {
+  act(() => {
+    input.focus();
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        getData: (type: string) => (type === "text/plain" ? text : ""),
+      },
+    });
+  });
+}
 
 function mount(text = "") {
   const ref = createRef<ComposerInputElement>();
@@ -211,7 +226,7 @@ it("adds both marks for ***x*** and leaves ~x~ literal", async () => {
   expect(h.markdown()).toBe("**_x_** ~y~");
 });
 
-it("waits for the whole closing run instead of italicising midway through **a**", async () => {
+it("waits for the whole closing run instead of italicising midway through **a** or ***b***", async () => {
   const h = mount();
   await h.user.keyboard("**a*");
   expect(h.input.querySelector("em, strong")).toBeNull();
@@ -220,7 +235,40 @@ it("waits for the whole closing run instead of italicising midway through **a**"
   expect(h.input.querySelector("strong")).toHaveTextContent("a");
   expect(h.input.querySelector("em")).toBeNull();
   expect(h.markdown()).toBe("**a**");
+  // A run touching the span's opener is unfinished whichever of its
+  // characters sits beside the span.
+  await h.user.keyboard(" ***b*");
+  expect(h.input).toHaveValue("a ***b*");
+  expect(h.input.querySelector("em")).toBeNull();
+  await h.user.keyboard("*");
+  expect(h.input).toHaveValue("a ***b**");
+  expect(h.input.querySelectorAll("strong")).toHaveLength(1);
+  await h.user.keyboard("*");
+  expect(h.input).toHaveValue("a b");
+  expect(h.markdown()).toBe("**a** **_b_**");
 });
+
+it.each([
+  ["snake_case _x_", "snake_case ", "x"],
+  ["file_name and _important_", "file_name and ", "important"],
+  ["5 * 3 is *great*", "5 * 3 is ", "great"],
+])(
+  "converts %s: an earlier literal delimiter blocks only a span it touches",
+  async (typed, before, inner) => {
+    const h = mount();
+    await h.user.keyboard(typed);
+    expect(h.input.querySelectorAll("em")).toHaveLength(1);
+    expect(h.input.querySelector("em")).toHaveTextContent(inner);
+    expect(h.input).toHaveValue(before + inner);
+    expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+      type: "paragraph",
+      children: [
+        { type: "text", value: before },
+        { type: "emphasis", children: [{ type: "text", value: inner }] },
+      ],
+    });
+  },
+);
 
 it("follows the parser for intraword delimiters: snake_case stays literal, 5*3*2 italicises 3", async () => {
   const h = mount();
@@ -293,6 +341,31 @@ it("bolds a mention typed between delimiters and keeps its chip and recipient", 
   expect(h.input.querySelector('strong [data-source="@Honey"]')).not.toBeNull();
   expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
   expect(h.markdown()).toBe("**@Honey** ");
+});
+
+it("italicises a mention typed between asterisks and sends a form the timeline still binds", async () => {
+  const h = mount();
+  const honey = { pubkey: "a".repeat(64), name: "Honey" };
+  await h.user.keyboard("*");
+  act(() => h.input.insertText("", honey));
+  expect(h.input).toHaveValue("*@Honey ");
+  act(() => h.input.setSelectionRange(7, 7));
+  await h.user.keyboard("*");
+  expect(h.input).toHaveValue("@Honey ");
+  expect(h.input.querySelector('em [data-source="@Honey"]')).not.toBeNull();
+  expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
+  // _@Honey_ would render italic but never bind: _ is a name character.
+  expect(h.markdown()).toBe("*@Honey* ");
+  expect(
+    profileMentionParts(
+      { content: h.markdown(), mentions: [honey.pubkey] },
+      new Map([[honey.pubkey, { name: honey.name }]]),
+    ),
+  ).toEqual([
+    { text: "*" },
+    { text: "@Honey", target: profileTarget(honey.pubkey) },
+    { text: "* " },
+  ]);
 });
 
 it.each([
@@ -457,9 +530,48 @@ it("does not convert a fence carrying inline code or pasted source", async () =>
     h.input.setSelectionRange(0, h.input.value.length);
     h.input.insertText("```\ncode\n```");
   });
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}");
   expect(h.input.querySelector("pre")).toBeNull();
-  expect(h.markdown()).toBe("```\ncode\n```");
+  expect(h.input).toHaveValue("```\ncode\n```\n");
+  expect(h.markdown()).toBe("```\ncode\n```\n");
 });
+
+it("keeps a pasted fenced block literal on Shift+Enter and Enter, then opens a new block from a fence typed below it", async () => {
+  const h = mount();
+  paste(h.input, "```\ncode\n```");
+  expect(h.input).toHaveValue("```\ncode\n```");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input).toHaveValue("```\ncode\n```\n");
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue("```\ncode\n```");
+  // Without a host send policy, Enter breaks the line; it never opens a block.
+  await h.user.keyboard("{Enter}");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input).toHaveValue("```\ncode\n```\n");
+  expect(h.markdown()).toBe("```\ncode\n```\n");
+  // The pasted block is closed, so a fence typed under it opens a new one.
+  await h.user.keyboard("```{Shift>}{Enter}{/Shift}more");
+  expect(h.input.querySelectorAll("pre")).toHaveLength(1);
+  expect(h.input.querySelector("pre > code")).toHaveTextContent("more");
+  expect(h.input).toHaveValue("```\ncode\n```\nmore");
+  expect(h.markdown()).toBe("```\ncode\n```\n\n```\nmore\n```");
+});
+
+it.each(["```js\ncode\n```", "~~~\ncode\n```", "````\n```"])(
+  "keeps the closing or inner fence line of restored source %j literal on Shift+Enter and Enter",
+  async (source) => {
+    const h = mount(source);
+    await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(h.input.querySelector("pre")).toBeNull();
+    expect(h.input).toHaveValue(`${source}\n`);
+    act(() => h.input.undo(false));
+    await h.user.keyboard("{Enter}");
+    expect(h.input.querySelector("pre")).toBeNull();
+    expect(h.input).toHaveValue(`${source}\n`);
+    expect(h.markdown()).toBe(`${source}\n`);
+  },
+);
 
 it("switches a nested bullet to its ordered ancestor's type without outdenting", async () => {
   const h = mount("one\ntwo\nthree");

@@ -419,6 +419,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     let before = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
     assert_eq!(before["runtimeAvailable"], false);
     assert_eq!(before["importAvailable"], cfg!(target_os = "macos"));
+    assert_eq!(before["createAvailable"], true);
     assert_eq!(
         before["harnessOptions"][0],
         json!({

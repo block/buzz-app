@@ -39,7 +39,12 @@ impl Snapshot {
         Self {
             data,
             import_available,
-            create_available: import_available,
+            // Platforms with a native credential store for the new identity.
+            create_available: cfg!(any(
+                target_os = "macos",
+                target_os = "windows",
+                target_os = "linux"
+            )),
             avatar_editing_available: true,
             local_inventory_actions: true,
             default_workspace: workspace.to_string_lossy().into_owned(),

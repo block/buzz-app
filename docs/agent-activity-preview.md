@@ -1,7 +1,11 @@
 # Agent Activity preview: testing guide
 
 **Experimental macOS test candidate, not merge-ready or release-validated.**
-Branch: `feature/agent-activity-preview`.
+Shared feedback branch: `feature/agent-activity-tulsi-preview`.
+
+This checkpoint keeps Tulsi's tested Activity iteration separate from the existing
+`feature/agent-activity-preview` branch. It does not incorporate that branch's
+later independent UI iteration or changes from main after `1f71ee94`.
 
 This branch integrates main through `1f71ee94` with the Activity implementation.
 Main's identity, packaged communities, harness setup, profiles and close-to-hide
@@ -93,7 +97,7 @@ and an existing Buzz account in the OS credential store.
 
 ```sh
 git fetch origin
-git switch feature/agent-activity-preview
+git switch feature/agent-activity-tulsi-preview
 bin/pnpm install --frozen-lockfile
 # Configure your own public BUZZ_DEV_VIEWER and optional relay origin
 # in git-ignored .env.local as described in README, then:
@@ -135,6 +139,17 @@ to five minutes to prevent replay. No old Buzz archive import, secure-erasure or
 complete-transcript promise.
 
 ## Evidence and outstanding gates
+
+The September 29 feedback checkpoint through `e02daff7` includes the tool-first
+renderer, shared request headers, per-reply exact-agent inspection and multi-send
+receipt linkage. Focused checks cover attribution, popup/panel scope, namesakes,
+missing evidence and Chromium/WebKit app wiring. The final author-only change
+passed TypeScript, 34 focused unit tests and both browser-engine journeys; earlier
+broader feedback checks are evidence for their own snapshots, not a full current
+scan. An existing WebKit avatar fallback-paint failure and narrow multi-panel
+clipping remain separate known gaps. Physical touch-swipe acceptance, updated-main
+integration, hosted PR checks and packaged real-account acceptance remain pending.
+The synthetic playground is included; the discarded composer-strip mock is not.
 
 Local development evidence includes actual signed three-agent audience tags, focused
 React/relay tests, both-engine Activity journeys, signed staged-CLI smoke tests, and

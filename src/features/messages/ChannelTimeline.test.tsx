@@ -1464,3 +1464,22 @@ it("estimated list shrinkage can leave an intermediate gap without becoming read
   h.unmount();
   expect(h.saved().bottom).toBe(true);
 });
+
+it("records a measured shrink before an append hides its queued native scroll clamp", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.append();
+  h.element.scrollHeight -= 200;
+  h.element.scrollTop -= 200;
+  h.measureRows(false); // Mutation delivery precedes the queued native scroll.
+  h.element.scrollHeight += 300; // A new event arrives before that scroll.
+  h.dispatchScroll();
+  h.handle.scrollToIndex.mockClear();
+  h.flush();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});

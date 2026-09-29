@@ -350,6 +350,15 @@ function Timeline({
           observer = new MutationObserver(() => {
             if (list.style.height === height) return;
             height = list.style.height;
+            // Capture a native clamp while its shrink is still observable.
+            // Another append can grow the list before the queued scroll event.
+            if (
+              !restore &&
+              measuredPosition.current &&
+              intent.current === scheduledIntent &&
+              scroller.current
+            )
+              recordPosition(scroller.current);
             cancelAnimationFrame(frame);
             correctionPending = true;
             frame = requestAnimationFrame(restorePosition);

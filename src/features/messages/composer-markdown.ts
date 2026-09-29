@@ -10,7 +10,7 @@ import {
   gfmStrikethroughToMarkdown,
 } from "mdast-util-gfm-strikethrough";
 import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
-import type { PhrasingContent, Root, Text } from "mdast";
+import type { Emphasis, PhrasingContent, Root, Text } from "mdast";
 import type { MentionDraft } from "./mention-draft";
 import type { Node as EditorNode } from "prosemirror-model";
 import {
@@ -126,6 +126,7 @@ function paragraphMarkdown(block: EditorNode): string {
   ] as const;
   const ranges: (SourceRange & { href?: string })[][] = formats.map(() => []);
   const literals: SourceRange[] = [];
+  const recipients: SourceRange[] = [];
   block.forEach((node) => {
     const start = text.length;
     text += node.isText
@@ -135,6 +136,11 @@ function paragraphMarkdown(block: EditorNode): string {
         : node.attrs.source;
     if (composerSchema.marks.literal.isInSet(node.marks))
       literals.push({ start, end: text.length });
+    if (
+      node.attrs.recipient ||
+      composerSchema.marks.recipient.isInSet(node.marks)
+    )
+      recipients.push({ start, end: text.length });
     formats.forEach(({ mark }, index) => {
       const active = mark.isInSet(node.marks);
       if (!active) return;
@@ -168,6 +174,13 @@ function paragraphMarkdown(block: EditorNode): string {
   if (!literals.length && ranges.every((spans) => !spans.length)) return text;
   const raw = new WeakSet<Text>();
   const literal = new WeakSet<Text>();
+  // The timeline binds a signed mention only when the character before its @
+  // and the one after its name are not word characters, and _ is one. An
+  // emphasis span holding a recipient therefore uses *, so *@Honey* renders
+  // italic and stays a bound mention where _@Honey_ would lose the binding.
+  // Chosen over refusing the typed *@Honey* conversion so toolbar italics on a
+  // chip send a bindable form too; every other emphasis keeps _.
+  const asterisk = new WeakSet<Emphasis>();
   const source = (
     start: number,
     end: number,
@@ -293,7 +306,15 @@ function paragraphMarkdown(block: EditorNode): string {
         if (range.href === undefined)
           throw new Error("Link mark has no destination");
         children.push({ type: "link", url: range.href, children: nested });
-      } else children.push({ type: format.type, children: nested });
+      } else {
+        const span: PhrasingContent = { type: format.type, children: nested };
+        if (
+          span.type === "emphasis" &&
+          recipients.some((range) => range.start < last && range.end > first)
+        )
+          asterisk.add(span);
+        children.push(span);
+      }
       offset = last;
     }
     children.push(...content(offset, end, depth + 1, marked, linked));
@@ -326,6 +347,19 @@ function paragraphMarkdown(block: EditorNode): string {
       ? value.replace(/[:.@]/g, (char) => `&#${char.charCodeAt(0)};`)
       : value;
   };
+  // The stock handler reads its marker from the serializer options, so swap
+  // the option for the span being written rather than reimplementing its
+  // flanking encoding.
+  const emphasis: Handle & { peek?: Handle } = (node, parent, state, info) => {
+    const previous = state.options.emphasis;
+    state.options.emphasis = asterisk.has(node) ? "*" : "_";
+    try {
+      return defaultHandlers.emphasis(node, parent, state, info);
+    } finally {
+      state.options.emphasis = previous;
+    }
+  };
+  emphasis.peek = (node) => (asterisk.has(node) ? "*" : "_");
   const tree: Root = {
     type: "root",
     children: [
@@ -336,7 +370,12 @@ function paragraphMarkdown(block: EditorNode): string {
   return toMarkdown(tree, {
     extensions: [strikethrough],
     unsafe: [{ character: "|", inConstruct: "spoiler" }],
-    handlers: { text: rawText, delete: strike, spoiler: spoilerMarkdown },
+    handlers: {
+      text: rawText,
+      delete: strike,
+      emphasis,
+      spoiler: spoilerMarkdown,
+    },
     strong: "*",
     emphasis: "_",
   }).slice(0, -1);

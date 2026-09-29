@@ -732,6 +732,30 @@ it("opens a code block from a typed fence on plain Enter instead of sending, the
   expect(h.input().querySelector("pre")).toBeNull();
 });
 
+it("sends a pasted fenced block verbatim on Enter instead of opening a block from its closing fence", async () => {
+  const h = mount();
+  act(() => {
+    h.input().focus();
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        items: [],
+        getData: (type: string) =>
+          type === "text/plain" ? "```\ncode\n```" : "",
+      },
+    });
+  });
+  expect(h.input()).toHaveValue("```\ncode\n```");
+  await h.user.keyboard("{Enter}");
+  expect(h.input().querySelector("pre")).toBeNull();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "```\ncode\n```",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+});
+
 it("prefixes thread replies with the selected media time and clears it after send", async () => {
   const clearMediaTime = vi.fn();
   const h = mount({
@@ -2288,6 +2312,27 @@ it.each(["bullet_list", "ordered_list", "code_block"] as const)(
     expect(screen.getByText("Editing message")).toBeVisible();
   },
 );
+
+it("saves an edited fenced message on Enter instead of opening a block from its closing fence", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage({ content: "```js\ncode\n```" })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("```js\ncode\n```");
+  act(() => {
+    h.input().setSelectionRange(10, 10);
+    h.input().insertText("!");
+    const end = h.input().value.length;
+    h.input().setSelectionRange(end, end);
+  });
+  fireEvent.keyDown(h.input(), { key: "Enter", keyCode: 13 });
+  expect(h.input().querySelector("pre")).toBeNull();
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    "```js\ncode!\n```",
+    "c".repeat(64),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
 
 it("saves only once, locks until delivery, and restores the new-message composer on acceptance", () => {
   const h = mount({}, undefined, first.pubkey);

@@ -1017,8 +1017,13 @@ export function EditableInput({
           ) {
             const conversion = editor.state.tr;
             if (applyComposerInlineInput(conversion, text)) {
+              const unconverted = editor.state;
               editor.dispatch(closeHistory(conversion).scrollIntoView());
-              separateHistory = true;
+              // Escapes in the serialized form can carry the conversion past
+              // maxLength, and the normalize filter then drops it. Only a
+              // conversion that landed is its own undo step; otherwise the
+              // next keystroke must not start a new group.
+              if (editor.state !== unconverted) separateHistory = true;
             }
           }
           return true;

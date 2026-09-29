@@ -663,9 +663,11 @@ event-local and are not substituted inside links or code.
 Authenticated live traffic reconciles through the same session. Channel creation is not
 implemented. In the composer, a line holding only ```` ``` ```` or `~~~`, optionally followed by a
 language, becomes a code block when Enter or Shift+Enter follows it, and that Enter does not send;
-the language stays on the sent fence. Shift+Enter on an empty last line leaves the block. Fences
-inside an existing code block, and pasted fences, stay literal text and still render as code once
-sent. Typing an inline span (`**bold**` or `__bold__`, `_italic_` or `*italic*`, `~~strike~~`,
+the language stays on the sent fence. Shift+Enter on an empty last line leaves the block. Only a
+fence that opens a block converts: a fence typed inside an existing code block stays literal, and
+so does pasted or restored fenced text, including its closing fence line, so Enter after a pasted
+or edited closing fence sends or saves as usual and the text still renders as code once sent.
+Typing an inline span (`**bold**` or `__bold__`, `_italic_` or `*italic*`, `~~strike~~`,
 `` `code` ``) converts it to formatting as the closing delimiter is typed, and one undo restores
 the typed characters. A single `~` never strikes, and pasted or restored delimiters stay literal
 text that still renders once sent. Reply counts open a bounded thread view; attachments are

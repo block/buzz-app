@@ -4,41 +4,28 @@ Status: Draft v0.1 — seeking direction feedback, not line edits.
 
 ## Problem
 
-Any plugin that displays, references or selects a person can need two capabilities:
+Plugins that display owners, select assignees or address messages need to:
 
-- **Identity resolution:** given an account identifier from another system,
-  identify the person and their display name.
-- **Person discovery:** given a name or search query, find people and the account
-  identifiers the plugin can use for them.
+- **Resolve identity:** turn an external account into a person and display name.
+- **Discover people:** search for someone and obtain an account usable by the plugin.
 
-Examples include displaying an owner, selecting an assignee or choosing a message
-recipient. Each plugin owns what it does with the selected person; it should not
-also need its own directory integration, credentials, indexing and cache. Buzz’s
-existing profile and identity-naming services resolve Nostr identities; they do
-not provide organizational person search or external-account mappings.
+Each plugin should not need its own directory credentials, fetching and cache.
+Buzz’s Nostr profile and naming services do not provide organizational person
+search or external-account mappings.
 
 ## Chosen approach
 
-The Directory plugin provides person discovery and identity resolution through
-`directoryV1`, owning configuration, authentication, fetching and caching.
-Consumers use the shared API while retaining ownership of their features and
-saved selections. A plugin that can operate without Directory uses an optional
-child `ctx.inject(["directoryV1"], …)` scope and falls back to its existing names
-and inputs; a plugin that requires it declares `directoryV1` in top-level `inject`.
-Organizations replace the provider plugin while preserving the consumer contract;
-Buzz needs no additional runtime service registry.
+A replaceable Directory plugin provides `directoryV1` and owns configuration,
+authentication, fetching and caching. Consumers keep their features and saved
+selections. Optional consumers retain existing names and inputs without Directory;
+required consumers depend on its service registration.
 
-The example below applies these capabilities to a review tool; the service does
-not own review queues, assignments or messaging. Organization charts, directory
-writes, multiple simultaneous providers and changes to Nostr naming are out of
-scope. This PR is documentation only; all API names and implementation work below
-are proposed.
+**Build the provider and first consumer integration. Extract no built-in Buzz
+service.** This PR proposes the design only. Organization charts, directory writes,
+multiple simultaneous providers and Nostr naming changes are out of scope.
 
-**Implementation scope:** build the Directory provider and its consumer integration;
-reuse Buzz's plugin infrastructure in place. **No built-in Buzz service is proposed
-for extraction.** In the diagram, **BUILD** means new code, **REUSE** means existing
-code that stays with its current owner, **EXTERNAL** means outside this project,
-and **LATER** means outside the first delivery.
+Diagram labels: **BUILD** = new code; **REUSE** = existing owner; **EXTERNAL** =
+existing data source outside this project; **LATER** = outside the first delivery.
 
 ```mermaid
 flowchart TB
@@ -70,63 +57,23 @@ flowchart TB
   class source,consumers outside
 ```
 
-The service belongs to the active provider plugin. Replacing that plugin preserves
-the API used by consumers. Disabling it stops the optional child scope; the
-consumer’s existing features and saved selections remain available. Required
-consumers follow the existing activation wait and timeout described below.
+| Area | Work and ownership |
+| --- | --- |
+| Directory | Build the shared API, person index, cache, packaged source settings, credential-command integration and status/refresh card. |
+| Consumers | Build lookup/search integration and cleanup; retain feature state, saved selections and fallback inputs. Add other consumers as needed. |
+| Buzz infrastructure | Reuse [runtime/Cordis](../src/plugins/runtime.ts), plugin installation and [settings-card registration](../src/features/settings/service.ts). No new registry, credential store or HTTP subsystem. |
+| Nostr identities | Retain the [profile directory](../src/features/relay/profile-directory.ts) and [identity-naming service](../src/features/identity-names/service.ts); neither becomes `directoryV1`. |
+| Organization directory | Connect to an existing source; do not build a directory server. |
 
-| Area | Proposed work | Existing code reused or retained |
-| --- | --- | --- |
-| Directory provider and `directoryV1` | **Build** the shared contract, person search/account index, cache and provider lifecycle. | Register the service through existing Cordis APIs; no new host registry. |
-| Provider configuration and authentication | **Build** packaged source settings, credential-command integration and a status/refresh card. | Reuse [settings-card registration](../src/features/settings/service.ts) and the existing desktop host commands/requests described below. Credentials stay in memory; no new credential store or HTTP subsystem. |
-| Consumer integration | **Build** lookup/search UI wiring and dependency-scoped cleanup for the first consumer. | Keep the consumer's features, saved selections and fallback inputs in that plugin. Other integrations follow only when needed. |
-| Buzz plugin infrastructure | **Reuse in place.** | [Plugin runtime](../src/plugins/runtime.ts), Cordis registration/injection/disposal, and plugin installation remain host-owned. |
-| Built-in Nostr identities | **Retain in Buzz; do not extract or wrap as `directoryV1`.** | [Profile directory](../src/features/relay/profile-directory.ts) and [identity naming](../src/features/identity-names/service.ts) keep their Nostr/community responsibilities. |
-| Organization directory | **External dependency.** | Connect to an existing data source; do not build a directory server. |
+Migrating a consumer’s local directory code is separate from extracting Buzz
+services. [Identity Naming](../src/bundled/identity-naming/index.ts) remains a Nostr
+naming-policy plugin.
 
-Moving a consumer's existing directory-specific fetch/cache code into the provider,
-if present, is plugin-local migration. It is not an extraction of Buzz's built-in
-profile or identity services. The new abstraction describes organizational people
-and external accounts; those existing services retain their current contracts.
+## Service contract [deep]
 
-## Existing support [sketch]
-
-Checked against public `main` on 2026-09-29; the host API source links identify
-the checked revision.
-
-- [Plugin runtime](../src/plugins/runtime.ts) forwards `module.inject` to Cordis.
-  The pinned fork treats every declared dependency as required; object values are
-  intercept configuration, not optional-dependency metadata. A missing required
-  service leaves the plugin starting until Buzz’s activation timeout fails it.
-- `ctx.inject(dependencies, callback)` creates a child scope that starts when its
-  dependencies appear and stops when they disappear. Keeping Directory out of
-  an optional consumer’s top-level dependencies lets the rest of the plugin stay
-  active.
-- `ctx.provide(name, implementation)` registers a service for the provider’s
-  scope. Cordis rejects a second live registration and removes it on disposal.
-- [Identity Naming](../src/bundled/identity-naming/index.ts) registers a Nostr
-  naming policy with `identityNames`; it is separate from this person directory.
-- The current [PluginManifest](https://github.com/block/buzz-app/blob/14a2e7ed585b130315629ded39d1b83b05eb2a53/src/plugins/api.ts)
-  supports `host.commands` and `host.networkOrigins`. The existing
-  [host service](https://github.com/block/buzz-app/blob/14a2e7ed585b130315629ded39d1b83b05eb2a53/src/features/host/service.ts)
-  provides `ctx.host.runCommand` and `ctx.host.request` to installed desktop
-  plugins. Reuse these operations with Directory's own declarations; the host
-  does not provide a shared credential store or another plugin's credentials.
-  Browser transport is not supplied by this capability and is not added here.
-
-Standalone assertions against pinned Cordis verified provider plugins appearing,
-disappearing, being replaced and being disposed at shutdown, with the consumer’s
-parent starting once. These verify the dependency mechanism only, not the proposed
-API or authenticated Buzz behavior.
-
-## Service and identity contract [deep]
-
-The identity shape, account namespaces and service name need agreement before
-independently distributed plugins adopt them. The shared contract contains types
-only; consumers do not import the provider’s implementation.
-The synchronous API below is provisional until source feasibility and search
-latency are verified in open questions 2–3. Do not freeze or implement the contract
-before those checks; a query-only source may require an asynchronous API instead.
+**The synchronous API is provisional.** Resolve source feasibility and latency
+in questions 2–3 before agreeing or implementing it. A query-only source may
+require an asynchronous API.
 
 ```ts
 export type DirectoryPerson = Readonly<{
@@ -155,59 +102,37 @@ export interface DirectoryV1 {
 }
 ```
 
-`id` identifies a person in transient UI lists and selections. It is opaque and
-unique within one provider and authorization context: the Buzz profile, directory
-account and source configuration. Replacement may change it. `displayName` is
-presentation only. Consumers persist the external account they already understand,
-not a person id or display name.
-The directory supplies identity information; the consumer decides which external
-account is meaningful for its action and preserves its existing storage format.
+**Identity.** `id` is an opaque key for transient lists/selections, scoped to the
+provider and authorization context: Buzz profile, directory account and source
+configuration. Replacement may change it. Names are presentation only. Consumers
+choose the account relevant to their action and persist that account in their
+existing format, never a person ID or display name.
 
-An account namespace identifies its authority and identifier kind. The initial
-v1 mapping is `github.com/login`, with case-insensitive lookup. GitHub Enterprise
-accounts belong to a different authority and cannot be treated as public GitHub
-accounts. Unknown namespaces return no match; additional namespaces require an
-explicit contract addition. This limits the initial implementation, not the
-person-discovery and identity-resolution responsibilities of the service.
-Providers return account identifiers and display names as supplied by the source.
-Consumers compare `github.com/login` selections case-insensitively with saved
-accounts before adding them, preserving their existing storage format.
+**Accounts.** Namespaces identify authority and identifier kind. V1 starts with
+`github.com/login`; this limits initial support, not the service’s responsibility.
+GitHub Enterprise is a separate authority. New namespaces need an explicit
+contract addition. Return names/logins as supplied; compare GitHub logins
+case-insensitively for lookup and before adding saved selections.
 
-Lookup and search synchronously read the current indexed snapshot, including
-while a refresh is loading or has failed; neither starts a network request.
-Status describes the latest fetch, not permission to read cached data. Loading
-keeps the last successful snapshot; before the first success it is empty.
-Missing or conflicting mappings return no match.
-Search trims queries and matches directory names and account logins without case
-sensitivity. Empty queries return no results; results have a stable order for the
-same query, namespace and snapshot. With `namespace`, include only people with an
-unambiguous account in that namespace, filtering before the result limit. An
-unknown namespace returns no results. Without it, return all matching people,
-including those without an account the consumer can use; the consumer decides
-whether they are selectable. The optional filter is part of the initial v1
-contract; making it required later would be a breaking change.
-`limit` is an upper bound, not a promised result count.
-The initial provider caps results at 20 and clamps positive integer limits to
-that cap; invalid limits throw `RangeError`. Start without debounce and measure
-input latency before adding it. Consumers call constant-time `lookup` per item;
-there is no additional batch method.
+| Operation | Contract |
+| --- | --- |
+| `lookup` | Constant-time indexed read. Missing, conflicting or unknown-namespace mappings return no match. No batch method. |
+| `search` | Trim queries; match names/logins case-insensitively. Empty query → no results. Stable order for the same query, namespace and snapshot. |
+| Namespace filter | Keep only unambiguous accounts in that namespace **before** limiting results. Unknown namespace → no results. Omitted filter → all matching people, including those without usable accounts; consumers decide selectability. Making the filter required later breaks v1. |
+| Result limit | An upper bound. Initially clamp positive integers to 20; invalid limits throw `RangeError`. No debounce initially; measure latency first. |
+| Snapshot reads | Lookup/search never fetch. Read the current snapshot during loading or failure; retain prior successful data, or empty data before first success. Status does not gate reads. |
+| Change notification | `snapshot()` stays stable until data/status changes. `subscribe` notifies afterward and returns an unsubscribe function. |
+| Status | `loadedAt` is the last successful load in epoch milliseconds, absent before success. `failure` is sanitized text, never raw responses or credentials. Publish the service before fetching so loading does not delay activation. |
 
-`snapshot()` is a stable revision until data or status changes; `subscribe`
-notifies after either changes and returns an unsubscribe function. `loadedAt` is
-epoch milliseconds for the last successful load, absent before the first success.
-`failure` is sanitized user-facing text, never raw responses or credentials.
-The provider publishes its service before starting the initial fetch, so loading
-data does not delay plugin activation.
+The service name versions the contract: v2-only providers cannot satisfy v1
+consumers. Breaking changes require a new name and continued v1 support during
+migration; plugin `apiVersion: 1` does not negotiate services. Distribute shared
+types, not provider implementation, through Directory’s authoring files by
+default; confirm the location in question 1.
 
-The service name carries the contract version. A v2-only provider is unavailable
-to a consumer requesting `directoryV1`; breaking changes require a new name and
-continued v1 support during migration. `apiVersion: 1` does not negotiate service
-features. Proposed default: distribute a shared type-only contract with the
-Directory plugin’s authoring files; confirm its durable location before coding.
+## Dependencies and replacement [deep]
 
-## Optional lifecycle and provider replacement [deep]
-
-Illustrative consumer wiring, retaining the plugin’s required services:
+Optional consumers use a child scope; their other required services remain:
 
 ```ts
 export const inject = ["react", "pages"];
@@ -219,215 +144,150 @@ export function apply(ctx: Context) {
 }
 ```
 
-`attachDirectory` subscribes to the service and uses `scope.effect` cleanup to
-unsubscribe and clear displayed directory names and search results. Lookup and
-search are synchronous; no separate asynchronous consumer lookup lifecycle is
-needed. The consumer’s own requests, feature state and saved selections remain
-owned by its parent scope.
+`attachDirectory` subscribes and uses `scope.effect` cleanup to unsubscribe and
+clear directory-derived UI. Parent requests, feature state and saved selections
+remain active. The child starts when Directory appears, without remounting the
+parent; synchronous reads need no asynchronous consumer lookup lifecycle.
 
-| Directory state | Optional consumer behavior |
+Required consumers declare `directoryV1` in top-level `inject`. All entries are
+required in pinned Cordis; object values configure interception, not optionality.
+Registration permits activation **before data is ready**. No required consumer
+ships in the first delivery.
+
+| Directory condition | Optional consumer | Required consumer |
+| --- | --- | --- |
+| Absent, disabled, incompatible or activation failed | Existing names/inputs; no persistent directory error. | Wait for registration; timeout behavior below. |
+| Unconfigured | Fallback; status belongs to Directory settings. | Direct users to settings; unresolved-person actions unavailable. |
+| Initial load / initial failure | Fallback; Directory shows loading or offers retry. | Show loading or retry; unresolved-person actions unavailable. |
+| Ready | Resolved names and person search. | Use results; unrelated operations remain the consumer’s responsibility. |
+| Refresh loading / failed with cache | Keep cached results in the same authorization context; show failure/freshness without blocking existing features. | Same cached-data behavior. |
+| Disabled or replaced after use | Clear derived UI; preserve features/selections. | Return to `starting`; timeout may require retry. |
+
+For replacement in Settings → Plugins, disable the old provider, await disposal,
+then enable the new one. `ctx.provide` is scope-owned and removed on disposal.
+Duplicate registration fails visibly while the existing provider keeps serving;
+a disposal timeout never permits overlap. At cold start the first registration
+serves, with no guaranteed ordering. Disable the unwanted provider explicitly.
+
+A required consumer missing its service fails after the current **10-second
+activation timeout**. Recovery then needs explicit disable/enable or reload;
+restoring Directory alone is insufficient.
+
+## Source, credentials and cache [deep]
+
+Reuse the installed-desktop-plugin capabilities already declared by
+[PluginManifest](https://github.com/block/buzz-app/blob/14a2e7ed585b130315629ded39d1b83b05eb2a53/src/plugins/api.ts)
+and exposed through the [host service](https://github.com/block/buzz-app/blob/14a2e7ed585b130315629ded39d1b83b05eb2a53/src/features/host/service.ts).
+These source links pin the public `main` revision checked on 2026-09-29.
+Browser transport is unavailable through this capability and is not added here.
+
+**Credentials and configuration**
+
+1. Package non-secret source URL/options with the provider; declare HTTPS origins
+   and the credential command in its manifest.
+2. On activation, call `ctx.host.runCommand(commandId)`. Validate output and account
+   identity before using `ctx.host.request` for declared-origin requests.
+3. Keep credentials in provider memory; never preferences, browser storage, logs
+   or `DirectoryV1`. The external tool manages its own login/session.
+4. Command failure or expiry produces sanitized failure status. Explicit retry
+   reacquires credentials; an account change clears the old snapshot first.
+   Disposal clears credentials.
+
+Source-setting changes require a provider update/reload. The first settings card
+offers status and refresh/retry, not persistent editing. Buzz’s settings cards
+store no configuration or credentials; this approach needs no new store and uses
+no consumer token. Plugins are trusted same-process code; injection is not access
+control. Escape display names; never authorize actions from names or mappings.
+
+**Fetch and cache rules**
+
+| Concern | Decision |
 | --- | --- |
-| Absent, disabled, incompatible version or activation failure | Existing names and inputs; no persistent directory error. |
-| Present, unconfigured or initial load pending | Same fallback; Directory’s settings own configuration/loading status. |
-| Ready | Resolved names and person search for the consumer’s features. |
-| Initial fetch failed | Existing names and inputs; Directory reports the error and offers refresh. |
-| Refresh failed with cached data | Retain cached names for the same authorization context; expose failure/freshness without blocking the consumer’s existing features. |
-| Disabled or replaced after use | Clear directory-derived UI immediately; keep feature state and saved selections. |
+| Host limits | Reuse the [30-second request deadline and 16 MiB UTF-8 response cap](https://github.com/block/buzz-app/blob/14a2e7ed585b130315629ded39d1b83b05eb2a53/src-tauri/src/host_request.rs). No second timeout policy. Per-request limits do not bound a paginated refresh; question 3 must establish total bounds and supported size. Pagination is not assumed. |
+| Trigger / freshness | Fetch on configuration/activation; later refreshes and retries are manual. No timer. Settings labels `loadedAt` age over 24 hours stale; age alone neither evicts data nor fetches. |
+| Shared refresh | Concurrent calls share one request. Expected failures update status and settle `refresh()` without rejection; subscribers observe status. Success replaces the snapshot, including empty success. Failure retains data only in the same authorization context. |
+| Isolation / invalidation | Scope cache to profile/account/source. Disposal, reload, credential replacement or scope change clears it and increments a generation. Discard older responses; invalidated refreshes settle without publishing. Never reuse another account’s data. |
+| Cancellation | Host requests have no caller cancellation; native work may finish or reach its deadline. No host cancellation API is proposed. |
+| Consumer disconnect | Clear that consumer’s transient names/search on its own disconnect/account change; leave the shared provider cache for other consumers. |
 
-Required injection waits for service registration, not usable directory data.
-Once registered, a required consumer must handle the same data states: direct
-users to Directory settings when unconfigured, show loading until the first
-snapshot, and offer retry after initial failure. Existing cached results remain
-usable during refresh or refresh failure. Operations needing a resolved person
-stay unavailable until their input can be resolved; unrelated operations are the
-consumer's responsibility. No required consumer is part of the first delivery.
-
-Enable Directory later and the child scope starts without remounting the consumer.
-For replacement in Settings → Plugins, disable the old provider, await its disposal,
-then enable the new one. Cordis rejects overlapping registrations: the existing
-provider keeps serving and the new plugin fails activation visibly in Settings →
-Plugins. A disposal timeout does not authorize overlapping providers. With two
-enabled providers at cold start, the first registration wins; no provider ordering
-is guaranteed.
-Disable the unwanted provider explicitly rather than relying on startup order.
-Required consumers return to `starting` when the service disappears. After the
-current 10-second activation timeout they fail and need an explicit disable/enable
-or reload; restoring Directory alone does not recover a timed-out consumer.
-
-## Fetching, credentials and cache [deep]
-
-Directory owns fetching and authenticates independently of its consumers. No token
-passes through `DirectoryV1`. Package the first provider's non-secret source URL
-and source options with the provider, and declare its HTTPS origins and credential
-command in its manifest. On activation, use `ctx.host.runCommand(commandId)` to
-obtain credentials, then use `ctx.host.request` for declared-origin requests.
-The provider validates the command output and identifies the directory account
-before loading data. Keep credentials only in provider memory; never write them
-to preferences, browser storage or logs. The command's underlying login/session
-remains managed by that external tool.
-
-Command failure or expired credentials produces a sanitized failed status and an
-explicit retry action. Retry reacquires credentials through the declared command;
-an account change clears the old snapshot before loading under the new account.
-Disposal clears credentials. Source-setting changes require a provider update and
-reload; the first settings card displays status and offers refresh/retry, without
-editable persistent settings. Choose the concrete source and command in open
-question 2. Plugins are trusted same-process code; injection is not an
-access-control mechanism.
-
-Initial defaults: an in-memory snapshot, a 24-hour freshness threshold, and the
-existing host's
-[30-second request deadline](https://github.com/block/buzz-app/blob/14a2e7ed585b130315629ded39d1b83b05eb2a53/src-tauri/src/host_request.rs).
-Reuse that deadline instead of adding a second timeout policy.
-The same host limits each response to 16 MiB of UTF-8 text. Source validation must
-prove a complete snapshot fits the transport, including any pagination and an
-explicit total refresh bound; the per-request deadline does not bound a sequence
-of requests. Record the supported person count, transfer size and total load time
-before agreeing the synchronous contract. Pagination support is not assumed.
-Fetch when the provider is configured or activated; subsequent refreshes are
-explicit user actions, including retries after failure. No periodic refresh is
-proposed initially. Settings computes age from `loadedAt` and labels data older
-than 24 hours stale; expiry alone neither evicts the snapshot nor starts a request.
-Concurrent refresh calls share one request. Expected fetch failures update status
-and settle `refresh()` without rejection; subscribers observe the new status.
-Successful empty data replaces the old snapshot; a failed refresh retains it only
-within the same authorization context. Refresh cadence and indexing details stay
-inside Directory, shared by every consumer.
-
-Scope the cache to the Buzz profile, directory account and source configuration.
-Disposal, reload, credential replacement or a scope change clears cached entries
-and increments a request generation. The current host request API exposes no
-caller cancellation; invalidate outstanding requests and discard their late
-responses. Native work may continue until completion or the host deadline; an
-invalidated refresh settles without publishing. No host cancellation API expansion
-is proposed. Never reuse one account’s cache for another.
-An independently authenticated consumer also clears transient names/search on its
-own disconnect or account change without clearing the provider cache used by others.
-
-Persist no directory records in host preferences, relay events or consumer state.
-Buzz has no plugin configuration or credential store; settings cards register UI
-only. Packaged source settings and command-supplied, in-memory credentials avoid
-requiring one for the first provider.
-Consumers escape display names and never use names or mappings for authorization.
-
-**Risks and diagnostics.** Failed loads, stale data and omitted mappings can
-reduce directory coverage. Diagnostics contain counts/status, not person records
-or credentials.
-The Directory settings card shows the last refresh result, `loadedAt` age,
-indexed-person count and omitted-conflict count. These local signals expose
-failed loads, stale data and rejected mappings without exporting person records.
+Directory owns refresh/indexing and keeps records in memory, never host
+preferences, relay events or consumer state. Its settings card shows refresh
+result, load age, indexed-person count and omitted-conflict count. These reveal
+failed loads, stale data and missing mappings without logging people or credentials.
 
 ## Example and edge cases [sketch]
 
-For example, a pull-request review plugin can resolve author names and let users
-choose priority accounts (VIPs). A queue row calls
-`lookup("github.com/login", authorLogin)` and shows the returned
-name or the GitHub login. The panel subscribes once, so a completed refresh updates
-names without refetching GitHub. In the VIP picker, the consumer calls
-`search(query, 20, "github.com/login")`, so people without a usable GitHub account
-do not consume result slots. The user explicitly selects a result, and the review
-plugin saves its GitHub login in its existing VIP list. The directory owns neither
-that list nor its meaning. Reloading or disabling Directory leaves the saved
-account usable; manual GitHub entry remains available without person search.
+A review plugin shows `lookup("github.com/login", authorLogin)`’s name or the
+GitHub login. One subscription updates names after refresh without refetching
+GitHub. Its priority-account (VIP) picker calls
+`search(query, 20, "github.com/login")`, so unusable accounts do not occupy result
+slots. The user selects a person; the plugin saves their GitHub login in its
+existing list. Directory neither owns that list nor its meaning. Disabling it
+preserves saved accounts and manual entry.
 
-1. **Ambiguous query versus conflicting mapping.** Several valid people may match
-   a query; show their account logins and require explicit selection. If one
-   account maps to several people, or one person maps to multiple accounts in
-   this namespace, detect that conflict in the source rows while indexing,
-   before constructing each person's `accounts` record. Omit conflicting mappings
-   from lookup and selectable search results. This initial contract requires 1:1
-   mappings. Never infer the chosen person from a display name. Count omissions
-   in Directory diagnostics; no public omission-count field initially.
-2. **Disable or change credentials during refresh.** Clear the relevant cached
-   and displayed data, invalidate the request and reject its late result. After a
-   provider swap the consumer subscribes only to the replacement. GitHub queues,
-   manual VIP entry and previously saved VIPs continue to work.
+1. **Ambiguity vs conflict.** Show account logins when several people match;
+   require explicit selection, never infer from a name. While indexing source
+   rows—before constructing `accounts`—detect one account mapping to many people
+   or one person mapping to multiple accounts in a namespace. V1 requires 1:1:
+   omit those mappings from lookup/selectable search and count them in diagnostics.
+   No public omission-count field initially.
+2. **Disable/change credentials during refresh.** Clear affected cache/UI and
+   invalidate late results. After replacement, subscribe only to the new provider.
+   Existing queues, manual input and saved VIPs continue working.
 
 ## Delivery and verification [sketch]
 
-1. Verify the source and credential command, agree the contract, then implement
-   Directory's status/refresh UI and the first consumer’s integration in coordinated
-   PRs. Keep service types with their first implementation and consumer; no unused
-   host registry or alternate provider implementation is required.
-2. Deploy Directory before switching a consumer to the shared API. If it has local
-   directory fetching, caching and configuration, remove them; only one directory
-   implementation should execute per plugin version. Preserve the consumer’s
-   saved selections and feature-specific settings. Other plugins adopt the API
-   when needed.
-3. Verify the provider and the first consumer together in an authenticated desktop
-   host. Disable Directory to verify fallback. Roll back the consumer migration
-   independently if needed; saved selections require no conversion.
+1. Verify source/credential command and agree the contract. Implement the provider,
+   status/refresh UI, shared types and first consumer together; no unused registry
+   or alternate provider.
+2. Deploy Directory before migrating the consumer. Remove local directory
+   fetch/cache/configuration so only one implementation runs per plugin version;
+   preserve feature settings and saved selections. Other consumers follow as needed.
+3. Verify both in an authenticated desktop host, including fallback when disabled.
+   Consumer rollback requires no saved-selection conversion.
 
-Colocated provider tests cover search/identity conflicts, namespace filtering
-before the cap, unfiltered people without accounts, unknown namespaces, empty
-data, command failure, credential reacquisition and account changes, initial and
-refresh failures, shared refreshes, credential isolation and late-response
-rejection. Consumer component tests cover explicit person selection, preference
-preservation, fallback and clearing stale displayed data. Host integration tests
-exercise actual plugin injection, duplicate-provider failure, enable/disable and
-replacement without restarting the consumer’s main scope. Control request
-completion with deferred operations. A focused desktop check verifies authentication,
-configuration and person selection; implementation and these checks remain
-future work, not validation supplied by this documentation PR.
+| Planned check | Coverage |
+| --- | --- |
+| Provider unit tests | Conflicts; namespace filtering before cap; unfiltered people without accounts; unknown namespaces; empty data; command/initial/refresh failures; credential reacquisition/isolation and account changes; shared refresh; late results. |
+| Consumer components | Explicit selection, preference preservation, fallback and clearing stale UI. |
+| Host integration | Actual injection, duplicate-provider failure, enable/disable/replacement without restarting the consumer parent. Control request completion with deferred operations. |
+| Desktop check | Authentication, configuration and person selection. |
 
-## Alternatives considered
+Implementation and these checks are future work. Existing standalone assertions
+against pinned Cordis verified provider appearance, disappearance, replacement and
+shutdown while the consumer parent starts once. They validate dependency mechanics,
+not the proposed API or authenticated provider.
 
-Add a host-owned directory registry similar to the
-[identityNames service](../src/features/identity-names/service.ts). Rejected:
-Cordis already supplies registration and disposal; another host owner and provider
-selection policy are unnecessary for one active provider.
-The cost is explicit child-scope wiring in each optional consumer and replacement
-of service handles and subscriptions whenever the provider changes.
+## Alternatives and trade-offs
 
-Persisting the directory snapshot would avoid a full fetch on every launch.
-The in-memory default avoids storing person records on disk and designing cache
-migration and deletion. Each launch therefore shows fallback data until loading
-finishes; the 24-hour freshness policy applies only within that running session.
-
-An account list per namespace would represent people with multiple accounts.
-The proposed single-account shape gives the first consumer one actionable account
-per person without an additional account picker. It excludes legitimate multiple
-accounts as well as conflicts; providers must omit those mappings in v1. Adopting
-lists later changes the public contract and requires a new version.
-
-An unversioned service name would avoid parallel registrations during migration,
-but independently released providers could then change behavior underneath older
-consumers. A versioned name makes incompatibility explicit, at the cost of
-maintaining both contracts during a breaking migration.
+| Alternative | Why choose the proposal; accepted cost |
+| --- | --- |
+| Host-owned directory registry | Cordis already registers/disposes one provider. Consumers must manage child scopes and replace handles/subscriptions on provider changes. |
+| Persisted snapshot | Memory avoids on-disk person records and cache migration/deletion. Every launch fetches again and shows fallback first; freshness applies within that session. |
+| Multiple accounts per namespace | One account gives the first consumer an actionable result without another picker. V1 excludes legitimate multi-account mappings; lists later require a new contract version. |
+| Unversioned service name | Versioned names protect independently released consumers. Breaking migration requires maintaining both contracts instead of silently changing existing behavior. |
 
 ## Open questions
 
-Dates are proposed decision deadlines, not delivery commitments.
+Dates are decision deadlines, not delivery commitments.
 
-1. Where should independently built plugins obtain the shared type-only contract?
-   Default: Directory’s authoring files. Re-exporting from `@buzz/author` requires
-   explicit approval for its FOUNDATION contract. **Owner:** Buzz plugin API
-   maintainer. **Needed:** 2026-10-02, before implementation.
-2. Which source URL, declared origins and credential command will ship with the
-   provider? Confirm command output, account identity and token expiry behavior
-   against the chosen source; no consumer token is assumed available. **Owner:**
-   Directory maintainer. **Needed:** 2026-10-02, before implementation.
-3. Can the chosen source supply a complete snapshot within the host response
-   limits and an agreed total refresh bound? Measure transfer size, load time,
-   and search latency at the declared supported person count. Decide any required
-   pagination and whether the synchronous API is viable before freezing it.
-   **Owner:** Directory maintainer. **Needed:** 2026-10-02, before contract
-   agreement or implementation. Failure requires revising this design first.
-4. Where is the organization-specific provider distributed and who maintains it?
-   Default: independently installed plugin; no private configuration in Buzz’s
-   public bundled catalog. **Owner:** Directory maintainer. **Needed:** 2026-10-09,
-   before rollout.
+| # | Decision needed | Owner | Deadline |
+| --- | --- | --- | --- |
+| 1 | Shared type distribution: default to Directory authoring files. Re-exporting from `@buzz/author` needs explicit FOUNDATION approval. | Buzz plugin API maintainer | 2026-10-02, before implementation |
+| 2 | Select source URL, origins and credential command; verify output, account identity and token expiry against that source. | Directory maintainer | 2026-10-02, before implementation |
+| 3 | Prove complete-snapshot feasibility: supported person count, transfer size, total load time/bound, pagination needs and search latency. Decide synchronous-API viability; revise the design first if it fails. | Directory maintainer | 2026-10-02, before contract agreement/implementation |
+| 4 | Provider distribution/maintenance: default to an independently installed plugin; keep private configuration out of Buzz’s public catalog. | Directory maintainer | 2026-10-09, before rollout |
 
 ## Reversibility
 
-| Decision | Classification | Cost if wrong |
+| Decision | Classification | Cost of changing |
 | --- | --- | --- |
-| Provider-scoped person ids; authority-scoped accounts; existing consumer storage formats | One-way | Changing identity semantics requires coordinated provider/consumer changes and possibly preference migration. |
-| Versioned `directoryV1` contract | One-way | Changing existing behavior breaks independently released consumers; introduce a new version. |
-| Plugin owns service registration, configuration, fetching and cache | Two-way | Ownership can move later while preserving the consumer contract. |
-| Optional consumer uses a child scope | Two-way | Local consumer wiring change; required dependency would remove fallback. |
-| One active provider, using Cordis duplicate rejection | Two-way | Multiple-provider selection needs a separate future design. |
-| Indexed lookup; 20 search results; no debounce initially | Two-way | Adjust provider internals/defaults after measuring; preserve the API contract. |
-| 24-hour freshness; explicit retry; existing host deadline | Two-way | Cache policy changes stay in the provider; request limits remain host-owned. |
-| In-memory cache and shared type-only authoring files | Two-way | Persistence or packaging can change separately; each needs its own compatibility review. |
-| Packaged source settings; command-supplied credentials held in memory | Two-way | A later editable-settings or credential-storage design changes the provider, not the directory consumer API. |
+| Provider-scoped IDs, authority-scoped accounts, existing storage formats | Costly to reverse | Coordinate consumers/providers; possible preference migration. |
+| Versioned `directoryV1` contract | Costly to reverse | Breaking behavior requires a new version for independent consumers. |
+| Plugin owns registration/configuration/fetch/cache | Reversible | Move ownership while preserving the API. |
+| Optional child scope | Reversible | Consumer wiring change; required dependency loses fallback. |
+| One active provider | Reversible | Multiple-provider selection needs another design. |
+| Indexed lookup, 20-result cap, no debounce | Reversible | Tune internals/defaults after measurement; preserve the contract. |
+| 24-hour freshness, manual retry, host deadline | Reversible | Provider owns cache policy; host owns request limits. |
+| Memory cache and type-only authoring files | Reversible | Persistence/packaging each need compatibility review. |
+| Packaged settings, command credentials in memory | Reversible | Later editing/storage changes the provider, not consumers. |

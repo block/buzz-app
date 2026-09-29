@@ -224,6 +224,22 @@ export function policyRelay({
             filters.flatMap((filter) => answer(communityOf(url), filter)),
           );
         }
+        if (filters.length === 2 && filters[1].kinds?.includes(13534)) {
+          // Identity archive consent: the target's profile plus the relay roster.
+          expect(filters).toEqual([
+            { kinds: [0], authors: [expect.any(String)], limit: 1 },
+            { kinds: [13534], authors: [relayAuthor], limit: 1 },
+          ]);
+          for (const filter of filters)
+            report.queries.push({
+              community: communityOf(url),
+              filter,
+              at: performance.now(),
+            });
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
         if (filters.length === 2 && filters[0].kinds?.includes(39000)) {
           // Exact channel authority lookup, distinct from sidebar preferences.
           const ids = filters[0]["#d"];
@@ -500,8 +516,23 @@ export function policyRelay({
               report.presencePublications.push({
                 community: this.community,
                 event: id,
+                at: performance.now(),
               });
-              queueMicrotask(() => emit(this, ["OK", id.id, true]));
+              queueMicrotask(() => {
+                emit(this, ["OK", id.id, true]);
+                for (const peer of sockets) {
+                  if (peer.community !== this.community) continue;
+                  for (const [wire, filters] of peer.routes)
+                    if (
+                      filters.some(
+                        (filter) =>
+                          filter.kinds.includes(20001) &&
+                          filter.authors?.includes(id.pubkey),
+                      )
+                    )
+                      emit(peer, ["EVENT", wire, id]);
+                }
+              });
               return;
             }
             if (kind === "EVENT" && acceptPublication) {
@@ -596,6 +627,28 @@ export function policyRelay({
             ),
           ),
       );
+    },
+    presence(community, event) {
+      let deliveries = 0;
+      for (const socket of sockets) {
+        if (socket.readyState !== 1 || socket.community !== community) continue;
+        for (const [id, filters] of socket.routes) {
+          if (
+            !filters.some(
+              (filter) =>
+                filter.kinds.includes(20001) &&
+                filter.authors?.includes(event.pubkey),
+            )
+          )
+            continue;
+          emit(socket, ["EVENT", id, event]);
+          deliveries++;
+        }
+      }
+      expect(
+        deliveries,
+        "presence must traverse the production demand-scoped REQ",
+      ).toBeGreaterThan(0);
     },
     observer(community, event) {
       let deliveries = 0;

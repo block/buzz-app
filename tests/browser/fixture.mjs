@@ -52,6 +52,7 @@ export const test = base.extend({
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
   dmLabels: [false, { option: true }],
+  agentPeers: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
@@ -90,6 +91,7 @@ export const test = base.extend({
       largeSidebar,
       iconCongestion,
       dmLabels,
+      agentPeers,
       tallMessages,
       membershipActivity,
       historyCounts,
@@ -162,6 +164,8 @@ export const test = base.extend({
         ),
       ]),
     );
+    // Kind 0 by author for keys a test creates; served on later profile reads.
+    const servedProfiles = new Map();
     const participants = largeSidebar
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
@@ -316,7 +320,7 @@ export const test = base.extend({
             sign(
               9,
               [["h", channel]],
-              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 4 : 1))}`,
+              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}`,
               readState ? peerKey : userKey,
               1700000100 + i,
             ),
@@ -602,6 +606,7 @@ export const test = base.extend({
         sortingSidebar,
         initialSidebarSort,
         dmLabels,
+        agentPeers,
         tallMessages,
         browserVersion: browser.version(),
         node: process.version,
@@ -639,6 +644,15 @@ export const test = base.extend({
         });
         return [sign(13535, [["-"]])];
       }
+      if (filter.kinds?.includes(13534)) {
+        // Relay-signed roster for archive consent; the viewer is a plain member.
+        expect(filter).toEqual({
+          kinds: [13534],
+          authors: [getPublicKey(relayKey)],
+          limit: 1,
+        });
+        return [sign(13534, [["member", viewer, "member"]])];
+      }
       if (filter.kinds?.includes(30617) || filter.kinds?.includes(30621)) {
         expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
@@ -649,7 +663,14 @@ export const test = base.extend({
         );
       if (filter.kinds?.includes(20001))
         return filter.authors.map((author) =>
-          sign(20001, [["p", author]], "online"),
+          sign(
+            20001,
+            [["p", author]],
+            report.presencePublications?.findLast(
+              (entry) =>
+                entry.community === community && entry.event.pubkey === author,
+            )?.event.content ?? "online",
+          ),
         );
       if (filter.kinds?.includes(30622))
         return channelLifecycle
@@ -699,13 +720,18 @@ export const test = base.extend({
                   ? lifecycleRole
                   : "member",
               ],
-              ...(dmLabels && id === "dm-peer"
-                ? [["p", participants[0], "", "member"]]
-                : dmLabels && id === "dm-group"
-                  ? participants.map((pubkey) => ["p", pubkey, "", "member"])
-                  : participants
-                      .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
-                      .map((pubkey) => ["p", pubkey, "", "member"])),
+              ...(agentPeers && channels.includes(id)
+                ? participants.map((pubkey) => ["p", pubkey, "", "member"])
+                : dmLabels && id === "dm-peer"
+                  ? [["p", participants[0], "", "member"]]
+                  : dmLabels && id === "dm-group"
+                    ? participants.map((pubkey) => ["p", pubkey, "", "member"])
+                    : participants
+                        .slice(
+                          dmIds.indexOf(id) * 8,
+                          (dmIds.indexOf(id) + 1) * 8,
+                        )
+                        .map((pubkey) => ["p", pubkey, "", "member"])),
             ]),
           );
       if (filter.kinds?.includes(39000))
@@ -838,6 +864,9 @@ export const test = base.extend({
       if (filter.kinds?.includes(0))
         return [
           profiles.get(community),
+          ...[...servedProfiles.values()].filter((event) =>
+            filter.authors?.includes(event.pubkey),
+          ),
           ...membershipKeys
             .filter((key) => filter.authors?.includes(getPublicKey(key)))
             .map((key) =>
@@ -858,6 +887,7 @@ export const test = base.extend({
                 0,
                 [],
                 JSON.stringify({
+                  ...(agentPeers && key !== peerKey ? { is_agent: true } : {}),
                   display_name: [
                     "Alice Fixture",
                     "Bob Fixture",
@@ -1578,6 +1608,17 @@ export const test = base.extend({
                 client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           return event;
         },
+        presence(status, community = "primary") {
+          const event = sign(
+            20001,
+            [],
+            status,
+            peerKey,
+            Math.floor(Date.now() / 1000),
+          );
+          relay.presence(community, event);
+          return event;
+        },
         participants,
         viewer,
         relay,
@@ -1600,6 +1641,12 @@ export const test = base.extend({
           );
           relay.observer(community, event);
           return { event, plaintext, agent };
+        },
+        // Answer later kind-0 reads for this key; no live delivery is modeled.
+        serveProfile(key, body) {
+          const event = sign(0, [], JSON.stringify(body), key);
+          servedProfiles.set(event.pubkey, event);
+          return event;
         },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.

@@ -203,6 +203,64 @@ it("opens the selected managed agent in the existing profile panel", async () =>
   );
 });
 
+it("focuses the Agents surface when the profile trigger was removed", async () => {
+  let deleteViewedAgent = async () => {};
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: ({ close }: { close: () => void }) => (
+      <button
+        type="button"
+        onClick={() => {
+          void deleteViewedAgent().then(close);
+        }}
+      >
+        Delete viewed agent
+      </button>
+    ),
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  const { f, control } = setup(
+    "connected",
+    undefined,
+    undefined,
+    undefined,
+    panels,
+  );
+  deleteViewedAgent = async () => {
+    await control.delete?.(f.agent.id, f.agent.revision);
+  };
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Delete viewed agent" }),
+  );
+
+  await waitFor(() => expect(card).not.toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByRole("region", { name: "Agents" })).toHaveFocus(),
+  );
+});
+
 it("offers View profile only for an identity in the selected community", async () => {
   const panel = {
     id: "profile",

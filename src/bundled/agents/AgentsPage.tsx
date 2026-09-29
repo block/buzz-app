@@ -56,6 +56,7 @@ export function AgentsPage({
     null,
   );
   const connection = useRelayConnection(relay);
+  const pageSurface = useRef<HTMLElement>(null);
   const registeredPanels = useSyncExternalStore(
     panels?.subscribe ?? noPanelSubscribe,
     panels?.snapshot ?? noPanelSnapshot,
@@ -70,8 +71,12 @@ export function AgentsPage({
   useEffect(() => {
     const before = previousProfile.current;
     previousProfile.current = profile;
-    if (before && !profile && before.trigger.isConnected)
-      before.trigger.focus();
+    if (before && !profile) {
+      const target = before.trigger.isConnected
+        ? before.trigger
+        : pageSurface.current;
+      target?.focus({ preventScroll: true });
+    }
   }, [profile]);
   useEffect(() => {
     if (profile && !registeredPanels.includes(profile.panel))
@@ -151,7 +156,7 @@ export function AgentsPage({
   return (
     <div className="h-full min-h-0">
       <PanelFrame companion={pageCompanion}>
-        <FullPageSurface aria-label="Agents">
+        <FullPageSurface aria-label="Agents" ref={pageSurface} tabIndex={-1}>
           <div className="flex h-full min-h-0 flex-col">
             <PanelHeader
               title="Agents"

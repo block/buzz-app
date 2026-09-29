@@ -1442,6 +1442,7 @@ export function createRelaySession(
     memberAdditions,
     presence,
     viewer: transport?.viewer,
+    relayAuthor: transport?.relayAuthor,
     authorizeAgentLog: transport?.authorizeAgentLog,
     scope: readScope,
     /** Verified new live-route messages, after reconciliation. Never history or local intent. */

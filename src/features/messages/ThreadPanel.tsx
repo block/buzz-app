@@ -369,7 +369,7 @@ function ThreadMessages({
           row?.dataset.messageId === messageId &&
           document.activeElement === row;
         // Ancestor expansion happens synchronously in a layout effect. Do not
-        // retain focus intent after this update (collapse, deletion, or unmount).
+        // retain focus intent after this update (deletion or unmount).
         queueMicrotask(() => {
           restore = false;
         });
@@ -395,16 +395,14 @@ function ThreadMessages({
     follow.current = false;
   }, []);
   const revealedAncestors = useRef(new Set<string>());
-  const deliberatelyCollapsed = useRef(new Set<string>());
   // A continuation may supply the parent of the visible reply. Commit its new
-  // ancestors before restoring geometry; never reopen a branch the reader closed.
+  // ancestors before restoring geometry; expanded branches stay open.
   useLayoutEffect(() => {
     const anchor = olderAnchor.current;
     if (!anchor || snapshot.status === "loading") return;
     const added = tree
       .ancestors(anchor.id)
       .filter((id) => !anchor.ancestors.includes(id));
-    if (added.some((id) => deliberatelyCollapsed.current.has(id))) return;
     if (added.length)
       setExpanded((current) => {
         if (added.every((id) => current.has(id))) return current;
@@ -589,9 +587,7 @@ function ThreadMessages({
       const added = tree
         .ancestors(anchor.id)
         .filter((id) => !anchor.ancestors.includes(id));
-      if (added.some((id) => deliberatelyCollapsed.current.has(id))) {
-        olderAnchor.current = undefined;
-      } else if (added.every((id) => expanded.has(id))) {
+      if (added.every((id) => expanded.has(id))) {
         const row = [
           ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
         ].find((row) => row.dataset.messageId === anchor.id);
@@ -688,16 +684,19 @@ function ThreadMessages({
     follow.current = false;
   };
   let previousReply: ChannelMessage | undefined = snapshot.root;
+  let previousParent: string | undefined;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
     return (tree.children.get(parent) ?? []).map((row) => {
       const children = tree.children.get(row.id);
-      const continuation = continuesMessageGroup(previousReply, row);
+      const continuation =
+        previousParent === parent && continuesMessageGroup(previousReply, row);
       const day =
         !previousReply ||
         new Date(previousReply.createdAt * 1000).toDateString() !==
           new Date(row.createdAt * 1000).toDateString();
       previousReply =
         children?.length && !expanded.has(row.id) ? undefined : row;
+      previousParent = parent;
       const descendants = branchReplies.get(row.id) ?? [];
       const unreadCount = descendants.filter(
         (reply) => session.unread.attention(channelId, reply.id).unread,
@@ -705,9 +704,8 @@ function ThreadMessages({
       const unreadLabel = unreadCount
         ? `${unreadCount} new in available replies`
         : undefined;
-      const message = (branchControl?: ReactNode) => (
+      const message = (
         <MessageRow
-          branchControl={branchControl}
           extensions={extensions}
           session={session}
           scope={scope}
@@ -721,6 +719,7 @@ function ThreadMessages({
           canOpenLink={canOpenLink}
           day={day}
           layout={continuation ? "continuation" : "thread"}
+          compactAvatar={depth > 0}
           retry={session.messages.retry}
           {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
           {...(onOpenMediaReview && rootId
@@ -743,7 +742,7 @@ function ThreadMessages({
 
           <ReplyBranch
             message={message}
-            collapsible={!!children?.length}
+            hasReplies={!!children?.length}
             layout={continuation ? "continuation" : "thread"}
             label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
             summary={
@@ -762,21 +761,10 @@ function ThreadMessages({
             }
             depth={depth}
             open={expanded.has(row.id)}
-            onOpenChange={(open) => {
+            onExpand={() => {
               follow.current = false;
               targetAnchor.current = undefined;
-              if (open) deliberatelyCollapsed.current.delete(row.id);
-              else deliberatelyCollapsed.current.add(row.id);
-              setExpanded((current) => {
-                const next = new Set(current);
-                if (open) next.add(row.id);
-                else {
-                  next.delete(row.id);
-                  for (const id of current)
-                    if (tree.ancestors(id).includes(row.id)) next.delete(id);
-                }
-                return next;
-              });
+              setExpanded((current) => new Set([...current, row.id]));
             }}
           >
             {expanded.has(row.id) && (
@@ -922,21 +910,14 @@ function ThreadMessages({
           <p className={styles.empty}>Original message unavailable.</p>
         ) : null}
         <ol>
-          {showOlderPageStatus &&
-            (snapshot.status === "loading" || snapshot.error) && (
-              <li className={styles.threadHistoryPageStatus}>
-                {snapshot.status === "loading" ? (
-                  <p role="status">Loading older replies…</p>
-                ) : (
-                  <>
-                    <p role="alert">{snapshot.error}</p>
-                    <Button type="button" onClick={retryThread}>
-                      Retry thread
-                    </Button>
-                  </>
-                )}
-              </li>
-            )}
+          {showOlderPageStatus && snapshot.error && (
+            <li className={styles.threadHistoryPageStatus}>
+              <p role="alert">{snapshot.error}</p>
+              <Button type="button" onClick={retryThread}>
+                Retry thread
+              </Button>
+            </li>
+          )}
           {renderReplies(undefined)}
         </ol>
         {requireReadyRoot &&
@@ -947,10 +928,7 @@ function ThreadMessages({
               to check the destination.
             </p>
           )}
-        {(snapshot.status === "loading" && !showOlderPageStatus) ||
-        (snapshot.direction !== "older" &&
-          snapshot.status === "ready" &&
-          snapshot.canLoadMore) ? (
+        {snapshot.status === "loading" && !rows.length ? (
           <p role="status">Loading thread…</p>
         ) : null}
         {snapshot.targetStatus === "unavailable" && (

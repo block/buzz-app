@@ -305,6 +305,10 @@ function ThreadMessages({
     },
     [],
   );
+  const olderAnchor = useRef<
+    { id: string; top: number; ancestors: readonly string[] } | undefined
+  >(undefined);
+  const olderDemand = useRef(false);
   const targetAnchor = useRef<number | undefined>(undefined);
   const selectedRow = useCallback(
     () =>
@@ -338,7 +342,7 @@ function ThreadMessages({
           row?.dataset.messageId === messageId &&
           document.activeElement === row;
         // Ancestor expansion happens synchronously in a layout effect. Do not
-        // retain focus intent after this update (collapse, deletion, or unmount).
+        // retain focus intent after this update (deletion or unmount).
         queueMicrotask(() => {
           restore = false;
         });
@@ -364,6 +368,20 @@ function ThreadMessages({
     follow.current = false;
   }, []);
   const revealedAncestors = useRef(new Set<string>());
+  // A continuation may supply the parent of the visible reply. Commit its new
+  // ancestors before restoring geometry; expanded branches stay open.
+  useLayoutEffect(() => {
+    const anchor = olderAnchor.current;
+    if (!anchor || snapshot.status === "loading") return;
+    const added = tree
+      .ancestors(anchor.id)
+      .filter((id) => !anchor.ancestors.includes(id));
+    if (added.length)
+      setExpanded((current) => {
+        if (added.every((id) => current.has(id))) return current;
+        return new Set([...current, ...added]);
+      });
+  }, [tree, snapshot.status]);
   // Exact targets may precede their ancestors in bounded history. Reveal every
   // available ancestor as it arrives; missing parents remain visible at the top.
   useLayoutEffect(() => {
@@ -476,10 +494,13 @@ function ThreadMessages({
     },
     [videoOwner, videoAttachment, rootId, openRootMedia],
   );
-  // The bridge walks oldest-first. Finish its bounded range automatically, rather
-  // than exposing transport pagination as a conversation control.
+  // Only legacy traversal is eager. Strict windows open at the newest page.
   useEffect(() => {
-    if (snapshot.status === "ready" && snapshot.canLoadMore)
+    if (
+      snapshot.direction !== "older" &&
+      snapshot.status === "ready" &&
+      snapshot.canLoadMore
+    )
       void view.loadMore();
   }, [view, snapshot]);
   useLayoutEffect(() => {
@@ -537,9 +558,29 @@ function ThreadMessages({
     if (
       (navigation && !rootTarget && revealed.current !== navigation.signal) ||
       (!positioned.current &&
-        (snapshot.status !== "ready" || snapshot.canLoadMore))
+        ((snapshot.status !== "ready" &&
+          !(
+            snapshot.status === "loading" &&
+            snapshot.readKind === "refresh" &&
+            snapshot.root
+          )) ||
+          (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
+    if (olderAnchor.current) {
+      const anchor = olderAnchor.current;
+      const added = tree
+        .ancestors(anchor.id)
+        .filter((id) => !anchor.ancestors.includes(id));
+      if (added.every((id) => expanded.has(id))) {
+        const row = [
+          ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
+        ].find((row) => row.dataset.messageId === anchor.id);
+        if (row)
+          element.scrollTop += row.getBoundingClientRect().top - anchor.top;
+        if (snapshot.status !== "loading") olderAnchor.current = undefined;
+      }
+    }
     if (targetAnchor.current !== undefined) {
       const offset = selectedOffset();
       if (offset !== undefined) {
@@ -550,7 +591,7 @@ function ThreadMessages({
       if (snapshot.status !== "loading" && !snapshot.canLoadMore)
         targetAnchor.current = undefined;
     }
-    // Initial positioning waits for automatic history loading. User intent wins;
+    // Initial positioning waits for one strict page or the legacy bounded walk.
     // subsequent live changes follow only while the reader is at the bottom.
     if (follow.current) element.scrollTop = element.scrollHeight;
     positioned.current = true;
@@ -569,6 +610,7 @@ function ThreadMessages({
     snapshot.targetStatus,
     snapshot.target,
     snapshot.canLoadMore,
+    snapshot.direction,
     snapshot.root,
     messageId,
     rows,
@@ -578,6 +620,8 @@ function ThreadMessages({
     rootTarget,
     revealed,
     selectedOffset,
+    tree,
+    expanded,
   ]);
   // An own send can land in the middle of a branch, not at the list bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
@@ -619,6 +663,7 @@ function ThreadMessages({
       clearTimeout(jumpTimer.current);
       jumpTimer.current = undefined;
     }
+    olderDemand.current = true;
     targetAnchor.current = undefined;
     setInitialPositioned(true);
     if (positioned.current) return;
@@ -626,16 +671,19 @@ function ThreadMessages({
     follow.current = false;
   };
   let previousReply: ChannelMessage | undefined = snapshot.root;
+  let previousParent: string | undefined;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
     return (tree.children.get(parent) ?? []).map((row) => {
       const children = tree.children.get(row.id);
-      const continuation = continuesMessageGroup(previousReply, row);
+      const continuation =
+        previousParent === parent && continuesMessageGroup(previousReply, row);
       const day =
         !previousReply ||
         new Date(previousReply.createdAt * 1000).toDateString() !==
           new Date(row.createdAt * 1000).toDateString();
       previousReply =
         children?.length && !expanded.has(row.id) ? undefined : row;
+      previousParent = parent;
       const descendants = branchReplies.get(row.id) ?? [];
       const unreadCount = descendants.filter(
         (reply) => session.unread.attention(channelId, reply.id).unread,
@@ -643,9 +691,8 @@ function ThreadMessages({
       const unreadLabel = unreadCount
         ? `${unreadCount} new in available replies`
         : undefined;
-      const message = (branchControl?: ReactNode) => (
+      const message = (
         <MessageRow
-          branchControl={branchControl}
           extensions={extensions}
           session={session}
           scope={scope}
@@ -659,6 +706,7 @@ function ThreadMessages({
           canOpenLink={canOpenLink}
           day={day}
           layout={continuation ? "continuation" : "thread"}
+          compactAvatar={depth > 0}
           retry={session.messages.retry}
           {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
           {...(onOpenMediaReview && rootId
@@ -681,7 +729,7 @@ function ThreadMessages({
 
           <ReplyBranch
             message={message}
-            collapsible={!!children?.length}
+            hasReplies={!!children?.length}
             layout={continuation ? "continuation" : "thread"}
             label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
             summary={
@@ -700,19 +748,10 @@ function ThreadMessages({
             }
             depth={depth}
             open={expanded.has(row.id)}
-            onOpenChange={(open) => {
+            onExpand={() => {
               follow.current = false;
               targetAnchor.current = undefined;
-              setExpanded((current) => {
-                const next = new Set(current);
-                if (open) next.add(row.id);
-                else {
-                  next.delete(row.id);
-                  for (const id of current)
-                    if (tree.ancestors(id).includes(row.id)) next.delete(id);
-                }
-                return next;
-              });
+              setExpanded((current) => new Set([...current, row.id]));
             }}
           >
             {expanded.has(row.id) && (
@@ -724,6 +763,49 @@ function ThreadMessages({
     });
   }
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
+  const captureOlderAnchor = (element: HTMLElement) => {
+    follow.current = false;
+    const row = [
+      ...element.querySelectorAll<HTMLElement>("ol [data-message-id]"),
+    ].find(
+      (row) =>
+        row.getBoundingClientRect().bottom >
+        element.getBoundingClientRect().top,
+    );
+    olderAnchor.current = row?.dataset.messageId
+      ? {
+          id: row.dataset.messageId,
+          top: row.getBoundingClientRect().top,
+          ancestors: tree.ancestors(row.dataset.messageId),
+        }
+      : undefined;
+  };
+  const loadOlder = () => {
+    const element = scroller.current;
+    if (
+      !element ||
+      !olderDemand.current ||
+      snapshot.direction !== "older" ||
+      snapshot.status !== "ready" ||
+      !snapshot.canLoadMore ||
+      element.scrollTop >
+        Math.max(80, (element.scrollHeight - element.clientHeight) * 0.2)
+    )
+      return;
+    olderDemand.current = false;
+    captureOlderAnchor(element);
+    void view.loadMore();
+  };
+  const showOlderPageStatus =
+    snapshot.direction === "older" &&
+    snapshot.readKind === "older" &&
+    !!snapshot.root;
+  const retryThread = () => {
+    if (showOlderPageStatus) {
+      if (scroller.current) captureOlderAnchor(scroller.current);
+      void view.loadMore();
+    } else void view.refresh();
+  };
   return (
     <MessageEditScope>
       <section
@@ -735,6 +817,13 @@ function ThreadMessages({
         onScroll={(event) => {
           if (!positioned.current) return;
           const element = event.currentTarget;
+          if (olderAnchor.current) {
+            const anchor = olderAnchor.current;
+            const row = [
+              ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
+            ].find((row) => row.dataset.messageId === anchor.id);
+            if (row) anchor.top = row.getBoundingClientRect().top;
+          }
           const bottom =
             element.scrollHeight - element.clientHeight - element.scrollTop <
             80;
@@ -742,9 +831,16 @@ function ThreadMessages({
           follow.current = bottom;
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);
+          loadOlder();
         }}
-        onWheel={keepReadingPosition}
-        onTouchMove={keepReadingPosition}
+        onWheel={(event) => {
+          keepReadingPosition();
+          if (event.deltaY < 0) loadOlder();
+        }}
+        onTouchMove={() => {
+          keepReadingPosition();
+          loadOlder();
+        }}
         onPointerDown={keepReadingPosition}
         onKeyDown={(event) => {
           if (
@@ -757,8 +853,14 @@ function ThreadMessages({
               "End",
               " ",
             ].includes(event.key)
-          )
+          ) {
             keepReadingPosition();
+            if (
+              ["ArrowUp", "PageUp", "Home"].includes(event.key) ||
+              (event.key === " " && event.shiftKey)
+            )
+              loadOlder();
+          }
         }}
         tabIndex={0}
       >
@@ -799,20 +901,32 @@ function ThreadMessages({
           ) : snapshot.status !== "loading" ? (
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
-          <ol>{renderReplies(undefined)}</ol>
+          <ol>
+            {showOlderPageStatus && snapshot.error && (
+              <li className={styles.threadHistoryPageStatus}>
+                <p role="alert">{snapshot.error}</p>
+                <Button type="button" onClick={retryThread}>
+                  Retry thread
+                </Button>
+              </li>
+            )}
+            {renderReplies(undefined)}
+          </ol>
         </div>
-        {(snapshot.status === "loading" ||
-          (snapshot.status === "ready" && snapshot.canLoadMore)) && (
+        {positioning || (snapshot.status === "loading" && !rows.length) ? (
           <p role="status">Loading thread…</p>
-        )}
+        ) : null}
         {snapshot.targetStatus === "unavailable" && (
           <p role="status">Selected message unavailable.</p>
         )}
-        {snapshot.error && <p role="alert">{snapshot.error}</p>}
+        {snapshot.error && !showOlderPageStatus && (
+          <p role="alert">{snapshot.error}</p>
+        )}
         {snapshot.limited && !snapshot.error && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
-        {(snapshot.error || snapshot.targetStatus === "unavailable") && (
+        {((snapshot.error && !showOlderPageStatus) ||
+          snapshot.targetStatus === "unavailable") && (
           <div className={styles.threadHistoryControls}>
             <Button type="button" onClick={() => void view.refresh()}>
               Retry thread

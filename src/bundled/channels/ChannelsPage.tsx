@@ -32,7 +32,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
-import { ChannelLeaveButton } from "./ChannelLeaveButton";
+import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import {
@@ -416,6 +416,16 @@ function ChannelWorkspace({
   const tabState = useChannelTabState(queries, currentId);
   const { thread, setThread, settings, setSettings, entries, setEntries } =
     tabState;
+  useEffect(() => {
+    if (!currentId || composingMessage || placeholder || draftParent) return;
+    // Retire this visit's reveal intent without discarding a new-DM handoff.
+    return () => {
+      setSent((previous) =>
+        previous?.channelId === currentId ? undefined : previous,
+      );
+    };
+  }, [currentId, composingMessage, placeholder, draftParent]);
+
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const splitTrigger = useRef<HTMLButtonElement>(null);
   const showingSettings =
@@ -1160,6 +1170,7 @@ function ChannelWorkspace({
   }, [showingSettings, settings, split.ref]);
   const settingsContent = (
     <ChannelSettingsPanel
+      key={settings?.id}
       setupTools={
         current && (
           <div style={{ display: "grid", gap: "var(--space-3)" }}>
@@ -1222,20 +1233,20 @@ function ChannelWorkspace({
               !current.readOnly &&
               current.channelType !== "dm" &&
               current.channelType !== "session" && (
-                <ChannelLeaveButton
+                <ChannelLifecycleActions
                   key={current.id}
                   channelId={current.id}
                   lifecycle={queries.channelLifecycle}
-                  choose={(trigger) =>
-                    handoff.openLifecycle(current, "leave", trigger)
+                  choose={(action, trigger) =>
+                    handoff.openLifecycle(current, action, trigger)
                   }
                 />
               )}
           </div>
         )
       }
-      key={currentId ?? "channels"}
       channel={current}
+      details={queries.channelDetails}
       close={closeSettings}
     >
       <UnreadOptions session={queries} channelId={current?.id} />

@@ -61,3 +61,18 @@ test("replacement sessions are isolated from retained state and old callbacks", 
   mounted.rerender({ session: first });
   expect(mounted.result.current.selected).toBe("late-old-tab");
 });
+
+test("closing and reopening settings starts a fresh view while hiding the pane retains it", () => {
+  const session = {} as RelaySession;
+  const mounted = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => mounted.result.current.setSettings({ channelId: "alpha" }));
+  const opening = mounted.result.current.settings;
+  act(() => mounted.result.current.setPaneOpen(false));
+  act(() => mounted.result.current.setPaneOpen(true));
+  expect(mounted.result.current.settings).toBe(opening);
+  act(() => mounted.result.current.setSettings({ channelId: "alpha" }));
+  expect(mounted.result.current.settings).toBe(opening);
+  act(() => mounted.result.current.setSettings(undefined));
+  act(() => mounted.result.current.setSettings({ channelId: "alpha" }));
+  expect(mounted.result.current.settings?.id).not.toBe(opening?.id);
+});

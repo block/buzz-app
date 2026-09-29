@@ -27,7 +27,7 @@ type State = {
   selected: string;
   paneOpen: boolean;
   thread: { channelId: string; messageId: string } | undefined;
-  settings: { channelId: string | undefined } | undefined;
+  settings: { id: string; channelId: string | undefined } | undefined;
 };
 const empty: State = {
   entries: [],
@@ -116,10 +116,14 @@ export function useChannelTabState(
     [update],
   );
   const setSettings = useCallback(
-    (settings: State["settings"]) =>
+    (settings: { channelId: string | undefined } | undefined) =>
       update((s) => ({
         ...s,
-        settings,
+        settings: settings
+          ? s.settings && s.settings.channelId === settings.channelId
+            ? s.settings
+            : { ...settings, id: crypto.randomUUID() }
+          : undefined,
         ...(settings ? { selected: "settings", paneOpen: true } : {}),
       })),
     [update],

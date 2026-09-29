@@ -67,9 +67,15 @@ export function UpdateSettings({
         id="update-settings-title"
         title="Software Updates"
         subtitle={
-          version
-            ? `Version ${version}. Keep Buzz up to date with the latest features and fixes.`
-            : "Keep Buzz up to date with the latest features and fixes."
+          version ? (
+            <>
+              Version {version}
+              <br />
+              Keep Buzz up to date with the latest features and fixes.
+            </>
+          ) : (
+            "Keep Buzz up to date with the latest features and fixes."
+          )
         }
       />
       <div className="flex flex-wrap items-center justify-between gap-3 py-3">

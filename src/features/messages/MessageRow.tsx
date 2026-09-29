@@ -1,9 +1,8 @@
 import { MessageTimestamp } from "./MessageTimestamp";
-import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { AgentAvatar } from "../agents/AgentAvatar";
 import { usePresenceStatus } from "../presence/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -40,11 +39,7 @@ import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 import { MessageManagementItems } from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
 import { FlagIcon } from "../../shared/design-system/icons";
-import {
-  MenuIcon,
-  MenuItem,
-  MenuSeparator,
-} from "../../shared/design-system/ui/Menu";
+import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
@@ -157,8 +152,12 @@ export const MessageRow = memo(function MessageRow({
     row.agentEnvelope || agentPubkeys?.has(row.authorId)
       ? "squircle"
       : "circle";
-  const presence = usePresenceStatus(session?.presence, row.authorId);
+  const presence = usePresenceStatus(
+    avatarShape === "squircle" ? session?.presence : undefined,
+    row.authorId,
+  );
   const presenceId = useId();
+  const thinkingId = useId();
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const displayRow = timeReply ? { ...row, content: timeReply.content } : row;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
@@ -195,7 +194,7 @@ export const MessageRow = memo(function MessageRow({
       <MenuIcon>
         <FlagIcon />
       </MenuIcon>
-      Report message
+      Report
     </MenuItem>
   );
   // Keep mixed attachments in sender order; only adjacent images share a strip.
@@ -252,6 +251,7 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.day}>
           <span>
             {new Date(row.createdAt * 1000).toLocaleDateString(undefined, {
+              year: "numeric",
               weekday: "long",
               month: "long",
               day: "numeric",
@@ -269,16 +269,27 @@ export const MessageRow = memo(function MessageRow({
             size={layout === "timeline" ? "default" : "sm"}
             shape="round"
             aria-label={`View ${name} profile`}
-            aria-describedby={presence === "unknown" ? undefined : presenceId}
+            aria-describedby={
+              [
+                presence !== "unknown" && presenceId,
+                avatarShape === "squircle" && thinkingId,
+              ]
+                .filter(Boolean)
+                .join(" ") || undefined
+            }
             onClick={(event) => {
               event.currentTarget.focus();
               onOpenLink(target);
             }}
             icon={
               <>
-                <Avatar
+                <AgentAvatar
+                  session={session}
+                  agentPubkey={row.authorId}
+                  channelId={row.channelId}
                   src={picture}
                   alt=""
+                  thinkingDescriptionId={thinkingId}
                   fallback={name}
                   size="fill"
                   shape={avatarShape}
@@ -293,7 +304,10 @@ export const MessageRow = memo(function MessageRow({
             }
           />
         ) : (
-          <Avatar
+          <AgentAvatar
+            session={session}
+            agentPubkey={row.authorId}
+            channelId={row.channelId}
             src={picture}
             alt={
               presence === "unknown"
@@ -360,24 +374,11 @@ export const MessageRow = memo(function MessageRow({
               }
               overflowItems={
                 <>
-                  {overflowItems != null ? (
-                    <>
-                      <MenuSeparator />
-                      {overflowItems}
-                    </>
-                  ) : session ? (
-                    <MessageManagementItems
-                      row={row}
-                      session={session}
-                      separated
-                    />
-                  ) : undefined}
-                  {reportItem && (
-                    <>
-                      <MenuSeparator />
-                      {reportItem}
-                    </>
-                  )}
+                  {overflowItems ??
+                    (session ? (
+                      <MessageManagementItems row={row} session={session} />
+                    ) : undefined)}
+                  {reportItem}
                 </>
               }
             />
@@ -404,14 +405,6 @@ export const MessageRow = memo(function MessageRow({
           >
             <span className={styles.author}>
               <strong>{name}</strong>
-              {session && (
-                <UserStatusDisplay
-                  session={session}
-                  userId={row.authorId}
-                  compact
-                  focusable={false}
-                />
-              )}
             </span>
             {layout !== "continuation" && (
               <MessageTimestamp createdAt={row.createdAt} />

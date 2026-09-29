@@ -29,12 +29,13 @@ remain available when the old library is disconnected, unavailable or archived.
 
 **Add agent** shares the Edit fields and model browser. In the development desktop,
 Create generates a native key, obtains the captured viewer's owner authorization,
-and saves the agent stopped before publishing its profile. Failed profile publication
-has a Retry action on the same saved card; it never creates another identity.
-During a Create/profile wait, **Close** leaves the native operation running and
-exposes the existing cards' recovery Stop. Closing before creation returns skips
-automatic profile publication; refresh status and retry on the saved card. Late
-completion never closes a subsequently opened dialog.
+saves the agent, starts it, then publishes its profile. A failed Start or profile
+publication retains the saved identity and offers a retry for that step; it never
+creates another identity. A native Start response can confirm a saved agent while
+reporting that its process could not run. During Create, Start, or profile setup,
+**Close** leaves the operation running and exposes the existing cards' recovery
+Stop. Late completion never closes a subsequently opened dialog. If an operation
+cannot be confirmed, refresh status before repeating it.
 Create is blocked with an explanation if this app’s runtime is unavailable;
 existing agents and profile retry remain intact.
 The dev broker and native host must both support this flow. Packaged human
@@ -89,8 +90,14 @@ because execution failed. The old-Buzz ownership guard remains in force.
 
 Mention startup carries the earliest relevant pending send timestamp into the
 bundled runner's existing replay input (bounded by its 15-minute catch-up limit).
-Already-running agents are not restarted. Process state is not proof of a live
-reply; imported identities require old Buzz stopped before handover.
+Already-running agents are not restarted. Mentions during queued or pending startup
+attach their earliest timestamp to that same launch, without another credential
+read or listener. Stop and changed saved revisions retire that input. If launch
+has already finished or the host cannot attach it, the send shows a separate
+replay warning instead of silently treating Waiting as Running. Attachment is not
+proof of delivery; a later credential/launch failure remains visible in Agents.
+Process state is not proof of a live reply; imported identities require old Buzz
+stopped before handover.
 
 The focused Add/Edit dialog contains Name and Agent instructions, followed by
 **AI configuration** in dependency order: **Harness → Provider → Model**. Provider
@@ -98,7 +105,8 @@ choices come from the selected harness; model discovery uses the current draft.
 Existing/custom values remain intact when another field changes. Workspace,
 arguments and write-only environment patches remain under **Advanced**;
 Start/Stop/Restart and exact identity are under **Runtime and identity**. Save uses
-native ID/revision; the planned restart-on-save flow is described below. Dirty
+native ID/revision and restarts the agent only if it is running and its effective
+settings changed (see [saving](#global-agent-defaults-and-saving)). Dirty
 drafts resist backdrop/Escape; explicit Cancel/Close discards. Page
 navigation/reload still discards page-local drafts.
 
@@ -166,13 +174,10 @@ and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
 See [configuration parity](configuration.md) for development routing, release
 flag exclusions and the supported deployment boundary.
 
-## Planned: Harnesses and agent defaults
+## Harnesses and agent defaults
 
-This is the approved Settings → Agents contract for the next implementation
-slices, not a description of controls already shipped. The current desktop still
-requires a restart to discover newly installed CLIs, and Save currently leaves
-running agents unchanged. Individual-agent configuration stays on the Agents
-page; Settings → Agents owns installation guidance and device-wide defaults.
+Individual-agent configuration stays on the Agents page; Settings → Agents owns
+installation guidance and device-wide defaults.
 
 ### Harnesses
 
@@ -184,8 +189,14 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
   did; Goose then uses built-in `goose acp`. One install runs at a time.
   Afterward Buzz re-detects, writes an install log, and restarts agents that
   were waiting for Goose.
-- **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. V1 shows a hint
-  and copyable commands (Node.js required); one-click Pi install comes later:
+- **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. On macOS/Linux,
+  **Install** downloads checksum-verified Node v24.18.0 into app-data, then uses
+  that Node/npm to install Pi and `buzz-pi-acp` into an app-owned npm prefix.
+  Installation has a private log, re-detects the executables, and restarts only
+  enabled Pi agents that previously failed because their executable was missing.
+  User-global Pi installations remain untouched. Windows and unsupported
+  architectures retain manual setup. The copyable commands remain the manual
+  fallback (Node.js required):
 
   ```sh
   npm install -g @earendil-works/pi-coding-agent
@@ -201,26 +212,39 @@ the app. The ACP tooltip says:
 
 ### Global agent defaults and saving
 
-Settings → Agents provides a default harness, provider, model, effort and
-environment variables. The default harness is **copied into each new agent** at
-creation; changing it later does not switch existing agents. Provider, model,
-effort and environment defaults are **looked up at each start** only for fields
-an agent leaves blank; per-agent values win. Per-agent effort is not yet an
-editable field. Changing the default harness clears the default model and effort.
+The **Agent defaults** card in Settings → Agents holds a default harness,
+provider, model, effort and environment variables.
 
-These mutable defaults live in a native store under app-data
-`agent-controller/`, not localStorage. Native files use owner-only permissions
-(0600); environment values are write-only and never read back into the UI, as
-with per-agent API keys. This layer sits above
-[`BuildDefaults::resolve()`](../crates/agent-controller/src/defaults.rs): global
-defaults win over the [nonsecret build floor](#nonsecret-build-defaults), which
-stays compiled and is not the editable store.
+- The default harness is **copied into each new agent** at creation (Create
+  falls back to Buzz Agent while the default harness is not installed). Changing
+  it later does not switch existing agents.
+- Provider, model and effort are **looked up at each start** for fields an agent
+  leaves blank, only when the agent uses the default harness; per-agent values
+  win. The editor shows a blank field as “Use agent defaults (…)”. Effort has no
+  per-agent field: an imported agent's `effort_level` stays its override.
+- Environment variables apply to every agent and merge **per key**; the agent's
+  key wins. A saved Databricks workspace/filter also wins over the corresponding
+  global `DATABRICKS_HOST` / `DATABRICKS_MODEL_FILTER` pair. Agents without their
+  own workspace/filter inherit the global pair.
+- Changing the default harness in the card clears the default model and effort;
+  values entered for the new harness before Save are kept.
 
-Saving an agent or defaults restarts **running agents whose effective settings
-changed** through the native supervisor and reports **“Saved. Restarted N
-agents.”** Unchanged and stopped agents are not restarted. Effective settings
-include inherited defaults, so today's `restartDiff` (raw saved configs) is not
-enough on its own. This supersedes the current Save-without-restart rule.
+The store is `defaults.json` under app-data `agent-controller/`, not
+localStorage, written atomically with owner-only permissions (0600).
+Environment values are write-only, like per-agent API keys: only key names are
+returned to the UI. This layer applies before
+[`BuildDefaults::resolve()`](../crates/agent-controller/src/defaults.rs), so a
+global value wins over the [nonsecret build floor](#nonsecret-build-defaults),
+which still fills only Buzz Agent blanks. Goose and Pi receive inherited
+provider/model through their existing selectors. Inherited values are never
+written into saved agents.
+
+Saving an agent or the defaults restarts, through the native supervisor, only
+agents that were **running** before and after the save and whose **effective**
+launch settings changed. Stopped and disabled agents are never started or
+enabled; a Stop that lands before the restart wins. Save reports “Saved.” or
+“Saved. Restarted N agents.” `restartDiff` compares effective settings, so it
+also flags inherited changes.
 
 ## Avatar editing
 
@@ -249,6 +273,63 @@ use temporary stores, public fixture keys and loopback HTTP. They do not establi
 live relay access, native image rendering or packaged human signing. Camera and
 recording are outside this avatar slice.
 
+## Agent Keychain unlock (macOS)
+
+Managed agent keys share one agent-only Keychain item: service
+`dev.local.buzz.foundation.agents`, account `agent-bundle-v1`. After a successful
+read, the native credential owner caches it for the session; starting another
+migrated agent does not read another Keychain item. Human identity and old Buzz's
+credential blob stay separate. Nothing collects the macOS password or changes
+Keychain access controls. Development signing and other credentials can still
+cause OS prompts; this is not a promise of exactly one total dialog.
+
+Existing app-owned `agent:<key-community>` entries are copied lazily on Start or
+other explicit credential use, with exact identity validation and secure readback.
+The first migration can require multiple approvals. Original entries remain for
+rollback; explicit Delete removes both copies before removing settings. New keys
+are written only to the bundle, so older versions cannot start newly created keys.
+Do not operate older and newer credential writers concurrently during rollback.
+Never delete old Buzz's source credentials for this migration.
+
+A short per-OS-user file lock serializes bundle access across cooperating
+worktrees/profiles. Writes re-read the current bundle under that lock and verify
+readback; a nonsecret invalidation token in the lock file invalidates other
+sessions' cached copies before writes. Lock files contain no keys. Busy storage
+fails visibly and requires explicit Retry; it never waits behind another app's
+consent prompt or automatically replays a write. This does not coordinate manual
+Keychain edits or older app versions; quit the app before changing storage outside
+this owner. A refused unlock is remembered until explicit Start/Retry, Import,
+Create, profile publication, or Delete; later auto-start rows do not reopen it.
+
+All launch-selected agents appear **Waiting to start · unlock Keychain if prompted**
+until their turn finishes acquiring credentials. A successful acquisition advances
+to **Starting process**, then process-alive evidence or a specific failure with
+**Retry start**. Stop remains available while waiting; pending OS dialogs may
+still need dismissal, but a late result cannot start a stopped agent. Quit and
+saved-revision fences remain in force. No frontend polling automatically retries
+Start. Windows/Linux retain their existing per-agent credential adapter.
+
+### Development startup diagnostics
+
+Debug builds print `[agent-startup]` and `[agent-keychain]` lines to the existing
+`just desktop` terminal. Selection records include the public key/community ID,
+effective `startOnAppLaunch` and enabled intent, then each auto-start attempt records its
+final process state. Credential records identify bundle/individual/legacy item
+class, operation, begin/end, sanitized failure category and elapsed time. They
+never print keys, raw item accounts, relay URLs, environment, agent names or OS
+error text. Release builds do not emit these diagnostics; no new log store or
+telemetry transport is added. A Keychain API call is not proof of an OS prompt.
+
+For an attended check, retain only these prefixed lines locally, note the dialog's
+item label (never the password), then quit and relaunch the **unchanged binary**.
+Do not manually start agents or send waking mentions during this check: credential
+lines have no agent ID, so overlapping credential operations cannot be attributed
+by order. Already-migrated agents should use the bundle, not individual reads. Native
+signing/OS consent remains a separate observation; do not equate a fixture pass
+or a Keychain call count with password-dialog acceptance. Auto-start off is a
+saved preference, not an execution failure: change **Start on launch** in the
+agent profile's Runtime tab deliberately rather than rewriting settings.
+
 ## Runtime boundary
 
 Native startup opens `app_data_dir/agent-controller`, never the old library as a
@@ -261,6 +342,15 @@ OS credential dialog does not hold the controller: Stop, Disconnect and Quit
 retire late starts; Save during a credential wait requires an explicit retry.
 Synthetic native tests inject rejecting or in-memory credentials and runtime
 resources. Production has no disposable storage override or preview launch mode.
+
+Launch-selected agents start relay listeners; their AI worker pools remain lazy
+until work arrives. Status reads project configured ACP/MCP paths without reading
+or hashing executables. These paths and `runtimeAvailable` describe the bundle
+accepted at initialization, not a fresh integrity check or relay readiness. Every
+actual launch still verifies its bundled worker, ACP and MCP executables before
+spawn, and exposes verification failure on the agent. Native Start projects one
+final snapshot after recording its outcome. This adds no incoming wake service
+for fully stopped listeners and no durable interrupted-turn recovery.
 
 On Unix, an execed supervisor in the same app binary owns each agent's shared
 identity lock, isolated listener session, and temporary runtime directory. App
@@ -318,8 +408,11 @@ containment on non-Unix platforms.
 - `running` is **process-alive evidence only**, labeled “Process running · relay
   readiness unverified.” It is not a Listening/Working badge or proof a mention
   can be received. Native wake/readiness acceptance is separate.
-- Save uses `expectedRevision` and updates only editable fields. The planned
-  flow restarts running agents whose effective settings change (see
+  The avatar badge is relay presence, which the harness publishes just after
+  the process starts; the card re-reads it briefly after start/stop (see
+  [presence](presence.md#ownership-and-bounds)).
+- Save uses `expectedRevision` and updates only editable fields, then restarts
+  running agents whose effective settings changed (see
   [Global agent defaults and saving](#global-agent-defaults-and-saving)).
   Saved/running revisions remain distinct. Dirty drafts survive refresh and save
   failure. A newer saved revision blocks overwrite and offers explicit discard;
@@ -328,14 +421,14 @@ containment on non-Unix platforms.
 - Arguments use a JSON string array rather than splitting shell text, preserving
   spaces and literal quoting. Empty/comma-containing arguments are rejected because
   the current ACP transport cannot represent them faithfully. The executable is a per-agent
-  harness choice; Settings → Agents owns the planned Harnesses setup card. The
+  harness choice; Settings → Agents owns the Harnesses setup card. The
   host must validate launch configuration and unsupported imported semantics
   before execution.
 - Harness and Provider choices come from native `harnessOptions` through the
   injected Core snapshot. Buzz Agent offers Databricks v2. Goose appears with an
   absolute executable path when the local CLI is installed, and offers common
   Goose providers plus a custom ID. A missing CLI leaves Goose disabled; the
-  planned **Check again** action re-detects it after installation without an app
+  **Check again** action re-detects it after installation without an app
   restart. Switching into or out of Goose supplies ACP
   arguments and clears the previous provider/model; selecting a Goose provider clears the
   previous model. For Goose, an explicit Browse asks Goose ACP for the selected
@@ -445,10 +538,13 @@ bin/cargo build -p buzz-foundation
 ```
 
 [`runtime/agent-runtime.json`](../runtime/agent-runtime.json) pins the five tools
-to the same immutable source revision as the native library. The build script uses pinned Cargo,
-`cargo install --git --rev --locked`, scrubs injected Buzz/provider environment,
-and stages binaries plus revision/target/SHA256 manifest in
-`src-tauri/resources/agent-runtime`. Native build copies them to
+to the same immutable source revision as the native library. The build script fetches
+that revision and uses pinned Cargo for one `cargo build --release --locked` of all
+five tools outside the checkout, scrubs injected Buzz/provider environment and
+per-shell compiler overrides (`RUSTFLAGS`, `RUSTC_*`, `CARGO_PROFILE_*`, …), and stages binaries plus
+revision/target/SHA256 manifest in `src-tauri/resources/agent-runtime`. Worktrees
+of one clone reuse a verified bundle cached under the Git common directory, keyed
+by the pin, tool list, build arguments and `rustc -vV`. Native build copies them to
 `target/debug/agent-runtime`. Generated binaries/manifest are not committed.
 Startup verifies the exact tool set, target, revision and file hashes. Packaged
 macOS apps may accept signing-induced hash changes only when the runtime belongs
@@ -482,8 +578,8 @@ live handover remains a separate step below.
 
 1. While old Buzz still runs, review/import only. Choose the installed/development
    library and destination under **Import options**. Import may prompt for the
-   selected legacy Keychain blob; it creates separate app credentials at service
-   `dev.local.buzz.foundation.agents`, account `agent:<key-community>`. The source
+   selected legacy secure-storage blob; it creates app credentials in the separate agent-only bundle described above.
+   The source
    is read-only and imported agents stay stopped. Refused custody is a blocker,
    never a reason to migrate keys implicitly.
 2. Review prompt, workspace, harness/provider/model and write-only overrides.
@@ -505,7 +601,7 @@ live handover remains a separate step below.
 
 `control.test.ts`, `control-native.test.ts`, `agent-edit.test.ts` cover projection
 races, unavailable browser, exact IPC payloads, uncertain result handling,
-the current save/restart distinction, literal arguments and environment patch
+save/restart feedback, literal arguments and environment patch
 semantics.
 `tests/browser/agent-control.spec.mjs` drives the real editor and capability over
 the isolated fake host in Chromium/WebKit: dirty refresh, save failure, revisions,
@@ -545,9 +641,10 @@ forced native quit, signed packaging or other-platform behavior.
 
 ## Pi harness
 
-Install Pi, Node.js, and the `buzz-pi-acp` adapter. In the planned Harnesses
-card, choose **Check again** to re-detect without reopening the app; until that
-ships, reopen the current desktop app. Pi appears alongside Buzz Agent and Goose.
+On macOS/Linux, Settings → Agents offers **Install** for a missing Pi CLI or
+adapter. It uses an app-owned Node and npm prefix; manual setup still works.
+Choose **Check again** to re-detect without reopening the app. Pi appears
+alongside Buzz Agent and Goose.
 Availability means the executables were found, not that authentication or
 inference has been verified. This
 integration uses the adapter's Pi argument forwarding after `--` (verified with
@@ -565,9 +662,8 @@ The Advanced model field preserves text literally, including IDs that themselves
 start with the provider name. After Browse, an unlisted ID carries a warning;
 manual IDs remain allowed and an available catalog is not inference validation.
 Clear both fields to keep Pi's own defaults. Choosing a provider requires a model
-before Start; Pi otherwise silently ignores a provider-only flag. Until the
-planned restart-on-save flow ships, use Restart explicitly to apply a saved
-change to a running Pi agent.
+before Start; Pi otherwise silently ignores a provider-only flag. Save restarts a
+running Pi agent whose effective settings changed.
 
 Discovery launches the same locally resolved Pi used by the ACP adapter, in the
 agent's workspace, with the same explicit environment and extension arguments.

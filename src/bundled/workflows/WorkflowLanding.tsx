@@ -1,6 +1,7 @@
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -35,6 +36,7 @@ import {
   MenuItem,
 } from "../../shared/design-system/ui/Menu";
 import { Switch } from "../../shared/design-system/ui/Switch";
+import { WorkflowDeletionNotices } from "./WorkflowDeletionNotices";
 import { ConfirmAction } from "./ConfirmAction";
 import { getWorkflowActivationWarning } from "./workflowActivationWarning";
 import {
@@ -65,7 +67,7 @@ type DefinitionsSnapshot = ReturnType<
   WorkflowView<WorkflowDefinitions>["snapshot"]
 >;
 
-function workflowOperationLocked(
+export function workflowOperationLocked(
   operations: readonly WorkflowOperation[],
   definition: WorkflowDefinition,
 ) {
@@ -366,7 +368,10 @@ function useLandingDefinitions(
     )
       store.refresh([saveReadback.channelId], true);
   }, [saveReadback, store]);
-  return useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
+  return {
+    ...useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot),
+    refresh: store.refresh,
+  };
 }
 
 function WorkflowIcon({ kind }: { kind: WorkflowCardIcon }) {
@@ -383,6 +388,7 @@ function WorkflowCard({
   viewer,
   onError,
   onOpen,
+  onDelete,
 }: {
   capability: WorkflowCapability;
   channel: ChannelSummary;
@@ -391,12 +397,24 @@ function WorkflowCard({
   operations: readonly WorkflowOperation[];
   viewer: string;
   onError: (message: string | null) => void;
+  onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (
     definition: WorkflowDefinition,
     channel: ChannelSummary,
-    action?: "run" | "delete",
+    action?: "run",
   ) => void;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deletion = [...operations]
+    .reverse()
+    .find(
+      (operation) =>
+        operation.action === "delete" &&
+        operation.outcome !== "rejected" &&
+        operation.workflow.id === definition.id &&
+        operation.workflow.owner === definition.owner &&
+        operation.workflow.channelId === definition.channelId,
+    );
   const [confirmEnable, setConfirmEnable] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
   const fields = readWorkflowDocumentFields(definition.yaml);
@@ -410,12 +428,16 @@ function WorkflowCard({
     submitted !== null &&
     definition.revision !== submitted &&
     submittedOperation?.outcome !== "rejected";
-  const toggleDisabled =
-    readonly ||
-    locked ||
-    awaitingReadback ||
-    !fields.editable ||
-    !capability.availability.save;
+  const toggleReason = readonly
+    ? "Only the author can change this workflow."
+    : locked || awaitingReadback
+      ? "Waiting for the submitted change to be resolved."
+      : !fields.editable
+        ? "Correct the YAML before changing the configured state."
+        : !capability.availability.save
+          ? "Saving is unavailable from this host."
+          : undefined;
+  const reasonId = useId();
   const warning = getWorkflowActivationWarning(definition.yaml);
   const name = fields.name || "Unnamed or malformed workflow";
   const toggle = (next: boolean) => {
@@ -447,6 +469,7 @@ function WorkflowCard({
         <Button
           aria-label={`Open ${name}`}
           data-workflow-card-open=""
+          disabled={!!deletion}
           onClick={() => onOpen(definition, channel)}
           variant="ghost"
         >
@@ -488,16 +511,19 @@ function WorkflowCard({
               )}
             </div>
             <div className="workflow-card-switch">
-              <Switch
-                aria-label={`Enabled in configuration: ${name}`}
-                checked={enabled}
-                disabled={toggleDisabled}
-                onCheckedChange={(next) => {
-                  if (next === enabled) return;
-                  if (next && warning) setConfirmEnable(true);
-                  else toggle(next);
-                }}
-              />
+              {fields.editable && (
+                <Switch
+                  aria-label={`Enabled in configuration: ${name}`}
+                  aria-describedby={toggleReason ? reasonId : undefined}
+                  checked={enabled}
+                  disabled={!!toggleReason}
+                  onCheckedChange={(next) => {
+                    if (next === enabled) return;
+                    if (next && warning) setConfirmEnable(true);
+                    else toggle(next);
+                  }}
+                />
+              )}
               <MenuRoot>
                 <MenuTrigger
                   render={
@@ -509,7 +535,10 @@ function WorkflowCard({
                   }
                 />
                 <MenuPopup size="compact">
-                  <MenuItem onClick={() => onOpen(definition, channel)}>
+                  <MenuItem
+                    disabled={!!deletion}
+                    onClick={() => onOpen(definition, channel)}
+                  >
                     {readonly ? "View workflow" : "Edit workflow"}
                   </MenuItem>
                   <MenuItem
@@ -531,7 +560,7 @@ function WorkflowCard({
                       awaitingReadback ||
                       !capability.availability.delete
                     }
-                    onClick={() => onOpen(definition, channel, "delete")}
+                    onClick={() => setConfirmDelete(true)}
                   >
                     Delete workflow
                   </MenuItem>
@@ -546,8 +575,13 @@ function WorkflowCard({
             <div className="workflow-card-identity">
               <strong className="text-standard">#{channel.name}</strong>
               <span>{name}</span>
-
-              {readonly && <span>Read-only</span>}
+              {deletion && (
+                <span role="status">
+                  {deletion.outcome === "pending"
+                    ? "Deleting…"
+                    : "Deletion unconfirmed"}
+                </span>
+              )}
             </div>
             <time
               dateTime={new Date(definition.createdAt * 1000).toISOString()}
@@ -555,8 +589,32 @@ function WorkflowCard({
               {new Date(definition.createdAt * 1000).toLocaleDateString()}
             </time>
           </div>
+          {!fields.editable && (
+            <span className="text-caption text-secondary">
+              Unreadable configuration
+            </span>
+          )}
+          {toggleReason && (
+            <span id={reasonId} hidden>
+              {toggleReason}
+            </span>
+          )}
         </div>
       </article>
+      {confirmDelete && (
+        <ConfirmAction
+          title="Delete this workflow?"
+          description="The saved workflow may remain visible. Work already running may continue."
+          action="Delete workflow"
+          cancel="Cancel"
+          destructive
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => {
+            setConfirmDelete(false);
+            onDelete(definition);
+          }}
+        />
+      )}
       {confirmEnable && (
         <ConfirmAction
           title={warning?.title ?? "Turn on this workflow?"}
@@ -584,16 +642,18 @@ function WorkflowChannelCards({
   snapshot,
   viewer,
   onOpen,
+  onDelete,
 }: {
   capability: WorkflowCapability;
   channel: ChannelSummary;
   operations: readonly WorkflowOperation[];
   snapshot: DefinitionsSnapshot | undefined;
   viewer: string;
+  onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (
     definition: WorkflowDefinition,
     channel: ChannelSummary,
-    action?: "run" | "delete",
+    action?: "run",
   ) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -622,6 +682,7 @@ function WorkflowChannelCards({
             locked={workflowOperationLocked(operations, definition)}
             onError={setError}
             onOpen={onOpen}
+            onDelete={onDelete}
             operations={operations}
             viewer={viewer}
           />
@@ -644,6 +705,7 @@ export function WorkflowLanding({
   viewer,
   onCreate,
   onOpen,
+  onDelete,
 }: {
   capability: WorkflowCapability;
   channels: readonly ChannelSummary[];
@@ -651,10 +713,11 @@ export function WorkflowLanding({
   saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
   viewer: string;
   onCreate: () => void;
+  onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (
     definition: WorkflowDefinition,
     channel: ChannelSummary,
-    action?: "run" | "delete",
+    action?: "run",
   ) => void;
 }) {
   const operations = useSyncExternalStore(
@@ -666,15 +729,15 @@ export function WorkflowLanding({
   const operationRefreshKey = operations
     .filter(
       (operation) =>
-        operation.action === "save" &&
+        (operation.action === "save" || operation.action === "delete") &&
         (operation.outcome === "unknown" || operation.outcome === "succeeded"),
     )
     .map(
       (operation) =>
-        `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}`,
+        `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}${operation.action === "delete" ? `/${operation.delivery}/${!!operation.error}` : ""}`,
     )
     .join(":");
-  const { snapshots, paused } = useLandingDefinitions(
+  const { snapshots, paused, refresh } = useLandingDefinitions(
     capability,
     channels,
     refreshRequest,
@@ -684,36 +747,45 @@ export function WorkflowLanding({
   );
   return (
     <>
-      <p className="text-body-sm text-secondary">
-        These switches change configuration, not confirmed runtime state. Saving
-        a disabled configuration does not confirm that automatic runs have
-        stopped or cancel work already running.
-      </p>
-      <p className="text-body-sm text-secondary" role="status">
-        {paused
-          ? "Workflow discovery paused. Some channels could not be checked. Loaded workflows are still shown."
-          : channels.some(
-                (channel) =>
-                  !snapshots[channel.id] ||
-                  snapshots[channel.id]?.status === "loading",
-              )
-            ? "Reading workflows…"
+      <WorkflowDeletionNotices
+        operations={operations}
+        snapshots={snapshots}
+        onCheck={refresh}
+        onDismiss={(operation) =>
+          capability.operations.dismiss(operation.eventId)
+        }
+      />
+      <div className="workflow-page-notice">
+        <p className="text-body-sm text-secondary">
+          Saved configuration only. Turning off does not confirm runs have
+          stopped or cancel active runs.
+        </p>
+        <p className="text-body-sm text-secondary" role="status">
+          {paused
+            ? "Workflow discovery paused. Some channels could not be checked. Loaded workflows are still shown."
             : channels.some(
                   (channel) =>
-                    snapshots[channel.id]?.status === "idle" ||
-                    snapshots[channel.id]?.status === "unavailable",
+                    !snapshots[channel.id] ||
+                    snapshots[channel.id]?.status === "loading",
                 )
-              ? "Workflow data cleared or unavailable. Refresh to check access."
-              : "Workflow scan finished. Lists may be limited by the relay."}
-      </p>
-      {paused && (
-        <Button
-          size="sm"
-          onClick={() => setRetryRequest((request) => request + 1)}
-        >
-          Retry
-        </Button>
-      )}
+              ? "Reading workflows…"
+              : channels.some(
+                    (channel) =>
+                      snapshots[channel.id]?.status === "idle" ||
+                      snapshots[channel.id]?.status === "unavailable",
+                  )
+                ? "Workflow data cleared or unavailable. Refresh to check access."
+                : "Workflows loaded."}
+        </p>
+        {paused && (
+          <Button
+            size="sm"
+            onClick={() => setRetryRequest((request) => request + 1)}
+          >
+            Retry
+          </Button>
+        )}
+      </div>
       <div className="workflow-card-grid">
         <Button
           aria-label="New workflow"
@@ -730,6 +802,7 @@ export function WorkflowLanding({
             channel={channel}
             key={channel.id}
             onOpen={onOpen}
+            onDelete={onDelete}
             operations={operations}
             snapshot={snapshots[channel.id]}
             viewer={viewer}

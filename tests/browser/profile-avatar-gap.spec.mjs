@@ -1,5 +1,8 @@
 import { test, expect } from "./fixture.mjs";
 
+// A visible badge requires confirmed presence, not just local Online intent.
+test.use({ productionBroker: true });
+
 // Real CSS paint and shell geometry require a browser, not DOM emulation.
 test("profile avatar cutout shows the shell through hover, press and open menu", async ({
   page,
@@ -23,7 +26,7 @@ test("profile avatar cutout shows the shell through hover, press and open menu",
     await page.setViewportSize({ width, height: 844 });
     const avatar = await control.boundingBox();
     const panel = await page
-      .locator('[aria-labelledby="settings-title"]')
+      .getByRole("region", { name: "Settings", exact: true })
       .boundingBox();
     expect(avatar.width).toBe(40);
     expect

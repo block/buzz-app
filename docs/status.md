@@ -10,7 +10,10 @@ and acceptance gaps here; keep chronological results in the [archive](#historica
   owns its page/navigation/layout under `src/bundled/channels`; reusable conversation
   components live in `src/features/messages` ([ownership](channels.md#reusing-conversation-ui)).
 - Explicit public development-identity pin and typed secure relay origins. Live
-  access still uses the opt-in macOS development broker, not packaged sign-in.
+  development uses the opt-in broker. Native macOS, Windows and Linux have
+  [packaged identity, admission and relay access](identity.md). Installed-app
+  acceptance remains open, including the Windows/Linux secure-store and transport
+  paths.
 - React lifecycle repair, current-DOM scroll metrics and a checked-in Chromium/WebKit
   scrolling gate. [Browser testing](browser-testing.md) defines exactly what it proves.
 

@@ -1,6 +1,15 @@
+import { selectSettingsSection } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
+
+const button = (page, name) => page.getByRole("button", { name, exact: true });
+
+async function settings(page) {
+  await button(page, "Your profile").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("main")).toBeFocused();
+}
 
 // Real font metrics, wrapping and parent layout need a browser, not jsdom.
 test("Notifications keeps settings separated and button labels contained at supported text sizes", async ({
@@ -17,13 +26,12 @@ test("Notifications keeps settings separated and button labels contained at supp
     };
   });
   await page.goto(app.origin);
-  const modifier = process.platform === "darwin" ? "Meta" : "Control";
-  await page.keyboard.press(`${modifier}+,`);
+  await settings(page);
   const section = page.locator(
     'section[aria-labelledby="notification-settings-title"]',
   );
   for (const scale of [100, 200]) {
-    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    await selectSettingsSection(page, "Appearance");
     if (scale === 200) {
       for (let i = 0; i < 10; i++) {
         await page.getByRole("button", { name: "Increase text size" }).click();
@@ -32,13 +40,18 @@ test("Notifications keeps settings separated and button labels contained at supp
     await expect(page.getByRole("status", { name: "Text size" })).toHaveText(
       `${scale}%`,
     );
-    await page
-      .getByRole("button", { name: "Notifications", exact: true })
-      .click();
+    await selectSettingsSection(page, "Notifications");
     await expect(
       section.getByRole("button", { name: "Allow notifications" }),
     ).toBeVisible();
     await expect(section.getByRole("switch")).toHaveCount(6);
+    // The per-event sound controls must be present for the geometry sweep.
+    for (const name of ["Direct messages", "@Mentions", "Thread replies"]) {
+      await expect(section.getByRole("combobox", { name })).toBeVisible();
+    }
+    await expect(
+      section.getByRole("button", { name: "Preview flutter" }),
+    ).toHaveCount(3);
     await page.evaluate(() => document.fonts.ready);
     for (const width of [800, 390]) {
       await page.setViewportSize({ width, height: 900 });

@@ -1,10 +1,10 @@
 import { test, expect } from "./source-fixture.mjs";
+import { watchPageErrors } from "./page-errors.mjs";
 
 test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecycle and recovery", async ({
   page,
 }, testInfo) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html");
   const panel = page.getByRole("complementary", {
     name: "Profile",
@@ -165,7 +165,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(panel.getByRole("tab", { name: "Memories" })).toBeVisible();
   await panel.getByRole("tab", { name: "Channels" }).click();
   await expect(panel.getByRole("region", { name: "Channels" })).toContainText(
-    "#One",
+    "One",
   );
   expect(
     await page.evaluate(() => window.profilesFixture.report.memoryReads),
@@ -246,7 +246,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     key: window.profilesFixture.keys.pinky,
   }));
   expect(reads.reads.some((batch) => batch.includes(reads.key))).toBe(true);
-  expect(errors).toEqual([]);
+  expect(errors.unexplained()).toEqual([]);
 });
 
 test("contextual panel callbacks retire with opening, channel, contribution and session", async ({

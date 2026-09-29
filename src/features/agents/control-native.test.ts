@@ -26,6 +26,7 @@ it("all command names and camelCase payloads match the native contract", async (
     "nonce-fixture",
   );
   await host.installGoose?.();
+  await host.installPi?.();
   const edit = {
     name: "Agent",
     systemPrompt: "Prompt",
@@ -60,6 +61,7 @@ it("all command names and camelCase payloads match the native contract", async (
       },
     ],
     ["goose_install"],
+    ["pi_install"],
     ["agent_control_save", { id: "exact-id", expectedRevision: 3, edit }],
     ["agent_control_delete", { id: "exact-id", expectedRevision: 3 }],
     ["agent_control_action", { id: "exact-id", action: "stop" }],
@@ -145,4 +147,18 @@ it("does not retry failed authorization or native log errors", async () => {
   await expect(host.readLog(target)).rejects.toBe("Log authorization expired");
   expect(invoke).toHaveBeenCalledTimes(2);
   expect(authorize).toHaveBeenCalledTimes(1);
+});
+
+it("pending mentions annotate the existing native launch without another Start", async () => {
+  vi.mocked(invoke).mockClear();
+  vi.mocked(isTauri).mockReturnValue(true);
+  await nativeAgentControlHost()?.attachMention?.("exact-id", 3, 1234567890);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith(
+    "agent_control_attach_mention",
+    {
+      id: "exact-id",
+      expectedRevision: 3,
+      replayFloor: 1234567890,
+    },
+  );
 });

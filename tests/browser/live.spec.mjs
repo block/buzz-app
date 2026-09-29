@@ -53,8 +53,8 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .fill("Keep my draft");
   const socketCount = app.relay.sockets.length;
-  const globalRequests = app.relay.requests.filter(
-    ({ filter }) => !filter["#h"],
+  const globalRequests = app.relay.requests.filter(({ filters }) =>
+    filters.every((filter) => !filter["#h"]),
   ).length;
   app.relay.failRoute("primary", "alpha");
   const missed = app.append(
@@ -98,9 +98,11 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   await retry(page).click();
   expect(heads(app, "alpha")).toHaveLength(calls);
   expect(app.relay.sockets).toHaveLength(socketCount);
-  expect(app.relay.requests.filter(({ filter }) => !filter["#h"])).toHaveLength(
-    globalRequests,
-  );
+  expect(
+    app.relay.requests.filter(({ filters }) =>
+      filters.every((filter) => !filter["#h"]),
+    ),
+  ).toHaveLength(globalRequests);
   await expectAnchor(page, reading);
   await crossCooldown(page, app);
   await retry(page).click();
@@ -184,13 +186,34 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
     page.getByRole("button", { name: "Alpha", exact: true }),
   ).toHaveCount(0);
   const globals = () =>
-    app.relay.requests.filter(
-      ({ filter }) => !filter["#h"] && !filter.kinds.includes(24200),
+    app.relay.requests.filter(({ filters }) =>
+      filters.some(
+        (filter) => filter.kinds.includes(0) || filter.kinds.includes(44100),
+      ),
     );
   const observer = () =>
-    app.relay.requests.filter(({ filter }) => filter.kinds.includes(24200));
+    app.relay.requests.filter(({ filters }) =>
+      filters.some((filter) => filter.kinds.includes(24200)),
+    );
+  const presence = () =>
+    app.relay.requests.filter(({ filters }) =>
+      filters.some((filter) => filter.kinds.includes(20001)),
+    );
   await expect.poll(() => globals().length).toBe(2);
   await expect.poll(() => observer().length).toBe(1);
+  await expect.poll(() => presence().length).toBe(1);
+  // Presence owns a separate access/demand-scoped route. Establish startup EOSE
+  // before recording healthy chat wires; a roster error is not a stream barrier.
+  const healthy = globals();
+  await expect
+    .poll(() =>
+      [...healthy, ...presence(), ...observer()].every(({ id }) =>
+        app.report.wireFrames.some(
+          (frame) => frame[0] === "EOSE" && frame[1] === id,
+        ),
+      ),
+    )
+    .toBe(true);
   const sockets = app.relay.sockets.length;
   const rosters = () =>
     app.report.queries.filter(({ filter }) => filter.kinds?.includes(39002));
@@ -206,11 +229,21 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   await expect(retry(page)).toHaveCount(0);
   expect(rosters()).toHaveLength(calls + 1);
   expect(app.relay.sockets).toHaveLength(sockets);
-  expect(globals()).toHaveLength(2);
-  // The first authoritative (empty) roster resets activity's access generation.
-  // Only its live-only route is renewed; healthy chat globals stay untouched.
+  // The first authoritative (empty) roster resets the access generation:
+  // activity renews its live-only route and presence retires stale observation.
+  // Neither lifecycle may restart the healthy profile/membership chat globals.
   await expect.poll(() => observer().length).toBe(2);
-  expect(observer()[1].filter.since).toBeGreaterThanOrEqual(
-    observer()[0].filter.since,
+  await expect
+    .poll(() =>
+      app.report.wireFrames.some(
+        (frame) => frame[0] === "EOSE" && frame[1] === observer()[1].id,
+      ),
+    )
+    .toBe(true);
+  expect(globals()).toHaveLength(2);
+  for (const { socket, id } of healthy)
+    expect(app.relay.sockets[socket].routes.has(id)).toBe(true);
+  expect(observer()[1].filters[0].since).toBeGreaterThanOrEqual(
+    observer()[0].filters[0].since,
   );
 });

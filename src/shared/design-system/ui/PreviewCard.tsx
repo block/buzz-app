@@ -18,6 +18,7 @@ export type PreviewCardProps = {
   anchor?: BasePreviewCard.Positioner.Props["anchor"];
   delay?: number;
   className?: string;
+  id?: string;
   "aria-label"?: string;
   /** Optional anchor that makes the whole card open the trigger's destination. */
   link?: ReactElement;
@@ -41,6 +42,7 @@ export function PreviewCard({
   anchor,
   delay = 250,
   className,
+  id,
   link,
   actionRef,
   "aria-label": label,
@@ -71,7 +73,7 @@ export function PreviewCard({
     >
       <BasePreviewCard.Trigger
         render={trigger}
-        delay={delay}
+        delay={actionRef ? 0 : delay}
         closeDelay={150}
         ref={triggerRef}
         onFocus={(event) => {
@@ -98,6 +100,7 @@ export function PreviewCard({
           className="buzz-preview-card-positioner"
         >
           <BasePreviewCard.Popup
+            id={id}
             data-buzz-ui=""
             ref={popupRef}
             onKeyDown={(event) => {

@@ -1,5 +1,11 @@
 import { npubEncode } from "nostr-tools/nip19";
-import { useRef, type ReactNode } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  type AriaAttributes,
+  type ReactNode,
+} from "react";
 import { CopyIcon } from "../design-system/icons";
 import { IconButton } from "../design-system/ui/IconButton";
 import { useToastNotification } from "../design-system/ui/Toast";
@@ -26,8 +32,17 @@ export function IdentityRow({
   keyLabel?: string | undefined;
   detail?: string | undefined;
   previewDetail?: ReactNode;
-  render?: ((content: ReactNode) => ReactNode) | undefined;
+  render?:
+    | ((content: ReactNode, previewProps: AriaAttributes) => ReactNode)
+    | undefined;
 }) {
+  const previewId = useId();
+  const descriptionId = useId();
+  const [open, setOpen] = useState(false);
+  const previewProps: AriaAttributes = {
+    "aria-describedby": descriptionId,
+    "aria-details": open ? previewId : undefined,
+  };
   const anchor = useRef<HTMLSpanElement>(null);
   const copyButton = useRef<HTMLButtonElement>(null);
   const notify = useToastNotification();
@@ -56,58 +71,82 @@ export function IdentityRow({
     </span>
   );
   return (
-    <PreviewCard
-      side="right"
-      anchor={anchor}
-      actionRef={copyButton}
-      aria-label={`${name} identity`}
-      trigger={
-        <span className="flex min-w-0 flex-1" tabIndex={render ? undefined : 0}>
-          {render ? render(content) : content}
-        </span>
-      }
-    >
-      <div className="flex min-w-0 items-center gap-3">
-        <Avatar
-          alt=""
-          fallback={name}
-          src={picture}
-          size="large"
-          shape={isAgent ? "squircle" : "circle"}
-        />
-        <div className="min-w-0">
-          <div className="text-label wrap-anywhere">{name}</div>
-          <div className="text-body-sm text-subtle">
-            {isAgent ? "Agent" : "Person"}
-            {detail ? ` · ${detail}` : ""}
+    <>
+      <span id={descriptionId} className="sr-only">
+        Identity preview opens on focus. When open, press Tab to reach Copy
+        npub, or Escape to dismiss the preview.
+      </span>
+      <PreviewCard
+        id={previewId}
+        open={open}
+        onOpenChange={setOpen}
+        side="right"
+        anchor={anchor}
+        actionRef={copyButton}
+        aria-label={`${name} identity`}
+        trigger={
+          render ? (
+            <span className="flex min-w-0 flex-1">
+              {render(content, previewProps)}
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 text-left"
+              aria-label={`Preview ${name} identity`}
+              aria-haspopup="dialog"
+              aria-expanded={open}
+              aria-controls={open ? previewId : undefined}
+              {...previewProps}
+              onClick={() => setOpen(true)}
+            >
+              {content}
+            </button>
+          )
+        }
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar
+            alt=""
+            fallback={name}
+            src={picture}
+            size="large"
+            shape={isAgent ? "squircle" : "circle"}
+          />
+          <div className="min-w-0">
+            <div className="text-label wrap-anywhere">{name}</div>
+            <div className="text-body-sm text-subtle">
+              {isAgent ? "Agent" : "Person"}
+              {detail ? ` · ${detail}` : ""}
+            </div>
           </div>
         </div>
-      </div>
-      <div className="mt-2 flex min-w-0 items-start gap-1">
-        <span className="min-w-0 flex-1 text-mono-sm break-all select-text">
-          {npub}
-        </span>
-        <IconButton
-          ref={copyButton}
-          size="xs"
-          variant="ghost"
-          aria-label="Copy npub"
-          icon={<CopyIcon size={16} aria-hidden="true" />}
-          onClick={() => {
-            void Promise.resolve()
-              .then(() => navigator.clipboard.writeText(npub))
-              .then(
-                () => notify("Copied npub", "success"),
-                () =>
-                  notify(
-                    "Couldn’t copy npub. Select the text to copy it.",
-                    "error",
-                  ),
-              );
-          }}
-        />
-      </div>
-      {previewDetail}
-    </PreviewCard>
+        <div className="mt-2 flex min-w-0 items-start gap-1">
+          <span className="min-w-0 flex-1 text-mono-sm break-all select-text">
+            {npub}
+          </span>
+          <IconButton
+            ref={copyButton}
+            size="xs"
+            variant="ghost"
+            aria-label="Copy npub"
+            icon={<CopyIcon size={16} aria-hidden="true" />}
+            onClick={() => {
+              void Promise.resolve()
+                .then(() => navigator.clipboard.writeText(npub))
+                .then(
+                  () => notify("Copied npub", "success"),
+                  () =>
+                    notify(
+                      "Couldn’t copy npub. Select the text to copy it.",
+                      "error",
+                    ),
+                );
+            }}
+          />
+        </div>
+        {previewDetail}
+      </PreviewCard>
+    </>
   );
 }

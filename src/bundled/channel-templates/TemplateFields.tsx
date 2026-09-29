@@ -67,8 +67,9 @@ export function AgentSelection({
                 ) : undefined
               }
               keyLabel={labels.get(agent.pubkey)}
-              render={(content) => (
+              render={(content, previewProps) => (
                 <Checkbox
+                  {...previewProps}
                   label={content}
                   checked={selected.includes(agent.pubkey)}
                   onCheckedChange={(checked) =>

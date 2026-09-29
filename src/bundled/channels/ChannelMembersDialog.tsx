@@ -268,8 +268,9 @@ export function ChannelMembersDialog({
         detail={archived.has(key) ? "Archived" : undefined}
         render={
           adding
-            ? (content) => (
+            ? (content, previewProps) => (
                 <NavigationItem
+                  {...previewProps}
                   label={content}
                   trailing={busy.has(key) ? "Adding…" : "Add"}
                   aria-label={`Add ${name} (${npubEncode(key)})`}

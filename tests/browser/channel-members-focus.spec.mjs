@@ -61,7 +61,7 @@ test("identity copy preserves modal focus and addition returns focus only to its
           );
         });
         const before = await add.boundingBox();
-        await add.hover();
+        await add.hover({ position: { x: 20, y: 20 } });
         const card = page.getByRole("dialog", {
           name: "Morgan identity",
           exact: true,
@@ -88,12 +88,24 @@ test("identity copy preserves modal focus and addition returns focus only to its
         await page.mouse.move(0, 0);
         await search.focus();
         await expect(card).not.toBeVisible();
-        await page.keyboard.press("Tab");
-        await page.keyboard.press("Tab");
-        await expect(add).toBeFocused();
+        // Hold the hover/focus delay: rapid Tab must not require a pause.
+        await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+        await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
+        try {
+          await page.keyboard.press("Tab");
+          await page.keyboard.press("Tab");
+          await page.keyboard.press("Tab");
+          await expect(copy).toBeFocused();
+        } finally {
+          await page.clock.resume();
+        }
         await expect(card).toBeVisible();
-        await page.keyboard.press("Tab");
-        await expect(copy).toBeFocused();
+        await expect(add).toHaveAttribute(
+          "aria-details",
+          await card.getAttribute("id"),
+        );
+        await expect(add).toHaveAccessibleDescription(/Tab to reach Copy npub/);
+        await expect(add).not.toHaveAttribute("aria-haspopup");
         await page.keyboard.press("Enter");
         await expect
           .poll(() => page.evaluate(() => window.copiedNpubs))
@@ -116,6 +128,7 @@ test("identity copy preserves modal focus and addition returns focus only to its
         await expect(card).not.toBeVisible();
         await expect(dialog).toBeVisible();
         await expect(add).toBeFocused();
+        await expect(add).not.toHaveAttribute("aria-details");
         await page.keyboard.press("Tab");
         await expect(
           dialog.getByRole("button", { name: "Close channel members" }),
@@ -171,11 +184,24 @@ test("identity copy preserves modal focus and addition returns focus only to its
       }
     }
     await team.getByRole("textbox").focus();
-    await page.keyboard.press("Tab");
-    await expect(checkbox).toBeFocused();
-    await expect(card).toBeVisible();
-    await page.keyboard.press("Tab");
-    await expect(card.getByRole("button", { name: "Copy npub" })).toBeFocused();
+    await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
+    try {
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      await expect(
+        card.getByRole("button", { name: "Copy npub" }),
+      ).toBeFocused();
+    } finally {
+      await page.clock.resume();
+    }
+    await expect(checkbox).toHaveAccessibleDescription(
+      /Tab to reach Copy npub/,
+    );
+    await expect(checkbox).toHaveAttribute(
+      "aria-details",
+      await card.getAttribute("id"),
+    );
+    await expect(checkbox).not.toHaveAttribute("aria-haspopup");
     await page.keyboard.press("Escape");
     await expect(card).not.toBeVisible();
     await expect(checkbox).toBeFocused();

@@ -375,7 +375,8 @@ hover feedback. It forwards normal button events, refs and data attributes so un
 preloading and product shortcuts remain with the caller.
 
 PreviewCard may expose one supplemental action through `actionRef`, such as copying
-an identity's full npub. It remains non-modal and never takes focus on hover. Tab
+an identity's full npub. Action previews open without a delay so immediate Tab
+navigation reaches the action. They remain non-modal and never take focus on hover. Tab
 from the trigger reaches the action; Shift+Tab returns to the trigger; forward Tab
 continues after the trigger. Escape dismisses the preview before restoring focus.
 The positioned portal owns its layer above dialogs. An optional content anchor

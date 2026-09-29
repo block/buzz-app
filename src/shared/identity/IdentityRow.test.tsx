@@ -34,8 +34,8 @@ it("loads supplemental evidence only during the preview lifetime and copies the 
         name="Agent"
         isAgent
         previewDetail={<Evidence />}
-        render={(content) => (
-          <button type="button" onClick={add}>
+        render={(content, previewProps) => (
+          <button {...previewProps} type="button" onClick={add}>
             {content}
           </button>
         )}
@@ -43,10 +43,17 @@ it("loads supplemental evidence only during the preview lifetime and copies the 
     </ToastProvider>,
   );
   expect(mount).not.toHaveBeenCalled();
-  await user.hover(screen.getByRole("button", { name: /Agent/ }));
+  const trigger = screen.getByRole("button", { name: /Agent/ });
+  expect(trigger).toHaveAccessibleDescription(
+    /Identity preview opens on focus/,
+  );
+  expect(trigger).not.toHaveAttribute("aria-haspopup");
+  expect(trigger).not.toHaveAttribute("aria-details");
+  await user.hover(trigger);
   const card = await screen.findByRole("dialog", { name: "Agent identity" });
   expect(card).toHaveTextContent(npubEncode(pubkey));
   expect(card).toHaveTextContent("Managed by Morgan");
+  expect(trigger).toHaveAttribute("aria-details", card.id);
   expect(mount).toHaveBeenCalledOnce();
   await user.click(screen.getByRole("button", { name: "Copy npub" }));
   await waitFor(() => expect(write).toHaveBeenCalledWith(npubEncode(pubkey)));
@@ -66,8 +73,18 @@ it("reports clipboard denial and leaves the full key available for manual copy",
       <IdentityRow pubkey={pubkey} name="Morgan" />
     </ToastProvider>,
   );
+  const trigger = screen.getByRole("button", {
+    name: "Preview Morgan identity",
+  });
+  expect(trigger).toHaveAccessibleDescription(/Tab to reach Copy npub/);
+  expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
   await user.tab();
+  expect(trigger).toHaveFocus();
   const card = await screen.findByRole("dialog", { name: "Morgan identity" });
+  expect(trigger).toHaveAttribute("aria-details", card.id);
+  expect(trigger).toHaveAttribute("aria-controls", card.id);
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
   await user.click(screen.getByRole("button", { name: "Copy npub" }));
   expect(
     await screen.findByText("Couldn’t copy npub. Select the text to copy it."),

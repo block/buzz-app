@@ -104,6 +104,15 @@ export function useFloatingActionBar(
     };
     const position = () => {
       frame = 0;
+      // A top-layer toolbar can retain hover above a portalled modal's backdrop.
+      // Keep actions in the active viewer usable, but suppress background rows.
+      const modal = [...document.querySelectorAll('[aria-modal="true"]')]
+        .filter((element) => !element.closest('[inert], [aria-hidden="true"]'))
+        .at(-1);
+      if (modal && !modal.contains(row)) {
+        hide();
+        return;
+      }
       const anchor = slot.getBoundingClientRect();
       const viewport = scroller?.getBoundingClientRect();
       // Timeline slots have zero height; include the bar itself when testing
@@ -136,11 +145,21 @@ export function useFloatingActionBar(
     observer.observe(slot);
     observer.observe(row);
     if (scroller) observer.observe(scroller);
+    // Modal open/close need not move focus or the pointer. Observe only while
+    // reveal is requested, and share the existing coalesced positioning update.
+    const modals = new MutationObserver(schedule);
+    modals.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["aria-modal", "aria-hidden", "inert"],
+    });
     return () => {
       cancelAnimationFrame(frame);
       document.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);
       observer.disconnect();
+      modals.disconnect();
       hide();
     };
   }, [floating, revealed, rowRef, barRef, slotRef, layout]);

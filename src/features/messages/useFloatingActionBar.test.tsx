@@ -169,3 +169,61 @@ it("leaves coarse/narrow controls static and cleans up floating mode on media ch
   unmount();
   expect(mediaListeners.size).toBe(0);
 });
+
+it("suppresses actions outside a modal without relying on pointer or focus movement", async () => {
+  const { rerender } = render(<Harness open expanded />);
+  const row = screen.getByTestId("row");
+  const bar = screen.getByTestId("bar");
+  fireEvent.pointerEnter(row);
+  expect(bar).toHaveAttribute("data-shown");
+  // Keep this portal mounted across attribute changes, as well as removal.
+  const modal = document.createElement("section");
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  try {
+    document.body.append(modal);
+    await waitFor(() => expect(bar).not.toHaveAttribute("data-shown"));
+    modal.setAttribute("aria-modal", "false");
+    await waitFor(() => expect(bar).toHaveAttribute("data-shown"));
+    modal.setAttribute("role", "alertdialog");
+    modal.setAttribute("aria-modal", "true");
+    await waitFor(() => expect(bar).not.toHaveAttribute("data-shown"));
+    // A popup or focus update must not reveal the toolbar behind the modal.
+    rerender(<Harness open />);
+    act(() => screen.getByRole("button", { name: "Avatar" }).focus());
+    await act(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    expect(bar).not.toHaveAttribute("data-shown");
+    modal.remove();
+    await waitFor(() => expect(bar).toHaveAttribute("data-shown"));
+  } finally {
+    modal.remove();
+  }
+});
+
+it("keeps actions inside the active modal available and suppresses them for a nested confirmation", async () => {
+  render(
+    <section role="dialog" aria-modal="true">
+      <Harness open />
+    </section>,
+  );
+  const bar = screen.getByTestId("bar");
+  expect(bar).toHaveAttribute("data-shown");
+  const confirmation = document.createElement("section");
+  confirmation.setAttribute("role", "alertdialog");
+  confirmation.setAttribute("aria-modal", "true");
+  try {
+    document.body.append(confirmation);
+    await waitFor(() => expect(bar).not.toHaveAttribute("data-shown"));
+    confirmation.setAttribute("aria-hidden", "true");
+    await waitFor(() => expect(bar).toHaveAttribute("data-shown"));
+    confirmation.removeAttribute("aria-hidden");
+    await waitFor(() => expect(bar).not.toHaveAttribute("data-shown"));
+    confirmation.remove();
+    await waitFor(() => expect(bar).toHaveAttribute("data-shown"));
+  } finally {
+    confirmation.remove();
+  }
+});

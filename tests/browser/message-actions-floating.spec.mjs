@@ -226,6 +226,66 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
 });
 
 // Browser-only: Base UI portals, native focus events and top-layer stacking.
+test("keyboard search covers a toolbar under the pointer and restores its actions", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const event = app.append("primary", "alpha", "Hovered Reply modal check");
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${event.id}"]`,
+  );
+  const actions = actionsFor(row);
+  const reply = actions.getByRole("button", { name: "Reply", exact: true });
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  const modifier = await page.evaluate(() =>
+    /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
+  );
+  for (const opener of [composer, reply]) {
+    await row.hover();
+    await shown(actions);
+    await opener.focus();
+    await reply.hover();
+    const bounds = await reply.boundingBox();
+    const point = {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    };
+    await page.keyboard.press(`${modifier}+k`);
+    const dialog = page.getByRole("dialog", {
+      name: "Search Buzz",
+      exact: true,
+    });
+    await expect(
+      dialog.getByRole("combobox", { name: "Search Buzz" }),
+    ).toBeFocused();
+    await expect
+      .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
+      .toBe(false);
+    await expect(actions).toHaveCSS("opacity", "0");
+    expect(
+      await actions.evaluate(
+        (bar, point) =>
+          bar.contains(document.elementFromPoint(point.x, point.y)),
+        point,
+      ),
+    ).toBe(false);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await row.hover();
+    await reply.hover();
+    await shown(actions);
+  }
+  await reply.click();
+  await expect(
+    page.getByRole("complementary", { name: "Thread", exact: true }),
+  ).toBeVisible();
+});
+
 test("menus and pickers retain actions, but modal dialogs cover them", async ({
   page,
   app,

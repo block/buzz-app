@@ -32,6 +32,7 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
   return {
     available: ready ? available : [],
     selected,
+    opening: selected ? opened : undefined,
     launch(panel: RegisteredPanel, trigger: HTMLButtonElement) {
       if (ready && panel.launcher && panels.snapshot().includes(panel))
         setOpened((current) =>

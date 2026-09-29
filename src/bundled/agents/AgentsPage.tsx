@@ -47,6 +47,7 @@ export function AgentsPage({
   open,
   panels,
   companion,
+  companionOpening,
 }: PageProps & {
   relay: RelayData;
   control?: AgentControl;
@@ -74,15 +75,17 @@ export function AgentsPage({
     opening: number;
   }>();
   const previousProfile = useRef(profile);
+  const restoreProfileFocus = useRef(true);
   useEffect(() => {
     const before = previousProfile.current;
     previousProfile.current = profile;
-    if (before && !profile) {
+    if (before && !profile && restoreProfileFocus.current) {
       const target = before.trigger.isConnected
         ? before.trigger
         : pageSurface.current;
       target?.focus({ preventScroll: true });
     }
+    restoreProfileFocus.current = true;
   }, [profile]);
   useEffect(() => {
     if (profile && !registeredPanels.includes(profile.panel)) {
@@ -90,15 +93,16 @@ export function AgentsPage({
       setProfile(undefined);
     }
   }, [profile, registeredPanels]);
-  const previousCompanion = useRef(companion);
+  const previousCompanionOpening = useRef(companionOpening);
   useEffect(() => {
-    const before = previousCompanion.current;
-    previousCompanion.current = companion;
-    if (profile && !before && companion) {
+    const before = previousCompanionOpening.current;
+    previousCompanionOpening.current = companionOpening;
+    if (profile && companionOpening && companionOpening !== before) {
       opening.current++;
+      restoreProfileFocus.current = false;
       setProfile(undefined);
     }
-  }, [companion, profile]);
+  }, [companionOpening, profile]);
   const currentOpening = profile?.opening;
   const canOpenProfile = (target: string) =>
     currentOpening !== undefined &&

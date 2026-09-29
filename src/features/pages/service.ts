@@ -7,7 +7,9 @@ import {
 } from "../../plugins/contributions.ts";
 
 export type PageProps = {
-  companion?: ReactNode;
+  companion?: ReactNode | undefined;
+  /** Opaque identity for the current shell-owned companion opening. */
+  companionOpening?: object | undefined;
   navigation?: import("../navigation/service").PageNavigation | undefined;
 };
 

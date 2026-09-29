@@ -49,6 +49,7 @@ function setup(
   ) => Promise<{ status: "opened" }>,
   panels?: Panels,
   companion?: ReactNode,
+  companionOpening?: object,
 ) {
   const f = controlFixture();
   configure?.(f);
@@ -128,7 +129,7 @@ function setup(
   });
   snapshot = { ...snapshot, session: { ...session, names } };
   disposals.push(() => names.dispose());
-  const page = (companionNode: ReactNode) => (
+  const page = (companionNode: ReactNode, opening?: object) => (
     <AgentsPage
       relay={relay}
       control={control}
@@ -136,15 +137,16 @@ function setup(
       {...(open ? { open } : {})}
       {...(panels ? { panels } : {})}
       companion={companionNode}
+      companionOpening={opening}
     />
   );
-  const view = render(page(companion));
+  const view = render(page(companion, companionOpening));
   return {
     f,
     read,
     control,
-    setCompanion(next: ReactNode) {
-      view.rerender(page(next));
+    setCompanion(next: ReactNode, selection?: object) {
+      view.rerender(page(next, selection));
     },
     changeScope(scope: string, generation: number) {
       snapshot = { status: "ready", scope, generation, session };
@@ -409,13 +411,15 @@ it("keeps the shell companion mounted while the profile is open", async () => {
     resolve: (target) => (panel.matches(target) ? panel : undefined),
     register: () => {},
   };
-  setup(
+  const companionOpening = {};
+  const { setCompanion } = setup(
     "connected",
     undefined,
     undefined,
     undefined,
     panels,
     <ShellCompanion />,
+    companionOpening,
   );
   const [card] = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
@@ -435,6 +439,8 @@ it("keeps the shell companion mounted while the profile is open", async () => {
   expect(
     await screen.findByRole("complementary", { name: "Profile" }),
   ).toBeVisible();
+  setCompanion(<ShellCompanion />, companionOpening);
+  expect(screen.getByRole("complementary", { name: "Profile" })).toBeVisible();
   expect(
     screen.getByRole("complementary", {
       name: "Shell companion",
@@ -448,7 +454,7 @@ it("keeps the shell companion mounted while the profile is open", async () => {
   expect(mounts).toBe(1);
 });
 
-it("shows a newly selected shell companion instead of the local profile", async () => {
+it("shows a replacement shell companion without stealing launcher focus", async () => {
   const panel = {
     id: "profile",
     title: "Profile",
@@ -465,12 +471,19 @@ it("shows a newly selected shell companion instead of the local profile", async 
     resolve: (target) => (panel.matches(target) ? panel : undefined),
     register: () => {},
   };
+  const firstSelection = {};
+  const secondSelection = {};
+  const launcher = document.createElement("button");
+  launcher.textContent = "Second companion launcher";
+  document.body.append(launcher);
   const { setCompanion } = setup(
     "connected",
     undefined,
     undefined,
     undefined,
     panels,
+    <aside aria-label="First shell companion">First shell companion</aside>,
+    firstSelection,
   );
   const [card] = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
@@ -486,12 +499,20 @@ it("shows a newly selected shell companion instead of the local profile", async 
     await screen.findByRole("complementary", { name: "Profile" }),
   ).toBeVisible();
 
-  setCompanion(<aside aria-label="Shell companion">Shell companion</aside>);
+  launcher.focus();
+  setCompanion(
+    <aside aria-label="Second shell companion">Second shell companion</aside>,
+    secondSelection,
+  );
 
   expect(
-    await screen.findByRole("complementary", { name: "Shell companion" }),
+    await screen.findByRole("complementary", {
+      name: "Second shell companion",
+    }),
   ).toBeVisible();
   expect(screen.queryByRole("complementary", { name: "Profile" })).toBeNull();
+  expect(launcher).toHaveFocus();
+  launcher.remove();
 });
 
 it("omits View profile when the profile panel is unavailable", async () => {

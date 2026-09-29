@@ -220,6 +220,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
               page={route.page}
               navigation={route.request}
               companion={pageOwnsCompanion ? companion : undefined}
+              companionOpening={
+                pageOwnsCompanion ? launcher.opening : undefined
+              }
             />
           ) : null}
         </AppShell>

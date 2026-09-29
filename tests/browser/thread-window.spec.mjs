@@ -265,6 +265,17 @@ test("newest window positions immediately; scrollback preserves the visible repl
     await history.hover();
     await page.mouse.wheel(0, -300);
     await expect(history.getByText("Loading older replies…")).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.filters.length),
+      )
+      .toBe(2);
+    const continuation = await page.evaluate(
+      () => window.messagesFixture.report.filters[1],
+    );
+    expect(continuation.thread_window).toBe(true);
+    expect(continuation.until).toBeDefined();
+    expect(continuation.before_id).toBeDefined();
     const anchor = history.locator("ol [data-message-id]").first();
     const id = await anchor.getAttribute("data-message-id");
     const before = await anchor.evaluate(

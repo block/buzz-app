@@ -159,9 +159,10 @@ export function createWorkSessions(
   }
   /** Resolves once the channel list shows `id` with the expected membership.
    * Admission never comes from the command's acknowledgment: the list must
-   * carry a relay-signed roster. That evidence arrives by an exact one-channel
-   * read first; only when that read leaves the gate unsatisfied does the full
-   * viewer-roster discovery run. Both apply through the same discovery path. */
+   * carry a relay-signed roster. When discovery has already made the list
+   * ready, that evidence arrives by an exact one-channel read first; otherwise,
+   * or when that read leaves the gate unsatisfied, the full viewer-roster
+   * discovery runs. Both apply through the same discovery path. */
   async function refresh(
     id: string,
     expected: {
@@ -227,9 +228,14 @@ export function createWorkSessions(
     // The gate may time out or abort while a read is in flight; its rejection
     // stays observed here and is rethrown below.
     const gate = wait.catch(() => {});
-    if (!settled)
-      // The store skips ids it already authorizes, so agent additions to a
-      // joined channel go straight to the full discovery below.
+    // The exact read extends a list discovery has already made ready. Any other
+    // status (idle, loading, error) needs the full pass to become ready at all,
+    // and that pass carries the new channel; the store's resolve would otherwise
+    // commit a ready list holding only this channel and, after a failed initial
+    // discovery, hide the error the user still needs to retry. The store also
+    // skips ids it already authorizes, so agent additions to a joined channel
+    // go straight to the full discovery below.
+    if (!settled && channels.list().status === "ready")
       await Promise.race([
         gate,
         (async () => {

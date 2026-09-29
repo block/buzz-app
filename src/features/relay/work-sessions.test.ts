@@ -612,6 +612,120 @@ it.each<["open" | "private", string[][]]>([
   },
 );
 
+it("creates a channel during initial discovery without committing a list of only that channel", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const other = "22222222-2222-4222-8222-222222222222";
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let records: readonly OutgoingEvent[] = [];
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      writer: {
+        kinds: [9, 9000, 9007],
+        sign: async (template) => signed(viewer, template),
+        publish: async () => {},
+      },
+    },
+    {
+      outboxStorage: {
+        load: () => structuredClone(records),
+        save: (next) => {
+          records = structuredClone(next);
+        },
+      },
+    },
+  );
+  try {
+    owner.session.channels.ensureList();
+    await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+    expect(owner.session.channels.list().status).toBe("loading");
+    const snapshots: ReturnType<ChannelQueries["list"]>[] = [];
+    const unsubscribe = owner.session.channels.subscribeList(() =>
+      snapshots.push(owner.session.channels.list()),
+    );
+    const creating = owner.session.channelCreation.create({
+      name: "Release notes",
+      visibility: "open",
+    });
+    await vi.waitFor(() =>
+      expect(records.some(({ event }) => event.kind === 9007)).toBe(true),
+    );
+    const id =
+      records
+        .find(({ event }) => event.kind === 9007)
+        ?.event.tags.find(([name]) => name === "h")?.[1] ?? "";
+    // Serve every pending read: the viewer roster page lists `joined`, and
+    // metadata answers whatever ids discovery asks for.
+    const serve = (joined: readonly string[]) => {
+      for (const request of wire.pending.splice(0)) {
+        const [filter] = request.filters;
+        request.respond(
+          filter?.kinds?.includes(39002) && filter["#p"]
+            ? joined.map((channel) => roster(relay, channel, [viewer.pubkey]))
+            : filter?.kinds?.includes(39000)
+              ? (filter["#d"] ?? []).map((channel) =>
+                  metadata(
+                    relay,
+                    channel,
+                    channel === id ? "Release notes" : "Existing",
+                    undefined,
+                    [["public"]],
+                  ),
+                )
+              : [],
+        );
+      }
+    };
+    await flush();
+    // Only the in-flight discovery page and the outbox receipt readback; the
+    // exact read would commit a ready list holding just the new channel.
+    expect(wire.pending).toHaveLength(2);
+    expect(
+      wire.pending.some((request) =>
+        request.filters.some((filter) => filter["#d"]),
+      ),
+    ).toBe(false);
+    // The in-flight page was served before the relay accepted the create.
+    serve([other]);
+    await vi.waitFor(() =>
+      expect(
+        snapshots.find((snapshot) => snapshot.status === "ready")?.channels,
+      ).toEqual([expect.objectContaining({ id: other })]),
+    );
+    // The first pass finishes with its metadata read before the forced second
+    // pass starts; that pass carries the new channel's roster.
+    await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+    serve([other]);
+    await vi.waitFor(() =>
+      expect(
+        wire.pending.some((request) =>
+          request.filters.some((filter) => filter["#p"]),
+        ),
+      ).toBe(true),
+    );
+    serve([other, id]);
+    await expect(creating).resolves.toBe(id);
+    expect(owner.session.channels.list()).toMatchObject({
+      status: "ready",
+      channels: expect.arrayContaining([
+        expect.objectContaining({ id: other }),
+        expect.objectContaining({ id, members: [viewer.pubkey] }),
+      ]),
+    });
+    expect(
+      snapshots
+        .filter((snapshot) => snapshot.status === "ready")
+        .every((snapshot) =>
+          snapshot.channels.some((channel) => channel.id === other),
+        ),
+    ).toBe(true);
+    unsubscribe();
+  } finally {
+    owner.dispose();
+  }
+});
+
 it.each([true, false])(
   "confirms an exact own creation without admitting a channel missing its roster (receipt: %s)",
   async (found) => {
@@ -837,6 +951,35 @@ it("admits a channel the live roster lists while its exact lookup is still in fl
   expect(test.controller.signal.aborted).toBe(false);
   expect(test.refreshList).not.toHaveBeenCalled();
 });
+it.each(["idle", "loading", "error"] as const)(
+  "waits for the full discovery instead of an exact lookup while the list is %s",
+  async (status) => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const member = "a".repeat(64);
+    const test = setup(true, {
+      status,
+      channels: [],
+      ...(status === "error" ? { error: "offline" } : {}),
+    });
+    let settled = false;
+    const refreshing = test.service
+      .refresh(id, { member }, false)
+      .finally(() => {
+        settled = true;
+      });
+    await vi.waitFor(() => expect(test.refreshList).toHaveBeenCalledOnce());
+    expect(test.resolve).not.toHaveBeenCalled();
+    await flush();
+    expect(settled).toBe(false);
+    test.setList({
+      status: "ready",
+      channels: [{ id, name: "Release notes", members: [member] }],
+    });
+    await expect(refreshing).resolves.toBeUndefined();
+    expect(test.resolve).not.toHaveBeenCalled();
+    expect(test.listListeners.size).toBe(0);
+  },
+);
 it.each([
   ["without the viewer", async () => {}],
   [

@@ -13,6 +13,7 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
     panels.snapshot,
   );
   const [opened, setOpened] = useState<Opened>();
+  const panelRef = useRef<HTMLElement>(null);
   // Exact installation object, not just key/revision: same-revision re-enable is new intent.
   const selected =
     ready && opened && available.includes(opened.panel) ? opened : undefined;
@@ -23,6 +24,15 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
   useEffect(() => {
     const before = previous.current;
     previous.current = opened;
+    // Wait for the menu's event handling to finish before focusing a retained panel.
+    if (
+      before &&
+      opened &&
+      before !== opened &&
+      before.panel === opened.panel &&
+      before.target === opened.target
+    )
+      panelRef.current?.focus();
     if (
       before &&
       !opened &&
@@ -32,6 +42,7 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
       before.trigger.focus();
   }, [opened, panels]);
   return {
+    panelRef,
     available: ready ? available : [],
     selected: selected?.panel,
     target: selected?.target,

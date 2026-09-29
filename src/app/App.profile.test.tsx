@@ -151,6 +151,46 @@ it("opens the viewer's community profile from the account menu avatar", async ()
   expect(trigger).toHaveFocus();
 });
 
+it("refocuses the retained profile on repeat openings and returns focus after Escape", async () => {
+  const user = await setup();
+  const trigger = screen.getByRole("button", { name: "Your profile" });
+  await user.click(trigger);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "View your profile" }),
+  );
+  const panel = await screen.findByRole("complementary", { name: "Profile" });
+  const details = within(panel).getByRole("region", {
+    name: "Profile details",
+  });
+  const channels = within(panel).getByRole("tab", { name: "Channels" });
+  await user.click(channels);
+
+  for (const keyboard of [false, true]) {
+    await user.click(trigger);
+    const menu = await screen.findByRole("menu");
+    const viewProfile = within(menu).getByRole("menuitem", {
+      name: "View your profile",
+    });
+    if (keyboard) {
+      await user.keyboard("{Home}");
+      expect(viewProfile).toHaveFocus();
+      await user.keyboard("{Enter}");
+    } else {
+      await user.click(viewProfile);
+    }
+    await waitFor(() => expect(menu).not.toBeInTheDocument());
+    expect(panel).toContainElement(document.activeElement as HTMLElement);
+    expect(within(panel).getByRole("region", { name: "Profile details" })).toBe(
+      details,
+    );
+    expect(channels).toHaveAttribute("aria-selected", "true");
+  }
+
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(panel).not.toBeInTheDocument());
+  expect(trigger).toHaveFocus();
+});
+
 it("opens the viewer's profile from New message without discarding recipients or the draft", async () => {
   const user = await setup();
   await user.click(await screen.findByRole("button", { name: "New message" }));

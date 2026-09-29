@@ -124,6 +124,9 @@ API or authenticated Buzz behavior.
 The identity shape, account namespaces and service name need agreement before
 independently distributed plugins adopt them. The shared contract contains types
 only; consumers do not import the provider’s implementation.
+The synchronous API below is provisional until source feasibility and search
+latency are verified in open questions 2–3. Do not freeze or implement the contract
+before those checks; a query-only source may require an asynchronous API instead.
 
 ```ts
 export type DirectoryPerson = Readonly<{
@@ -148,9 +151,11 @@ export interface DirectoryV1 {
 }
 ```
 
-`id` is opaque and unique within one provider and authorization context;
-replacement may change it. `displayName` is presentation only. Consumers persist
-the external account they already understand, not a person id or display name.
+`id` identifies a person in transient UI lists and selections. It is opaque and
+unique within one provider and authorization context: the Buzz profile, directory
+account and source configuration. Replacement may change it. `displayName` is
+presentation only. Consumers persist the external account they already understand,
+not a person id or display name.
 The directory supplies identity information; the consumer decides which external
 account is meaningful for its action and preserves its existing storage format.
 
@@ -161,13 +166,19 @@ accounts. Unknown namespaces return no match; additional namespaces require an
 explicit contract addition. This limits the initial implementation, not the
 person-discovery and identity-resolution responsibilities of the service.
 Providers return account identifiers and display names as supplied by the source.
+Consumers compare `github.com/login` selections case-insensitively with saved
+accounts before adding them, preserving their existing storage format.
 
-Lookup and search synchronously read the provider’s current indexed snapshot;
-neither starts a network request. Missing or conflicting mappings return no match.
+Lookup and search synchronously read the current indexed snapshot, including
+while a refresh is loading or has failed; neither starts a network request.
+Status describes the latest fetch, not permission to read cached data. Loading
+keeps the last successful snapshot; before the first success it is empty.
+Missing or conflicting mappings return no match.
 Search trims queries and matches directory names and account logins without case
 sensitivity. Empty queries return no results; results have a stable order for the
-same query and snapshot. Initially cap results at 20, clamp positive integer
-limits to that cap, and reject other limits. Start without debounce and measure
+same query and snapshot. `limit` is an upper bound, not a promised result count.
+The initial provider caps results at 20 and clamps positive integer limits to
+that cap; invalid limits throw `RangeError`. Start without debounce and measure
 input latency before adding it. Consumers call constant-time `lookup` per item;
 there is no additional batch method.
 
@@ -213,12 +224,25 @@ owned by its parent scope.
 | Refresh failed with cached data | Retain cached names for the same authorization context; expose failure/freshness without blocking the consumer’s existing features. |
 | Disabled or replaced after use | Clear directory-derived UI immediately; keep feature state and saved selections. |
 
+Required injection waits for service registration, not usable directory data.
+Once registered, a required consumer must handle the same data states: direct
+users to Directory settings when unconfigured, show loading until the first
+snapshot, and offer retry after initial failure. Existing cached results remain
+usable during refresh or refresh failure. Operations needing a resolved person
+stay unavailable until their input can be resolved; unrelated operations are the
+consumer's responsibility. No required consumer is part of the first delivery.
+
 Enable Directory later and the child scope starts without remounting the consumer.
-For replacement, disable the old provider, await its disposal, then enable the new
-one. Cordis rejects overlapping registrations: the existing provider keeps serving
-and the new plugin fails activation visibly in Settings → Plugins. A disposal
-timeout does not authorize overlapping providers. Required consumers follow the
-existing activation-timeout/reload behavior; this proposal adds no retry policy.
+For replacement in Settings → Plugins, disable the old provider, await its disposal,
+then enable the new one. Cordis rejects overlapping registrations: the existing
+provider keeps serving and the new plugin fails activation visibly in Settings →
+Plugins. A disposal timeout does not authorize overlapping providers. With two
+enabled providers at cold start, the first registration wins; no provider ordering
+is guaranteed.
+Disable the unwanted provider explicitly rather than relying on startup order.
+Required consumers return to `starting` when the service disappears. After the
+current 10-second activation timeout they fail and need an explicit disable/enable
+or reload; restoring Directory alone does not recover a timed-out consumer.
 
 ## Fetching, credentials and cache [deep]
 
@@ -229,10 +253,19 @@ credentials. Choose its source and declarations before enabling real organizatio
 data. Plugins are trusted same-process code; injection is not an access-control
 mechanism.
 
-Initial defaults: an in-memory snapshot, 24-hour freshness, explicit refresh after
-failure and the existing host's
+Initial defaults: an in-memory snapshot, a 24-hour freshness threshold, and the
+existing host's
 [30-second request deadline](https://github.com/block/buzz-app/blob/14a2e7ed585b130315629ded39d1b83b05eb2a53/src-tauri/src/host_request.rs).
 Reuse that deadline instead of adding a second timeout policy.
+The same host limits each response to 16 MiB of UTF-8 text. Source validation must
+prove a complete snapshot fits the transport, including any pagination and an
+explicit total refresh bound; the per-request deadline does not bound a sequence
+of requests. Record the supported person count, transfer size and total load time
+before agreeing the synchronous contract. Pagination support is not assumed.
+Fetch when the provider is configured or activated; subsequent refreshes are
+explicit user actions, including retries after failure. No periodic refresh is
+proposed initially. Settings computes age from `loadedAt` and labels data older
+than 24 hours stale; expiry alone neither evicts the snapshot nor starts a request.
 Concurrent refresh calls share one request. Expected fetch failures update status
 and settle `refresh()` without rejection; subscribers observe the new status.
 Successful empty data replaces the old snapshot; a failed refresh retains it only
@@ -250,9 +283,16 @@ An independently authenticated consumer also clears transient names/search on it
 own disconnect or account change without clearing the provider cache used by others.
 
 Persist no directory records in host preferences, relay events or consumer state.
-Configuration and credential storage follow the approved provider/host mechanism.
+Buzz has no plugin configuration or credential store; settings cards register UI
+only. Open question 2 must choose a concrete mechanism before implementation.
 Consumers escape display names and never use names or mappings for authorization.
-Directory diagnostics contain counts/status, not person records or credentials.
+
+**Risks and diagnostics.** Failed loads, stale data and omitted mappings can
+reduce directory coverage. Diagnostics contain counts/status, not person records
+or credentials.
+The Directory settings card shows the last refresh result, `loadedAt` age,
+indexed-person count and omitted-conflict count. These local signals expose
+failed loads, stale data and rejected mappings without exporting person records.
 
 ## Example and edge cases [sketch]
 
@@ -269,10 +309,11 @@ GitHub entry remains available without person search.
 1. **Ambiguous query versus conflicting mapping.** Several valid people may match
    a query; show their account logins and require explicit selection. If one
    account maps to several people, or one person maps to multiple accounts in
-   this namespace, omit the conflicting mappings from lookup and selectable
-   search results. This initial contract requires 1:1 mappings. Never infer the
-   chosen person from a display name. Count omissions in Directory diagnostics;
-   no public omission-count field initially.
+   this namespace, detect that conflict in the source rows while indexing,
+   before constructing each person's `accounts` record. Omit conflicting mappings
+   from lookup and selectable search results. This initial contract requires 1:1
+   mappings. Never infer the chosen person from a display name. Count omissions
+   in Directory diagnostics; no public omission-count field initially.
 2. **Disable or change credentials during refresh.** Clear the relevant cached
    and displayed data, invalidate the request and reject its late result. After a
    provider swap the consumer subscribes only to the replacement. GitHub queues,
@@ -303,12 +344,30 @@ completion with deferred operations. A focused desktop check verifies authentica
 configuration and person selection; implementation and these checks remain
 future work, not validation supplied by this documentation PR.
 
-## Alternative considered
+## Alternatives considered
 
 Add a host-owned directory registry similar to the
 [identityNames service](../src/features/identity-names/service.ts). Rejected:
 Cordis already supplies registration and disposal; another host owner and provider
 selection policy are unnecessary for one active provider.
+The cost is explicit child-scope wiring in each optional consumer and replacement
+of service handles and subscriptions whenever the provider changes.
+
+Persisting the directory snapshot would avoid a full fetch on every launch.
+The in-memory default avoids storing person records on disk and designing cache
+migration and deletion. Each launch therefore shows fallback data until loading
+finishes; the 24-hour freshness policy applies only within that running session.
+
+An account list per namespace would represent people with multiple accounts.
+The proposed single-account shape gives the first consumer one actionable account
+per person without an additional account picker. It excludes legitimate multiple
+accounts as well as conflicts; providers must omit those mappings in v1. Adopting
+lists later changes the public contract and requires a new version.
+
+An unversioned service name would avoid parallel registrations during migration,
+but independently released providers could then change behavior underneath older
+consumers. A versioned name makes incompatibility explicit, at the cost of
+maintaining both contracts during a breaking migration.
 
 ## Open questions
 
@@ -322,9 +381,12 @@ Dates are proposed decision deadlines, not delivery commitments.
    through the existing desktop host capability? Confirm access with Directory's
    own credentials; do not assume a consumer's token is available. **Owner:**
    Directory maintainer. **Needed:** 2026-10-02, before implementation.
-3. What is measured search latency at the supported directory size? Keep the
-   20-result cap and immediate local search unless measurements warrant change.
-   **Owner:** Directory maintainer. **Needed:** 2026-10-09, before rollout.
+3. Can the chosen source supply a complete snapshot within the host response
+   limits and an agreed total refresh bound? Measure transfer size, load time,
+   and search latency at the declared supported person count. Decide any required
+   pagination and whether the synchronous API is viable before freezing it.
+   **Owner:** Directory maintainer. **Needed:** 2026-10-02, before contract
+   agreement or implementation. Failure requires revising this design first.
 4. Where is the organization-specific provider distributed and who maintains it?
    Default: independently installed plugin; no private configuration in Buzz’s
    public bundled catalog. **Owner:** Directory maintainer. **Needed:** 2026-10-09,

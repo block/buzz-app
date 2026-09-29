@@ -74,6 +74,12 @@ afterEach(async () => {
 });
 
 async function setup(connectionError = false) {
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    media,
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
   vi.stubGlobal(
     "ResizeObserver",
     class {

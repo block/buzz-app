@@ -13,6 +13,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { UpdateSettings } from "./UpdateSettings";
 import { createUpdates, type UpdatePlatform, type Updates } from "./updates";
 
+const native = vi.hoisted(() => ({
+  getVersion: vi.fn(async () => "1.2.3"),
+  isTauri: vi.fn(() => false),
+}));
+vi.mock("@tauri-apps/api/app", () => ({ getVersion: native.getVersion }));
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: native.isTauri }));
+
 let updates: Updates | undefined;
 afterEach(() => {
   cleanup();
@@ -108,6 +115,30 @@ it("explains builds without automatic updates", async () => {
     ),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Check Again" })).toBeVisible();
+});
+
+it("shows the installed version in the header", async () => {
+  native.isTauri.mockReturnValue(true);
+  try {
+    renderSettings({});
+    expect(
+      await screen.findByText(
+        "Version 1.2.3. Keep Buzz up to date with the latest features and fixes.",
+      ),
+    ).toBeVisible();
+    expect(native.getVersion).toHaveBeenCalledOnce();
+  } finally {
+    native.isTauri.mockReturnValue(false);
+  }
+});
+
+it("keeps the plain subtitle when the native version is unavailable", async () => {
+  renderSettings({});
+  expect(
+    screen.getByText(
+      "Keep Buzz up to date with the latest features and fixes.",
+    ),
+  ).toBeVisible();
 });
 
 function deferred<T>() {

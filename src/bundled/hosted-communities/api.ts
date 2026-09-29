@@ -63,7 +63,7 @@ const messages: Record<string, string> = {
   missing_mapping: "Connect your Buzz identity before creating a community.",
   invalid_name: "Use lowercase letters, numbers, and hyphens.",
   taken: "That Buzz address is already taken.",
-  limit_reached: "You've reached your current community quota.",
+  limit_reached: "You've reached your community limit.",
   relay_unavailable: "Community provisioning is temporarily unavailable.",
   identity_already_bound:
     "This Builderlab account is connected to another Buzz identity.",
@@ -315,7 +315,7 @@ export function clearPendingDeletion(expected: PendingDeletion) {
     try {
       localStorage.removeItem(DELETION_PENDING_KEY);
     } catch {
-      // A retained accepted receipt is safe to reconcile again on reopen.
+      // A retained request can be checked again on reopen.
     }
   }
 }
@@ -339,6 +339,19 @@ const DEFINITIVE_DELETION_REJECTIONS = new Map([
   ["protected_target", 409],
   ["deletion_conflict", 409],
 ]);
+const DELETION_PROGRESS_STAGES = new Set([
+  "accepted",
+  "submitted",
+  "inventoried",
+  "approved",
+  "fenced",
+  "drained",
+  "bindings_removed",
+  "postgres_purged",
+  "cache_purged",
+  "logically_verified",
+  "retention_pending",
+]);
 
 class DefinitiveDeletionRejection extends ApiFailure {}
 
@@ -346,7 +359,7 @@ export function isDefinitiveDeletionRejection(reason: unknown) {
   return reason instanceof DefinitiveDeletionRejection;
 }
 
-/** A possible dispatch terminates only on a tuple-bound acceptance or abort. */
+/** A possible dispatch terminates only on a tuple-bound 202 stage or abort. */
 function deletionResult(
   response: { status: number; value: Reply },
   request: DeletionRequest,
@@ -355,15 +368,21 @@ function deletionResult(
   if (
     status === 202 &&
     !value.error &&
-    value.status === "accepted" &&
+    DELETION_PROGRESS_STAGES.has(value.status ?? "") &&
     matchesDeletion(value, request)
   )
     return value;
   if (
-    value.error?.code === "deletion_aborted" &&
+    status === 202 &&
+    !value.error &&
+    value.status === "aborted" &&
     matchesDeletion(value, request)
   )
-    check(value, "Could not check deletion status.");
+    throw new ApiFailure(
+      "deletion_aborted",
+      messages.deletion_aborted as string,
+      value.correlation_id,
+    );
   throw new ApiFailure(
     "acceptance_unknown",
     messages.acceptance_unknown as string,
@@ -371,21 +390,7 @@ function deletionResult(
   );
 }
 
-/** Read-only status check. A missing, malformed, or mismatched receipt stays uncertain. */
-export async function checkDeletionStatus(request: DeletionRequest) {
-  let response: { status: number; value: Reply };
-  try {
-    response = await send<Reply>("delete-receipt", request);
-  } catch {
-    throw new ApiFailure(
-      "acceptance_unknown",
-      messages.acceptance_unknown as string,
-    );
-  }
-  return deletionResult(response, request);
-}
-
-/** Sends one admission; only a fresh call trusts known pre-admission rejections. */
+/** One same-UUID POST per explicit attempt; only fresh known rejections are definitive. */
 export async function admitDeletion(
   request: DeletionRequest,
   attempt: DeletionAttempt,
@@ -394,10 +399,18 @@ export async function admitDeletion(
   try {
     response = await send<Reply>("delete", request);
   } catch {
-    // Browser-to-broker response loss is ambiguous; reconcile below.
-    return checkDeletionStatus(request);
+    throw new ApiFailure(
+      "acceptance_unknown",
+      messages.acceptance_unknown as string,
+    );
   }
   const code = response.value.error?.code ?? "";
+  if (response.status === 409 && code === "deletion_request_conflict")
+    throw new DefinitiveDeletionRejection(
+      "deletion_conflict",
+      messages.deletion_conflict as string,
+      response.value.correlation_id,
+    );
   if (
     attempt === "fresh" &&
     DEFINITIVE_DELETION_REJECTIONS.get(code) === response.status
@@ -409,11 +422,5 @@ export async function admitDeletion(
         "Could not start deletion.",
       response.value.correlation_id,
     );
-  try {
-    return deletionResult(response, request);
-  } catch (reason) {
-    if (reason instanceof ApiFailure && reason.code === "deletion_aborted")
-      throw reason;
-  }
-  return checkDeletionStatus(request);
+  return deletionResult(response, request);
 }

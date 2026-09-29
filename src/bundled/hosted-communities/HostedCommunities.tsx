@@ -33,7 +33,6 @@ import {
   boundKey,
   call,
   check,
-  checkDeletionStatus,
   clearPendingDeletion,
   getAuth,
   HOST_SUFFIX,
@@ -49,7 +48,6 @@ import {
   VALID_NAME,
   type Account,
   type Community,
-  type DeletionAttempt,
   type Identity,
   type PendingDeletion,
   type Quota,
@@ -236,7 +234,6 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const settleDeletion = async (
     pending: PendingDeletion,
     at: number,
-    attempt: DeletionAttempt,
     operation: () => Promise<unknown>,
   ) => {
     try {
@@ -247,24 +244,18 @@ export function HostedCommunities({ active }: { active(): boolean }) {
     } catch (reason) {
       if (at !== generation.current || !active()) return false;
       if (
-        reason instanceof ApiFailure &&
-        (reason.code === "deletion_aborted" ||
-          (attempt === "fresh" && isDefinitiveDeletionRejection(reason)))
+        (reason instanceof ApiFailure && reason.code === "deletion_aborted") ||
+        isDefinitiveDeletionRejection(reason)
       ) {
         clearPendingDeletion(pending);
         setPendingDeletion(null);
+        if (reason instanceof ApiFailure && reason.code === "deletion_aborted")
+          await load().catch(() => undefined);
       } else setPendingDeletion(pending);
       throw reason;
     }
   };
   const checkPendingDeletion = (pending: PendingDeletion) =>
-    run("receipt", async () => {
-      const at = generation.current;
-      await settleDeletion(pending, at, "recovery", () =>
-        checkDeletionStatus(pending.request),
-      );
-    });
-  const retryPendingDeletion = (pending: PendingDeletion) =>
     run("delete", async () => {
       const at = generation.current;
       const snapshot = await load();
@@ -272,27 +263,20 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       const currentAuth = await getAuth();
       if (at !== generation.current || !active()) return;
       const stored = readPendingDeletion();
-      const row = snapshot?.communities.find(
-        (community) =>
-          community.id === pending.request.community_id &&
-          community.normalized_host === pending.request.host &&
-          Boolean(community.archived_at),
-      );
       if (
         !snapshot ||
         !stored ||
         JSON.stringify(stored) !== JSON.stringify(pending) ||
         stored.backend_origin !== window.location.origin ||
-        boundKey(snapshot.identity) !== pending.owner_pubkey ||
-        !row
+        boundKey(snapshot.identity) !== pending.owner_pubkey
       )
         throw new Error(
-          "The exact archived community is not currently available for a safe retry. Check deletion status instead.",
+          "This deletion request no longer matches the current account. Sign in with the original account to check its status.",
         );
+      setAuth(currentAuth);
       if (currentAuth?.capabilities?.can_delete_buzz_communities !== true)
         throw new Error("Community deletion is no longer available.");
-      setAuth(currentAuth);
-      await settleDeletion(pending, at, "recovery", () =>
+      await settleDeletion(pending, at, () =>
         admitDeletion(pending.request, "recovery"),
       );
     });
@@ -316,16 +300,6 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const ready = bound !== null && bound === local;
   const deletionEnabled =
     auth?.capabilities?.can_delete_buzz_communities === true;
-  const retryableDeletion =
-    pendingDeletion &&
-    deletionEnabled &&
-    ready &&
-    communities.some(
-      (community) =>
-        community.id === pendingDeletion.request.community_id &&
-        community.normalized_host === pendingDeletion.request.host &&
-        Boolean(community.archived_at),
-    );
   // A handoff belongs to the bound identity: whenever it changes, by a local
   // action or a refresh, drop the handoff and any clipboard result in flight.
   // Layout effect, so a stale handoff is never painted beside the new identity.
@@ -598,8 +572,9 @@ export function HostedCommunities({ active }: { active(): boolean }) {
               <p className="m-0 text-label">Deletion status is unknown</p>
               <p className="text-body-sm text-muted">
                 Buzz will not check automatically. Use Check deletion status
-                when you are ready; uncertainty can continue indefinitely. A
-                missing receipt does not prove the deletion was never accepted.
+                when deletion is available. This resends the same request UUID,
+                which may admit the original intent; a failed check does not
+                prove the earlier request was never accepted.
               </p>
               <p className="break-all font-mono text-body-sm">
                 {pendingDeletion.request.host}
@@ -614,22 +589,12 @@ export function HostedCommunities({ active }: { active(): boolean }) {
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant="primary"
-                  loading={action === "receipt"}
-                  disabled={busy}
+                  loading={action === "delete"}
+                  disabled={busy || !deletionEnabled || !ready}
                   onClick={() => void checkPendingDeletion(pendingDeletion)}
                 >
                   Check deletion status
                 </Button>
-                {retryableDeletion && (
-                  <Button
-                    variant="outline"
-                    loading={action === "delete"}
-                    disabled={busy}
-                    onClick={() => void retryPendingDeletion(pendingDeletion)}
-                  >
-                    Retry same deletion request
-                  </Button>
-                )}
               </div>
             </div>
           )}
@@ -781,12 +746,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
           )}
           <CreateCommunity
             enabled={ready && quotaState?.canCreate !== false}
-            atLimit={Boolean(
-              quotaState &&
-                !quotaState.canCreate &&
-                quotaState.used >= quotaState.limit,
-            )}
-            {...(quotaState ? { limit: quotaState.limit } : {})}
+            atLimit={quotaState?.canCreate === false}
             busy={busy}
             creating={action === "create"}
             onCreate={(name) =>
@@ -831,7 +791,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             setDeleteTarget(null);
             void run("delete", async () => {
               const at = generation.current;
-              await settleDeletion(pending, at, "fresh", () =>
+              await settleDeletion(pending, at, () =>
                 admitDeletion(pending.request, "fresh"),
               );
             });
@@ -963,14 +923,12 @@ function DeleteCommunityDialog({
 function CreateCommunity({
   enabled,
   atLimit,
-  limit,
   busy,
   creating,
   onCreate,
 }: {
   enabled: boolean;
   atLimit: boolean;
-  limit?: number;
   busy: boolean;
   creating: boolean;
   onCreate(name: string): Promise<boolean>;
@@ -1017,8 +975,7 @@ function CreateCommunity({
       </p>
       {atLimit && (
         <p className="text-body-sm text-muted">
-          You’ve reached the limit of {limit} hosted communities. Transfer one
-          to free up a slot before creating another.
+          You've reached your community limit.
         </p>
       )}
       <Field

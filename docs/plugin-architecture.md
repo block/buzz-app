@@ -132,11 +132,12 @@ account: browser sign-in, binding the local Buzz identity (a locally signed kind
 default-off capability also exposes owner deletion for archived communities. The
 card persists the bound four-field request before admission. A fresh request can
 terminate on a known structured pre-admission code and HTTP status pair;
-ambiguous first responses reconcile through the read-only receipt route. Once
-uncertain, only tuple-bound acceptance or abort terminates receipt/retry recovery.
-Recovery remains explicit. The card displays valid server quota when available;
+ambiguous first responses stay pending until an explicit same-UUID delete replay.
+Only a tuple-bound non-aborted 202 confirms progress; an aborted 202 ends recovery
+without claiming deletion. The card displays valid server quota when available;
 without it, Create remains available and the server enforces its owner limit.
-It never estimates quota from visible rows. One origin-wide pending slot is
+`can_create: false` alone disables Create; usage is informational and is never
+estimated from visible rows. One origin-wide pending slot is
 re-read and verified before dispatch; browser local storage has no atomic compare-and-set,
 so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining

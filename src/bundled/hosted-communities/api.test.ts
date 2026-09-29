@@ -3,7 +3,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   admitDeletion,
   type ApiFailure,
-  checkDeletionStatus,
   clearPendingDeletion,
   DELETION_PENDING_KEY,
   persistPendingDeletion,
@@ -30,6 +29,82 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+it("replays the same deletion tuple once after an ambiguous dispatch", async () => {
+  const requests: [string, DeletionRequest][] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init: RequestInit) => {
+      requests.push([url, JSON.parse(String(init.body))]);
+      if (requests.length === 1) throw new TypeError("EOF");
+      return Response.json(
+        { ...request, status: "retention_pending" },
+        { status: 202 },
+      );
+    }),
+  );
+  await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
+    code: "acceptance_unknown",
+  } satisfies Partial<ApiFailure>);
+  expect(requests).toEqual([["/api/builderlab/delete", request]]);
+  await expect(admitDeletion(request, "recovery")).resolves.toMatchObject({
+    ...request,
+    status: "retention_pending",
+  });
+  expect(requests).toEqual([
+    ["/api/builderlab/delete", request],
+    ["/api/builderlab/delete", request],
+  ]);
+});
+
+it("treats a tuple-bound aborted 202 replay as terminal, not progress", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({ ...request, status: "aborted" }, { status: 202 }),
+    ),
+  );
+  await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
+    code: "deletion_aborted",
+  } satisfies Partial<ApiFailure>);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("treats a 409 UUID retarget conflict as definitive on replay", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json(
+        { error: { code: "deletion_request_conflict" } },
+        { status: 409 },
+      ),
+    ),
+  );
+  await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
+    code: "deletion_conflict",
+  } satisfies Partial<ApiFailure>);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it.each(["EOF", "relay 503"])(
+  "keeps %s ambiguous without automatically replaying",
+  async (failure) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        if (failure === "EOF") throw new TypeError("EOF");
+        return Response.json(
+          { error: { code: "relay_unavailable" } },
+          { status: 503 },
+        );
+      }),
+    );
+    await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
+      code: "acceptance_unknown",
+    } satisfies Partial<ApiFailure>);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  },
+);
 
 it.each([
   ["invalid JSON", "{"],
@@ -69,43 +144,35 @@ it.each([
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
 });
 
-it("reconciles a mismatched admission response and validates the entire receipt tuple", async () => {
+it("rejects a mismatched admission response without a second request", async () => {
   const calls: string[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
       calls.push(url);
-      return url.endsWith("/delete")
-        ? Response.json(
-            { ...request, community_id: "wrong", status: "accepted" },
-            { status: 202 },
-          )
-        : Response.json({ ...request, status: "accepted" }, { status: 202 });
+      return Response.json(
+        { ...request, community_id: "wrong", status: "submitted" },
+        { status: 202 },
+      );
     }),
-  );
-  await expect(admitDeletion(request, "fresh")).resolves.toMatchObject({
-    request_id: request.request_id,
-    community_id: request.community_id,
-  });
-  expect(calls).toEqual([
-    "/api/builderlab/delete",
-    "/api/builderlab/delete-receipt",
-  ]);
-});
-
-it("turns a missing receipt after ambiguous dispatch into acceptance_unknown", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi
-      .fn()
-      .mockRejectedValueOnce(new TypeError("EOF"))
-      .mockResolvedValueOnce(
-        Response.json({ error: { code: "not_owner" } }, { status: 404 }),
-      ),
   );
   await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
     code: "acceptance_unknown",
   } satisfies Partial<ApiFailure>);
+  expect(calls).toEqual(["/api/builderlab/delete"]);
+});
+
+it("does not infer noncommit after a lost dispatch response", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new TypeError("EOF");
+    }),
+  );
+  await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
+    code: "acceptance_unknown",
+  } satisfies Partial<ApiFailure>);
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
 
 it.each([
@@ -198,22 +265,11 @@ it.each([
   ],
   ["network EOF", () => Promise.reject(new TypeError("EOF"))],
 ])("keeps a fresh %s ambiguous", async (_label, firstResponse) => {
-  vi.stubGlobal(
-    "fetch",
-    vi
-      .fn()
-      .mockImplementationOnce(firstResponse)
-      .mockResolvedValueOnce(
-        Response.json(
-          { error: { code: "acceptance_unknown" } },
-          { status: 503 },
-        ),
-      ),
-  );
+  vi.stubGlobal("fetch", vi.fn(firstResponse));
   await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
     code: "acceptance_unknown",
   } satisfies Partial<ApiFailure>);
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
 
 it("keeps the same structured rejection uncertain during recovery", async () => {
@@ -230,29 +286,27 @@ it("keeps the same structured rejection uncertain during recovery", async () => 
     code: "acceptance_unknown",
     correlationId: "corr-recovery",
   } satisfies Partial<ApiFailure>);
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
 
-it("preserves receipt correlation when EOF is followed by relay_unavailable", async () => {
+it("preserves the original ambiguous response correlation", async () => {
   vi.stubGlobal(
     "fetch",
-    vi
-      .fn()
-      .mockRejectedValueOnce(new TypeError("EOF"))
-      .mockResolvedValueOnce(
-        Response.json(
-          {
-            error: { code: "relay_unavailable" },
-            correlation_id: "corr-receipt-relay",
-          },
-          { status: 503 },
-        ),
+    vi.fn(async () =>
+      Response.json(
+        {
+          error: { code: "relay_unavailable" },
+          correlation_id: "corr-admission",
+        },
+        { status: 503 },
       ),
+    ),
   );
   await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
     code: "acceptance_unknown",
-    correlationId: "corr-receipt-relay",
+    correlationId: "corr-admission",
   } satisfies Partial<ApiFailure>);
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
 
 it.each(["relay_unavailable", "not_owner"])(
@@ -260,67 +314,55 @@ it.each(["relay_unavailable", "not_owner"])(
   async (code) => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(
-          Response.json(
-            { error: { code }, correlation_id: `corr-admission-${code}` },
-            { status: code === "not_owner" ? 403 : 503 },
-          ),
-        )
-        .mockResolvedValueOnce(
-          Response.json(
-            {
-              error: { code: "relay_unavailable" },
-              correlation_id: `corr-receipt-${code}`,
-            },
-            { status: 503 },
-          ),
+      vi.fn(async () =>
+        Response.json(
+          { error: { code }, correlation_id: `corr-admission-${code}` },
+          { status: code === "not_owner" ? 403 : 503 },
         ),
+      ),
     );
     await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
       code: "acceptance_unknown",
-      correlationId: `corr-receipt-${code}`,
+      correlationId: `corr-admission-${code}`,
     } satisfies Partial<ApiFailure>);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(1);
   },
 );
 
-it("does not accept an unbound aborted receipt as terminal", async () => {
+it("does not accept an unbound aborted 202 as terminal", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
       Response.json(
         {
-          error: { code: "deletion_aborted" },
           status: "aborted",
           correlation_id: "corr-unbound-abort",
         },
-        { status: 409 },
+        { status: 202 },
       ),
     ),
   );
-  await expect(checkDeletionStatus(request)).rejects.toMatchObject({
+  await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
     code: "acceptance_unknown",
     correlationId: "corr-unbound-abort",
   } satisfies Partial<ApiFailure>);
 });
 
-it("accepts only a full tuple-bound aborted receipt as terminal", async () => {
+it("accepts only a full tuple-bound aborted 202 as terminal", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
       Response.json(
         {
           ...request,
-          error: { code: "deletion_aborted" },
+          status: "aborted",
           correlation_id: "corr-bound-abort",
         },
-        { status: 409 },
+        { status: 202 },
       ),
     ),
   );
-  await expect(checkDeletionStatus(request)).rejects.toMatchObject({
+  await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
     code: "deletion_aborted",
     correlationId: "corr-bound-abort",
   } satisfies Partial<ApiFailure>);
@@ -333,7 +375,7 @@ it("requires HTTP 202 for a tuple-bound accepted result", async () => {
       Response.json({ ...request, status: "accepted" }, { status: 200 }),
     ),
   );
-  await expect(checkDeletionStatus(request)).rejects.toMatchObject({
+  await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
     code: "acceptance_unknown",
   } satisfies Partial<ApiFailure>);
 });
@@ -376,21 +418,19 @@ it.each([
   ["community_id", "wrong-community"],
   ["host", "north.communities.buzz.xyz"],
   ["acknowledgement_version", 2],
-  ["status", "aborted"],
-])("rejects a receipt with mismatched %s", async (field, value) => {
+  ["status", "unknown_stage"],
+])("rejects an admission response with mismatched %s", async (field, value) => {
   vi.stubGlobal(
     "fetch",
-    vi
-      .fn()
-      .mockRejectedValueOnce(new TypeError("EOF"))
-      .mockResolvedValueOnce(
-        Response.json(
-          { ...request, status: "accepted", [field]: value },
-          { status: 202 },
-        ),
+    vi.fn(async () =>
+      Response.json(
+        { ...request, status: "submitted", [field]: value },
+        { status: 202 },
       ),
+    ),
   );
   await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
     code: "acceptance_unknown",
   });
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

@@ -362,7 +362,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   }
 });
 
-test("hosted deletion reload waits for a manual receipt check while capability is off", async ({
+test("hosted deletion reload keeps the UUID until an enabled manual replay", async ({
   page,
   app,
 }) => {
@@ -374,6 +374,8 @@ test("hosted deletion reload waits for a manual receipt check while capability i
     acknowledgement_version: 1,
   };
   const calls = [];
+  const deletionBodies = [];
+  let canDelete = false;
   await page.route("**/api/relay/identity", (route) =>
     route.fulfill({ json: { viewer: owner } }),
   );
@@ -386,7 +388,7 @@ test("hosted deletion reload waits for a manual receipt check while capability i
           auth: {
             email: "owner@example.com",
             expiresAt: "2030",
-            capabilities: { can_delete_buzz_communities: false },
+            capabilities: { can_delete_buzz_communities: canDelete },
           },
         },
       });
@@ -401,11 +403,13 @@ test("hosted deletion reload waits for a manual receipt check while capability i
           can_create: false,
         },
       });
-    if (action === "delete-receipt")
+    if (action === "delete") {
+      deletionBodies.push(route.request().postDataJSON());
       return route.fulfill({
         status: 202,
-        json: { ...request, status: "accepted" },
+        json: { ...request, status: "submitted" },
       });
+    }
     return route.fulfill({ status: 404, json: { error: "unexpected" } });
   });
 
@@ -434,18 +438,25 @@ test("hosted deletion reload waits for a manual receipt check while capability i
     page.getByText(request.request_id, { exact: true }),
   ).toBeVisible();
   await expect(page.getByText(/will not check automatically/i)).toBeVisible();
-  expect(calls.filter((action) => action === "delete-receipt")).toHaveLength(0);
+  expect(calls.filter((action) => action === "delete")).toHaveLength(0);
   expect(
     await page.evaluate(() =>
       localStorage.getItem("buzz.hosted-community-deletion.v1"),
     ),
   ).not.toBeNull();
+  await expect(button(page, "Check deletion status")).toBeDisabled();
+  canDelete = true;
+  await page.reload();
+  await button(page, "Your profile").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await button(page, "Hosted communities").click();
+  await expect(button(page, "Check deletion status")).toBeEnabled();
   await button(page, "Check deletion status").click();
   await expect(
     page.getByText("Deletion started", { exact: true }),
   ).toBeVisible();
-  expect(calls.filter((action) => action === "delete-receipt")).toHaveLength(1);
-  expect(calls.filter((action) => action === "delete")).toHaveLength(0);
+  expect(calls.filter((action) => action === "delete")).toHaveLength(1);
+  expect(deletionBodies).toEqual([request]);
   await expect(button(page, "Delete")).toHaveCount(0);
   expect(
     await page.evaluate(() =>

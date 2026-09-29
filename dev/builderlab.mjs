@@ -28,10 +28,6 @@ const ROUTES = {
     "/v1/buzz/communities/delete",
     ["community_id", "host", "request_id", "acknowledgement_version"],
   ],
-  "delete-receipt": [
-    "/v1/buzz/communities/delete/receipt",
-    ["community_id", "host", "request_id", "acknowledgement_version"],
-  ],
   // Builderlab's transfer endpoint takes camelCase keys.
   transfer: [
     "/v1/buzz/communities/transfer",

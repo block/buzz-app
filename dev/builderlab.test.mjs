@@ -155,12 +155,10 @@ it("forwards only allowlisted fields and ignores unknown actions", async () => {
   expect(await h.builderlab.call("../auth/me", {})).toBeUndefined();
 });
 
-it("forwards the exact deletion tuple to admission and read-only receipt", async () => {
+it("forwards the exact deletion tuple for both admission and same-UUID replay", async () => {
   const h = account({
     "/v1/buzz/communities/delete": () =>
-      Response.json({ status: "accepted" }, { status: 202 }),
-    "/v1/buzz/communities/delete/receipt": () =>
-      Response.json({ error: { code: "acceptance_unknown" } }, { status: 503 }),
+      Response.json({ status: "submitted" }, { status: 202 }),
   });
   await signIn(h);
   const request = {
@@ -180,15 +178,24 @@ it("forwards the exact deletion tuple to admission and read-only receipt", async
     request_id: request.request_id,
     acknowledgement_version: 1,
   });
-  const receipt = await h.builderlab.call("delete-receipt", request);
-  expect(builderlabResponseStatus(receipt)).toBe(503);
-  expect(h.requests.at(-1).path).toBe("/v1/buzz/communities/delete/receipt");
+  const replay = await h.builderlab.call("delete", request);
+  expect(builderlabResponseStatus(replay)).toBe(202);
+  expect(h.requests.at(-1).path).toBe("/v1/buzz/communities/delete");
   expect(JSON.parse(h.requests.at(-1).init.body)).toEqual({
     community_id: request.community_id,
     host: request.host,
     request_id: request.request_id,
     acknowledgement_version: 1,
   });
+  expect(
+    h.requests.filter((item) => item.path === "/v1/buzz/communities/delete"),
+  ).toHaveLength(2);
+});
+
+it("does not expose a removed deletion receipt action", async () => {
+  const h = account({});
+  expect(await h.builderlab.call("delete-receipt", {})).toBeUndefined();
+  expect(h.requests).toHaveLength(0);
 });
 
 it.each([

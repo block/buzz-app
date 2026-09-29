@@ -121,7 +121,8 @@ export function AgentCard({
                 <MenuItem
                   onClick={() => {
                     const button = trigger.current;
-                    if (button) onViewProfile(button);
+                    if (button)
+                      requestAnimationFrame(() => onViewProfile(button));
                   }}
                 >
                   View profile

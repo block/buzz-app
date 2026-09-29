@@ -66,10 +66,12 @@ export function AgentsPage({
     panels?.snapshot ?? noPanelSnapshot,
     panels?.snapshot ?? noPanelSnapshot,
   );
+  const opening = useRef(0);
   const [profile, setProfile] = useState<{
     panel: RegisteredPanel;
     target: string;
     trigger: HTMLButtonElement;
+    opening: number;
   }>();
   const previousProfile = useRef(profile);
   useEffect(() => {
@@ -83,26 +85,58 @@ export function AgentsPage({
     }
   }, [profile]);
   useEffect(() => {
-    if (profile && !registeredPanels.includes(profile.panel))
+    if (profile && !registeredPanels.includes(profile.panel)) {
+      opening.current++;
       setProfile(undefined);
+    }
   }, [profile, registeredPanels]);
+  const previousCompanion = useRef(companion);
+  useEffect(() => {
+    const before = previousCompanion.current;
+    previousCompanion.current = companion;
+    if (profile && !before && companion) {
+      opening.current++;
+      setProfile(undefined);
+    }
+  }, [companion, profile]);
+  const currentOpening = profile?.opening;
   const canOpenProfile = (target: string) =>
+    currentOpening !== undefined &&
+    opening.current === currentOpening &&
     panels?.resolve(target) !== undefined;
   const panelContext: PanelContext = {
     channelId: "",
     canOpen: canOpenProfile,
     open: (target) => {
       const panel = panels?.resolve(target);
-      if (!panel || !profile) return false;
-      setProfile({ ...profile, panel, target });
+      if (
+        !panel ||
+        currentOpening === undefined ||
+        opening.current !== currentOpening
+      )
+        return false;
+      setProfile((current) =>
+        current?.opening === currentOpening
+          ? { ...current, panel, target }
+          : current,
+      );
       return true;
     },
+  };
+  const closeProfile = () => {
+    if (currentOpening === undefined || opening.current !== currentOpening)
+      return;
+    opening.current++;
+    setProfile((current) =>
+      current?.opening === currentOpening ? undefined : current,
+    );
   };
   const resolveProfile: ProfileResolver = (pubkey) => {
     const target = profileTarget(pubkey);
     const panel = target && panels?.resolve(target);
     return target && panel
-      ? (trigger: HTMLButtonElement) => setProfile({ panel, target, trigger })
+      ? (trigger: HTMLButtonElement) =>
+          setProfile({ panel, target, trigger, opening: ++opening.current })
       : undefined;
   };
   const resolveName = useIdentityNames(connection.session.names);
@@ -165,7 +199,7 @@ export function AgentsPage({
             panel={profile.panel}
             target={profile.target}
             context={panelContext}
-            close={() => setProfile(undefined)}
+            close={closeProfile}
           />
         )}
       </>

@@ -128,20 +128,24 @@ function setup(
   });
   snapshot = { ...snapshot, session: { ...session, names } };
   disposals.push(() => names.dispose());
-  render(
+  const page = (companionNode: ReactNode) => (
     <AgentsPage
       relay={relay}
       control={control}
       navigation={navigation}
       {...(open ? { open } : {})}
       {...(panels ? { panels } : {})}
-      companion={companion}
-    />,
+      companion={companionNode}
+    />
   );
+  const view = render(page(companion));
   return {
     f,
     read,
     control,
+    setCompanion(next: ReactNode) {
+      view.rerender(page(next));
+    },
     changeScope(scope: string, generation: number) {
       snapshot = { status: "ready", scope, generation, session };
       for (const listener of listeners) listener();
@@ -442,6 +446,52 @@ it("keeps the shell companion mounted while the profile is open", async () => {
     screen.getByRole("complementary", { name: "Shell companion" }),
   ).toBeVisible();
   expect(mounts).toBe(1);
+});
+
+it("shows a newly selected shell companion instead of the local profile", async () => {
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: () => <p>Existing profile panel</p>,
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  const { setCompanion } = setup(
+    "connected",
+    undefined,
+    undefined,
+    undefined,
+    panels,
+  );
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+  expect(
+    await screen.findByRole("complementary", { name: "Profile" }),
+  ).toBeVisible();
+
+  setCompanion(<aside aria-label="Shell companion">Shell companion</aside>);
+
+  expect(
+    await screen.findByRole("complementary", { name: "Shell companion" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("complementary", { name: "Profile" })).toBeNull();
 });
 
 it("omits View profile when the profile panel is unavailable", async () => {

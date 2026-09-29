@@ -3,18 +3,24 @@ import { open } from "./timeline.mjs";
 
 // Browser-only boundary: Base UI restores focus when a popup's exit
 // transition ends. The test holds that transition, so the user's next focus
-// move lands while the old menu is still closing.
+// move lands while the old menu is still closing. The hold starts when Base UI
+// marks the popup as ending, before the next frame. A transitionrun listener
+// is too late under load: WebKit dispatches it at a later frame, after the
+// short exit transition can already have finished.
 async function holdMenuExit(page) {
   await page.evaluate(() => {
-    // transitionrun arrives on a rendering update, after a short exit may
-    // already finish. Materialize and pause it at the closing-state mutation.
     new MutationObserver((records) => {
       for (const { target } of records)
-        if (target.matches(".buzz-menu-popup[data-ending-style]"))
+        if (
+          target instanceof HTMLElement &&
+          target.matches(".buzz-menu-popup[data-ending-style]")
+        )
+          // getAnimations() flushes style, so the exit transition exists.
           for (const animation of target.getAnimations()) animation.pause();
-    }).observe(document, {
-      subtree: true,
+    }).observe(document.body, {
+      attributes: true,
       attributeFilter: ["data-ending-style"],
+      subtree: true,
     });
   });
   return {

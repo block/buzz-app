@@ -12,6 +12,12 @@ pub fn is_codex(command: &str) -> bool {
     Path::new(command).file_name().and_then(|s| s.to_str()) == Some("codex-acp")
 }
 
+/// Find the default adapter using the same managed-first search as execution.
+/// This checks executable presence only; it does not start a process or check login.
+pub fn installed_adapter() -> Option<PathBuf> {
+    resolve_executable("codex-acp", &default_directories()).ok()
+}
+
 /// Native-only execution settings; never serialize credential-bearing values.
 #[derive(Clone)]
 pub struct Context {
@@ -53,21 +59,7 @@ impl Context {
         }
         // Reuse the original Buzz installation before system-wide adapters.
         // An explicit adapter path above still wins for isolated/custom contexts.
-        directories.extend(buzz_managed_directories());
-        if let Some(home) = std::env::var_os("HOME") {
-            directories.push(PathBuf::from(home).join(".local/bin"));
-        }
-        directories.extend(
-            [
-                "/opt/homebrew/bin",
-                "/usr/local/bin",
-                "/usr/bin",
-                "/bin",
-                "/usr/sbin",
-                "/sbin",
-            ]
-            .map(PathBuf::from),
-        );
+        directories.extend(default_directories());
         let adapter = resolve_executable(&harness.command, &directories)?;
         let bundled_cli = !environment.contains_key("CODEX_PATH");
         let cli = if let Some(path) = environment.get("CODEX_PATH") {
@@ -132,6 +124,25 @@ impl Context {
         self.apply_environment(&mut command)?;
         Ok(command)
     }
+}
+
+fn default_directories() -> Vec<PathBuf> {
+    let mut directories = buzz_managed_directories();
+    if let Some(home) = std::env::var_os("HOME") {
+        directories.push(PathBuf::from(home).join(".local/bin"));
+    }
+    directories.extend(
+        [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+        .map(PathBuf::from),
+    );
+    directories
 }
 
 fn buzz_managed_directories() -> Vec<PathBuf> {

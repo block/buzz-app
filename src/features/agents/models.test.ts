@@ -216,6 +216,125 @@ it("bounds Codex cached contexts, labels cached evidence, and clears them on dis
   ).toBeUndefined();
 });
 
+it("does not treat defaults-only Codex evidence as a complete catalog", async () => {
+  const full: ModelCatalog = {
+    ...data,
+    integration: { kind: "codex" },
+    models: [{ id: "full-model", name: "Full model" }],
+    discovery: {
+      source: "codexAcp",
+      authentication: "authenticated",
+      catalog: "adapter",
+    },
+  };
+  const defaults: ModelCatalog = {
+    ...full,
+    models: [],
+    defaults: { model: "configured-model", effort: "medium" },
+  };
+  const run = vi.fn(async (_ticket: number, request: ModelRequest) =>
+    request.edit?.harness.configuration?.mode === "advanced" ? full : defaults,
+  );
+  const service = createAgentModels({
+    begin: async () => 1,
+    run,
+    cancel: async () => {},
+  });
+  const edit = request.edit;
+  if (!edit) throw new Error("Missing fixture edit");
+  const codex = {
+    ...request,
+    integration: { kind: "codex" as const },
+    action: "refresh" as const,
+  };
+  const defaultRequest = {
+    ...codex,
+    edit: {
+      ...edit,
+      harness: {
+        ...edit.harness,
+        configuration: { mode: "default" as const },
+      },
+    },
+  };
+  const advancedRequest = {
+    ...codex,
+    edit: {
+      ...edit,
+      harness: {
+        ...edit.harness,
+        configuration: {
+          mode: "advanced" as const,
+          effort: { kind: "value" as const, value: "high" },
+        },
+      },
+    },
+  };
+  await service.request(defaultRequest, new AbortController().signal);
+  expect(service.cached?.(advancedRequest)).toBeUndefined();
+  await service.request(advancedRequest, new AbortController().signal);
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(service.cached?.(advancedRequest)?.models).toEqual(full.models);
+  service.dispose();
+});
+
+it("invalidates the complete Codex cache when a defaults refresh fails", async () => {
+  const full: ModelCatalog = {
+    ...data,
+    integration: { kind: "codex" },
+    models: [{ id: "full-model", name: "Full model" }],
+    discovery: {
+      source: "codexAcp",
+      authentication: "authenticated",
+      catalog: "adapter",
+    },
+  };
+  const run = vi.fn(async () => full);
+  const service = createAgentModels({
+    begin: async () => 1,
+    run,
+    cancel: async () => {},
+  });
+  const edit = request.edit;
+  if (!edit) throw new Error("Missing fixture edit");
+  const codex = {
+    ...request,
+    integration: { kind: "codex" as const },
+    action: "refresh" as const,
+  };
+  const advancedRequest = {
+    ...codex,
+    edit: {
+      ...edit,
+      harness: {
+        ...edit.harness,
+        configuration: {
+          mode: "advanced" as const,
+          effort: { kind: "value" as const, value: "high" },
+        },
+      },
+    },
+  };
+  const defaultRequest = {
+    ...codex,
+    edit: {
+      ...edit,
+      harness: {
+        ...edit.harness,
+        configuration: { mode: "default" as const },
+      },
+    },
+  };
+  await service.request(advancedRequest, new AbortController().signal);
+  run.mockRejectedValueOnce(new Error("refresh failed"));
+  await expect(
+    service.request(defaultRequest, new AbortController().signal),
+  ).rejects.toThrow();
+  expect(service.cached?.(defaultRequest)).toBeUndefined();
+  expect(service.cached?.(advancedRequest)).toBeUndefined();
+  service.dispose();
+});
+
 it("expires Codex account evidence and never retains draft environment secrets as keys", async () => {
   const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
   const keys = vi.spyOn(Map.prototype, "set");

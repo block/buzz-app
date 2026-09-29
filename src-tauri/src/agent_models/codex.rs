@@ -601,6 +601,100 @@ for line in sys.stdin:
     }
 
     #[tokio::test]
+    async fn defaults_only_uses_initial_session_without_model_probes() {
+        let (dir, context) = fixture(true);
+        let catalog = discover(context, Some(String::new())).await.unwrap();
+        assert_eq!(
+            catalog
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        let defaults = catalog.defaults.unwrap();
+        assert_eq!(defaults.model.as_deref(), Some("first"));
+        assert_eq!(defaults.effort.as_deref(), Some("low"));
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|method| *method == "initialize")
+                .count(),
+            1
+        );
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|method| *method == "session/new")
+                .count(),
+            1
+        );
+        assert!(!calls
+            .lines()
+            .any(|method| method == "session/set_config_option"));
+        assert!(!calls.lines().any(|method| method == "session/set_model"));
+    }
+
+    #[test]
+    fn native_dispatch_uses_draft_mode_for_codex_discovery() {
+        use crate::agents::tests::{fixture as host_fixture, invoke};
+        let (dir, context) = fixture(true);
+        let (_store, _host, _app, view) = host_fixture();
+        let run = |model: &str, configuration: Value| {
+            let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+            invoke(
+                &view,
+                "agent_models_run",
+                json!({
+                    "ticket": ticket,
+                    "request": {
+                        "action": "refresh",
+                        "integration": {"kind": "codex"},
+                        "edit": {
+                            "name": "Codex discovery",
+                            "workspace": dir.path(),
+                            "systemPrompt": "",
+                            "harness": {
+                                "command": context.adapter.to_string_lossy(),
+                                "args": [],
+                                "provider": "",
+                                "model": model,
+                                "configuration": configuration
+                            },
+                            "environment": {"CODEX_HOME": dir.path().join("config")}
+                        }
+                    }
+                }),
+            )
+            .unwrap()
+        };
+        let result = run("", json!({"mode": "default"}));
+        assert_eq!(result["defaults"]["model"], "first");
+        assert_eq!(result["defaults"]["effort"], "low");
+        assert_eq!(result["models"][0]["id"], "first");
+        assert_eq!(result["models"][0]["effort"]["status"], "unknown");
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert!(calls.contains("session/new"));
+        assert!(!calls.contains("session/set_config_option"));
+        assert!(!calls.contains("session/set_model"));
+        let advanced = run(
+            "second",
+            json!({"mode": "advanced", "effort": {"kind": "value", "value": "high"}}),
+        );
+        assert_eq!(advanced["models"][1]["id"], "second");
+        assert_eq!(advanced["models"][1]["effort"]["status"], "supported");
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|method| *method == "session/set_config_option")
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
     async fn legacy_effort_variant_is_selected_and_validated_through_real_transport() {
         let (dir, context) = fixture(true);
         std::fs::write(dir.path().join("legacy-model"), "").unwrap();
@@ -870,6 +964,68 @@ for line in sys.stdin:
         let error = execute(context, String::new()).await.err().unwrap();
         assert!(error.to_string().contains("size limit"));
     }
+    #[test]
+    #[ignore = "requires an installed Codex adapter and existing login; no inference or persistence"]
+    fn installed_codex_default_creation_preflight() {
+        use crate::agents::tests::{fixture as host_fixture, has_prepared_identity, invoke};
+        let workspace = std::env::var("BUZZ_TEST_CODEX_WORKSPACE")
+            .expect("Set BUZZ_TEST_CODEX_WORKSPACE to the existing workspace to check");
+        let (_store, host, _app, view) = host_fixture();
+        let snapshot = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+        let codex = snapshot["harnessOptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|option| option["id"] == "codex")
+            .unwrap();
+        assert_eq!(codex["available"], true);
+        let result = invoke(
+            &view,
+            "agent_control_create_prepare",
+            json!({"requestId":uuid::Uuid::new_v4().to_string(),"destination":"wss://relay.example","owner":"ab".repeat(32),"edit":{"name":"Codex preflight","workspace":workspace,"systemPrompt":"","harness":{"command":codex["command"],"args":[],"provider":"","model":"","configuration":{"mode":"default"}},"environment":{}}}),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert!(has_prepared_identity(&host));
+    }
+
+    #[test]
+    fn native_default_creation_accepts_cli_version_with_stderr_warning() {
+        use crate::agents::tests::{fixture as host_fixture, has_prepared_identity, invoke};
+        let (dir, context) = fixture(true);
+        std::fs::write(
+            &context.cli,
+            "#!/bin/sh\n[ \"$1\" = -V ] && { echo 'WARNING: proceeding, even though we could not create PATH aliases' >&2; echo 'codex-cli 0.147.0'; exit 0; }\nexit 0\n",
+        )
+        .unwrap();
+        let (_store, host, _app, view) = host_fixture();
+        let result = invoke(
+            &view,
+            "agent_control_create_prepare",
+            json!({"requestId":uuid::Uuid::new_v4().to_string(),"destination":"wss://relay.example","owner":"ab".repeat(32),"edit":{"name":"Codex defaults","workspace":dir.path(),"systemPrompt":"","harness":{"command":context.adapter,"args":[],"provider":"","model":"","configuration":{"mode":"default"}},"environment":{"CODEX_HOME":dir.path().join("config")}}}),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert!(has_prepared_identity(&host));
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert!(calls.contains("session/new"));
+        assert!(!calls.contains("session/set_config_option"));
+    }
+
+    #[tokio::test]
+    async fn cli_version_requires_success_and_valid_stdout_with_bounded_diagnostics() {
+        for script in [
+            "echo 'codex-cli 0.147.0' >&2; exit 0",
+            "echo malformed-version; echo 'codex-cli 0.147.0' >&2; exit 0",
+            "echo 'codex-cli 0.147.0'; exit 1",
+            "echo 'codex-cli 0.147.0'; /usr/bin/python3 -c \"import sys; sys.stderr.write('x' * 16384)\"; exit 0",
+        ] {
+            let (dir, context) = fixture(true);
+            std::fs::write(&context.cli, format!("#!/bin/sh\n{script}\n")).unwrap();
+            let error = execute(context, String::new()).await.err().unwrap();
+            assert_eq!(serde_json::to_value(error).unwrap()["code"], "unavailable");
+            assert!(!dir.path().join("calls").exists());
+        }
+    }
+
     #[test]
     fn native_creation_checks_codex_before_generating_identity() {
         use crate::agents::tests::{fixture as host_fixture, has_prepared_identity, invoke};

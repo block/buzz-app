@@ -5,7 +5,7 @@ use tokio::io::AsyncReadExt;
 
 pub(super) async fn login(context: &Context) -> Result<(), ModelError> {
     // Adapter 1.3.0 intercepts --version even after `cli`; -V reaches Codex.
-    let (success, version) = probe(context, &["-V"]).await?;
+    let (success, version, _) = probe(context, &["-V"]).await?;
     let version = std::str::from_utf8(&version)
         .ok()
         .and_then(|s| s.trim().strip_prefix("codex-cli "));
@@ -20,20 +20,27 @@ pub(super) async fn login(context: &Context) -> Result<(), ModelError> {
             "Codex CLI did not report a valid version. Repair the CLI installation and refresh.",
         ));
     }
-    let (success, output) = probe(context, &["login", "status"]).await?;
+    let (success, mut output, diagnostics) = probe(context, &["login", "status"]).await?;
+    output.extend(diagnostics);
     classify_login(success, &output)
 }
 
-async fn probe(context: &Context, args: &[&str]) -> Result<(bool, Vec<u8>), ModelError> {
+async fn probe(context: &Context, args: &[&str]) -> Result<(bool, Vec<u8>, Vec<u8>), ModelError> {
     let (reader, writer) = UnixStream::pair()
         .map_err(|_| ModelError::new("unavailable", "Could not open Codex CLI probe."))?;
-    let stderr = writer
-        .try_clone()
+    // Version output is stdout; harmless CLI warnings on stderr must not make
+    // a successful version response invalid. Still bound both streams together.
+    let (diagnostics, stderr) = UnixStream::pair()
         .map_err(|_| ModelError::new("unavailable", "Could not open Codex CLI probe."))?;
     reader
         .set_nonblocking(true)
         .map_err(|_| ModelError::new("unavailable", "Could not configure Codex CLI probe."))?;
     let mut reader = tokio::net::UnixStream::from_std(reader)
+        .map_err(|_| ModelError::new("unavailable", "Could not configure Codex CLI probe."))?;
+    diagnostics
+        .set_nonblocking(true)
+        .map_err(|_| ModelError::new("unavailable", "Could not configure Codex CLI probe."))?;
+    let mut diagnostics = tokio::net::UnixStream::from_std(diagnostics)
         .map_err(|_| ModelError::new("unavailable", "Could not configure Codex CLI probe."))?;
     let mut command = context.cli_command()?;
     command
@@ -51,19 +58,31 @@ async fn probe(context: &Context, args: &[&str]) -> Result<(bool, Vec<u8>), Mode
     // Command retains its copies of the sockets after spawn.
     drop(command);
     let result = tokio::time::timeout(Duration::from_secs(15), async {
-        let mut bytes = Vec::new();
-        (&mut reader)
-            .take(16 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(|_| {
+        let mut output = [Vec::new(), Vec::new()];
+        let mut closed = [false, false];
+        let mut stdout_buffer = [0; 1024];
+        let mut stderr_buffer = [0; 1024];
+        while !closed.iter().all(|closed| *closed) {
+            let (stream, read) = tokio::select! {
+                read = reader.read(&mut stdout_buffer), if !closed[0] => (0, read),
+                read = diagnostics.read(&mut stderr_buffer), if !closed[1] => (1, read),
+            };
+            let count = read.map_err(|_| {
                 ModelError::new("unavailable", "Could not read Codex CLI status. Retry.")
             })?;
-        if bytes.len() > 16 * 1024 {
-            return Err(ModelError::new(
-                "unavailable",
-                "Codex CLI output exceeded its limit. Check the CLI configuration and retry.",
-            ));
+            if output[0].len() + output[1].len() + count > 16 * 1024 {
+                return Err(ModelError::new(
+                    "unavailable",
+                    "Codex CLI output exceeded its limit. Check the CLI configuration and retry.",
+                ));
+            }
+            closed[stream] = count == 0;
+            let buffer = if stream == 0 {
+                &stdout_buffer
+            } else {
+                &stderr_buffer
+            };
+            output[stream].extend_from_slice(&buffer[..count]);
         }
         let success = loop {
             if let Some(success) = process.exit_success()? {
@@ -71,7 +90,8 @@ async fn probe(context: &Context, args: &[&str]) -> Result<(bool, Vec<u8>), Mode
             }
             tokio::time::sleep(Duration::from_millis(40)).await;
         };
-        Ok((success, bytes))
+        let [stdout, stderr] = output;
+        Ok((success, stdout, stderr))
     })
     .await
     .unwrap_or_else(|_| {

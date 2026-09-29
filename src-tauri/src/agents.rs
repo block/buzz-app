@@ -199,7 +199,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             node: buzz_agent_controller::managed_tool(app_data, "node"),
         },
     );
-    let codex = buzz_agent_controller::installed("codex-acp");
+    let codex = buzz_agent_controller::codex::installed_adapter();
     vec![
         HarnessOption {
             id: "buzz-agent",

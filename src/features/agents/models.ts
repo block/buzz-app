@@ -112,7 +112,10 @@ export function createAgentModels(
   host: ModelHost | undefined,
 ): AgentModels & { dispose(): void } {
   // Owned by the app's control service; never persisted with environment secrets.
-  const cache = new Map<string, { data: ModelCatalog; expires: number }>();
+  const cache = new Map<
+    string,
+    { data: ModelCatalog; expires: number; fullCatalog: boolean }
+  >();
   // Draft environment patches can contain credentials. Do not retain them, or
   // reuse catalog evidence across unpersisted credential/configuration changes.
   const cacheable = (request: ModelRequest) =>
@@ -127,6 +130,8 @@ export function createAgentModels(
       request.edit?.harness.args,
       request.edit?.harness.provider,
     ]);
+  const needsFullCatalog = (request: ModelRequest) =>
+    request.edit?.harness.configuration?.mode === "advanced";
   const active = new Set<AbortController>();
   // Native admits one lookup and holds it until a cancelled one is dropped. A
   // replacement waits for that retirement instead of being refused as busy.
@@ -142,6 +147,7 @@ export function createAgentModels(
         cache.delete(key);
         return undefined;
       }
+      if (needsFullCatalog(request) && !entry?.fullCatalog) return undefined;
       const data = entry?.data;
       return data
         ? {
@@ -210,7 +216,11 @@ export function createAgentModels(
           cache.delete(key);
           if (cache.size >= 16)
             cache.delete(cache.keys().next().value as string);
-          cache.set(key, { data: result, expires: Date.now() + 60_000 });
+          cache.set(key, {
+            data: result,
+            expires: Date.now() + 60_000,
+            fullCatalog: needsFullCatalog(request),
+          });
         }
         return result;
       } catch (error) {

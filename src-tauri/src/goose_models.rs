@@ -18,7 +18,8 @@ impl Drop for CheckChild {
     }
 }
 
-/// Goose's `info --check` runs a direct provider completion with no tools.
+/// Run one Goose turn through its normal session path without saving a session
+/// or loading extensions. Databricks rejects `info --check`'s empty system prompt.
 /// The selected draft and write-only overrides are resolved by the controller.
 pub(super) async fn test(context: GooseModelContext) -> Result<(), String> {
     if context.model_id.trim().is_empty()
@@ -32,7 +33,16 @@ pub(super) async fn test(context: GooseModelContext) -> Result<(), String> {
     }
     let mut command = tokio::process::Command::new(context.command);
     command
-        .args(["info", "--check"])
+        .args([
+            "run",
+            "--text",
+            "Reply OK.",
+            "--no-session",
+            "--no-profile",
+            "--max-turns",
+            "1",
+            "--quiet",
+        ])
         .current_dir(context.workspace)
         .env_clear()
         .stdin(Stdio::null())

@@ -145,7 +145,7 @@ fn goose_connection_test_uses_the_draft_model_and_environment() {
     std::fs::write(
         &goose,
         format!(
-            "#!/bin/sh\n[ \"$1 $2\" = 'info --check' ] || exit 1\n[ \"$GOOSE_PROVIDER\" = 'openai' ] || exit 1\n[ \"$GOOSE_MODEL\" = 'effective-model' ] || exit 1\n[ \"$GOOSE_MAX_TOKENS\" = '10' ] || exit 1\n[ \"$GOOSE_THINKING_EFFORT\" = 'off' ] || exit 1\n[ \"$OPENAI_API_KEY\" = 'draft-key' ] || exit 1\n[ \"$(pwd)\" = '{}' ] || exit 1\nexit 0\n",
+            "#!/bin/sh\n[ \"$1 $2 $3\" = 'run --text Reply OK.' ] || exit 1\n[ \"$4 $5 $6 $7 $8\" = '--no-session --no-profile --max-turns 1 --quiet' ] || exit 1\n[ \"$GOOSE_PROVIDER\" = 'openai' ] || exit 1\n[ \"$GOOSE_MODEL\" = 'effective-model' ] || exit 1\n[ \"$GOOSE_MAX_TOKENS\" = '10' ] || exit 1\n[ \"$GOOSE_THINKING_EFFORT\" = 'off' ] || exit 1\n[ \"$OPENAI_API_KEY\" = 'draft-key' ] || exit 1\n[ \"$(pwd)\" = '{}' ] || exit 1\nexit 0\n",
             dir.path().canonicalize().unwrap().display()
         ),
     )

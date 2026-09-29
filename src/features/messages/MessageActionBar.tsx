@@ -34,7 +34,6 @@ export function MessageActionBar({
   link,
   copyText,
   quickControls,
-  branchControl,
   overflowItems,
   messageId,
   menuTriggerRef,
@@ -46,7 +45,6 @@ export function MessageActionBar({
   link?: string | undefined;
   copyText(): string;
   quickControls?: ReactNode;
-  branchControl?: ReactNode;
   overflowItems?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -83,7 +81,6 @@ export function MessageActionBar({
         role="group"
         aria-label="Message actions"
       >
-        {branchControl}
         {quickControls}
         {onReply && (
           <IconButton
@@ -100,7 +97,7 @@ export function MessageActionBar({
             }}
           />
         )}
-        <span className={styles.copyLinkShortcut}>
+        <span>
           <IconButton
             aria-label="Copy link"
             title={link ? "Copy link" : "Message link unavailable"}
@@ -123,6 +120,13 @@ export function MessageActionBar({
               setOpenedByPointer(
                 details.event instanceof MouseEvent && details.event.detail > 0,
               );
+            } else if (
+              details.event.type.startsWith("key") ||
+              (details.event.type === "click" &&
+                "detail" in details.event &&
+                details.event.detail === 0)
+            ) {
+              setOpenedByPointer(false);
             }
             setOpen(next);
           }}
@@ -150,8 +154,8 @@ export function MessageActionBar({
             data-message-id={messageId}
             // A boolean preserves Base UI's safeguard when focus already moved.
             // A callback returning true would force focus back over a newer action.
-            // A pointer-opened menu hands nothing back: a trigger silently
-            // holding focus would pin the hover-revealed bar.
+            // Pointer-only interactions hand nothing back; switching to the
+            // keyboard restores the trigger for continued navigation.
             finalFocus={!handingOffFocus && !openedByPointer}
           >
             <AfterMenuClose.Provider
@@ -168,17 +172,6 @@ export function MessageActionBar({
                   <CopyIcon />
                 </MenuIcon>
                 Copy message
-              </MenuItem>
-              <MenuItem
-                disabled={!link || copying}
-                onClick={() => {
-                  if (link) void copy(() => link, "Link");
-                }}
-              >
-                <MenuIcon>
-                  <LinkIcon />
-                </MenuIcon>
-                Copy link
               </MenuItem>
               {overflowItems}
             </AfterMenuClose.Provider>

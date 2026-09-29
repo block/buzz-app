@@ -6,6 +6,14 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, sync::OnceLock, time::Duration};
 use url::Url;
 
+mod channel_writes;
+mod kit;
+pub(crate) use channel_writes::{
+    relay_channel_publish, relay_channel_sign, relay_direct_message, relay_kit_decode,
+    relay_kit_prepare,
+};
+pub(crate) use kit::relay_kit_sign;
+
 type Result<T> = std::result::Result<T, String>;
 const MAX_BODY: usize = 1024 * 1024;
 const MAX_RESPONSE: usize = 16 * 1024 * 1024;
@@ -117,6 +125,12 @@ pub(crate) async fn relay_sign(
     event: EventTemplate,
 ) -> Result<serde_json::Value> {
     validate_event(&community, &event)?;
+    if event.kind == 9007 && !channel_creation_supported(&community).await? {
+        return Err("Channel creation is unavailable".into());
+    }
+    if event.kind == 30078 {
+        return Err("Channel recipe or Canvas rejected".into());
+    }
     let workflow_delete = if event.kind == 5 {
         event
             .tags
@@ -133,6 +147,8 @@ pub(crate) async fn relay_sign(
         return Err("Only the workflow author can manage it".into());
     }
     Ok(signed)
+
+
 }
 
 fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
@@ -167,6 +183,11 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         }
     } else if matches!(event.kind, 30620 | 46020) {
         validate_workflow_template(event)?;
+    } else if event.kind == 9007 {
+        if !channel_writes::creation(event) {
+            return Err("Agent enrollment or channel operation unavailable or invalid".into());
+        }
+
     } else if !matches!(
         event.kind,
         0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30315 | 40003 | 40100 | 42000
@@ -281,6 +302,53 @@ pub(crate) struct RelayResponse {
     body: String,
 }
 
+async fn verify_owned_event(host: &IdentityHost, event: &serde_json::Value) -> Result<()> {
+    if event.get("pubkey").and_then(serde_json::Value::as_str)
+        != Some(host.viewer().await?.as_str())
+    {
+        return Err("Invalid outgoing signature".into());
+    }
+    let parsed: nostr::Event =
+        serde_json::from_value(event.clone()).map_err(|_| "Invalid outgoing signature")?;
+    parsed
+        .verify()
+        .map_err(|_| "Invalid outgoing signature".into())
+}
+
+async fn channel_creation_supported(community: &str) -> Result<bool> {
+    let url = request_url(community, "/", "GET")?;
+    let response = client()?
+        .get(url)
+        .header("Accept", "application/nostr+json")
+        .send()
+        .await
+        .map_err(|_| "Community discovery failed")?;
+    if !response.status().is_success() {
+        return Err("Community discovery failed".into());
+    }
+    let body = response
+        .bytes()
+        .await
+        .map_err(|_| "Community discovery failed")?;
+    if body.len() > MAX_BODY {
+        return Err("Invalid community information".into());
+    }
+    let info: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|_| "Invalid community information")?;
+    Ok(info
+        .get("self")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|v| {
+            v.len() == 64
+                && v.bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        })
+        && info
+            .get("supported_nips")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|nips| nips.contains(&serde_json::Value::from(29))))
+}
+
 fn client() -> Result<&'static reqwest::Client> {
     static CLIENT: OnceLock<std::result::Result<reqwest::Client, reqwest::Error>> = OnceLock::new();
     CLIENT
@@ -310,6 +378,35 @@ pub(crate) async fn relay_http(
     {
         return Err("Invalid relay request body".into());
     }
+    if path == "/events" {
+        let event: serde_json::Value =
+            serde_json::from_str(body.as_deref().ok_or("Invalid relay request body")?)
+                .map_err(|_| "Invalid relay request body")?;
+        let kind = event.get("kind").and_then(serde_json::Value::as_u64);
+        if matches!(kind, Some(41010)) {
+            return Err("Choose between one and eight other people.".into());
+        }
+        if kind == Some(30078) {
+            verify_owned_event(host.inner(), &event).await?;
+            kit::validate_ciphertext(host.inner(), &event, &community).await?;
+        }
+        if kind == Some(9007) {
+            verify_owned_event(host.inner(), &event).await?;
+            let template: EventTemplate = serde_json::from_value(serde_json::json!({
+                "kind": event.get("kind"), "created_at": event.get("created_at"),
+                "content": event.get("content"), "tags": event.get("tags"),
+            }))
+            .map_err(|_| "Agent enrollment or channel operation unavailable or invalid")?;
+            if !channel_writes::creation(&template)
+                || !channel_creation_supported(&community).await?
+            {
+                return Err("Agent enrollment or channel operation unavailable or invalid".into());
+            }
+        }
+        if matches!(kind, Some(9002 | 9008 | 9022 | 41012 | 9035 | 9036)) {
+            return Err("Invalid outgoing signature".into());
+        }
+    }
     send(
         host.inner(),
         url,
@@ -319,6 +416,7 @@ pub(crate) async fn relay_http(
         MAX_RESPONSE,
     )
     .await
+
 }
 
 async fn send(

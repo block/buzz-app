@@ -163,7 +163,7 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
       ).toBeVisible();
       expect(
         screen.getByText(
-          /git\+https:\/\/github.com\/salman1993\/buzz-pi-acp.git#8fdc91c/,
+          /git\+https:\/\/github.com\/salman1993\/buzz-pi-acp.git#72015de/,
         ),
       ).toBeVisible();
       const write = vi
@@ -173,7 +173,7 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
         screen.getByRole("button", { name: "Copy Adapter command" }),
       );
       expect(write).toHaveBeenCalledWith(
-        "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#8fdc91c'",
+        "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#72015de'",
       );
       expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
         "Adapter command copied.",
@@ -409,7 +409,7 @@ it.each([
   },
 );
 
-it("offers no adapter update or command for a ready user-global Pi install", async () => {
+it("offers no Pi update or command for a current or user-global Pi install", async () => {
   setupHarnesses(
     "ready",
     {},
@@ -420,14 +420,14 @@ it("offers no adapter update or command for a ready user-global Pi install", asy
   )[2];
   if (!pi) throw new Error("Missing Pi row");
   expect(within(pi).getByText("Ready")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Update adapter" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Update Pi" })).toBeNull();
   expect(
     screen.queryByRole("button", { name: "Copy Adapter command" }),
   ).toBeNull();
   expect(screen.queryByText(/buzz-pi-acp.git#/)).toBeNull();
 });
 
-it("updates a ready app-owned Pi adapter and tells the user to restart running agents", async () => {
+it("updates an outdated app-owned Pi and tells the user to restart running agents", async () => {
   const user = userEvent.setup();
   const installPi = vi.fn().mockResolvedValue({
     ready: true,
@@ -450,10 +450,10 @@ it("updates a ready app-owned Pi adapter and tells the user to restart running a
     "listitem",
   )[2];
   if (!pi) throw new Error("Missing Pi row");
-  await user.click(within(pi).getByRole("button", { name: "Update adapter" }));
+  await user.click(within(pi).getByRole("button", { name: "Update Pi" }));
   expect(installPi).toHaveBeenCalledTimes(1);
   expect(
-    await screen.findByText(/Restart running Pi agents to use it/),
+    await screen.findByText(/Restart running Pi agents to use them/),
   ).toBeVisible();
 });
 
@@ -498,14 +498,14 @@ it("keeps Pi install progress and report across Settings remounts without taking
   });
   expect(
     await screen.findByText(
-      /Pi adapter installed.*Restarted 1 waiting agents\./,
+      /Pi and its adapter are up to date.*Restarted 1 waiting agents\./,
     ),
   ).toBeVisible();
   cleanup();
   render(<AgentSettings control={control} />, { wrapper: ToastProvider });
   expect(
     await screen.findByText(
-      /Pi adapter installed.*Restarted 1 waiting agents\./,
+      /Pi and its adapter are up to date.*Restarted 1 waiting agents\./,
     ),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Copy Pi command" })).toBeNull();

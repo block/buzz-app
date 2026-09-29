@@ -392,26 +392,19 @@ pub(crate) async fn pi_install<R: tauri::Runtime>(
             .all(|name| buzz_agent_controller::installed(name).is_some())
         {
             return Err(
-                "Pi uses a user-global adapter; update it with the command in Settings → Agents"
-                    .into(),
+                "Pi is installed user-globally; update it with npm, then click Check again".into(),
             );
         }
-        let adapter_only = (buzz_agent_controller::managed_tool(&app_data, "pi").is_some()
-            || buzz_agent_controller::installed("pi").is_some())
-            && ["buzz-pi-acp", "node"]
-                .iter()
-                .all(|name| buzz_agent_controller::managed_tool(&app_data, name).is_some());
         let waiting = agents.waiting_for_pi().await?;
         let path = app_data.join("agent-controller/pi-install.log");
         let mut report = run_install(&path, |log| {
-            crate::managed_pi::install(state.inner(), &app_data, log, adapter_only)
+            crate::managed_pi::install(state.inner(), &app_data, log)
         })
         .await?;
         if !report.ready {
             return Ok(report);
         }
-        if (buzz_agent_controller::managed_tool(&app_data, "pi").is_none()
-            && buzz_agent_controller::installed("pi").is_none())
+        if buzz_agent_controller::managed_tool(&app_data, "pi").is_none()
             || buzz_agent_controller::managed_tool(&app_data, "buzz-pi-acp").is_none()
             || buzz_agent_controller::managed_tool(&app_data, "node").is_none()
         {

@@ -174,6 +174,15 @@ fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str,
     (selected.adapter, status, managed_selected)
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn pi_current(app_data: &std::path::Path) -> bool {
+    crate::managed_pi::current(app_data)
+}
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn pi_current(_: &std::path::Path) -> bool {
+    true
+}
+
 fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
     let goose = installed_goose();
     let (pi, pi_status, pi_managed) = pi_choice(
@@ -231,7 +240,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                 any(target_os = "macos", target_os = "linux"),
                 any(target_arch = "x86_64", target_arch = "aarch64")
             ))),
-            update_supported: Some(pi_managed && pi_status == "ready"),
+            update_supported: Some(pi_managed && pi_status == "ready" && !pi_current(app_data)),
             default_args: &[],
             // Pi reports signed-in providers through its model catalog.
             providers: &[],

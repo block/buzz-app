@@ -253,6 +253,7 @@ export function ProfileButton({
             <span className={styles.profileAvatar}>
               {onProfile ? (
                 <MenuItem
+                  nativeButton
                   onClick={() => {
                     const trigger = profileTrigger.current;
                     if (!trigger) return;

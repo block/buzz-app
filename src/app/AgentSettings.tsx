@@ -7,9 +7,10 @@ import {
 import { QuestionIcon } from "../shared/design-system/icons";
 import { Button } from "../shared/design-system/ui/Button";
 import { IconButton } from "../shared/design-system/ui/IconButton";
-import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
+import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
+import { AgentDefaultsCard } from "./AgentDefaultsCard";
 import styles from "./AgentSettings.module.css";
 
 const acpHint =
@@ -45,6 +46,11 @@ export function AgentSettings({
     report: installResult,
     error: installError,
   } = state.gooseInstall ?? { installing: false, report: null, error: null };
+  const {
+    installing: installingPi,
+    report: piResult,
+    error: piError,
+  } = state.piInstall ?? { installing: false, report: null, error: null };
   useEffect(() => {
     if (active) void control.refresh();
   }, [active, control]);
@@ -93,7 +99,10 @@ export function AgentSettings({
             size="sm"
             type="button"
             disabled={
-              state.status === "unavailable" || state.busy || installing
+              state.status === "unavailable" ||
+              state.busy ||
+              installing ||
+              installingPi
             }
             loading={checking}
             onClick={() => {
@@ -140,6 +149,28 @@ export function AgentSettings({
                     <span className="text-secondary">
                       {option?.status ? labels[option.status] : "Unknown"}
                     </span>
+                    {option?.label === "Pi" &&
+                      option.status !== "ready" &&
+                      option.installSupported &&
+                      control.installPi &&
+                      !piResult?.ready && (
+                        <Button
+                          size="sm"
+                          type="button"
+                          loading={installingPi}
+                          disabled={
+                            state.status !== "ready" ||
+                            state.busy ||
+                            installing ||
+                            installingPi
+                          }
+                          onClick={() => {
+                            void control.installPi?.().catch(() => {});
+                          }}
+                        >
+                          Install
+                        </Button>
+                      )}
                     {option?.label === "Goose" &&
                       option.status === "cli-needed" &&
                       option.installSupported &&
@@ -150,7 +181,10 @@ export function AgentSettings({
                           type="button"
                           loading={installing}
                           disabled={
-                            state.status !== "ready" || state.busy || installing
+                            state.status !== "ready" ||
+                            state.busy ||
+                            installing ||
+                            installingPi
                           }
                           onClick={() => {
                             void control.installGoose?.().catch(() => {});
@@ -164,6 +198,32 @@ export function AgentSettings({
               ))}
             </ul>
             {installing && <p role="status">Installing Goose…</p>}
+            {installingPi && (
+              <p role="status">Installing Pi and its ACP adapter…</p>
+            )}
+            {!installingPi && piResult?.ready && pi?.status === "ready" && (
+              <p role="status">
+                Pi installed. Restarted {piResult.restarted} waiting agents.
+                {piResult.restartFailures > 0 &&
+                  ` ${piResult.restartFailures} agents could not restart; check Agents.`}
+              </p>
+            )}
+            {!installingPi && (piResult?.error || piError) && (
+              <div role="alert" className="text-body-sm">
+                <p>{piResult?.error || piError}</p>
+                {piResult && (
+                  <details>
+                    <summary>Pi install log</summary>
+                    <p className="break-all">{piResult.logPath}</p>
+                    <pre
+                      className={`${styles.command} whitespace-pre-wrap break-all`}
+                    >
+                      {piResult.output || "No output was recorded."}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            )}
             {!installing &&
               installResult?.ready &&
               goose?.status === "ready" && (
@@ -228,8 +288,9 @@ export function AgentSettings({
           </>
         )}
       </section>
+      <AgentDefaultsCard control={control} state={state} />
       <div className="mt-6">
-        <PreferenceRow
+        <SwitchPreferenceRow
           label="Remember mentioned agents"
           description="Start your next message with the agents from your last one in the same channel or thread."
           checked={preference}

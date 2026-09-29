@@ -1,9 +1,8 @@
 import { MessageTimestamp } from "./MessageTimestamp";
-import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { AgentAvatar } from "../agents/AgentAvatar";
 import { usePresenceStatus } from "../presence/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -37,6 +36,7 @@ import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
+import { MessageManagementItems } from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
 import { FlagIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
@@ -84,6 +84,7 @@ export type MessageRowProps = {
     messageId: string,
     attachment: ChannelMessage["attachments"][number],
     seconds: number,
+    hasComments?: boolean,
   ) => void;
 };
 
@@ -151,11 +152,14 @@ export const MessageRow = memo(function MessageRow({
     row.agentEnvelope || agentPubkeys?.has(row.authorId)
       ? "squircle"
       : "circle";
-  const presence = usePresenceStatus(session?.presence, row.authorId);
+  const presence = usePresenceStatus(
+    avatarShape === "squircle" ? session?.presence : undefined,
+    row.authorId,
+  );
   const presenceId = useId();
+  const thinkingId = useId();
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
-  const replaceTime = !!timeReply && !!onMediaTime;
-  const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
+  const displayRow = timeReply ? { ...row, content: timeReply.content } : row;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -190,9 +194,21 @@ export const MessageRow = memo(function MessageRow({
       <MenuIcon>
         <FlagIcon />
       </MenuIcon>
-      Report message
+      Report
     </MenuItem>
   );
+  // Keep mixed attachments in sender order; only adjacent images share a strip.
+  const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
+  for (const attachment of row.attachments) {
+    if (!safeMessageUrl(attachment.url)) continue;
+    const previous = attachmentGroups.at(-1);
+    if (
+      (attachment.kind === "image" || attachment.kind === "file") &&
+      previous?.[0]?.kind === attachment.kind
+    )
+      previous.push(attachment);
+    else attachmentGroups.push([attachment]);
+  }
   const body = row.diff ? (
     <div>
       <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
@@ -235,6 +251,7 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.day}>
           <span>
             {new Date(row.createdAt * 1000).toLocaleDateString(undefined, {
+              year: "numeric",
               weekday: "long",
               month: "long",
               day: "numeric",
@@ -252,16 +269,27 @@ export const MessageRow = memo(function MessageRow({
             size={layout === "timeline" ? "default" : "sm"}
             shape="round"
             aria-label={`View ${name} profile`}
-            aria-describedby={presence === "unknown" ? undefined : presenceId}
+            aria-describedby={
+              [
+                presence !== "unknown" && presenceId,
+                avatarShape === "squircle" && thinkingId,
+              ]
+                .filter(Boolean)
+                .join(" ") || undefined
+            }
             onClick={(event) => {
               event.currentTarget.focus();
               onOpenLink(target);
             }}
             icon={
               <>
-                <Avatar
+                <AgentAvatar
+                  session={session}
+                  agentPubkey={row.authorId}
+                  channelId={row.channelId}
                   src={picture}
                   alt=""
+                  thinkingDescriptionId={thinkingId}
                   fallback={name}
                   size="fill"
                   shape={avatarShape}
@@ -276,7 +304,10 @@ export const MessageRow = memo(function MessageRow({
             }
           />
         ) : (
-          <Avatar
+          <AgentAvatar
+            session={session}
+            agentPubkey={row.authorId}
+            channelId={row.channelId}
             src={picture}
             alt={
               presence === "unknown"
@@ -342,12 +373,13 @@ export const MessageRow = memo(function MessageRow({
                 ) : undefined)
               }
               overflowItems={
-                overflowItems || reportItem ? (
-                  <>
-                    {overflowItems}
-                    {reportItem}
-                  </>
-                ) : undefined
+                <>
+                  {overflowItems ??
+                    (session ? (
+                      <MessageManagementItems row={row} session={session} />
+                    ) : undefined)}
+                  {reportItem}
+                </>
               }
             />
           )}
@@ -373,28 +405,24 @@ export const MessageRow = memo(function MessageRow({
           >
             <span className={styles.author}>
               <strong>{name}</strong>
-              {session && (
-                <UserStatusDisplay
-                  session={session}
-                  userId={row.authorId}
-                  compact
-                  focusable={false}
-                />
-              )}
             </span>
             {layout !== "continuation" && (
               <MessageTimestamp createdAt={row.createdAt} />
             )}
           </div>
-          {timeReply && onMediaTime && (
+          {timeReply && (
             <span className={styles.mediaTimeLink}>
-              <Button
-                size="sm"
-                type="button"
-                onClick={() => onMediaTime(timeReply.anchor.seconds)}
-              >
-                {timeReply.label}
-              </Button>
+              {onMediaTime ? (
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => onMediaTime(timeReply.anchor.seconds)}
+                >
+                  {timeReply.label}
+                </Button>
+              ) : (
+                <span>{timeReply.label}</span>
+              )}
             </span>
           )}
           {extensions?.messages ? (
@@ -405,76 +433,122 @@ export const MessageRow = memo(function MessageRow({
             body
           )}
           <DeliveryNotice row={row} retry={retry} />
-          {row.attachments.map((attachment) => {
-            const url = safeMessageUrl(attachment.url);
-            if (!url) return null;
-            const source = media(url);
-            if (attachment.kind === "file")
-              return (
-                <FileAttachment
-                  key={url}
-                  attachment={{ ...attachment, url }}
-                  source={source}
-                  onOpenLink={onOpenLink}
-                />
-              );
-            if (attachment.kind === "audio") {
-              if (source && isProxySource(source))
+          {attachmentGroups.map((group) => {
+            const images = group[0]?.kind === "image";
+            const files = group[0]?.kind === "file";
+            const items = group.map((attachment, index) => {
+              const url = safeMessageUrl(attachment.url);
+              if (!url) return null;
+              const source = media(url);
+              if (attachment.kind === "file")
                 return (
-                  <AudioAttachment
+                  <FileAttachment
                     key={url}
                     attachment={{ ...attachment, url }}
                     source={source}
+                    onOpenLink={onOpenLink}
                   />
                 );
+              if (attachment.kind === "audio") {
+                if (source && isProxySource(source))
+                  return (
+                    <AudioAttachment
+                      key={url}
+                      attachment={{ ...attachment, url }}
+                      source={source}
+                    />
+                  );
+                return (
+                  <FileAttachment
+                    key={url}
+                    attachment={{ ...attachment, url }}
+                    source={source}
+                    onOpenLink={onOpenLink}
+                  />
+                );
+              }
+              if (attachment.kind === "image") {
+                return (
+                  <AttachmentImage
+                    key={url}
+                    attachment={{ ...attachment, url }}
+                    url={url}
+                    source={source}
+                    cached={cached}
+                    thumbnail
+                    label={
+                      group.length > 1
+                        ? `Open image ${index + 1} of ${group.length}`
+                        : "Open image attachment"
+                    }
+                    onOpenLink={onOpenLink}
+                    {...(onOpenMediaReview
+                      ? {
+                          onOpenReview: (item, seconds) =>
+                            onOpenMediaReview(
+                              row.id,
+                              item,
+                              seconds,
+                              row.replyCount > 0 ||
+                                (!!row.threadRootId &&
+                                  row.threadRootId !== row.id),
+                            ),
+                        }
+                      : {})}
+                  />
+                );
+              }
               return (
-                <FileAttachment
+                <MediaAttachment
                   key={url}
                   attachment={{ ...attachment, url }}
-                  source={source}
-                  onOpenLink={onOpenLink}
-                />
-              );
-            }
-            if (attachment.kind === "image")
-              return (
-                <AttachmentImage
-                  key={url}
-                  attachment={{ ...attachment, url }}
-                  url={url}
-                  source={source}
-                  cached={cached}
-                  onOpenLink={onOpenLink}
+                  media={media}
+                  mode={mediaMode}
+                  {...(attachment.kind === "video" && mediaSeekTo !== undefined
+                    ? {
+                        seekTo: mediaSeekTo,
+                        ...(mediaSeekRequest !== undefined
+                          ? { seekRequest: mediaSeekRequest }
+                          : {}),
+                      }
+                    : {})}
+                  {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
                   {...(onOpenMediaReview
                     ? {
                         onOpenReview: (item, seconds) =>
-                          onOpenMediaReview(row.id, item, seconds),
+                          onOpenMediaReview(
+                            row.id,
+                            item,
+                            seconds,
+                            row.replyCount > 0 ||
+                              (!!row.threadRootId &&
+                                row.threadRootId !== row.id),
+                          ),
                       }
                     : {})}
                 />
               );
-            return (
-              <MediaAttachment
-                key={url}
-                attachment={{ ...attachment, url }}
-                media={media}
-                mode={mediaMode}
-                {...(attachment.kind === "video" && mediaSeekTo !== undefined
-                  ? {
-                      seekTo: mediaSeekTo,
-                      ...(mediaSeekRequest !== undefined
-                        ? { seekRequest: mediaSeekRequest }
-                        : {}),
-                    }
-                  : {})}
-                {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
-                {...(onOpenMediaReview
-                  ? {
-                      onOpenReview: (item, seconds) =>
-                        onOpenMediaReview(row.id, item, seconds),
-                    }
-                  : {})}
-              />
+            });
+            return images ? (
+              <div className={styles.imageGroup} key={group[0]?.url}>
+                {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
+                <div
+                  className={styles.imageStrip}
+                  role="group"
+                  aria-label={`${group.length} ${group.length === 1 ? "image" : "images"}`}
+                >
+                  {items}
+                </div>
+                {group.length > 1 && (
+                  <div className={styles.imageCount}>{group.length} images</div>
+                )}
+              </div>
+            ) : files ? (
+              <div className={styles.fileGroup} key={group[0]?.url}>
+                {items}
+              </div>
+            ) : (
+              items
             );
           })}
           {session && scope && extensions ? (

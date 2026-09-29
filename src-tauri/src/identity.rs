@@ -1,14 +1,16 @@
 //! One create-only human identity. Never consult legacy, agent, file or environment keys.
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{Keypair, PublicKey, Secp256k1, SecretKey};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 use zeroize::Zeroizing;
 
 type Result<T> = std::result::Result<T, String>;
 const INVALID: &str = "Enter a valid nsec private key";
-const MALFORMED: &str = "Saved identity is malformed; nothing was changed. Keep your key backup and contact support before changing Keychain data.";
+const MALFORMED: &str = "Saved identity is malformed; nothing was changed. Keep your key backup and contact support before changing secure storage.";
 // Debug identities must never occupy the create-only release item.
-#[cfg(any(all(target_os = "macos", not(test)), test))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 const SERVICE: &str = if cfg!(debug_assertions) {
     "dev.local.buzz.foundation.identity.debug"
 } else {
@@ -17,7 +19,49 @@ const SERVICE: &str = if cfg!(debug_assertions) {
 
 // No Debug/Serialize: only deliberate export may return the secret to the main UI.
 struct Key(Zeroizing<[u8; 32]>);
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EventTemplate {
+    pub created_at: u64,
+    pub kind: u16,
+    pub tags: Vec<Vec<String>>,
+    pub content: String,
+}
+
 impl Key {
+    fn sign(&self, event: EventTemplate) -> Result<serde_json::Value> {
+        let pubkey = self.viewer()?;
+        let serialized = serde_json::to_vec(&serde_json::json!([
+            0,
+            pubkey,
+            event.created_at,
+            event.kind,
+            event.tags,
+            event.content
+        ]))
+        .map_err(|_| "Could not encode relay event")?;
+        if serialized.len() > 64 * 1024 {
+            return Err("Relay event is too large".into());
+        }
+        let hash = Sha256::digest(serialized);
+        let secp = Secp256k1::signing_only();
+        let mut secret = SecretKey::from_byte_array(*self.0).map_err(|_| INVALID)?;
+        let mut pair = Keypair::from_secret_key(&secp, &secret);
+        secret.non_secure_erase();
+        let mut random = Zeroizing::new([0; 32]);
+        if getrandom::fill(random.as_mut()).is_err() {
+            pair.non_secure_erase();
+            return Err("Could not sign relay event".into());
+        }
+        let signature = secp.sign_schnorr_with_aux_rand(&hash, &pair, &random);
+        pair.non_secure_erase();
+        Ok(serde_json::json!({
+            "id": format!("{hash:x}"), "pubkey": pubkey,
+            "created_at": event.created_at, "kind": event.kind,
+            "tags": event.tags, "content": event.content, "sig": signature.to_string()
+        }))
+    }
     fn parse(text: &str) -> Result<Self> {
         let text = text.trim();
         if text.len() != 63 || !(text.starts_with("nsec1") || text.starts_with("NSEC1")) {
@@ -100,8 +144,38 @@ mod platform {
         }
     }
 }
+#[cfg(all(any(target_os = "windows", target_os = "linux"), not(test)))]
+mod keyring_platform {
+    use super::*;
+    use buzz_credential_store::{self as credentials, Error};
+    const ACCOUNT: &str = "human";
+    fn error(error: Error) -> String {
+        match error {
+            Error::Occupied => "An identity is already saved; nothing was overwritten. Restart to restore it.",
+            Error::Denied => "Secure storage access was denied. Allow access and retry; no identity was created.",
+            Error::Busy => "Another Buzz app is accessing secure storage. Retry shortly.",
+            Error::Corrupt => MALFORMED,
+            _ => "Your identity could not be accessed in secure storage. Unlock your credential store and retry without changing keys.",
+        }.into()
+    }
+    impl Store for OsStore {
+        fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            match credentials::read(SERVICE, ACCOUNT) {
+                Ok(value) => Ok(Some(value)),
+                Err(Error::Absent) => Ok(None),
+                Err(e) => Err(error(e)),
+            }
+        }
+        fn add(&self, value: &[u8]) -> Result<()> {
+            credentials::add(SERVICE, ACCOUNT, value).map_err(error)
+        }
+    }
+}
 // Native tests cannot touch an OS credential store, even via the default host.
-#[cfg(any(not(target_os = "macos"), test))]
+#[cfg(any(
+    not(any(target_os = "macos", target_os = "windows", target_os = "linux")),
+    test
+))]
 impl Store for OsStore {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
         Err("Secure identity storage is not available on this platform yet".into())
@@ -164,6 +238,26 @@ impl Identity {
 
 #[derive(Clone)]
 pub struct IdentityHost(Arc<Mutex<Identity>>);
+impl IdentityHost {
+    #[cfg(test)]
+    pub(crate) fn fixture() -> Self {
+        Self(Arc::new(Mutex::new(Identity {
+            state: State::Ready(Key(Zeroizing::new([1; 32]))),
+            store: Box::new(OsStore),
+        })))
+    }
+
+    pub(crate) async fn sign(&self, event: EventTemplate) -> Result<serde_json::Value> {
+        with_identity(self.clone(), move |identity| {
+            identity.restore()?;
+            match &identity.state {
+                State::Ready(key) => key.sign(event),
+                _ => Err("Set up your identity first".into()),
+            }
+        })
+        .await
+    }
+}
 impl Default for IdentityHost {
     fn default() -> Self {
         Self(Arc::new(Mutex::new(Identity {

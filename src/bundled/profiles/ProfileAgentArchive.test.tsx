@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+stubAvatarBrowserApis();
 import { StrictMode } from "react";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -454,7 +456,7 @@ it("a failed native delete after confirmed relay effects reports it and stays op
   );
   await confirmDelete(userEvent.setup());
   const [error] = await screen.findAllByText(
-    /Synthetic native refusal Could not confirm the operation\. Check current status and saved settings before retrying/,
+    /Synthetic native refusal\. Could not confirm the operation\. Check current status and saved settings before retrying/,
   );
   expect(error).toBeVisible();
   expect(fixture.published.map((event) => event.kind)).toEqual([9001, 9035]);

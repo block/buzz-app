@@ -3,18 +3,21 @@
 @layer components {
   .buzz-button {
     position: relative;
-    display: inline-grid;
-    place-items: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     min-width: 0;
+    flex-shrink: 0;
+    white-space: nowrap;
     /* The reference's 32/40/52px heights remain minimums for text scaling. */
     min-height: var(--size-control);
     border: 0;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-capsule);
     padding: var(--space-2) var(--space-6);
     background: transparent;
     color: var(--text-standard);
     font-family: inherit;
-    @apply text-label;
+    @apply text-label-sm;
     cursor: pointer;
     transition:
       background-color var(--duration-state) var(--easing-state),
@@ -26,7 +29,6 @@
     justify-content: center;
     min-width: 0;
     gap: var(--space-row-gap);
-    overflow-wrap: anywhere;
   }
   .buzz-button-label > svg,
   .buzz-button-spinner {
@@ -98,7 +100,8 @@
       ):hover:not(
         [data-disabled],
         [data-icon-variant="chrome"],
-        [data-icon-variant="avatar"]
+        [data-icon-variant="avatar"],
+        [data-icon-variant="media"]
       ) {
       background: var(--affordance-subtle-hover);
     }
@@ -122,7 +125,8 @@
     [data-variant="inverted"]
   ):is(:active, [aria-expanded="true"]):not(
     [data-disabled],
-    [data-icon-variant="avatar"]
+    [data-icon-variant="avatar"],
+    [data-icon-variant="media"]
   ) {
     background: var(--affordance-subtle-pressed);
   }
@@ -207,6 +211,9 @@
   }
   .buzz-button[data-icon-variant="chrome"] {
     @apply glass-primary-interactive;
+  }
+  .buzz-button[data-icon-variant="media"] {
+    @apply media-glass;
   }
   @media (hover: hover) and (pointer: fine) {
     .buzz-button[data-icon-variant="tint"]:hover:not([data-disabled]) {
@@ -362,9 +369,9 @@
     pointer-events: none;
   }
 
-  /* A same-hue outline carries the status boundary while preserving the
+  /* Online retains a same-hue outline while preserving the
      requested step-10 center. Inheriting the mask also outlines squircles. */
-  .buzz-avatar-status-dot::after {
+  .buzz-avatar-status[data-status="online"] .buzz-avatar-status-dot::after {
     content: "";
     position: absolute;
     inset: 1px;
@@ -374,16 +381,11 @@
   }
 
   .buzz-avatar-status[data-status="away"] .buzz-avatar-status-dot {
-    --avatar-status-fill: var(--status-away);
-    background: var(--status-avatar-away-border);
+    background: var(--status-away);
   }
 
   .buzz-avatar-status[data-status="offline"] .buzz-avatar-status-dot {
     background: var(--status-offline);
-  }
-
-  .buzz-avatar-status[data-status="offline"] .buzz-avatar-status-dot::after {
-    content: none;
   }
 
   /* A panel is the default opaque reading surface over the atmospheric
@@ -1226,7 +1228,32 @@
     min-width: 0;
     padding: var(--space-3) 0;
   }
+  .buzz-preference-row[data-has-icon] {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .buzz-preference-row-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--space-5);
+    height: var(--space-5);
+    color: var(--text-subtle);
+  }
+  .buzz-preference-row-icon > svg {
+    width: 100%;
+    height: 100%;
+  }
+  .buzz-preference-row-trailing {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    min-width: 0;
+    max-width: 100%;
+  }
   .buzz-preference-row-content {
+    overflow-wrap: anywhere;
     display: grid;
     gap: var(--space-1);
     min-width: 0;
@@ -1234,14 +1261,37 @@
   .buzz-preference-row-label {
     @apply text-label-sm;
     color: var(--text-standard);
+  }
+  label.buzz-preference-row-label {
     cursor: pointer;
+  }
+  @container (max-width: 24rem) {
+    .buzz-preference-row-trailing:has(
+        button:not([role="switch"]):not([role="checkbox"])
+      ),
+    .buzz-preference-row-trailing:has([role="combobox"]) {
+      grid-column: 1 / -1;
+      justify-content: flex-start;
+    }
+    .buzz-preference-row[data-has-icon]
+      > .buzz-preference-row-trailing:has(
+        button:not([role="switch"]):not([role="checkbox"])
+      ),
+    .buzz-preference-row[data-has-icon]
+      > .buzz-preference-row-trailing:has([role="combobox"]) {
+      grid-column: 2 / -1;
+    }
   }
   .buzz-preference-row-description {
     @apply text-body-sm;
     color: var(--text-subtle);
   }
-  .buzz-preference-row:has(.buzz-switch-control[data-disabled])
-    :is(.buzz-preference-row-label, .buzz-preference-row-description) {
+  .buzz-preference-row[data-disabled]
+    :is(
+      .buzz-preference-row-label,
+      .buzz-preference-row-description,
+      .buzz-preference-row-icon
+    ) {
     color: var(--text-unavailable);
     cursor: not-allowed;
   }

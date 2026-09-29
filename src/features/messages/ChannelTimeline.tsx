@@ -8,6 +8,7 @@ import type { RelaySession } from "../relay/session";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow } from "./MessageRow";
+import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
@@ -18,6 +19,7 @@ import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
+import { JumpToLatestButton } from "./JumpToLatestButton";
 
 const EDGE_HEIGHT = 56;
 type ReadingPosition = {
@@ -89,6 +91,7 @@ export type ChannelTimelineProps = {
     messageId: string,
     attachment: Attachment,
     seconds: number,
+    hasComments?: boolean,
   ): void;
 };
 
@@ -161,7 +164,8 @@ function Timeline({
   const edges = useRef<{
     first?: string | undefined;
     last?: string | undefined;
-  }>({});
+    ids: ReadonlySet<string>;
+  }>({ ids: new Set() });
   const intent = useRef(0);
   const measuredPosition = useRef<{
     offset: number;
@@ -173,6 +177,8 @@ function Timeline({
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
     (element: HTMLElement) => {
       // A delayed membership event can replace a group's rendered representative.
@@ -212,6 +218,25 @@ function Timeline({
     },
     [rows],
   );
+  const updateJumpToLatest = useCallback((element: HTMLElement) => {
+    const bottom =
+      element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+    setShowJumpToLatest(!bottom);
+    if (bottom) setNewMessageCount(0);
+  }, []);
+  const jumpToLatest = useCallback(() => {
+    if (!handle.current || !rows.length) return;
+    intent.current++;
+    follow.current = true;
+    restoredAnchor.current = undefined;
+    userScrolled.current = false;
+    scroller.current?.focus({ preventScroll: true });
+    setShowJumpToLatest(false);
+    setNewMessageCount(0);
+    handle.current.scrollToIndex(rows.length - 1, {
+      align: "end",
+    });
+  }, [rows.length]);
   const targetId =
     navigation?.target.kind === "conversation"
       ? navigation.target.messageId
@@ -284,7 +309,23 @@ function Timeline({
   useLayoutEffect(() => {
     // Row updates include edits/reactions/replies, not only new message IDs.
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.
-    edges.current = { first: rows[0]?.id, last: rows.at(-1)?.id };
+    const previousIds = edges.current.ids;
+    const arrivals = prepend
+      ? 0
+      : rows.filter((row) => !previousIds.has(row.id)).length;
+    edges.current = {
+      first: rows[0]?.id,
+      last: rows.at(-1)?.id,
+      ids: new Set(rows.map((row) => row.id)),
+    };
+    if (
+      arrivals > 0 &&
+      previousIds.size > 0 &&
+      !follow.current &&
+      (!targetId || exactRevealed.current === navigation?.signal)
+    ) {
+      setNewMessageCount((count) => count + arrivals);
+    }
     if (
       (targetId && navigation && exactRevealed.current !== navigation.signal) ||
       !size.width ||
@@ -301,9 +342,7 @@ function Timeline({
         ? savedPosition.current
         : null;
     let observer: MutationObserver | undefined;
-    let correctionPending = false;
     const restorePosition = () => {
-      correctionPending = false;
       if (intent.current !== scheduledIntent || !handle.current) return;
       if (restore) {
         const anchor = restore.anchor;
@@ -348,8 +387,16 @@ function Timeline({
           observer = new MutationObserver(() => {
             if (list.style.height === height) return;
             height = list.style.height;
+            // Capture a native clamp while its shrink is still observable.
+            // Another append can grow the list before the queued scroll event.
+            if (
+              !restore &&
+              measuredPosition.current &&
+              intent.current === scheduledIntent &&
+              scroller.current
+            )
+              recordPosition(scroller.current);
             cancelAnimationFrame(frame);
-            correctionPending = true;
             frame = requestAnimationFrame(restorePosition);
           });
           observer.observe(list, {
@@ -359,19 +406,22 @@ function Timeline({
         }
       }
       settled.current = true;
+      if (scroller.current) updateJumpToLatest(scroller.current);
     });
     return () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();
-      // A row refresh can cancel the late measurement correction. Carry the
-      // original restoration across it; only newer reader input may retire it.
-      if (
-        correctionPending &&
-        restore &&
-        !follow.current &&
-        intent.current === scheduledIntent
-      ) {
-        savedPosition.current = restore;
+      // A row refresh can arrive before the first deferred measurement or
+      // cancel its correction. Keep restoration until newer reader input.
+      if (restore && !follow.current && intent.current === scheduledIntent) {
+        // Carry the original geometry with the resolved membership identity.
+        savedPosition.current =
+          restore.anchor && restoredAnchor.current
+            ? {
+                ...restore,
+                anchor: { ...restore.anchor, id: restoredAnchor.current },
+              }
+            : restore;
         settled.current = false;
       }
     };
@@ -383,6 +433,7 @@ function Timeline({
     targetId,
     navigation,
     exactRevealed,
+    updateJumpToLatest,
   ]);
   const revealed = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
@@ -485,6 +536,7 @@ function Timeline({
           element.clientHeight === size.height
         ) {
           recordPosition(element);
+          updateJumpToLatest(element);
         }
         loadNearTop(element);
       }}
@@ -508,6 +560,12 @@ function Timeline({
           </Button>
         ) : null}
       </div>
+      {showJumpToLatest && (
+        <JumpToLatestButton
+          newMessageCount={newMessageCount}
+          onClick={jumpToLatest}
+        />
+      )}
       {width > 0 && (
         <Virtualizer
           ref={handle}
@@ -524,8 +582,7 @@ function Timeline({
           {rows.map((row, index) => {
             const day =
               index === 0
-                ? queries.channels.get?.(channelId)?.channelType !== "dm" ||
-                  window.hasMore
+                ? true
                 : new Date(
                     (rows[index - 1]?.createdAt ?? 0) * 1000,
                   ).toDateString() !==
@@ -544,6 +601,11 @@ function Timeline({
               />
             ) : (
               <MessageRow
+                layout={
+                  continuesMessageGroup(rows[index - 1], row)
+                    ? "continuation"
+                    : "timeline"
+                }
                 session={queries}
                 scope={scope}
                 key={row.id}

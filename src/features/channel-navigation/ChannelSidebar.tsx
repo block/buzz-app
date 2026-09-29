@@ -37,6 +37,7 @@ import {
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { clientMetrics } from "../developer/client-metrics";
 import {
   BellIcon,
   BellSlashIcon,
@@ -296,11 +297,8 @@ function ReadySidebar({
   useEffect(() => {
     if (list.status === "ready") void lifecycle.refreshVisibility();
   }, [lifecycle, list.asOf, list.status]);
-  const [lifecycleDialog, setLifecycleDialog] = useState<{
-    channel: ChannelSummary;
-    action: ChannelLifecycleAction;
-  }>();
   const lifecycleFocus = useRef<string | undefined>(undefined);
+  const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);
   const sidebar = useSidebarView(
     scope,
     startup.ready &&
@@ -322,6 +320,7 @@ function ReadySidebar({
     [workingIds],
   );
   const handoff = useChannelNavigation();
+  const lifecycleDialog = handoff?.lifecycleDialog;
   const draftParents = handoff?.draftParents ?? [];
   const draftParent =
     target.kind === "page" &&
@@ -411,13 +410,19 @@ function ReadySidebar({
   ) => {
     // Let the existing context menu restore focus before opening confirmation.
     requestAnimationFrame(() => {
-      if (mounted.current) setLifecycleDialog({ channel, action });
+      if (mounted.current) handoff?.openLifecycle(channel, action);
     });
   };
   useLayoutEffect(() => {
     if (!lifecycleFocus.current || lifecycleDialog) return;
     const id = lifecycleFocus.current;
     lifecycleFocus.current = undefined;
+    const trigger = lifecycleTrigger.current;
+    lifecycleTrigger.current = undefined;
+    if (trigger?.isConnected) {
+      trigger.focus({ preventScroll: true });
+      return;
+    }
     const rows = [
       ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
         "[data-channel-id]",
@@ -437,6 +442,7 @@ function ReadySidebar({
   const select = useCallback(
     (id: string) => {
       if (!viewer || relay.snapshot().session !== queries) return;
+      clientMetrics.channelIntent(id, window.event);
       writeView(scope, "selected-channel", id);
       void navigator.open({
         version: 1,
@@ -874,13 +880,19 @@ function ReadySidebar({
           lifecycle={lifecycle}
           close={() => {
             lifecycleFocus.current = lifecycleDialog.channel.id;
-            setLifecycleDialog(undefined);
+            lifecycleTrigger.current = lifecycleDialog.trigger;
+            handoff?.closeLifecycle();
           }}
           completed={() => {
             const id = lifecycleDialog.channel.id;
             lifecycleFocus.current = id;
-            setLifecycleDialog(undefined);
-            if (current?.id === id) {
+            handoff?.closeLifecycle();
+            // Confirmed access loss can already have removed current from the roster.
+            if (
+              (target.kind === "conversation"
+                ? target.channelId
+                : draftParent) === id
+            ) {
               const next = sections
                 .flatMap((section) => section.rows)
                 .find((channel) => channel.id !== id);

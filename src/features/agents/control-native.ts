@@ -33,16 +33,28 @@ export function nativeAgentControlHost(): AgentControlHost | null {
       });
     },
     installGoose: () => invoke("goose_install"),
+    installPi: () => invoke("pi_install"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),
+    saveDefaults: (edit) => invoke("agent_control_save_defaults", { edit }),
     delete: (id, expectedRevision) =>
       invoke("agent_control_delete", { id, expectedRevision }),
+    attachMention: (id, expectedRevision, replayFloor) =>
+      invoke("agent_control_attach_mention", {
+        id,
+        expectedRevision,
+        replayFloor,
+      }),
     action: (id, action, replayFloor) =>
       invoke("agent_control_action", {
         id,
         action,
         ...(replayFloor === undefined ? {} : { replayFloor }),
       }),
+    configureHere: (id, resolution) =>
+      invoke("agent_control_use_here", { id, resolution }),
+    cloneSettings: (source, pubkey) =>
+      invoke("agent_control_clone_settings", { source, pubkey }),
     previewImport: (source, destination) =>
       invoke("agent_control_import_preview", { source, destination }),
     commitImport: (token, ids) =>

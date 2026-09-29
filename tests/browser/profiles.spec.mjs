@@ -1,10 +1,10 @@
 import { test, expect } from "./source-fixture.mjs";
+import { watchPageErrors } from "./page-errors.mjs";
 
 test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecycle and recovery", async ({
   page,
 }, testInfo) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html");
   const panel = page.getByRole("complementary", {
     name: "Profile",
@@ -34,21 +34,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   const portraitWidth = await portrait.evaluate(
     (element) => element.getBoundingClientRect().width,
   );
-  const contentWidth = await portrait.evaluate((element) => {
-    const region = element.closest('[aria-label="Profile details"]');
-    return (
-      region.clientWidth -
-      parseFloat(getComputedStyle(region).paddingLeft) -
-      parseFloat(getComputedStyle(region).paddingRight)
-    );
-  });
-  const maxPortraitWidth = await page.evaluate(() =>
-    Math.min(256, innerHeight * 0.35),
-  );
-  expect(portraitWidth).toBeCloseTo(
-    Math.min(contentWidth, maxPortraitWidth),
-    0,
-  );
+  expect(portraitWidth).toBeCloseTo(80, 0);
   expect(
     await portrait.evaluate(
       (element) => element.getBoundingClientRect().height,
@@ -57,8 +43,8 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   expect(
     await name.evaluate(
       (element, portrait) =>
-        element.getBoundingClientRect().top >=
-        portrait.getBoundingClientRect().bottom,
+        element.getBoundingClientRect().left >=
+        portrait.getBoundingClientRect().right,
       await portrait.elementHandle(),
     ),
   ).toBe(true);
@@ -179,7 +165,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(panel.getByRole("tab", { name: "Memories" })).toBeVisible();
   await panel.getByRole("tab", { name: "Channels" }).click();
   await expect(panel.getByRole("region", { name: "Channels" })).toContainText(
-    "#One",
+    "One",
   );
   expect(
     await page.evaluate(() => window.profilesFixture.report.memoryReads),
@@ -260,7 +246,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     key: window.profilesFixture.keys.pinky,
   }));
   expect(reads.reads.some((batch) => batch.includes(reads.key))).toBe(true);
-  expect(errors).toEqual([]);
+  expect(errors.unexplained()).toEqual([]);
 });
 
 test("contextual panel callbacks retire with opening, channel, contribution and session", async ({

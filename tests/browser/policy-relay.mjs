@@ -26,6 +26,45 @@ export function policyRelay({
   report.liveRequests = requests;
   report.quotaRefusals = rejected;
   const quotas = new Map();
+  // Opt-in scale profile: the relay's per-principal, per-community Redis counter.
+  // REQ and EVENT share a five-second window starting on the first frame;
+  // rejected frames increment it too. AUTH/CLOSE do not spend this budget.
+  let wsLimit = 0;
+  let eoseMs = 0;
+  const wsWindows = new Map();
+  report.wsAdmissions = [];
+  function admitWs(socket, kind, id) {
+    if (!wsLimit || !["REQ", "EVENT"].includes(kind)) return true;
+    const now = performance.now();
+    let window = wsWindows.get(socket.community);
+    if (!window || now >= window.reset) {
+      window = { count: 0, reset: now + 5000 };
+      wsWindows.set(socket.community, window);
+    }
+    const accepted = ++window.count <= wsLimit;
+    report.wsAdmissions.push({
+      kind,
+      id: kind === "EVENT" ? id.id : id,
+      community: socket.community,
+      at: now,
+      accepted,
+    });
+    if (!accepted) {
+      // Redis TTL reports remaining milliseconds rounded to the nearest second.
+      const seconds = Math.round((window.reset - now) / 1000);
+      const reason = `rate-limited: quota exceeded; retry in ${seconds}s`;
+      const reject = () =>
+        emit(
+          socket,
+          kind === "REQ"
+            ? ["CLOSED", id, reason]
+            : ["OK", id.id, false, reason],
+        );
+      if (eoseMs) setTimeout(reject, eoseMs);
+      else queueMicrotask(reject);
+    }
+    return accepted;
+  }
   const heldEose = new Set();
   const pendingEose = [];
   const pendingProfiles = [];
@@ -48,6 +87,7 @@ export function policyRelay({
           ? "observer"
           : undefined);
   report.wireFrames = [];
+  report.startupFrames = [];
   let emptyRoster = false;
   let heldContent = false;
   const communityOf = (url) =>
@@ -58,10 +98,20 @@ export function policyRelay({
   };
   function emit(socket, frame) {
     report.wireFrames.push(frame);
+    if (wsLimit)
+      report.startupFrames.push({
+        socket: sockets.indexOf(socket),
+        frame,
+        at: performance.now(),
+      });
     if (socket.readyState === 1)
       socket.onmessage?.({ data: JSON.stringify(frame) });
   }
   return {
+    startupQuota(limit, setupLatencyMs = 40) {
+      wsLimit = limit;
+      eoseMs = setupLatencyMs;
+    },
     holdPresence() {
       presenceHeld = true;
     },
@@ -92,9 +142,11 @@ export function policyRelay({
     releaseEose(channel) {
       heldEose.delete(channel);
       for (let i = pendingEose.length - 1; i >= 0; i--) {
-        if (pendingEose[i].channel !== channel) continue;
-        const [item] = pendingEose.splice(i, 1);
-        emit(item.socket, ["EOSE", item.id]);
+        const item = pendingEose[i];
+        if (item.routes.some((route) => heldEose.has(route))) continue;
+        pendingEose.splice(i, 1);
+        if (item.socket.routes.has(item.id))
+          emit(item.socket, ["EOSE", item.id]);
       }
     },
     sockets,
@@ -161,6 +213,22 @@ export function policyRelay({
           });
           expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([
             9, 40002, 40008,
+          ]);
+          for (const filter of filters)
+            report.queries.push({
+              community: communityOf(url),
+              filter,
+              at: performance.now(),
+            });
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
+        if (filters.length === 2 && filters[1].kinds?.includes(13534)) {
+          // Identity archive consent: the target's profile plus the relay roster.
+          expect(filters).toEqual([
+            { kinds: [0], authors: [expect.any(String)], limit: 1 },
+            { kinds: [13534], authors: [relayAuthor], limit: 1 },
           ]);
           for (const filter of filters)
             report.queries.push({
@@ -424,7 +492,7 @@ export function policyRelay({
         routes: new Map(),
         send(text) {
           try {
-            const [kind, id, filter] = JSON.parse(text);
+            const [kind, id, ...filters] = JSON.parse(text);
             if (kind === "AUTH") {
               expect(verifyEvent(id)).toBe(true);
               expect(id.pubkey).toBe(viewer);
@@ -437,6 +505,7 @@ export function policyRelay({
               this.routes.delete(id);
               return;
             }
+            if (kind === "EVENT" && !admitWs(this, kind, id)) return;
             if (kind === "EVENT" && id.kind === 20001) {
               expect(this.authenticated).toBe(true);
               expect(verifyEvent(id)).toBe(true);
@@ -447,8 +516,23 @@ export function policyRelay({
               report.presencePublications.push({
                 community: this.community,
                 event: id,
+                at: performance.now(),
               });
-              queueMicrotask(() => emit(this, ["OK", id.id, true]));
+              queueMicrotask(() => {
+                emit(this, ["OK", id.id, true]);
+                for (const peer of sockets) {
+                  if (peer.community !== this.community) continue;
+                  for (const [wire, filters] of peer.routes)
+                    if (
+                      filters.some(
+                        (filter) =>
+                          filter.kinds.includes(20001) &&
+                          filter.authors?.includes(id.pubkey),
+                      )
+                    )
+                      emit(peer, ["EVENT", wire, id]);
+                }
+              });
               return;
             }
             if (kind === "EVENT" && acceptPublication) {
@@ -470,43 +554,53 @@ export function policyRelay({
                 : `Unexpected relay frame ${kind}`,
             ).toBe("REQ");
             expect(this.authenticated).toBe(true);
+            expect(filters.length).toBeGreaterThan(0);
+            expect(filters.length).toBeLessThanOrEqual(10);
+            const routes = filters.flatMap(
+              (filter) => filter["#h"] ?? [routeOf(filter)],
+            );
             requests.push({
               socket: sockets.indexOf(this),
               community: this.community,
               id,
-              filter,
-              route: routeOf(filter),
+              filters,
+              routes,
               at: performance.now(),
             });
-            const channel = filter["#h"]?.[0];
-            // A broad channel REQ cannot substitute for explicit #h fan-out.
-            if (
-              filter.kinds.includes(9) &&
-              (!channel || filter["#h"].length !== 1)
-            ) {
-              queueMicrotask(() =>
-                emit(this, [
-                  "CLOSED",
-                  id,
-                  "restricted: channel filter required",
-                ]),
-              );
-              return;
+            if (!admitWs(this, kind, id)) return;
+            for (const filter of filters) {
+              const channel = filter["#h"]?.[0];
+              // Initial replay stays per channel; zero replay may consolidate the wire.
+              if (
+                filter.kinds.includes(9) &&
+                (!channel ||
+                  filter["#h"].length > 10 ||
+                  (filter.limit !== 0 && filter["#h"].length !== 1))
+              ) {
+                queueMicrotask(() =>
+                  emit(this, [
+                    "CLOSED",
+                    id,
+                    "restricted: channel filter required",
+                  ]),
+                );
+                return;
+              }
+              if (filter.kinds.includes(44100))
+                expect(filter["#p"]).toEqual([viewer]);
+              if (filter.kinds.includes(24200)) {
+                expect(filter["#p"]).toEqual([viewer]);
+                expect(filter["#h"]).toBeUndefined();
+                expect(filter.limit).toBeUndefined();
+                expect(filter.since).toBeGreaterThanOrEqual(
+                  Math.floor(Date.now() / 1000) - 1,
+                );
+              }
             }
-            if (filter.kinds.includes(44100))
-              expect(filter["#p"]).toEqual([viewer]);
-            if (filter.kinds.includes(24200)) {
-              expect(filter["#p"]).toEqual([viewer]);
-              expect(filter["#h"]).toBeUndefined();
-              expect(filter.limit).toBeUndefined();
-              expect(filter.since).toBeGreaterThanOrEqual(
-                Math.floor(Date.now() / 1000) - 1,
-              );
-            }
-            this.routes.set(id, filter);
-            const route = routeOf(filter);
-            if (heldEose.has(route))
-              pendingEose.push({ socket: this, id, channel: route });
+            this.routes.set(id, filters);
+            if (routes.some((route) => heldEose.has(route)))
+              pendingEose.push({ socket: this, id, routes });
+            else if (eoseMs) setTimeout(() => emit(this, ["EOSE", id]), eoseMs);
             else queueMicrotask(() => emit(this, ["EOSE", id]));
           } catch (error) {
             fault(error);
@@ -527,15 +621,46 @@ export function policyRelay({
         (s) =>
           s.readyState === 1 &&
           s.community === community &&
-          [...s.routes.values()].some((f) => routeOf(f) === channel),
+          [...s.routes.values()].some((filters) =>
+            filters.some((filter) =>
+              (filter["#h"] ?? [routeOf(filter)]).includes(channel),
+            ),
+          ),
       );
+    },
+    presence(community, event) {
+      let deliveries = 0;
+      for (const socket of sockets) {
+        if (socket.readyState !== 1 || socket.community !== community) continue;
+        for (const [id, filters] of socket.routes) {
+          if (
+            !filters.some(
+              (filter) =>
+                filter.kinds.includes(20001) &&
+                filter.authors?.includes(event.pubkey),
+            )
+          )
+            continue;
+          emit(socket, ["EVENT", id, event]);
+          deliveries++;
+        }
+      }
+      expect(
+        deliveries,
+        "presence must traverse the production demand-scoped REQ",
+      ).toBeGreaterThan(0);
     },
     observer(community, event) {
       let deliveries = 0;
       for (const socket of sockets) {
         if (socket.readyState !== 1 || socket.community !== community) continue;
-        for (const [id, filter] of socket.routes) {
-          if (!filter.kinds.includes(24200) || !filter["#p"]?.includes(viewer))
+        for (const [id, filters] of socket.routes) {
+          if (
+            !filters.some(
+              (filter) =>
+                filter.kinds.includes(24200) && filter["#p"]?.includes(viewer),
+            )
+          )
             continue;
           emit(socket, ["EVENT", id, event]);
           deliveries++;
@@ -550,11 +675,14 @@ export function policyRelay({
       let deliveries = 0;
       for (const socket of sockets) {
         if (socket.readyState !== 1 || socket.community !== community) continue;
-        for (const [id, filter] of socket.routes) {
+        for (const [id, filters] of socket.routes) {
           if (
-            !filter.kinds.includes(event.kind) ||
-            !filter["#h"]?.some((h) =>
-              event.tags.some(([k, v]) => k === "h" && h === v),
+            !filters.some(
+              (filter) =>
+                filter.kinds.includes(event.kind) &&
+                filter["#h"]?.some((h) =>
+                  event.tags.some(([k, v]) => k === "h" && h === v),
+                ),
             )
           )
             continue;
@@ -575,8 +703,13 @@ export function policyRelay({
       let failures = 0;
       for (const socket of sockets) {
         if (socket.readyState !== 1 || socket.community !== community) continue;
-        for (const [id, filter] of [...socket.routes]) {
-          if (routeOf(filter) !== channel) continue;
+        for (const [id, filters] of [...socket.routes]) {
+          if (
+            !filters.some((filter) =>
+              (filter["#h"] ?? [routeOf(filter)]).includes(channel),
+            )
+          )
+            continue;
           socket.routes.delete(id);
           emit(socket, ["CLOSED", id, reason]);
           failures++;

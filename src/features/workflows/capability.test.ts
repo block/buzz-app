@@ -15,6 +15,8 @@ const yaml =
 const disposers: (() => void)[] = [];
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 function setup(relayHttpUrl?: string) {
   const key = keypair();
@@ -268,6 +270,322 @@ it("stale/legacy deletion receipt never proves deletion", async () => {
   expect(h.capability.operations.snapshot()[1]?.outcome).toBe("succeeded");
 });
 
+it("reuses completed aggregate definitions only for fresh session-cache reads", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const h = setup();
+  const other = "44444444-4444-4444-8444-444444444444";
+  const row = signed(keypair(), {
+    kind: 30620,
+    created_at: 1,
+    content: yaml,
+    tags: [
+      ["h", channelId],
+      ["d", id],
+    ],
+  });
+  h.read.mockResolvedValue([row]);
+  const first = h.capability.definitions([channelId, other]);
+  await first.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(1);
+  first.dispose();
+
+  const fresh = h.capability.definitions([other, channelId]);
+  expect(fresh.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [{ revision: row.id }] },
+  });
+  await fresh.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(1);
+  await fresh.refresh();
+  expect(h.read).toHaveBeenCalledTimes(2);
+  fresh.dispose();
+
+  vi.setSystemTime(10_001);
+  const stale = h.capability.definitions([channelId, other]);
+  expect(stale.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [{ revision: row.id }] },
+  });
+  const refreshing = stale.refresh({ ifStale: true });
+  expect(stale.snapshot()).toMatchObject({
+    status: "loading",
+    data: { items: [{ revision: row.id }] },
+  });
+  await refreshing;
+  expect(h.read).toHaveBeenCalledTimes(3);
+  stale.dispose();
+
+  vi.setSystemTime(70_002);
+  expect(h.capability.definitions([channelId, other]).snapshot()).toMatchObject(
+    {
+      status: "idle",
+      data: { items: [] },
+    },
+  );
+});
+
+it("evicts only overlapping aggregate definition cache entries after completed reads", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const h = setup();
+  const other = "44444444-4444-4444-8444-444444444444";
+  const disjoint = "55555555-5555-4555-8555-555555555555";
+  const row = signed(keypair(), {
+    kind: 30620,
+    created_at: 1,
+    content: yaml,
+    tags: [
+      ["h", channelId],
+      ["d", id],
+    ],
+  });
+
+  h.read.mockResolvedValueOnce([]);
+  const emptySuperset = h.capability.definitions([channelId, other]);
+  await emptySuperset.refresh();
+  emptySuperset.dispose();
+
+  h.read.mockResolvedValueOnce([]);
+  const emptyDisjoint = h.capability.definitions([disjoint]);
+  await emptyDisjoint.refresh();
+  emptyDisjoint.dispose();
+
+  h.read.mockResolvedValueOnce([row]);
+  const subset = h.capability.definitions([channelId]);
+  await subset.refresh();
+  subset.dispose();
+  expect(h.read).toHaveBeenCalledTimes(3);
+
+  const cachedDisjoint = h.capability.definitions([disjoint]);
+  expect(cachedDisjoint.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [] },
+  });
+  await cachedDisjoint.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(3);
+  cachedDisjoint.dispose();
+
+  const evictedSuperset = h.capability.definitions([other, channelId]);
+  expect(evictedSuperset.snapshot()).toMatchObject({
+    status: "idle",
+    data: { items: [] },
+  });
+  h.read.mockResolvedValueOnce([row]);
+  await evictedSuperset.refresh({ ifStale: true });
+  expect(evictedSuperset.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [{ revision: row.id }] },
+  });
+  evictedSuperset.dispose();
+  expect(h.read).toHaveBeenCalledTimes(4);
+
+  const evictedSubset = h.capability.definitions([channelId]);
+  expect(evictedSubset.snapshot()).toMatchObject({
+    status: "idle",
+    data: { items: [] },
+  });
+  h.read.mockRejectedValueOnce(new Error("offline"));
+  await evictedSubset.refresh();
+  expect(evictedSubset.snapshot()).toMatchObject({
+    status: "error",
+    data: { items: [] },
+  });
+  evictedSubset.dispose();
+
+  const retainedSuperset = h.capability.definitions([channelId, other]);
+  expect(retainedSuperset.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [{ revision: row.id }] },
+  });
+  await retainedSuperset.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(5);
+});
+
+it("an empty deletion receipt reconciles only after a complete fresh read without its coordinate", async () => {
+  const h = setup();
+  const operation = h.capability.delete(h.definition);
+  await flush();
+  h.settle("");
+  await flush();
+  expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
+  await h.capability.definitions(channelId).refresh();
+  expect(h.read).toHaveBeenCalledWith(
+    [{ kinds: [30620], "#h": [channelId], limit: 100 }],
+    expect.objectContaining({ fresh: true }),
+  );
+  expect(h.capability.operations.snapshot()[0]).toMatchObject({
+    eventId: operation,
+    action: "delete",
+    delivery: "accepted",
+    outcome: "succeeded",
+  });
+  expect(h.capability.operations.snapshot()[0]?.error).toBeUndefined();
+  expect(h.publish).toHaveBeenCalledTimes(1);
+  expect(h.sign).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  "retained",
+  "partial",
+  "other-channel",
+  "failed-read",
+  "lost-receipt",
+  "echo-only",
+  "rejected",
+  "malformed-receipt",
+  "revoked",
+  "disposed",
+])("does not confirm deletion from %s", async (scenario) => {
+  const h = setup();
+  h.capability.delete(h.definition);
+  await flush();
+  const event = h.publish.mock.calls[0]?.[0];
+  if (!event) throw new Error("missing deletion");
+  if (scenario === "echo-only") h.outbox.observe([event]);
+  if (scenario === "lost-receipt" || scenario === "echo-only")
+    h.reject(new Error("Lost receipt"));
+  else if (scenario === "rejected")
+    h.reject(new PublishRejected("Deletion rejected"));
+  else h.settle(scenario === "malformed-receipt" ? "response:{" : "");
+  await flush();
+  const view = h.capability.definitions(
+    scenario === "other-channel" ? runId : channelId,
+  );
+  const retained = {
+    ...event,
+    kind: 30620,
+    content: yaml,
+    tags: [
+      ["h", channelId],
+      ["d", id],
+    ],
+  };
+  if (scenario === "retained") h.read.mockResolvedValue([retained]);
+  if (scenario === "partial")
+    h.read.mockResolvedValue(
+      Array.from({ length: 100 }, (_, index) => ({
+        ...retained,
+        id: index.toString(16).padStart(64, "0"),
+        tags: [
+          ["h", channelId],
+          ["d", runId],
+        ],
+      })),
+    );
+  if (scenario === "failed-read")
+    h.read.mockRejectedValue(new Error("Offline"));
+  let release!: () => void;
+  if (scenario === "revoked" || scenario === "disposed")
+    h.read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve([]);
+        }),
+    );
+  const reading = view.refresh();
+  await flush();
+  try {
+    if (scenario === "revoked") h.revoke();
+    if (scenario === "disposed") view.dispose();
+  } finally {
+    release?.();
+  }
+  await reading;
+  expect(
+    h.capability.operations.snapshot().some((op) => op.outcome === "succeeded"),
+  ).toBe(false);
+  expect(h.publish).toHaveBeenCalledTimes(1);
+});
+
+it("a read started before deletion acceptance cannot reconcile absence; a later read can", async () => {
+  const h = setup();
+  h.capability.delete(h.definition);
+  await flush();
+  let release!: () => void;
+  h.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve([]);
+      }),
+  );
+  const view = h.capability.definitions(channelId);
+  const reading = view.refresh();
+  await flush();
+  try {
+    h.settle("");
+    await flush();
+  } finally {
+    release();
+  }
+  await reading;
+  expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
+  await view.refresh();
+  expect(h.capability.operations.snapshot()[0]?.outcome).toBe("succeeded");
+  expect(h.publish).toHaveBeenCalledTimes(1);
+});
+
+it("refresh during an older in-flight read queues deletion readback after that read", async () => {
+  const h = setup();
+  h.capability.delete(h.definition);
+  await flush();
+  let release!: () => void;
+  h.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve([]);
+      }),
+  );
+  const view = h.capability.definitions(channelId);
+  const oldRead = view.refresh();
+  await flush();
+  let readback: Promise<void> | undefined;
+  try {
+    h.settle("");
+    await flush();
+    readback = view.refresh();
+    expect(h.read).toHaveBeenCalledTimes(1);
+    expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
+  } finally {
+    release();
+  }
+  await Promise.all([oldRead, readback]);
+  expect(h.read).toHaveBeenCalledTimes(2);
+  expect(h.capability.operations.snapshot()[0]?.outcome).toBe("succeeded");
+  expect(h.publish).toHaveBeenCalledTimes(1);
+});
+
+it.each(["clear", "interrupt"] as const)(
+  "%s fences queued deletion readback without starting another read",
+  async (action) => {
+    const h = setup();
+    h.capability.delete(h.definition);
+    await flush();
+    let release!: () => void;
+    h.read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve([]);
+        }),
+    );
+    const view = h.capability.definitions(channelId);
+    const oldRead = view.refresh();
+    await flush();
+    h.settle("");
+    await flush();
+    const queued = view.refresh();
+    try {
+      h[action]();
+    } finally {
+      release();
+    }
+    await Promise.all([oldRead, queued]);
+    expect(h.read).toHaveBeenCalledTimes(1);
+    expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
+    expect(view.snapshot().status).toBe(action === "clear" ? "idle" : "error");
+  },
+);
+
 it.each([true, false])(
   "fresh exact saved configuration resolves a lost save receipt without replay (echo=%s)",
   async (echo) => {
@@ -415,11 +733,13 @@ it.each(["save", "trigger", "delete"] as const)(
   },
 );
 
-it("batch definitions deduplicate signed IDs and track limits per channel before coordinate folding", async () => {
+it("batch definitions use one bounded filter and count unique events before coordinate folding", async () => {
   const h = setup();
   const other = "44444444-4444-4444-8444-444444444444";
+  const empty = "66666666-6666-4666-8666-666666666666";
+  const author = keypair();
   const make = (channel: string, index: number) =>
-    signed(keypair(), {
+    signed(author, {
       kind: 30620,
       created_at: index,
       content: yaml,
@@ -433,13 +753,10 @@ it("batch definitions deduplicate signed IDs and track limits per channel before
     ...Array.from({ length: 100 }, () => first),
     make(other, 2),
   ]);
-  const view = h.capability.definitions([channelId, other]);
+  const view = h.capability.definitions([channelId, other, empty, channelId]);
   await view.refresh();
   expect(h.read).toHaveBeenLastCalledWith(
-    [
-      { kinds: [30620], "#h": [channelId], limit: 100 },
-      { kinds: [30620], "#h": [other], limit: 100 },
-    ],
+    [{ kinds: [30620], "#h": [channelId, other, empty], limit: 100 }],
     expect.anything(),
   );
   expect(view.snapshot().data).toMatchObject({
@@ -448,12 +765,26 @@ it("batch definitions deduplicate signed IDs and track limits per channel before
     partialChannelIds: [],
   });
   expect(view.snapshot().data.items).toHaveLength(2);
-  h.read.mockResolvedValue([
-    ...Array.from({ length: 100 }, (_, i) => make(channelId, i)),
-    make(other, 2),
-  ]);
+  const events = [
+    ...Array.from({ length: 49 }, (_, i) => make(channelId, i)),
+    ...Array.from({ length: 50 }, (_, i) => make(other, i)),
+  ];
+  h.read.mockResolvedValue(events);
   await view.refresh();
-  expect(view.snapshot().data.partialChannelIds).toEqual([channelId]);
+  expect(view.snapshot().data.partial).toBe(false);
+  h.read
+    .mockResolvedValueOnce([...events, make(channelId, 49)])
+    .mockResolvedValueOnce([]);
+  await view.refresh();
+  expect(view.snapshot().data).toMatchObject({
+    partial: false,
+    partialChannelIds: [],
+  });
+  expect(view.snapshot().data.items).toHaveLength(2);
+  expect(h.read).toHaveBeenCalledTimes(4);
+  const cached = h.capability.definitions([channelId, other, empty]).snapshot();
+  expect(cached.status).toBe("ready");
+  expect(cached.data.items).toHaveLength(2);
   h.read.mockResolvedValue([make("55555555-5555-4555-8555-555555555555", 1)]);
   await view.refresh();
   expect(view.snapshot()).toMatchObject({

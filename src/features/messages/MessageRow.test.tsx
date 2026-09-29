@@ -163,6 +163,7 @@ it.each(["bare", "angle", "markdown", "escaped"] as const)(
 );
 
 it.each([
+  ["😀 🙏 👏", [], true],
   ["😀 🙏 👏 😄", [], true],
   ["😀".repeat(40), [], true],
   [
@@ -434,35 +435,30 @@ it.each([9, 40002])(
 );
 
 it.each([
-  [
-    { width: 700, height: 900 },
-    "width:248.88888888888889px;aspect-ratio:700 / 900",
-  ],
-  [{ width: 1600, height: 900 }, "width:360px;aspect-ratio:1600 / 900"],
-  [{ width: 20, height: 10 }, "width:20px;aspect-ratio:20 / 10"],
-])(
-  "reserves metadata-sized previews without waiting for load: %j",
-  (dimensions, style) => {
-    const html = renderToStaticMarkup(
-      <MessageRow
-        row={{
-          ...row,
-          attachments: [
-            { url: "https://image.test/shot.png", kind: "image", dimensions },
-          ],
-        }}
-        profile={undefined}
-        media={(url) => url}
-        onOpenLink={() => false}
-        day={false}
-        retry={undefined}
-      />,
-    );
-    expect(html).toContain(`style="${style}"`);
-    expect(html).toContain('aria-label="Open image attachment"');
-    expect(html).toContain('loading="lazy"');
-  },
-);
+  { width: 700, height: 900 },
+  { width: 1600, height: 900 },
+  { width: 20, height: 10 },
+])("uses fixed thumbnails regardless of image dimensions: %j", (dimensions) => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { url: "https://image.test/shot.png", kind: "image", dimensions },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain('data-thumbnail="true"');
+  expect(html).not.toContain("aspect-ratio:");
+  expect(html).toContain('aria-label="Open image attachment"');
+  expect(html).toContain('loading="lazy"');
+});
 
 it.each([undefined, { width: 640, height: 400 }])(
   "keeps cached images silent and unfetched, but explains a live unavailable source (%j)",
@@ -506,12 +502,8 @@ it.each([undefined, { width: 640, height: 400 }])(
       );
       expect(placeholder).not.toBeNull();
       expect(placeholder).toBeEmptyDOMElement();
-      if (dimensions)
-        expect(placeholder).toHaveStyle({
-          width: "360px",
-          aspectRatio: "640 / 400",
-        });
-      else expect(placeholder).not.toHaveAttribute("style"); // Existing CSS owns fallback geometry.
+      expect(placeholder).toHaveAttribute("data-thumbnail", "true");
+      expect(placeholder).not.toHaveAttribute("style"); // Strip CSS owns fixed geometry.
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(screen.queryByText("Image unavailable")).not.toBeInTheDocument();
       view.rerender(show(false));
@@ -834,12 +826,13 @@ it.each([9, 40002])(
 );
 
 it.each([
-  { replyCount: 0, threadRootId: undefined, expected: false },
-  { replyCount: 2, threadRootId: undefined, expected: true },
-  { replyCount: 0, threadRootId: "parent", expected: true },
+  { replyCount: 0, threadRootId: undefined, expected: false, count: 1 },
+  { replyCount: 2, threadRootId: undefined, expected: true, count: 1 },
+  { replyCount: 0, threadRootId: "parent", expected: true, count: 1 },
+  { replyCount: 2, threadRootId: undefined, expected: true, count: 2 },
 ])(
   "passes known comment state from the chat photo to its viewer: $expected",
-  ({ replyCount, threadRootId, expected }) => {
+  ({ replyCount, threadRootId, expected, count }) => {
     const attachment = {
       kind: "image" as const,
       url: "https://fixture.test/photo.png",
@@ -849,7 +842,13 @@ it.each([
       <MessageRow
         row={{
           ...row,
-          attachments: [attachment],
+          attachments:
+            count === 1
+              ? [attachment]
+              : [
+                  attachment,
+                  { ...attachment, url: "https://fixture.test/second.png" },
+                ],
           replyCount,
           ...(threadRootId ? { threadRootId } : {}),
         }}
@@ -862,7 +861,9 @@ it.each([
       />,
     );
     fireEvent.click(
-      screen.getByRole("link", { name: "Open image attachment" }),
+      screen.getByRole("link", {
+        name: count === 1 ? "Open image attachment" : "Open image 1 of 2",
+      }),
       { detail: 1 },
     );
     expect(open).toHaveBeenCalledWith(row.id, attachment, 0, expected);
@@ -903,3 +904,243 @@ it.each(["sending", "failed"] as const)(
     }
   },
 );
+
+// These contracts belong to the rendered row, rather than a shallow ThreadPanel fixture.
+function renderMessage(
+  patch: Partial<import("./MessageRow").MessageRowProps> = {},
+) {
+  return renderDom(
+    <MessageRow
+      row={row}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+      {...patch}
+    />,
+  );
+}
+
+it("rejects attachment URLs outside the shared safe-link policy", () => {
+  const media = vi.fn((url: string) => url);
+  const view = renderMessage({
+    row: {
+      ...row,
+      attachments: [
+        { url: "https://safe.test/a.png", kind: "image" },
+        { url: "https://user:secret@unsafe.test/a.png", kind: "image" },
+        { url: "http://unsafe.test/a.png", kind: "image" },
+      ],
+    },
+    media,
+  });
+  try {
+    const links = screen.getAllByRole("link", {
+      name: "Open image attachment",
+    });
+    expect(media).toHaveBeenCalledExactlyOnceWith("https://safe.test/a.png");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("href", "https://safe.test/a.png");
+    expect(view.container.innerHTML).not.toContain("unsafe.test");
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each([true, false])(
+  "renders a stripped timecode body with seeking available=%s",
+  (canSeek) => {
+    const seek = vi.fn();
+    const view = renderMessage({
+      row: { ...row, content: "⏱ 0:42 — **Change** the title" },
+      ...(canSeek ? { onMediaTime: seek } : {}),
+    });
+    try {
+      expect(screen.getByText("Change").tagName).toBe("STRONG");
+      expect(view.container).toHaveTextContent("Change the title");
+      expect(view.container.textContent?.match(/0:42/g)).toHaveLength(1);
+      expect(view.container).not.toHaveTextContent("⏱");
+      if (canSeek) {
+        fireEvent.click(screen.getByRole("button", { name: "0:42" }));
+        expect(seek).toHaveBeenCalledExactlyOnceWith(42);
+      } else {
+        expect(screen.queryByRole("button", { name: "0:42" })).toBeNull();
+        expect(screen.getByText("0:42").tagName).toBe("SPAN");
+      }
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it.each([undefined, "canonical-root"])(
+  "opens the selected row with canonical root %s and retains trigger focus",
+  (threadRootId) => {
+    const open = vi.fn();
+    const view = renderMessage({
+      row: { ...row, threadRootId },
+      onOpenThread: open,
+    });
+    try {
+      const trigger = screen.getByRole("button", {
+        name: "View thread: 23 replies",
+      });
+      fireEvent.click(trigger);
+      expect(trigger).toHaveFocus();
+      expect(open).toHaveBeenCalledExactlyOnceWith(
+        row.id,
+        threadRootId ?? row.id,
+      );
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it("bounds reply participants and projects artwork with fallback initials", () => {
+  const media = vi.fn((url: string) =>
+    url === "https://safe/avatar" ? "https://proxy/avatar" : undefined,
+  );
+  const view = renderMessage({
+    row: { ...row, participants: ["p1", "p2", "p3", "p4", "p5"] },
+    participantProfiles: new Map([
+      ["p1", { name: "Alice", picture: "https://safe/avatar" }],
+      ["p2", { name: "Brain", picture: "http://unsafe" }],
+    ]),
+    media,
+    onOpenThread: () => {},
+  });
+  try {
+    const trigger = screen.getByRole("button", {
+      name: "View thread: 23 replies",
+    });
+    expect(
+      [...trigger.querySelectorAll("[title]")].map((e) =>
+        e.getAttribute("title"),
+      ),
+    ).toEqual(["Alice", "Brain", "p3"]);
+    expect(trigger.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://proxy/avatar",
+    );
+    expect(trigger.querySelectorAll("img")).toHaveLength(1);
+    expect(trigger.querySelector('[title="Brain"]')).toHaveTextContent("B");
+    expect(trigger.querySelector('[title="p3"]')).toHaveTextContent("P");
+    expect(trigger).toHaveTextContent("+2");
+    expect(media).toHaveBeenCalledWith("https://safe/avatar", "small");
+    expect(media).toHaveBeenCalledWith("http://unsafe", "small");
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each([1, 2, 3, 4, 5, 10])(
+  "keeps all %i images reachable in a labelled strip",
+  (count) => {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={{
+          ...row,
+          attachments: Array.from({ length: count }, (_, i) => ({
+            kind: "image",
+            url: `https://image.test/${i}.png`,
+          })),
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(html).toContain(
+      `role="group" aria-label="${count} ${count === 1 ? "image" : "images"}"`,
+    );
+    expect(html.match(/data-thumbnail="true"/g)).toHaveLength(count);
+    expect(html).toContain(`href="https://image.test/${count - 1}.png"`);
+    const text = new DOMParser().parseFromString(html, "text/html").body
+      .textContent;
+    if (count === 1) expect(text).not.toContain("1 image");
+    else expect(text).toContain(`${count} images`);
+  },
+);
+
+it("preserves interleaved file order and counts unavailable images but not unsafe URLs", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { kind: "image", url: "https://image.test/first.png" },
+          { kind: "image", url: "javascript:alert(1)" },
+          { kind: "image", url: "https://image.test/unavailable.png" },
+          {
+            kind: "file",
+            url: "https://files.test/notes.md",
+            name: "notes.md",
+          },
+          { kind: "image", url: "https://image.test/last.png" },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => (url.includes("unavailable") ? undefined : url)}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain('role="group" aria-label="2 images"');
+  expect(html).toContain('role="group" aria-label="1 image"');
+  const text = new DOMParser().parseFromString(html, "text/html").body
+    .textContent;
+  expect(text).toContain("2 images");
+  expect(text).not.toContain("1 image");
+  expect(html).toContain("Image unavailable");
+  expect(html).not.toContain("javascript:");
+  expect(html.indexOf('href="https://image.test/first.png"')).toBeLessThan(
+    html.indexOf('href="https://files.test/notes.md"'),
+  );
+  expect(html.indexOf('href="https://files.test/notes.md"')).toBeLessThan(
+    html.indexOf('href="https://image.test/last.png"'),
+  );
+});
+
+it("keeps audio and video players between their original image runs", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { kind: "image", url: "https://image.test/first.png" },
+          {
+            kind: "audio",
+            url: "https://files.test/voice.mp3",
+            name: "voice.mp3",
+          },
+          {
+            kind: "video",
+            url: "https://files.test/demo.mp4",
+            name: "demo.mp4",
+          },
+          { kind: "image", url: "https://image.test/last.png" },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html.match(/role="group" aria-label="1 image"/g)).toHaveLength(2);
+  expect(html).toContain("<audio");
+  expect(html).toContain("<video");
+  expect(html.indexOf('href="https://image.test/first.png"')).toBeLessThan(
+    html.indexOf("<audio"),
+  );
+  expect(html.indexOf("<audio")).toBeLessThan(html.indexOf("<video"));
+  expect(html.indexOf("<video")).toBeLessThan(
+    html.indexOf('href="https://image.test/last.png"'),
+  );
+});

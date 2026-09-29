@@ -410,38 +410,75 @@ it.each([
   },
 );
 
-it("offers the reviewed adapter command for a ready user-global Pi install", async () => {
-  const user = userEvent.setup();
+it.each([
+  ["/opt/homebrew/bin/buzz-pi-acp", "/opt/homebrew"],
+  ["/Users/test/.local/bin/buzz-pi-acp", "/Users/test/.local"],
+  [
+    "/Users/test/O'Brien/.local/bin/buzz-pi-acp",
+    "/Users/test/O'\\''Brien/.local",
+  ],
+])(
+  "targets the selected user-global Pi adapter at %s",
+  async (adapterPath, prefix) => {
+    const user = userEvent.setup();
+    setupHarnesses(
+      "ready",
+      {},
+      {
+        command: adapterPath,
+        installSupported: true,
+        updateSupported: false,
+        installPi: vi.fn(),
+      },
+    );
+    const pi = within(await screen.findByRole("list")).getAllByRole(
+      "listitem",
+    )[2];
+    if (!pi) throw new Error("Missing Pi row");
+    expect(
+      within(pi).queryByRole("button", { name: "Update adapter" }),
+    ).toBeNull();
+    expect(screen.getByText(/Selected Pi adapter:/)).toHaveTextContent(
+      adapterPath,
+    );
+    expect(screen.getByText(/For a user-global Pi install/)).toBeVisible();
+    expect(
+      screen.getByText(/confirm the selected path is the same/),
+    ).toBeVisible();
+    expect(screen.getByText(/buzz-pi-acp.git#cff9964/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Copy Pi command" }),
+    ).toBeNull();
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue();
+    await user.click(
+      screen.getByRole("button", { name: "Copy Adapter command" }),
+    );
+    expect(write).toHaveBeenCalledWith(
+      `npm install -g --install-links=true --prefix '${prefix}' 'git+https://github.com/salman1993/buzz-pi-acp.git#cff9964'`,
+    );
+  },
+);
+
+it("does not suggest a different npm install for a nonstandard selected adapter", async () => {
   setupHarnesses(
     "ready",
     {},
     {
-      command: "/opt/homebrew/bin/buzz-pi-acp",
-      installSupported: true,
+      command: "/custom/buzz-pi-acp",
       updateSupported: false,
-      installPi: vi.fn(),
     },
   );
-  const pi = within(await screen.findByRole("list")).getAllByRole(
-    "listitem",
-  )[2];
-  if (!pi) throw new Error("Missing Pi row");
+  expect(await screen.findByText(/Selected Pi adapter:/)).toHaveTextContent(
+    "/custom/buzz-pi-acp",
+  );
   expect(
-    within(pi).queryByRole("button", { name: "Update adapter" }),
+    screen.queryByRole("button", { name: "Copy Adapter command" }),
   ).toBeNull();
-  expect(screen.getByText(/Selected Pi adapter:/)).toHaveTextContent(
-    "/opt/homebrew/bin/buzz-pi-acp",
-  );
-  expect(screen.getByText(/For a user-global Pi install/)).toBeVisible();
-  expect(screen.getByText(/buzz-pi-acp.git#cff9964/)).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Copy Pi command" })).toBeNull();
-  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
-  await user.click(
-    screen.getByRole("button", { name: "Copy Adapter command" }),
-  );
-  expect(write).toHaveBeenCalledWith(
-    "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#cff9964'",
-  );
+  expect(
+    screen.getByText(/outside a standard npm global bin directory/),
+  ).toBeVisible();
 });
 
 it("updates a ready app-owned Pi adapter and tells the user to restart running agents", async () => {

@@ -16,8 +16,17 @@ import styles from "./AgentSettings.module.css";
 const acpHint =
   "Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.";
 const piCommand = "npm install -g @earendil-works/pi-coding-agent";
-const adapterCommand =
-  "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#cff9964'";
+const adapterSource =
+  "'git+https://github.com/salman1993/buzz-pi-acp.git#cff9964'";
+const adapterCommand = `npm install -g --install-links=true ${adapterSource}`;
+
+function adapterUpdateCommand(path: string): string | null {
+  const suffix = "/bin/buzz-pi-acp";
+  if (!path.startsWith("/") || !path.endsWith(suffix)) return null;
+  const prefix = path.slice(0, -suffix.length) || "/";
+  const quotedPrefix = `'${prefix.replaceAll("'", "'\\''")}'`;
+  return `npm install -g --install-links=true --prefix ${quotedPrefix} ${adapterSource}`;
+}
 const labels = {
   ready: "Ready",
   "cli-needed": "CLI needed",
@@ -61,6 +70,8 @@ export function AgentSettings({
   const available = harnesses.every((option) => !!option?.status);
   const goose = harnesses[1];
   const pi = harnesses[2];
+  const userAdapterCommand =
+    pi?.status === "ready" ? adapterUpdateCommand(pi.command) : null;
   const change = (enabled: boolean) =>
     setError(setRememberAgentsPreference(enabled));
   const copy = async (name: string, command: string) => {
@@ -262,23 +273,39 @@ export function AgentSettings({
               <div className="space-y-3 text-body-sm">
                 <p className="m-0 text-secondary">
                   Native steering needs the reviewed adapter revision. For a
-                  user-global Pi install, update it if needed, then restart
-                  running Pi agents.
+                  user-global Pi install, update the selected adapter shown
+                  above, then restart running Pi agents.
                 </p>
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <code
-                    className={`${styles.command} min-w-0 flex-1 text-mono`}
-                  >
-                    {adapterCommand}
-                  </code>
-                  <Button
-                    size="sm"
-                    type="button"
-                    onClick={() => void copy("Adapter", adapterCommand)}
-                  >
-                    Copy Adapter command
-                  </Button>
-                </div>
+                {userAdapterCommand ? (
+                  <>
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <code
+                        className={`${styles.command} min-w-0 flex-1 text-mono`}
+                      >
+                        {userAdapterCommand}
+                      </code>
+                      <Button
+                        size="sm"
+                        type="button"
+                        onClick={() => void copy("Adapter", userAdapterCommand)}
+                      >
+                        Copy Adapter command
+                      </Button>
+                    </div>
+                    <p className="m-0 text-secondary">
+                      This command targets the npm prefix containing the
+                      selected adapter. After installing, click Check again and
+                      confirm the selected path is the same.
+                    </p>
+                  </>
+                ) : (
+                  <p className="m-0 text-secondary">
+                    The selected adapter is outside a standard npm global bin
+                    directory. Update the installation at the path shown above,
+                    then click Check again and confirm that path is still
+                    selected.
+                  </p>
+                )}
                 {copyMessage && <p role="status">{copyMessage}</p>}
               </div>
             )}

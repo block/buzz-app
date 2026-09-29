@@ -207,10 +207,14 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
 is executable detection, not a guarantee of sign-in, ACP readiness or inference.
 The reviewed Pi adapter revision supports native steering. An app-owned Pi
 installation offers **Update adapter** when Ready; it replaces only the adapter.
-For a user-global installation, Settings shows the manual adapter update command
-without changing the user's npm prefix. Settings also shows the selected Pi
-adapter path. Restart running Pi agents after either update so new sessions load
-the adapter.
+For a ready user-global installation under `<prefix>/bin/buzz-pi-acp`, Settings
+shows a manual update command with `--prefix <prefix>` so npm updates the
+selected adapter even when the active npm uses another global prefix. Settings
+also shows the selected Pi adapter path; confirm the command targets that path,
+then choose **Check again** and confirm the same path remains selected. For a
+nonstandard adapter path, Settings asks the user to update that exact
+installation instead of offering a potentially wrong copyable command. Restart
+running Pi agents after either update so new sessions load the adapter.
 Add/Edit links to Settings → Agents for setup instead of telling people to reopen
 the app. The ACP tooltip says:
 
